@@ -1,9 +1,9 @@
-"""Unit tests for the process-global degraded-condition collector (platformcore.degraded): the in-memory
+"""Unit tests for the process-global degraded-condition collector (delivery.degraded): the in-memory
 accumulation and the cross-process file-union channel used when a bring-up runs its phases as separate
 processes. Moved here from netctl - the collector is platform's now."""
 import os
 
-from platformcore import degraded
+from delivery import degraded
 
 
 def test_items_unions_the_shared_file_so_separate_phases_surface_to_the_verdict(tmp_path):

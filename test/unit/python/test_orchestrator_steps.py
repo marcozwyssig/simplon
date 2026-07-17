@@ -1,4 +1,4 @@
-"""Engine tests for the shared steps-runner (platformcore.orchestrator.steps): the product-agnostic step
+"""Engine tests for the shared steps-runner (delivery.orchestrator.steps): the product-agnostic step
 model + runners moved out of netctl. Fake actions (no real subprocess, no Textual) so the state
 transitions + overall verdict are tested in isolation. This is now the home of the generic runner + its
 coverage (moved here from netctl's test_steps.py)."""
@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from platformcore.orchestrator.steps import (
+from delivery.orchestrator.steps import (
     Outcome,
     Pipeline,
     Step,

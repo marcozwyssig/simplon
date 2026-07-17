@@ -1,6 +1,6 @@
 """Unit tests for vcs.prune_verdict - the squash-aware keep/delete decision behind prune-branches.
 No git, no subprocess; AAA throughout. Moved here from netctl - the vcs wrappers are platform's now."""
-from platformcore import vcs
+from delivery import vcs
 
 
 def test_main_or_current_branch_is_skipped():

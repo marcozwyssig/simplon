@@ -1,9 +1,9 @@
-"""Unit tests for platformcore.diskguard.disk_guard - the docker-disk probe/decide/prune engine. A fake
+"""Unit tests for delivery.diskguard.disk_guard - the docker-disk probe/decide/prune engine. A fake
 Host feeds canned `df` Results (no real subprocess, no docker); the prune commands are captured via a
 patched run. AAA throughout. (Moved here from netctl's guard tests - the guard mechanism is platform's now;
 the netctl-side toggle stays in netctl.)"""
-from platformcore import diskguard
-from platformcore.run import Result
+from delivery import diskguard
+from delivery.run import Result
 
 
 class _FakeHost:

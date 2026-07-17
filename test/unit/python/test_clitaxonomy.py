@@ -1,7 +1,7 @@
-"""Unit tests for the generic CommandTaxonomy env-gate engine (platformcore.clitaxonomy): the reverse
+"""Unit tests for the generic CommandTaxonomy env-gate engine (delivery.clitaxonomy): the reverse
 index, group/flat-command resolution, env-requirement, and the verdict - exercised on a SYNTHETIC taxonomy
 so the engine is validated independently of any product's command set. AAA throughout."""
-from platformcore.clitaxonomy import CommandTaxonomy
+from delivery.clitaxonomy import CommandTaxonomy
 
 
 def _tax() -> CommandTaxonomy:

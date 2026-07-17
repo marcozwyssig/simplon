@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import platform
 
-from platformcore.run import Result, run
+from delivery.run import Result, run
 
 
 class Host:

@@ -1,6 +1,6 @@
 """Unit tests for disk - the docker-disk-guard parse/decision logic. Moved here from netctl - the guard is
 platform's now."""
-from platformcore import disk
+from delivery import disk
 
 
 def test_used_pct_parses_the_fifth_df_field():

@@ -1,7 +1,7 @@
-"""Unit tests for the Host execution router (platformcore.host): on macOS the lab commands are wrapped in
+"""Unit tests for the Host execution router (delivery.host): on macOS the lab commands are wrapped in
 `colima ssh --`, on Linux they run directly. The OS is injected via os_name so the routing is testable on
 any host, with no real subprocess. AAA throughout."""
-from platformcore import host
+from delivery import host
 
 
 def test_host_wraps_docker_in_colima_ssh_on_darwin(monkeypatch):

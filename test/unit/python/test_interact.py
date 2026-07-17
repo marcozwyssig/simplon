@@ -1,5 +1,5 @@
 """Unit tests for interact - the pure resolver/arg logic of the lab-interaction commands."""
-from platformcore import interact
+from delivery import interact
 
 
 def test_parse_logs_args_defaults_to_listing_with_tail_120():

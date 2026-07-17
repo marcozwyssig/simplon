@@ -12,8 +12,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable
 
-from platformcore import log
-from platformcore.run import run_stream
+from delivery import log
+from delivery.run import run_stream
 
 # A sink for a step's live output lines (the TUI appends to a RichLog; headless prints them).
 Emit = Callable[[str], None]
@@ -130,7 +130,7 @@ def dispatch(pipeline: Pipeline) -> int:
     `dispatch` (not `run`) to avoid colliding with the subprocess helpers this module imports. Kept in
     the lowest layer so callers depend downward on it, not on each other."""
     try:
-        from platformcore.orchestrator.tui import run_pipeline
+        from delivery.orchestrator.tui import run_pipeline
         return run_pipeline(pipeline)
     except ImportError:
         return run_headless(pipeline)

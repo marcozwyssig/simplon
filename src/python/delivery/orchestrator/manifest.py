@@ -5,7 +5,7 @@ this engine reads the manifest and the product assembles its CLI from it - produ
 DATA, not code, which dissolves the platform -> product coupling.
 
 The engine is PURE and framework-free: it parses + validates the manifest (loudly, like
-platformcore.environments.parse), resolves an impl reference to the real callable, and builds the shared
+delivery.environments.parse), resolves an impl reference to the real callable, and builds the shared
 CommandTaxonomy (the env-gate) from the manifest so that logic is reused, not copied. It deliberately
 imports no CLI framework: registering Typer commands / sub-apps / help panels is the PRODUCT's job (the
 engine must not bind to one CLI framework). "One source, two outputs": the same manifest assembles the
@@ -18,7 +18,7 @@ from typing import Callable, NamedTuple
 
 import yaml
 
-from platformcore.clitaxonomy import CommandTaxonomy
+from delivery.clitaxonomy import CommandTaxonomy
 
 
 class CommandSpec(NamedTuple):
@@ -81,7 +81,7 @@ def load(text: str) -> Manifest:
       - every command listed in a group has a spec, and every spec's command is in exactly one group
         (membership and specs agree, both ways);
       - every spec declares a non-empty `help` and a well-formed "module:function" `impl`.
-    Mirrors the style of platformcore.environments.parse.
+    Mirrors the style of delivery.environments.parse.
     """
     data = yaml.safe_load(text) or {}
 

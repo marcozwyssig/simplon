@@ -1,4 +1,4 @@
-"""Smoke test for the shared Textual split-pane app (platformcore.orchestrator.tui): drive it headlessly
+"""Smoke test for the shared Textual split-pane app (delivery.orchestrator.tui): drive it headlessly
 via run_test() and assert the worker ran every step to its real state and the details pane shows a step's
 output. Skipped when Textual is not installed. Moved here from netctl - the tui is platform's now.
 """
@@ -8,8 +8,8 @@ import pytest
 
 pytest.importorskip("textual")
 
-from platformcore.orchestrator.steps import Outcome, Pipeline, Step  # noqa: E402
-from platformcore.orchestrator.tui import _StepApp  # noqa: E402
+from delivery.orchestrator.steps import Outcome, Pipeline, Step  # noqa: E402
+from delivery.orchestrator.tui import _StepApp  # noqa: E402
 
 
 def _pipeline() -> Pipeline:

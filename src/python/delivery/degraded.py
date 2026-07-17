@@ -12,12 +12,12 @@ from __future__ import annotations
 
 import os
 
-from platformcore import log
+from delivery import log
 
 # Env var naming the cross-process degraded file. Product-neutral by default; a product may override this
 # module constant at bootstrap if it needs its own name. Both the orchestrator that SETS the file and this
 # collector that READS it must agree on the name.
-DEGRADED_FILE_ENV = "PLATFORMCORE_DEGRADED_FILE"
+DEGRADED_FILE_ENV = "DELIVERY_DEGRADED_FILE"
 
 _items: list[str] = []
 

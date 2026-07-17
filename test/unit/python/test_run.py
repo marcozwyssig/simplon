@@ -1,5 +1,5 @@
 """Unit tests for run.run_stream - the live line-streaming subprocess helper the TUI builds on."""
-from platformcore.run import run_stream
+from delivery.run import run_stream
 
 
 def test_run_stream_emits_each_line_and_returns_the_real_rc():

@@ -1,8 +1,8 @@
-"""Unit tests for platformcore.environments.parse - the pure environments.yml -> Registry parsing and
+"""Unit tests for delivery.environments.parse - the pure environments.yml -> Registry parsing and
 validation with product-supplied valid backends. No I/O; AAA throughout."""
 import pytest
 
-from platformcore.environments import parse
+from delivery.environments import parse
 
 _BACKENDS = ("local", "cloud")
 _OK = """

@@ -1,4 +1,4 @@
-"""Unit tests for the manifest-driven CLI assembly engine (platformcore.orchestrator.manifest): the pure
+"""Unit tests for the manifest-driven CLI assembly engine (delivery.orchestrator.manifest): the pure
 YAML load + schema validation, the impl-reference resolution, and the shared-taxonomy build - exercised on
 a SYNTHETIC manifest so the engine is validated independently of any product's command set. No Typer, no
 product impls; AAA throughout.
@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from platformcore.orchestrator import manifest
+from delivery.orchestrator import manifest
 
 _OK = """
 product: demo

@@ -1,5 +1,5 @@
-"""pytest bootstrap for the platformcore unit tests: put the delivery block's python language level
-(src/delivery/src/python) on sys.path so `from platformcore import ...` resolves without an install
+"""pytest bootstrap for the delivery unit tests: put the delivery block's python language level
+(src/delivery/src/python) on sys.path so `from delivery import ...` resolves without an install
 (mirrors netctl's convention)."""
 import sys
 from pathlib import Path

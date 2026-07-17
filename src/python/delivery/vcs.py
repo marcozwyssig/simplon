@@ -12,8 +12,8 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from platformcore import log
-from platformcore.run import run
+from delivery import log
+from delivery.run import run
 
 ROOT = Path.cwd()
 
