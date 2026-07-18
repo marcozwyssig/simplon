@@ -36,16 +36,30 @@ class CommandSpec(NamedTuple):
     passthrough_args: bool = False
 
 
+class CompositeSpec(NamedTuple):
+    """A named, ordered command pipeline declared in the manifest (#456): the step command NAMES to run in
+    order, and whether a failed step stops the rest (`stop_on_failure`, default False = run every step and
+    take the worst rc). Every step must name a command that exists in the manifest (validated in `load()`).
+    This makes composites (bringup, test.all, ...) DATA in the manifest instead of product Python, so a
+    second product gets the same runner + its own composites for free. The runner lives in
+    `delivery.orchestrator.product.run_composite`.
+    """
+    steps: tuple[str, ...]
+    stop_on_failure: bool = False
+
+
 class Manifest(NamedTuple):
     """A parsed, validated product manifest: the command taxonomy (group -> its command names, and the
     subset of env-first groups) plus each command's spec. `groups` and `env_groups` already have the exact
     shape the shared CommandTaxonomy consumes, so `taxonomy()` builds the env-gate without duplicating its
     logic. `commands` keeps the spec keys AS DECLARED - plain (`up`) or group-scoped (`deploy.all`, #519);
-    resolve a member's spec through `spec_for`, which knows the scoped-first precedence.
+    resolve a member's spec through `spec_for`, which knows the scoped-first precedence. `composites` maps a
+    composite name to its ordered step commands (#456); empty on a manifest that declares none.
     """
     groups: dict[str, tuple[str, ...]]
     env_groups: frozenset[str]
     commands: dict[str, CommandSpec]
+    composites: dict[str, CompositeSpec] = {}
 
     def taxonomy(self) -> CommandTaxonomy:
         """The shared env-gate engine built from this manifest's taxonomy (one env-gate, not a copy)."""
@@ -80,8 +94,11 @@ def load(text: str) -> Manifest:
       - no command appears in more than one group;
       - every command listed in a group has a spec, and every spec's command is in exactly one group
         (membership and specs agree, both ways);
-      - every spec declares a non-empty `help` and a well-formed "module:function" `impl`.
-    Mirrors the style of delivery.environments.parse.
+      - every spec declares a non-empty `help` and a well-formed "module:function" `impl`;
+      - every `composites` entry (#456) declares a non-empty `steps` list and every step names a command
+        that exists in the manifest (a member of some group).
+    Unknown top-level keys stay ignored (backward compatible). Mirrors the style of
+    delivery.environments.parse.
     """
     data = yaml.safe_load(text) or {}
 
@@ -148,7 +165,26 @@ def load(text: str) -> Manifest:
     if orphans:
         raise ValueError(f"commands with a spec but not in any declared group: {sorted(orphans)}")
 
-    return Manifest(groups=groups, env_groups=env_groups, commands=commands)
+    # composites (#456): a named, ordered pipeline of existing commands. Every step must name a command
+    # that is a member of some group (command_groups is that membership index, built above), so a typo or a
+    # renamed command fails loudly here, not deep in the runner. `stop_on_failure` defaults to False.
+    known_commands = set(command_groups)
+    raw_composites = data.get("composites") or {}
+    composites: dict[str, CompositeSpec] = {}
+    for name, spec in raw_composites.items():
+        name = str(name)
+        spec = spec or {}
+        steps = tuple(str(s) for s in (spec.get("steps") or ()))
+        if not steps:
+            raise ValueError(f"composite '{name}': needs a non-empty 'steps' list")
+        for step in steps:
+            if step not in known_commands:
+                raise ValueError(
+                    f"composite '{name}': step '{step}' is not a command in the manifest")
+        composites[name] = CompositeSpec(
+            steps=steps, stop_on_failure=bool(spec.get("stop_on_failure", False)))
+
+    return Manifest(groups=groups, env_groups=env_groups, commands=commands, composites=composites)
 
 
 def resolve_impl(spec: CommandSpec) -> Callable[..., object]:
