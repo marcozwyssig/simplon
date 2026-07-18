@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Mapping, Protocol
+from typing import Callable, Mapping, Protocol
 
 import typer
 
@@ -60,31 +60,59 @@ class EnvironmentProvider(Protocol):
     def require_backend(self, backend: str = ...) -> None: ...
 
 
+def _group_default_app(help_text: str, default_fn: Callable[..., object]) -> typer.Typer:
+    """A sub-app whose bare token runs `default_fn` as the group's DEFAULT action (#592 D4). Used for a
+    group whose name equals one of its (several) members: `<product> build` runs the build pipeline while
+    `<product> build diff` still dispatches the `diff` sibling and `<product> build --help` lists them.
+
+    Implemented with Typer's invoke-without-command callback: with no subcommand Click invokes the callback
+    (which runs the namesake member), a subcommand short-circuits it, and `--help` renders the group listing
+    before the callback runs. The namesake member is parameterless in this role (its bare token takes no
+    args); a namesake needing options would declare them on this callback, out of scope here."""
+    ga = typer.Typer(add_completion=False, invoke_without_command=True, no_args_is_help=False,
+                     help=help_text)
+
+    @ga.callback(invoke_without_command=True)
+    def _default(ctx: typer.Context) -> None:
+        if ctx.invoked_subcommand is None:
+            default_fn()
+
+    return ga
+
+
 def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str) -> None:
     """Assemble a product's Typer app from its loaded manifest (#437). One sub-app per non-flat group
     (rich-panelled CI vs CD); each command is registered under its group AND again as a HIDDEN flat
     back-compat alias bound to the SAME callback, so `<product> <env> deploy up` and the bare `<product> up`
     dispatch identically (the #147 pattern, extended to the full taxonomy). A single-member flat group
-    (#424: `build`) has no sub-app - its member is registered ONCE as a VISIBLE flat top-level command, so
-    a bare `<product> build` runs the pipeline instead of printing group help. Env-first vs agnostic
-    panelling comes from the shared taxonomy; each callback is resolved from its manifest impl
-    ("module:function"). Per-command `--help` is unchanged: help stays with each callback's docstring,
-    which Typer renders. The product name only shapes the usage hints (panel + group help), so a second
-    product reads in its own voice.
+    (#424: `package`) has no sub-app - its member is registered ONCE as a VISIBLE flat top-level command, so
+    a bare `<product> package` runs the pipeline instead of printing group help. A MULTI-member group whose
+    name equals one of its members (#592 D4: `build` = build/diff/docs) becomes a sub-app whose bare token
+    runs that namesake member as the DEFAULT action (so `<product> build` still runs the pipeline) while its
+    siblings register as subcommands (`<product> build diff`) plus their hidden flat aliases (`<product>
+    diff`). Env-first vs agnostic panelling comes from the shared taxonomy; each callback is resolved from
+    its manifest impl ("module:function"). Per-command `--help` is unchanged: help stays with each callback's
+    docstring, which Typer renders. The product name only shapes the usage hints (panel + group help), so a
+    second product reads in its own voice.
     """
     tax = mf.taxonomy()
     cd_panel = _cd_panel(product)
 
     # a sub-app per non-flat group, in manifest order (a collapsed flat group is skipped - no sub-app, so
-    # no name collision with its same-named flat command).
+    # no name collision with its same-named flat command). A group-default group (D4) is a sub-app too, but
+    # its bare token runs the namesake member instead of printing group help.
     group_apps: dict[str, typer.Typer] = {}
     for group in mf.groups:
         if tax.is_flat_command_group(group):
             continue
         env_first = tax.group_requires_env(group)
-        ga = typer.Typer(add_completion=False, no_args_is_help=True,
-                         help=(f"{group} commands. " + ("Env-first: `" + product + " <env> " + group
-                               + " <cmd>` (default dev)." if env_first else "Environment-agnostic (no env).")))
+        if tax.is_group_default_command(group):
+            ga = _group_default_app(mf.spec_for(group, group).help,
+                                    manifest.resolve_impl(mf.spec_for(group, group)))
+        else:
+            ga = typer.Typer(add_completion=False, no_args_is_help=True,
+                             help=(f"{group} commands. " + ("Env-first: `" + product + " <env> " + group
+                                   + " <cmd>` (default dev)." if env_first else "Environment-agnostic (no env).")))
         group_apps[group] = ga
         app.add_typer(ga, name=group, rich_help_panel=(cd_panel if env_first else _CI_PANEL))
 
@@ -92,10 +120,15 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str) -> None:
     # registered ONCE as a VISIBLE flat top-level command. The callback comes from the manifest impl
     # (spec_for: the group-scoped declaration wins, #519). A name owned by SEVERAL groups gets NO flat
     # alias - it is addressable only via its group token (`test all` vs `<env> deploy all`), so a bare
-    # ambiguous token fails as unknown instead of silently picking a group.
+    # ambiguous token fails as unknown instead of silently picking a group. In a group-default group the
+    # namesake member is the sub-app's DEFAULT action (registered on its callback above), so it is neither a
+    # subcommand nor a separate top-level flat command - only its siblings register here.
     for group, cmds in mf.groups.items():
         panel = cd_panel if tax.group_requires_env(group) else _CI_PANEL
+        default_member = tax.is_group_default_command(group)
         for name in cmds:
+            if default_member and name == group:
+                continue
             spec = mf.spec_for(group, name)
             fn = manifest.resolve_impl(spec)
             kw = {"context_settings": _PASSTHROUGH_CTX} if spec.passthrough_args else {}

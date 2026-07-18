@@ -13,6 +13,7 @@ import types
 import click
 import pytest
 from typer.main import get_command
+from typer.testing import CliRunner
 
 from delivery import cli
 from delivery.orchestrator import manifest
@@ -146,3 +147,110 @@ def test_the_assembled_app_compiles_to_a_click_tree_with_the_expected_top_level_
     # the ambiguous 'all' is absent as a flat node.
     assert {"code", "test", "deploy", "build", "up", "fmt", "lint"} <= names
     assert "all" not in names
+
+
+# --- group-default-command (#592 D4): a multi-member group named after one of its members ---------------
+
+_GD_MANIFEST = """
+product: demo
+groups:
+  build:   [build, diff, docs]
+  package: [package]
+env_groups: []
+commands:
+  build:   { impl: "gd_impls:build",   help: "Build the images." }
+  diff:    { impl: "gd_impls:diff",    help: "Show the schema diff." }
+  docs:    { impl: "gd_impls:docs",    help: "Render the docs." }
+  package: { impl: "gd_impls:package", help: "Package the images." }
+"""
+
+
+def _gd_impls_module(calls: list[str]):
+    """Impls that RECORD their invocation, so a bare group token running its namesake member's callback is
+    observable end-to-end (via CliRunner), not just by structural introspection."""
+    mod = types.ModuleType("gd_impls")
+    for fn_name in ("build", "diff", "docs", "package"):
+        def make(n):
+            def _fn():
+                calls.append(n)
+            _fn.__name__ = n
+            return _fn
+        setattr(mod, fn_name, make(fn_name))
+    return mod
+
+
+@pytest.fixture
+def gd_assembled():
+    """Assemble a demo app whose `build` group is the group-default shape (build/diff/docs), recording
+    every impl invocation in `calls`."""
+    import typer
+
+    calls: list[str] = []
+    sys.modules["gd_impls"] = _gd_impls_module(calls)
+    try:
+        app = typer.Typer(add_completion=False, no_args_is_help=True, help="demo root")
+        cli.assemble(app, manifest.load(_GD_MANIFEST), product="demo")
+        yield app, calls
+    finally:
+        del sys.modules["gd_impls"]
+
+
+def test_a_group_default_group_is_registered_as_a_sub_app(gd_assembled):
+    # arrange
+    app, _ = gd_assembled
+
+    # act / assert: unlike the single-member flat collapse, a group-default group IS a sub-app (so its
+    # siblings are reachable as subcommands); the single-member `package` still collapses to a flat command
+    groups = _groups(app)
+    assert "build" in groups
+    assert "package" not in groups
+
+
+def test_a_bare_group_default_token_runs_the_namesake_member_not_group_help(gd_assembled):
+    # arrange
+    app, calls = gd_assembled
+
+    # act: invoke the bare group token with no subcommand
+    result = CliRunner().invoke(app, ["build"])
+
+    # assert: the namesake `build` member ran as the default action (it did NOT fall through to group help)
+    assert result.exit_code == 0, result.output
+    assert calls == ["build"]
+
+
+def test_a_group_default_sibling_dispatches_as_a_subcommand(gd_assembled):
+    # arrange
+    app, calls = gd_assembled
+
+    # act: `demo build diff` runs the sibling, not the namesake default
+    result = CliRunner().invoke(app, ["build", "diff"])
+
+    # assert
+    assert result.exit_code == 0, result.output
+    assert calls == ["diff"]
+
+
+def test_a_group_default_sibling_keeps_its_hidden_flat_back_compat_alias(gd_assembled):
+    # arrange
+    app, calls = gd_assembled
+    flat = _flat(app)
+
+    # assert: `diff` is registered as a HIDDEN top-level flat alias on the same callback...
+    assert flat["diff"].hidden is True
+    assert flat["diff"].callback is sys.modules["gd_impls"].diff
+    # ...and invoking it runs the sibling
+    result = CliRunner().invoke(app, ["diff"])
+    assert result.exit_code == 0, result.output
+    assert calls == ["diff"]
+
+
+def test_a_group_default_namesake_is_neither_a_subcommand_nor_a_separate_flat_command(gd_assembled):
+    # arrange
+    app, _ = gd_assembled
+    flat = _flat(app)
+
+    # assert: the namesake `build` is the group's DEFAULT action only - not a top-level flat command, and
+    # not registered as a `build build` subcommand (its siblings are the only subcommands)
+    assert "build" not in flat
+    build_sub = {c.name for c in _groups(app)["build"].typer_instance.registered_commands}
+    assert build_sub == {"diff", "docs"}

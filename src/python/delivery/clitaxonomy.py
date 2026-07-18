@@ -48,6 +48,18 @@ class CommandTaxonomy:
         cmds = self.groups.get(group, ())
         return len(cmds) == 1 and cmds[0] == group
 
+    def is_group_default_command(self, group: str) -> bool:
+        """True for a MULTI-member group that ALSO contains a member whose name equals the group name.
+
+        Such a group is a sub-app whose siblings are subcommands, but whose bare token (no subcommand)
+        runs the namesake member as the group's DEFAULT action: `<product> build` runs the `build`
+        member's pipeline, `<product> build diff` runs the `diff` sibling, and `<product> build --help`
+        lists the siblings. It is the multi-member counterpart of is_flat_command_group (a single-member
+        same-named group that collapses to ONE flat top-level command); the two are mutually exclusive.
+        This preserves the bare group-token muscle memory when a discipline gains sibling commands."""
+        cmds = self.groups.get(group, ())
+        return len(cmds) > 1 and group in cmds
+
     def resolve_group(self, token: str | None) -> str | None:
         """The group a leading command token belongs to: the token itself if it names a group, else the
         group of the flat command with that name, else None (unknown token, --help, internal)."""
