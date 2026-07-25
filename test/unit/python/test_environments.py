@@ -2,7 +2,7 @@
 validation with product-supplied valid backends. No I/O; AAA throughout."""
 import pytest
 
-from delivery.environments import parse
+from delivery.environments import parse, parse_data
 
 _BACKENDS = ("local", "cloud")
 _OK = """
@@ -56,3 +56,27 @@ def test_parse_rejects_an_empty_environment_set():
     # arrange / act / assert
     with pytest.raises(ValueError, match="no environments"):
         parse("default: dev\nenvironments: {}\n", _BACKENDS)
+
+
+def test_parse_data_builds_the_registry_from_an_already_parsed_mapping():
+    # arrange: the one-manifest path hands parse_data an already-loaded dict, not text (no yaml round-trip)
+    data = {"default": "dev",
+            "environments": {"dev": {"backend": "local", "description": "Local lab."},
+                             "prod": {"backend": "cloud"}}}
+
+    # act
+    reg = parse_data(data, _BACKENDS)
+
+    # assert: same registry the text form yields, straight from the mapping
+    assert set(reg.environments) == {"dev", "prod"}
+    assert reg.environments["dev"].backend == "local"
+    assert reg.default == "dev"
+
+
+def test_parse_data_rejects_an_unknown_backend_from_a_mapping():
+    # arrange: the same validation applies on the mapping path
+    data = {"default": "dev", "environments": {"dev": {"backend": "kubernetes"}}}
+
+    # act / assert
+    with pytest.raises(ValueError, match="backend"):
+        parse_data(data, _BACKENDS)

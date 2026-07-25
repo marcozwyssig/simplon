@@ -6,7 +6,7 @@ active-environment gate on top of these types.
 """
 from __future__ import annotations
 
-from typing import Iterable, NamedTuple
+from typing import Iterable, Mapping, NamedTuple
 
 import yaml
 
@@ -23,11 +23,17 @@ class Registry(NamedTuple):
 
 
 def parse(text: str, valid_backends: Iterable[str]) -> Registry:
-    """Parse an environments.yml document into the registry (pure; unit-tested). Validates that every
-    backend is one of valid_backends and that `default` names a real environment, so a bad descriptor
-    fails loudly here, not deep in a deployment."""
+    """Parse an environments.yml TEXT document into the registry (pure; unit-tested). Thin wrapper over
+    parse_data for the standalone-file form; the validation lives in parse_data."""
+    return parse_data(yaml.safe_load(text) or {}, valid_backends)
+
+
+def parse_data(data: Mapping[str, object], valid_backends: Iterable[str]) -> Registry:
+    """Build the registry from an ALREADY-parsed mapping - a product's standalone environments.yml OR the
+    `environments:`/`default:` section of its one manifest (delivery.context.manifest_data()). Validates
+    that every backend is one of valid_backends and that `default` names a real environment, so a bad
+    descriptor fails loudly here, not deep in a deployment."""
     valid = tuple(valid_backends)
-    data = yaml.safe_load(text) or {}
     envs: dict[str, Environment] = {}
     for name, spec in (data.get("environments") or {}).items():
         spec = spec or {}
