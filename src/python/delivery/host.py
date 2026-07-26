@@ -16,6 +16,14 @@ class Host:
     def __init__(self, os_name: str | None = None) -> None:
         self._darwin = (os_name or platform.system()) == "Darwin"
 
+    @property
+    def is_darwin(self) -> bool:
+        """True when the lab lives inside a macOS Colima VM (commands are `colima ssh`-wrapped), False
+        when it runs natively on Linux. Lets a lab-lifecycle caller pick the host-vs-VM invocation shape
+        (e.g. `sudo` vs `$SUDO`) off the SAME injected Host the routing already keys on, instead of
+        re-detecting the platform independently."""
+        return self._darwin
+
     def sh(self, script: str, *, capture: bool = True) -> Result:
         """Run a shell snippet in the host/VM context: `bash -lc <script>` on Linux, the same wrapped in
         `colima ssh --` on macOS."""
