@@ -3,11 +3,15 @@
 # kernel owns its dependency declaration rather than every product re-pinning it (netctl#730).
 #
 # These are exactly what `delivery` imports: typer (the manifest-assembled CLI), pydantic (the manifest
-# schema), PyYAML (context + manifest parsing) and textual (the split-pane step TUI). click and rich are
-# transitive but pinned here because the pins are about the kernel's own CLI/TUI, not the product.
+# schema), PyYAML (context + manifest parsing), textual (the split-pane step TUI), and - since netctl#731
+# Strand 2 - jinja2 + cryptography (the generic clab render engine, delivery.clabrender: template rendering
+# + WireGuard X25519 keygen). click and rich are transitive but pinned here because the pins are about the
+# kernel's own CLI/TUI, not the product.
 typer==0.12.5
 click==8.1.7        # typer 0.12.5 predates Click 8.2's make_metavar(ctx) change; pin the last 8.1.x
 PyYAML==6.0.3
 rich==15.0.0        # pulled by textual 8.2.8; the kernel uses plain ANSI, not rich, so the bump is safe
 textual==8.2.8      # the split-pane step TUI (doctor + build/up/seed); headless fallback without it
 pydantic==2.13.4    # the delivery manifest schema (delivery.orchestrator.manifest.load, netctl#651 strand 3)
+jinja2==3.1.4       # the delivery.clabrender template engine (netctl#731 Strand 2)
+cryptography==43.0.1  # delivery.clabrender.wg_keypair - WireGuard X25519 keygen (netctl#731 Strand 2)
