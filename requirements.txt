@@ -1,0 +1,13 @@
+# Runtime deps of the delivery kernel (the domain-agnostic *ctl shared core). A consuming product's
+# host-venv requirements.txt references this file with `-r` and adds ONLY its own product deps, so the
+# kernel owns its dependency declaration rather than every product re-pinning it (netctl#730).
+#
+# These are exactly what `delivery` imports: typer (the manifest-assembled CLI), pydantic (the manifest
+# schema), PyYAML (context + manifest parsing) and textual (the split-pane step TUI). click and rich are
+# transitive but pinned here because the pins are about the kernel's own CLI/TUI, not the product.
+typer==0.12.5
+click==8.1.7        # typer 0.12.5 predates Click 8.2's make_metavar(ctx) change; pin the last 8.1.x
+PyYAML==6.0.3
+rich==15.0.0        # pulled by textual 8.2.8; the kernel uses plain ANSI, not rich, so the bump is safe
+textual==8.2.8      # the split-pane step TUI (doctor + build/up/seed); headless fallback without it
+pydantic==2.13.4    # the delivery manifest schema (delivery.orchestrator.manifest.load, netctl#651 strand 3)

@@ -90,3 +90,20 @@ def test_dies_when_pip_cannot_be_provisioned_at_all(monkeypatch, tmp_path):
     # act / assert: the die names the apt fix
     with pytest.raises(SystemExit, match="python3-venv"):
         pyvenv.ensure_venv(venv)
+
+
+def test_venv_python_pip_returns_the_venv_bin_paths_and_installs_requirements(monkeypatch, tmp_path):
+    # arrange: ensure_venv is a double that reports a ready venv; capture the pip install argv
+    installs = []
+    monkeypatch.setattr(pyvenv, "ensure_venv", lambda v: v)
+    monkeypatch.setattr(pyvenv, "run",
+                        lambda argv, **kw: installs.append(argv) or Result(rc=0, out="", err=""))
+
+    # act
+    py, pip = pyvenv.venv_python_pip(tmp_path)
+
+    # assert: the returned executables live under <dir>/.venv/bin, and requirements.txt was pip-installed
+    assert py == str(tmp_path / ".venv" / "bin" / "python")
+    assert pip == str(tmp_path / ".venv" / "bin" / "pip")
+    assert installs == [[pip, "install", "-q", "--disable-pip-version-check",
+                         "-r", str(tmp_path / "requirements.txt")]]

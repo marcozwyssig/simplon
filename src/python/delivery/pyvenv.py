@@ -39,3 +39,15 @@ def ensure_venv(venv: Path) -> Path:
         log.die(f"could not provision pip into {venv} (ensurepip missing and get-pip.py failed); "
                 f"install venv support: sudo apt install python3-venv")
     return venv
+
+
+def venv_python_pip(directory: str | Path) -> tuple[str, str]:
+    """Ensure a self-healing venv under ``<directory>/.venv``, install its ``requirements.txt`` into it,
+    and return the ``(python, pip)`` executable paths. The one-call convenience a product's test runner
+    uses to prepare a suite's venv (netctl#730, extracted from netctl's orchestrator testrun)."""
+    directory = Path(directory)
+    venv = ensure_venv(directory / ".venv")
+    py = str(venv / "bin" / "python")
+    pip = str(venv / "bin" / "pip")
+    run([pip, "install", "-q", "--disable-pip-version-check", "-r", str(directory / "requirements.txt")])
+    return py, pip
