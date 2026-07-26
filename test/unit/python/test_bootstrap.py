@@ -3,11 +3,35 @@ generated starter manifest validates through the real delivery loader, the file 
 substitution are exact) and the file-writing (every file lands, the shim is executable, an existing tree is
 not clobbered). No Typer, no product deps; AAA throughout, incl. negative cases.
 """
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
+import delivery
 from delivery import bootstrap
 from delivery import environments as env_mod
 from delivery.orchestrator import manifest
+
+
+def _kernel_src() -> Path:
+    """The kernel's python source dir (…/src/delivery/src/python), the parent of the `delivery` package -
+    so a subprocess can import the kernel exactly as the product shim's PYTHONPATH does."""
+    return Path(delivery.__file__).resolve().parents[1]
+
+
+def _run_generated(pkg_src: Path, argv: list[str], *, code: str | None = None) -> subprocess.CompletedProcess:
+    """Run the SCAFFOLDED product package in a SUBPROCESS - so its import-time context.set_current() +
+    marker-walk never leak into the test process - with the kernel + the generated package on PYTHONPATH,
+    the exact seam `<product>.sh` sets. PYTHONSAFEPATH keeps CWD off sys.path (no namespace-package
+    shadowing). `code` runs `python -c code`; else `python -m orchestrator <argv>`."""
+    env = dict(os.environ, PYTHONSAFEPATH="1",
+               PYTHONPATH=os.pathsep.join([str(_kernel_src()), str(pkg_src)]))
+    args = ([sys.executable, "-c", code] if code is not None
+            else [sys.executable, "-m", "orchestrator", *argv])
+    return subprocess.run(args, env=env, capture_output=True, text=True)
 
 _EXPECTED_FILES = {
     "fooctl.sh",
@@ -36,11 +60,12 @@ def test_generated_manifest_validates_through_the_delivery_loader():
     # act: the SAME loader the product CLI assembles from
     mf = manifest.load(text)
 
-    # assert: the starter taxonomy - an agnostic group, an env-first CD group, a composite
-    assert mf.groups == {"build": ("build",), "deploy": ("up", "down")}
+    # assert: the starter taxonomy - an agnostic group, an env-first CD group whose `all` member runs the
+    # composite, and the composite itself
+    assert mf.groups == {"build": ("build",), "deploy": ("up", "down", "all")}
     assert mf.env_groups == frozenset({"deploy"})
     assert set(mf.commands) == {"build", "deploy"}
-    assert set(mf.commands["deploy"]) == {"up", "down"}
+    assert set(mf.commands["deploy"]) == {"up", "down", "all"}
     assert mf.composites["all"].steps == ("build", "up")
 
 
@@ -52,6 +77,7 @@ def test_generated_manifest_impls_reference_the_scaffolded_orchestrator_package(
     assert mf.spec_for("build", "build").impl == "orchestrator.cli:build"
     assert mf.spec_for("deploy", "up").impl == "orchestrator.cli:up"
     assert mf.spec_for("deploy", "down").impl == "orchestrator.cli:down"
+    assert mf.spec_for("deploy", "all").impl == "orchestrator.cli:all_cmd"
 
 
 def test_generated_manifest_taxonomy_matches_the_assembly_semantics():
@@ -168,3 +194,109 @@ def test_next_steps_names_the_product_the_target_and_the_submodule(tmp_path):
     assert "./fooctl.sh help" in steps
     assert "fooctl.yaml" in steps
     assert "lib/platform" in steps
+
+
+# --- gap #737-1: kernel deps via -r, not re-pinned inline (netctl#730) --------------------------------
+
+def test_requirements_reference_the_kernel_via_dash_r_and_do_not_repin():
+    # arrange / act
+    req = bootstrap.render("fooctl")["orchestrator/requirements.txt"]
+
+    # assert: the kernel's own deps come in via -r (netctl#730), not copied inline
+    assert "-r ../lib/platform/src/delivery/requirements.txt" in req
+    # assert: no kernel dep is re-pinned in the product file (the exact breakage #737-1 describes)
+    for kernel_pin in ("typer==", "click==", "pydantic==", "textual==", "rich==", "PyYAML=="):
+        assert kernel_pin not in req, f"kernel dep {kernel_pin!r} is re-pinned inline instead of -r'd"
+
+
+def test_requirements_relative_r_path_resolves_to_the_vendored_kernel(tmp_path):
+    # arrange: a real scaffold on disk
+    bootstrap.write("fooctl", tmp_path)
+    req_file = tmp_path / "orchestrator" / "requirements.txt"
+
+    # act: resolve the -r target relative to the requirements file, exactly as pip does
+    rel = next(line.split(None, 1)[1].strip()
+               for line in req_file.read_text(encoding="utf-8").splitlines() if line.startswith("-r "))
+    resolved = (req_file.parent / rel).resolve()
+
+    # assert: it lands on <root>/lib/platform/src/delivery/requirements.txt (where the submodule is vendored),
+    # so the `../` count matches the scaffolded orchestrator-dir depth
+    assert resolved == (tmp_path / "lib" / "platform" / "src" / "delivery" / "requirements.txt").resolve()
+
+
+# --- gap #737-2: the `all` composite is reachable (a command runs it), not a dead placeholder ---------
+
+def test_scaffolded_manifest_declares_no_dead_composite():
+    # arrange
+    mf = manifest.load(bootstrap.manifest_yaml("fooctl"))
+    commands = {name for members in mf.commands.values() for name in members}
+
+    # assert: every declared composite is invocable via a same-named command (a dead composite has none)
+    assert mf.composites, "starter should exercise the composite feature"
+    for composite in mf.composites:
+        assert composite in commands, f"composite '{composite}' has no command to run it (dead placeholder)"
+
+
+def test_scaffolded_composite_actually_runs_through_the_shared_runner(tmp_path):
+    # arrange: a real scaffold; drive its `all` command with the runner's dispatch patched to a recorder,
+    # so we observe the composite really being assembled + dispatched (behavioural, not just declared)
+    bootstrap.write("fooctl", tmp_path)
+    probe = (
+        "import typer\n"
+        "from delivery.orchestrator import product\n"
+        "seen = {}\n"
+        "def _record(pipeline):\n"
+        "    seen['name'] = pipeline.name\n"
+        "    seen['labels'] = [s.label for s in pipeline.steps]\n"
+        "    return 0\n"
+        "product.dispatch = _record\n"           # run_composite calls the module-level dispatch
+        "from orchestrator import cli\n"
+        "try:\n"
+        "    cli.all_cmd()\n"
+        "except typer.Exit as exc:\n"
+        "    assert exc.exit_code == 0, exc.exit_code\n"
+        "assert seen['name'] == 'all', seen\n"
+        "assert seen['labels'] == ['build', 'up'], seen\n"
+        "print('COMPOSITE_REACHABLE')\n"
+    )
+
+    # act
+    res = _run_generated(tmp_path / "orchestrator" / "src" / "python", [], code=probe)
+
+    # assert: the `all` command drove run_composite for the 'all' composite (steps build -> up)
+    assert res.returncode == 0, res.stderr
+    assert "COMPOSITE_REACHABLE" in res.stdout
+
+
+# --- gap #737-3: root detection is a marker-walk, robust to relocating the orchestrator dir -----------
+
+def test_root_detection_survives_relocating_the_orchestrator_dir(tmp_path):
+    # arrange: scaffold, then RELOCATE the orchestrator package deep (as netctl did to deploy/provision/…),
+    # leaving the manifest at the repo root - the exact layout change that forced netctl's parents[6] edit
+    bootstrap.write("fooctl", tmp_path)
+    relocated = tmp_path / "deploy" / "provision" / "orchestrator"
+    relocated.parent.mkdir(parents=True)
+    (tmp_path / "orchestrator").rename(relocated)
+
+    # act: import paths from the relocated tree and read the derived ROOT
+    res = _run_generated(relocated / "src" / "python", [],
+                         code="import orchestrator.paths as p; print(p.ROOT)")
+
+    # assert: the walk-up-to-manifest-marker still finds the true repo root - no hand-edited parent depth
+    assert res.returncode == 0, res.stderr
+    assert res.stdout.strip() == str(tmp_path)
+
+
+# --- gap #737 end-to-end: the assembled CLI boots + `help` runs (#740's verify step) ------------------
+
+def test_generated_cli_help_runs_end_to_end(tmp_path):
+    # arrange
+    bootstrap.write("fooctl", tmp_path)
+
+    # act: boot the assembled CLI headless - this resolves EVERY manifest impl (incl. all_cmd) at assembly
+    res = _run_generated(tmp_path / "orchestrator" / "src" / "python", ["help"])
+
+    # assert: help renders and exits clean, so a freshly-scaffolded product's `./<name>.sh help` works
+    assert res.returncode == 0, res.stderr
+    assert "fooctl orchestrator" in res.stdout
+    assert "deploy" in res.stdout

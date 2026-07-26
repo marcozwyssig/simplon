@@ -14,12 +14,15 @@ It renders, mirroring the shape netctl's own `netctl.yaml` + `netctl.sh` use but
     <product>.sh                                     the thin shim onto lib/platform's launch.sh
     <product>.yaml                                   the starter manifest (groups tree/env_groups/
                                                      composites/environments the Pydantic loader accepts)
-    orchestrator/requirements.txt                    the host-venv deps (mirrors the kernel's pins)
+    orchestrator/requirements.txt                    the host-venv deps: `-r` the kernel's requirements
+                                                     (netctl#730) + product-only pins (no re-pinned kernel)
     orchestrator/src/python/orchestrator/
         __init__.py                                  the product package
         __main__.py                                  `python -m orchestrator` entry
-        cli.py                                       composition root: root Typer app + assemble + main
-        paths.py                                     the ProductContext wiring (delivery.context)
+        cli.py                                       composition root: root Typer app + assemble + main +
+                                                     the `all` composite wiring (run_composite)
+        paths.py                                     the ProductContext wiring (delivery.context); repo root
+                                                     found by walking up to the manifest marker, not a depth
         environments.py                              the EnvironmentProvider (backends + the env-gate)
 
 The generated manifest VALIDATES through `delivery.orchestrator.manifest.load`; the generated `paths.py`
@@ -30,9 +33,11 @@ Design / scope (best-effort MINIMAL slice; netctl#651 strand 4 is under-specifie
 
     IN this slice
       - a single-command-per-group starter manifest that loads clean and exercises BOTH an agnostic group
-        (`build`, flat-collapsed) and an env-first CD group (`deploy`), plus a composite and the env matrix;
+        (`build`, flat-collapsed) and an env-first CD group (`deploy`), plus a WORKING composite (`all` is
+        wired to run_composite so `<product> all` runs build->up, not a dead placeholder) and the env matrix;
       - the full product-adapter wiring (paths/environments/cli/__main__) so the CLI actually assembles;
-      - the shim + requirements, so `./<product>.sh help` runs once lib/platform is vendored;
+      - the shim + requirements (kernel deps via `-r`, netctl#730), so `./<product>.sh help` runs once
+        lib/platform is vendored;
       - PURE render (text only, no I/O, no yaml/pydantic import) split from the file-writing, so the manifest
         can be validated and the file set asserted in unit tests;
       - clobber-safety: refuses to overwrite an existing file unless `--force`.
@@ -40,7 +45,8 @@ Design / scope (best-effort MINIMAL slice; netctl#651 strand 4 is under-specifie
     DEFERRED to a fuller scaffolder (documented, deliberately NOT built here)
       - a real `delivery` console-script / a `bootstrap` subcommand woven into the assembled product CLI
         (today it is `python -m delivery.bootstrap`, the only honest entry before a product exists);
-      - `git submodule add lib/platform` + `git init` automation (side-effecting: network + VCS state);
+      - `git init` automation (side-effecting VCS state); the `git submodule add lib/platform` + bootstrap
+        + verify one-command flow now lives in the repo-root `init-product.sh` wrapper (netctl#740);
       - schema-per-section docs, includes/anchors and a `--profile` menu (network-lab vs plain-service) that
         seeds a richer manifest;
       - product-name -> package-name derivation (the package is the fixed identifier `orchestrator`, as in
@@ -61,7 +67,8 @@ _PRODUCT_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
 # The generated product package is always `orchestrator` (LAUNCH_MODULE), mirroring netctl. Relative to the
 # scaffolded root, its source lives here; the block dir `orchestrator/` is LAUNCH_ORCH_DIR (holds .venv +
-# requirements.txt). `paths.py` derives the repo root as parents[4] of itself, matching this depth.
+# requirements.txt). `paths.py` locates the repo root by walking up to the manifest marker (netctl#737), so
+# this layout can move without a hand-edit.
 _PKG_DIR = "orchestrator/src/python/orchestrator"
 _ORCH_DIR = "orchestrator"
 
@@ -118,15 +125,19 @@ groups:
   build:
     build: { impl: "orchestrator.cli:build", help: "Build the product artefacts (placeholder)." }
   deploy:
-    up:   { impl: "orchestrator.cli:up",   help: "Deploy the product to the target environment (placeholder)." }
-    down: { impl: "orchestrator.cli:down", help: "Tear the deployment down (placeholder)." }
+    up:   { impl: "orchestrator.cli:up",     help: "Deploy the product to the target environment (placeholder)." }
+    down: { impl: "orchestrator.cli:down",   help: "Tear the deployment down (placeholder)." }
+    all:  { impl: "orchestrator.cli:all_cmd", help: "Run the build->up composite end to end (see composites.all)." }
 
 # The env-first CD groups: `@@PRODUCT@@ <env> deploy up` (default env below). Every other group is
 # environment-agnostic and rejects an env prefix.
 env_groups: [deploy]
 
-# Named, ordered command pipelines (#456): each step names a command declared above. `stop_on_failure:
-# false` (the default) runs every step and takes the worst rc.
+# Named, ordered command pipelines (#456): each step names a command declared above; the runner maps each
+# through the product step factory. `all` is WIRED to the `all` command in the deploy group above
+# (orchestrator.cli:all_cmd calls delivery.orchestrator.product.run_composite), so `@@PRODUCT@@ all` actually
+# runs it - a live example, not a dead placeholder. `stop_on_failure: false` (the default) runs every step
+# and takes the worst rc.
 composites:
   all:
     steps: [build, up]
@@ -181,15 +192,19 @@ LAUNCH_MODULE=orchestrator \\
 
 _REQUIREMENTS = """\
 # Host-Python deps for the @@PRODUCT@@ delivery orchestrator, scaffolded on the delivery kernel
-# (netctl#651 strand 4). Installed into a host venv by @@PRODUCT@@.sh via the shared launcher. The pins
-# mirror the delivery kernel's own core (typer/click/pyyaml/pydantic drive manifest assembly; rich/textual
-# back the split-pane step TUI). Keep them in step with lib/platform and add your product's own deps below.
-typer==0.12.5
-click==8.1.7        # typer 0.12.5 predates Click 8.2's make_metavar(ctx) change; pin the last 8.1.x
-PyYAML==6.0.3
-pydantic==2.13.4   # the delivery manifest schema (delivery.orchestrator.manifest.load)
-rich==15.0.0
-textual==8.2.8     # the split-pane step TUI; headless fallback without it
+# (netctl#651 strand 4). Installed into a host venv by @@PRODUCT@@.sh via the shared launcher.
+#
+# The delivery KERNEL owns its own dependency declaration (typer/click/PyYAML/rich/textual/pydantic drive
+# manifest assembly + the split-pane step TUI); reference it here with -r rather than re-pinning it, so a
+# kernel dep bump lands in ONE place and this file carries ONLY @@PRODUCT@@-product deps (netctl#730). pip
+# resolves the -r path relative to THIS file: the kernel is vendored at <root>/lib/platform and this file is
+# <root>/orchestrator/requirements.txt, so a single `../` reaches the root. (Relocate the orchestrator dir
+# deeper and this is the one path to re-tune - one `../` per extra level - the Python side self-locates.)
+-r ../lib/platform/src/delivery/requirements.txt
+
+# --- @@PRODUCT@@-product-only deps ---
+# Add @@PRODUCT@@'s OWN runtime deps below (HTTP clients, template engines, cloud SDKs, ...). The kernel's
+# CLI/TUI stack is already covered by the -r reference above; do not re-pin it here.
 """
 
 _INIT = '''\
@@ -221,9 +236,11 @@ resolve to, and hands the app + product context + environments + aliases to the 
 the CI/CD panels) and the env-first dispatch live in the kernel, driven entirely by the manifest - so a
 fresh product adds groups/commands in @@PRODUCT@@.yaml and impl callables HERE, and nowhere else.
 
-Replace the three placeholder commands (build/up/down) with your own; keep them as module-level callables
-so the manifest's impl refs resolve (delivery.orchestrator.manifest.resolve_impl imports THIS module and
-getattrs the function named after the `:`).
+Replace the placeholder commands (build/up/down) with your own; keep them as module-level callables so the
+manifest's impl refs resolve (delivery.orchestrator.manifest.resolve_impl imports THIS module and getattrs
+the function named after the `:`). `all_cmd` is a WORKING example of the composite feature (#456): the
+`all` composite in @@PRODUCT@@.yaml (build -> up) is run through the shared composite runner, so a fresh
+product sees the pattern live instead of a dead placeholder - grow it by adding steps to that composite.
 """
 from __future__ import annotations
 
@@ -231,6 +248,8 @@ import typer
 
 from delivery import cli as delivery_cli
 from delivery import log
+from delivery.orchestrator.product import StepFactoryContext, run_composite
+from delivery.orchestrator.steps import argv_step
 
 from . import environments
 from . import paths
@@ -238,8 +257,8 @@ from . import paths
 app = typer.Typer(add_completion=False, no_args_is_help=True,
                   help=("@@PRODUCT@@ orchestrator (scaffolded on the delivery kernel). AGNOSTIC groups take "
                         "no env (build); ENV-FIRST CD groups run against a target env as the outer prefix "
-                        "`@@PRODUCT@@ <env> <group> <cmd>` (default dev): deploy (up/down). Fill in "
-                        "@@PRODUCT@@.yaml to grow the CLI."))
+                        "`@@PRODUCT@@ <env> <group> <cmd>` (default dev): deploy (up/down/all, where `all` "
+                        "runs the build->up composite). Fill in @@PRODUCT@@.yaml to grow the CLI."))
 
 # Back-compat command aliases (old token -> canonical), passed IN so the kernel hardcodes none. Empty for a
 # fresh product; add entries here as you rename commands and want the old muscle memory to keep working.
@@ -261,6 +280,22 @@ def down() -> None:
     log.info("@@PRODUCT@@: down (placeholder)")
 
 
+# The composite-runner seam (#456): a command NAME becomes a live-streamed `./@@PRODUCT@@.sh <cmd>` step, so
+# the declarative composites in @@PRODUCT@@.yaml run as DATA through the shared runner - no product Python
+# per composite. Built once; StepFactoryContext is delivery.orchestrator.product's step-factory seam (kept
+# distinct from the identity context in delivery.context, netctl#737).
+_STEP_CONTEXT = StepFactoryContext(
+    "@@PRODUCT@@", lambda cmd: argv_step(cmd, [str(paths.ROOT / "@@PRODUCT@@.sh"), cmd]))
+
+
+def all_cmd() -> None:
+    """Run the `all` composite declared in @@PRODUCT@@.yaml (build -> up) through the shared composite
+    runner, and exit with its aggregate rc. A WORKING starter example of the composite feature (#456): each
+    step shells `./@@PRODUCT@@.sh <cmd>` live; extend it by editing the composite's `steps` in the manifest.
+    Reachable as `@@PRODUCT@@ all` (flat) or `@@PRODUCT@@ <env> deploy all`."""
+    raise typer.Exit(run_composite("all", paths.CONTEXT.manifest(), _STEP_CONTEXT))
+
+
 # Assemble the CLI from the manifest via the delivery binding layer. Runs at import (like netctl's cli.py):
 # resolve_impl imports this module and binds each command's callback, so every command above must already be
 # defined. The product name only shapes the usage hints.
@@ -280,10 +315,13 @@ manifest path and register ONE ProductContext at import, so kernel code reads th
 via delivery.context.current() and never hardcodes "@@PRODUCT@@". Scaffolded by `python -m
 delivery.bootstrap` (netctl#651 strand 4).
 
-DELIVERY_PRODUCT_ROOT / DELIVERY_MANIFEST (the kernel's DELIVERY_* namespace) override the derived defaults
-for a relocated checkout / a test fixture tree; with neither set the values are the plain __file__
-derivation below. Extend this adapter to read the manifest's raw build-data sections (images/volumes/...)
-via CONTEXT.manifest_data() as your pipeline grows - see netctl's paths.py for the pattern.
+The repo ROOT is found by WALKING UP from this file to the directory that holds the manifest
+`@@PRODUCT@@.yaml` (the marker), NOT a hardcoded parent depth - so relocating this orchestrator package
+deeper in the tree (e.g. under deploy/provision/) needs no hand-edit (netctl#737). DELIVERY_PRODUCT_ROOT /
+DELIVERY_MANIFEST (the kernel's DELIVERY_* namespace) still OVERRIDE the derived defaults for a relocated
+checkout / a test fixture tree; with neither set the values are the marker-walk derivation below. Extend
+this adapter to read the manifest's raw build-data sections (images/volumes/...) via CONTEXT.manifest_data()
+as your pipeline grows - see netctl's paths.py for the pattern.
 """
 from __future__ import annotations
 
@@ -291,10 +329,24 @@ from pathlib import Path
 
 from delivery import context
 
-# This file is <root>/orchestrator/src/python/orchestrator/paths.py, so the repo root is FOUR parents up
-# (orchestrator/src/python/orchestrator -> src/python -> src -> orchestrator -> <root>).
-_DERIVED_ROOT = Path(__file__).resolve().parents[4]
-_DERIVED_MANIFEST = _DERIVED_ROOT / "@@PRODUCT@@.yaml"
+# The manifest file doubles as the repo-root MARKER: it sits at the repo root in the scaffolded layout.
+_MANIFEST_NAME = "@@PRODUCT@@.yaml"
+
+
+def _find_root(start: Path, marker: str) -> Path:
+    """Walk up from `start` (inclusive) to the first directory that contains `marker`, and return it as the
+    repo root. Robust to relocating this package deeper in the tree - no hardcoded parent depth (netctl#737).
+    Fails loudly if the marker is never found, so a broken checkout is caught here, not as a wrong path
+    downstream."""
+    for candidate in (start, *start.parents):
+        if (candidate / marker).is_file():
+            return candidate
+    raise RuntimeError(
+        f"@@PRODUCT@@: cannot locate '{marker}' walking up from {start}; is the checkout intact?")
+
+
+_DERIVED_ROOT = _find_root(Path(__file__).resolve().parent, _MANIFEST_NAME)
+_DERIVED_MANIFEST = _DERIVED_ROOT / _MANIFEST_NAME
 
 # Register the context ONCE at import; kernel code reads it back through delivery.context.current().
 CONTEXT = context.set_current(

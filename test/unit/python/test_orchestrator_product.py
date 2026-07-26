@@ -1,9 +1,9 @@
 """Runner tests for delivery.orchestrator.product.run_composite (#456): the product-agnostic composite
-runner that maps a manifest-declared composite's step NAMES through the product's step factory and
-dispatches the resulting Pipeline. Fake step_factory (no real subprocess, no Textual) so the mapping, the
-stop_on_failure carry-through and the rc propagation are tested in isolation. run_composite calls
-`dispatch`; the tests either capture the Pipeline before it runs or force the headless runner, so no TUI is
-launched. AAA throughout.
+runner that maps a manifest-declared composite's step NAMES through the product's step factory
+(`StepFactoryContext`) and dispatches the resulting Pipeline. Fake step_factory (no real subprocess, no
+Textual) so the mapping, the stop_on_failure carry-through and the rc propagation are tested in isolation.
+run_composite calls `dispatch`; the tests either capture the Pipeline before it runs or force the headless
+runner, so no TUI is launched. AAA throughout.
 """
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ def test_run_composite_maps_each_step_through_the_factory_in_order(monkeypatch):
     captured = {}
     monkeypatch.setattr(product, "dispatch", lambda p: captured.setdefault("pipeline", p) or 0)
     factory, built = _factory()
-    ctx = product.ProductContext("demo", factory)
+    ctx = product.StepFactoryContext("demo", factory)
     mf = _manifest(bringup=CompositeSpec(steps=("install", "build", "up", "seed")))
 
     # act
@@ -55,7 +55,7 @@ def test_run_composite_carries_the_composite_stop_on_failure_onto_the_pipeline(m
     captured = {}
     monkeypatch.setattr(product, "dispatch", lambda p: captured.setdefault("pipeline", p) or 0)
     factory, _ = _factory()
-    ctx = product.ProductContext("demo", factory)
+    ctx = product.StepFactoryContext("demo", factory)
     mf = _manifest(c=CompositeSpec(steps=("install", "build"), stop_on_failure=stop_on_failure))
 
     # act
@@ -69,7 +69,7 @@ def test_run_composite_returns_zero_when_every_step_passes(monkeypatch):
     # arrange: force the headless runner so real rc propagation is exercised (no TUI)
     monkeypatch.setattr(product, "dispatch", run_headless)
     factory, _ = _factory()
-    ctx = product.ProductContext("demo", factory)
+    ctx = product.StepFactoryContext("demo", factory)
     mf = _manifest(c=CompositeSpec(steps=("install", "build", "up")))
 
     # act
@@ -83,7 +83,7 @@ def test_run_composite_returns_nonzero_when_a_step_fails(monkeypatch):
     # arrange: the middle step fails; run headless so the pipeline's worst-rc verdict is real
     monkeypatch.setattr(product, "dispatch", run_headless)
     factory, _ = _factory({"build": 2})
-    ctx = product.ProductContext("demo", factory)
+    ctx = product.StepFactoryContext("demo", factory)
     mf = _manifest(c=CompositeSpec(steps=("install", "build", "up")))
 
     # act
@@ -96,9 +96,19 @@ def test_run_composite_returns_nonzero_when_a_step_fails(monkeypatch):
 def test_run_composite_raises_a_clear_error_for_an_unknown_composite():
     # arrange
     factory, _ = _factory()
-    ctx = product.ProductContext("demo", factory)
+    ctx = product.StepFactoryContext("demo", factory)
     mf = _manifest(bringup=CompositeSpec(steps=("install",)))
 
     # act / assert
     with pytest.raises(ValueError, match="no composite named 'nope'"):
         product.run_composite("nope", mf, ctx)
+
+
+def test_product_context_is_a_back_compat_alias_of_step_factory_context():
+    # The class was renamed ProductContext -> StepFactoryContext (netctl#737) to stop colliding with
+    # delivery.context.ProductContext; the old name stays as an alias so a not-yet-bumped consumer keeps
+    # importing it until it migrates.
+    # act / assert: same class, so `product.ProductContext(...)` still builds a usable step-factory context
+    assert product.ProductContext is product.StepFactoryContext
+    ctx = product.ProductContext("demo", lambda cmd: Step(label=cmd, action=lambda: Outcome(0, "")))
+    assert ctx.product == "demo"
