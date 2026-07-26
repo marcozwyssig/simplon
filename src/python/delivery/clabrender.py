@@ -31,12 +31,19 @@ from typing import Any, Mapping, NamedTuple
 
 from jinja2 import Environment, FileSystemLoader
 
-from delivery.topology import InstanceScoping, TopologyManifest
+from delivery.topology import InstanceScoping, Node, TopologyManifest
 
 # The reserved instance that renders byte-for-byte (no token infix, no subnet offset). A manifest's
 # ``InstanceScoping.default_instance`` overrides this per-product; kept as a module default for the
 # policy-less path.
 DEFAULT_INSTANCE = "dev"
+
+# The kernel's OWN, product-free clab template (Strand 4): renders a valid ``*.clab.yml`` from a topology
+# manifest ALONE, with zero product knowledge. It ships beside this engine so any product - or none - can
+# render a manifest without authoring a template. netctl keeps its richer own template product-side; this
+# generic path renders alongside it (it does NOT replace it).
+GENERIC_TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+GENERIC_CLAB_TEMPLATE = "generic.clab.yml.j2"
 
 # The deterministic mgmt-subnet offset band for non-default instances: 10.128.0.0/24 .. 10.223.0.0/24.
 # Only the mgmt subnet needs a per-instance offset (docker refuses overlapping bridge subnets); every other
@@ -131,6 +138,61 @@ def apply_instance_scoping(manifest: TopologyManifest, instance: str) -> ScopedI
 
 
 # ---------------------------------------------------------------------------
+# Generic render context - a manifest's clab node/bridge/link payloads, derived from the manifest ALONE
+# (leak-inventory falsifier: the built-in generic template consumes ONLY what this function produces, so it
+# cannot demand an OOB bridge, an instance token, a site-id-derived address, a specific role/vendor, or a
+# parsed startup_config - none of those is a function of the manifest here).
+# ---------------------------------------------------------------------------
+def _generic_node_payload(manifest: TopologyManifest, node: Node) -> dict[str, Any]:
+    """One node's containerlab payload for the built-in generic template: its resolved ``kind`` (always)
+    and ``image`` (via the manifest's OWN vendor registry - no vendor label is special-cased here), plus
+    ONLY the generic clab fields that are set. ``startup_config`` is copied through verbatim as an OPAQUE
+    ref (never parsed or interpreted); ``role``/``site``/``vendor`` are manifest-internal and are NOT clab
+    keys, so they are deliberately absent from the payload (the renderer ignores role structurally)."""
+    payload: dict[str, Any] = {"name": node.name, "kind": manifest.kind_of(node)}
+    image = manifest.image_of(node)
+    if image is not None:
+        payload["image"] = image
+    if node.type is not None:
+        payload["type"] = node.type
+    if node.image_pull_policy is not None:
+        payload["image_pull_policy"] = node.image_pull_policy
+    if node.mgmt_ipv4 is not None:
+        payload["mgmt_ipv4"] = node.mgmt_ipv4
+    if node.startup_config is not None:
+        payload["startup_config"] = node.startup_config
+    if node.cmd is not None:
+        payload["cmd"] = node.cmd
+    if node.env:
+        payload["env"] = node.env
+    if node.binds:
+        payload["binds"] = node.binds
+    if node.exec:
+        payload["exec"] = node.exec
+    if node.ports:
+        payload["ports"] = node.ports
+    if node.healthcheck:
+        payload["healthcheck"] = node.healthcheck
+    if node.wait_for:
+        payload["wait_for"] = node.wait_for
+    return payload
+
+
+def build_generic_context(manifest: TopologyManifest) -> dict[str, Any]:
+    """Build the render context for the built-in generic clab template PURELY from a topology manifest -
+    no product code, no product knowledge. Each node resolves to its clab payload (``kind``/``image`` from
+    the manifest's own vendor registry + the set generic clab fields), each bridge becomes a ``kind:
+    bridge`` node, and links pass through as endpoint pairs. Because the context is a function of the
+    manifest ALONE, ANY topology the schema accepts renders through the engine - the Strand-4 anti-leak
+    surface."""
+    return {
+        "nodes": [_generic_node_payload(manifest, n) for n in manifest.nodes],
+        "bridges": [{"name": b.name} for b in manifest.bridges],
+        "links": [{"endpoints": list(link.endpoints)} for link in manifest.links],
+    }
+
+
+# ---------------------------------------------------------------------------
 # The render engine.
 # ---------------------------------------------------------------------------
 class ClabRenderer:
@@ -149,6 +211,21 @@ class ClabRenderer:
             loader=FileSystemLoader(str(templates_dir)),
             trim_blocks=True, lstrip_blocks=True, keep_trailing_newline=True,
         )
+
+    @classmethod
+    def generic(cls, manifest: TopologyManifest, *, instance: str = DEFAULT_INSTANCE) -> "ClabRenderer":
+        """A renderer bound to the kernel's OWN built-in generic clab template (``GENERIC_TEMPLATES_DIR``),
+        needing NO product templates dir. The fully-generic path: it renders ANY ``delivery.topology``
+        manifest to a valid ``*.clab.yml`` with zero product code, so a deliberately-non-netctl topology
+        (Strand 4's ``clos-2t``) proves the schema + engine are containerlab-shaped, not netctl-shaped."""
+        return cls(manifest, templates_dir=GENERIC_TEMPLATES_DIR, instance=instance)
+
+    def render_generic_topology(self, out_path: str | Path) -> Path:
+        """Render the built-in generic clab template to ``out_path`` from the manifest ALONE: the node
+        payloads (``kind``/``image`` resolved via the manifest's vendor registry + the set generic clab
+        fields), the bridges (``kind: bridge``) and the links - merged with the manifest's #453 scoped
+        identity. No product context is consulted, so the emitted lab is a pure function of the manifest."""
+        return self.render_topology(GENERIC_CLAB_TEMPLATE, out_path, build_generic_context(self.manifest))
 
     def topology_context(self) -> dict[str, str]:
         """The scoped identity as a render-context fragment (``topo_name`` / ``mgmt_network`` /

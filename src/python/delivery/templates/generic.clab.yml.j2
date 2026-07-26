@@ -1,0 +1,61 @@
+# Rendered by delivery.clabrender from a delivery.topology manifest - a GENERIC containerlab topology.
+# Carries NO product knowledge: the name, the mgmt network, every node (its clab kind + image resolved via
+# the manifest's own vendor registry, plus ONLY the generic clab fields that are set), any bridges and the
+# links all come from the manifest ALONE. Values are emitted JSON-encoded (a subset of YAML), so any string
+# (an image tag with a colon, an exec command with quotes) stays valid clab regardless of the product.
+name: {{ topo_name }}
+
+mgmt:
+  network: {{ mgmt_network }}
+  ipv4-subnet: {{ mgmt_subnet }}
+
+topology:
+  nodes:
+{% for n in nodes %}
+    {{ n.name }}:
+      kind: {{ n.kind | tojson }}
+{% if n.type is defined %}
+      type: {{ n.type | tojson }}
+{% endif %}
+{% if n.image is defined %}
+      image: {{ n.image | tojson }}
+{% endif %}
+{% if n.image_pull_policy is defined %}
+      image-pull-policy: {{ n.image_pull_policy | tojson }}
+{% endif %}
+{% if n.mgmt_ipv4 is defined %}
+      mgmt-ipv4: {{ n.mgmt_ipv4 | tojson }}
+{% endif %}
+{% if n.startup_config is defined %}
+      startup-config: {{ n.startup_config | tojson }}
+{% endif %}
+{% if n.cmd is defined %}
+      cmd: {{ n.cmd | tojson }}
+{% endif %}
+{% if n.env is defined %}
+      env: {{ n.env | tojson }}
+{% endif %}
+{% if n.binds is defined %}
+      binds: {{ n.binds | tojson }}
+{% endif %}
+{% if n.exec is defined %}
+      exec: {{ n.exec | tojson }}
+{% endif %}
+{% if n.ports is defined %}
+      ports: {{ n.ports | tojson }}
+{% endif %}
+{% if n.healthcheck is defined %}
+      healthcheck: {{ n.healthcheck | tojson }}
+{% endif %}
+{% if n.wait_for is defined %}
+      stages: { create: { wait-for: [{% for w in n.wait_for %}{"node": {{ w | tojson }}, "stage": "healthy"}{% if not loop.last %}, {% endif %}{% endfor %}] } }
+{% endif %}
+{% endfor %}
+{% for b in bridges %}
+    {{ b.name }}:
+      kind: bridge
+{% endfor %}
+  links:
+{% for l in links %}
+    - endpoints: {{ l.endpoints | tojson }}
+{% endfor %}

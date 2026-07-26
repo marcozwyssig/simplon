@@ -1,0 +1,41 @@
+# clos-2t - a deliberately NON-netctl topology in the delivery.topology (Strand 1) schema, used by the
+# Strand 4 anti-leak proof (test_antileak_clos2t.py). A 2-tier leaf-spine DC fabric that differs from
+# netctl's site mesh on every axis:
+#   * a Clos graph, not a site mesh;
+#   * a vendor mix (Nokia SR Linux + Arista cEOS + Alpine) - NONE of frr/ios/vyos, no cisco_iol;
+#   * opaque roles spine/leaf/host - none of l3s/w3s/ogw;
+#   * NO OGW/EVPN/MPLS/WireGuard, NO controllers/`/api`/seed;
+#   * NO OOB bridges (the `bridges:` section is omitted on purpose - OOB is optional, not netctl-baked);
+#   * NO #453 instance_scoping (omitted on purpose - scoping is opt-in, not structural).
+# It validates against delivery.topology.load() as-is and renders through the SAME generic engine
+# (delivery.clabrender) with zero product code. If it renders + reaches "UP", the schema/renderer/substrate
+# are containerlab-shaped, not netctl-shaped.
+name: clos-2t
+
+mgmt:
+  network: clos-mgmt
+  ipv4_subnet: 172.20.20.0/24
+
+vendor_kinds:
+  srl:  { kind: nokia_srlinux, image: "ghcr.io/nokia/srlinux:24.7.1" }
+  ceos: { kind: arista_ceos,   image: "ceos:4.32.0F" }
+  host: { kind: linux,         image: "alpine:3.20" }
+
+sites:
+  - { name: dc1, id: 1 }
+
+nodes:
+  - { name: spine1, vendor: srl,  site: dc1, role: spine, mgmt_ipv4: 172.20.20.11, startup_config: cfg/spine1.cfg }
+  - { name: spine2, vendor: srl,  site: dc1, role: spine, mgmt_ipv4: 172.20.20.12, startup_config: cfg/spine2.cfg }
+  - { name: leaf1,  vendor: ceos, site: dc1, role: leaf,  mgmt_ipv4: 172.20.20.21, startup_config: cfg/leaf1.cfg }
+  - { name: leaf2,  vendor: ceos, site: dc1, role: leaf,  mgmt_ipv4: 172.20.20.22, startup_config: cfg/leaf2.cfg }
+  - { name: h1, vendor: host, site: dc1, role: host, exec: ["ip addr add 10.1.1.1/24 dev eth1", "ip route add 10.1.2.0/24 via 10.1.1.254"] }
+  - { name: h2, vendor: host, site: dc1, role: host, exec: ["ip addr add 10.1.2.1/24 dev eth1", "ip route add 10.1.1.0/24 via 10.1.2.254"] }
+
+links:
+  - { endpoints: ["leaf1:e1-1", "spine1:e1-1"] }
+  - { endpoints: ["leaf1:e1-2", "spine2:e1-1"] }
+  - { endpoints: ["leaf2:e1-1", "spine1:e1-2"] }
+  - { endpoints: ["leaf2:e1-2", "spine2:e1-2"] }
+  - { endpoints: ["h1:eth1", "leaf1:e1-3"] }
+  - { endpoints: ["h2:eth1", "leaf2:e1-3"] }

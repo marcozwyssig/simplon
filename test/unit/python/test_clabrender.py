@@ -7,6 +7,7 @@ throughout, goal-stating names incl. the negative validate_instance case.
 import base64
 
 import pytest
+import yaml
 
 from delivery import clabrender, topology
 
@@ -209,3 +210,147 @@ def test_render_to_file_marks_an_executable_artifact_and_creates_parent_dirs(man
     import os
     assert out.read_text() == "#!/bin/sh\necho hi\n"
     assert os.access(out, os.X_OK)
+
+
+# --- build_generic_context (manifest -> clab payloads, no product code) --------------------------------
+
+# A manifest that exercises EVERY generic clab node field the built-in template supports, so each template
+# branch is covered. `full` overrides its vendor image + declares type/image-pull-policy/cmd/env/binds/exec/
+# ports/healthcheck/wait_for; `dep1` is the bare minimum node; `br0` is a bridge.
+_RICH = """
+name: richlab
+mgmt: { network: rich-mgmt, ipv4_subnet: 10.7.0.0/24 }
+vendor_kinds:
+  box: { kind: linux, image: base:1 }
+sites: [ { name: s1, id: 1 } ]
+nodes:
+  - name: full
+    vendor: box
+    site: s1
+    role: whatever
+    type: ixrd3
+    image: override:2
+    image_pull_policy: never
+    mgmt_ipv4: 10.7.0.5
+    startup_config: cfg/full.partial
+    cmd: /bin/run
+    env: { FOO: bar }
+    binds: [ "host/a:/b:ro" ]
+    exec: [ "ip link set eth1 up" ]
+    ports: [ "8080:80" ]
+    healthcheck: { test: ["CMD", "true"] }
+    wait_for: [ dep1 ]
+  - { name: dep1, kind: linux, image: base:1 }
+bridges:
+  - { name: br0 }
+links:
+  - { endpoints: ["full:eth1", "br0:br0-full"] }
+"""
+
+
+def test_build_generic_context_resolves_kind_and_image_via_the_manifest_registry():
+    # arrange: a node whose kind+image come from the vendor registry (no explicit kind/image on the node)
+    mf = topology.load(
+        "name: x\nmgmt: { network: m, ipv4_subnet: 10.0.0.0/24 }\n"
+        "vendor_kinds: { box: { kind: linux, image: base:1 } }\n"
+        "nodes:\n  - { name: n1, vendor: box }\n")
+
+    # act
+    ctx = clabrender.build_generic_context(mf)
+
+    # assert: the payload carries the resolved kind + default image, and NO manifest-internal keys
+    # (role/site/vendor are not clab keys, so the generic renderer never emits them)
+    node = ctx["nodes"][0]
+    assert node["kind"] == "linux" and node["image"] == "base:1"
+    for internal in ("role", "site", "vendor"):
+        assert internal not in node
+
+
+def test_build_generic_context_omits_every_unset_optional_field():
+    # arrange: the bare-minimum node - only a name + an explicit kind
+    mf = topology.load(
+        "name: x\nmgmt: { network: m, ipv4_subnet: 10.0.0.0/24 }\n"
+        "nodes:\n  - { name: n1, kind: linux }\n")
+
+    # act
+    node = clabrender.build_generic_context(mf)["nodes"][0]
+
+    # assert: only name+kind survive; nothing optional is fabricated (a minimal node stays minimal)
+    assert set(node) == {"name", "kind"}
+
+
+def test_build_generic_context_carries_every_set_generic_clab_field_verbatim():
+    # arrange
+    mf = topology.load(_RICH)
+
+    # act
+    ctx = clabrender.build_generic_context(mf)
+    full = next(n for n in ctx["nodes"] if n["name"] == "full")
+
+    # assert: the explicit image overrides the vendor default; every generic clab field round-trips; the
+    # startup_config is carried VERBATIM as an opaque ref (never parsed)
+    assert full["kind"] == "linux" and full["image"] == "override:2"
+    assert full["type"] == "ixrd3" and full["image_pull_policy"] == "never"
+    assert full["mgmt_ipv4"] == "10.7.0.5" and full["cmd"] == "/bin/run"
+    assert full["startup_config"] == "cfg/full.partial"
+    assert full["env"] == {"FOO": "bar"} and full["binds"] == ["host/a:/b:ro"]
+    assert full["exec"] == ["ip link set eth1 up"] and full["ports"] == ["8080:80"]
+    assert full["healthcheck"] == {"test": ["CMD", "true"]} and full["wait_for"] == ["dep1"]
+    # bridges become kind:bridge nodes; links pass through as endpoint pairs
+    assert ctx["bridges"] == [{"name": "br0"}]
+    assert ctx["links"] == [{"endpoints": ["full:eth1", "br0:br0-full"]}]
+
+
+# --- the built-in generic clab template (zero product code) -------------------------------------------
+
+def test_generic_renderer_emits_a_valid_clab_topology_from_the_manifest_alone(manifest, tmp_path):
+    # arrange: NO product templates dir - ClabRenderer.generic uses the kernel's own built-in template
+    renderer = clabrender.ClabRenderer.generic(manifest, instance="dev")
+    out = tmp_path / "tiny.clab.yml"
+
+    # act
+    renderer.render_generic_topology(out)
+    doc = yaml.safe_load(out.read_text())
+
+    # assert: it parses as a valid clab topology with the dev identity + both manifest nodes and the link
+    assert doc["name"] == "tinylab"
+    assert doc["mgmt"] == {"network": "tinylab-mgmt", "ipv4-subnet": "10.9.0.0/24"}
+    assert set(doc["topology"]["nodes"]) == {"a", "b"}
+    assert doc["topology"]["nodes"]["a"] == {"kind": "linux", "image": "alpine:3", "mgmt-ipv4": "10.9.0.10"}
+    assert doc["topology"]["links"] == [{"endpoints": ["a:eth1", "b:eth1"]}]
+
+
+def test_generic_renderer_renders_every_generic_clab_field_as_valid_yaml(tmp_path):
+    # arrange: the rich manifest exercises all node fields + a bridge
+    mf = topology.load(_RICH)
+    out = tmp_path / "rich.clab.yml"
+
+    # act
+    clabrender.ClabRenderer.generic(mf).render_generic_topology(out)
+    doc = yaml.safe_load(out.read_text())
+    full = doc["topology"]["nodes"]["full"]
+
+    # assert: the emitted clab node is well-formed YAML carrying every field with the clab key spelling
+    assert full["kind"] == "linux" and full["image"] == "override:2" and full["type"] == "ixrd3"
+    assert full["image-pull-policy"] == "never" and full["mgmt-ipv4"] == "10.7.0.5"
+    assert full["startup-config"] == "cfg/full.partial" and full["cmd"] == "/bin/run"
+    assert full["env"] == {"FOO": "bar"} and full["binds"] == ["host/a:/b:ro"]
+    assert full["exec"] == ["ip link set eth1 up"] and full["ports"] == ["8080:80"]
+    assert full["healthcheck"] == {"test": ["CMD", "true"]}
+    # wait_for maps to clab's stages.create.wait-for with a default `healthy` stage
+    assert full["stages"] == {"create": {"wait-for": [{"node": "dep1", "stage": "healthy"}]}}
+    # the bridge is emitted as a kind:bridge node
+    assert doc["topology"]["nodes"]["br0"] == {"kind": "bridge"}
+
+
+def test_generic_renderer_applies_the_453_scoping_through_the_builtin_path(manifest, tmp_path):
+    # arrange: a non-dev instance must infix the token into the topology header even on the generic path
+    out = tmp_path / "tiny.clab.yml"
+
+    # act
+    clabrender.ClabRenderer.generic(manifest, instance="a1").render_generic_topology(out)
+    doc = yaml.safe_load(out.read_text())
+
+    # assert: the scoped identity flows into the generic render (name + mgmt network carry the id)
+    assert doc["name"] == "tinylab-a1"
+    assert doc["mgmt"]["network"] == "tinylab-mgmt-a1"
