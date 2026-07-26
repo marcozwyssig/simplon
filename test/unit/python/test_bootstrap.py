@@ -39,7 +39,8 @@ def test_generated_manifest_validates_through_the_delivery_loader():
     # assert: the starter taxonomy - an agnostic group, an env-first CD group, a composite
     assert mf.groups == {"build": ("build",), "deploy": ("up", "down")}
     assert mf.env_groups == frozenset({"deploy"})
-    assert set(mf.commands) == {"build", "up", "down"}
+    assert set(mf.commands) == {"build", "deploy"}
+    assert set(mf.commands["deploy"]) == {"up", "down"}
     assert mf.composites["all"].steps == ("build", "up")
 
 
@@ -48,9 +49,9 @@ def test_generated_manifest_impls_reference_the_scaffolded_orchestrator_package(
     mf = manifest.load(bootstrap.manifest_yaml("fooctl"))
 
     # assert: each impl is a resolvable "module:function" into the generated package (the wiring contract)
-    assert mf.commands["build"].impl == "orchestrator.cli:build"
-    assert mf.commands["up"].impl == "orchestrator.cli:up"
-    assert mf.commands["down"].impl == "orchestrator.cli:down"
+    assert mf.spec_for("build", "build").impl == "orchestrator.cli:build"
+    assert mf.spec_for("deploy", "up").impl == "orchestrator.cli:up"
+    assert mf.spec_for("deploy", "down").impl == "orchestrator.cli:down"
 
 
 def test_generated_manifest_taxonomy_matches_the_assembly_semantics():

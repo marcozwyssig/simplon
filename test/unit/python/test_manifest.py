@@ -1,7 +1,7 @@
 """Unit tests for the manifest-driven CLI assembly engine (delivery.orchestrator.manifest): the pure
-YAML load + schema validation, the impl-reference resolution, and the shared-taxonomy build - exercised on
-a SYNTHETIC manifest so the engine is validated independently of any product's command set. No Typer, no
-product impls; AAA throughout.
+YAML load + schema validation of the nested group -> command -> spec TREE (#729), the impl-reference
+resolution, and the shared-taxonomy build - exercised on a SYNTHETIC manifest so the engine is validated
+independently of any product's command set. No Typer, no product impls; AAA throughout.
 """
 import json
 
@@ -12,29 +12,30 @@ from delivery.orchestrator import manifest
 _OK = """
 product: demo
 groups:
-  code:   [fmt, lint]
-  build:  [build]
-  deploy: [up, down]
+  code:
+    fmt:  { impl: "demo.impls:fmt",  help: "Format the sources." }
+    lint: { impl: "demo.impls:lint", help: "Lint the sources." }
+  build:
+    build: { impl: "demo.impls:build", help: "Build the artefacts." }
+  deploy:
+    up:   { impl: "demo.impls:up",   help: "Deploy up.", passthrough_args: true }
+    down: { impl: "demo.impls:down", help: "Tear down." }
 env_groups: [deploy]
-commands:
-  fmt:   { impl: "demo.impls:fmt",   help: "Format the sources." }
-  lint:  { impl: "demo.impls:lint",  help: "Lint the sources." }
-  build: { impl: "demo.impls:build", help: "Build the artefacts." }
-  up:    { impl: "demo.impls:up",    help: "Deploy up.", passthrough_args: true }
-  down:  { impl: "demo.impls:down",  help: "Tear down." }
 """
 
 
-def test_load_reads_groups_env_groups_and_command_specs():
+def test_load_reads_the_groups_tree_as_membership_and_specs():
     # arrange / act
     mf = manifest.load(_OK)
 
-    # assert: the taxonomy, the env-first subset, and each command's impl + help
+    # assert: `groups` is the membership projection (each group's ordered command names) ...
     assert mf.groups == {"code": ("fmt", "lint"), "build": ("build",), "deploy": ("up", "down")}
     assert mf.env_groups == frozenset({"deploy"})
-    assert mf.commands["fmt"].impl == "demo.impls:fmt"
-    assert mf.commands["fmt"].help == "Format the sources."
-    assert set(mf.commands) == {"fmt", "lint", "build", "up", "down"}
+    # ... and `commands` is the nested spec tree, resolved via spec_for(group, name)
+    assert set(mf.commands) == {"code", "build", "deploy"}
+    assert set(mf.commands["code"]) == {"fmt", "lint"}
+    assert mf.spec_for("code", "fmt").impl == "demo.impls:fmt"
+    assert mf.spec_for("code", "fmt").help == "Format the sources."
 
 
 def test_load_reads_the_passthrough_args_flag_defaulting_to_false():
@@ -42,8 +43,8 @@ def test_load_reads_the_passthrough_args_flag_defaulting_to_false():
     mf = manifest.load(_OK)
 
     # assert: only the command that declared it is a passthrough command
-    assert mf.commands["up"].passthrough_args is True
-    assert mf.commands["fmt"].passthrough_args is False
+    assert mf.spec_for("deploy", "up").passthrough_args is True
+    assert mf.spec_for("code", "fmt").passthrough_args is False
 
 
 def test_taxonomy_reuses_the_shared_env_gate_built_from_the_manifest():
@@ -63,102 +64,67 @@ def test_taxonomy_reuses_the_shared_env_gate_built_from_the_manifest():
 
 
 def test_load_rejects_a_manifest_with_no_groups():
-    # arrange / act / assert
+    # arrange / act / assert: a manifest with no `groups` tree (unknown top-level keys are ignored)
     with pytest.raises(ValueError, match="no groups"):
-        manifest.load("commands: {}\n")
+        manifest.load("product: demo\n")
 
 
 def test_load_rejects_an_env_group_that_is_not_a_declared_group():
     # arrange: env_groups names a group that does not exist
-    text = "groups:\n  code: [fmt]\nenv_groups: [deploy]\ncommands:\n  fmt: { impl: 'm:f', help: 'x' }\n"
+    text = ("groups:\n  code:\n    fmt: { impl: 'm:f', help: 'x' }\n"
+            "env_groups: [deploy]\n")
 
     # act / assert
     with pytest.raises(ValueError, match="env_groups entry 'deploy'"):
         manifest.load(text)
 
 
-# A name owned by two groups, each with its own GROUP-SCOPED spec (`<group>.<name>`) - the #519 shape
-# (netctl: `test all` runs every test stage, `deploy all` stays the full e2e bring-up).
+# A name owned by two groups, each nesting its OWN spec - the #519 shape (netctl: `test all` runs every test
+# stage, `deploy all` stays the full e2e bring-up). Nesting resolves the collision; no dotted keys.
 _DUPLICATE_OK = """
 groups:
-  test:   [unit, all]
-  deploy: [up, all]
+  test:
+    unit: { impl: "demo.impls:unit",     help: "Unit gate." }
+    all:  { impl: "demo.impls:test_all", help: "Run every test stage." }
+  deploy:
+    up:  { impl: "demo.impls:up",         help: "Deploy up." }
+    all: { impl: "demo.impls:deploy_all", help: "Full e2e bring-up." }
 env_groups: [deploy]
-commands:
-  unit:       { impl: "demo.impls:unit", help: "Unit gate." }
-  up:         { impl: "demo.impls:up",   help: "Deploy up." }
-  test.all:   { impl: "demo.impls:test_all",   help: "Run every test stage." }
-  deploy.all: { impl: "demo.impls:deploy_all", help: "Full e2e bring-up." }
 """
 
 
-def test_load_accepts_a_duplicated_name_when_every_owner_declares_a_scoped_spec():
+def test_load_resolves_a_name_owned_by_several_groups_by_nesting():
     # arrange / act
     mf = manifest.load(_DUPLICATE_OK)
 
-    # assert: each group resolves ITS spec; unique names still resolve via their plain spec
+    # assert: each group resolves ITS own spec for the shared name; unique names resolve too
     assert mf.spec_for("test", "all").impl == "demo.impls:test_all"
     assert mf.spec_for("deploy", "all").impl == "demo.impls:deploy_all"
     assert mf.spec_for("test", "unit").impl == "demo.impls:unit"
 
 
-def test_spec_for_prefers_a_scoped_spec_over_a_plain_one():
-    # arrange: `unit` has a plain spec AND a test-scoped override
-    text = ("groups:\n  test: [unit]\ncommands:\n"
-            "  unit:      { impl: 'm:plain',  help: 'x' }\n"
-            "  test.unit: { impl: 'm:scoped', help: 'x' }\n")
+def test_spec_by_name_resolves_an_unambiguous_command_but_not_an_ambiguous_one():
+    # arrange: `unit` is owned by exactly one group; `all` is owned by two
+    mf = manifest.load(_DUPLICATE_OK)
 
-    # act
-    mf = manifest.load(text)
-
-    # assert
-    assert mf.spec_for("test", "unit").impl == "m:scoped"
+    # act / assert: the bare-name flat view returns the sole owner's spec, and None for the ambiguous name
+    assert mf.spec_by_name("unit").impl == "demo.impls:unit"
+    assert mf.spec_by_name("all") is None
+    assert mf.spec_by_name("nonesuch") is None
 
 
-def test_load_rejects_a_duplicated_name_with_only_a_plain_spec():
-    # arrange: `up` appears in both deploy and operate but has ONE unscoped spec - ambiguous
-    text = ("groups:\n  deploy: [up]\n  operate: [up]\n"
-            "commands:\n  up: { impl: 'm:f', help: 'x' }\n")
+def test_load_rejects_a_group_member_with_an_empty_spec():
+    # arrange: `lint` is a member of code but carries no impl/help (an empty spec body)
+    text = ("groups:\n  code:\n    fmt:  { impl: 'm:f', help: 'x' }\n    lint: {}\n")
 
-    # act / assert: the error demands group-scoped specs
-    with pytest.raises(ValueError, match="group-scoped"):
-        manifest.load(text)
-
-
-def test_load_rejects_a_scoped_spec_whose_command_is_not_in_that_group():
-    # arrange: `deploy.fmt` is scoped to deploy, but fmt is a code member
-    text = ("groups:\n  code: [fmt]\n  deploy: [up]\ncommands:\n"
-            "  fmt:        { impl: 'm:f', help: 'x' }\n"
-            "  up:         { impl: 'm:f', help: 'x' }\n"
-            "  deploy.fmt: { impl: 'm:f', help: 'x' }\n")
-
-    # act / assert
-    with pytest.raises(ValueError, match="not a member"):
-        manifest.load(text)
-
-
-def test_load_rejects_a_group_member_without_a_spec():
-    # arrange: `lint` is a member of code but has no command spec
-    text = "groups:\n  code: [fmt, lint]\ncommands:\n  fmt: { impl: 'm:f', help: 'x' }\n"
-
-    # act / assert
-    with pytest.raises(ValueError, match="missing a spec"):
-        manifest.load(text)
-
-
-def test_load_rejects_a_spec_that_is_in_no_group():
-    # arrange: `orphan` has a spec but is in no group
-    text = ("groups:\n  code: [fmt]\n"
-            "commands:\n  fmt: { impl: 'm:f', help: 'x' }\n  orphan: { impl: 'm:o', help: 'x' }\n")
-
-    # act / assert
-    with pytest.raises(ValueError, match="not in any declared group"):
+    # act / assert: an empty spec fails loudly, naming the owning group + command
+    with pytest.raises(ValueError, match="command 'code.lint': missing impl"):
         manifest.load(text)
 
 
 def test_load_rejects_a_command_with_a_missing_help():
     # arrange: fmt has an impl but no help
-    text = "groups:\n  code: [fmt]\ncommands:\n  fmt: { impl: 'm:f' }\n"
+    text = "groups:\n  code:\n    fmt: { impl: 'm:f' }\n"
 
     # act / assert
     with pytest.raises(ValueError, match="missing help"):
@@ -168,7 +134,7 @@ def test_load_rejects_a_command_with_a_missing_help():
 @pytest.mark.parametrize("bad_impl", ["nocolon", ":func", "module:", "a:b:c"])
 def test_load_rejects_a_malformed_impl_reference(bad_impl):
     # arrange: an impl that is not a clean "module:function"
-    text = f"groups:\n  code: [fmt]\ncommands:\n  fmt: {{ impl: '{bad_impl}', help: 'x' }}\n"
+    text = f"groups:\n  code:\n    fmt: {{ impl: '{bad_impl}', help: 'x' }}\n"
 
     # act / assert
     with pytest.raises(ValueError, match="module:function"):
@@ -210,14 +176,13 @@ def test_resolve_impl_raises_a_clear_error_on_a_missing_function():
 _COMPOSITES = """
 product: demo
 groups:
-  build:  [install, build]
-  deploy: [up, seed]
+  build:
+    install: { impl: "demo.impls:install", help: "Install host prereqs." }
+    build:   { impl: "demo.impls:build",   help: "Build the artefacts." }
+  deploy:
+    up:   { impl: "demo.impls:up",   help: "Deploy up." }
+    seed: { impl: "demo.impls:seed", help: "Seed." }
 env_groups: [deploy]
-commands:
-  install: { impl: "demo.impls:install", help: "Install host prereqs." }
-  build:   { impl: "demo.impls:build",   help: "Build the artefacts." }
-  up:      { impl: "demo.impls:up",      help: "Deploy up." }
-  seed:    { impl: "demo.impls:seed",    help: "Seed." }
 composites:
   bringup: { steps: [install, build, up, seed] }
   strict:  { steps: [install, build], stop_on_failure: true }

@@ -12,7 +12,7 @@ Run it standalone (the kernel's python source must be on sys.path, e.g. via a ch
 It renders, mirroring the shape netctl's own `netctl.yaml` + `netctl.sh` use but stripped to the bones:
 
     <product>.sh                                     the thin shim onto lib/platform's launch.sh
-    <product>.yaml                                   the starter manifest (groups/env_groups/commands/
+    <product>.yaml                                   the starter manifest (groups tree/env_groups/
                                                      composites/environments the Pydantic loader accepts)
     orchestrator/requirements.txt                    the host-venv deps (mirrors the kernel's pins)
     orchestrator/src/python/orchestrator/
@@ -94,9 +94,9 @@ _MANIFEST = """\
 #
 # Sections:
 #   product       the product label (shim/manifest name + diagnostics).
-#   groups        group -> its ordered command names (the SINGLE membership source; the env-gate is derived).
+#   groups        the ONE command tree: group -> command -> { impl: "module:function", help: "one-line
+#                 summary" }. The key order within a group is its membership order; the env-gate is derived.
 #   env_groups    the subset of groups that are env-first (`@@PRODUCT@@ <env> <group> <cmd>`, default below).
-#   commands      command -> { impl: "module:function", help: "one-line summary" }.
 #   composites    named, ordered command pipelines (optional).
 #   environments  the deployment env matrix (a backend per env) + the default env.
 product: @@PRODUCT@@
@@ -109,24 +109,21 @@ product: @@PRODUCT@@
 # volumes:
 #   build_cache: @@PRODUCT@@-build-cache
 
-# group -> its ordered command names, along the CI/CD loop. `build` is a single-member group whose member
-# shares its name, so it collapses to ONE flat top-level command (`@@PRODUCT@@ build`). `deploy` is a
-# multi-member env-first group (see env_groups).
+# The ONE command tree, along the CI/CD loop: group -> command -> { impl: "module:function", help }. The
+# key order within a group is its membership order. `build` is a single-member group whose member shares its
+# name, so it collapses to ONE flat top-level command (`@@PRODUCT@@ build`); `deploy` is a multi-member
+# env-first group (see env_groups). The starter impls point at the generated `orchestrator.cli` callbacks;
+# replace them with your own as you add commands.
 groups:
-  build:  [build]
-  deploy: [up, down]
+  build:
+    build: { impl: "orchestrator.cli:build", help: "Build the product artefacts (placeholder)." }
+  deploy:
+    up:   { impl: "orchestrator.cli:up",   help: "Deploy the product to the target environment (placeholder)." }
+    down: { impl: "orchestrator.cli:down", help: "Tear the deployment down (placeholder)." }
 
 # The env-first CD groups: `@@PRODUCT@@ <env> deploy up` (default env below). Every other group is
 # environment-agnostic and rejects an env prefix.
 env_groups: [deploy]
-
-# command -> its implementation reference ("module:function") + a one-line help. The owning group is derived
-# from `groups` above. The starter impls point at the generated `orchestrator.cli` callbacks; replace them
-# with your own as you add commands.
-commands:
-  build: { impl: "orchestrator.cli:build", help: "Build the product artefacts (placeholder)." }
-  up:    { impl: "orchestrator.cli:up",    help: "Deploy the product to the target environment (placeholder)." }
-  down:  { impl: "orchestrator.cli:down",  help: "Tear the deployment down (placeholder)." }
 
 # Named, ordered command pipelines (#456): each step names a command declared above. `stop_on_failure:
 # false` (the default) runs every step and takes the worst rc.

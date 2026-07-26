@@ -4,6 +4,11 @@ reference ("module:function") and its help summary. A product ships the manifest
 this engine reads the manifest and the product assembles its CLI from it - product-specifics become
 DATA, not code, which dissolves the platform -> product coupling.
 
+The manifest is ONE hierarchy (#729): `groups` maps each group to a group -> command -> spec TREE, so a
+command's membership and its spec live together. The former separate flat `commands` map (and the dotted
+group-scoped keys `test.all` / `deploy.all` it needed because `all` collides across groups in a flat
+namespace) is gone - the collision is resolved by NESTING instead.
+
 The engine is PURE and framework-free: it parses + validates the manifest (loudly, like
 delivery.environments.parse), resolves an impl reference to the real callable, and builds the shared
 CommandTaxonomy (the env-gate) from the manifest so that logic is reused, not copied. It deliberately
@@ -14,9 +19,9 @@ runtime CLI now and, in Phase 2, the CI workflows.
 Parsing + validation run through the private Pydantic v2 models below (`_ManifestModel` and its spec
 models). The PUBLIC surface stays the NamedTuples `CommandSpec` / `CompositeSpec` / `Manifest`: `load()`
 converts the validated model into those tuples before returning, so consumers see byte-for-byte the same
-types (field access, tuple unpacking, `taxonomy()`, `spec_for()`). The fail-loud contract is unchanged -
-every rule violation is raised as a ValueError, and `load()` re-raises any Pydantic ValidationError as a
-plain ValueError so a raw ValidationError never escapes.
+types (field access, tuple unpacking, `taxonomy()`, `spec_for()`, `spec_by_name()`). The fail-loud
+contract is unchanged - every rule violation is raised as a ValueError, and `load()` re-raises any Pydantic
+ValidationError as a plain ValueError so a raw ValidationError never escapes.
 """
 from __future__ import annotations
 
@@ -36,8 +41,9 @@ class CommandSpec(NamedTuple):
     that runs the command. `help` is the canonical short summary (used in listings + consumed by the
     Phase-2 CI-doc generation). `passthrough_args` marks a command that forwards any unrecognised trailing
     args to an underlying tool (e.g. a test runner) - a generic intent the product maps to its CLI
-    framework's settings. The owning GROUP is deliberately NOT stored here: it is derivable from the
-    manifest's `groups` map (the single membership source), so a command can never disagree with it.
+    framework's settings. The owning GROUP is deliberately NOT stored here: it is the key of the group that
+    nests this spec in the manifest's `commands` tree (the single membership source), so a command can never
+    disagree with it.
     """
     impl: str
     help: str
@@ -57,16 +63,18 @@ class CompositeSpec(NamedTuple):
 
 
 class Manifest(NamedTuple):
-    """A parsed, validated product manifest: the command taxonomy (group -> its command names, and the
-    subset of env-first groups) plus each command's spec. `groups` and `env_groups` already have the exact
-    shape the shared CommandTaxonomy consumes, so `taxonomy()` builds the env-gate without duplicating its
-    logic. `commands` keeps the spec keys AS DECLARED - plain (`up`) or group-scoped (`deploy.all`, #519);
-    resolve a member's spec through `spec_for`, which knows the scoped-first precedence. `composites` maps a
-    composite name to its ordered step commands (#456); empty on a manifest that declares none.
+    """A parsed, validated product manifest, held as ONE hierarchy (#729): the command taxonomy (group ->
+    its command names, and the subset of env-first groups) plus each command's spec, nested under its group.
+    `groups` is the membership projection (each group's ordered command names) the shared CommandTaxonomy
+    consumes, so `taxonomy()` builds the env-gate without duplicating its logic. `commands` is the nested
+    spec tree (group -> command -> spec), so `spec_for(group, name)` resolves a member's spec by NESTING -
+    the same name may live in several groups (#519: `test all` next to `deploy all`), each owner carrying its
+    own spec, with no flat dotted keys. `composites` maps a composite name to its ordered step commands
+    (#456); empty on a manifest that declares none.
     """
     groups: dict[str, tuple[str, ...]]
     env_groups: frozenset[str]
-    commands: dict[str, CommandSpec]
+    commands: dict[str, dict[str, CommandSpec]]
     composites: dict[str, CompositeSpec] = {}
 
     def taxonomy(self) -> CommandTaxonomy:
@@ -74,11 +82,19 @@ class Manifest(NamedTuple):
         return CommandTaxonomy(self.groups, self.env_groups)
 
     def spec_for(self, group: str, name: str) -> CommandSpec:
-        """The spec for a group member: its group-scoped declaration (`<group>.<name>`) when present,
-        else the plain one. load() guarantees every member resolves (and that a name owned by several
-        groups is declared scoped per owner), so this lookup cannot miss on a validated manifest."""
-        scoped = self.commands.get(f"{group}.{name}")
-        return scoped if scoped is not None else self.commands[name]
+        """The spec for a group member, resolved by nesting (`commands[group][name]`). load() guarantees
+        membership IS the spec tree (every member of every group carries a spec), so this lookup cannot miss
+        on a validated manifest."""
+        return self.commands[group][name]
+
+    def spec_by_name(self, name: str) -> CommandSpec | None:
+        """The spec for a command by its BARE name when exactly ONE group owns it, else None - an absent
+        name OR an ambiguous one owned by several groups (#519: `all`). This flat view is used for the
+        display LABEL of an unambiguous composite step (delivery.orchestrator.product maps a composite's bare
+        step names through the product step factory); a caller that must disambiguate an owned-by-many name
+        uses spec_for(group, name)."""
+        owners = [group for group, specs in self.commands.items() if name in specs]
+        return self.commands[owners[0]][name] if len(owners) == 1 else None
 
 
 def _split_impl(impl: str, context: str) -> tuple[str, str]:
@@ -105,7 +121,7 @@ def _split_impl(impl: str, context: str) -> tuple[str, str]:
 class _CommandSpecModel(BaseModel):
     """Parse/validate view of one command declaration. Coerces the scalars exactly like the former loader
     and IGNORES unknown keys inside a spec. The non-empty-impl/help and 'module:function' rules live on the
-    manifest model so their errors can name the owning command."""
+    manifest model so their errors can name the owning group + command."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -148,40 +164,42 @@ class _CompositeSpecModel(BaseModel):
 class _ManifestModel(BaseModel):
     """Parse/validate view of the whole manifest. Unknown TOP-LEVEL sections (product, environments,
     default, images, ... - a product's own build data) are IGNORED, exactly as the former loader read only
-    groups/env_groups/commands/composites. The six validation rules run here (rule 1 groups non-empty;
-    rule 2 env_groups subset; rule 3 multi-owner reverse index; rule 4 membership<->specs agreement both
-    ways; rule 5 well-formed non-empty impl/help; rule 6 composite steps exist), each raised as a ValueError
-    so `load()` surfaces the same clean message the imperative loader did."""
+    the taxonomy sections. `groups` is the ONE command tree (group -> command -> spec, #729); the former
+    separate flat `commands` map and its dotted group-scoped keys are gone - NESTING resolves a name owned
+    by several groups. The four validation rules run here (rule 1 groups non-empty; rule 2 env_groups subset;
+    rule 3 every spec has a well-formed non-empty impl/help; rule 4 composite steps name real commands), each
+    raised as a ValueError so `load()` surfaces the same clean message the imperative loader did."""
 
     model_config = ConfigDict(extra="ignore")
 
-    groups: dict[str, tuple[str, ...]] = {}
+    groups: dict[str, dict[str, _CommandSpecModel]] = {}
     env_groups: tuple[str, ...] = ()
-    commands: dict[str, _CommandSpecModel] = {}
     composites: dict[str, _CompositeSpecModel] = {}
 
     @field_validator("groups", mode="before")
     @classmethod
     def _coerce_groups(cls, value: object) -> dict:
-        # each group name -> its ordered members, str-coerced; a null/absent member list becomes empty.
-        return {str(name): tuple(str(member) for member in (members or ()))
-                for name, members in (value or {}).items()}
+        # group name -> {command name -> spec body}, str-coerced. A null/absent member map becomes an empty
+        # group; a null spec body becomes an empty mapping so the sub-model defaults apply (then the
+        # missing-impl rule below names it). Ordered: dict insertion order is the member order.
+        return {str(group): {str(name): (spec or {}) for name, spec in (members or {}).items()}
+                for group, members in (value or {}).items()}
 
     @field_validator("env_groups", mode="before")
     @classmethod
     def _coerce_env_groups(cls, value: object) -> tuple[str, ...]:
         return tuple(str(group) for group in (value or ()))
 
-    @field_validator("commands", "composites", mode="before")
+    @field_validator("composites", mode="before")
     @classmethod
-    def _coerce_spec_map(cls, value: object) -> dict:
-        # str-coerce the spec keys and treat a null spec body as an empty mapping (the sub-model defaults
+    def _coerce_composites(cls, value: object) -> dict:
+        # str-coerce the composite keys and treat a null body as an empty mapping (the sub-model defaults
         # then apply), mirroring the former `name = str(name); spec = spec or {}`.
         return {str(name): (spec or {}) for name, spec in (value or {}).items()}
 
     @model_validator(mode="after")
     def _validate_taxonomy(self) -> "_ManifestModel":
-        # rule 1: `groups` maps each declared group to its ordered command names (the single membership source).
+        # rule 1: `groups` maps each declared group to its ordered command tree (the ONE membership + spec source).
         if not self.groups:
             raise ValueError("manifest defines no groups")
 
@@ -190,55 +208,19 @@ class _ManifestModel(BaseModel):
             if group not in self.groups:
                 raise ValueError(f"env_groups entry '{group}' is not a declared group")
 
-        # rule 5: every spec declares a non-empty `help` and a well-formed "module:function" `impl`. Enforced
-        # here (not on _CommandSpecModel) so the error names the owning command, as the former loader did.
-        for name, spec in self.commands.items():
-            if not spec.impl:
-                raise ValueError(f"command '{name}': missing impl")
-            _split_impl(spec.impl, f"command '{name}'")   # validates the "module:function" shape
-            if not spec.help:
-                raise ValueError(f"command '{name}': missing help")
-
-        # multi-owner reverse index: the SAME name may live in several groups (#519), in which case every
-        # owner must declare a group-scoped spec (validated below) and the name loses its flat form.
-        command_groups: dict[str, list[str]] = {}
+        # rule 3: every command spec declares a non-empty `help` and a well-formed "module:function" `impl`.
+        # The error names the owning group + command (nesting makes the owner explicit).
         for group, members in self.groups.items():
-            for cmd in members:
-                command_groups.setdefault(cmd, []).append(group)
+            for name, spec in members.items():
+                if not spec.impl:
+                    raise ValueError(f"command '{group}.{name}': missing impl")
+                _split_impl(spec.impl, f"command '{group}.{name}'")   # validates the "module:function" shape
+                if not spec.help:
+                    raise ValueError(f"command '{group}.{name}': missing help")
 
-        # rule 4 (membership -> spec): every group member resolves to a spec (plain or group-scoped).
-        missing_spec = sorted(
-            c for c, owners in command_groups.items()
-            if any(c not in self.commands and f"{g}.{c}" not in self.commands for g in owners))
-        if missing_spec:
-            raise ValueError(f"commands declared in a group but missing a spec: {missing_spec}")
-
-        # rule 3: a name owned by SEVERAL groups must be declared group-scoped per owner (a lone plain spec
-        # would be ambiguous).
-        ambiguous_plain = sorted(
-            c for c, owners in command_groups.items()
-            if len(owners) > 1 and any(f"{g}.{c}" not in self.commands for g in owners))
-        if ambiguous_plain:
-            raise ValueError(
-                f"commands owned by several groups need a group-scoped spec per owner "
-                f"('<group>.<name>'): {ambiguous_plain}")
-
-        # rule 4 (spec -> membership): a scoped key names a real member of its group; a plain key is a member
-        # of some group; anything else is an orphan spec.
-        orphans: list[str] = []
-        for key in self.commands:
-            group, sep, name = key.partition(".")
-            if sep and group in self.groups:
-                if name not in self.groups[group]:
-                    raise ValueError(f"scoped spec '{key}': '{name}' is not a member of group '{group}'")
-            elif key not in command_groups:
-                orphans.append(key)
-        if orphans:
-            raise ValueError(f"commands with a spec but not in any declared group: {sorted(orphans)}")
-
-        # rule 6: every composite step names a command that is a member of some group (command_groups is that
-        # membership index), so a typo fails loudly here, not deep in the runner. `stop_on_failure` default False.
-        known_commands = set(command_groups)
+        # rule 4: every composite step names a command that is a member of some group (the flat name set), so
+        # a typo fails loudly here, not deep in the runner. `stop_on_failure` default False.
+        known_commands = {name for members in self.groups.values() for name in members}
         for name, spec in self.composites.items():
             if not spec.steps:
                 raise ValueError(f"composite '{name}': needs a non-empty 'steps' list")
@@ -274,17 +256,16 @@ def load(text: str) -> Manifest:
 
     Validates through the private `_ManifestModel`, failing loudly with ValueError so a bad manifest is
     caught here and not deep in the CLI:
-      - `groups` maps each declared group to its ordered command names (the single membership source);
+      - `groups` maps each declared group to its ordered command tree (group -> command -> spec, the ONE
+        membership + spec source);
       - every `env_groups` entry is a declared group;
-      - no command appears in more than one group without a group-scoped spec per owner;
-      - every command listed in a group has a spec, and every spec's command is in exactly one group
-        (membership and specs agree, both ways);
-      - every spec declares a non-empty `help` and a well-formed "module:function" `impl`;
+      - every command spec declares a non-empty `help` and a well-formed "module:function" `impl`;
       - every `composites` entry (#456) declares a non-empty `steps` list and every step names a command
         that exists in the manifest (a member of some group).
     Unknown top-level keys stay ignored (backward compatible). Any Pydantic ValidationError is re-raised as
     a plain ValueError (a raw ValidationError never escapes), then the validated model is converted into the
-    public NamedTuples so callers see the unchanged types.
+    public NamedTuples so callers see the unchanged types: `groups` is the membership projection (each
+    group's ordered command names) and `commands` is the nested spec tree (group -> command -> spec).
     """
     data = yaml.safe_load(text) or {}
     try:
@@ -292,15 +273,17 @@ def load(text: str) -> Manifest:
     except ValidationError as exc:
         raise ValueError(_validation_message(exc)) from exc
 
+    groups = {group: tuple(members) for group, members in model.groups.items()}
     commands = {
-        name: CommandSpec(impl=spec.impl, help=spec.help, passthrough_args=spec.passthrough_args)
-        for name, spec in model.commands.items()
+        group: {name: CommandSpec(impl=spec.impl, help=spec.help, passthrough_args=spec.passthrough_args)
+                for name, spec in members.items()}
+        for group, members in model.groups.items()
     }
     composites = {
         name: CompositeSpec(steps=spec.steps, stop_on_failure=spec.stop_on_failure)
         for name, spec in model.composites.items()
     }
-    return Manifest(groups=model.groups, env_groups=frozenset(model.env_groups),
+    return Manifest(groups=groups, env_groups=frozenset(model.env_groups),
                     commands=commands, composites=composites)
 
 

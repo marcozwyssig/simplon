@@ -36,19 +36,18 @@ def _impls_module():
 _MANIFEST = """
 product: demo
 groups:
-  code:   [fmt, lint]
-  build:  [build]
-  test:   [unit, all]
-  deploy: [up, all]
+  code:
+    fmt:  { impl: "demo_impls:fmt",  help: "Format the sources." }
+    lint: { impl: "demo_impls:lint", help: "Lint the sources." }
+  build:
+    build: { impl: "demo_impls:build", help: "Build the artefacts." }
+  test:
+    unit: { impl: "demo_impls:unit",     help: "Unit gate.", passthrough_args: true }
+    all:  { impl: "demo_impls:test_all", help: "Every test stage." }
+  deploy:
+    up:  { impl: "demo_impls:up",         help: "Deploy up." }
+    all: { impl: "demo_impls:deploy_all", help: "Full bring-up." }
 env_groups: [deploy]
-commands:
-  fmt:        { impl: "demo_impls:fmt",        help: "Format the sources." }
-  lint:       { impl: "demo_impls:lint",       help: "Lint the sources." }
-  build:      { impl: "demo_impls:build",      help: "Build the artefacts." }
-  unit:       { impl: "demo_impls:unit",       help: "Unit gate.", passthrough_args: true }
-  test.all:   { impl: "demo_impls:test_all",   help: "Every test stage." }
-  up:         { impl: "demo_impls:up",         help: "Deploy up." }
-  deploy.all: { impl: "demo_impls:deploy_all", help: "Full bring-up." }
 """
 
 
@@ -154,14 +153,13 @@ def test_the_assembled_app_compiles_to_a_click_tree_with_the_expected_top_level_
 _GD_MANIFEST = """
 product: demo
 groups:
-  build:   [build, diff, docs]
-  package: [package]
+  build:
+    build: { impl: "gd_impls:build", help: "Build the images." }
+    diff:  { impl: "gd_impls:diff",  help: "Show the schema diff." }
+    docs:  { impl: "gd_impls:docs",  help: "Render the docs." }
+  package:
+    package: { impl: "gd_impls:package", help: "Package the images." }
 env_groups: []
-commands:
-  build:   { impl: "gd_impls:build",   help: "Build the images." }
-  diff:    { impl: "gd_impls:diff",    help: "Show the schema diff." }
-  docs:    { impl: "gd_impls:docs",    help: "Render the docs." }
-  package: { impl: "gd_impls:package", help: "Package the images." }
 """
 
 
