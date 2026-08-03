@@ -113,6 +113,16 @@ def test_spec_by_name_resolves_an_unambiguous_command_but_not_an_ambiguous_one()
     assert mf.spec_by_name("nonesuch") is None
 
 
+def test_path_by_name_returns_the_dotted_path_for_a_unique_owner_only():
+    # arrange: `unit` is owned by exactly one group; `all` is owned by two
+    mf = manifest.load(_DUPLICATE_OK)
+
+    # act / assert: the sole owner yields the dotted group.command path; ambiguous and unknown yield None
+    assert mf.path_by_name("unit") == "test.unit"
+    assert mf.path_by_name("all") is None
+    assert mf.path_by_name("nonesuch") is None
+
+
 def test_load_rejects_a_group_member_with_an_empty_spec():
     # arrange: `lint` is a member of code but carries no impl/help (an empty spec body)
     text = ("groups:\n  code:\n    fmt:  { impl: 'm:f', help: 'x' }\n    lint: {}\n")

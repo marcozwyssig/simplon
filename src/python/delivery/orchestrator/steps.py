@@ -8,6 +8,7 @@ SAME Pipeline, so step pass/fail always reflects the real rc, never the UI state
 """
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable
@@ -47,10 +48,17 @@ class Step:
     """One pipeline step. Either a quick `action` (returns an Outcome) OR a `stream` action (receives an
     Emit and returns an Outcome, feeding output lines live as it runs - for long steps like build/up).
     Exactly one is set. Mutable result fields fill in as it runs so the UI can render
-    PENDING -> RUNNING -> OK/FAILED."""
+    PENDING -> RUNNING -> OK/FAILED.
+
+    `command` is the step's exact-command identity: the verbatim command path this step runs (a dotted
+    CLI path like 'test.unit', or a real argv like 'docker build ...'). Both runners render
+    `command or label` as the section header, so every section shows the EXACT command instead of a
+    prose label; empty means the step has no command identity and the label stands (netctl#897, which
+    reverses the earlier name+help label vocabulary of netctl#722 for the header)."""
     label: str
     action: Callable[[], Outcome] | None = None
     stream: Callable[[Emit], Outcome] | None = None
+    command: str = ""
     state: StepState = StepState.PENDING
     output: str = ""
     rc: int | None = None
@@ -78,9 +86,11 @@ class Pipeline:
     stop_on_failure: bool = False
 
 
-def argv_step(label: str, argv: list[str]) -> Step:
+def argv_step(label: str, argv: list[str], command: str | None = None) -> Step:
     """A STREAMING Step that runs an arbitrary command and feeds its output live into the details pane.
-    The build pipeline uses it to render each image build (a docker build/run) as its own step."""
+    The build pipeline uses it to render each image build (a docker build/run) as its own step.
+    `command` is the step's exact-command identity for the section header; it defaults to the real argv
+    (shlex-joined), so a native docker/argv step displays the command it actually runs."""
     def stream(emit: Emit) -> Outcome:
         lines: list[str] = []
 
@@ -90,7 +100,7 @@ def argv_step(label: str, argv: list[str]) -> Step:
 
         rc = run_stream(argv, on_line)
         return Outcome(rc=rc, output="\n".join(lines))
-    return Step(label=label, stream=stream)
+    return Step(label=label, stream=stream, command=command if command is not None else shlex.join(argv))
 
 
 def run_headless(pipeline: Pipeline) -> int:
@@ -102,18 +112,19 @@ def run_headless(pipeline: Pipeline) -> int:
     skipped = 0
     stopped = False
     for step in pipeline.steps:
+        title = step.command or step.label      # exact-command identity when the step carries one (#897)
         if stopped:
             step.state = StepState.SKIPPED
             skipped += 1
-            log.warn(f"{step.label} - skipped (a previous step failed)")
+            log.warn(f"{title} - skipped (a previous step failed)")
             continue
-        log.info(step.label)
+        log.info(title)
         outcome = step.run(lambda line: print(f"  {line}", flush=True))
         if outcome.ok:
-            log.ok(step.label)
+            log.ok(title)
         else:
             failures += 1
-            log.warn(f"{step.label} - failed (rc {outcome.rc})")
+            log.warn(f"{title} - failed (rc {outcome.rc})")
             if pipeline.stop_on_failure:
                 stopped = True
     if failures:

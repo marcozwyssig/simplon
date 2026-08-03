@@ -96,6 +96,14 @@ class Manifest(NamedTuple):
         owners = [group for group, specs in self.commands.items() if name in specs]
         return self.commands[owners[0]][name] if len(owners) == 1 else None
 
+    def path_by_name(self, name: str) -> str | None:
+        """The dotted `group.command` CLI path for a BARE command name when exactly ONE group owns it,
+        else None - an absent name OR an ambiguous one owned by several groups (#519: `all`). This is
+        the exact-command identity the orchestrator renders as a step's section header (netctl#897),
+        replacing the earlier name+help label vocabulary there."""
+        owners = [group for group, specs in self.commands.items() if name in specs]
+        return f"{owners[0]}.{name}" if len(owners) == 1 else None
+
 
 def _split_impl(impl: str, context: str) -> tuple[str, str]:
     """Split a "module:function" reference into its two parts, failing loudly on a malformed one.

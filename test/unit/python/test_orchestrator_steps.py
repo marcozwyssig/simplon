@@ -4,6 +4,8 @@ transitions + overall verdict are tested in isolation. This is now the home of t
 coverage (moved here from netctl's test_steps.py)."""
 from __future__ import annotations
 
+import shlex
+
 import pytest
 
 from delivery.orchestrator.steps import (
@@ -105,6 +107,31 @@ def test_argv_step_is_a_streaming_step_for_an_arbitrary_command():
     # Assert: it streams (not a quick capture action)
     assert s.stream is not None
     assert s.action is None
+
+
+def test_step_command_defaults_to_empty_so_the_label_stands():
+    # Arrange / Act: a plain step that declares no command identity
+    s = _step("host-checks", rc=0)
+    # Assert: the command is empty, so `command or label` renders the label
+    assert s.command == ""
+    assert (s.command or s.label) == "host-checks"
+
+
+def test_argv_step_command_defaults_to_the_shlex_joined_argv():
+    # Arrange: a native argv step (a docker build) without an explicit command
+    argv = ["docker", "build", "-t", "netctl-web:local", "."]
+    # Act
+    s = argv_step("web image", argv)
+    # Assert: the section header identity is the REAL command it runs
+    assert s.command == shlex.join(argv)
+    assert s.command == "docker build -t netctl-web:local ."
+
+
+def test_argv_step_takes_an_explicit_command_override():
+    # Arrange / Act: a composite step whose header should be the dotted CLI path, not the raw argv
+    s = argv_step("package: web jar", ["./netctl.sh", "package"], command="build.package")
+    # Assert: the override wins over the shlex-joined argv
+    assert s.command == "build.package"
 
 
 def test_stop_on_failure_skips_the_steps_after_a_failure():

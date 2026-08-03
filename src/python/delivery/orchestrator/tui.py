@@ -70,7 +70,7 @@ class _StepApp(App):
 
     def _row(self, i: int) -> str:
         step = self.pipeline.steps[i]
-        return f"{_ICON[step.state]} {step.label}"
+        return f"{_ICON[step.state]} {step.command or step.label}"
 
     def _refresh_row(self, i: int) -> None:
         item = self.query_one(f"#s{i}", ListItem)
@@ -80,7 +80,7 @@ class _StepApp(App):
         rlog = self.query_one("#details", RichLog)
         rlog.clear()
         step = self.pipeline.steps[i]
-        rlog.write(f"$ {step.label}\n")
+        rlog.write(f"$ {step.command or step.label}\n")
         if step.output:
             rlog.write(step.output.rstrip("\n"))
         elif step.state == StepState.RUNNING:
@@ -94,7 +94,8 @@ class _StepApp(App):
         if self.query_one("#steps", ListView).index == i:
             rlog = self.query_one("#details", RichLog)
             rlog.clear()
-            rlog.write(f"$ {self.pipeline.steps[i].label}\n")
+            step = self.pipeline.steps[i]
+            rlog.write(f"$ {step.command or step.label}\n")
 
     def _on_line(self, i: int, line: str) -> None:
         """A streamed output line: append it live only if its step is the highlighted one."""
