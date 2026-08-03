@@ -13,14 +13,14 @@ It renders, mirroring the shape netctl's own `netctl.yaml` + `netctl.sh` use but
 
     <product>.sh                                     the thin shim onto lib/platform's launch.sh
     <product>.yaml                                   the starter manifest (groups tree/env_groups/
-                                                     composites/environments the Pydantic loader accepts)
+                                                     environments the Pydantic loader accepts)
     orchestrator/requirements.txt                    the host-venv deps: `-r` the kernel's requirements
                                                      (netctl#730) + product-only pins (no re-pinned kernel)
     orchestrator/src/python/orchestrator/
         __init__.py                                  the product package
         __main__.py                                  `python -m orchestrator` entry
-        cli.py                                       composition root: root Typer app + assemble + main +
-                                                     the `all` composite wiring (run_composite)
+        cli.py                                       composition root: root Typer app + assemble
+                                                     (step_context binds the `all` aggregate) + main
         paths.py                                     the ProductContext wiring (delivery.context); repo root
                                                      found by walking up to the manifest marker, not a depth
         environments.py                              the EnvironmentProvider (backends + the env-gate)
@@ -33,8 +33,9 @@ Design / scope (best-effort MINIMAL slice; netctl#651 strand 4 is under-specifie
 
     IN this slice
       - a single-command-per-group starter manifest that loads clean and exercises BOTH an agnostic group
-        (`build`, flat-collapsed) and an env-first CD group (`deploy`), plus a WORKING composite (`all` is
-        wired to run_composite so `<product> all` runs build->up, not a dead placeholder) and the env matrix;
+        (`build`, flat-collapsed) and an env-first CD group (`deploy`), plus a WORKING aggregate (`all` is
+        an impl-less `depends_on: [build, up]` command the kernel binds via assemble(step_context=...), so
+        `<product> all` runs build->up, not a dead placeholder) and the env matrix;
       - the full product-adapter wiring (paths/environments/cli/__main__) so the CLI actually assembles;
       - the shim + requirements (kernel deps via `-r`, netctl#730), so `./<product>.sh help` runs once
         lib/platform is vendored;
@@ -104,13 +105,12 @@ _MANIFEST = """\
 #   groups        the ONE command tree: group -> command -> { impl: "module:function", help: "one-line
 #                 summary" }. The key order within a group is its membership order; the env-gate is derived.
 #   env_groups    the subset of groups that are env-first (`@@PRODUCT@@ <env> <group> <cmd>`, default below).
-#   composites    named, ordered command pipelines (optional).
 #   environments  the deployment env matrix (a backend per env) + the default env.
 product: @@PRODUCT@@
 
 # --- product build data (read RAW by your paths adapter, IGNORED by the CLI engine) ---
-# The CLI engine reads only groups/env_groups/commands/composites and ignores any other top-level section,
-# so your product's own build data lives here. Uncomment + extend as the pipeline grows.
+# The CLI engine reads only groups/env_groups and ignores any other top-level section, so your product's
+# own build data lives here. Uncomment + extend as the pipeline grows.
 # images:
 #   app: @@PRODUCT@@:local
 # volumes:
@@ -121,27 +121,23 @@ product: @@PRODUCT@@
 # name, so it collapses to ONE flat top-level command (`@@PRODUCT@@ build`); `deploy` is a multi-member
 # env-first group (see env_groups). The starter impls point at the generated `orchestrator.cli` callbacks;
 # replace them with your own as you add commands.
+#
+# `all` is an impl-less AGGREGATE (#895/#896): it declares no impl, only `depends_on`, and the kernel
+# binds it at assembly time (assemble(step_context=...) in orchestrator/cli.py) to run its dependency
+# plan build->up as live-streamed `./@@PRODUCT@@.sh <cmd>` steps - a live example, not a dead
+# placeholder. `stop_on_failure: false` (the default) runs every planned step and takes the worst rc.
 groups:
   build:
     build: { impl: "orchestrator.cli:build", help: "Build the product artefacts (placeholder)." }
   deploy:
     up:   { impl: "orchestrator.cli:up",     help: "Deploy the product to the target environment (placeholder)." }
     down: { impl: "orchestrator.cli:down",   help: "Tear the deployment down (placeholder)." }
-    all:  { impl: "orchestrator.cli:all_cmd", help: "Run the build->up composite end to end (see composites.all)." }
+    all:  { help: "Run build then deploy up end to end (the build->up dependency plan).",
+            depends_on: [build, up], stop_on_failure: false }
 
 # The env-first CD groups: `@@PRODUCT@@ <env> deploy up` (default env below). Every other group is
 # environment-agnostic and rejects an env prefix.
 env_groups: [deploy]
-
-# Named, ordered command pipelines (#456): each step names a command declared above; the runner maps each
-# through the product step factory. `all` is WIRED to the `all` command in the deploy group above
-# (orchestrator.cli:all_cmd calls delivery.orchestrator.product.run_composite), so `@@PRODUCT@@ all` actually
-# runs it - a live example, not a dead placeholder. `stop_on_failure: false` (the default) runs every step
-# and takes the worst rc.
-composites:
-  all:
-    steps: [build, up]
-    stop_on_failure: false
 
 # The deployment environment matrix (#15, folded into the one manifest per #651 strand 1): one env per row,
 # `backend` decides HOW it is realised (`local` today; add a cloud backend and widen _VALID_BACKENDS in
@@ -238,9 +234,10 @@ fresh product adds groups/commands in @@PRODUCT@@.yaml and impl callables HERE, 
 
 Replace the placeholder commands (build/up/down) with your own; keep them as module-level callables so the
 manifest's impl refs resolve (delivery.orchestrator.manifest.resolve_impl imports THIS module and getattrs
-the function named after the `:`). `all_cmd` is a WORKING example of the composite feature (#456): the
-`all` composite in @@PRODUCT@@.yaml (build -> up) is run through the shared composite runner, so a fresh
-product sees the pattern live instead of a dead placeholder - grow it by adding steps to that composite.
+the function named after the `:`). The `all` command in @@PRODUCT@@.yaml is a WORKING example of an
+impl-less AGGREGATE (#895/#896): it carries only `depends_on: [build, up]` and the kernel binds it at
+assembly time via the step context below, so a fresh product sees the pattern live instead of a dead
+placeholder - grow it by adding dependencies to that command in the manifest.
 """
 from __future__ import annotations
 
@@ -248,7 +245,7 @@ import typer
 
 from delivery import cli as delivery_cli
 from delivery import log
-from delivery.orchestrator.product import StepFactoryContext, run_composite
+from delivery.orchestrator.product import StepFactoryContext
 from delivery.orchestrator.steps import argv_step
 
 from . import environments
@@ -258,7 +255,7 @@ app = typer.Typer(add_completion=False, no_args_is_help=True,
                   help=("@@PRODUCT@@ orchestrator (scaffolded on the delivery kernel). AGNOSTIC groups take "
                         "no env (build); ENV-FIRST CD groups run against a target env as the outer prefix "
                         "`@@PRODUCT@@ <env> <group> <cmd>` (default dev): deploy (up/down/all, where `all` "
-                        "runs the build->up composite). Fill in @@PRODUCT@@.yaml to grow the CLI."))
+                        "runs the build->up dependency plan). Fill in @@PRODUCT@@.yaml to grow the CLI."))
 
 # Back-compat command aliases (old token -> canonical), passed IN so the kernel hardcodes none. Empty for a
 # fresh product; add entries here as you rename commands and want the old muscle memory to keep working.
@@ -280,26 +277,22 @@ def down() -> None:
     log.info("@@PRODUCT@@: down (placeholder)")
 
 
-# The composite-runner seam (#456): a command NAME becomes a live-streamed `./@@PRODUCT@@.sh <cmd>` step, so
-# the declarative composites in @@PRODUCT@@.yaml run as DATA through the shared runner - no product Python
-# per composite. Built once; StepFactoryContext is delivery.orchestrator.product's step-factory seam (kept
-# distinct from the identity context in delivery.context, netctl#737).
+# The step-factory seam (#895/#896): a command NAME becomes a live-streamed `./@@PRODUCT@@.sh <cmd>` step,
+# so the manifest's impl-less aggregates (`all`: depends_on build->up) run as DATA through the shared
+# runner - no product Python per aggregate. Built once; StepFactoryContext is
+# delivery.orchestrator.product's step-factory seam (kept distinct from the identity context in
+# delivery.context, netctl#737).
 _STEP_CONTEXT = StepFactoryContext(
     "@@PRODUCT@@", lambda cmd: argv_step(cmd, [str(paths.ROOT / "@@PRODUCT@@.sh"), cmd]))
 
 
-def all_cmd() -> None:
-    """Run the `all` composite declared in @@PRODUCT@@.yaml (build -> up) through the shared composite
-    runner, and exit with its aggregate rc. A WORKING starter example of the composite feature (#456): each
-    step shells `./@@PRODUCT@@.sh <cmd>` live; extend it by editing the composite's `steps` in the manifest.
-    Reachable as `@@PRODUCT@@ all` (flat) or `@@PRODUCT@@ <env> deploy all`."""
-    raise typer.Exit(run_composite("all", paths.CONTEXT.manifest(), _STEP_CONTEXT))
-
-
 # Assemble the CLI from the manifest via the delivery binding layer. Runs at import (like netctl's cli.py):
-# resolve_impl imports this module and binds each command's callback, so every command above must already be
-# defined. The product name only shapes the usage hints.
-delivery_cli.assemble(app, paths.CONTEXT.manifest(), product=paths.CONTEXT.name)
+# resolve_impl imports this module and binds each leaf command's callback, so every command above must
+# already be defined; step_context lets the kernel synthesize the callback for each impl-less aggregate
+# (`all` runs its build->up dependency plan, reachable as `@@PRODUCT@@ all` or `@@PRODUCT@@ <env> deploy
+# all`). The product name only shapes the usage hints.
+delivery_cli.assemble(app, paths.CONTEXT.manifest(), product=paths.CONTEXT.name,
+                      step_context=_STEP_CONTEXT)
 
 
 def main() -> None:

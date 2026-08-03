@@ -60,24 +60,25 @@ def test_generated_manifest_validates_through_the_delivery_loader():
     # act: the SAME loader the product CLI assembles from
     mf = manifest.load(text)
 
-    # assert: the starter taxonomy - an agnostic group, an env-first CD group whose `all` member runs the
-    # composite, and the composite itself
+    # assert: the starter taxonomy - an agnostic group, and an env-first CD group whose `all` member is the
+    # impl-less aggregate over build -> up
     assert mf.groups == {"build": ("build",), "deploy": ("up", "down", "all")}
     assert mf.env_groups == frozenset({"deploy"})
     assert set(mf.commands) == {"build", "deploy"}
     assert set(mf.commands["deploy"]) == {"up", "down", "all"}
-    assert mf.composites["all"].steps == ("build", "up")
+    assert mf.spec_for("deploy", "all").depends_on == ("build", "up")
 
 
 def test_generated_manifest_impls_reference_the_scaffolded_orchestrator_package():
     # arrange / act
     mf = manifest.load(bootstrap.manifest_yaml("fooctl"))
 
-    # assert: each impl is a resolvable "module:function" into the generated package (the wiring contract)
+    # assert: each leaf impl is a resolvable "module:function" into the generated package (the wiring
+    # contract); `all` is the impl-less aggregate the kernel binds itself
     assert mf.spec_for("build", "build").impl == "orchestrator.cli:build"
     assert mf.spec_for("deploy", "up").impl == "orchestrator.cli:up"
     assert mf.spec_for("deploy", "down").impl == "orchestrator.cli:down"
-    assert mf.spec_for("deploy", "all").impl == "orchestrator.cli:all_cmd"
+    assert mf.spec_for("deploy", "all").impl == ""
 
 
 def test_generated_manifest_taxonomy_matches_the_assembly_semantics():
@@ -224,48 +225,48 @@ def test_requirements_relative_r_path_resolves_to_the_vendored_kernel(tmp_path):
     assert resolved == (tmp_path / "lib" / "platform" / "src" / "delivery" / "requirements.txt").resolve()
 
 
-# --- gap #737-2: the `all` composite is reachable (a command runs it), not a dead placeholder ---------
+# --- gap #737-2: the `all` aggregate is reachable (the kernel binds it), not a dead placeholder --------
 
-def test_scaffolded_manifest_declares_no_dead_composite():
+def test_scaffolded_manifest_declares_no_dead_aggregate():
     # arrange
     mf = manifest.load(bootstrap.manifest_yaml("fooctl"))
-    commands = {name for members in mf.commands.values() for name in members}
+    aggregates = {name: spec for members in mf.commands.values()
+                  for name, spec in members.items() if spec.depends_on}
 
-    # assert: every declared composite is invocable via a same-named command (a dead composite has none)
-    assert mf.composites, "starter should exercise the composite feature"
-    for composite in mf.composites:
-        assert composite in commands, f"composite '{composite}' has no command to run it (dead placeholder)"
+    # assert: the starter declares a live aggregate and its plan expands to real leaves
+    assert aggregates, "starter should exercise the aggregate feature"
+    for name in aggregates:
+        plan = mf.plan_for(name)
+        assert plan, f"aggregate '{name}' plans no leaves (dead placeholder)"
 
 
-def test_scaffolded_composite_actually_runs_through_the_shared_runner(tmp_path):
+def test_scaffolded_aggregate_actually_runs_through_the_shared_runner(tmp_path):
     # arrange: a real scaffold; drive its `all` command with the runner's dispatch patched to a recorder,
-    # so we observe the composite really being assembled + dispatched (behavioural, not just declared)
+    # so we observe the aggregate really being planned + dispatched (behavioural, not just declared)
     bootstrap.write("fooctl", tmp_path)
     probe = (
-        "import typer\n"
         "from delivery.orchestrator import product\n"
         "seen = {}\n"
         "def _record(pipeline):\n"
         "    seen['name'] = pipeline.name\n"
         "    seen['labels'] = [s.label for s in pipeline.steps]\n"
         "    return 0\n"
-        "product.dispatch = _record\n"           # run_composite calls the module-level dispatch
-        "from orchestrator import cli\n"
-        "try:\n"
-        "    cli.all_cmd()\n"
-        "except typer.Exit as exc:\n"
-        "    assert exc.exit_code == 0, exc.exit_code\n"
+        "product.dispatch = _record\n"           # run_command calls the module-level dispatch
+        "from typer.testing import CliRunner\n"
+        "from orchestrator import cli\n"         # import assembles the app (step_context binds `all`)
+        "result = CliRunner().invoke(cli.app, ['all'])\n"
+        "assert result.exit_code == 0, result.output\n"
         "assert seen['name'] == 'all', seen\n"
         "assert seen['labels'] == ['build', 'up'], seen\n"
-        "print('COMPOSITE_REACHABLE')\n"
+        "print('AGGREGATE_REACHABLE')\n"
     )
 
     # act
     res = _run_generated(tmp_path / "orchestrator" / "src" / "python", [], code=probe)
 
-    # assert: the `all` command drove run_composite for the 'all' composite (steps build -> up)
+    # assert: the `all` command ran its dependency plan through run_command (leaves build -> up)
     assert res.returncode == 0, res.stderr
-    assert "COMPOSITE_REACHABLE" in res.stdout
+    assert "AGGREGATE_REACHABLE" in res.stdout
 
 
 # --- gap #737-3: root detection is a marker-walk, robust to relocating the orchestrator dir -----------
@@ -293,7 +294,8 @@ def test_generated_cli_help_runs_end_to_end(tmp_path):
     # arrange
     bootstrap.write("fooctl", tmp_path)
 
-    # act: boot the assembled CLI headless - this resolves EVERY manifest impl (incl. all_cmd) at assembly
+    # act: boot the assembled CLI headless - this resolves every manifest impl and binds the `all`
+    # aggregate at assembly
     res = _run_generated(tmp_path / "orchestrator" / "src" / "python", ["help"])
 
     # assert: help renders and exits clean, so a freshly-scaffolded product's `./<name>.sh help` works

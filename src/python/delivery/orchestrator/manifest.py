@@ -17,7 +17,7 @@ engine must not bind to one CLI framework). "One source, two outputs": the same 
 runtime CLI now and, in Phase 2, the CI workflows.
 
 Parsing + validation run through the private Pydantic v2 models below (`_ManifestModel` and its spec
-models). The PUBLIC surface stays the NamedTuples `CommandSpec` / `CompositeSpec` / `Manifest`: `load()`
+models). The PUBLIC surface stays the NamedTuples `CommandSpec` / `Manifest`: `load()`
 converts the validated model into those tuples before returning, so consumers see byte-for-byte the same
 types (field access, tuple unpacking, `taxonomy()`, `spec_for()`, `spec_by_name()`). The fail-loud
 contract is unchanged - every rule violation is raised as a ValueError, and `load()` re-raises any Pydantic
@@ -53,24 +53,13 @@ class CommandSpec(NamedTuple):
     <leaf>` SUBPROCESSES, so an impl-bearing command that also carried deps would re-expand them in the
     child and break dedup-once. Forward path if a hybrid is ever needed: a child-side skip-deps env guard
     (e.g. NETCTL_SKIP_DEPS=1) - deliberately NOT built now. `stop_on_failure` (an aggregate's flag) makes
-    a failed plan step skip the rest instead of running doomed work, mirroring CompositeSpec.
+    a failed plan step skip the rest instead of running doomed work (default False = run every step and
+    take the worst rc).
     """
     impl: str
     help: str
     passthrough_args: bool = False
     depends_on: tuple[str, ...] = ()
-    stop_on_failure: bool = False
-
-
-class CompositeSpec(NamedTuple):
-    """A named, ordered command pipeline declared in the manifest (#456): the step command NAMES to run in
-    order, and whether a failed step stops the rest (`stop_on_failure`, default False = run every step and
-    take the worst rc). Every step must name a command that exists in the manifest (validated in `load()`).
-    This makes composites (bringup, test.all, ...) DATA in the manifest instead of product Python, so a
-    second product gets the same runner + its own composites for free. The runner lives in
-    `delivery.orchestrator.product.run_composite`.
-    """
-    steps: tuple[str, ...]
     stop_on_failure: bool = False
 
 
@@ -81,13 +70,11 @@ class Manifest(NamedTuple):
     consumes, so `taxonomy()` builds the env-gate without duplicating its logic. `commands` is the nested
     spec tree (group -> command -> spec), so `spec_for(group, name)` resolves a member's spec by NESTING -
     the same name may live in several groups (#519: `test all` next to `deploy all`), each owner carrying its
-    own spec, with no flat dotted keys. `composites` maps a composite name to its ordered step commands
-    (#456); empty on a manifest that declares none.
+    own spec, with no flat dotted keys.
     """
     groups: dict[str, tuple[str, ...]]
     env_groups: frozenset[str]
     commands: dict[str, dict[str, CommandSpec]]
-    composites: dict[str, CompositeSpec] = {}
 
     def taxonomy(self) -> CommandTaxonomy:
         """The shared env-gate engine built from this manifest's taxonomy (one env-gate, not a copy)."""
@@ -101,10 +88,10 @@ class Manifest(NamedTuple):
 
     def spec_by_name(self, name: str) -> CommandSpec | None:
         """The spec for a command by its BARE name when exactly ONE group owns it, else None - an absent
-        name OR an ambiguous one owned by several groups (#519: `all`). This flat view is used for the
-        display LABEL of an unambiguous composite step (delivery.orchestrator.product maps a composite's bare
-        step names through the product step factory); a caller that must disambiguate an owned-by-many name
-        uses spec_for(group, name)."""
+        name OR an ambiguous one owned by several groups (#519: `all`). This flat view resolves the bare
+        dependency names in a `depends_on` plan (delivery.orchestrator.product maps each planned leaf
+        through the product step factory); a caller that must disambiguate an owned-by-many name uses
+        spec_for(group, name)."""
         owners = [group for group, specs in self.commands.items() if name in specs]
         return self.commands[owners[0]][name] if len(owners) == 1 else None
 
@@ -173,7 +160,7 @@ def _split_impl(impl: str, context: str) -> tuple[str, str]:
 # validated model into the public NamedTuples above. Modelling it here (rather than an imperative wall of
 # ValueError checks) keeps the schema declarative and the unknown-key tolerance explicit, while the public
 # types stay unchanged. The scalar coercions reproduce the former loader exactly (`str(...).strip()`,
-# `bool(...)`, `... or ()`). Rules whose error names a specific command / composite are enforced in the
+# `bool(...)`, `... or ()`). Rules whose error names a specific command are enforced in the
 # manifest-level `@model_validator` so the message can carry that name (the tests assert on those strings).
 
 
@@ -206,43 +193,35 @@ class _CommandSpecModel(BaseModel):
         return bool(value)
 
 
-class _CompositeSpecModel(BaseModel):
-    """Parse/validate view of one composite pipeline: its ordered step names and the stop-on-failure flag.
-    Coerces like the former loader and IGNORES unknown keys; the non-empty-steps and known-step rules live
-    on the manifest model so their errors can name the composite."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    steps: tuple[str, ...] = ()
-    stop_on_failure: bool = False
-
-    @field_validator("steps", mode="before")
-    @classmethod
-    def _str_tuple(cls, value: object) -> tuple[str, ...]:
-        return tuple(str(step) for step in (value or ()))
-
-    @field_validator("stop_on_failure", mode="before")
-    @classmethod
-    def _as_bool(cls, value: object) -> bool:
-        return bool(value)
-
-
 class _ManifestModel(BaseModel):
     """Parse/validate view of the whole manifest. Unknown TOP-LEVEL sections (product, environments,
     default, images, ... - a product's own build data) are IGNORED, exactly as the former loader read only
-    the taxonomy sections. `groups` is the ONE command tree (group -> command -> spec, #729); the former
-    separate flat `commands` map and its dotted group-scoped keys are gone - NESTING resolves a name owned
-    by several groups. The four validation rules run here (rule 1 groups non-empty; rule 2 env_groups subset;
-    rule 3 every spec has a well-formed non-empty impl/help; rule 4 composite steps name real commands), each
-    raised as a ValueError so `load()` surfaces the same clean message the imperative loader did. Two
-    dependency-model rules (#895) follow them: rule 5 every `depends_on` entry names a known, unambiguous
-    command; rule 6 the dependency graph is acyclic."""
+    the taxonomy sections. The ONE exception is the REMOVED `composites` section (netctl#898): a leftover
+    `composites:` key is rejected LOUDLY (never silently dropped by the extra-ignore tolerance), pointing
+    the manifest author at `depends_on`. `groups` is the ONE command tree (group -> command -> spec, #729);
+    the former separate flat `commands` map and its dotted group-scoped keys are gone - NESTING resolves a
+    name owned by several groups. The five validation rules run here (rule 1 groups non-empty; rule 2
+    env_groups subset; rule 3 every spec has a non-empty help plus impl XOR depends_on; rule 4 every
+    `depends_on` entry names a known, unambiguous command (#895); rule 5 the dependency graph is acyclic
+    (#895)), each raised as a ValueError so `load()` surfaces the same clean message the imperative loader
+    did."""
 
     model_config = ConfigDict(extra="ignore")
 
     groups: dict[str, dict[str, _CommandSpecModel]] = {}
     env_groups: tuple[str, ...] = ()
-    composites: dict[str, _CompositeSpecModel] = {}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_removed_composites(cls, data: object) -> object:
+        # The composites concept was REMOVED (netctl#898, subsumed by depends_on). A leftover `composites:`
+        # key must fail loudly here - silently dropping it via extra="ignore" would turn a still-declared
+        # pipeline into dead data. Every other unknown top-level key stays ignored (backward compatible).
+        if isinstance(data, dict) and "composites" in data:
+            raise ValueError(
+                "manifest declares 'composites', which has been removed: declare an impl-less "
+                "aggregate command with 'depends_on' instead (netctl#898)")
+        return data
 
     @field_validator("groups", mode="before")
     @classmethod
@@ -257,13 +236,6 @@ class _ManifestModel(BaseModel):
     @classmethod
     def _coerce_env_groups(cls, value: object) -> tuple[str, ...]:
         return tuple(str(group) for group in (value or ()))
-
-    @field_validator("composites", mode="before")
-    @classmethod
-    def _coerce_composites(cls, value: object) -> dict:
-        # str-coerce the composite keys and treat a null body as an empty mapping (the sub-model defaults
-        # then apply), mirroring the former `name = str(name); spec = spec or {}`.
-        return {str(name): (spec or {}) for name, spec in (value or {}).items()}
 
     @model_validator(mode="after")
     def _validate_taxonomy(self) -> "_ManifestModel":
@@ -298,20 +270,9 @@ class _ManifestModel(BaseModel):
                 if not spec.help:
                     raise ValueError(f"command '{group}.{name}': missing help")
 
-        # rule 4: every composite step names a command that is a member of some group (the flat name set), so
-        # a typo fails loudly here, not deep in the runner. `stop_on_failure` default False.
-        known_commands = {name for members in self.groups.values() for name in members}
-        for name, spec in self.composites.items():
-            if not spec.steps:
-                raise ValueError(f"composite '{name}': needs a non-empty 'steps' list")
-            for step in spec.steps:
-                if step not in known_commands:
-                    raise ValueError(
-                        f"composite '{name}': step '{step}' is not a command in the manifest")
-
-        # rule 5 (#895): every `depends_on` entry names a KNOWN, UNAMBIGUOUS command (the mirror of the
-        # composite rule 4, tightened: a dependency is a bare name, so a name owned by SEVERAL groups
-        # cannot be depended on - Manifest.plan_for could not resolve it).
+        # rule 4 (#895): every `depends_on` entry names a KNOWN, UNAMBIGUOUS command - a dependency is a
+        # bare name, so a name owned by SEVERAL groups cannot be depended on (Manifest.plan_for could not
+        # resolve it), and a typo fails loudly here, not deep in the runner.
         owners_by_name: dict[str, list[str]] = {}
         for group, members in self.groups.items():
             for name in members:
@@ -328,9 +289,9 @@ class _ManifestModel(BaseModel):
                             f"command '{group}.{name}': dependency '{dep}' is ambiguous "
                             f"(owned by groups {sorted(owners)})")
 
-        # rule 6 (#895): the depends_on graph is ACYCLIC - a 3-colour DFS (white = unvisited, grey = on
+        # rule 5 (#895): the depends_on graph is ACYCLIC - a 3-colour DFS (white = unvisited, grey = on
         # the current path, black = done) over the flat name graph. Only unambiguous names carry edges
-        # (rule 5), so an ambiguous name can never sit inside a cycle; its own out-edges are still walked
+        # (rule 4), so an ambiguous name can never sit inside a cycle; its own out-edges are still walked
         # because every dependency it names is an unambiguous node visited below.
         deps_by_name = {name: self.groups[owners[0]][name].depends_on
                         for name, owners in owners_by_name.items() if len(owners) == 1}
@@ -382,14 +343,15 @@ def load(text: str) -> Manifest:
       - every `env_groups` entry is a declared group;
       - every command spec declares a non-empty `help`, plus either a well-formed "module:function" `impl`
         (a leaf) or a non-empty `depends_on` (an impl-less aggregate, #895) - never both;
-      - every `composites` entry (#456) declares a non-empty `steps` list and every step names a command
-        that exists in the manifest (a member of some group);
       - every `depends_on` entry (#895) names a known, UNAMBIGUOUS command, and the dependency graph is
         acyclic.
-    Unknown top-level keys stay ignored (backward compatible). Any Pydantic ValidationError is re-raised as
-    a plain ValueError (a raw ValidationError never escapes), then the validated model is converted into the
-    public NamedTuples so callers see the unchanged types: `groups` is the membership projection (each
-    group's ordered command names) and `commands` is the nested spec tree (group -> command -> spec).
+    Unknown top-level keys stay ignored (backward compatible), with ONE exception: a leftover `composites:`
+    key is rejected loudly (the concept was removed in netctl#898; declare an impl-less aggregate command
+    with `depends_on` instead) - silently dropping it would turn a still-declared pipeline into dead data.
+    Any Pydantic ValidationError is re-raised as a plain ValueError (a raw ValidationError never escapes),
+    then the validated model is converted into the public NamedTuples so callers see the unchanged types:
+    `groups` is the membership projection (each group's ordered command names) and `commands` is the nested
+    spec tree (group -> command -> spec).
     """
     data = yaml.safe_load(text) or {}
     try:
@@ -404,12 +366,7 @@ def load(text: str) -> Manifest:
                 for name, spec in members.items()}
         for group, members in model.groups.items()
     }
-    composites = {
-        name: CompositeSpec(steps=spec.steps, stop_on_failure=spec.stop_on_failure)
-        for name, spec in model.composites.items()
-    }
-    return Manifest(groups=groups, env_groups=frozenset(model.env_groups),
-                    commands=commands, composites=composites)
+    return Manifest(groups=groups, env_groups=frozenset(model.env_groups), commands=commands)
 
 
 def resolve_impl(spec: CommandSpec) -> Callable[..., object]:

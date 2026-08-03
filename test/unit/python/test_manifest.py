@@ -181,62 +181,29 @@ def test_resolve_impl_raises_a_clear_error_on_a_missing_function():
         manifest.resolve_impl(spec)
 
 
-# --- composites (#456): named, ordered command pipelines declared in the manifest -------------------
+# --- removed composites (#898): a leftover `composites:` key fails loudly ---------------------------
 
-_COMPOSITES = """
-product: demo
-groups:
-  build:
-    install: { impl: "demo.impls:install", help: "Install host prereqs." }
-    build:   { impl: "demo.impls:build",   help: "Build the artefacts." }
-  deploy:
-    up:   { impl: "demo.impls:up",   help: "Deploy up." }
-    seed: { impl: "demo.impls:seed", help: "Seed." }
-env_groups: [deploy]
-composites:
-  bringup: { steps: [install, build, up, seed] }
-  strict:  { steps: [install, build], stop_on_failure: true }
-"""
+def test_load_rejects_a_leftover_composites_key_loudly():
+    # arrange: a manifest still carrying the removed `composites:` section
+    text = _OK + "composites:\n  bringup: { steps: [fmt, lint] }\n"
 
-
-def test_load_reads_a_composites_block_with_steps_and_stop_on_failure():
-    # arrange / act
-    mf = manifest.load(_COMPOSITES)
-
-    # assert: each composite carries its ordered steps; stop_on_failure defaults to False
-    assert mf.composites["bringup"].steps == ("install", "build", "up", "seed")
-    assert mf.composites["bringup"].stop_on_failure is False
-    assert mf.composites["strict"].steps == ("install", "build")
-    assert mf.composites["strict"].stop_on_failure is True
-
-
-def test_load_defaults_composites_to_empty_when_absent():
-    # arrange: a manifest that declares no composites (backward compatible)
-    mf = manifest.load(_OK)
-
-    # act / assert
-    assert mf.composites == {}
-
-
-def test_load_rejects_a_composite_step_naming_an_unknown_command():
-    # arrange: the composite references a command that is not in the manifest
-    text = _COMPOSITES.replace("steps: [install, build, up, seed]", "steps: [install, nope]")
-
-    # act / assert: the error names the composite and the bad step
-    with pytest.raises(ValueError, match="composite 'bringup': step 'nope'"):
+    # act / assert: it is NOT silently dropped by the unknown-key tolerance; the error points at depends_on
+    with pytest.raises(ValueError, match="'composites', which has been removed.*depends_on"):
         manifest.load(text)
 
 
-def test_load_rejects_a_composite_with_no_steps():
-    # arrange: an empty steps list
-    text = _COMPOSITES.replace("steps: [install, build], stop_on_failure: true", "steps: []")
+def test_load_ignores_other_unknown_top_level_keys():
+    # arrange: product build data in extra top-level sections (the backward-compatible tolerance)
+    text = _OK + "images:\n  app: demo:local\nvolumes:\n  build_cache: demo-cache\n"
 
-    # act / assert
-    with pytest.raises(ValueError, match="composite 'strict': needs a non-empty 'steps' list"):
-        manifest.load(text)
+    # act
+    mf = manifest.load(text)
+
+    # assert: only `composites` gets the targeted rejection; everything else stays ignored
+    assert set(mf.commands) == {"code", "build", "deploy"}
 
 
-# --- depends_on (#895): the command dependency model subsuming composites ---------------------------
+# --- depends_on (#895): the command dependency model -------------------------------------------------
 # Under the v1 impl-XOR-depends_on lock a LEAF never carries deps, so every chain flows through impl-less
 # AGGREGATES. A diamond on purpose: bringup reaches `prep` both directly and via `stage`, so prep's
 # leaves are reachable twice - the plan must still run each exactly once.

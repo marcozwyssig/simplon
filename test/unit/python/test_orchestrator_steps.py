@@ -128,7 +128,7 @@ def test_argv_step_command_defaults_to_the_shlex_joined_argv():
 
 
 def test_argv_step_takes_an_explicit_command_override():
-    # Arrange / Act: a composite step whose header should be the dotted CLI path, not the raw argv
+    # Arrange / Act: an aggregate plan step whose header should be the dotted CLI path, not the raw argv
     s = argv_step("package: web jar", ["./netctl.sh", "package"], command="build.package")
     # Assert: the override wins over the shlex-joined argv
     assert s.command == "build.package"

@@ -1,24 +1,17 @@
-"""Runner tests for delivery.orchestrator.product: run_composite (#456), the product-agnostic composite
-runner that maps a manifest-declared composite's step NAMES through the product's step factory
-(`StepFactoryContext`) and dispatches the resulting Pipeline, and its successor run_command (#896),
-which sources the steps from the #895 dependency plan instead. Fake step_factory (no real subprocess, no
-Textual) so the mapping, the stop_on_failure carry-through and the rc propagation are tested in isolation.
-run_composite calls `dispatch`; the tests either capture the Pipeline before it runs or force the headless
-runner, so no TUI is launched. AAA throughout.
+"""Runner tests for delivery.orchestrator.product: run_command (#896), the product-agnostic runner that
+expands a command NAME through the #895 dependency plan (`Manifest.plan_for`), maps each planned leaf
+through the product's step factory (`StepFactoryContext`) and dispatches the resulting Pipeline. Fake
+step_factory (no real subprocess, no Textual) so the mapping, the stop_on_failure carry-through and the
+rc propagation are tested in isolation. run_command calls `dispatch`; the tests either capture the
+Pipeline before it runs or force the headless runner, so no TUI is launched. AAA throughout.
 """
 from __future__ import annotations
 
 import pytest
 
 from delivery.orchestrator import product
-from delivery.orchestrator.manifest import CompositeSpec, Manifest
 from delivery.orchestrator.manifest import load as manifest_load
 from delivery.orchestrator.steps import Outcome, Step, run_headless
-
-
-def _manifest(**composites: CompositeSpec) -> Manifest:
-    """A minimal Manifest carrying only the composites under test (the runner reads nothing else)."""
-    return Manifest(groups={}, env_groups=frozenset(), commands={}, composites=composites)
 
 
 def _factory(rc_by_cmd: dict[str, int] | None = None):
@@ -34,79 +27,6 @@ def _factory(rc_by_cmd: dict[str, int] | None = None):
     return factory, built
 
 
-def test_run_composite_maps_each_step_through_the_factory_in_order(monkeypatch):
-    # arrange: capture the dispatched pipeline instead of running it
-    captured = {}
-    monkeypatch.setattr(product, "dispatch", lambda p: captured.setdefault("pipeline", p) or 0)
-    factory, built = _factory()
-    ctx = product.StepFactoryContext("demo", factory)
-    mf = _manifest(bringup=CompositeSpec(steps=("install", "build", "up", "seed")))
-
-    # act
-    product.run_composite("bringup", mf, ctx)
-
-    # assert: one step per command, in declared order, each built via the factory
-    assert built == ["install", "build", "up", "seed"]
-    assert [s.label for s in captured["pipeline"].steps] == ["install", "build", "up", "seed"]
-    assert captured["pipeline"].name == "bringup"
-
-
-@pytest.mark.parametrize("stop_on_failure", [True, False])
-def test_run_composite_carries_the_composite_stop_on_failure_onto_the_pipeline(monkeypatch, stop_on_failure):
-    # arrange
-    captured = {}
-    monkeypatch.setattr(product, "dispatch", lambda p: captured.setdefault("pipeline", p) or 0)
-    factory, _ = _factory()
-    ctx = product.StepFactoryContext("demo", factory)
-    mf = _manifest(c=CompositeSpec(steps=("install", "build"), stop_on_failure=stop_on_failure))
-
-    # act
-    product.run_composite("c", mf, ctx)
-
-    # assert: the Pipeline respects the composite's stop_on_failure verbatim
-    assert captured["pipeline"].stop_on_failure is stop_on_failure
-
-
-def test_run_composite_returns_zero_when_every_step_passes(monkeypatch):
-    # arrange: force the headless runner so real rc propagation is exercised (no TUI)
-    monkeypatch.setattr(product, "dispatch", run_headless)
-    factory, _ = _factory()
-    ctx = product.StepFactoryContext("demo", factory)
-    mf = _manifest(c=CompositeSpec(steps=("install", "build", "up")))
-
-    # act
-    rc = product.run_composite("c", mf, ctx)
-
-    # assert
-    assert rc == 0
-
-
-def test_run_composite_returns_nonzero_when_a_step_fails(monkeypatch):
-    # arrange: the middle step fails; run headless so the pipeline's worst-rc verdict is real
-    monkeypatch.setattr(product, "dispatch", run_headless)
-    factory, _ = _factory({"build": 2})
-    ctx = product.StepFactoryContext("demo", factory)
-    mf = _manifest(c=CompositeSpec(steps=("install", "build", "up")))
-
-    # act
-    rc = product.run_composite("c", mf, ctx)
-
-    # assert: a failing fake step makes the overall verdict nonzero
-    assert rc != 0
-
-
-def test_run_composite_raises_a_clear_error_for_an_unknown_composite():
-    # arrange
-    factory, _ = _factory()
-    ctx = product.StepFactoryContext("demo", factory)
-    mf = _manifest(bringup=CompositeSpec(steps=("install",)))
-
-    # act / assert
-    with pytest.raises(ValueError, match="no composite named 'nope'"):
-        product.run_composite("nope", mf, ctx)
-
-
-# --- run_command (#896): the dependency-plan runner subsuming run_composite -------------------------
 # Manifests are loaded from YAML so the #895 load-time validation is on the path; `bringup` is an
 # impl-less aggregate whose plan is (install, build, up, seed).
 
@@ -172,6 +92,20 @@ def test_run_command_on_a_leaf_runs_just_that_leaf(monkeypatch):
 
     # assert: a dep-less leaf plans as itself alone
     assert built == ["seed"]
+
+
+def test_run_command_returns_zero_when_every_planned_step_passes(monkeypatch):
+    # arrange: force the headless runner so real rc propagation is exercised (no TUI)
+    monkeypatch.setattr(product, "dispatch", run_headless)
+    factory, _ = _factory()
+    ctx = product.StepFactoryContext("demo", factory)
+    mf = manifest_load(_DEPS_MANIFEST)
+
+    # act
+    rc = product.run_command("bringup", mf, ctx)
+
+    # assert
+    assert rc == 0
 
 
 def test_run_command_returns_nonzero_when_a_planned_step_fails(monkeypatch):

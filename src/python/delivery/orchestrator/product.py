@@ -1,20 +1,17 @@
-"""Running a manifest-declared composite (#456): the product-agnostic runner that turns a `composites:`
-entry into a live Pipeline. A composite is a named, ordered list of command NAMES (bringup, test.all, ...);
-this module maps each name through the product's own step factory - typically a streaming `./<product>.sh
-<cmd>` subprocess - and dispatches the resulting Pipeline through the shared runner. The composites become
-DATA in the product's manifest instead of hand-written product Python, so a second product (infractl) gets
-the same runner and its own composites for free.
-
-`run_command` (#896) is the successor runner on the SAME seam: it takes a command NAME, expands it through
-`Manifest.plan_for` (the #895 dependency model - transitive, deduped, each unique command once, in
-dependency order) and dispatches the planned leaves as one Pipeline. It subsumes `run_composite`, which
-coexists until the remove-composites issue lands.
+"""Running a manifest-declared command as its dependency plan (#895/#896): the product-agnostic runner
+that turns a command NAME into a live Pipeline. `run_command` expands the name through
+`Manifest.plan_for` (transitive, deduped, each unique command once, in dependency order), maps each
+planned leaf through the product's own step factory - typically a streaming `./<product>.sh <cmd>`
+subprocess - and dispatches the resulting Pipeline through the shared runner. Multi-command pipelines
+(bringup, test.all, ...) are thereby DATA in the product's manifest (impl-less aggregates carrying
+`depends_on`) instead of hand-written product Python, so a second product (infractl) gets the same
+runner and its own aggregates for free.
 
 This module is PURE of any product import: the ONLY product-specific thing is the injected `step_factory`
 on the `StepFactoryContext`. That name is deliberately DISTINCT from `delivery.context.ProductContext`
 (which carries a product's identity/root/manifest path for the CLI engine): the two used to share the name
 `ProductContext`, disambiguated only by a docstring, which was a footgun (netctl#737). This seam is the
-composite-runner one - a command name -> Step factory - so it is named for what it is.
+step-runner one - a command name -> Step factory - so it is named for what it is.
 """
 from __future__ import annotations
 
@@ -27,7 +24,7 @@ from delivery.orchestrator.steps import Pipeline, Step, dispatch
 
 @dataclass(frozen=True)
 class StepFactoryContext:
-    """What `run_composite` needs from a product: its name and a factory that, given a command NAME, returns
+    """What `run_command` needs from a product: its name and a factory that, given a command NAME, returns
     the Step that runs it (typically a streaming `./<product>.sh <cmd>` subprocess step). Immutable; the
     product builds it once and passes it in, so the runner never imports the product.
 
@@ -53,8 +50,6 @@ def run_command(name: str, manifest: Manifest, ctx: StepFactoryContext, *, group
     `./<product>.sh <leaf>` subprocess), wrapped in a Pipeline carrying the command's own
     `stop_on_failure`, and dispatched through the shared runner (TUI when available, else headless).
 
-    Same shape as `run_composite`, with the step source changed from `composites[name].steps` to
-    `plan_for(name)`; it SUBSUMES the composite runner, which stays until the remove-composites issue.
     `group` disambiguates a root name owned by several groups (the #519 `test all` shape); it flows
     through to `plan_for`. Fails loudly with a clear ValueError when `name` does not resolve."""
     spec = (manifest.commands.get(group, {}).get(name) if group is not None
@@ -63,21 +58,5 @@ def run_command(name: str, manifest: Manifest, ctx: StepFactoryContext, *, group
         raise ValueError(f"no unambiguous command named '{name}' in the manifest")
     plan = manifest.plan_for(name, group=group)
     steps = [ctx.step_factory(cmd) for cmd in plan]
-    pipeline = Pipeline(name=name, steps=steps, stop_on_failure=spec.stop_on_failure)
-    return dispatch(pipeline)
-
-
-def run_composite(name: str, manifest: Manifest, ctx: StepFactoryContext) -> int:
-    """Run the composite `name` declared in `manifest` and return the pipeline's exit code (0 iff every step
-    passed). Each step command is mapped through `ctx.step_factory` into a Step, wrapped in a Pipeline that
-    carries the composite's `stop_on_failure`, and dispatched through the shared runner (TUI when available,
-    else headless). Fails loudly with a clear ValueError when no such composite is declared."""
-    try:
-        spec = manifest.composites[name]
-    except KeyError:
-        raise ValueError(
-            f"no composite named '{name}' in the manifest (declared: {sorted(manifest.composites)})"
-        ) from None
-    steps = [ctx.step_factory(cmd) for cmd in spec.steps]
     pipeline = Pipeline(name=name, steps=steps, stop_on_failure=spec.stop_on_failure)
     return dispatch(pipeline)
