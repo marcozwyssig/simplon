@@ -252,3 +252,109 @@ def test_a_group_default_namesake_is_neither_a_subcommand_nor_a_separate_flat_co
     assert "build" not in flat
     build_sub = {c.name for c in _groups(app)["build"].typer_instance.registered_commands}
     assert build_sub == {"diff", "docs"}
+
+
+# --- impl-less aggregate binding (#896): assemble synthesizes the aggregate's callback -----------------
+# `bringup` is an impl-less aggregate (deps, no impl); assemble binds it to a kernel-synthesized closure
+# that expands the #895 dependency plan through run_command and exits with the pipeline's rc.
+
+_AGG_MANIFEST = """
+product: demo
+groups:
+  build:
+    install: { impl: "agg_impls:install", help: "Install host prereqs." }
+    build:   { impl: "agg_impls:build",   help: "Build the artefacts." }
+  deploy:
+    up:      { impl: "agg_impls:up",   help: "Deploy up." }
+    seed:    { impl: "agg_impls:seed", help: "Seed." }
+    bringup: { help: "Full bring-up.", depends_on: [build, up, seed] }
+env_groups: [deploy]
+"""
+
+
+def _agg_impls_module():
+    mod = types.ModuleType("agg_impls")
+    for fn_name in ("install", "build", "up", "seed"):
+        def make(n):
+            def _fn():
+                return n
+            _fn.__name__ = n
+            return _fn
+        setattr(mod, fn_name, make(fn_name))
+    return mod
+
+
+@pytest.fixture
+def agg_assembled(monkeypatch):
+    """Assemble a demo app whose manifest declares the `bringup` aggregate, injecting a fake
+    StepFactoryContext that records every planned command and succeeds - so invoking the aggregate is
+    observable end-to-end without a subprocess or the TUI (dispatch is forced headless-free by the fake
+    steps; the steps themselves are instant)."""
+    import typer
+
+    from delivery.orchestrator import product
+    from delivery.orchestrator.steps import Outcome, Step, run_headless
+
+    monkeypatch.setattr(product, "dispatch", run_headless)
+    built: list[str] = []
+
+    def step_factory(cmd: str) -> Step:
+        built.append(cmd)
+        return Step(label=cmd, action=lambda: Outcome(rc=0, output=""))
+
+    step_ctx = product.StepFactoryContext("demo", step_factory)
+    sys.modules["agg_impls"] = _agg_impls_module()
+    try:
+        app = typer.Typer(add_completion=False, no_args_is_help=True, help="demo root")
+        cli.assemble(app, manifest.load(_AGG_MANIFEST), product="demo", step_context=step_ctx)
+        yield app, built
+    finally:
+        del sys.modules["agg_impls"]
+
+
+def test_an_impl_less_aggregate_registers_under_its_group_with_a_hidden_flat_alias(agg_assembled):
+    # arrange
+    app, _ = agg_assembled
+
+    # assert: registration behaviour is unchanged - a subcommand of its group plus a hidden flat alias
+    deploy_members = {c.name for c in _groups(app)["deploy"].typer_instance.registered_commands}
+    assert "bringup" in deploy_members
+    flat = _flat(app)
+    assert flat["bringup"].hidden is True
+
+
+def test_invoking_an_aggregate_runs_its_dependency_plan_and_exits_zero(agg_assembled):
+    # arrange
+    app, built = agg_assembled
+
+    # act: the hidden flat alias dispatches the synthesized callback
+    result = CliRunner().invoke(app, ["bringup"])
+
+    # assert: the plan's leaves were built as steps in dependency order and the run exited 0
+    assert result.exit_code == 0, result.output
+    assert built == ["build", "up", "seed"]
+
+
+def test_assemble_fails_loudly_when_an_aggregate_manifest_gets_no_step_context():
+    # arrange: the same manifest, but the product forgot to inject its StepFactoryContext
+    import typer
+
+    sys.modules["agg_impls"] = _agg_impls_module()
+    try:
+        app = typer.Typer(add_completion=False, no_args_is_help=True, help="demo root")
+
+        # act / assert: assembly (not first invocation) rejects the unbindable aggregate
+        with pytest.raises(ValueError, match="'deploy.bringup' is an impl-less aggregate"):
+            cli.assemble(app, manifest.load(_AGG_MANIFEST), product="demo")
+    finally:
+        del sys.modules["agg_impls"]
+
+
+def test_the_aggregates_help_line_is_its_synthesized_callbacks_docstring(agg_assembled):
+    # arrange
+    app, _ = agg_assembled
+
+    # assert: Typer renders the spec's help from the closure docstring
+    bringup = next(c for c in _groups(app)["deploy"].typer_instance.registered_commands
+                   if c.name == "bringup")
+    assert bringup.callback.__doc__ == "Full bring-up."

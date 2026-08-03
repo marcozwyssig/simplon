@@ -286,6 +286,11 @@ class _ManifestModel(BaseModel):
                 if spec.impl and spec.depends_on:
                     raise ValueError(
                         f"command '{group}.{name}': impl and depends_on are mutually exclusive")
+                # A passthrough command forwards trailing args to ONE underlying tool; an aggregate's plan
+                # runs each leaf as its own subprocess, so there is no single forwarding target (#896).
+                if spec.depends_on and spec.passthrough_args:
+                    raise ValueError(
+                        f"command '{group}.{name}': passthrough_args cannot combine with depends_on")
                 if not spec.impl and not spec.depends_on:
                     raise ValueError(f"command '{group}.{name}': missing impl")
                 if spec.impl:

@@ -386,6 +386,17 @@ def test_load_still_rejects_a_command_with_neither_impl_nor_depends_on():
         manifest.load(text)
 
 
+def test_load_rejects_an_aggregate_declaring_passthrough_args():
+    # arrange: a passthrough command forwards trailing args to ONE tool; an aggregate's plan runs each
+    # leaf as its own subprocess, so there is no single forwarding target (#896)
+    text = ("groups:\n  code:\n    fmt: { impl: 'm:f', help: 'x' }\n"
+            "    fix: { help: 'y', depends_on: [fmt], passthrough_args: true }\n")
+
+    # act / assert
+    with pytest.raises(ValueError, match="command 'code.fix': passthrough_args cannot combine with depends_on"):
+        manifest.load(text)
+
+
 def test_load_rejects_an_aggregate_with_a_missing_help():
     # arrange: an impl-less aggregate still owes its help line
     text = ("groups:\n  code:\n    fmt: { impl: 'm:f', help: 'x' }\n"

@@ -25,6 +25,7 @@ import typer
 from delivery import log
 from delivery.context import ProductContext
 from delivery.orchestrator import manifest
+from delivery.orchestrator.product import StepFactoryContext, run_command
 
 # The passthrough context settings: a passthrough command forwards unrecognised trailing args to its
 # underlying tool (e.g. accept -> pytest). The manifest declares the intent (passthrough_args); this maps
@@ -80,7 +81,32 @@ def _group_default_app(help_text: str, default_fn: Callable[..., object]) -> typ
     return ga
 
 
-def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str) -> None:
+def _command_callback(mf: manifest.Manifest, group: str, name: str, spec: manifest.CommandSpec,
+                      step_context: StepFactoryContext | None) -> Callable[..., object]:
+    """The Typer callback for one manifest command. A leaf resolves to its own impl callable, unchanged.
+    An impl-less AGGREGATE (#895/#896) has no callable of its own, so the kernel synthesizes one: it
+    expands the command through the dependency plan (`run_command`) and exits with the pipeline's rc via
+    `typer.Exit`. The closure is GROUP-scoped, so an aggregate name owned by several groups still resolves
+    its own plan (`test all` vs `deploy all`). Binding an aggregate requires the product's
+    `StepFactoryContext` (the `step_context` kwarg on `assemble`); a manifest that declares an aggregate
+    while the product supplied none fails loudly at ASSEMBLY time, not at first invocation. The spec's
+    help becomes the closure's docstring, which Typer renders as the command help."""
+    if spec.impl:
+        return manifest.resolve_impl(spec)
+    if step_context is None:
+        raise ValueError(f"command '{group}.{name}' is an impl-less aggregate; "
+                         "assemble(step_context=...) is required to bind it")
+
+    def _aggregate() -> None:
+        raise typer.Exit(code=run_command(name, mf, step_context, group=group))
+
+    _aggregate.__name__ = name.replace("-", "_")
+    _aggregate.__doc__ = spec.help
+    return _aggregate
+
+
+def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
+             step_context: StepFactoryContext | None = None) -> None:
     """Assemble a product's Typer app from its loaded manifest (#437). One sub-app per non-flat group
     (rich-panelled CI vs CD); each command is registered under its group AND again as a HIDDEN flat
     back-compat alias bound to the SAME callback, so `<product> <env> deploy up` and the bare `<product> up`
@@ -94,6 +120,12 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str) -> None:
     its manifest impl ("module:function"). Per-command `--help` is unchanged: help stays with each callback's
     docstring, which Typer renders. The product name only shapes the usage hints (panel + group help), so a
     second product reads in its own voice.
+
+    An impl-less AGGREGATE (#896) binds a kernel-synthesized callback that runs its #895 dependency plan
+    (`run_command`) instead of a resolved impl; `step_context` injects the product's `StepFactoryContext`
+    for that binding and is only required when the manifest declares aggregates. Registration behaviour is
+    unchanged: an aggregate registers under its group plus the hidden flat alias unless its name is
+    ambiguous, exactly like a leaf.
     """
     tax = mf.taxonomy()
     cd_panel = _cd_panel(product)
@@ -108,7 +140,8 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str) -> None:
         env_first = tax.group_requires_env(group)
         if tax.is_group_default_command(group):
             ga = _group_default_app(mf.spec_for(group, group).help,
-                                    manifest.resolve_impl(mf.spec_for(group, group)))
+                                    _command_callback(mf, group, group, mf.spec_for(group, group),
+                                                      step_context))
         else:
             ga = typer.Typer(add_completion=False, no_args_is_help=True,
                              help=(f"{group} commands. " + ("Env-first: `" + product + " <env> " + group
@@ -130,7 +163,7 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str) -> None:
             if default_member and name == group:
                 continue
             spec = mf.spec_for(group, name)
-            fn = manifest.resolve_impl(spec)
+            fn = _command_callback(mf, group, name, spec, step_context)
             kw = {"context_settings": _PASSTHROUGH_CTX} if spec.passthrough_args else {}
             if tax.is_flat_command_group(group):
                 app.command(name=name, rich_help_panel=panel, **kw)(fn)
