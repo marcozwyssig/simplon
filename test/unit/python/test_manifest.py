@@ -234,3 +234,163 @@ def test_load_rejects_a_composite_with_no_steps():
     # act / assert
     with pytest.raises(ValueError, match="composite 'strict': needs a non-empty 'steps' list"):
         manifest.load(text)
+
+
+# --- depends_on (#895): the command dependency model subsuming composites ---------------------------
+# Under the v1 impl-XOR-depends_on lock a LEAF never carries deps, so every chain flows through impl-less
+# AGGREGATES. A diamond on purpose: bringup reaches `prep` both directly and via `stage`, so prep's
+# leaves are reachable twice - the plan must still run each exactly once.
+
+_DEPS = """
+product: demo
+groups:
+  build:
+    install: { impl: "demo.impls:install", help: "Install host prereqs." }
+    build:   { impl: "demo.impls:build",   help: "Build the artefacts." }
+    prep:    { help: "Install + build.", depends_on: [install, build] }
+  deploy:
+    up:      { impl: "demo.impls:up",   help: "Deploy up." }
+    seed:    { impl: "demo.impls:seed", help: "Seed." }
+    stage:   { help: "Prep + deploy up.", depends_on: [prep, up] }
+    bringup: { help: "Full bring-up.", depends_on: [stage, prep, seed], stop_on_failure: true }
+env_groups: [deploy]
+"""
+
+
+def test_load_reads_depends_on_and_stop_on_failure_defaulting_to_empty_and_false():
+    # arrange / act
+    mf = manifest.load(_DEPS)
+
+    # assert: declared deps come through as tuples; a leaf defaults to () / False
+    assert mf.spec_for("build", "prep").depends_on == ("install", "build")
+    assert mf.spec_for("deploy", "bringup").depends_on == ("stage", "prep", "seed")
+    assert mf.spec_for("deploy", "bringup").stop_on_failure is True
+    assert mf.spec_for("build", "install").depends_on == ()
+    assert mf.spec_for("build", "install").stop_on_failure is False
+
+
+def test_plan_for_resolves_transitively_in_dependency_order_and_dedups_the_diamond():
+    # arrange: bringup reaches prep twice (directly and via stage), so its leaves are reachable twice
+    mf = manifest.load(_DEPS)
+
+    # act
+    plan = mf.plan_for("bringup")
+
+    # assert: every transitive dep before its dependant, each unique command exactly once
+    assert plan == ("install", "build", "up", "seed")
+
+
+def test_plan_for_never_emits_an_impl_less_aggregate_only_its_leaves():
+    # arrange / act
+    mf = manifest.load(_DEPS)
+    plan = mf.plan_for("bringup")
+
+    # assert: the aggregates contribute their leaves, never themselves
+    assert "bringup" not in plan and "stage" not in plan and "prep" not in plan
+
+
+def test_plan_for_a_nested_aggregate_and_a_bare_leaf():
+    # arrange / act
+    mf = manifest.load(_DEPS)
+
+    # assert: a nested aggregate expands to its transitive leaves; a leaf plans as just itself
+    assert mf.plan_for("stage") == ("install", "build", "up")
+    assert mf.plan_for("install") == ("install",)
+
+
+def test_plan_for_rejects_an_unknown_command_name():
+    # arrange
+    mf = manifest.load(_DEPS)
+
+    # act / assert
+    with pytest.raises(ValueError, match="no unambiguous command named 'nope'"):
+        mf.plan_for("nope")
+
+
+def test_plan_for_disambiguates_an_ambiguous_root_via_the_group_keyword():
+    # arrange: `all` is owned by test AND deploy (the #519 shape), so the bare name cannot resolve
+    text = """
+groups:
+  test:
+    unit: { impl: "demo.impls:unit", help: "Unit gate." }
+    all:  { help: "Every test stage.", depends_on: [unit] }
+  deploy:
+    up:  { impl: "demo.impls:up", help: "Deploy up." }
+    all: { help: "Full bring-up.", depends_on: [up] }
+env_groups: [deploy]
+"""
+    mf = manifest.load(text)
+
+    # act / assert: the group keyword resolves each owner's own aggregate; the bare name fails loudly
+    assert mf.plan_for("all", group="test") == ("unit",)
+    assert mf.plan_for("all", group="deploy") == ("up",)
+    with pytest.raises(ValueError, match="no unambiguous command named 'all'"):
+        mf.plan_for("all")
+
+
+def test_load_rejects_a_dependency_naming_an_unknown_command():
+    # arrange: prep depends on a command that is not in the manifest
+    text = _DEPS.replace("depends_on: [install, build]", "depends_on: [nope, build]")
+
+    # act / assert: the error names the owning command and the bad dependency
+    with pytest.raises(ValueError, match="command 'build.prep': dependency 'nope' is not a command"):
+        manifest.load(text)
+
+
+def test_load_rejects_a_dependency_naming_an_ambiguous_command():
+    # arrange: `all` is owned by two groups, so no bare dependency can name it
+    text = """
+groups:
+  test:
+    all: { impl: "demo.impls:test_all", help: "Every test stage." }
+  deploy:
+    all:   { impl: "demo.impls:deploy_all", help: "Full bring-up." }
+    combo: { help: "Aggregate over an ambiguous name.", depends_on: [all] }
+"""
+
+    # act / assert
+    with pytest.raises(ValueError, match="command 'deploy.combo': dependency 'all' is ambiguous"):
+        manifest.load(text)
+
+
+def test_load_rejects_a_dependency_cycle_naming_its_path():
+    # arrange: a -> b -> a
+    text = """
+groups:
+  code:
+    a: { help: "A.", depends_on: [b] }
+    b: { help: "B.", depends_on: [a] }
+"""
+
+    # act / assert: the 3-colour DFS reports the cycle path
+    with pytest.raises(ValueError, match="dependency cycle: a -> b -> a"):
+        manifest.load(text)
+
+
+def test_load_rejects_a_command_declaring_both_impl_and_depends_on():
+    # arrange: the v1 lock - a command is a leaf-with-impl XOR an impl-less aggregate
+    text = ("groups:\n  code:\n    fmt: { impl: 'm:f', help: 'x' }\n"
+            "    fix: { impl: 'm:g', help: 'y', depends_on: [fmt] }\n")
+
+    # act / assert
+    with pytest.raises(ValueError, match="command 'code.fix': impl and depends_on are mutually exclusive"):
+        manifest.load(text)
+
+
+def test_load_still_rejects_a_command_with_neither_impl_nor_depends_on():
+    # arrange: an empty spec is neither a leaf nor an aggregate
+    text = "groups:\n  code:\n    fmt: { help: 'x' }\n"
+
+    # act / assert: the pre-#895 missing-impl message is unchanged
+    with pytest.raises(ValueError, match="command 'code.fmt': missing impl"):
+        manifest.load(text)
+
+
+def test_load_rejects_an_aggregate_with_a_missing_help():
+    # arrange: an impl-less aggregate still owes its help line
+    text = ("groups:\n  code:\n    fmt: { impl: 'm:f', help: 'x' }\n"
+            "    fix: { depends_on: [fmt] }\n")
+
+    # act / assert
+    with pytest.raises(ValueError, match="command 'code.fix': missing help"):
+        manifest.load(text)

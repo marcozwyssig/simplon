@@ -44,10 +44,22 @@ class CommandSpec(NamedTuple):
     framework's settings. The owning GROUP is deliberately NOT stored here: it is the key of the group that
     nests this spec in the manifest's `commands` tree (the single membership source), so a command can never
     disagree with it.
+
+    `depends_on` (#895) names the commands this one depends on: the runner resolves them transitively,
+    DEDUPLICATES by name and runs each unique command exactly once per top-level invocation, in dependency
+    order (`Manifest.plan_for`). Idempotency is each command's own guarantee - there is no freshness/Make
+    tracking, only dedup-once. `impl` and `depends_on` are mutually exclusive (v1 lock): a command is
+    either a leaf-with-impl or an impl-less AGGREGATE. Rationale: plan steps execute as `./<product>.sh
+    <leaf>` SUBPROCESSES, so an impl-bearing command that also carried deps would re-expand them in the
+    child and break dedup-once. Forward path if a hybrid is ever needed: a child-side skip-deps env guard
+    (e.g. NETCTL_SKIP_DEPS=1) - deliberately NOT built now. `stop_on_failure` (an aggregate's flag) makes
+    a failed plan step skip the rest instead of running doomed work, mirroring CompositeSpec.
     """
     impl: str
     help: str
     passthrough_args: bool = False
+    depends_on: tuple[str, ...] = ()
+    stop_on_failure: bool = False
 
 
 class CompositeSpec(NamedTuple):
@@ -104,6 +116,45 @@ class Manifest(NamedTuple):
         owners = [group for group, specs in self.commands.items() if name in specs]
         return f"{owners[0]}.{name}" if len(owners) == 1 else None
 
+    def plan_for(self, name: str, *, group: str | None = None) -> tuple[str, ...]:
+        """The execution plan for command `name` (#895): a post-order DFS over `depends_on`, so every
+        transitive dependency is planned BEFORE its dependant; a `done` set dedups by name, so a command
+        reached along several paths (a diamond) appears exactly ONCE per top-level invocation; and a node
+        is emitted only if it carries its own `impl` - an impl-less AGGREGATE contributes its leaves,
+        never itself. A grey-set (DFS trail) cycle guard fails loudly, defensively: load() already
+        rejects cyclic manifests, so a validated manifest never trips it here.
+
+        `name` is a bare command name; `group` disambiguates a ROOT owned by several groups (#519:
+        `test all` vs `deploy all`). Dependency ENTRIES are always bare names - load() validates each as
+        known and unambiguous, so they resolve via spec_by_name without a group."""
+        plan: list[str] = []
+        done: set[str] = set()
+        trail: list[str] = []   # the DFS path = the grey set, kept ordered for the cycle message
+
+        def visit(cmd: str, spec: CommandSpec) -> None:
+            if cmd in done:
+                return
+            if cmd in trail:
+                raise ValueError("dependency cycle: " + " -> ".join(trail[trail.index(cmd):] + [cmd]))
+            trail.append(cmd)
+            for dep in spec.depends_on:
+                dep_spec = self.spec_by_name(dep)
+                if dep_spec is None:
+                    raise ValueError(
+                        f"command '{cmd}': dependency '{dep}' is not an unambiguous command in the manifest")
+                visit(dep, dep_spec)
+            trail.pop()
+            done.add(cmd)
+            if spec.impl:
+                plan.append(cmd)
+
+        root = (self.commands.get(group, {}).get(name) if group is not None
+                else self.spec_by_name(name))
+        if root is None:
+            raise ValueError(f"no unambiguous command named '{name}' in the manifest")
+        visit(name, root)
+        return tuple(plan)
+
 
 def _split_impl(impl: str, context: str) -> tuple[str, str]:
     """Split a "module:function" reference into its two parts, failing loudly on a malformed one.
@@ -136,13 +187,20 @@ class _CommandSpecModel(BaseModel):
     impl: str = ""
     help: str = ""
     passthrough_args: bool = False
+    depends_on: tuple[str, ...] = ()
+    stop_on_failure: bool = False
 
     @field_validator("impl", "help", mode="before")
     @classmethod
     def _stripped_str(cls, value: object) -> str:
         return str(value).strip()
 
-    @field_validator("passthrough_args", mode="before")
+    @field_validator("depends_on", mode="before")
+    @classmethod
+    def _str_tuple(cls, value: object) -> tuple[str, ...]:
+        return tuple(str(dep) for dep in (value or ()))
+
+    @field_validator("passthrough_args", "stop_on_failure", mode="before")
     @classmethod
     def _as_bool(cls, value: object) -> bool:
         return bool(value)
@@ -176,7 +234,9 @@ class _ManifestModel(BaseModel):
     separate flat `commands` map and its dotted group-scoped keys are gone - NESTING resolves a name owned
     by several groups. The four validation rules run here (rule 1 groups non-empty; rule 2 env_groups subset;
     rule 3 every spec has a well-formed non-empty impl/help; rule 4 composite steps name real commands), each
-    raised as a ValueError so `load()` surfaces the same clean message the imperative loader did."""
+    raised as a ValueError so `load()` surfaces the same clean message the imperative loader did. Two
+    dependency-model rules (#895) follow them: rule 5 every `depends_on` entry names a known, unambiguous
+    command; rule 6 the dependency graph is acyclic."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -216,13 +276,20 @@ class _ManifestModel(BaseModel):
             if group not in self.groups:
                 raise ValueError(f"env_groups entry '{group}' is not a declared group")
 
-        # rule 3: every command spec declares a non-empty `help` and a well-formed "module:function" `impl`.
-        # The error names the owning group + command (nesting makes the owner explicit).
+        # rule 3: every command spec declares a non-empty `help`, plus EITHER a well-formed
+        # "module:function" `impl` (a leaf) OR a non-empty `depends_on` (an impl-less aggregate, #895) -
+        # never both (v1 lock: plan steps run as subprocesses, so an impl-bearing command with deps would
+        # re-expand them in the child and break dedup-once; forward path is a child-side skip-deps env
+        # guard, deliberately not built). The error names the owning group + command.
         for group, members in self.groups.items():
             for name, spec in members.items():
-                if not spec.impl:
+                if spec.impl and spec.depends_on:
+                    raise ValueError(
+                        f"command '{group}.{name}': impl and depends_on are mutually exclusive")
+                if not spec.impl and not spec.depends_on:
                     raise ValueError(f"command '{group}.{name}': missing impl")
-                _split_impl(spec.impl, f"command '{group}.{name}'")   # validates the "module:function" shape
+                if spec.impl:
+                    _split_impl(spec.impl, f"command '{group}.{name}'")   # validates the "module:function" shape
                 if not spec.help:
                     raise ValueError(f"command '{group}.{name}': missing help")
 
@@ -236,6 +303,47 @@ class _ManifestModel(BaseModel):
                 if step not in known_commands:
                     raise ValueError(
                         f"composite '{name}': step '{step}' is not a command in the manifest")
+
+        # rule 5 (#895): every `depends_on` entry names a KNOWN, UNAMBIGUOUS command (the mirror of the
+        # composite rule 4, tightened: a dependency is a bare name, so a name owned by SEVERAL groups
+        # cannot be depended on - Manifest.plan_for could not resolve it).
+        owners_by_name: dict[str, list[str]] = {}
+        for group, members in self.groups.items():
+            for name in members:
+                owners_by_name.setdefault(name, []).append(group)
+        for group, members in self.groups.items():
+            for name, spec in members.items():
+                for dep in spec.depends_on:
+                    owners = owners_by_name.get(dep, [])
+                    if not owners:
+                        raise ValueError(
+                            f"command '{group}.{name}': dependency '{dep}' is not a command in the manifest")
+                    if len(owners) > 1:
+                        raise ValueError(
+                            f"command '{group}.{name}': dependency '{dep}' is ambiguous "
+                            f"(owned by groups {sorted(owners)})")
+
+        # rule 6 (#895): the depends_on graph is ACYCLIC - a 3-colour DFS (white = unvisited, grey = on
+        # the current path, black = done) over the flat name graph. Only unambiguous names carry edges
+        # (rule 5), so an ambiguous name can never sit inside a cycle; its own out-edges are still walked
+        # because every dependency it names is an unambiguous node visited below.
+        deps_by_name = {name: self.groups[owners[0]][name].depends_on
+                        for name, owners in owners_by_name.items() if len(owners) == 1}
+        done: set[str] = set()
+
+        def walk(cmd: str, trail: list[str]) -> None:
+            if cmd in done:
+                return
+            if cmd in trail:
+                raise ValueError("dependency cycle: " + " -> ".join(trail[trail.index(cmd):] + [cmd]))
+            trail.append(cmd)
+            for dep in deps_by_name.get(cmd, ()):
+                walk(dep, trail)
+            trail.pop()
+            done.add(cmd)
+
+        for name in deps_by_name:
+            walk(name, [])
 
         return self
 
@@ -267,9 +375,12 @@ def load(text: str) -> Manifest:
       - `groups` maps each declared group to its ordered command tree (group -> command -> spec, the ONE
         membership + spec source);
       - every `env_groups` entry is a declared group;
-      - every command spec declares a non-empty `help` and a well-formed "module:function" `impl`;
+      - every command spec declares a non-empty `help`, plus either a well-formed "module:function" `impl`
+        (a leaf) or a non-empty `depends_on` (an impl-less aggregate, #895) - never both;
       - every `composites` entry (#456) declares a non-empty `steps` list and every step names a command
-        that exists in the manifest (a member of some group).
+        that exists in the manifest (a member of some group);
+      - every `depends_on` entry (#895) names a known, UNAMBIGUOUS command, and the dependency graph is
+        acyclic.
     Unknown top-level keys stay ignored (backward compatible). Any Pydantic ValidationError is re-raised as
     a plain ValueError (a raw ValidationError never escapes), then the validated model is converted into the
     public NamedTuples so callers see the unchanged types: `groups` is the membership projection (each
@@ -283,7 +394,8 @@ def load(text: str) -> Manifest:
 
     groups = {group: tuple(members) for group, members in model.groups.items()}
     commands = {
-        group: {name: CommandSpec(impl=spec.impl, help=spec.help, passthrough_args=spec.passthrough_args)
+        group: {name: CommandSpec(impl=spec.impl, help=spec.help, passthrough_args=spec.passthrough_args,
+                                  depends_on=spec.depends_on, stop_on_failure=spec.stop_on_failure)
                 for name, spec in members.items()}
         for group, members in model.groups.items()
     }
