@@ -25,6 +25,7 @@ import time
 from typing import Callable
 
 from delivery import diskguard, log
+from delivery import host as host_mod     # module-level, so a test can monkeypatch the socket probe
 from delivery.host import Host
 from delivery.run import run
 
@@ -248,7 +249,12 @@ def ensure_colima_vm(*, install: Callable[[], object]) -> None:
     """`up` needs a running colima VM. Missing colima / never-created VM -> the product's `install`
     callback (a full host install); present but stopped -> start it. So `up` is self-sufficient. No-op on
     Linux. `install` is INJECTED (the substrate never names a product's install entry point); netctl passes
-    a callback that runs `./netctl.sh install`."""
+    a callback that runs `./netctl.sh install`.
+
+    "Stopped" is decided by the DOCKER SOCKET, not by colima's status record (netctl#1031). A non-zero
+    `colima status` is only a suspicion: on the netctl#1002 incident the record read `Stopped` while the
+    daemon served 43 lab containers. Starting a VM that is already running is the wrong move on the wrong
+    diagnosis, so the socket gets the last word."""
     if not IS_DARWIN:
         return
     # `colima delete` (clean vm / reset) removes the lima instance dir, so its presence distinguishes a
@@ -259,10 +265,15 @@ def ensure_colima_vm(*, install: Callable[[], object]) -> None:
         install()
         return
     if not run(["colima", "status"]).ok:
-        log.info("Colima VM present but stopped - starting it")
-        if not run(["colima", "start"]).ok:
-            log.warn("colima start failed - running install")
-            install()
+        if host_mod.socket_answers(host_mod.docker_socket_path(darwin=True)):
+            log.warn("colima reports the VM stopped, but its docker socket answers - the STATUS RECORD is "
+                     "stale, not the VM (netctl#1002/#1031). Leaving the running VM alone; if commands "
+                     "that tunnel through `colima ssh` refuse, restore the hop with: colima restart")
+        else:
+            log.info("Colima VM present but stopped - starting it")
+            if not run(["colima", "start"]).ok:
+                log.warn("colima start failed - running install")
+                install()
     # #425: a reused VM keeps whatever CPU/mem it was first created with (a resize needs a stop+start), so
     # an under-resourced VM silently starves the Raft mesh into a partition. Detect + warn only, never
     # resize mid-lab.

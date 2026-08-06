@@ -171,25 +171,46 @@ def test_ensure_colima_vm_runs_the_injected_install_when_no_vm(monkeypatch):
     assert calls == ["install"]
 
 
-def test_ensure_colima_vm_starts_a_stopped_vm_without_installing(monkeypatch):
-    # arrange: macOS, colima present, VM dir present, but `colima status` reports stopped
+def _stopped_vm(monkeypatch, *, socket_answers: bool) -> list[list[str]]:
+    """A macOS host with colima + the VM dir present whose `colima status` reports stopped. The docker
+    socket's answer is the variable, because THAT is what decides whether the VM is really stopped
+    (netctl#1031). Returns the recorded argvs."""
     monkeypatch.setattr(labhost, "IS_DARWIN", True)
     monkeypatch.setattr(labhost, "_have", lambda tool: True)
     monkeypatch.setattr(labhost.os.path, "isdir", lambda p: True)
     monkeypatch.setattr(labhost, "warn_if_vm_underprovisioned", lambda: ())
+    monkeypatch.setattr(labhost.host_mod, "socket_answers",
+                        lambda path, timeout=2.0: socket_answers)
     seen: list[list[str]] = []
 
     def fake_run(argv, **kwargs):
         seen.append(argv)
-        # status non-zero (stopped), start ok
+        # status non-zero (stopped), everything else ok
         return Result(rc=1 if argv == ["colima", "status"] else 0, out="", err="")
 
     monkeypatch.setattr(labhost, "run", fake_run)
+    return seen
+
+
+def test_ensure_colima_vm_starts_a_stopped_vm_without_installing(monkeypatch):
+    # arrange: `colima status` reports stopped AND the docker socket stays silent -> really stopped
+    seen = _stopped_vm(monkeypatch, socket_answers=False)
     installed: list[str] = []
     # act
     labhost.ensure_colima_vm(install=lambda: installed.append("install"))
     # assert: it started the VM and did NOT run the install fallback
     assert ["colima", "start"] in seen
+    assert installed == []
+
+
+def test_ensure_colima_vm_leaves_a_live_vm_alone_when_only_the_status_record_says_stopped(monkeypatch):
+    # arrange: the netctl#1002 incident - `colima status` reports stopped while the daemon serves the lab
+    seen = _stopped_vm(monkeypatch, socket_answers=True)
+    installed: list[str] = []
+    # act
+    labhost.ensure_colima_vm(install=lambda: installed.append("install"))
+    # assert: no start (starting a running VM is the wrong move on the wrong diagnosis), no install
+    assert ["colima", "start"] not in seen
     assert installed == []
 
 
