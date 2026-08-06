@@ -9,6 +9,7 @@ import shlex
 import pytest
 
 from delivery.orchestrator.steps import (
+    VERBOSE_ENV,
     Outcome,
     Pipeline,
     Step,
@@ -62,6 +63,67 @@ def test_run_headless_returns_one_when_any_step_fails():
     # Assert: overall failure, but the later step still ran (no short-circuit)
     assert rc == 1
     assert p.steps[2].state == StepState.OK
+
+
+def test_run_headless_prints_a_failing_action_steps_output(capsys):
+    # Arrange: a gate that fails with a composed diagnosis (netctl#1047's freshness verdict, the case
+    # netctl#1073 was filed for) - an action step, so nothing of its output has been shown yet
+    diagnosis = "the app.jar inside netctl:local is a DEV-MODE build\n- clear web/build and rebuild"
+    p = Pipeline("build", [_step("verify.build-freshness", 1, output=diagnosis)])
+    # Act
+    rc = run_headless(p)
+    # Assert: the REASON reaches stdout (indented like the streamed lines), not just the rc
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "  the app.jar inside netctl:local is a DEV-MODE build" in out
+    assert "  - clear web/build and rebuild" in out
+    assert "failed (rc 1)" in out
+
+
+def test_run_headless_hides_a_passing_action_steps_output_by_default(capsys):
+    # Arrange: a passing probe whose captured output is noise on a green run (a doctor `docker version`)
+    p = Pipeline("doctor", [_step("docker version", 0, output="Server: 28.0")])
+    # Act
+    rc = run_headless(p)
+    # Assert: the checklist stays compact - the output is NOT printed
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "Server: 28.0" not in out
+
+
+def test_run_headless_prints_a_passing_action_steps_output_when_verbose(capsys):
+    # Arrange: the same passing probe, verbose asked for explicitly
+    p = Pipeline("doctor", [_step("docker version", 0, output="Server: 28.0")])
+    # Act
+    run_headless(p, verbose=True)
+    # Assert: the proof of WHAT was checked is shown, same indent
+    assert "  Server: 28.0" in capsys.readouterr().out
+
+
+def test_run_headless_verbose_defaults_to_the_delivery_verbose_env(capsys, monkeypatch):
+    # Arrange: no explicit flag, the operator opted in via the env var
+    monkeypatch.setenv(VERBOSE_ENV, "1")
+    p = Pipeline("doctor", [_step("docker version", 0, output="Server: 28.0")])
+    # Act
+    run_headless(p)
+    # Assert
+    assert "  Server: 28.0" in capsys.readouterr().out
+
+
+def test_run_headless_does_not_reprint_a_streaming_steps_live_output(capsys):
+    # Arrange: a FAILING streaming step - its lines already went out live through emit, and
+    # outcome.output is the same text again
+    def stream(emit):
+        emit("step 1/3: FROM alpine")
+        return Outcome(rc=1, output="step 1/3: FROM alpine")
+
+    p = Pipeline("build", [Step(label="web image", stream=stream)])
+    # Act
+    rc = run_headless(p, verbose=True)
+    # Assert: printed exactly once (live), never a second time by the runner
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert out.count("step 1/3: FROM alpine") == 1
 
 
 def test_overall_rc_matches_step_states():

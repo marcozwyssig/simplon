@@ -8,6 +8,7 @@ SAME Pipeline, so step pass/fail always reflects the real rc, never the UI state
 """
 from __future__ import annotations
 
+import os
 import shlex
 from dataclasses import dataclass, field
 from enum import Enum
@@ -19,9 +20,18 @@ from delivery.run import run_stream
 # A sink for a step's live output lines (the TUI appends to a RichLog; headless prints them).
 Emit = Callable[[str], None]
 
+# Opt-in (=1): headless, print a PASSING action step's captured output too. A FAILING step's output is
+# ALWAYS printed (netctl#1073) - the reason a gate said no is the whole point of the gate; a green run
+# keeps the compact checklist instead of dumping every probe's `docker version` into the log.
+VERBOSE_ENV = "DELIVERY_VERBOSE"
+
 
 def _noop(_line: str) -> None:
     pass
+
+
+def _verbose_env() -> bool:
+    return os.environ.get(VERBOSE_ENV, "0") == "1"
 
 
 class StepState(str, Enum):
@@ -103,11 +113,28 @@ def argv_step(label: str, argv: list[str], command: str | None = None) -> Step:
     return Step(label=label, stream=stream, command=command if command is not None else shlex.join(argv))
 
 
-def run_headless(pipeline: Pipeline) -> int:
+def _print_captured(output: str) -> None:
+    """Print an action step's captured output with the SAME two-space indent the streamed lines use, so
+    both kinds of step read identically headlessly."""
+    for line in output.rstrip("\n").splitlines():
+        print(f"  {line}", flush=True)
+
+
+def run_headless(pipeline: Pipeline, verbose: bool | None = None) -> int:
     """Run every step sequentially, printing the same info/ok/warn lines the rest of netctl uses (and a
     streaming step's lines live, indented), and return the overall exit code (0 iff every step passed).
     This is the TTY-fallback / CI path - no Textual. The overall result is the worst step's rc, never
-    derived from any UI state."""
+    derived from any UI state.
+
+    An `action` step CAPTURES its output instead of streaming it, so nothing of it has been shown when it
+    returns: this runner prints it (netctl#1073). Before the fix only `.ok`/`.rc` were read here and the
+    text died with the Outcome - the TUI's details pane was its only reader - so a failing gate printed
+    `failed (rc 1)` and swallowed the diagnosis it had just composed, on exactly the runs (CI, the in-`up`
+    rebuild) nobody watches. Failures always print; a PASSING step's output only when `verbose` (default:
+    the DELIVERY_VERBOSE env var), so a green `doctor` stays a checklist. A `stream` step is never
+    reprinted here: its lines already went out live through `emit` and `outcome.output` is the same text
+    again."""
+    show_passing = _verbose_env() if verbose is None else verbose
     failures = 0
     skipped = 0
     stopped = False
@@ -120,6 +147,8 @@ def run_headless(pipeline: Pipeline) -> int:
             continue
         log.info(title)
         outcome = step.run(lambda line: print(f"  {line}", flush=True))
+        if step.stream is None and outcome.output and (not outcome.ok or show_passing):
+            _print_captured(outcome.output)
         if outcome.ok:
             log.ok(title)
         else:
