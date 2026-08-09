@@ -36,7 +36,8 @@ def _require(tool: str) -> None:
 # --- pure decision (unit-tested) --------------------------------------------------------------------
 
 def prune_verdict(*, is_main_or_current: bool, in_worktree: bool,
-                  is_ancestor: bool, in_merged_prs: bool) -> tuple[str, str]:
+                  is_ancestor: bool, in_merged_prs: bool,
+                  prune_unmerged: bool = False) -> tuple[str, str]:
     """Decide what to do with a local branch during prune-branches:
 
     - ("skip", "")            - it is main or the current branch: never touch.
@@ -44,9 +45,19 @@ def prune_verdict(*, is_main_or_current: bool, in_worktree: bool,
     - ("delete", "ancestor")  - its tip is an ancestor of origin/main: a normal (fast-forward/merge) merge.
     - ("delete", "pr-merged") - it is the head branch of a MERGED PR: the squash-merge case (NOT an
                                 ancestor of main, so only the PR-name check catches it).
-    - ("keep", "unmerged")    - none of the above: real work in progress, keep it.
+    - ("keep", "unmerged")    - none of the above: keep it, because it cannot be PROVEN merged.
 
-    Order matters: skip > worktree > ancestor > pr-merged > keep.
+    Order matters: skip > worktree > ancestor > pr-merged > the unmerged bucket.
+
+    `prune_unmerged` turns that last bucket into ("delete", "unmerged"). It exists because the bucket
+    never empties on its own: a branch whose PR branch was deleted on the remote, or that never had a PR,
+    is indistinguishable from work in progress, so finished work accumulates until someone types a raw
+    `git branch -D` loop. It is a PARAMETER rather than a second function so the ordering above has one
+    definition and one set of tests.
+
+    The three protections above it are deliberately NOT weakened by the flag: they are about correctness,
+    not caution. Deleting the current branch or a worktree's branch is something git refuses anyway, and
+    a flag that turned those into silent failures would be worse than no flag.
     """
     if is_main_or_current:
         return ("skip", "")
@@ -56,7 +67,7 @@ def prune_verdict(*, is_main_or_current: bool, in_worktree: bool,
         return ("delete", "ancestor")
     if in_merged_prs:
         return ("delete", "pr-merged")
-    return ("keep", "unmerged")
+    return ("delete", "unmerged") if prune_unmerged else ("keep", "unmerged")
 
 
 # --- commands ---------------------------------------------------------------------------------------
@@ -93,10 +104,16 @@ def push() -> int:
     return 0
 
 
-def prune_branches(dry: bool = False, remote: bool = False) -> int:
+def prune_branches(dry: bool = False, remote: bool = False, unmerged: bool = False) -> int:
     """Delete local branches already merged into main - including SQUASH-merged ones, detected via the
     merged-PR head-branch names (gh). main + the current branch + any worktree-checked-out branch are kept.
-    --dry-run previews; --remote also deletes them on origin."""
+    --dry-run previews; --remote also deletes them on origin.
+
+    `unmerged` additionally clears the branches that cannot be PROVEN merged (#1136). That bucket never
+    empties on its own, so finished work piles up in it. It is reported separately from the provably
+    merged ones and each deletion prints its tip sha, because the two carry completely different risk:
+    one is bookkeeping, the other may be the last copy of something. The sha makes it recoverable from
+    the reflog by whoever realises a minute later."""
     _require("git")
     log.info("fetching + pruning stale remote-tracking refs")
     if not _git(["fetch", "--prune", "--quiet"]).ok:
@@ -124,6 +141,8 @@ def prune_branches(dry: bool = False, remote: bool = False) -> int:
     branches = [ln.strip() for ln in (_git(["for-each-ref", "--format=%(refname:short)",
                                             "refs/heads/"]).out or "").splitlines() if ln.strip()]
     kept: list[str] = []
+    unproven: list[str] = []   # deleted WITHOUT proof of merge (#1136): reported apart from the rest
+    deleted_preview = 0        # what a --dry-run WOULD delete, so its summary can say something
     deleted = 0
     for b in branches:
         action, reason = prune_verdict(
@@ -131,19 +150,31 @@ def prune_branches(dry: bool = False, remote: bool = False) -> int:
             in_worktree=(b in worktree_branches),
             is_ancestor=_git(["merge-base", "--is-ancestor", b, f"origin/{main}"]).ok,
             in_merged_prs=(b in merged_prs),
+            prune_unmerged=unmerged,
         )
         if action == "skip":
             continue
         if action == "keep":
             kept.append(b)
             continue
-        why = f"merged into {main}" if reason == "ancestor" else "PR merged"
+        # The unmerged bucket carries its tip sha, and only it: for a merged branch the sha is noise, for
+        # this one it is the difference between "recoverable from the reflog" and "gone".
+        if reason == "unmerged":
+            tip = (_git(["rev-parse", "--short", b]).out or "").strip()
+            why = f"NOT proven merged - tip {tip}"
+        else:
+            why = f"merged into {main}" if reason == "ancestor" else "PR merged"
         if dry:
             log.info(f"would delete {b} ({why})")
+            deleted_preview += 1
+            if reason == "unmerged":
+                unproven.append(b)
             continue
         if _git(["branch", "-D", b]).ok:
             log.ok(f"deleted {b} ({why})")
             deleted += 1
+            if reason == "unmerged":
+                unproven.append(b)
             if remote and _git(["ls-remote", "--exit-code", "--heads", "origin", b]).ok:
                 if _git(["push", "origin", "--delete", b]).ok:
                     log.ok(f"deleted origin/{b}")
@@ -152,8 +183,16 @@ def prune_branches(dry: bool = False, remote: bool = False) -> int:
         else:
             log.warn(f"could not delete {b} (left in place)")
 
+    if dry and not deleted_preview and not kept:
+        # A dry run that prints nothing cannot be told apart from a dry run that failed to look.
+        log.ok("nothing to prune: no local branch besides main and the current one")
     if not dry:
         log.ok(f"pruned {deleted} obsolete local branch(es)")
+    if unproven:
+        verb = "would delete" if dry else "deleted"
+        log.warn(f"{verb} {len(unproven)} branch(es) that could NOT be proven merged (--unmerged): "
+                 f"{', '.join(unproven)}")
+        log.warn("  recover one with `git branch <name> <tip-sha>` from the lines above, or `git reflog`")
     if kept:
         log.info(f"kept {len(kept)} active/unmerged branch(es):")
         for b in kept:
