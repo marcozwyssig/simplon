@@ -55,12 +55,21 @@ class CommandSpec(NamedTuple):
     (e.g. NETCTL_SKIP_DEPS=1) - deliberately NOT built now. `stop_on_failure` (an aggregate's flag) makes
     a failed plan step skip the rest instead of running doomed work (default False = run every step and
     take the worst rc).
+
+    `keep_awake` (an aggregate's flag, netctl#1238) declares that the host must not idle-sleep while this
+    command's PLAN runs: `run_command` wraps the whole dispatch in `delivery.awake.keep_awake`. It exists
+    because a plan has no product code around it - the callback the CLI binds for an aggregate is
+    kernel-synthesized - so an aggregate that replaced a hand-written multi-minute pipeline would silently
+    lose the inhibitor that pipeline's command had. Declaring it beats each leaf arming its own: the
+    inhibitor then spans the GAPS between steps too, and one line in the manifest replaces the same `with`
+    block repeated in every long leaf.
     """
     impl: str
     help: str
     passthrough_args: bool = False
     depends_on: tuple[str, ...] = ()
     stop_on_failure: bool = False
+    keep_awake: bool = False
 
 
 class Manifest(NamedTuple):
@@ -176,6 +185,7 @@ class _CommandSpecModel(BaseModel):
     passthrough_args: bool = False
     depends_on: tuple[str, ...] = ()
     stop_on_failure: bool = False
+    keep_awake: bool = False
 
     @field_validator("impl", "help", mode="before")
     @classmethod
@@ -187,7 +197,7 @@ class _CommandSpecModel(BaseModel):
     def _str_tuple(cls, value: object) -> tuple[str, ...]:
         return tuple(str(dep) for dep in (value or ()))
 
-    @field_validator("passthrough_args", "stop_on_failure", mode="before")
+    @field_validator("passthrough_args", "stop_on_failure", "keep_awake", mode="before")
     @classmethod
     def _as_bool(cls, value: object) -> bool:
         return bool(value)
@@ -263,6 +273,13 @@ class _ManifestModel(BaseModel):
                 if spec.depends_on and spec.passthrough_args:
                     raise ValueError(
                         f"command '{group}.{name}': passthrough_args cannot combine with depends_on")
+                # keep_awake is honoured by `run_command`, which only ever runs an aggregate's PLAN. The
+                # CLI binds a leaf straight to its impl, so the flag there would be silently ignored -
+                # and a flag that does nothing where it is written is worse than no flag (netctl#1238).
+                if spec.keep_awake and not spec.depends_on:
+                    raise ValueError(
+                        f"command '{group}.{name}': keep_awake applies to an aggregate's plan "
+                        f"(depends_on); a leaf's own impl arms it itself")
                 if not spec.impl and not spec.depends_on:
                     raise ValueError(f"command '{group}.{name}': missing impl")
                 if spec.impl:
@@ -344,7 +361,9 @@ def load(text: str) -> Manifest:
       - every command spec declares a non-empty `help`, plus either a well-formed "module:function" `impl`
         (a leaf) or a non-empty `depends_on` (an impl-less aggregate, #895) - never both;
       - every `depends_on` entry (#895) names a known, UNAMBIGUOUS command, and the dependency graph is
-        acyclic.
+        acyclic;
+      - `keep_awake` (netctl#1238) is declared only on an AGGREGATE, because `run_command` - which runs a
+        plan - is its only consumer; on a leaf it would be silently ignored.
     Unknown top-level keys stay ignored (backward compatible), with ONE exception: a leftover `composites:`
     key is rejected loudly (the concept was removed in netctl#898; declare an impl-less aggregate command
     with `depends_on` instead) - silently dropping it would turn a still-declared pipeline into dead data.
@@ -362,7 +381,8 @@ def load(text: str) -> Manifest:
     groups = {group: tuple(members) for group, members in model.groups.items()}
     commands = {
         group: {name: CommandSpec(impl=spec.impl, help=spec.help, passthrough_args=spec.passthrough_args,
-                                  depends_on=spec.depends_on, stop_on_failure=spec.stop_on_failure)
+                                  depends_on=spec.depends_on, stop_on_failure=spec.stop_on_failure,
+                                  keep_awake=spec.keep_awake)
                 for name, spec in members.items()}
         for group, members in model.groups.items()
     }
