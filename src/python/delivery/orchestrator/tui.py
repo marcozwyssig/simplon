@@ -69,8 +69,25 @@ class _StepApp(App):
         self._run_steps()
 
     def _row(self, i: int) -> str:
+        """One line of the LEFT pane: the step's SPEAKING NAME, never its argv.
+
+        `command` is the exact-command identity, and it belongs to the RIGHT pane's section header -
+        which is what the convention that introduced it says ("section headers show the step's EXACT
+        command"). Applying it here too turned the step list into a wall of argv: a pipeline whose steps
+        run native docker lines renders rows like
+
+            docker run --rm -v /work:/work -e GRADLE_USER_HOME=/home/gradle/.gradle -v ... \
+                netctl-builder:local gradle :web:bootJar -Pvaadin.productionMode --no-daemon
+
+        where the operator wanted to read `package: web jar`. A pipeline built from `shell_step` was
+        unaffected - `./netctl.sh _up preflight` is short - which is why the same TUI looked right for
+        the bring-up and wrong for the build, and why this read as two renderers when it is one.
+
+        The label is what the pipeline AUTHOR chose to call the step; the command is what it runs. The
+        left pane answers "where am I", the right pane answers "what exactly ran".
+        """
         step = self.pipeline.steps[i]
-        return f"{_ICON[step.state]} {step.command or step.label}"
+        return f"{_ICON[step.state]} {step.label or step.command}"
 
     def _refresh_row(self, i: int) -> None:
         item = self.query_one(f"#s{i}", ListItem)

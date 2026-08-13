@@ -43,3 +43,41 @@ def test_tui_app_runs_every_step_and_renders_details():
     assert pipeline.steps[0].state.name == "OK"
     assert pipeline.steps[1].state.name == "FAILED"
     assert "all good" in rendered
+
+
+def test_the_step_list_shows_the_speaking_name_and_the_details_pane_the_exact_command():
+    """The left pane is `where am I`, the right pane is `what exactly ran`.
+
+    Regression guard: `_row` used to render `command or label`, so a pipeline whose steps run native
+    docker argv turned the step list into a wall of argv while a pipeline built from short shell
+    invocations looked fine. That made ONE renderer look like two - the bring-up read well and the image
+    build did not - and it is invisible in a test that only uses label-only steps.
+    """
+    from delivery.orchestrator.steps import argv_step
+
+    # arrange: exactly the shape that exposed it - a speaking label over a long real command
+    real = ("docker run --rm -v /work:/work -e GRADLE_USER_HOME=/home/gradle/.gradle "
+            "netctl-builder:local gradle :web:bootJar -Pvaadin.productionMode --no-daemon")
+    # a harmless argv carrying the REAL command as its identity: the assertion is about what each pane
+    # renders, and running a docker build to find out would make this test need a daemon
+    pipeline = Pipeline("smoke", [argv_step("package: web jar", ["sh", "-c", "true"], command=real)])
+
+    async def _drive():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            from textual.widgets import ListView, RichLog
+            app.query_one("#steps", ListView).index = 0
+            await pilot.pause()
+            details = app.query_one("#details", RichLog)
+            return app._row(0), "\n".join(str(line) for line in details.lines)
+
+    # act
+    row, details = asyncio.run(_drive())
+
+    # assert
+    assert "package: web jar" in row, f"the step list must show the speaking name, got: {row}"
+    assert "docker run" not in row, f"the step list must not render the argv, got: {row}"
+    assert "docker run" in details, (
+        "the details pane must still carry the exact command - that is what the section-header "
+        f"convention is for, got: {details}")
