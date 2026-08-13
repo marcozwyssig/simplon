@@ -2,8 +2,9 @@
 that turns a command NAME into a live Pipeline. `run_command` expands the name through
 `Manifest.plan_for` (transitive, deduped, each unique command once, in dependency order), maps each
 planned leaf through the product's own step factory - typically a streaming `./<product>.sh <cmd>`
-subprocess - and dispatches the resulting Pipeline through the shared runner. Multi-command pipelines
-(bringup, test.all, ...) are thereby DATA in the product's manifest (impl-less aggregates carrying
+subprocess - and dispatches the resulting Pipeline through the shared runner, optionally holding the host
+awake for the duration (the `keep_awake` spec flag, netctl#1238). Multi-command pipelines
+(bringup, test.all, build, ...) are thereby DATA in the product's manifest (impl-less aggregates carrying
 `depends_on`) instead of hand-written product Python, so a second product (infractl) gets the same
 runner and its own aggregates for free.
 
@@ -15,9 +16,11 @@ step-runner one - a command name -> Step factory - so it is named for what it is
 """
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 from typing import Callable
 
+from delivery.awake import keep_awake
 from delivery.orchestrator.manifest import Manifest
 from delivery.orchestrator.steps import Pipeline, Step, dispatch
 
@@ -50,6 +53,13 @@ def run_command(name: str, manifest: Manifest, ctx: StepFactoryContext, *, group
     `./<product>.sh <leaf>` subprocess), wrapped in a Pipeline carrying the command's own
     `stop_on_failure`, and dispatched through the shared runner (TUI when available, else headless).
 
+    A command that declares `keep_awake` (netctl#1238) has its WHOLE plan wrapped in
+    `delivery.awake.keep_awake`, so a multi-minute aggregate inhibits host idle-sleep exactly as the
+    hand-written pipeline it replaced did. The wrap belongs here because an aggregate has no product code
+    around it - its CLI callback is kernel-synthesized - and because one inhibitor spanning the plan also
+    covers the GAPS between steps, which per-leaf arming does not. Best-effort by keep_awake's own
+    contract: a host with no inhibitor warns and runs anyway.
+
     `group` disambiguates a root name owned by several groups (the #519 `test all` shape); it flows
     through to `plan_for`. Fails loudly with a clear ValueError when `name` does not resolve."""
     spec = (manifest.commands.get(group, {}).get(name) if group is not None
@@ -59,4 +69,5 @@ def run_command(name: str, manifest: Manifest, ctx: StepFactoryContext, *, group
     plan = manifest.plan_for(name, group=group)
     steps = [ctx.step_factory(cmd) for cmd in plan]
     pipeline = Pipeline(name=name, steps=steps, stop_on_failure=spec.stop_on_failure)
-    return dispatch(pipeline)
+    with (keep_awake() if spec.keep_awake else contextlib.nullcontext()):
+        return dispatch(pipeline)

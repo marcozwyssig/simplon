@@ -79,6 +79,40 @@ def test_run_command_carries_the_commands_stop_on_failure_onto_the_pipeline(monk
     assert captured["pipeline"].stop_on_failure is stop_on_failure
 
 
+@pytest.mark.parametrize("declared, wrapped", [(True, True), (False, False)])
+def test_run_command_holds_the_host_awake_for_a_plan_that_declares_it(monkeypatch, declared, wrapped):
+    # arrange: the aggregate that replaced a hand-written multi-minute pipeline keeps that pipeline's
+    # idle-sleep inhibitor (netctl#1238). There is no product code around a plan - the CLI callback is
+    # kernel-synthesized - so if the runner does not wrap it, nothing does. Record whether the inhibitor
+    # was HELD while the pipeline dispatched, not merely entered at some point.
+    import contextlib
+
+    held: list[bool] = []
+
+    @contextlib.contextmanager
+    def fake_keep_awake():
+        held.append(True)
+        try:
+            yield
+        finally:
+            held.append(False)
+
+    monkeypatch.setattr(product, "keep_awake", fake_keep_awake)
+    monkeypatch.setattr(product, "dispatch", lambda p: (held.append("dispatch"), 0)[1])
+    factory, _ = _factory()
+    ctx = product.StepFactoryContext("demo", factory)
+    text = _DEPS_MANIFEST.replace("depends_on: [prep, up, seed]",
+                                  f"depends_on: [prep, up, seed], keep_awake: {str(declared).lower()}")
+    mf = manifest_load(text)
+
+    # act
+    product.run_command("bringup", mf, ctx)
+
+    # assert: declared -> the dispatch happens INSIDE the with-block and the inhibitor is released after;
+    # not declared -> nothing is spawned at all (a 3-second aggregate must not fork caffeinate)
+    assert held == ([True, "dispatch", False] if wrapped else ["dispatch"])
+
+
 def test_run_command_on_a_leaf_runs_just_that_leaf(monkeypatch):
     # arrange
     captured = {}

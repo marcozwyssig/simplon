@@ -364,6 +364,30 @@ def test_load_rejects_an_aggregate_declaring_passthrough_args():
         manifest.load(text)
 
 
+def test_load_reads_keep_awake_defaulting_to_false():
+    # arrange: an aggregate whose plan runs for many minutes declares that the host must not idle-sleep
+    # while it runs (netctl#1238); everything else defaults to False
+    text = ("groups:\n  build:\n    jar: { impl: 'm:f', help: 'x' }\n"
+            "    images: { help: 'y', depends_on: [jar], keep_awake: true }\n")
+
+    # act
+    mf = manifest.load(text)
+
+    # assert
+    assert mf.spec_for("build", "images").keep_awake is True
+    assert mf.spec_for("build", "jar").keep_awake is False
+
+
+def test_load_rejects_keep_awake_on_a_leaf():
+    # arrange: `run_command` is the flag's only consumer and it only ever runs an AGGREGATE's plan - the
+    # CLI binds a leaf straight to its impl - so on a leaf the flag would do nothing at all (netctl#1238)
+    text = "groups:\n  build:\n    jar: { impl: 'm:f', help: 'x', keep_awake: true }\n"
+
+    # act / assert: a flag that does nothing where it is written fails loudly instead
+    with pytest.raises(ValueError, match="command 'build.jar': keep_awake applies to an aggregate's plan"):
+        manifest.load(text)
+
+
 def test_load_rejects_an_aggregate_with_a_missing_help():
     # arrange: an impl-less aggregate still owes its help line
     text = ("groups:\n  code:\n    fmt: { impl: 'm:f', help: 'x' }\n"
