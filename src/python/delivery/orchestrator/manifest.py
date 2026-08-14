@@ -151,6 +151,91 @@ class Manifest(NamedTuple):
         visit(name, root)
         return tuple(plan)
 
+    def _path_for(self, name: str, group: str | None = None) -> str:
+        """The dotted `group.command` identity of a plan node: the explicit `group` when the caller
+        disambiguated the root (the #519 `test all` vs `deploy all` shape, where `path_by_name` cannot
+        decide), else the unambiguous owner, else the bare name as a last resort."""
+        if group is not None:
+            return f"{group}.{name}"
+        return self.path_by_name(name) or name
+
+    def plan_tree_for(self, name: str, *, group: str | None = None) -> "PlanNode":
+        """The execution plan for command `name` as a TREE (#1275): the structured view of `plan_for`.
+
+        Same DFS, same dedup, same order. A `done` set means a command reached along several paths appears
+        exactly ONCE, at its first occurrence, so the result is a spanning tree of the DAG rather than the
+        DAG itself. An aggregate that contributes nothing (its whole subtree was already planned) is
+        OMITTED rather than rendered as an empty node; the ROOT is always returned even then, because it is
+        the pipeline's identity. A grey-set cycle guard fails loudly, defensively: `load()` already rejects
+        cyclic manifests, so a validated manifest never trips it - exactly the stance `plan_for` takes.
+
+        `leaves()` on the result is byte-identical to `plan_for(name, group=group)`. The parity test pins
+        that, and it is why `run_command` can build its steps from the tree without a second traversal.
+        """
+        done: set[str] = set()
+        trail: list[str] = []   # the DFS path = the grey set, kept ordered for the cycle message
+
+        def visit(cmd: str, spec: CommandSpec, path: str) -> "PlanNode | None":
+            if cmd in done:
+                return None
+            if cmd in trail:
+                raise ValueError("dependency cycle: " + " -> ".join(trail[trail.index(cmd):] + [cmd]))
+            trail.append(cmd)
+            children: list[PlanNode] = []
+            for dep in spec.depends_on:
+                dep_spec = self.spec_by_name(dep)
+                if dep_spec is None:
+                    raise ValueError(
+                        f"command '{cmd}': dependency '{dep}' is not an unambiguous command in the manifest")
+                child = visit(dep, dep_spec, self._path_for(dep))
+                if child is not None:
+                    children.append(child)
+            trail.pop()
+            done.add(cmd)
+            if spec.impl:
+                return PlanNode(name=cmd, path=path, spec=spec)
+            return PlanNode(name=cmd, path=path, spec=spec, children=tuple(children)) if children else None
+
+        root_spec = (self.commands.get(group, {}).get(name) if group is not None
+                     else self.spec_by_name(name))
+        if root_spec is None:
+            raise ValueError(f"no unambiguous command named '{name}' in the manifest")
+        root_path = self._path_for(name, group)
+        root = visit(name, root_spec, root_path)
+        # An aggregate always bottoms out at leaves in a validated manifest, so `visit` returning None for
+        # the ROOT cannot happen; return the bare node rather than None so the caller's type never widens.
+        return root if root is not None else PlanNode(name=name, path=root_path, spec=root_spec)
+
+
+class PlanNode(NamedTuple):
+    """One node of a command's execution plan, kept as a TREE (#1275) instead of the flat leaf tuple
+    `plan_for` returns. `name` is the bare command name, `path` its dotted `group.command` CLI identity
+    (what the TUI renders as the row), `spec` its declaration, and `children` the nodes it expands into:
+    empty for a leaf, one entry per CONTRIBUTING dependency for an aggregate.
+
+    The tree is a DFS SPANNING TREE of the dependency DAG, not the DAG: `plan_tree_for` dedups by name
+    exactly as `plan_for` does, so a diamond appears ONCE, at its first occurrence. That is what keeps
+    `leaves()` byte-identical to `plan_for`, and that equality is the whole point - display and execution
+    cannot disagree when they come from one traversal.
+    """
+    name: str
+    path: str
+    spec: CommandSpec
+    children: tuple["PlanNode", ...] = ()
+
+    @property
+    def is_leaf(self) -> bool:
+        """True for an impl-bearing command (a step that really runs), False for an aggregate (a display
+        node whose state a renderer derives from its children)."""
+        return bool(self.spec.impl)
+
+    def leaves(self) -> tuple["PlanNode", ...]:
+        """This node's executable leaves in DFS order - the execution plan itself. `run_command` maps these
+        to Steps; the parity test pins them against `plan_for`."""
+        if self.is_leaf:
+            return (self,)
+        return tuple(leaf for child in self.children for leaf in child.leaves())
+
 
 def _split_impl(impl: str, context: str) -> tuple[str, str]:
     """Split a "module:function" reference into its two parts, failing loudly on a malformed one.

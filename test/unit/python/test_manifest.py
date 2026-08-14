@@ -396,3 +396,128 @@ def test_load_rejects_an_aggregate_with_a_missing_help():
     # act / assert
     with pytest.raises(ValueError, match="command 'code.fix': missing help"):
         manifest.load(text)
+
+
+# --- plan_tree_for (#1275): the same plan, keeping the structure plan_for drops -----------------------
+# `plan_for` returns the flat leaf tuple, so an aggregate contributes its leaves and never itself - which
+# is why `build` disappears as a concept inside `bringup`'s step list. The tree keeps the aggregates as
+# nodes while resolving to exactly the same leaves, and THAT equality is the property both the runner and
+# the TUI depend on: display and execution can never disagree if they come from one traversal.
+
+_SHARED = """
+groups:
+  build:
+    a:   { impl: "demo.impls:a", help: "A leaf." }
+    x:   { help: "X.", depends_on: [a] }
+    y:   { help: "Y.", depends_on: [a] }
+    top: { help: "Top.", depends_on: [x, y] }
+"""
+
+
+def test_plan_tree_for_keeps_the_aggregates_that_the_flat_plan_drops():
+    # arrange
+    mf = manifest.load(_DEPS)
+
+    # act
+    tree = mf.plan_tree_for("bringup")
+
+    # assert: the root is the aggregate itself, and `stage` survives as an intermediate node
+    assert tree.name == "bringup"
+    assert tree.is_leaf is False
+    stage = tree.children[0]
+    assert stage.name == "stage"
+    assert [child.name for child in stage.children] == ["prep", "up"]
+    assert [grandchild.name for grandchild in stage.children[0].children] == ["install", "build"]
+
+
+def test_plan_tree_for_shows_a_diamond_once_at_its_first_occurrence():
+    # arrange: bringup depends on [stage, prep, seed] and stage already pulls prep in
+    mf = manifest.load(_DEPS)
+
+    # act
+    tree = mf.plan_tree_for("bringup")
+
+    # assert: the SECOND reach of prep contributes nothing, so it is not a direct child of bringup
+    assert [child.name for child in tree.children] == ["stage", "seed"]
+
+
+def test_plan_tree_for_omits_an_aggregate_whose_whole_subtree_was_already_planned():
+    # arrange: x and y both depend on the single leaf a, so y contributes nothing once x has been walked
+    mf = manifest.load(_SHARED)
+
+    # act
+    tree = mf.plan_tree_for("top")
+
+    # assert: y is dropped rather than rendered as an empty node, and the leaf still appears once
+    assert [child.name for child in tree.children] == ["x"]
+    assert [leaf.name for leaf in tree.leaves()] == ["a"]
+
+
+def test_plan_tree_for_a_leaf_root_is_a_childless_node_that_is_its_own_leaf():
+    # arrange / act
+    mf = manifest.load(_DEPS)
+    tree = mf.plan_tree_for("install")
+
+    # assert
+    assert tree.name == "install"
+    assert tree.children == ()
+    assert tree.is_leaf is True
+    assert [leaf.name for leaf in tree.leaves()] == ["install"]
+
+
+@pytest.mark.parametrize("root", ["bringup", "stage", "prep", "install"])
+def test_the_trees_leaves_in_dfs_order_are_exactly_the_flat_plan(root):
+    # arrange: the invariant the whole slice rests on - one plan, two views. plan_for is an INDEPENDENT
+    # implementation, so this really compares two traversals rather than one against itself.
+    mf = manifest.load(_DEPS)
+
+    # act
+    tree = mf.plan_tree_for(root)
+
+    # assert
+    assert tuple(leaf.name for leaf in tree.leaves()) == mf.plan_for(root)
+
+
+def test_plan_tree_for_carries_the_dotted_group_command_path_on_every_node():
+    # arrange
+    mf = manifest.load(_DEPS)
+
+    # act
+    tree = mf.plan_tree_for("bringup")
+
+    # assert: the path is the CLI identity the TUI renders, not the bare name
+    assert tree.path == "deploy.bringup"
+    assert tree.children[0].path == "deploy.stage"
+    assert tree.children[0].children[0].path == "build.prep"
+    assert tree.children[0].children[0].children[0].path == "build.install"
+
+
+def test_plan_tree_for_disambiguates_an_ambiguous_root_via_the_group_keyword():
+    # arrange: `all` is owned by test AND deploy (the #519 shape), so path_by_name cannot decide
+    text = """
+groups:
+  test:
+    unit: { impl: "demo.impls:unit", help: "Unit gate." }
+    all:  { help: "Every test stage.", depends_on: [unit] }
+  deploy:
+    up:  { impl: "demo.impls:up", help: "Deploy up." }
+    all: { help: "Full bring-up.", depends_on: [up] }
+env_groups: [deploy]
+"""
+    mf = manifest.load(text)
+
+    # act / assert: the group keyword resolves the owner's own plan AND its path; the bare name fails loudly
+    assert mf.plan_tree_for("all", group="test").path == "test.all"
+    assert mf.plan_tree_for("all", group="deploy").path == "deploy.all"
+    assert [leaf.name for leaf in mf.plan_tree_for("all", group="test").leaves()] == ["unit"]
+    with pytest.raises(ValueError, match="no unambiguous command named 'all'"):
+        mf.plan_tree_for("all")
+
+
+def test_plan_tree_for_rejects_an_unknown_command_name():
+    # arrange
+    mf = manifest.load(_DEPS)
+
+    # act / assert: the same message plan_for gives, so the two views fail identically
+    with pytest.raises(ValueError, match="no unambiguous command named 'nope'"):
+        mf.plan_tree_for("nope")
