@@ -200,3 +200,42 @@ def test_product_context_is_a_back_compat_alias_of_step_factory_context():
     assert product.ProductContext is product.StepFactoryContext
     ctx = product.ProductContext("demo", lambda cmd: Step(label=cmd, action=lambda: Outcome(0, "")))
     assert ctx.product == "demo"
+
+
+# --- the plan tree reaches the Pipeline (#1275) -------------------------------------------------------
+
+
+def test_run_command_puts_the_plan_tree_and_the_invoked_path_on_the_pipeline(monkeypatch):
+    # arrange: capture the dispatched pipeline instead of running it
+    captured = {}
+    monkeypatch.setattr(product, "dispatch", lambda p: captured.setdefault("pipeline", p) or 0)
+    factory, _ = _factory()
+    ctx = product.StepFactoryContext("demo", factory)
+    mf = manifest_load(_DEPS_MANIFEST)
+
+    # act
+    product.run_command("bringup", mf, ctx)
+
+    # assert: the aggregate structure survives onto the pipeline, and the root is the dotted CLI identity
+    pipeline = captured["pipeline"]
+    assert pipeline.root == "deploy.bringup"
+    assert pipeline.tree.name == "bringup"
+    assert [child.name for child in pipeline.tree.children] == ["prep", "up", "seed"]
+
+
+def test_run_command_builds_one_step_per_tree_leaf_in_tree_order(monkeypatch):
+    # arrange: the steps that RUN and the tree that is SHOWN must come from one traversal, or a renderer
+    # can display a structure whose leaves are not the steps that executed
+    captured = {}
+    monkeypatch.setattr(product, "dispatch", lambda p: captured.setdefault("pipeline", p) or 0)
+    factory, built = _factory()
+    ctx = product.StepFactoryContext("demo", factory)
+    mf = manifest_load(_DEPS_MANIFEST)
+
+    # act
+    product.run_command("bringup", mf, ctx)
+
+    # assert
+    pipeline = captured["pipeline"]
+    assert built == [leaf.name for leaf in pipeline.tree.leaves()]
+    assert [s.label for s in pipeline.steps] == ["install", "build", "up", "seed"]

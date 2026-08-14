@@ -53,6 +53,12 @@ def run_command(name: str, manifest: Manifest, ctx: StepFactoryContext, *, group
     `./<product>.sh <leaf>` subprocess), wrapped in a Pipeline carrying the command's own
     `stop_on_failure`, and dispatched through the shared runner (TUI when available, else headless).
 
+    The plan is resolved ONCE, as a tree (`Manifest.plan_tree_for`, netctl#1275), and the steps are its
+    leaves in DFS order - identical to what `plan_for` returns, which the manifest parity test pins. Both
+    the tree and the invoked command's dotted path ride along on the Pipeline as display metadata, so a
+    renderer shows the aggregate structure the plan really had instead of a flat list of leaves, and can
+    never show a structure whose leaves are not the steps that ran.
+
     A command that declares `keep_awake` (netctl#1238) has its WHOLE plan wrapped in
     `delivery.awake.keep_awake`, so a multi-minute aggregate inhibits host idle-sleep exactly as the
     hand-written pipeline it replaced did. The wrap belongs here because an aggregate has no product code
@@ -66,8 +72,9 @@ def run_command(name: str, manifest: Manifest, ctx: StepFactoryContext, *, group
             else manifest.spec_by_name(name))
     if spec is None:
         raise ValueError(f"no unambiguous command named '{name}' in the manifest")
-    plan = manifest.plan_for(name, group=group)
-    steps = [ctx.step_factory(cmd) for cmd in plan]
-    pipeline = Pipeline(name=name, steps=steps, stop_on_failure=spec.stop_on_failure)
+    tree = manifest.plan_tree_for(name, group=group)
+    steps = [ctx.step_factory(leaf.name) for leaf in tree.leaves()]
+    pipeline = Pipeline(name=name, steps=steps, stop_on_failure=spec.stop_on_failure,
+                        tree=tree, root=tree.path)
     with (keep_awake() if spec.keep_awake else contextlib.nullcontext()):
         return dispatch(pipeline)
