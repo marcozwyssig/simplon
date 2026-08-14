@@ -12,10 +12,13 @@ import os
 import shlex
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from delivery import log
 from delivery.run import run_stream
+
+if TYPE_CHECKING:   # type-only: the step model is the LOWEST layer and must not import the manifest
+    from delivery.orchestrator.manifest import PlanNode
 
 # A sink for a step's live output lines (the TUI appends to a RichLog; headless prints them).
 Emit = Callable[[str], None]
@@ -94,6 +97,12 @@ class Pipeline:
     # pipeline sets this so a red unit gate or web jar does not burn minutes building images that cannot
     # succeed. Default false keeps the bring-up pipeline's run-everything behaviour.
     stop_on_failure: bool = False
+    # The plan as a TREE (#1275) plus the dotted path of the command that was INVOKED. Both are display
+    # metadata: the runners execute `steps` exactly as before, and a pipeline built by hand (doctor) leaves
+    # them unset. APPENDED after stop_on_failure deliberately - a dozen tests construct Pipeline
+    # positionally, so a field inserted earlier would silently rebind their arguments rather than fail.
+    tree: "PlanNode | None" = None
+    root: str = ""
 
 
 def argv_step(label: str, argv: list[str], command: str | None = None) -> Step:

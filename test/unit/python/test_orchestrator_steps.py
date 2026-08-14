@@ -218,3 +218,37 @@ def test_without_stop_on_failure_a_failed_step_does_not_skip_the_rest():
     # Assert: the step after the failure still ran (no SKIPPED), overall still a failure
     assert p.steps[2].state == StepState.OK
     assert rc == 1
+
+
+# --- the plan tree on the Pipeline (#1275) ------------------------------------------------------------
+
+
+def test_pipeline_defaults_the_display_metadata_so_a_hand_built_pipeline_needs_neither():
+    # Arrange / Act: `doctor` builds its Pipeline by hand and has no manifest plan behind it
+    p = Pipeline("doctor", [_step("docker engine", 0)])
+    # Assert: the new fields are optional display metadata, not a new requirement
+    assert p.tree is None
+    assert p.root == ""
+
+
+def test_pipeline_still_takes_name_steps_and_stop_on_failure_positionally():
+    # Arrange / Act: a dozen call sites construct it positionally, so the new fields must be APPENDED -
+    # inserting either one earlier would silently rebind these arguments instead of failing loudly
+    p = Pipeline("build", [_step("unit gate", 0)], True)
+    # Assert
+    assert p.name == "build"
+    assert [s.label for s in p.steps] == ["unit gate"]
+    assert p.stop_on_failure is True
+    assert p.tree is None
+
+
+def test_pipeline_carries_the_plan_tree_and_the_invoked_commands_dotted_path():
+    # Arrange
+    from delivery.orchestrator.manifest import CommandSpec, PlanNode
+
+    node = PlanNode(name="seed", path="deploy.seed", spec=CommandSpec(impl="demo.impls:seed", help="Seed."))
+    # Act
+    p = Pipeline("seed", [_step("seed", 0)], False, node, "deploy.seed")
+    # Assert: the runners ignore both; they exist so a renderer can show the structure and the identity
+    assert p.tree is node
+    assert p.root == "deploy.seed"
