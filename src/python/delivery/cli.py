@@ -126,6 +126,11 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
     for that binding and is only required when the manifest declares aggregates. Registration behaviour is
     unchanged: an aggregate registers under its group plus the hidden flat alias unless its name is
     ambiguous, exactly like a leaf.
+
+    A command whose spec declares `hidden: true` (netctl#1277) stays reachable exactly as above but is
+    additionally hidden from ITS GROUP's listing (the flat alias has always been hidden, unconditionally):
+    a plan step named by a `depends_on` entry must be a real manifest command, yet need not clutter `--help`
+    meant for a human. See the loop below for how each registration shape threads the flag.
     """
     tax = mf.taxonomy()
     cd_panel = _cd_panel(product)
@@ -156,6 +161,16 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
     # ambiguous token fails as unknown instead of silently picking a group. In a group-default group the
     # namesake member is the sub-app's DEFAULT action (registered on its callback above), so it is neither a
     # subcommand nor a separate top-level flat command - only its siblings register here.
+    #
+    # `spec.hidden` (netctl#1277) is threaded through per registration SHAPE, deliberately, because each
+    # shape means something different for "absent from --help while still invocable":
+    #   - a collapsed flat single-member group has exactly ONE registration (its group IS the command), so
+    #     `hidden` there hides that one and only top-level entry;
+    #   - an ordinary grouped command has TWO registrations, and only the GROUP one changes: the flat alias
+    #     has always been hidden (the #147 back-compat pattern, unconditional), so a hidden command simply
+    #     stops being the one exception that was visible somewhere;
+    #   - a group-default namesake never reaches this loop (the `continue` above) and `load()` already
+    #     rejects `hidden` there, so there is nothing to thread for it here.
     for group, cmds in mf.groups.items():
         panel = cd_panel if tax.group_requires_env(group) else _CI_PANEL
         default_member = tax.is_group_default_command(group)
@@ -166,9 +181,9 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
             fn = _command_callback(mf, group, name, spec, step_context)
             kw = {"context_settings": _PASSTHROUGH_CTX} if spec.passthrough_args else {}
             if tax.is_flat_command_group(group):
-                app.command(name=name, rich_help_panel=panel, **kw)(fn)
+                app.command(name=name, rich_help_panel=panel, hidden=spec.hidden, **kw)(fn)
             else:
-                group_apps[group].command(name=name, **kw)(fn)
+                group_apps[group].command(name=name, hidden=spec.hidden, **kw)(fn)
                 if not tax.is_ambiguous(name):
                     app.command(name=name, hidden=True, **kw)(fn)
 

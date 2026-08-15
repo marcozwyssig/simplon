@@ -388,6 +388,58 @@ def test_load_rejects_keep_awake_on_a_leaf():
         manifest.load(text)
 
 
+def test_load_reads_hidden_defaulting_to_false():
+    # arrange: a plan step named by a depends_on entry (loader rule 4) must be a real command, but need
+    # not clutter --help (netctl#1277); everything else defaults to False
+    text = ("groups:\n  build:\n    jar:  { impl: 'm:f', help: 'x' }\n"
+            "    step: { impl: 'm:g', help: 'y', hidden: true }\n")
+
+    # act
+    mf = manifest.load(text)
+
+    # assert
+    assert mf.spec_for("build", "step").hidden is True
+    assert mf.spec_for("build", "jar").hidden is False
+
+
+def test_load_rejects_hidden_on_a_group_default_namesake():
+    # arrange: `build` is the group-default namesake of the multi-member `build` group (#592 D4) - it is
+    # bound as the sub-app's default callback, never a listed subcommand or a separate flat command, so
+    # `hidden` there would do nothing (the same reasoning that rejects keep_awake on a leaf)
+    text = ("groups:\n  build:\n    build: { impl: 'm:f', help: 'x', hidden: true }\n"
+            "    diff:  { impl: 'm:g', help: 'y' }\n")
+
+    # act / assert: a flag that does nothing where it is written fails loudly instead
+    with pytest.raises(ValueError, match="command 'build.build': hidden has no effect on a group-default "
+                                          "namesake member"):
+        manifest.load(text)
+
+
+def test_load_allows_hidden_on_a_group_default_sibling():
+    # arrange: only the NAMESAKE is rejected; a sibling in the same group-default group is an ordinary
+    # grouped command, so hidden is meaningful there
+    text = ("groups:\n  build:\n    build: { impl: 'm:f', help: 'x' }\n"
+            "    diff:  { impl: 'm:g', help: 'y', hidden: true }\n")
+
+    # act
+    mf = manifest.load(text)
+
+    # assert
+    assert mf.spec_for("build", "diff").hidden is True
+
+
+def test_load_allows_hidden_on_a_single_member_flat_group():
+    # arrange: `package` collapses to ONE visible flat top-level command (is_flat_command_group) - hidden
+    # there is meaningful too, it hides that one and only registration
+    text = "groups:\n  package:\n    package: { impl: 'm:f', help: 'x', hidden: true }\n"
+
+    # act
+    mf = manifest.load(text)
+
+    # assert
+    assert mf.spec_for("package", "package").hidden is True
+
+
 def test_load_rejects_an_aggregate_with_a_missing_help():
     # arrange: an impl-less aggregate still owes its help line
     text = ("groups:\n  code:\n    fmt: { impl: 'm:f', help: 'x' }\n"

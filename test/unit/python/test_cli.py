@@ -254,6 +254,99 @@ def test_a_group_default_namesake_is_neither_a_subcommand_nor_a_separate_flat_co
     assert build_sub == {"diff", "docs"}
 
 
+# --- hidden command (netctl#1277): a plan step need not clutter --help --------------------------------
+
+_HIDDEN_MANIFEST = """
+product: demo
+groups:
+  code:
+    fmt:  { impl: "hidden_impls:fmt",  help: "Format the sources." }
+    lint: { impl: "hidden_impls:lint", help: "Lint the sources.", hidden: true }
+  package:
+    package: { impl: "hidden_impls:package", help: "Package the artefacts.", hidden: true }
+env_groups: []
+"""
+
+
+def _hidden_impls_module():
+    mod = types.ModuleType("hidden_impls")
+    for fn_name in ("fmt", "lint", "package"):
+        def make(n):
+            def _fn():
+                return n
+            _fn.__name__ = n
+            return _fn
+        setattr(mod, fn_name, make(fn_name))
+    return mod
+
+
+@pytest.fixture
+def hidden_assembled():
+    """Assemble a demo app whose `code` group has one hidden member (lint) beside a visible one (fmt), and
+    whose single-member flat group `package` is itself hidden."""
+    sys.modules["hidden_impls"] = _hidden_impls_module()
+    try:
+        import typer
+
+        app = typer.Typer(add_completion=False, no_args_is_help=True, help="demo root")
+        cli.assemble(app, manifest.load(_HIDDEN_MANIFEST), product="demo")
+        yield app
+    finally:
+        del sys.modules["hidden_impls"]
+
+
+def test_a_hidden_grouped_command_is_absent_from_its_group_listing(hidden_assembled):
+    # arrange: both members still REGISTER under the group (Typer needs the registration to dispatch the
+    # name at all); `hidden` is what Click's listing/`--help` rendering reads to omit a command
+    code_members = {c.name: c for c in _groups(hidden_assembled)["code"].typer_instance.registered_commands}
+
+    # assert: fmt is listed, the hidden lint sibling is marked hidden - so it drops out of `code --help`
+    assert code_members["fmt"].hidden is False
+    assert code_members["lint"].hidden is True
+
+
+def test_a_hidden_grouped_commands_help_text_omits_it_from_the_group_listing(hidden_assembled):
+    # arrange / act: render the group's own --help, the actual listing a human reads
+    result = CliRunner().invoke(hidden_assembled, ["code", "--help"])
+
+    # assert: fmt is advertised, lint is not - even though both dispatch fine (checked elsewhere)
+    assert result.exit_code == 0, result.output
+    assert "fmt" in result.output
+    assert "lint" not in result.output
+
+
+def test_a_hidden_grouped_command_keeps_its_hidden_flat_alias_and_stays_invocable(hidden_assembled):
+    # arrange
+    flat = _flat(hidden_assembled)
+
+    # assert: the flat alias was always hidden regardless, and dispatches the same callback
+    assert flat["lint"].hidden is True
+    assert flat["lint"].callback is sys.modules["hidden_impls"].lint
+    result = CliRunner().invoke(hidden_assembled, ["lint"])
+    assert result.exit_code == 0, result.output
+
+
+def test_a_non_hidden_grouped_commands_flat_alias_is_unaffected_by_the_hidden_flag(hidden_assembled):
+    # arrange
+    flat = _flat(hidden_assembled)
+
+    # assert: fmt's flat alias is the unrelated, unconditional #147 back-compat hiding - unchanged by
+    # this feature (fmt's GROUP listing entry is asserted visible above)
+    assert flat["fmt"].hidden is True
+
+
+def test_a_hidden_single_member_flat_group_hides_its_one_and_only_registration(hidden_assembled):
+    # arrange
+    flat = _flat(hidden_assembled)
+    groups = _groups(hidden_assembled)
+
+    # assert: `package` has no sub-app (collapsed) and its one registration is hidden, yet still invocable
+    assert "package" not in groups
+    assert flat["package"].hidden is True
+    result = CliRunner().invoke(hidden_assembled, ["package"])
+    assert result.exit_code == 0, result.output
+
+
 # --- impl-less aggregate binding (#896): assemble synthesizes the aggregate's callback -----------------
 # `bringup` is an impl-less aggregate (deps, no impl); assemble binds it to a kernel-synthesized closure
 # that expands the #895 dependency plan through run_command and exits with the pipeline's rc.
