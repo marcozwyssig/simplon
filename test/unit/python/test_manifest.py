@@ -478,6 +478,20 @@ def test_the_trees_leaves_in_dfs_order_are_exactly_the_flat_plan(root):
     assert tuple(leaf.name for leaf in tree.leaves()) == mf.plan_for(root)
 
 
+@pytest.mark.parametrize("root", ["top", "x", "y"])
+def test_the_trees_leaves_in_dfs_order_are_exactly_the_flat_plan_for_an_omitted_aggregate(root):
+    # arrange: _SHARED is the one shape _DEPS never exercises - `top` reaches the leaf `a` via both `x`
+    # and `y`, so `y` contributes nothing and is OMITTED from the tree entirely. plan_for is an INDEPENDENT
+    # implementation, so this still compares two traversals rather than one against itself.
+    mf = manifest.load(_SHARED)
+
+    # act
+    tree = mf.plan_tree_for(root)
+
+    # assert
+    assert tuple(leaf.name for leaf in tree.leaves()) == mf.plan_for(root)
+
+
 def test_plan_tree_for_carries_the_dotted_group_command_path_on_every_node():
     # arrange
     mf = manifest.load(_DEPS)
@@ -512,6 +526,13 @@ env_groups: [deploy]
     assert [leaf.name for leaf in mf.plan_tree_for("all", group="test").leaves()] == ["unit"]
     with pytest.raises(ValueError, match="no unambiguous command named 'all'"):
         mf.plan_tree_for("all")
+
+    # assert: the parity property holds for EACH group's own disambiguated root too, not only the
+    # unambiguous shape _DEPS exercises
+    assert (tuple(leaf.name for leaf in mf.plan_tree_for("all", group="test").leaves())
+            == mf.plan_for("all", group="test"))
+    assert (tuple(leaf.name for leaf in mf.plan_tree_for("all", group="deploy").leaves())
+            == mf.plan_for("all", group="deploy"))
 
 
 def test_plan_tree_for_rejects_an_unknown_command_name():

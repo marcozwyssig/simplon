@@ -112,6 +112,16 @@ class Manifest(NamedTuple):
         owners = [group for group, specs in self.commands.items() if name in specs]
         return f"{owners[0]}.{name}" if len(owners) == 1 else None
 
+    def root_spec_for(self, name: str, *, group: str | None = None) -> CommandSpec:
+        """The spec for a plan ROOT: `name` scoped to `group` when given (the #519 `test all` vs
+        `deploy all` disambiguation), else resolved by bare name via `spec_by_name`. Raises the same
+        ValueError `plan_for`, `plan_tree_for` and `run_command` each used to raise inline, from the one
+        place that now owns the expression all three used to repeat."""
+        spec = self.commands.get(group, {}).get(name) if group is not None else self.spec_by_name(name)
+        if spec is None:
+            raise ValueError(f"no unambiguous command named '{name}' in the manifest")
+        return spec
+
     def plan_for(self, name: str, *, group: str | None = None) -> tuple[str, ...]:
         """The execution plan for command `name` (#895): a post-order DFS over `depends_on`, so every
         transitive dependency is planned BEFORE its dependant; a `done` set dedups by name, so a command
@@ -122,7 +132,11 @@ class Manifest(NamedTuple):
 
         `name` is a bare command name; `group` disambiguates a ROOT owned by several groups (#519:
         `test all` vs `deploy all`). Dependency ENTRIES are always bare names - load() validates each as
-        known and unambiguous, so they resolve via spec_by_name without a group."""
+        known and unambiguous, so they resolve via spec_by_name without a group.
+
+        Kept as an INDEPENDENT traversal rather than reimplemented in terms of `plan_tree_for` (e.g. via
+        `PlanNode.leaves()`): it is the ORACLE the parity test checks `plan_tree_for` against, and
+        reimplementing it in terms of the tree would turn that test into a tautology."""
         plan: list[str] = []
         done: set[str] = set()
         trail: list[str] = []   # the DFS path = the grey set, kept ordered for the cycle message
@@ -144,11 +158,7 @@ class Manifest(NamedTuple):
             if spec.impl:
                 plan.append(cmd)
 
-        root = (self.commands.get(group, {}).get(name) if group is not None
-                else self.spec_by_name(name))
-        if root is None:
-            raise ValueError(f"no unambiguous command named '{name}' in the manifest")
-        visit(name, root)
+        visit(name, self.root_spec_for(name, group=group))
         return tuple(plan)
 
     def _path_for(self, name: str, group: str | None = None) -> str:
@@ -169,8 +179,9 @@ class Manifest(NamedTuple):
         the pipeline's identity. A grey-set cycle guard fails loudly, defensively: `load()` already rejects
         cyclic manifests, so a validated manifest never trips it - exactly the stance `plan_for` takes.
 
-        `leaves()` on the result is byte-identical to `plan_for(name, group=group)`. The parity test pins
-        that, and it is why `run_command` can build its steps from the tree without a second traversal.
+        `leaves()` on the result yields `PlanNode`s whose names, in DFS order, are identical to
+        `plan_for(name, group=group)`. The parity test pins that, and it is why `run_command` can build its
+        steps from the tree without a second traversal.
         """
         done: set[str] = set()
         trail: list[str] = []   # the DFS path = the grey set, kept ordered for the cycle message
@@ -193,13 +204,10 @@ class Manifest(NamedTuple):
             trail.pop()
             done.add(cmd)
             if spec.impl:
-                return PlanNode(name=cmd, path=path, spec=spec)
+                return PlanNode(name=cmd, path=path, spec=spec, children=tuple(children))
             return PlanNode(name=cmd, path=path, spec=spec, children=tuple(children)) if children else None
 
-        root_spec = (self.commands.get(group, {}).get(name) if group is not None
-                     else self.spec_by_name(name))
-        if root_spec is None:
-            raise ValueError(f"no unambiguous command named '{name}' in the manifest")
+        root_spec = self.root_spec_for(name, group=group)
         root_path = self._path_for(name, group)
         root = visit(name, root_spec, root_path)
         # An aggregate always bottoms out at leaves in a validated manifest, so `visit` returning None for
@@ -214,9 +222,9 @@ class PlanNode(NamedTuple):
     empty for a leaf, one entry per CONTRIBUTING dependency for an aggregate.
 
     The tree is a DFS SPANNING TREE of the dependency DAG, not the DAG: `plan_tree_for` dedups by name
-    exactly as `plan_for` does, so a diamond appears ONCE, at its first occurrence. That is what keeps
-    `leaves()` byte-identical to `plan_for`, and that equality is the whole point - display and execution
-    cannot disagree when they come from one traversal.
+    exactly as `plan_for` does, so a diamond appears ONCE, at its first occurrence. That is what keeps the
+    names `leaves()` returns identical to `plan_for`'s, and that equality is the whole point - display and
+    execution cannot disagree when they come from one traversal.
     """
     name: str
     path: str
@@ -230,11 +238,13 @@ class PlanNode(NamedTuple):
         return bool(self.spec.impl)
 
     def leaves(self) -> tuple["PlanNode", ...]:
-        """This node's executable leaves in DFS order - the execution plan itself. `run_command` maps these
-        to Steps; the parity test pins them against `plan_for`."""
-        if self.is_leaf:
-            return (self,)
-        return tuple(leaf for child in self.children for leaf in child.leaves())
+        """This node's executable leaves in POST-ORDER (every child's leaves before this node's own, so a
+        dependency always precedes its dependant) - the execution plan itself. The order is STRUCTURAL: it
+        walks `children`, which is populated for every node regardless of `is_leaf`, rather than resting on
+        the v1 impl-XOR-depends_on lock that happens to keep a leaf childless today. `run_command` maps
+        these to Steps; the parity test pins their names against `plan_for`."""
+        return (tuple(leaf for child in self.children for leaf in child.leaves())
+                + ((self,) if self.is_leaf else ()))
 
 
 def _split_impl(impl: str, context: str) -> tuple[str, str]:

@@ -1,5 +1,5 @@
 """Runner tests for delivery.orchestrator.product: run_command (#896), the product-agnostic runner that
-expands a command NAME through the #895 dependency plan (`Manifest.plan_for`), maps each planned leaf
+expands a command NAME through the #895 dependency plan (`Manifest.plan_tree_for`), maps each planned leaf
 through the product's step factory (`StepFactoryContext`) and dispatches the resulting Pipeline. Fake
 step_factory (no real subprocess, no Textual) so the mapping, the stop_on_failure carry-through and the
 rc propagation are tested in isolation. run_command calls `dispatch`; the tests either capture the
@@ -218,7 +218,7 @@ def test_run_command_puts_the_plan_tree_and_the_invoked_path_on_the_pipeline(mon
 
     # assert: the aggregate structure survives onto the pipeline, and the root is the dotted CLI identity
     pipeline = captured["pipeline"]
-    assert pipeline.root == "deploy.bringup"
+    assert pipeline.root_path == "deploy.bringup"
     assert pipeline.tree.name == "bringup"
     assert [child.name for child in pipeline.tree.children] == ["prep", "up", "seed"]
 
@@ -237,5 +237,26 @@ def test_run_command_builds_one_step_per_tree_leaf_in_tree_order(monkeypatch):
 
     # assert
     pipeline = captured["pipeline"]
-    assert built == [leaf.name for leaf in pipeline.tree.leaves()]
+    assert built == list(mf.plan_for("bringup"))
     assert [s.label for s in pipeline.steps] == ["install", "build", "up", "seed"]
+
+
+def test_run_command_lines_up_steps_and_tree_leaves_index_for_index(monkeypatch):
+    # arrange: the only thing joining tree.leaves()[i] to steps[i] is that run_command built them in one
+    # comprehension (the CONTRACT documented on Pipeline.tree in steps.py). Pin it here: the next slice
+    # derives an aggregate's state from its children's steps and would mis-attribute results silently if
+    # the two ever desynced.
+    captured = {}
+    monkeypatch.setattr(product, "dispatch", lambda p: captured.setdefault("pipeline", p) or 0)
+    factory, _ = _factory()
+    ctx = product.StepFactoryContext("demo", factory)
+    mf = manifest_load(_DEPS_MANIFEST)
+
+    # act
+    product.run_command("bringup", mf, ctx)
+
+    # assert
+    pipeline = captured["pipeline"]
+    leaves = pipeline.tree.leaves()
+    assert len(pipeline.steps) == len(leaves)
+    assert [s.label for s in pipeline.steps] == [leaf.name for leaf in leaves]

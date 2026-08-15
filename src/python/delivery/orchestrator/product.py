@@ -1,6 +1,6 @@
 """Running a manifest-declared command as its dependency plan (#895/#896): the product-agnostic runner
 that turns a command NAME into a live Pipeline. `run_command` expands the name through
-`Manifest.plan_for` (transitive, deduped, each unique command once, in dependency order), maps each
+`Manifest.plan_tree_for` (transitive, deduped, each unique command once, in dependency order), maps each
 planned leaf through the product's own step factory - typically a streaming `./<product>.sh <cmd>`
 subprocess - and dispatches the resulting Pipeline through the shared runner, optionally holding the host
 awake for the duration (the `keep_awake` spec flag, netctl#1238). Multi-command pipelines
@@ -48,14 +48,14 @@ ProductContext = StepFactoryContext
 
 def run_command(name: str, manifest: Manifest, ctx: StepFactoryContext, *, group: str | None = None) -> int:
     """Run the command `name` as its dependency-resolved plan (#895/#896) and return the pipeline's exit
-    code (0 iff every planned step passed). `manifest.plan_for` is the whole of transitive + dedup + once
-    + order; each planned leaf is mapped through `ctx.step_factory` into a Step (typically a streaming
+    code (0 iff every planned step passed). `manifest.plan_tree_for` is the whole of transitive + dedup +
+    once + order; each planned leaf is mapped through `ctx.step_factory` into a Step (typically a streaming
     `./<product>.sh <leaf>` subprocess), wrapped in a Pipeline carrying the command's own
     `stop_on_failure`, and dispatched through the shared runner (TUI when available, else headless).
 
-    The plan is resolved ONCE, as a tree (`Manifest.plan_tree_for`, netctl#1275), and the steps are its
-    leaves in DFS order - identical to what `plan_for` returns, which the manifest parity test pins. Both
-    the tree and the invoked command's dotted path ride along on the Pipeline as display metadata, so a
+    The plan is resolved ONCE, as a tree (`Manifest.plan_tree_for`, netctl#1275); the steps are built from
+    its leaves, whose names in DFS order are identical to what `plan_for` returns, which the manifest
+    parity test pins. Both the tree and the invoked command's dotted path ride along on the Pipeline as
     renderer shows the aggregate structure the plan really had instead of a flat list of leaves, and can
     never show a structure whose leaves are not the steps that ran.
 
@@ -67,14 +67,11 @@ def run_command(name: str, manifest: Manifest, ctx: StepFactoryContext, *, group
     contract: a host with no inhibitor warns and runs anyway.
 
     `group` disambiguates a root name owned by several groups (the #519 `test all` shape); it flows
-    through to `plan_for`. Fails loudly with a clear ValueError when `name` does not resolve."""
-    spec = (manifest.commands.get(group, {}).get(name) if group is not None
-            else manifest.spec_by_name(name))
-    if spec is None:
-        raise ValueError(f"no unambiguous command named '{name}' in the manifest")
+    through to `plan_tree_for`. Fails loudly with a clear ValueError when `name` does not resolve."""
+    spec = manifest.root_spec_for(name, group=group)
     tree = manifest.plan_tree_for(name, group=group)
     steps = [ctx.step_factory(leaf.name) for leaf in tree.leaves()]
     pipeline = Pipeline(name=name, steps=steps, stop_on_failure=spec.stop_on_failure,
-                        tree=tree, root=tree.path)
+                        tree=tree, root_path=tree.path)
     with (keep_awake() if spec.keep_awake else contextlib.nullcontext()):
         return dispatch(pipeline)

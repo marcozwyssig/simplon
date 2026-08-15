@@ -228,7 +228,7 @@ def test_pipeline_defaults_the_display_metadata_so_a_hand_built_pipeline_needs_n
     p = Pipeline("doctor", [_step("docker engine", 0)])
     # Assert: the new fields are optional display metadata, not a new requirement
     assert p.tree is None
-    assert p.root == ""
+    assert p.root_path == ""
 
 
 def test_pipeline_still_takes_name_steps_and_stop_on_failure_positionally():
@@ -251,4 +251,4 @@ def test_pipeline_carries_the_plan_tree_and_the_invoked_commands_dotted_path():
     p = Pipeline("seed", [_step("seed", 0)], False, node, "deploy.seed")
     # Assert: the runners ignore both; they exist so a renderer can show the structure and the identity
     assert p.tree is node
-    assert p.root == "deploy.seed"
+    assert p.root_path == "deploy.seed"
