@@ -55,9 +55,9 @@ def run_command(name: str, manifest: Manifest, ctx: StepFactoryContext, *, group
 
     The plan is resolved ONCE, as a tree (`Manifest.plan_tree_for`, netctl#1275); the steps are built from
     its leaves, whose names in DFS order are identical to what `plan_for` returns, which the manifest
-    parity test pins. Both the tree and the invoked command's dotted path ride along on the Pipeline as
-    renderer shows the aggregate structure the plan really had instead of a flat list of leaves, and can
-    never show a structure whose leaves are not the steps that ran.
+    parity test pins. Both the tree and the invoked command's dotted path ride along on the Pipeline as display
+    metadata, so a renderer shows the aggregate structure the plan really had instead of a flat list
+    of leaves, and can never show a structure whose leaves are not the steps that ran.
 
     A command that declares `keep_awake` (netctl#1238) has its WHOLE plan wrapped in
     `delivery.awake.keep_awake`, so a multi-minute aggregate inhibits host idle-sleep exactly as the
