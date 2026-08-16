@@ -677,10 +677,12 @@ def test_a_failure_in_the_last_leaf_of_a_flagged_subtree_is_no_abort_at_all():
 
 
 # A dependency reached along several paths is planned at its FIRST occurrence, so `late` below declares
-# `aot` but does not carry it: `early` got there first.
+# `aot` but does not carry it: `early` got there first. EARLY_FLAG is the placeholder `_with_flags` fills:
+# false makes the two declarers of `aot` disagree, which loader rule 6 rejects (netctl#1319); true makes
+# them agree, which loads and leaves the relocation in place.
 #
 #     run.root
-#       build.early          <- plans jar and aot
+#       build.early          <- EARLY_FLAG, plans jar and aot
 #         build.jar
 #         build.aot
 #       build.late           <- stop_on_failure, declares aot, carries only image
@@ -729,4 +731,53 @@ def test_a_relocated_dependency_between_agreeing_declarers_keeps_the_scope_of_wh
         "jar": StepState.OK,
         "aot": StepState.FAILED,
         "image": StepState.OK,
+    }
+
+
+# The same hazard one level up, which rule 6 does NOT see: `first` and `mid` both declare `shared` and
+# both default to false, so the guard compares two falses and passes - while the flag that matters sits on
+# `guarded`, an ANCESTOR of `mid` rather than a declarer.
+#
+#     run.root
+#       gate.first           <- plans shared
+#         gate.shared
+#       gate.guarded         <- stop_on_failure, ancestor of a declarer of shared
+#         gate.mid           <- declares shared, carries only other
+#           gate.other
+#       gate.later
+_ANCESTOR_FLAG_MANIFEST = """
+groups:
+  gate:
+    shared:  { impl: "demo.impls:shared", help: "The shared dependency." }
+    other:   { impl: "demo.impls:other",  help: "What the guard protects." }
+    later:   { impl: "demo.impls:later",  help: "A step after the guard." }
+    first:   { help: "Planned first.", depends_on: [shared] }
+    mid:     { help: "Declares shared too.", depends_on: [shared, other] }
+    guarded: { help: "Wants to stop.", depends_on: [mid], stop_on_failure: true }
+  run:
+    root: { help: "The whole run.", depends_on: [first, guarded, later] }
+env_groups: [run]
+"""
+
+
+def test_a_flag_contradicted_through_an_ancestor_of_a_declarer_survives_the_guard_documents_a_limitation():
+    """DOCUMENTS A KNOWN LIMITATION, it does not endorse it (netctl#1319, option 2 is the cure).
+
+    Loader rule 6 compares each DIRECT declarer's own flag. Here both declarers of `shared` are unflagged,
+    so the manifest loads - and the aggregate that really asked to stop, `guarded`, is an ANCESTOR of one
+    of them. `shared` is planned under `first`, `guarded` is not on that leaf's chain, and its subtree runs
+    although the leaf its own subtree declared has died. That is netctl#1319's opening paragraph one level
+    up. Extending rule 6 to EFFECTIVE policy would make the comparison per plan and per declarer, which is
+    the declaration-graph scoping this ticket defers; pinning the behaviour means that change will notice
+    when it moves."""
+    # Arrange: the manifest loads (the guard stays silent), and shared - planned under `first` - fails
+    pipeline = _fail(_planned(_ANCESTOR_FLAG_MANIFEST, "root"), "shared")
+    # Act
+    run_headless(pipeline, verbose=False)
+    # Assert: nothing is aborted at all, so `other` runs inside the subtree `guarded` claimed to guard
+    assert abort_after(pipeline, 0) == Abort(scope="", indices=frozenset())
+    assert _states(pipeline) == {
+        "shared": StepState.FAILED,
+        "other": StepState.OK,
+        "later": StepState.OK,
     }

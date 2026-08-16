@@ -4,6 +4,10 @@ resolution, and the shared-taxonomy build - exercised on a SYNTHETIC manifest so
 independently of any product's command set. No Typer, no product impls; AAA throughout.
 """
 import json
+import os
+import pathlib
+import subprocess
+import sys
 
 import pytest
 
@@ -502,6 +506,42 @@ groups:
     # assert: the diamond still collapses to one occurrence of the shared leaf
     assert mf.plan_for("images") == ("jar",)
     assert mf.spec_for("build", "aot").stop_on_failure is True
+
+
+# Two entry points reach both declarers, so the message has to CHOOSE which plan it names. `zulu` is
+# declared first, so insertion order cannot pass for the alphabetical tie-break.
+_TWO_PLANS_COLLIDE = """
+groups:
+  gate:
+    shared:  { impl: "demo:shared", help: "The contested dependency." }
+    first:   { help: "Reaches shared first.", depends_on: [shared] }
+    guarded: { help: "Wants to stop.", depends_on: [shared], stop_on_failure: true }
+  run:
+    zulu:  { help: "One plan over both.", depends_on: [first, guarded] }
+    alpha: { help: "Another plan over both.", depends_on: [first, guarded] }
+"""
+
+
+def test_the_named_plan_is_the_alphabetically_first_candidate_whatever_the_hash_seed():
+    # arrange: the candidate plans arrive as a SET, whose iteration order Python randomises per process, so
+    # a single in-process assertion would pass half the time even if the tie-break were dropped. Run the
+    # load under several PYTHONHASHSEEDs instead and require ONE message out of all of them.
+    source = str(pathlib.Path(manifest.__file__).parents[2])
+    probe = (f"import sys; sys.path.insert(0, {source!r})\n"
+             "from delivery.orchestrator import manifest\n"
+             "try:\n"
+             f"    manifest.load({_TWO_PLANS_COLLIDE!r})\n"
+             "except ValueError as exc:\n"
+             "    print(exc)\n")
+
+    # act
+    messages = {subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True,
+                               env={**os.environ, "PYTHONHASHSEED": str(seed)}).stdout.strip()
+                for seed in range(4)}
+
+    # assert: one message across every seed, naming the alphabetically first of the two candidate plans
+    assert len(messages) == 1
+    assert "plan 'run.alpha' reaches both" in messages.pop()
 
 
 def test_the_in_plan_disagreement_message_names_both_aggregates_the_dependency_and_the_plan():

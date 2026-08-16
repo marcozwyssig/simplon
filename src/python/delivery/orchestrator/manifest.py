@@ -468,9 +468,14 @@ class _ManifestModel(BaseModel):
         # is planned under whichever aggregate the traversal reaches first and deduplicated under the
         # other; the loser is then not on that leaf's chain at all and `abort_after` never consults its
         # flag - it said "stop on failure", its own dependency died, and the subtree it guards ran anyway.
-        # Where the two declare the SAME flag no declarer's policy is contradicted (only the abort scope
-        # can come out narrower than the loser asked for), so only a DISAGREEMENT is rejected; scoping the
-        # abort by the declaration graph is what would close the remainder, and it stays deferred.
+        # The comparison is between the two DIRECT declarers' OWN flags, and that is the exact extent of
+        # what the guard catches. Two things it deliberately does not: a relocation between declarers that
+        # AGREE still narrows the abort scope to whichever of them carries the dependency, and a declarer
+        # whose flag is false under a `true` ANCESTOR has an effective policy the guard never compares, so
+        # the same contradiction reappears one level up. Extending it to effective policy is not a bigger
+        # check but a different one - a declarer's outermost true ancestor differs per entry point, so the
+        # comparison would become per plan AND per declarer - which is the declaration-graph scoping this
+        # ticket defers, not this guard. `steps.abort_after` states the surviving shapes in the same terms.
         #
         # "Within one plan" is the whole substance of the rule. Two aggregates share a plan exactly when
         # some command's plan reaches both, which is equivalent to sharing an ENTRY POINT (a command no
@@ -498,7 +503,11 @@ class _ManifestModel(BaseModel):
         entry_points: dict[str, frozenset[str]] = {}
 
         def plans_reaching(path: str) -> frozenset[str]:
-            """The plans that contain `path`: its ancestors that nothing else depends on, memoised."""
+            """The plans that contain `path`: the ancestors it has that nothing depends on, memoised.
+
+            `path` ITSELF is in the result when nothing depends on it - a plan contains its own root, and
+            that is what makes the declarer-is-the-entry-point case (one declarer sitting above the other)
+            come out as a collision rather than as two disjoint sets."""
             if path not in entry_points:
                 roots: set[str] = set()
                 seen, stack = {path}, [path]
