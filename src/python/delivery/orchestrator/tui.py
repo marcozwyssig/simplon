@@ -61,6 +61,11 @@ class _StepApp(App):
         # step". Filled on mount, when the nodes exist.
         self._chain_nodes: dict[int, tuple[TreeNode, ...]] = {}
         self._chain_rows: dict[int, tuple[Row, ...]] = {}
+        # Per SKIPPED step (by identity), why it will not run - the same `Abort.reason` the headless runner
+        # prints. Without it the TTY operator sees a bare ⊘ and never learns which subtree decided, which is
+        # the whole content of a subtree-scoped stop (netctl#1317). Keyed by the Step rather than its index
+        # because the details pane is reached from a Row.
+        self._skipped_because: dict[int, str] = {}
         # The last text written to each node, so an unchanged row is not written again. Textual's
         # `TreeNode.set_label` schedules `_refresh_node`, which marks every VISIBLE line of that node's
         # subtree dirty - for the root that is the whole pane. A 17-leaf plan repaints the root twice per
@@ -163,6 +168,8 @@ class _StepApp(App):
                 rlog.write(step.output.rstrip("\n"))
             elif step.state == StepState.RUNNING:
                 rlog.write("(running…)")
+            elif step.state == StepState.SKIPPED:
+                rlog.write(f"(skipped: {self._skipped_because.get(id(step), 'a previous step failed')})")
             elif step.state == StepState.PENDING:
                 rlog.write("(pending)")
             return
@@ -221,6 +228,7 @@ class _StepApp(App):
             if i in aborted:
                 step.state = StepState.SKIPPED                      # its subtree stopped: do not run it
                 self.call_from_thread(self._refresh_row, i)
+                self.call_from_thread(self._maybe_refresh_details, i)   # -> the pane names the scope
                 continue
             step.state = StepState.RUNNING
             self.call_from_thread(self._refresh_row, i)             # -> RUNNING shown
@@ -230,7 +238,10 @@ class _StepApp(App):
             self.call_from_thread(self._refresh_row, i)             # -> OK/FAILED
             self.call_from_thread(self._maybe_refresh_details, i)
             if not outcome.ok:
-                aborted |= abort_after(self.pipeline, i).indices
+                abort = abort_after(self.pipeline, i)
+                aborted |= abort.indices
+                for doomed in abort.indices:
+                    self._skipped_because.setdefault(id(self.pipeline.steps[doomed]), abort.reason)
         self.call_from_thread(self._on_done)
 
     def _on_done(self) -> None:

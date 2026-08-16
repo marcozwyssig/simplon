@@ -54,16 +54,21 @@ def run_command(name: str, manifest: Manifest, ctx: StepFactoryContext, *, group
     runner (TUI when available, else headless).
 
     `stop_on_failure` rides along on the TREE, where it is declared: every node carries its own spec, and
-    `delivery.orchestrator.steps.abort_after` scopes a failure to the nearest ancestor that sets the flag
+    `delivery.orchestrator.steps.abort_after` scopes a failure to the OUTERMOST ancestor whose flag is true
     (netctl#1317). The Pipeline's own single flag is still set from the ROOT spec, as the fallback for the
     tree-less / degraded shape - with a usable tree it is the root NODE's flag that is read, and the two
     are the same value by construction.
 
     The plan is resolved ONCE, as a tree (`Manifest.plan_tree_for`, netctl#1275); the steps are built from
-    its leaves, whose names in DFS order are identical to what `plan_for` returns, which the manifest
-    parity test pins. Both the tree and the invoked command's dotted path ride along on the Pipeline as display
-    metadata, so a renderer shows the aggregate structure the plan really had instead of a flat list
-    of leaves, and can never show a structure whose leaves are not the steps that ran.
+    its leaves, whose names in DFS order are identical to what `plan_for` returns, which the manifest parity
+    test pins. Both the tree and the invoked command's dotted path ride along on the Pipeline, so a renderer
+    shows the aggregate structure the plan really had instead of a flat list of leaves, and can never show a
+    structure whose leaves are not the steps that ran. The tree is NOT decoration: since netctl#1317 it also
+    carries the per-node stop flags a failure is scoped by, so this function is the one production builder
+    of a Pipeline that decides what does not run. Building the steps and the tree from one traversal is
+    therefore load-bearing twice over, and a step factory must stamp each Step with its leaf's exact-command
+    identity - `Pipeline.usable_tree` cannot verify a step that names nothing and drops the whole tree,
+    loudly, when one appears.
 
     A command that declares `keep_awake` (netctl#1238) has its WHOLE plan wrapped in
     `delivery.awake.keep_awake`, so a multi-minute aggregate inhibits host idle-sleep exactly as the

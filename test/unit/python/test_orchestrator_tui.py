@@ -177,7 +177,8 @@ groups:
 env_groups: [deploy]
 """
     tree = manifest_load(manifest).plan_tree_for("bringup")
-    steps = [Step(label=leaf.name, action=lambda: Outcome(rc=0, output="")) for leaf in tree.leaves()]
+    steps = [Step(label=leaf.name, command=leaf.path, action=lambda: Outcome(rc=0, output=""))
+             for leaf in tree.leaves()]
     pipeline = Pipeline("bringup", steps, False, tree, tree.path)
 
     async def _drive():
@@ -395,3 +396,42 @@ env_groups: [deploy]
                     "✓ deploy.up"]
     assert [step.state for step in pipeline.steps] == [
         StepState.FAILED, StepState.SKIPPED, StepState.OK]
+
+
+def test_the_details_pane_tells_a_skipped_step_which_subtree_stopped_it():
+    """The headless runner prints `deploy.up stopped on a failure` beside every step it skips; the TUI used
+    to show a bare ⊘ and nothing else, so the operator watching a forty-minute bring-up on a TTY - the one
+    who most needs to know - never learned which subtree decided."""
+    # arrange: prep stops on failure, its first leaf dies, and the cursor lands on the skipped row
+    manifest = """
+groups:
+  build:
+    install: { impl: "demo.impls:install", help: "Install host prereqs." }
+    compile: { impl: "demo.impls:compile", help: "Compile the artefacts." }
+    prep:    { help: "Install + compile.", depends_on: [install, compile], stop_on_failure: true }
+  deploy:
+    up:      { impl: "demo.impls:up", help: "Deploy up." }
+    bringup: { help: "Full bring-up.", depends_on: [prep, up] }
+env_groups: [deploy]
+"""
+    tree = manifest_load(manifest).plan_tree_for("bringup")
+    pipeline = Pipeline("bringup", [
+        Step(label=leaf.name, command=leaf.path,
+             action=lambda name=leaf.name: Outcome(rc=1 if name == "install" else 0, output=""))
+        for leaf in tree.leaves()], False, tree, tree.path)
+
+    async def _drive():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            _focus_line(app, 3)     # build.compile, the skipped one
+            await pilot.pause()
+            return _details(app)
+
+    # act
+    rendered = asyncio.run(_drive())
+
+    # assert
+    assert "skipped: build.prep stopped on a failure" in rendered
+    assert "(pending)" not in rendered, "a step that will never run must not still read as pending"

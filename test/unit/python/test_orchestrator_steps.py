@@ -11,6 +11,7 @@ import pytest
 from delivery.orchestrator.manifest import load as manifest_load
 from delivery.orchestrator.steps import (
     VERBOSE_ENV,
+    Abort,
     Outcome,
     Pipeline,
     Step,
@@ -24,6 +25,12 @@ from delivery.orchestrator.steps import (
 
 def _step(label: str, rc: int, output: str = "") -> Step:
     return Step(label=label, action=lambda: Outcome(rc=rc, output=output))
+
+
+def _command_step(command: str, rc: int = 0) -> Step:
+    """A step carrying its exact-command identity, the way a product's step factory builds one - which is
+    what lets the kernel verify a leaf-to-step pairing at all."""
+    return Step(label=command, action=lambda: Outcome(rc=rc, output=""), command=command)
 
 
 def test_step_run_transitions_to_ok_and_records_output():
@@ -449,18 +456,17 @@ def test_the_walk_continues_past_the_nearest_flagged_ancestor_to_the_outermost_o
     assert _states(pipeline)["accept"] == StepState.SKIPPED
 
 
-def test_a_leafs_own_stop_on_failure_aborts_nothing_beyond_the_leaf_itself():
-    """A leaf's subtree is the leaf. Declaring the flag there is pointless rather than wrong, and it must
-    not be read as "stop the run" - the manifest has an aggregate for that."""
+def test_a_leafs_own_stop_on_failure_is_rejected_at_load_rather_than_silently_scoping_to_nothing():
+    """A leaf's subtree is the leaf, so the flag there could only ever skip nothing. That used to load
+    cleanly and do nothing, which is the trap `keep_awake` and `hidden` are already rejected for; the walk
+    would still be correct, so this pins the LOUD half. The message itself is pinned in test_manifest.py."""
     # Arrange: the flag on the LEAF, on no aggregate above it
     text = _with_flags(_GATES_MANIFEST, root=False, build=False, up=False).replace(
         'unit:  { impl: "demo.impls:unit",  help: "The unit gate." }',
         'unit:  { impl: "demo.impls:unit",  help: "The unit gate.", stop_on_failure: true }')
-    pipeline = _fail(_planned(text, "all"), "unit")
-    # Act
-    run_headless(pipeline, verbose=False)
-    # Assert
-    assert all(state != StepState.SKIPPED for state in _states(pipeline).values())
+    # Act / Assert
+    with pytest.raises(ValueError, match="stop_on_failure applies to an aggregate"):
+        manifest_load(text)
 
 
 def test_the_nearest_flagged_ancestor_leaves_its_own_sibling_running():
@@ -573,3 +579,141 @@ def test_a_rejected_tree_still_stops_the_run_when_the_pipeline_flag_says_so():
     run_headless(pipeline, verbose=False)
     # Assert
     assert [s.state for s in pipeline.steps] == [StepState.FAILED, StepState.SKIPPED, StepState.SKIPPED]
+
+
+def test_a_doomed_steps_action_is_never_invoked_and_not_merely_marked_skipped():
+    """SKIPPED is the state; not running is the POINT. Asserting the state alone would still pass over a
+    runner that ran the doomed work and relabelled it afterwards, which is the entire cost this flag
+    exists to avoid - forty minutes of deploying a stale image, marked skipped."""
+    # Arrange: record every action that is actually entered
+    ran: list[str] = []
+    tree = manifest_load(_with_flags(_GATES_MANIFEST, root=False, build=True, up=False)).plan_tree_for("all")
+    steps = [Step(label=leaf.name, command=leaf.path,
+                  action=lambda name=leaf.name: (ran.append(name),
+                                                 Outcome(rc=1 if name == "unit" else 0, output=""))[1])
+             for leaf in tree.leaves()]
+    pipeline = Pipeline("all", steps, tree.spec.stop_on_failure, tree, tree.path)
+    # Act
+    run_headless(pipeline, verbose=False)
+    # Assert: `image` was never entered, and carries none of the traces a run leaves behind
+    assert ran == ["unit", "up-preflight", "up-deploy", "accept"]
+    assert pipeline.steps[1].label == "image"
+    assert pipeline.steps[1].state == StepState.SKIPPED
+    assert pipeline.steps[1].rc is None and pipeline.steps[1].output == ""
+
+
+def test_a_tree_whose_steps_name_nothing_falls_back_to_the_pipelines_own_flag():
+    """The count and the order are right, but no step carries its identity, so the kernel cannot VERIFY the
+    pairing. It must not scope a failure by a tree it cannot check: the probe that reversed such steps
+    skipped `build.image` for a failure inside `deploy.up`, a subtree it is not even in."""
+    # Arrange: the up subtree says stop, the pipeline's own flag says do not
+    tree = manifest_load(_with_flags(_GATES_MANIFEST, root=False, build=False, up=True)).plan_tree_for("all")
+    pipeline = Pipeline("all", [_step(leaf.name, rc=1 if leaf.name == "up-preflight" else 0)
+                                for leaf in tree.leaves()], False, tree, tree.path)
+    # Act
+    run_headless(pipeline, verbose=False)
+    # Assert: no subtree flag was read at all
+    assert _states(pipeline)["up-deploy"] == StepState.OK
+    assert all(state != StepState.SKIPPED for state in _states(pipeline).values())
+
+
+def test_the_degrade_to_the_flat_shape_says_out_loud_that_the_stop_scopes_went_with_it(capsys):
+    """The degrade used to be silent, and with a `false` root that silently reinstates the very defect this
+    change fixes: every subtree flag dropped, nothing skipped, and the only signal a flat-looking tree. The
+    warning names the safety half, not merely the display shape."""
+    # Arrange: a plan whose subtrees stop on failure, against a step list the guard rejects
+    tree = manifest_load(_with_flags(_GATES_MANIFEST, root=False, build=True, up=True)).plan_tree_for("all")
+    pipeline = Pipeline("all", [_command_step("build.unit", rc=1)], False, tree, tree.path)
+    # Act
+    run_headless(pipeline, verbose=False)
+    # Assert
+    printed = capsys.readouterr().out
+    assert "does not pair with the steps that will run" in printed
+    assert "stop_on_failure is dropped" in printed
+    assert "nothing is skipped" in printed
+
+
+def test_a_usable_tree_degrades_nothing_and_therefore_warns_about_nothing(capsys):
+    """The negative case for the warning: a well-paired plan must not cry wolf on every single run."""
+    # Arrange
+    pipeline = _fail(_planned(_with_flags(_GATES_MANIFEST, root=False, build=True, up=True), "all"), "unit")
+    # Act
+    run_headless(pipeline, verbose=False)
+    # Assert
+    assert "does not pair" not in capsys.readouterr().out
+
+
+def test_the_pairing_verdict_is_computed_once_for_display_and_execution_alike(capsys):
+    """Three evaluations over a mutable step list is three chances to disagree, and a run whose printed
+    tree says one thing while its skipping does another is worse than either failing alone. One verdict,
+    remembered - which a single warning for a run that asks from both sides is the visible proof of."""
+    # Arrange: a rejected pairing, in a run that fails (execution asks) and then prints its tree (display)
+    tree = manifest_load(_with_flags(_GATES_MANIFEST, root=True, build=False, up=False)).plan_tree_for("all")
+    pipeline = Pipeline("all", [_command_step("build.unit", rc=1), _command_step("build.image")], True,
+                        tree, tree.path)
+    # Act
+    run_headless(pipeline, verbose=False)
+    # Assert: warned once, and the verdict is stable however often it is asked afterwards
+    assert capsys.readouterr().out.count("does not pair with the steps") == 1
+    assert pipeline.usable_tree() is None and pipeline.usable_tree() is None
+
+
+def test_an_abort_that_skips_nothing_cannot_name_a_subtree():
+    """`reason` would otherwise announce that some node stopped a run in which nothing was stopped."""
+    # Arrange / Act / Assert
+    with pytest.raises(ValueError, match="must not name a scope"):
+        Abort(scope="deploy.up", indices=frozenset())
+
+
+def test_a_failure_in_the_last_leaf_of_a_flagged_subtree_is_no_abort_at_all():
+    """The reachable shape behind that invariant: the flagged node has no remainder left to abort."""
+    # Arrange: build stops on failure, and its LAST leaf (image, index 1) is the one that fails
+    pipeline = _planned(_with_flags(_GATES_MANIFEST, root=False, build=True, up=False), "all")
+    # Act
+    abort = abort_after(pipeline, 1)
+    # Assert
+    assert abort.indices == frozenset()
+    assert abort.scope == ""
+
+
+# A dependency reached along several paths is planned at its FIRST occurrence, so `late` below declares
+# `aot` but does not carry it: `early` got there first.
+#
+#     run.root
+#       build.early          <- plans jar and aot
+#         build.jar
+#         build.aot
+#       build.late           <- stop_on_failure, declares aot, carries only image
+#         build.image
+_RELOCATED_DEP_MANIFEST = """
+groups:
+  build:
+    jar:   { impl: "demo.impls:jar",   help: "Build the jar." }
+    aot:   { impl: "demo.impls:aot",   help: "The shared dependency." }
+    image: { impl: "demo.impls:image", help: "Build the image." }
+    early: { help: "Planned first.", depends_on: [jar, aot] }
+    late:  { help: "Declares aot too.", depends_on: [aot, image], stop_on_failure: true }
+  run:
+    root: { help: "The whole run.", depends_on: [early, late] }
+env_groups: [run]
+"""
+
+
+def test_a_dependency_dedup_moved_out_of_a_flagged_subtree_does_not_stop_it_documents_a_limitation():
+    """DOCUMENTS A KNOWN LIMITATION, it does not endorse it (follow-up filed off netctl#1317).
+
+    `plan_tree_for` is a DFS SPANNING tree, so `aot` is planned under `early`, which reached it first, and
+    `late` carries no node for it. `abort_after` walks the tree, so `late` is not on the failed leaf's chain
+    and does not stop for the failure of a dependency it declared. netctl has three such relocations today,
+    harmless only because a wider `true` sits above them. Fixing it means changing what a plan tree IS,
+    which is not this change; pinning the current behaviour means the follow-up will notice when it moves."""
+    # Arrange: aot fails, and the aggregate that declared it - but did not get to carry it - stops on failure
+    pipeline = _fail(_planned(_RELOCATED_DEP_MANIFEST, "root"), "aot")
+    # Act
+    run_headless(pipeline, verbose=False)
+    # Assert: `image`, which IS in late's subtree, still runs
+    assert _states(pipeline) == {
+        "jar": StepState.OK,
+        "aot": StepState.FAILED,
+        "image": StepState.OK,
+    }

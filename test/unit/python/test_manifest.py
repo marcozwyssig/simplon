@@ -388,6 +388,31 @@ def test_load_rejects_keep_awake_on_a_leaf():
         manifest.load(text)
 
 
+def test_load_rejects_stop_on_failure_on_a_leaf():
+    # arrange: the flag scopes to the SUBTREE of the command that declares it (netctl#1317), and a leaf's
+    # subtree is the leaf - by the time it has failed there is nothing below it left to skip. Someone
+    # writing it on a preflight guard expecting the bring-up to stop would get a clean load and no effect.
+    text = "groups:\n  build:\n    jar: { impl: 'm:f', help: 'x', stop_on_failure: true }\n"
+
+    # act / assert: a flag that does nothing where it is written fails loudly instead, exactly as
+    # keep_awake and hidden already do
+    with pytest.raises(ValueError,
+                       match="command 'build.jar': stop_on_failure applies to an aggregate"):
+        manifest.load(text)
+
+
+def test_load_allows_stop_on_failure_on_an_aggregate():
+    # arrange: the negative half - the rejection must not swallow the case the flag exists for
+    text = ("groups:\n  build:\n    jar:    { impl: 'm:f', help: 'x' }\n"
+            "    images: { help: 'y', depends_on: [jar], stop_on_failure: true }\n")
+
+    # act
+    mf = manifest.load(text)
+
+    # assert
+    assert mf.spec_for("build", "images").stop_on_failure is True
+
+
 def test_load_reads_hidden_defaulting_to_false():
     # arrange: a plan step named by a depends_on entry (loader rule 4) must be a real command, but need
     # not clutter --help (netctl#1277); everything else defaults to False

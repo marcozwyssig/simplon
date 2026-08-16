@@ -55,9 +55,11 @@ def _command_step(command: str, rc: int = 0) -> Step:
 
 
 def _planned_pipeline() -> Pipeline:
-    """A Pipeline built exactly as `run_command` builds one: steps from the tree's leaves, in leaf order."""
+    """A Pipeline built exactly as `run_command` builds one: steps from the tree's leaves, in leaf order,
+    each stamped with its leaf's exact-command identity the way a product's step factory stamps it - which
+    is what makes the pairing verifiable at all (netctl#1317)."""
     tree = manifest_load(_NESTED_MANIFEST).plan_tree_for("bringup")
-    steps = [_step(leaf.name) for leaf in tree.leaves()]
+    steps = [_command_step(leaf.path) for leaf in tree.leaves()]
     return Pipeline(name="bringup", steps=steps, stop_on_failure=False, tree=tree,
                     root_path=tree.path)
 
@@ -279,17 +281,22 @@ def test_build_rows_ignores_a_tree_whose_steps_are_in_the_wrong_order():
     assert rows.children[0].step is steps[0], "the flat shape still pairs each row with its own step"
 
 
-def test_build_rows_keeps_the_tree_when_a_step_carries_no_command_of_its_own():
-    """An empty `command` is not evidence of a mis-pairing: a hand-built step legitimately has none, and
-    the guard must not throw away a correct tree over a step that simply declined to name itself."""
+def test_build_rows_drops_a_tree_whose_steps_name_nothing_the_kernel_can_check():
+    """Reversed by netctl#1317. An empty `command` used to be tolerated here, because the verdict only
+    chose a display shape and a hand-built step legitimately has none. The same verdict now also decides
+    what does NOT RUN, and an unverifiable pairing cannot be trusted with that: the probe that reversed
+    such steps skipped `build.image` for a failure inside `deploy.up`, a subtree it is not in. A hand-built
+    pipeline has no tree, so it never reaches the guard - only a plan whose factory declined to stamp its
+    steps does, and that degrades (loudly) instead."""
     # arrange
     tree = manifest_load(_NESTED_MANIFEST).plan_tree_for("bringup")
     pipeline = Pipeline("bringup", [_step(leaf.name) for leaf in tree.leaves()], False, tree,
                         "deploy.bringup")
     # act
     rows = build_rows(pipeline)
-    # assert
-    assert [child.label for child in rows.children] == ["build.prep", "deploy.up"]
+    # assert: root identity kept, structure dropped
+    assert rows.label == "deploy.bringup"
+    assert [child.label for child in rows.children] == ["install", "compile", "up"]
 
 
 def test_build_rows_keeps_the_tree_when_a_steps_command_is_the_leafs_bare_name():

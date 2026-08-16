@@ -52,11 +52,13 @@ class CommandSpec(NamedTuple):
     either a leaf-with-impl or an impl-less AGGREGATE. Rationale: plan steps execute as `./<product>.sh
     <leaf>` SUBPROCESSES, so an impl-bearing command that also carried deps would re-expand them in the
     child and break dedup-once. Forward path if a hybrid is ever needed: a child-side skip-deps env guard
-    (e.g. NETCTL_SKIP_DEPS=1) - deliberately NOT built now. `stop_on_failure` makes a failure skip the rest
-    of THIS command's subtree instead of running doomed work (default False = run every step below it and
-    take the worst rc). It is scoped to the subtree, not to the run (netctl#1317): a failing `up` aborts
-    its own phases while the `test all` that planned it carries on to the next gate, which is what a flag
-    declared PER AGGREGATE has to mean. `delivery.orchestrator.steps.abort_after` owns the walk.
+    (e.g. NETCTL_SKIP_DEPS=1) - deliberately NOT built now. `stop_on_failure` (an AGGREGATE's flag, rejected
+    on a leaf) makes a failure skip the rest of THIS command's subtree instead of running doomed work
+    (default False = run every step below it and take the worst rc). It is scoped to the subtree, not to the
+    run (netctl#1317): a failing `up` aborts its own phases while the `test all` that planned it carries on
+    to the next gate, which is what a flag declared PER AGGREGATE has to mean. The scope of a failure is the
+    OUTERMOST ancestor whose flag is true, so an explicit `false` reads the same as an unset one and cannot
+    shield its subtree from a `true` above it. `delivery.orchestrator.steps.abort_after` owns the walk.
 
     `keep_awake` (an aggregate's flag, netctl#1238) declares that the host must not idle-sleep while this
     command's PLAN runs: `run_command` wraps the whole dispatch in `delivery.awake.keep_awake`. It exists
@@ -382,6 +384,15 @@ class _ManifestModel(BaseModel):
                 if spec.depends_on and spec.passthrough_args:
                     raise ValueError(
                         f"command '{group}.{name}': passthrough_args cannot combine with depends_on")
+                # stop_on_failure scopes to the SUBTREE of the command that declares it (netctl#1317), and
+                # a leaf's subtree is the leaf: by the time it has failed there is nothing left below it to
+                # skip. Someone writing it on `up-preflight` to stop the bring-up would get a clean load and
+                # no effect whatsoever, which is the same trap keep_awake and hidden are rejected for.
+                if spec.stop_on_failure and not spec.depends_on:
+                    raise ValueError(
+                        f"command '{group}.{name}': stop_on_failure applies to an aggregate "
+                        f"(depends_on); on a leaf it would scope to that leaf alone and skip nothing - "
+                        f"declare it on the aggregate whose remaining steps should be skipped")
                 # keep_awake is honoured by `run_command`, which only ever runs an aggregate's PLAN. The
                 # CLI binds a leaf straight to its impl, so the flag there would be silently ignored -
                 # and a flag that does nothing where it is written is worse than no flag (netctl#1238).
@@ -484,6 +495,9 @@ def load(text: str) -> Manifest:
         acyclic;
       - `keep_awake` (netctl#1238) is declared only on an AGGREGATE, because `run_command` - which runs a
         plan - is its only consumer; on a leaf it would be silently ignored;
+      - `stop_on_failure` (netctl#1317) is likewise declared only on an AGGREGATE: it scopes to the
+        subtree of the command that declares it, and a leaf's subtree is the leaf, so there is nothing
+        left below it to skip;
       - `hidden` (netctl#1277) is rejected on a group-default group's NAMESAKE member, because that member
         never reaches the registration `delivery.cli.assemble` would apply it to.
     Unknown top-level keys stay ignored (backward compatible), with ONE exception: a leftover `composites:`
