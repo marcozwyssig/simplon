@@ -192,10 +192,11 @@ env_groups: [deploy]
     # act
     rows, rendered = asyncio.run(_drive())
 
-    # assert: no row for `build` anywhere, and the parent that declared it says why
+    # assert: no row for `build` anywhere, and the parent that declared it names it by its BARE name -
+    # asserting `"build" in rendered` would pass on the substring of any `build.*` row, including with the
+    # bare-name half, which is the case this test exists for, deleted outright
     assert not any("build.build" in row or row.endswith(" build") for row in rows)
-    assert "already planned earlier in this run" in rendered
-    assert "build" in rendered
+    assert "already planned earlier in this run, so it carries no row here: build" in rendered
 
 
 def test_the_tree_auto_focuses_the_first_failure_when_the_run_is_done():
@@ -247,11 +248,13 @@ def test_a_row_whose_text_did_not_change_is_not_written_again(monkeypatch):
 
     # arrange: 3 leaves under 2 aggregates, so the root stays RUNNING across most transitions
     pipeline = _planned_pipeline()
-    writes: list[str] = []
+    # PER NODE, because global label uniqueness is a different claim: it would false-fail the moment two
+    # steps share a label, and it would pass a run that repainted one row while eliding another's change
+    writes: dict[int, list[str]] = {}
     original = TreeNode.set_label
 
     def recording(self, label):
-        writes.append(str(label))
+        writes.setdefault(id(self), []).append(str(label))
         return original(self, label)
 
     monkeypatch.setattr(TreeNode, "set_label", recording)
@@ -265,13 +268,18 @@ def test_a_row_whose_text_did_not_change_is_not_written_again(monkeypatch):
     # act
     asyncio.run(_drive())
 
-    # assert: the root went pending -> running -> ok, so TWO writes, not one per leaf transition; and no
-    # row was ever written a text it already showed
-    assert [w for w in writes if "deploy.bringup" in w] == ["▶ deploy.bringup", "✓ deploy.bringup"]
-    assert len(writes) == len(set(writes)), f"a row was repainted with unchanged text: {writes}"
+    # assert: no NODE was ever written a text it already showed, and the root went pending -> running -> ok
+    # in two writes rather than one per leaf transition
+    for node_writes in writes.values():
+        assert all(new != previous for previous, new in zip(node_writes, node_writes[1:])), node_writes
+    root_writes = [w for w in writes.values() if any("deploy.bringup" in text for text in w)]
+    assert root_writes == [["▶ deploy.bringup", "✓ deploy.bringup"]], root_writes
 
 
-def test_an_aggregate_reaches_ok_only_once_every_leaf_below_it_has():
+def test_every_row_including_the_derived_ones_repaints_to_ok_when_the_run_finished():
+    """Renamed from an "only once" claim it never made: this asserts the END state of the pane. The
+    progressive half - an aggregate staying RUNNING until its LAST leaf is done - is the derivation's own
+    behaviour and is pinned at the data layer, in test_orchestrator_rows.py."""
     # arrange
     pipeline = _planned_pipeline()
 
@@ -288,3 +296,63 @@ def test_an_aggregate_reaches_ok_only_once_every_leaf_below_it_has():
     # assert: the derived rows carry the OK icon, not the pending dot they were mounted with
     assert all(row.startswith("✓") for row in rows), rows
     assert all(step.state == StepState.OK for step in pipeline.steps)
+
+
+def test_a_pipeline_whose_root_IS_its_only_step_still_paints_and_streams():
+    """`plan_tree_for` of an impl-bearing command returns a childless node, so the root row carries the
+    step itself. Recording only the chains reached through `children` left that pipeline with no chain at
+    all, and every reader no-opped in silence: the row kept its pending dot and the pane said "running"
+    over a step that had already exited 0. `run_command` is public kernel API, so this shape is reachable
+    without going through an aggregate."""
+    # arrange
+    manifest = """
+groups:
+  deploy:
+    seed: { impl: "demo.impls:seed", help: "Seed the lab." }
+env_groups: [deploy]
+"""
+    tree = manifest_load(manifest).plan_tree_for("seed")
+    assert tree.children == () and len(tree.leaves()) == 1, "the shape under test is a leaf-rooted tree"
+    step = Step(label="seed", command="deploy.seed",
+                stream=lambda emit: (emit("seeding site zh"), Outcome(rc=0, output="seeding site zh"))[1])
+    pipeline = Pipeline("seed", [step], False, tree, tree.path)
+
+    async def _drive():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            return _rows(app), _details(app)
+
+    # act
+    rows, rendered = asyncio.run(_drive())
+
+    # assert: the single row reached OK, and its output is in the pane rather than a stale "(running…)"
+    assert rows == ["✓ deploy.seed"], rows
+    assert "seeding site zh" in rendered
+    assert "(running" not in rendered and "(pending)" not in rendered
+
+
+def test_the_flat_fallback_still_gives_every_step_a_working_row():
+    """The count-mismatch degradation is pinned at the data layer; this pins that the TUI built on that
+    shape still repaints and streams for EVERY step, rather than quietly losing the chains."""
+    # arrange: the plan's three leaves against two steps, so build_rows drops to the flat shape
+    tree = manifest_load(_NESTED_MANIFEST).plan_tree_for("bringup")
+    pipeline = Pipeline("bringup", [
+        Step(label="install", action=lambda: Outcome(rc=0, output="install ran")),
+        Step(label="compile", action=lambda: Outcome(rc=4, output="compile blew up")),
+    ], False, tree, tree.path)
+
+    async def _drive():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            return _rows(app), _details(app)
+
+    # act
+    rows, rendered = asyncio.run(_drive())
+
+    # assert: root plus both steps, each painted with its real outcome, and the failure auto-focused
+    assert rows == ["✗ deploy.bringup", "✓ install", "✗ compile"], rows
+    assert "compile blew up" in rendered

@@ -90,11 +90,28 @@ class _StepApp(App):
         return f"{STATE_ICON[row.state]} {row.label}"
 
     def _mount_tree(self) -> None:
-        """Mount the display tree, fully expanded, and record each step's row chain."""
+        """Mount the display tree, fully expanded, and record the row chain of EVERY step, the root's own
+        included.
+
+        The root is not always an aggregate: `plan_tree_for` of an impl-bearing command returns a childless
+        node, so `build_rows` legitimately hands back a one-row tree whose root carries the single step -
+        and `run_command` is public kernel API a product can call with any command name. Recording only the
+        chains reached through `children` left that pipeline with no chain at all, and five call sites
+        (`_refresh_row`, `_begin_details`, `_on_line`, `_maybe_refresh_details`, `_on_done`) then no-opped
+        in silence: the row stayed on its pending dot and the pane said "running" over a step that had
+        already exited 0. Five readers tolerating a missing chain was the defect, not the contract."""
         tree = self._tree()
         tree.root.data = self.rows
         self._painted[id(self.rows)] = self._label(self.rows)
         index_of_step = {id(step): i for i, step in enumerate(self.pipeline.steps)}
+
+        def record(row: Row, nodes: tuple[TreeNode, ...], rows: tuple[Row, ...]) -> None:
+            if row.step is None:
+                return
+            index = index_of_step.get(id(row.step))
+            if index is not None:
+                self._chain_nodes[index] = nodes
+                self._chain_rows[index] = rows
 
         def attach(parent: TreeNode, row: Row, nodes: tuple[TreeNode, ...],
                    rows: tuple[Row, ...]) -> None:
@@ -103,13 +120,10 @@ class _StepApp(App):
                 self._painted[id(child)] = label
                 node = parent.add(label, data=child, expand=True)
                 chain_nodes, chain_rows = nodes + (node,), rows + (child,)
-                if child.step is not None:
-                    index = index_of_step.get(id(child.step))
-                    if index is not None:
-                        self._chain_nodes[index] = chain_nodes
-                        self._chain_rows[index] = chain_rows
+                record(child, chain_nodes, chain_rows)
                 attach(node, child, chain_nodes, chain_rows)
 
+        record(self.rows, (tree.root,), (self.rows,))
         attach(tree.root, self.rows, (tree.root,), (self.rows,))
         tree.root.expand_all()
 

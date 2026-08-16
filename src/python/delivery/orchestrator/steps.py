@@ -168,6 +168,12 @@ class Row:
         - A mix of finished and not-yet-started children is RUNNING, not PENDING: the aggregate is under
           way even in the gap between two of its leaves.
 
+        SKIPPED is tested before PENDING, and on "some skipped, none OK" rather than "all skipped". A
+        `stop_on_failure` run marks the doomed steps SKIPPED one at a time with a repaint between each, so
+        a downstream aggregate passes through [SKIPPED, PENDING] on its way to [SKIPPED, SKIPPED]. Reading
+        that as RUNNING would paint a row that will never run again as busy for a frame. It converges
+        either way; a status line that is briefly wrong is still wrong.
+
         A terminal mix of OK and SKIPPED with no failure below it reads OK. It cannot actually occur in a
         planned tree - a node's leaves are contiguous in the flat execution order, so the failure that
         caused the skip would itself be a descendant and win above - but the rule is stated rather than
@@ -182,17 +188,13 @@ class Row:
             return StepState.FAILED
         if StepState.RUNNING in states:
             return StepState.RUNNING
+        if StepState.SKIPPED in states and StepState.OK not in states:
+            return StepState.SKIPPED       # nothing here ran, and nothing here will
         if all(state == StepState.PENDING for state in states):
             return StepState.PENDING
-        if all(state == StepState.SKIPPED for state in states):
-            return StepState.SKIPPED
         if StepState.PENDING in states:
             return StepState.RUNNING       # some children finished, others have not started yet
         return StepState.OK
-
-    def walk(self) -> "tuple[Row, ...]":
-        """This row and its descendants in display order (pre-order: a parent before its children)."""
-        return (self,) + tuple(row for child in self.children for row in child.walk())
 
 
 def _paths_by_name(node: "PlanNode", into: dict[str, str]) -> dict[str, str]:
@@ -204,6 +206,26 @@ def _paths_by_name(node: "PlanNode", into: dict[str, str]) -> dict[str, str]:
     return into
 
 
+def _pairs_with_leaves(leaves: "tuple[PlanNode, ...]", steps: list[Step]) -> bool:
+    """Whether `steps[i]` really is the step built for `leaves[i]` - as much of the `Pipeline.tree` contract
+    as the kernel can check without knowing how a product builds its steps.
+
+    Cardinality alone is not the check. Equal counts in the wrong ORDER pair every row with the wrong
+    result: a probe that built the steps in reverse leaf order produced a tree blaming `build.install` for
+    `deploy.up`'s rc 7 and painting `deploy.up` green, which is worse than no tree at all.
+
+    What the kernel owns is `Step.command`, the exact-command identity. A step built for a planned leaf
+    carries that leaf's dotted path (netctl's factory spells it `manifest_command(name)`, which is
+    `path_by_name` with the bare name as its fallback for a name the manifest cannot resolve
+    unambiguously), so the pairing is verifiable: BOTH spellings are accepted, and an empty `command` is
+    tolerated because a hand-built step legitimately has none. Only a step that names something else is
+    evidence of a real mis-pairing."""
+    if len(leaves) != len(steps):
+        return False
+    return all(not step.command or step.command in (leaf.path, leaf.name)
+               for leaf, step in zip(leaves, steps))
+
+
 def build_rows(pipeline: Pipeline) -> Row:
     """The display tree for a pipeline (netctl#1276). One rule for every pipeline: the ROOT row is the
     invoked command, and the children are either planned commands (dotted paths) or, for a pipeline built
@@ -211,10 +233,9 @@ def build_rows(pipeline: Pipeline) -> Row:
 
     With `pipeline.tree` set, the structure is the plan's own and each planned leaf carries the Step built
     for it, relying on the contract `Pipeline.tree` states: `steps[i]` is the step for `tree.leaves()[i]`.
-    That contract is not enforced by any type, so it is CHECKED here rather than trusted: a tree whose leaf
-    count disagrees with the step count would mis-attribute every result after the first divergence, so the
-    renderer drops to the flat shape instead. A display defect must not silently relabel results, and it
-    must not abort a running pipeline either.
+    Nothing types that contract, so `_pairs_with_leaves` checks as much of it as the kernel can see before
+    it is used, and the renderer drops to the flat shape when the check fails. A display defect must not
+    silently relabel results, and it must not abort a running pipeline either.
 
     Without a usable tree (`doctor`, `up` - both built by hand), the root is `pipeline.root_path` and the
     steps hang off it flat. The bare `pipeline.name` is only the last resort for a pipeline that set no
@@ -223,7 +244,7 @@ def build_rows(pipeline: Pipeline) -> Row:
     tree = pipeline.tree
     if tree is not None:
         leaves = tree.leaves()
-        if len(leaves) == len(pipeline.steps):
+        if _pairs_with_leaves(leaves, pipeline.steps):
             step_of = {id(leaf): step for leaf, step in zip(leaves, pipeline.steps)}
             paths = _paths_by_name(tree, {})
 
@@ -331,6 +352,11 @@ def run_headless(pipeline: Pipeline, verbose: bool | None = None) -> int:
             log.warn(f"{title} - failed (rc {outcome.rc})")
             if pipeline.stop_on_failure:
                 stopped = True
+    # A header, because the two blocks can legitimately name the same step differently: the per-step line
+    # above uses `command or label` (the exact-command identity, netctl#897) and a tree row uses the row's
+    # display identity, which for a hand-built pipeline is the prose label. Without a line saying so, a CI
+    # log lists one run twice under two vocabularies - the exact complaint this change answers.
+    log.info("the same steps, as the TUI draws them:")
     for line in render_tree(build_rows(pipeline)):
         print(line, flush=True)
     if failures:

@@ -49,6 +49,11 @@ def _step(label: str, rc: int = 0, output: str = "") -> Step:
     return Step(label=label, action=lambda: Outcome(rc=rc, output=output))
 
 
+def _command_step(command: str, rc: int = 0) -> Step:
+    """A step carrying its exact-command identity, the way a product's step factory builds one."""
+    return Step(label=command, action=lambda: Outcome(rc=rc, output=""), command=command)
+
+
 def _planned_pipeline() -> Pipeline:
     """A Pipeline built exactly as `run_command` builds one: steps from the tree's leaves, in leaf order."""
     tree = manifest_load(_NESTED_MANIFEST).plan_tree_for("bringup")
@@ -105,6 +110,16 @@ def test_an_aggregate_is_skipped_when_every_child_is_skipped():
     assert row.state == StepState.SKIPPED
 
 
+def test_an_aggregate_being_skipped_one_child_at_a_time_never_reads_running():
+    """A stop_on_failure run marks the doomed steps SKIPPED one at a time with a repaint between each, so a
+    downstream aggregate is momentarily [SKIPPED, PENDING]. Reading that as RUNNING paints a row that will
+    never run again as busy. It converges either way; a status line that is briefly wrong is still wrong."""
+    # arrange
+    row = _aggregate(StepState.SKIPPED, StepState.PENDING)
+    # act / assert
+    assert row.state == StepState.SKIPPED
+
+
 def test_a_failed_child_outranks_a_still_running_sibling():
     """The negative case for "RUNNING as soon as a child runs": steps run sequentially, so an aggregate
     keeps running leaves after one of them failed. Reporting RUNNING there would hide the verdict."""
@@ -128,6 +143,27 @@ def test_an_aggregate_with_no_children_at_all_is_pending_rather_than_ok():
     row = Row(label="empty")
     # act / assert
     assert row.state == StepState.PENDING
+
+
+def test_an_aggregate_stays_running_until_the_LAST_leaf_below_it_is_done():
+    """The "only once" half of "OK when all children are OK": finishing both of prep's leaves turns prep
+    green but not bringup, which still has deploy.up outstanding."""
+    # arrange
+    pipeline = _planned_pipeline()
+    rows = build_rows(pipeline)
+    prep, up = rows.children
+    seen = []
+    # act: finish the leaves one at a time, recording what each level says after every one
+    for step in pipeline.steps:
+        step.run()
+        seen.append((prep.state, rows.state))
+    # assert: prep goes OK on its second leaf, bringup only on the third
+    assert seen == [
+        (StepState.RUNNING, StepState.RUNNING),   # install done, compile pending
+        (StepState.OK, StepState.RUNNING),        # prep complete, deploy.up pending
+        (StepState.OK, StepState.OK),             # deploy.up done
+    ]
+    assert up.state == StepState.OK
 
 
 def test_a_nested_aggregate_derives_its_state_through_the_intermediate_node():
@@ -227,6 +263,48 @@ def test_build_rows_ignores_a_tree_whose_leaf_count_disagrees_with_the_steps():
     assert [child.label for child in rows.children] == ["install", "compile"]
 
 
+def test_build_rows_ignores_a_tree_whose_steps_are_in_the_wrong_order():
+    """Cardinality alone is not the check. Equal counts paired the wrong way round put every result on the
+    wrong row: before the identity check this shape rendered `build.install` red for `deploy.up`'s rc 7 and
+    painted `deploy.up` green - worse than showing no tree at all."""
+    # arrange: the right steps, built in REVERSE leaf order, each carrying its own dotted identity
+    tree = manifest_load(_NESTED_MANIFEST).plan_tree_for("bringup")
+    steps = [_command_step(leaf.path, rc=7 if leaf.name == "up" else 0)
+             for leaf in reversed(tree.leaves())]
+    pipeline = Pipeline("bringup", steps, False, tree, "deploy.bringup")
+    # act
+    rows = build_rows(pipeline)
+    # assert: flat, so nothing claims a structure whose rows would lie
+    assert [child.label for child in rows.children] == ["deploy.up", "build.compile", "build.install"]
+    assert rows.children[0].step is steps[0], "the flat shape still pairs each row with its own step"
+
+
+def test_build_rows_keeps_the_tree_when_a_step_carries_no_command_of_its_own():
+    """An empty `command` is not evidence of a mis-pairing: a hand-built step legitimately has none, and
+    the guard must not throw away a correct tree over a step that simply declined to name itself."""
+    # arrange
+    tree = manifest_load(_NESTED_MANIFEST).plan_tree_for("bringup")
+    pipeline = Pipeline("bringup", [_step(leaf.name) for leaf in tree.leaves()], False, tree,
+                        "deploy.bringup")
+    # act
+    rows = build_rows(pipeline)
+    # assert
+    assert [child.label for child in rows.children] == ["build.prep", "deploy.up"]
+
+
+def test_build_rows_keeps_the_tree_when_a_steps_command_is_the_leafs_bare_name():
+    """`manifest_command` falls back to the bare name for a command the manifest cannot resolve to one
+    unambiguous path (the #519 `test all` / `deploy all` shape), so both spellings must pass the guard."""
+    # arrange
+    tree = manifest_load(_NESTED_MANIFEST).plan_tree_for("bringup")
+    pipeline = Pipeline("bringup", [_command_step(leaf.name) for leaf in tree.leaves()], False, tree,
+                        "deploy.bringup")
+    # act
+    rows = build_rows(pipeline)
+    # assert
+    assert [child.label for child in rows.children] == ["build.prep", "deploy.up"]
+
+
 # --------------------------------------------------------------------- the omitted-dependency note
 
 
@@ -237,9 +315,12 @@ def test_omitted_note_names_the_dependency_that_dedup_left_without_a_row():
     rows = build_rows(_planned_pipeline())
     # act
     note = omitted_note(rows)
-    # assert: the aggregate that vanished by its bare name, the deduped leaf by the row that does hold it
-    assert "already planned earlier in this run" in note
-    assert "build" in note and "build.install" in note
+    # assert: the whole line, because "build" is a substring of "build.install" - asserting membership
+    # would pass with the bare-name half, which is the case the finding is about, deleted outright
+    assert note == ("already planned earlier in this run, so it carries no row here: "
+                    "build, build.install")
+    assert rows.omitted == ("build", "build.install"), (
+        "the aggregate that vanished entirely is named bare; the deduped leaf by the row that does hold it")
 
 
 def test_omitted_note_is_empty_for_a_row_whose_declared_dependencies_all_have_one():
@@ -251,11 +332,16 @@ def test_omitted_note_is_empty_for_a_row_whose_declared_dependencies_all_have_on
     assert note == ""
 
 
-def test_omitted_note_is_empty_for_a_leaf():
+def test_omitted_note_is_empty_for_a_command_that_declares_no_dependencies():
+    """Named for what it checks. A LEAF cannot have an omitted dependency at all - the v1 manifest lock
+    makes `impl` and `depends_on` mutually exclusive - so a test claiming to cover "a leaf" would be
+    passing on that lock rather than on anything this code does."""
     # arrange
     rows = build_rows(_planned_pipeline())
     # act / assert
-    assert omitted_note(rows.children[1]) == ""
+    up = rows.children[1]
+    assert up.step is not None and up.omitted == ()
+    assert omitted_note(up) == ""
 
 
 # --------------------------------------------------------------------- the text rendering
@@ -314,3 +400,18 @@ def test_run_headless_prints_the_root_path_tree_for_a_hand_built_pipeline(capsys
     assert "✗ support.doctor" in printed
     assert "  ✓ docker engine" in printed
     assert "  ✗ host egress" in printed
+
+
+def test_run_headless_labels_the_tree_block_so_a_ci_log_is_not_two_vocabularies(capsys):
+    """The per-step lines use the exact-command identity and the tree rows use the display identity, so a
+    hand-built pipeline lists the same steps twice under different names. One header ties them together."""
+    # arrange: a step whose command and label differ, which is exactly when the two blocks diverge
+    step = Step(label="docker engine", action=lambda: Outcome(rc=0, output=""),
+                command="./netctl.sh support doctor")
+    # act
+    run_headless(Pipeline("doctor", [step], root_path="support.doctor"), verbose=False)
+    # assert
+    printed = capsys.readouterr().out
+    assert "./netctl.sh support doctor" in printed, "the per-step header keeps the exact command"
+    assert "the same steps, as the TUI draws them:" in printed
+    assert printed.index("the same steps") < printed.index("✓ support.doctor")
