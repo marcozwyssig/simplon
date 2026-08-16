@@ -208,6 +208,8 @@ def test_load_ignores_other_unknown_top_level_keys():
 # AGGREGATES. A diamond on purpose: bringup reaches `prep` both directly and via `stage`, so prep's
 # leaves are reachable twice - the plan must still run each exactly once.
 
+# `prep` is a diamond: `bringup` reaches it directly AND through `stage`. Both declarers therefore carry
+# the same stop_on_failure, which loader rule 6 (netctl#1319) requires of two aggregates in ONE plan.
 _DEPS = """
 product: demo
 groups:
@@ -218,7 +220,7 @@ groups:
   deploy:
     up:      { impl: "demo.impls:up",   help: "Deploy up." }
     seed:    { impl: "demo.impls:seed", help: "Seed." }
-    stage:   { help: "Prep + deploy up.", depends_on: [prep, up] }
+    stage:   { help: "Prep + deploy up.", depends_on: [prep, up], stop_on_failure: true }
     bringup: { help: "Full bring-up.", depends_on: [stage, prep, seed], stop_on_failure: true }
 env_groups: [deploy]
 """
@@ -411,6 +413,111 @@ def test_load_allows_stop_on_failure_on_an_aggregate():
 
     # assert
     assert mf.spec_for("build", "images").stop_on_failure is True
+
+
+# --- rule 6: in-plan agreement on stop_on_failure (netctl#1319) -------------------------------------
+# The shape the ticket names: `first` (unflagged) and `guarded` (flagged) both declare `shared`, and one
+# plan - `run.root` - reaches both. The spanning tree plans `shared` under whichever of the two the DFS
+# reaches first, so the other's stop_on_failure never fires for its OWN dependency. The two fixtures
+# differ only in the order that decides that race, because the verdict must not depend on it.
+_IN_PLAN_GUARD_SECOND = """
+groups:
+  gate:
+    shared:  { impl: "demo:shared", help: "The contested dependency." }
+    other:   { impl: "demo:other",  help: "What the guard protects." }
+    later:   { impl: "demo:later",  help: "A step after the guard." }
+    first:   { help: "Reaches shared first.", depends_on: [shared] }
+    guarded: { help: "Wants to stop.", depends_on: [shared, other], stop_on_failure: true }
+  run:
+    root: { help: "The plan that reaches both.", depends_on: [first, guarded, later] }
+"""
+
+_IN_PLAN_GUARD_FIRST = """
+groups:
+  gate:
+    shared:  { impl: "demo:shared", help: "The contested dependency." }
+    other:   { impl: "demo:other",  help: "What the guard protects." }
+    later:   { impl: "demo:later",  help: "A step after the guard." }
+    guarded: { help: "Wants to stop.", depends_on: [shared, other], stop_on_failure: true }
+    first:   { help: "Reaches shared second.", depends_on: [shared] }
+  run:
+    root: { help: "The plan that reaches both.", depends_on: [guarded, first, later] }
+"""
+
+
+@pytest.mark.parametrize("text", [_IN_PLAN_GUARD_SECOND, _IN_PLAN_GUARD_FIRST],
+                         ids=["guard-declared-second", "guard-declared-first"])
+def test_load_rejects_in_plan_aggregates_disagreeing_on_stop_on_failure(text):
+    # arrange: both orders of the same diamond - the flagged aggregate as the FIRST and as the SECOND
+    # parent of `shared`, which is what decides who wins the spanning tree's dedup
+
+    # act / assert: the dedup order must not decide whether the manifest loads, so both are rejected
+    with pytest.raises(ValueError,
+                       match="both declare dependency 'shared' but disagree on stop_on_failure"):
+        manifest.load(text)
+
+
+def test_load_accepts_disagreeing_aggregates_that_live_in_different_plans():
+    # arrange: netctl's real shape as a regression fixture - `deploy bringup` (a strict chain, flagged) and
+    # `test all` (a collection, unflagged) share `up` and `seed`, but they are separate ENTRY POINTS that
+    # never appear in one plan. A manifest-wide rule would reject five such commands in netctl today; that
+    # their failure policy over the same command differs is exactly right and must keep loading.
+    text = """
+groups:
+  deploy:
+    up:      { impl: "demo:up",   help: "Bring the lab up." }
+    seed:    { impl: "demo:seed", help: "Seed the lab." }
+    bringup: { help: "Cold-host bring-up.", depends_on: [up, seed], stop_on_failure: true }
+  test:
+    unit: { impl: "demo:unit", help: "Unit tests." }
+    all:  { help: "The complete e2e.", depends_on: [up, seed, unit], stop_on_failure: false }
+"""
+
+    # act
+    mf = manifest.load(text)
+
+    # assert: both keep their own policy over the two shared commands
+    assert mf.spec_for("deploy", "bringup").stop_on_failure is True
+    assert mf.spec_for("test", "all").stop_on_failure is False
+    assert [leaf.name for leaf in mf.plan_tree_for("bringup").leaves()] == ["up", "seed"]
+    assert [leaf.name for leaf in mf.plan_tree_for("all", group="test").leaves()] == ["up", "seed", "unit"]
+
+
+def test_load_accepts_in_plan_aggregates_agreeing_on_stop_on_failure():
+    # arrange: netctl's two genuine in-plan diamonds have this shape - `aot` and `web-image` both declare
+    # `jar` from inside one plan, and both stop on failure. Whoever catches the failure catches it with the
+    # same policy, so the relocation is harmless and the rule must not touch it.
+    text = """
+groups:
+  build:
+    jar:       { impl: "demo:jar", help: "The shared artefact." }
+    aot:       { help: "AOT image.", depends_on: [jar], stop_on_failure: true }
+    web-image: { help: "Web image.", depends_on: [jar], stop_on_failure: true }
+    images:    { help: "Every image.", depends_on: [aot, web-image], stop_on_failure: true }
+"""
+
+    # act
+    mf = manifest.load(text)
+
+    # assert: the diamond still collapses to one occurrence of the shared leaf
+    assert mf.plan_for("images") == ("jar",)
+    assert mf.spec_for("build", "aot").stop_on_failure is True
+
+
+def test_the_in_plan_disagreement_message_names_both_aggregates_the_dependency_and_the_plan():
+    # arrange: without all three the reader cannot act - the SAME pair of aggregates is legal in a
+    # different plan, so the plan is what makes the message a diagnosis instead of a complaint
+    with pytest.raises(ValueError) as caught:
+        manifest.load(_IN_PLAN_GUARD_SECOND)
+
+    # act
+    message = str(caught.value)
+
+    # assert
+    assert "gate.first" in message
+    assert "gate.guarded" in message
+    assert "'shared'" in message
+    assert "run.root" in message
 
 
 def test_load_reads_hidden_defaulting_to_false():

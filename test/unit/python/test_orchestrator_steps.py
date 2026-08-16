@@ -691,7 +691,7 @@ groups:
     jar:   { impl: "demo.impls:jar",   help: "Build the jar." }
     aot:   { impl: "demo.impls:aot",   help: "The shared dependency." }
     image: { impl: "demo.impls:image", help: "Build the image." }
-    early: { help: "Planned first.", depends_on: [jar, aot] }
+    early: { help: "Planned first.", depends_on: [jar, aot], stop_on_failure: EARLY_FLAG }
     late:  { help: "Declares aot too.", depends_on: [aot, image], stop_on_failure: true }
   run:
     root: { help: "The whole run.", depends_on: [early, late] }
@@ -699,16 +699,29 @@ env_groups: [run]
 """
 
 
-def test_a_dependency_dedup_moved_out_of_a_flagged_subtree_does_not_stop_it_documents_a_limitation():
-    """DOCUMENTS A KNOWN LIMITATION, it does not endorse it (follow-up filed off netctl#1317).
+def test_a_relocated_dependency_whose_declarers_disagree_never_reaches_the_runner():
+    """The limitation `abort_after` names, closed at the manifest boundary (netctl#1319).
 
     `plan_tree_for` is a DFS SPANNING tree, so `aot` is planned under `early`, which reached it first, and
     `late` carries no node for it. `abort_after` walks the tree, so `late` is not on the failed leaf's chain
-    and does not stop for the failure of a dependency it declared. netctl has three such relocations today,
-    harmless only because a wider `true` sits above them. Fixing it means changing what a plan tree IS,
-    which is not this change; pinning the current behaviour means the follow-up will notice when it moves."""
-    # Arrange: aot fails, and the aggregate that declared it - but did not get to carry it - stops on failure
-    pipeline = _fail(_planned(_RELOCATED_DEP_MANIFEST, "root"), "aot")
+    and would not stop for the failure of a dependency it declared. Rather than change what a plan tree IS,
+    loader rule 6 rejects the shape: `early` and `late` sit in ONE plan (`run.root`) and disagree over
+    `aot`."""
+    # Arrange / Act / Assert: the pipeline cannot even be built, because the manifest does not load
+    with pytest.raises(ValueError, match="both declare dependency 'aot' but disagree on stop_on_failure"):
+        _planned(_with_flags(_RELOCATED_DEP_MANIFEST, early=False), "root")
+
+
+def test_a_relocated_dependency_between_agreeing_declarers_keeps_the_scope_of_whoever_carries_it():
+    """The case netctl#1319 deliberately leaves open, pinned so the full cure notices when it moves.
+
+    With both declarers flagged the manifest loads, and `aot` is still planned under `early` alone. The
+    failure is therefore caught by `early`, whose remainder is empty, so `late`'s own subtree runs even
+    though `late` declared the leaf that died. No declarer's POLICY is contradicted here - both asked to
+    stop - only the scope is narrower than `late` intended, which is why the guard rejects disagreement
+    and not relocation itself. Scoping the abort by the declaration graph is what would close it."""
+    # Arrange: aot fails, with both aggregates that declared it stopping on failure
+    pipeline = _fail(_planned(_with_flags(_RELOCATED_DEP_MANIFEST, early=True), "root"), "aot")
     # Act
     run_headless(pipeline, verbose=False)
     # Assert: `image`, which IS in late's subtree, still runs

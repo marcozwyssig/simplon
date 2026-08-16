@@ -59,6 +59,9 @@ class CommandSpec(NamedTuple):
     to the next gate, which is what a flag declared PER AGGREGATE has to mean. The scope of a failure is the
     OUTERMOST ancestor whose flag is true, so an explicit `false` reads the same as an unset one and cannot
     shield its subtree from a `true` above it. `delivery.orchestrator.steps.abort_after` owns the walk.
+    Because a plan tree is a SPANNING tree, a dependency two aggregates both declare is planned under one
+    of them only, and the other's flag would never fire for it; `load()` rule 6 (netctl#1319) rejects that
+    ambiguity where the two aggregates sit in ONE plan and their flags disagree.
 
     `keep_awake` (an aggregate's flag, netctl#1238) declares that the host must not idle-sleep while this
     command's PLAN runs: `run_command` wraps the whole dispatch in `delivery.awake.keep_awake`. It exists
@@ -321,11 +324,12 @@ class _ManifestModel(BaseModel):
     `composites:` key is rejected LOUDLY (never silently dropped by the extra-ignore tolerance), pointing
     the manifest author at `depends_on`. `groups` is the ONE command tree (group -> command -> spec, #729);
     the former separate flat `commands` map and its dotted group-scoped keys are gone - NESTING resolves a
-    name owned by several groups. The five validation rules run here (rule 1 groups non-empty; rule 2
+    name owned by several groups. The six validation rules run here (rule 1 groups non-empty; rule 2
     env_groups subset; rule 3 every spec has a non-empty help plus impl XOR depends_on; rule 4 every
     `depends_on` entry names a known, unambiguous command (#895); rule 5 the dependency graph is acyclic
-    (#895)), each raised as a ValueError so `load()` surfaces the same clean message the imperative loader
-    did."""
+    (#895); rule 6 two aggregates in ONE plan agree on `stop_on_failure` over a dependency they both
+    declare (netctl#1319)), each raised as a ValueError so `load()` surfaces the same clean message the
+    imperative loader did."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -459,6 +463,72 @@ class _ManifestModel(BaseModel):
         for name in deps_by_name:
             walk(name, [])
 
+        # rule 6 (netctl#1319): two aggregates that ONE plan reaches must not disagree on stop_on_failure
+        # over a dependency they BOTH declare. `plan_tree_for` is a DFS SPANNING tree, so such a dependency
+        # is planned under whichever aggregate the traversal reaches first and deduplicated under the
+        # other; the loser is then not on that leaf's chain at all and `abort_after` never consults its
+        # flag - it said "stop on failure", its own dependency died, and the subtree it guards ran anyway.
+        # Where the two declare the SAME flag no declarer's policy is contradicted (only the abort scope
+        # can come out narrower than the loser asked for), so only a DISAGREEMENT is rejected; scoping the
+        # abort by the declaration graph is what would close the remainder, and it stays deferred.
+        #
+        # "Within one plan" is the whole substance of the rule. Two aggregates share a plan exactly when
+        # some command's plan reaches both, which is equivalent to sharing an ENTRY POINT (a command no
+        # other command depends on): every common ancestor has an entry-point ancestor of its own, and in
+        # an acyclic graph - rule 5 above has just proven this one is - every node has at least one. Naming
+        # that entry point is also the actionable half of the message, because it is a plan a human really
+        # invokes. Aggregates under DIFFERENT entry points keep their differing policy, which is the case a
+        # manifest-wide rule would have got wrong: netctl's `deploy bringup` (a strict chain) and its two
+        # `all` collections disagree over five shared commands today, correctly, and must keep loading.
+        #
+        # Cost: the reverse walk runs only for a dependency whose declarers already disagree, so a manifest
+        # with no such dependency pays one pass to build the maps. Measured on netctl's manifest (71
+        # commands, 47 dependency edges, 5 disagreeing dependencies, 0 rejections): ~5 us per load, against
+        # ~47 us for the alternative of planning every command as a root.
+        declarers: dict[str, list[tuple[str, bool]]] = {}
+        parents_by_path: dict[str, set[str]] = {}
+        for group, members in self.groups.items():
+            for name, spec in members.items():
+                path = f"{group}.{name}"
+                for dep in spec.depends_on:
+                    # rule 4 has passed, so `dep` names exactly one owner and the dotted path is exact.
+                    declarers.setdefault(dep, []).append((path, spec.stop_on_failure))
+                    parents_by_path.setdefault(f"{owners_by_name[dep][0]}.{dep}", set()).add(path)
+
+        entry_points: dict[str, frozenset[str]] = {}
+
+        def plans_reaching(path: str) -> frozenset[str]:
+            """The plans that contain `path`: its ancestors that nothing else depends on, memoised."""
+            if path not in entry_points:
+                roots: set[str] = set()
+                seen, stack = {path}, [path]
+                while stack:
+                    node = stack.pop()
+                    parents = parents_by_path.get(node, ())
+                    if not parents:
+                        roots.add(node)
+                    for parent in parents:
+                        if parent not in seen:
+                            seen.add(parent)
+                            stack.append(parent)
+                entry_points[path] = frozenset(roots)
+            return entry_points[path]
+
+        for dep in sorted(declarers):
+            declared_by = declarers[dep]
+            for index, (first, first_stops) in enumerate(declared_by):
+                for second, second_stops in declared_by[index + 1:]:
+                    if first_stops == second_stops:
+                        continue
+                    shared = plans_reaching(first) & plans_reaching(second)
+                    if shared:
+                        raise ValueError(
+                            f"aggregates '{first}' and '{second}' both declare dependency '{dep}' but "
+                            f"disagree on stop_on_failure, and plan '{sorted(shared)[0]}' reaches both: "
+                            f"the plan tree is a spanning tree, so '{dep}' is planned under ONE of them "
+                            f"and the other's stop_on_failure never fires for its own dependency - give "
+                            f"both aggregates the same stop_on_failure (netctl#1319)")
+
         return self
 
 
@@ -498,6 +568,11 @@ def load(text: str) -> Manifest:
       - `stop_on_failure` (netctl#1317) is likewise declared only on an AGGREGATE: it scopes to the
         subtree of the command that declares it, and a leaf's subtree is the leaf, so there is nothing
         left below it to skip;
+      - two aggregates that ONE plan reaches agree on `stop_on_failure` over a dependency they BOTH
+        declare (netctl#1319): a plan tree is a spanning tree, so that dependency is planned under one of
+        them only and the other's flag would never fire for it. Aggregates in DIFFERENT plans (two entry
+        points that never meet, such as a strict bring-up chain next to a test collection) keep their
+        differing policy, which is why the rule is scoped per plan rather than manifest-wide;
       - `hidden` (netctl#1277) is rejected on a group-default group's NAMESAKE member, because that member
         never reaches the registration `delivery.cli.assemble` would apply it to.
     Unknown top-level keys stay ignored (backward compatible), with ONE exception: a leftover `composites:`
