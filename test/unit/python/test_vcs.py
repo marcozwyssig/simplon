@@ -106,3 +106,52 @@ def test_a_provably_merged_branch_keeps_its_own_reason_under_the_flag():
     # assert
     assert ancestor == ("delete", "ancestor")
     assert pr == ("delete", "pr-merged")
+
+
+# --- init_submodule (netctl#1280): git submodule update --init, no real subprocess ----------------------
+
+class _FakeResult:
+    def __init__(self, ok):
+        self.ok = ok
+
+
+def test_init_submodule_runs_git_submodule_update_init_at_the_configured_root(monkeypatch, tmp_path):
+    # arrange
+    vcs.configure(tmp_path)
+    calls = []
+    monkeypatch.setattr(vcs, "run", lambda args, capture=True: calls.append(args) or _FakeResult(True))
+    monkeypatch.setattr(vcs.shutil, "which", lambda tool: "/usr/bin/git")
+
+    # act
+    rc = vcs.init_submodule()
+
+    # assert
+    assert rc == 0
+    assert calls == [["git", "-C", str(tmp_path), "submodule", "update", "--init", "lib/platform"]]
+
+
+def test_init_submodule_honours_a_custom_path(monkeypatch, tmp_path):
+    # arrange
+    vcs.configure(tmp_path)
+    calls = []
+    monkeypatch.setattr(vcs, "run", lambda args, capture=True: calls.append(args) or _FakeResult(True))
+    monkeypatch.setattr(vcs.shutil, "which", lambda tool: "/usr/bin/git")
+
+    # act
+    vcs.init_submodule("lib/other")
+
+    # assert
+    assert calls == [["git", "-C", str(tmp_path), "submodule", "update", "--init", "lib/other"]]
+
+
+def test_init_submodule_returns_1_when_git_fails(monkeypatch, tmp_path):
+    # arrange
+    vcs.configure(tmp_path)
+    monkeypatch.setattr(vcs, "run", lambda args, capture=True: _FakeResult(False))
+    monkeypatch.setattr(vcs.shutil, "which", lambda tool: "/usr/bin/git")
+
+    # act
+    rc = vcs.init_submodule()
+
+    # assert
+    assert rc == 1

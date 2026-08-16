@@ -88,6 +88,15 @@ def commit(message: str) -> int:
     return 0
 
 
+def init_submodule(path: str = "lib/platform") -> int:
+    """`git submodule update --init <path>` - init a vendored submodule a fresh worktree/clone needs
+    before the product's CLI can boot. git no-ops on an already-initialised checkout, so this composes
+    as a plain CLI command. The default path is the platform kernel's own vendored location, shared by
+    every product in the family (netctl#434/#435/#658)."""
+    _require("git")
+    return 0 if _git(["submodule", "update", "--init", path]).ok else 1
+
+
 def push() -> int:
     """git pull --rebase then push (current branch); abort the rebase + die on conflicts."""
     _require("git")
