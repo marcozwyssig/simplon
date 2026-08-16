@@ -356,3 +356,42 @@ def test_the_flat_fallback_still_gives_every_step_a_working_row():
     # assert: root plus both steps, each painted with its real outcome, and the failure auto-focused
     assert rows == ["✗ deploy.bringup", "✓ install", "✗ compile"], rows
     assert "compile blew up" in rendered
+
+
+def test_the_tui_runner_skips_the_aborted_subtree_and_keeps_running_its_siblings():
+    """Both runners must reach the same verdict for the same plan (netctl#1317). The headless half of this
+    is pinned in test_orchestrator_steps.py; here the Textual worker has its own loop, which used to hold a
+    single `stopped` latch and could therefore only express "stop the whole run"."""
+    # arrange: `prep` stops on failure, the bring-up around it does not, and prep's first leaf dies
+    manifest = """
+groups:
+  build:
+    install: { impl: "demo.impls:install", help: "Install host prereqs." }
+    compile: { impl: "demo.impls:compile", help: "Compile the artefacts." }
+    prep:    { help: "Install + compile.", depends_on: [install, compile], stop_on_failure: true }
+  deploy:
+    up:      { impl: "demo.impls:up", help: "Deploy up." }
+    bringup: { help: "Full bring-up.", depends_on: [prep, up] }
+env_groups: [deploy]
+"""
+    tree = manifest_load(manifest).plan_tree_for("bringup")
+    pipeline = Pipeline("bringup", [
+        Step(label=leaf.name, command=leaf.path,
+             action=lambda name=leaf.name: Outcome(rc=1 if name == "install" else 0, output=f"{name} ran"))
+        for leaf in tree.leaves()], False, tree, tree.path)
+
+    async def _drive():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            return _rows(app)
+
+    # act
+    rows = asyncio.run(_drive())
+
+    # assert: prep's remaining leaf is skipped, prep's SIBLING still ran, and every row paints its verdict
+    assert rows == ["✗ deploy.bringup", "✗ build.prep", "✗ build.install", "⊘ build.compile",
+                    "✓ deploy.up"]
+    assert [step.state for step in pipeline.steps] == [
+        StepState.FAILED, StepState.SKIPPED, StepState.OK]

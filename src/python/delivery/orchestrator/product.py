@@ -50,8 +50,14 @@ def run_command(name: str, manifest: Manifest, ctx: StepFactoryContext, *, group
     """Run the command `name` as its dependency-resolved plan (#895/#896) and return the pipeline's exit
     code (0 iff every planned step passed). `manifest.plan_tree_for` is the whole of transitive + dedup +
     once + order; each planned leaf is mapped through `ctx.step_factory` into a Step (typically a streaming
-    `./<product>.sh <leaf>` subprocess), wrapped in a Pipeline carrying the command's own
-    `stop_on_failure`, and dispatched through the shared runner (TUI when available, else headless).
+    `./<product>.sh <leaf>` subprocess), wrapped in a Pipeline and dispatched through the shared
+    runner (TUI when available, else headless).
+
+    `stop_on_failure` rides along on the TREE, where it is declared: every node carries its own spec, and
+    `delivery.orchestrator.steps.abort_after` scopes a failure to the nearest ancestor that sets the flag
+    (netctl#1317). The Pipeline's own single flag is still set from the ROOT spec, as the fallback for the
+    tree-less / degraded shape - with a usable tree it is the root NODE's flag that is read, and the two
+    are the same value by construction.
 
     The plan is resolved ONCE, as a tree (`Manifest.plan_tree_for`, netctl#1275); the steps are built from
     its leaves, whose names in DFS order are identical to what `plan_for` returns, which the manifest

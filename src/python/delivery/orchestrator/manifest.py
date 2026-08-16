@@ -52,9 +52,11 @@ class CommandSpec(NamedTuple):
     either a leaf-with-impl or an impl-less AGGREGATE. Rationale: plan steps execute as `./<product>.sh
     <leaf>` SUBPROCESSES, so an impl-bearing command that also carried deps would re-expand them in the
     child and break dedup-once. Forward path if a hybrid is ever needed: a child-side skip-deps env guard
-    (e.g. NETCTL_SKIP_DEPS=1) - deliberately NOT built now. `stop_on_failure` (an aggregate's flag) makes
-    a failed plan step skip the rest instead of running doomed work (default False = run every step and
-    take the worst rc).
+    (e.g. NETCTL_SKIP_DEPS=1) - deliberately NOT built now. `stop_on_failure` makes a failure skip the rest
+    of THIS command's subtree instead of running doomed work (default False = run every step below it and
+    take the worst rc). It is scoped to the subtree, not to the run (netctl#1317): a failing `up` aborts
+    its own phases while the `test all` that planned it carries on to the next gate, which is what a flag
+    declared PER AGGREGATE has to mean. `delivery.orchestrator.steps.abort_after` owns the walk.
 
     `keep_awake` (an aggregate's flag, netctl#1238) declares that the host must not idle-sleep while this
     command's PLAN runs: `run_command` wraps the whole dispatch in `delivery.awake.keep_awake`. It exists
