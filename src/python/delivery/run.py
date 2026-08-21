@@ -50,6 +50,33 @@ def run(argv: list[str], *, check: bool = False, capture: bool = True,
     )
 
 
+def stream(argv: list[str], *, cwd: str | None = None) -> int:
+    """Run one external command with its output going STRAIGHT to the terminal, and return the real rc.
+
+    The shape a command IMPL wants, and the one every adopting product kept rebuilding on top of `run`
+    (platform#43): a tool's own output IS the user interface - a test runner's progress, a build's log, a
+    compose bring-up - so capturing it would only hide it, and the rc is the single thing the caller needs
+    back. `cwd` is where the command runs; a product passes its repo root
+    (`delivery.context.current().root`) to reproduce what a Makefile recipe did from the top of the tree.
+    """
+    return run(argv, capture=False, cwd=cwd).rc
+
+
+def chain(*commands: list[str], cwd: str | None = None) -> int:
+    """Run commands in order, STOPPING at the first failure, and return ITS rc (0 when all succeed).
+
+    The behaviour a `make` recipe's line-by-line execution had, and the reason a two-step gate cannot just
+    run both and take the last rc: what the caller has to report is the step that actually failed, and
+    what a developer needs is for the run to stop there rather than pile a second failure on top of the
+    first one's cause.
+    """
+    for argv in commands:
+        rc = stream(argv, cwd=cwd)
+        if rc != 0:
+            return rc
+    return 0
+
+
 def run_stream(argv: list[str], on_line: Callable[[str], None]) -> int:
     """Run `argv` and feed each output line (stdout+stderr merged) to `on_line` AS IT IS PRODUCED, then
     return the real exit code. This is what lets the TUI show a long step's output live (build/up/seed)
