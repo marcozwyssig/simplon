@@ -451,3 +451,60 @@ def test_the_aggregates_help_line_is_its_synthesized_callbacks_docstring(agg_ass
     bringup = next(c for c in _groups(app)["deploy"].typer_instance.registered_commands
                    if c.name == "bringup")
     assert bringup.callback.__doc__ == "Full bring-up."
+
+
+# --- one impl bound to several commands (netctl#1406) ---------------------------------------------------
+
+
+_SHARED_MANIFEST = """
+product: demo
+groups:
+  test:
+    system: { impl: "demo_impls:unit", help: "SYSTEM gate: the system suite against the running lab." }
+    smoke:  { impl: "demo_impls:unit", help: "SMOKE gate: the fastest reachability check." }
+    lint:   { impl: "demo_impls:lint", help: "Lint the sources." }
+env_groups: []
+"""
+
+
+@pytest.fixture
+def shared_impl_app():
+    """A manifest where TWO commands point at the SAME impl - the shape a kernel suite runner produces,
+    one callback backing every declared test level and identifying itself by the name it was invoked as."""
+    sys.modules["demo_impls"] = _impls_module()
+    try:
+        import typer
+
+        app = typer.Typer(add_completion=False, no_args_is_help=True, help="demo root")
+        cli.assemble(app, manifest.load(_SHARED_MANIFEST), product="demo")
+        yield app
+    finally:
+        del sys.modules["demo_impls"]
+
+
+def _group_command(app, group, name):
+    sub = next(g.typer_instance for g in app.registered_groups if g.name == group)
+    return next(c for c in sub.registered_commands if c.name == name)
+
+
+def test_assemble_takes_help_from_the_manifest_for_commands_sharing_one_impl(shared_impl_app):
+    # arrange: both commands resolve to the same callable, so its single docstring cannot describe both
+    system = _group_command(shared_impl_app, "test", "system")
+    smoke = _group_command(shared_impl_app, "test", "smoke")
+
+    # act
+    rendered = (get_command(shared_impl_app).commands["test"].commands["system"].get_short_help_str(200),
+                get_command(shared_impl_app).commands["test"].commands["smoke"].get_short_help_str(200))
+
+    # assert: each renders its OWN manifest help, not the shared docstring
+    assert system.callback is smoke.callback
+    assert rendered[0].startswith("SYSTEM gate")
+    assert rendered[1].startswith("SMOKE gate")
+
+
+def test_assemble_leaves_an_unshared_impls_help_to_its_docstring(shared_impl_app):
+    # arrange / act: a command whose impl only IT uses must be untouched by the rule above
+    lint = _group_command(shared_impl_app, "test", "lint")
+
+    # assert: no help override was applied, so Typer still reads the callback's own docstring
+    assert lint.help is None

@@ -127,6 +127,12 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
     unchanged: an aggregate registers under its group plus the hidden flat alias unless its name is
     ambiguous, exactly like a leaf.
 
+    Help normally comes from each callback's DOCSTRING. The one exception is an impl bound to several
+    commands (netctl#1406: one kernel suite-runner callback backs every declared test level, identifying
+    itself by the name it was invoked as): a shared function has one docstring, so all of them would render
+    the same blurb. There the manifest's per-command `help:` is used instead, which is the product's own
+    wording either way.
+
     A command whose spec declares `hidden: true` (netctl#1277) stays reachable exactly as above but is
     additionally hidden from ITS GROUP's listing (the flat alias has always been hidden, unconditionally):
     a plan step named by a `depends_on` entry must be a real manifest command, yet need not clutter `--help`
@@ -134,6 +140,13 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
     """
     tax = mf.taxonomy()
     cd_panel = _cd_panel(product)
+    # impl refs bound to MORE than one command (see the help override in the registration loop below).
+    seen: dict[str, int] = {}
+    for specs in mf.commands.values():
+        for spec in specs.values():
+            if spec.impl:
+                seen[spec.impl] = seen.get(spec.impl, 0) + 1
+    shared_impls = {ref for ref, count in seen.items() if count > 1}
 
     # a sub-app per non-flat group, in manifest order (a collapsed flat group is skipped - no sub-app, so
     # no name collision with its same-named flat command). A group-default group (D4) is a sub-app too, but
@@ -180,6 +193,12 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
             spec = mf.spec_for(group, name)
             fn = _command_callback(mf, group, name, spec, step_context)
             kw = {"context_settings": _PASSTHROUGH_CTX} if spec.passthrough_args else {}
+            if spec.impl in shared_impls:
+                # A callback several commands share cannot carry per-command help in its docstring, which
+                # is where Typer otherwise reads it from - all of them would render the same blurb. The
+                # manifest's `help:` is the canonical short summary and is per command, so it wins here
+                # (netctl#1406, where one kernel suite-runner callback backs every declared test level).
+                kw["help"] = spec.help
             if tax.is_flat_command_group(group):
                 app.command(name=name, rich_help_panel=panel, hidden=spec.hidden, **kw)(fn)
             else:

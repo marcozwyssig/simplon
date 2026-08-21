@@ -609,18 +609,30 @@ def load(text: str) -> Manifest:
     return Manifest(groups=groups, env_groups=frozenset(model.env_groups), commands=commands)
 
 
+def resolve_ref(ref: str, where: str) -> Callable[..., object]:
+    """Import a "module:function" reference and return the callable - the one place a declarative ref
+    becomes real code. `where` labels the errors so a stale ref points at the declaration that carries it.
+
+    A command's `impl:` is the original consumer, but it is not the only kind of ref a manifest carries: a
+    product also declares HOOKS a kernel command calls back into (netctl#1406 - the lab preamble and the
+    health precondition of a suite gate). Those are data in the manifest exactly as an impl is, so they
+    resolve through the same function rather than a second, subtly different importer.
+    """
+    module_name, function_name = _split_impl(ref, where)
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError as exc:
+        raise ValueError(f"{where}: cannot import module '{module_name}': {exc}") from exc
+    try:
+        return getattr(module, function_name)
+    except AttributeError as exc:
+        raise ValueError(
+            f"{where}: module '{module_name}' has no attribute '{function_name}'") from exc
+
+
 def resolve_impl(spec: CommandSpec) -> Callable[..., object]:
     """Import the module named in the spec's `impl` and return its function - where the manifest's
     declarative "module:function" becomes the real callable the CLI runs. Raises a clear ValueError if the
     module cannot be imported or the function is missing (so a stale impl ref fails loudly, not silently).
     """
-    module_name, function_name = _split_impl(spec.impl, f"impl '{spec.impl}'")
-    try:
-        module = importlib.import_module(module_name)
-    except ImportError as exc:
-        raise ValueError(f"impl '{spec.impl}': cannot import module '{module_name}': {exc}") from exc
-    try:
-        return getattr(module, function_name)
-    except AttributeError as exc:
-        raise ValueError(
-            f"impl '{spec.impl}': module '{module_name}' has no attribute '{function_name}'") from exc
+    return resolve_ref(spec.impl, f"impl '{spec.impl}'")

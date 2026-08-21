@@ -4,6 +4,7 @@ import json
 import os
 import re
 from datetime import datetime
+from types import SimpleNamespace
 
 from delivery import allure
 
@@ -103,3 +104,72 @@ def test_merge_results_skips_missing_source_dirs(tmp_path):
     # assert: dst is created and empty
     assert dst.is_dir()
     assert list(dst.iterdir()) == []
+
+
+# --- render_report (moved here from netctl's testrun.allure_report, netctl#1406) ------------------------
+
+
+def _fake_allure_generate(argv, **kwargs):
+    """Stand in for the allure CLI: write the single-file index.html into whatever -o names."""
+    out = argv[argv.index("-o") + 1]
+    os.makedirs(out, exist_ok=True)
+    with open(os.path.join(out, "index.html"), "w", encoding="utf-8") as fh:
+        fh.write("<html>allure single-file</html>")
+    return SimpleNamespace(ok=True, rc=0)
+
+
+def test_render_report_moves_the_single_file_to_the_timestamped_name_and_removes_the_scratch_dir(tmp_path, monkeypatch):
+    # arrange: allure CLI present; a fake `generate` that writes the single-file index.html into -o
+    report_dir = str(tmp_path)
+    os.makedirs(os.path.join(report_dir, "allure-results"))
+    monkeypatch.setattr(allure.shutil, "which", lambda name: "/usr/bin/allure" if name == "allure" else None)
+    monkeypatch.setattr(allure, "report_filename", lambda **kw: "allure-20260708-143015.html")
+    monkeypatch.setattr(allure, "run", _fake_allure_generate)
+
+    # act
+    allure.render_report(report_dir)
+
+    # assert: exactly the dated single-file report remains; the transient scratch dir is cleaned up
+    dated = os.path.join(report_dir, "allure-20260708-143015.html")
+    assert os.path.isfile(dated)
+    assert "allure single-file" in open(dated, encoding="utf-8").read()
+    assert not os.path.exists(os.path.join(report_dir, "allure-report"))
+
+
+def test_render_report_renders_the_results_dir_and_prefix_it_is_given(tmp_path, monkeypatch):
+    # arrange: an EXPLORATORY run passes its own quarantined results dir and its own archive prefix, so
+    # its report can never be mistaken for the canonical one (netctl#1406)
+    report_dir = str(tmp_path)
+    quarantine = os.path.join(report_dir, "allure-results-filtered")
+    os.makedirs(quarantine)
+    seen = {}
+    monkeypatch.setattr(allure.shutil, "which", lambda name: "/usr/bin/allure" if name == "allure" else None)
+    monkeypatch.setattr(allure, "run",
+                        lambda argv, **kw: seen.update(argv=argv) or _fake_allure_generate(argv, **kw))
+
+    # act
+    allure.render_report(report_dir, quarantine, prefix="allure-filtered")
+
+    # assert: allure read the quarantined dir, and the archive carries the distinguishing prefix
+    assert quarantine in seen["argv"]
+    assert any(f.startswith("allure-filtered-") and f.endswith(".html") for f in os.listdir(report_dir))
+    assert not any(re.fullmatch(r"allure-\d{8}-\d{6}\.html", f) for f in os.listdir(report_dir))
+
+
+def test_render_report_writes_no_report_and_keeps_results_when_neither_allure_nor_docker_present(tmp_path, monkeypatch):
+    # arrange: no allure CLI and no docker -> the render tool is unavailable
+    report_dir = str(tmp_path)
+    os.makedirs(os.path.join(report_dir, "allure-results"))
+    monkeypatch.setattr(allure.shutil, "which", lambda name: None)
+
+    def _must_not_run(*a, **k):
+        raise AssertionError("render_report must not shell out when no render tool is available")
+
+    monkeypatch.setattr(allure, "run", _must_not_run)
+
+    # act
+    allure.render_report(report_dir)
+
+    # assert: no dated report was produced; the raw results dir is left intact for a later `allure serve`
+    assert not any(f.startswith("allure-") and f.endswith(".html") for f in os.listdir(report_dir))
+    assert os.path.isdir(os.path.join(report_dir, "allure-results"))
