@@ -140,17 +140,21 @@ class Pipeline:
         alone. The verdict is a property of how the pipeline was BUILT, so asking once is also the honest
         reading of it.
 
-        A rejected tree is WARNED about, once, naming what is lost: the display shape is the smaller half,
-        the stop SCOPE is the safety-relevant one. Dropping every subtree's `stop_on_failure` back onto a
-        root that says `false` reinstates exactly the defect netctl#1317 exists to fix, and it would do so
-        with no signal beyond a tree that came out flat."""
+        A rejected tree is WARNED about, once, naming what is lost AND why it was rejected: the display
+        shape is the smaller half, the stop SCOPE is the safety-relevant one. Dropping every subtree's
+        `stop_on_failure` back onto a root that says `false` reinstates exactly the defect netctl#1317
+        exists to fix, and it would do so with no signal beyond a tree that came out flat. The concrete
+        fault rides along because the warning is the only thing standing between a voided manifest
+        declaration and a run that looks normal: a reader who is told which step named what can fix the
+        factory, where one told only that "the pairing failed" reads past it (#42)."""
         if self._verified is None:
-            self._verified = self.tree is not None and _pairs_with_leaves(self.tree.leaves(), self.steps)
-            if self.tree is not None and not self._verified:
+            fault = _pairing_fault(self.tree.leaves(), self.steps) if self.tree is not None else ""
+            self._verified = self.tree is not None and not fault
+            if fault:
                 stops = "the whole run stops" if self.stop_on_failure else "nothing is skipped"
                 log.warn(f"{self.name}: the plan tree does not pair with the steps that will run, so it is "
                          f"not used - the display falls back to a flat list AND every subtree's "
-                         f"stop_on_failure is dropped, so a failure now means {stops}")
+                         f"stop_on_failure is dropped, so a failure now means {stops}; {fault}")
         return self.tree if self._verified else None
 
 
@@ -238,18 +242,20 @@ def _paths_by_name(node: "PlanNode", into: dict[str, str]) -> dict[str, str]:
     return into
 
 
-def _pairs_with_leaves(leaves: "tuple[PlanNode, ...]", steps: list[Step]) -> bool:
-    """Whether `steps[i]` really is the step built for `leaves[i]` - as much of the `Pipeline.tree` contract
-    as the kernel can check without knowing how a product builds its steps.
+def _pairing_fault(leaves: "tuple[PlanNode, ...]", steps: list[Step]) -> str:
+    """Why `steps[i]` is not the step built for `leaves[i]`, named concretely - or "" when the pairing
+    holds. As much of the `Pipeline.tree` contract as the kernel can check without knowing how a product
+    builds its steps.
 
     Cardinality alone is not the check. Equal counts in the wrong ORDER pair every row with the wrong
     result: a probe that built the steps in reverse leaf order produced a tree blaming `build.install` for
     `deploy.up`'s rc 7 and painting `deploy.up` green, which is worse than no tree at all.
 
     What the kernel owns is `Step.command`, the exact-command identity. A step built for a planned leaf
-    carries that leaf's dotted path (netctl's factory spells it `manifest_command(name)`, which is
-    `path_by_name` with the bare name as its fallback for a name the manifest cannot resolve
-    unambiguously), so the pairing is verifiable and BOTH spellings are accepted.
+    carries that leaf's dotted path (`StepFactoryContext.for_shim` stamps it as `path_by_name` with the
+    bare name as its fallback for a name the manifest cannot resolve unambiguously; netctl's own factory
+    spells the same thing `manifest_command(name)`), so the pairing is verifiable and BOTH spellings are
+    accepted.
 
     A step that names NOTHING is not verifiable, and since netctl#1317 that is a rejection rather than a
     tolerance. The tolerance was written when this verdict only chose a display shape, where trusting an
@@ -257,10 +263,22 @@ def _pairs_with_leaves(leaves: "tuple[PlanNode, ...]", steps: list[Step]) -> boo
     reversed the steps and skipped `build.image` for a failure inside `deploy.up`, a subtree it is not even
     in. A hand-built step legitimately carries no command - and a hand-built pipeline has no tree, so it
     never reaches this function. On the path that does reach it, an unverifiable pairing must degrade
-    (loudly, see `Pipeline.usable_tree`) rather than be trusted."""
+    (loudly, see `Pipeline.usable_tree`) rather than be trusted.
+
+    The verdict is a REASON rather than a bool because its only consumer is that warning, and a warning
+    that says the pairing is wrong without saying WHICH step and which leaf sends its reader into the
+    kernel to find out. The three faults read differently to whoever has to fix one: a count mismatch is a
+    step list built beside the plan, a step that names nothing is a factory that never stamped an identity
+    (#42, the shape the scaffolder shipped), and a mismatched name is the reordering the check exists
+    for."""
     if len(leaves) != len(steps):
-        return False
-    return all(step.command in (leaf.path, leaf.name) for leaf, step in zip(leaves, steps))
+        return f"step count {len(steps)} does not match the plan's {len(leaves)} leaves"
+    for index, (leaf, step) in enumerate(zip(leaves, steps)):
+        if step.command not in (leaf.path, leaf.name):
+            named = f"names '{step.command}'" if step.command else "names nothing"
+            return (f"step {index} ({step.label}) {named}, but the plan's leaf there is "
+                    f"'{leaf.path or leaf.name}'")
+    return ""
 
 
 # --- what a failure aborts (netctl#1317) --------------------------------------------------------------
