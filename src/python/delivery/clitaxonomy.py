@@ -23,6 +23,25 @@ class TaxonomyNode:
     env_first: bool = False
 
 
+def merge_trees(catalogue: dict[str, TaxonomyNode],
+                product: dict[str, TaxonomyNode]) -> dict[str, TaxonomyNode]:
+    """Merge the platform catalogue's taxonomy with the product's own.
+
+    A group declared in BOTH is an error rather than a precedence rule: with a winner, a reader has to
+    know which manifest won in order to predict the surface, and the shadowed declaration is invisible in
+    the file that lost. With an error there is no winner to reason about, only a contradiction to fix -
+    which is what lets the catalogue take the tree over one group at a time, leaving a half-migrated tree
+    that works rather than one that silently disagrees with itself.
+    """
+    clashes = sorted(set(catalogue) & set(product))
+    if clashes:
+        raise ValueError(
+            f"group(s) declared in BOTH the catalogue and the product manifest: {', '.join(clashes)}. "
+            f"A group belongs to exactly one of them - remove it from the product manifest once the "
+            f"catalogue owns it.")
+    return {**catalogue, **product}
+
+
 class CommandTaxonomy:
     """A CI/CD command taxonomy: which commands belong to which group, and which groups are env-first.
 
@@ -41,8 +60,38 @@ class CommandTaxonomy:
         }
         self._index()
 
+    @classmethod
+    def from_tree(cls, tree: dict[str, TaxonomyNode]) -> "CommandTaxonomy":
+        """Build a taxonomy from an already-nested tree (what a catalogue manifest declares).
+
+        The flat constructor stays the product path until the catalogue exists; this is the nested one.
+        Both end up holding the same `tree` attribute, so every method below is written once.
+        """
+        obj = cls.__new__(cls)
+        obj.tree = tree
+        obj.groups = {name: node.commands for name, node in tree.items()}
+        obj.env_groups = frozenset(name for name, node in tree.items() if node.env_first)
+        obj._index()
+        return obj
+
+    def resolve_path(self, path: str | None) -> TaxonomyNode | None:
+        """The node a dotted path names (`support`, `support.git`), or None if no such node exists."""
+        if not path:
+            return None
+        node: TaxonomyNode | None = None
+        children: Mapping[str, TaxonomyNode] = self.tree
+        for part in path.split("."):
+            node = children.get(part)
+            if node is None:
+                return None
+            children = node.groups
+        return node
+
     def _index(self) -> None:
-        """Build the name -> owning-group indexes.
+        """Index every leaf name against EVERY group PATH that owns it, walking the whole tree.
+
+        A flat top-level alias depends on the NAME, not on the depth: `support.git`'s `commit` and a
+        top-level `commit` produce the same leaf name, so nesting a group costs nothing at the surface.
 
         multi-owner index: command name -> EVERY group that owns it, in declaration order. The same
         name may live in several groups (#519: `test all` next to `deploy all`); such a name is
@@ -50,12 +99,19 @@ class CommandTaxonomy:
         UNAMBIGUOUS names only - an ambiguous one is deliberately absent, so resolve_group() treats its
         bare token as unknown and a CLI knows not to register a flat alias for it.
         """
-        self.command_groups: dict[str, tuple[str, ...]] = {}
-        for g, cmds in self.groups.items():
-            for cmd in cmds:
-                self.command_groups[cmd] = (*self.command_groups.get(cmd, ()), g)
+        owners: dict[str, tuple[str, ...]] = {}
+
+        def walk(children: Mapping[str, TaxonomyNode], prefix: str) -> None:
+            for name, node in children.items():
+                here = f"{prefix}.{name}" if prefix else name
+                for cmd in node.commands:
+                    owners[cmd] = (*owners.get(cmd, ()), here)
+                walk(node.groups, here)
+
+        walk(self.tree, "")
+        self.command_groups: dict[str, tuple[str, ...]] = owners
         self.command_group: dict[str, str] = {
-            cmd: gs[0] for cmd, gs in self.command_groups.items() if len(gs) == 1
+            cmd: paths[0] for cmd, paths in owners.items() if len(paths) == 1
         }
 
     def is_ambiguous(self, name: str) -> bool:
@@ -63,8 +119,24 @@ class CommandTaxonomy:
         return len(self.command_groups.get(name, ())) > 1
 
     def group_requires_env(self, group: str) -> bool:
-        """True iff the group is one of the env-first CD groups."""
-        return group in self.env_groups
+        """True iff the group PATH is inside an env-first subtree.
+
+        The flag is declared on the subtree ROOT and inherited by every descendant, so `deploy.rescue` is
+        env-first because `deploy` is, without restating it. Walking down and returning at the first
+        env-first ancestor is the whole rule.
+        """
+        # The path must EXIST before its ancestors are consulted. Walking and short-circuiting at the
+        # first env-first ancestor would answer True for `deploy.nope`, gating a group that does not
+        # exist - and an unknown token has to reach the "ok" verdict, never a backend gate.
+        if self.resolve_path(group) is None:
+            return False
+        children: Mapping[str, TaxonomyNode] = self.tree
+        for part in group.split("."):
+            node = children[part]
+            if node.env_first:
+                return True
+            children = node.groups
+        return False
 
     def is_flat_command_group(self, group: str) -> bool:
         """True for a single-member group whose only command shares the group's name (e.g. `build`).
