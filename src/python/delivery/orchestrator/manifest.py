@@ -31,7 +31,7 @@ from typing import Callable, NamedTuple
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
-from delivery.clitaxonomy import CommandTaxonomy
+from delivery.clitaxonomy import CommandTaxonomy, TaxonomyNode, merge_trees
 
 
 class CommandSpec(NamedTuple):
@@ -102,10 +102,11 @@ class Manifest(NamedTuple):
     groups: dict[str, tuple[str, ...]]
     env_groups: frozenset[str]
     commands: dict[str, dict[str, CommandSpec]]
+    tree: dict[str, TaxonomyNode]
 
     def taxonomy(self) -> CommandTaxonomy:
-        """The shared env-gate engine built from this manifest's taxonomy (one env-gate, not a copy)."""
-        return CommandTaxonomy(self.groups, self.env_groups)
+        """The shared env-gate engine built from this manifest's tree (one env-gate, not a copy)."""
+        return CommandTaxonomy.from_tree(self.tree)
 
     def spec_for(self, group: str, name: str) -> CommandSpec:
         """The spec for a group member, resolved by nesting (`commands[group][name]`). load() guarantees
@@ -357,6 +358,8 @@ class _ManifestModel(BaseModel):
         return {str(group): {str(name): (spec or {}) for name, spec in (members or {}).items()}
                 for group, members in (value or {}).items()}
 
+    taxonomy: dict[str, dict] = {}
+
     @field_validator("env_groups", mode="before")
     @classmethod
     def _coerce_env_groups(cls, value: object) -> tuple[str, ...]:
@@ -606,7 +609,42 @@ def load(text: str) -> Manifest:
                 for name, spec in members.items()}
         for group, members in model.groups.items()
     }
-    return Manifest(groups=groups, env_groups=frozenset(model.env_groups), commands=commands)
+    env_groups = frozenset(model.env_groups)
+    tree = merge_trees(_catalogue_tree(model.taxonomy, groups), _flat_tree(groups, env_groups))
+    return Manifest(groups=groups, env_groups=env_groups, commands=commands, tree=tree)
+
+
+def _catalogue_tree(declared: dict[str, dict],
+                    members: dict[str, tuple[str, ...]]) -> dict[str, TaxonomyNode]:
+    """Build the NESTED part of the tree from a `taxonomy:` block, attaching each group's members.
+
+    A group's members are declared under its dotted PATH in `groups:` (`support.git`), so a node's
+    commands are looked up by the path this recursion has walked, not by its bare name.
+    """
+    def build(spec: dict[str, dict], prefix: str) -> dict[str, TaxonomyNode]:
+        out: dict[str, TaxonomyNode] = {}
+        for name, node in spec.items():
+            here = f"{prefix}.{name}" if prefix else name
+            out[name] = TaxonomyNode(name=name,
+                                     commands=members.get(here, ()),
+                                     groups=build(node.get("groups", {}) or {}, here),
+                                     env_first=bool(node.get("env_first", False)))
+        return out
+
+    return build(declared, "")
+
+
+def _flat_tree(members: dict[str, tuple[str, ...]],
+               env_groups: frozenset[str]) -> dict[str, TaxonomyNode]:
+    """The depth-1 tree for every BARE `groups:` key - the product's own top-level groups.
+
+    A DOTTED key (`support.git`) names members of a node the taxonomy block already built, so it is not
+    a top-level group and is skipped here. A bare key is the product's, and if the catalogue declares it
+    too, merge_trees() raises - which is the point. Filtering these out by "the taxonomy block already
+    claims this name" would swallow exactly the contradiction the merge rule exists to catch.
+    """
+    return {name: TaxonomyNode(name=name, commands=cmds, env_first=name in env_groups)
+            for name, cmds in members.items() if "." not in name}
 
 
 def resolve_ref(ref: str, where: str) -> Callable[..., object]:

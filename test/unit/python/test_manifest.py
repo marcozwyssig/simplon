@@ -766,3 +766,62 @@ def test_plan_tree_for_rejects_an_unknown_command_name():
     # act / assert: the same message plan_for gives, so the two views fail identically
     with pytest.raises(ValueError, match="no unambiguous command named 'nope'"):
         mf.plan_tree_for("nope")
+
+
+# --- the taxonomy TREE (netctl#1431): an optional nested `taxonomy:` block, merged with `groups:` ----
+
+def test_a_manifest_without_a_taxonomy_key_yields_the_flat_groups_as_a_depth_one_tree():
+    # arrange: netctl's shape throughout netctl#1431 - no taxonomy block at all
+    text = """
+groups:
+  build:
+    build: { impl: "m:f", help: "Build it." }
+  deploy:
+    up: { impl: "m:g", help: "Bring it up." }
+env_groups: [deploy]
+"""
+
+    # act
+    m = manifest.load(text)
+
+    # assert: identical to what the flat constructor produced before the rewrite
+    assert sorted(m.tree) == ["build", "deploy"]
+    assert m.tree["deploy"].env_first is True
+    assert m.tree["build"].groups == {}
+    assert m.taxonomy().resolve_group("up") == "deploy"
+
+
+def test_a_nested_taxonomy_block_places_a_group_beneath_another():
+    # arrange: what a catalogue will declare, exercised here through the product manifest
+    text = """
+taxonomy:
+  support:
+    help: "Host and tooling upkeep."
+    groups:
+      git: { help: "Version control verbs." }
+groups:
+  support.git:
+    commit: { impl: "m:f", help: "Commit." }
+"""
+
+    # act
+    m = manifest.load(text)
+
+    # assert
+    assert m.taxonomy().resolve_path("support.git") is not None
+    assert m.taxonomy().resolve_group("commit") == "support.git"
+
+
+def test_a_group_declared_in_both_the_taxonomy_block_and_as_a_flat_group_is_rejected():
+    # arrange: the merge contradiction, surfaced at manifest-load time rather than at dispatch
+    text = """
+taxonomy:
+  build: { help: "Produce the artefacts." }
+groups:
+  build:
+    build: { impl: "m:f", help: "Build it." }
+"""
+
+    # act / assert
+    with pytest.raises(ValueError, match="build"):
+        manifest.load(text)
