@@ -825,3 +825,63 @@ groups:
     # act / assert
     with pytest.raises(ValueError, match="build"):
         manifest.load(text)
+
+
+def test_an_env_groups_entry_naming_a_nested_group_is_rejected():
+    # arrange: `env_groups:` is the FLAT key; a nested node declares env_first: in the taxonomy block.
+    # Accepting the dotted spelling here loaded cleanly and made the env-gate a silent no-op for that
+    # group - a CD command that must be backend-gated instead reached the "ok" verdict.
+    text = """
+taxonomy:
+  support:
+    help: "Host and tooling upkeep."
+    groups:
+      git: { help: "Version control verbs." }
+groups:
+  support.git:
+    commit: { impl: "m:f", help: "Commit." }
+env_groups: [support.git]
+"""
+
+    # act / assert: the message must point at the key that DOES work
+    with pytest.raises(ValueError, match="env_first"):
+        manifest.load(text)
+
+
+def test_a_nested_group_of_commands_without_a_taxonomy_node_is_rejected():
+    # arrange: `support.git` names members of a node the taxonomy block never declares. Dropping it
+    # silently left the commands registered and runnable but absent from the taxonomy, so they were
+    # never env-gated and never counted towards ambiguity.
+    text = """
+taxonomy:
+  support: { help: "Host and tooling upkeep." }
+groups:
+  support.git:
+    commit: { impl: "m:f", help: "Commit." }
+"""
+
+    # act / assert
+    with pytest.raises(ValueError, match="support.git"):
+        manifest.load(text)
+
+
+def test_a_nested_group_declared_env_first_in_the_taxonomy_block_gates_its_members():
+    # arrange: the SUPPORTED way to make a nested group env-first
+    text = """
+taxonomy:
+  deploy:
+    help: "Put it somewhere."
+    env_first: true
+    groups:
+      rescue: { help: "Recover a broken environment." }
+groups:
+  deploy.rescue:
+    reset: { impl: "m:f", help: "Reset it." }
+"""
+
+    # act
+    m = manifest.load(text)
+
+    # assert: inherited from the subtree root, never restated on the child
+    assert m.taxonomy().group_requires_env("deploy.rescue") is True
+    assert m.taxonomy().env_verdict("deploy", env_explicit=False) == "gate-backend"

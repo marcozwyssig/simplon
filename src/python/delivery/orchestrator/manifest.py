@@ -371,8 +371,16 @@ class _ManifestModel(BaseModel):
         if not self.groups:
             raise ValueError("manifest defines no groups")
 
-        # rule 2: every `env_groups` entry names a declared group.
+        # rule 2: every `env_groups` entry names a declared TOP-LEVEL group. A dotted entry is rejected
+        # rather than honoured: `env_groups` is the flat key, a nested node declares `env_first: true` in
+        # the `taxonomy:` block, and accepting the dotted spelling loaded cleanly while making the env
+        # gate a silent no-op for that group - a CD command that must be backend-gated reached "ok".
         for group in self.env_groups:
+            if "." in group:
+                raise ValueError(
+                    f"env_groups entry '{group}' names a NESTED group. env_groups takes top-level "
+                    f"groups only - declare `env_first: true` on that group in the `taxonomy:` block "
+                    f"instead; every descendant inherits it")
             if group not in self.groups:
                 raise ValueError(f"env_groups entry '{group}' is not a declared group")
 
@@ -611,6 +619,16 @@ def load(text: str) -> Manifest:
     }
     env_groups = frozenset(model.env_groups)
     tree = merge_trees(_catalogue_tree(model.taxonomy, groups), _flat_tree(groups, env_groups))
+    # Every DOTTED `groups:` key must name a node the `taxonomy:` block actually declares. Without this,
+    # an unmatched path was dropped from the tree while `groups`/`commands` kept it: the commands stayed
+    # registered and runnable but were invisible to the taxonomy, so they were never env-gated and never
+    # counted towards ambiguity. A typo in a nested path has to fail at load, not disable a gate.
+    taxonomy = CommandTaxonomy.from_tree(tree)
+    for name in groups:
+        if "." in name and taxonomy.resolve_path(name) is None:
+            raise ValueError(
+                f"groups entry '{name}' names a nested group the `taxonomy:` block does not declare - "
+                f"declare it there, or move its commands to a top-level group")
     return Manifest(groups=groups, env_groups=env_groups, commands=commands, tree=tree)
 
 

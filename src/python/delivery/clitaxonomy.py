@@ -145,8 +145,13 @@ class CommandTaxonomy:
         collision (the group wins), so a CLI collapses these to ONE visible flat top-level command. The
         group stays in the taxonomy as the single source of truth for the env-gate, so an agnostic flat
         command still rejects an explicit env exactly as a grouped one would."""
-        cmds = self.groups.get(group, ())
-        return len(cmds) == 1 and cmds[0] == group
+        node = self.resolve_path(group)
+        if node is None:
+            return False
+        # Compare against the node's own SEGMENT, not the full path: `support.doctor` collapses when its
+        # single member is `doctor`. Resolving by path rather than reading the top-level projection is
+        # what makes this answer correct at depth > 1 instead of silently False.
+        return len(node.commands) == 1 and node.commands[0] == group.rsplit(".", 1)[-1]
 
     def is_group_default_command(self, group: str) -> bool:
         """True for a MULTI-member group that ALSO contains a member whose name equals the group name.
@@ -157,8 +162,10 @@ class CommandTaxonomy:
         lists the siblings. It is the multi-member counterpart of is_flat_command_group (a single-member
         same-named group that collapses to ONE flat top-level command); the two are mutually exclusive.
         This preserves the bare group-token muscle memory when a discipline gains sibling commands."""
-        cmds = self.groups.get(group, ())
-        return len(cmds) > 1 and group in cmds
+        node = self.resolve_path(group)
+        if node is None:
+            return False
+        return len(node.commands) > 1 and group.rsplit(".", 1)[-1] in node.commands
 
     def resolve_group(self, token: str | None) -> str | None:
         """The group a leading command token belongs to: the token itself if it names a group, else the

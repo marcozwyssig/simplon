@@ -366,3 +366,38 @@ def test_an_empty_catalogue_leaves_the_product_tree_untouched():
 
     # assert
     assert merged == product
+
+
+# --- the two shape predicates must be path-aware, like group_requires_env -----------------------------
+
+def test_a_nested_single_member_group_named_after_itself_is_a_flat_command_group():
+    # arrange: the collapse rule, one level down - `support.doctor` holding only `doctor`
+    tax = CommandTaxonomy.from_tree({
+        "support": TaxonomyNode(name="support", commands=(), groups={
+            "doctor": TaxonomyNode(name="doctor", commands=("doctor",)),
+        }),
+    })
+
+    # act / assert
+    assert tax.is_flat_command_group("support.doctor") is True
+    assert tax.is_group_default_command("support.doctor") is False
+
+
+def test_a_nested_multi_member_group_containing_its_own_name_has_a_default_command():
+    # arrange
+    tax = CommandTaxonomy.from_tree({
+        "support": TaxonomyNode(name="support", commands=(), groups={
+            "git": TaxonomyNode(name="git", commands=("git", "commit", "push")),
+        }),
+    })
+
+    # act / assert: the two are mutually exclusive, at any depth
+    assert tax.is_group_default_command("support.git") is True
+    assert tax.is_flat_command_group("support.git") is False
+
+
+def test_the_shape_predicates_answer_false_for_an_unknown_path():
+    # arrange / act / assert: silently wrong is the failure mode these replace
+    tax = _nested()
+    assert tax.is_flat_command_group("nope") is False
+    assert tax.is_group_default_command("support.nope") is False
