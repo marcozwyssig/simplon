@@ -23,7 +23,7 @@ It renders, mirroring the shape netctl's own `netctl.yaml` + `netctl.sh` use but
                                                      (step_context binds the `all` aggregate) + main
         paths.py                                     the ProductContext wiring (delivery.context); repo root
                                                      found by walking up to the manifest marker, not a depth
-        environments.py                              the EnvironmentProvider (backends + the env-gate)
+        environments.py                              the EnvironmentProvider (its three product values)
 
 The generated manifest VALIDATES through `delivery.orchestrator.manifest.load`; the generated `paths.py`
 registers a `ProductContext` exactly as netctl's adapter does, so a `git submodule add ... lib/platform`
@@ -306,22 +306,19 @@ def main() -> None:
     """Entry point (`python -m orchestrator`): env-first dispatch via the delivery binding layer. The
     product context, the environments module and the alias map are injected, so delivery.cli hardcodes
     nothing product-specific."""
-    delivery_cli.main(app=app, context=paths.CONTEXT, environments=environments, aliases=_ALIASES)
+    delivery_cli.main(app=app, context=paths.CONTEXT, environments=environments.PROVIDER,
+                      aliases=_ALIASES)
 '''
 
 _PATHS = '''\
-"""@@PRODUCT@@'s product adapter onto the delivery kernel (netctl#592 Train B): derive the repo ROOT + the
-manifest path and register ONE ProductContext at import, so kernel code reads them back product-agnostically
-via delivery.context.current() and never hardcodes "@@PRODUCT@@". Scaffolded by `python -m
-delivery.bootstrap` (netctl#651 strand 4).
+"""@@PRODUCT@@'s product adapter onto the delivery kernel: derive the repo ROOT + the manifest path and
+register ONE ProductContext at import, so kernel code reads them back product-agnostically via
+delivery.context.current() and never hardcodes "@@PRODUCT@@".
 
-The repo ROOT is found by WALKING UP from this file to the directory that holds the manifest
-`@@PRODUCT@@.yaml` (the marker), NOT a hardcoded parent depth - so relocating this orchestrator package
-deeper in the tree (e.g. under deploy/provision/) needs no hand-edit (netctl#737). DELIVERY_PRODUCT_ROOT /
-DELIVERY_MANIFEST (the kernel's DELIVERY_* namespace) still OVERRIDE the derived defaults for a relocated
-checkout / a test fixture tree; with neither set the values are the marker-walk derivation below. Extend
-this adapter to read the manifest's raw build-data sections (images/volumes/...) via CONTEXT.manifest_data()
-as your pipeline grows - see netctl's paths.py for the pattern.
+The walk up to the marker, the DELIVERY_* overrides and the fail-loud on a broken checkout are the
+KERNEL's (delivery.context.bootstrap). What only this product knows is its name and where this file
+sits, so that is all this module says. Extend it to read the manifest's raw build-data sections
+(images/volumes/...) through CONTEXT.manifest_data() as your pipeline grows.
 """
 from __future__ import annotations
 
@@ -329,99 +326,33 @@ from pathlib import Path
 
 from delivery import context
 
-# The manifest file doubles as the repo-root MARKER: it sits at the repo root in the scaffolded layout.
-_MANIFEST_NAME = "@@PRODUCT@@.yaml"
-
-
-def _find_root(start: Path, marker: str) -> Path:
-    """Walk up from `start` (inclusive) to the first directory that contains `marker`, and return it as the
-    repo root. Robust to relocating this package deeper in the tree - no hardcoded parent depth (netctl#737).
-    Fails loudly if the marker is never found, so a broken checkout is caught here, not as a wrong path
-    downstream."""
-    for candidate in (start, *start.parents):
-        if (candidate / marker).is_file():
-            return candidate
-    raise RuntimeError(
-        f"@@PRODUCT@@: cannot locate '{marker}' walking up from {start}; is the checkout intact?")
-
-
-_DERIVED_ROOT = _find_root(Path(__file__).resolve().parent, _MANIFEST_NAME)
-_DERIVED_MANIFEST = _DERIVED_ROOT / _MANIFEST_NAME
-
-# Register the context ONCE at import; kernel code reads it back through delivery.context.current().
-CONTEXT = context.set_current(
-    context.ProductContext.resolve("@@PRODUCT@@", _DERIVED_ROOT, _DERIVED_MANIFEST))
+CONTEXT = context.bootstrap("@@PRODUCT@@", Path(__file__).resolve().parent)
 ROOT = CONTEXT.root
 MANIFEST = CONTEXT.manifest_path
 '''
 
 _ENVIRONMENTS = '''\
-"""@@PRODUCT@@'s named, isolated deployment environments (#15). The env matrix lives in @@PRODUCT@@.yaml
-(the `environments:`/`default:` sections, #651 strand 1); this adapter supplies @@PRODUCT@@'s VALID backend
-names and the active-environment gate on top of the shared delivery.environments types. Scaffolded by
-`python -m delivery.bootstrap` (netctl#651 strand 4).
+"""@@PRODUCT@@'s named, isolated deployment environments. The matrix itself lives in @@PRODUCT@@.yaml
+(the `environments:`/`default:` sections); this adapter supplies the three things that are @@PRODUCT@@'s
+own and lets delivery.environments.Provider do the rest.
 
-A deployment command always targets ONE environment, selected env-first on the CLI (`@@PRODUCT@@ <env>
-<command>`); with no prefix the manifest's `default` is used. The active environment rides in
-$@@ENV_VAR@@ (set by delivery.cli.main). `backend` decides HOW a command realises the environment: `local`
-today - add your cloud backend (e.g. a VM-per-site provider) to _VALID_BACKENDS and gate on it here.
+  * the process variable the active environment rides in (set by delivery.cli.main);
+  * the backends this product IMPLEMENTS - `local` today; add your cloud backend (e.g. a VM-per-site
+    provider) here and gate a command on it with PROVIDER.require_backend();
+  * how this product's shim spells a command, so an error message can hand an operator a line that
+    actually dispatches.
 
-This module satisfies the delivery.cli EnvironmentProvider protocol structurally (ENV_VAR, LOCAL, names,
-default, is_local, require_backend), so nothing named is imported by the kernel - the coupling flows product
--> kernel.
+PROVIDER satisfies the delivery.cli EnvironmentProvider protocol structurally, so nothing named is
+imported by the kernel - the coupling flows product -> kernel, never the reverse.
 """
 from __future__ import annotations
 
-import os
-
-from delivery import context, log
-from delivery.environments import Environment, Registry, parse_data as _parse_data
+from delivery.environments import LOCAL, Provider
 
 ENV_VAR = "@@ENV_VAR@@"
-LOCAL = "local"
-_VALID_BACKENDS = (LOCAL,)
 
-
-def _registry() -> Registry:
-    # The env matrix lives in the one manifest: read the already-parsed mapping straight from the context.
-    data = context.current().manifest_data()
-    if not data.get("environments"):
-        # No environments section: fall back to a single local `dev` so the orchestrator still runs.
-        return Registry({"dev": Environment("dev", LOCAL, "Local development environment.")}, "dev")
-    return _parse_data(data, _VALID_BACKENDS)
-
-
-def names() -> list[str]:
-    return list(_registry().environments)
-
-
-def default() -> str:
-    return _registry().default
-
-
-def get(name: str) -> Environment | None:
-    return _registry().environments.get(name)
-
-
-def current() -> Environment:
-    """The active environment: $@@ENV_VAR@@ if set + known, else the manifest default."""
-    reg = _registry()
-    return reg.environments.get(os.environ.get(ENV_VAR, ""), reg.environments[reg.default])
-
-
-def is_local(name: str | None = None) -> bool:
-    env = get(name) if name else current()
-    return env is not None and env.backend == LOCAL
-
-
-def require_backend(backend: str = LOCAL) -> None:
-    """Gate a deployment command on the active environment's backend. Only `local` is implemented in the
-    scaffold, so a non-local target dies clean instead of mis-running the local path."""
-    env = current()
-    if env.backend != backend:
-        log.die(f"environment '{env.name}' needs backend '{backend}', has '{env.backend}'")
+PROVIDER = Provider(ENV_VAR, shim="./@@PRODUCT@@.sh", valid_backends=(LOCAL,))
 '''
-
 
 def _templates(name: str) -> dict[str, str]:
     """The (relative POSIX path -> template) map for a product, BEFORE placeholder substitution."""

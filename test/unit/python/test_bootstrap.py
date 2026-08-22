@@ -112,9 +112,10 @@ def test_render_substitutes_the_product_into_the_shim_and_the_wiring():
 
     # assert: the product name is threaded through the shim params and the ProductContext wiring
     assert "LAUNCH_PRODUCT=fooctl" in rendered["fooctl.sh"]
-    assert 'ProductContext.resolve("fooctl"' in rendered["orchestrator/src/python/orchestrator/paths.py"]
+    assert 'context.bootstrap("fooctl"' in rendered["orchestrator/src/python/orchestrator/paths.py"]
     env_src = rendered["orchestrator/src/python/orchestrator/environments.py"]
     assert 'ENV_VAR = "FOOCTL_ENV"' in env_src
+    assert 'shim="./fooctl.sh"' in env_src
 
 
 def test_no_placeholder_tokens_survive_the_render():

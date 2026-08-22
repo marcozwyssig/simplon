@@ -84,3 +84,24 @@ def current() -> ProductContext:
             "delivery: no ProductContext registered; the product's paths adapter must call "
             "delivery.context.set_current(...) at import before the kernel reads the context")
     return _current
+
+
+def bootstrap(product: str, start: Path, marker: str = "") -> ProductContext:
+    """Derive a product's repo ROOT by walking up from `start` to the directory holding `marker`
+    (default `<product>.yaml`), build the context and register it - the whole of what every scaffolded
+    `orchestrator/paths.py` did in ~40 lines.
+
+    The walk, not a fixed parent depth: an adapter package that moves deeper in the tree (biz-cockpit's
+    sits under `deploy/provision/`) then needs no hand-edit. `start` is the CALLER's file location, which
+    is the one thing the kernel cannot know - a product passes `Path(__file__).resolve().parent`.
+
+    Fails loudly when the marker is never found, so a broken or partial checkout is caught HERE, at
+    import, rather than as a wrong path in a command halfway through a deployment. The DELIVERY_*
+    overrides still apply, through `resolve`.
+    """
+    name = marker or f"{product}.yaml"
+    for candidate in (start, *start.parents):
+        if (candidate / name).is_file():
+            return set_current(ProductContext.resolve(product, candidate, candidate / name))
+    raise RuntimeError(
+        f"{product}: cannot locate '{name}' walking up from {start}; is the checkout intact?")
