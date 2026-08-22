@@ -18,11 +18,12 @@ from __future__ import annotations
 
 import contextlib
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 from delivery.awake import keep_awake
 from delivery.orchestrator.manifest import Manifest
-from delivery.orchestrator.steps import Pipeline, Step, dispatch
+from delivery.orchestrator.steps import Pipeline, Step, argv_step, dispatch
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,34 @@ class StepFactoryContext:
 
     product: str
     step_factory: Callable[[str], Step]
+
+    @classmethod
+    def for_shim(cls, product: str, script: str | Path, manifest: Manifest) -> "StepFactoryContext":
+        """The context for the shape every shim-backed product has: a command NAME becomes a live-streamed
+        `<script> <name>` step, STAMPED with that command's exact-command identity - the dotted
+        `group.command` path the manifest gives it, or the bare name when several groups own it (#519) and
+        the manifest cannot decide. Both spellings are what `Pipeline.usable_tree` accepts.
+
+        The stamp is not decoration, which is why this factory lives HERE rather than being rewritten in
+        each product: an unstamped step names its own argv, the kernel cannot verify the leaf-to-step
+        pairing, and it drops the whole plan tree - taking every subtree's `stop_on_failure` with it, so a
+        gate chain runs on after a failure (#42). Resolving the identity is pure kernel knowledge, so a
+        product function doing it would be a shim rather than a seam.
+
+        It stays an INDEPENDENT derivation, deliberately: the identity comes from the manifest by name, not
+        from the leaf `run_command` is currently mapping. Handing each step the leaf's own path would make
+        the pairing check agree with itself by construction and verify nothing - which is exactly why
+        `run_command` does not stamp the steps it receives.
+
+        `manifest` is the parsed manifest the product assembles its CLI from; a product that has none at
+        hand reads it back through `delivery.context.current().manifest()`.
+        """
+        argv0 = str(script)
+
+        def factory(cmd: str) -> Step:
+            return argv_step(cmd, [argv0, cmd], command=manifest.path_by_name(cmd) or cmd)
+
+        return cls(product=product, step_factory=factory)
 
 
 # Back-compat alias for the pre-rename name (netctl#737). netctl's orchestrator still imports
@@ -68,7 +97,8 @@ def run_command(name: str, manifest: Manifest, ctx: StepFactoryContext, *, group
     of a Pipeline that decides what does not run. Building the steps and the tree from one traversal is
     therefore load-bearing twice over, and a step factory must stamp each Step with its leaf's exact-command
     identity - `Pipeline.usable_tree` cannot verify a step that names nothing and drops the whole tree,
-    loudly, when one appears.
+    loudly, when one appears. `StepFactoryContext.for_shim` is the kernel's factory for the usual
+    `./<product>.sh <cmd>` shape and stamps it; a product writing its own owes the same stamp (#42).
 
     A command that declares `keep_awake` (netctl#1238) has its WHOLE plan wrapped in
     `delivery.awake.keep_awake`, so a multi-minute aggregate inhibits host idle-sleep exactly as the
@@ -84,5 +114,13 @@ def run_command(name: str, manifest: Manifest, ctx: StepFactoryContext, *, group
     steps = [ctx.step_factory(leaf.name) for leaf in tree.leaves()]
     pipeline = Pipeline(name=name, steps=steps, stop_on_failure=spec.stop_on_failure,
                         tree=tree, root_path=tree.path)
+    # Ask the pairing verdict HERE, before anything runs. It is decided by the two lines above and cannot
+    # change afterwards, but its consumers ask lazily - `abort_after` at the first FAILURE, `build_rows`
+    # after the last step - so the warning for a rejected tree used to surface halfway down a run's own
+    # output, or under the TUI, where it reads as one line among many. That is how a voided manifest
+    # declaration went unnoticed until a `lint -> check-contract -> test` chain kept going after a failure
+    # (#42). The verdict is computed once and remembered, so asking early changes nothing but WHERE the
+    # warning lands: above the run, where it is still actionable.
+    pipeline.usable_tree()
     with (keep_awake() if spec.keep_awake else contextlib.nullcontext()):
         return dispatch(pipeline)

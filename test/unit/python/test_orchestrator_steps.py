@@ -633,6 +633,32 @@ def test_the_degrade_to_the_flat_shape_says_out_loud_that_the_stop_scopes_went_w
     assert "nothing is skipped" in printed
 
 
+def test_the_degrade_names_the_step_and_the_leaf_that_did_not_pair(capsys):
+    """A warning that says the pairing failed without saying WHERE sends its reader into the kernel to
+    find out, and this one has to survive being read mid-run. The #42 shape - a factory that stamps no
+    identity at all - is the one a product author can act on the moment it is named."""
+    # Arrange: the plan's own count and order, but the first step names nothing (an unstamped factory)
+    tree = manifest_load(_with_flags(_GATES_MANIFEST, root=False, build=True, up=True)).plan_tree_for("all")
+    steps = [_step(leaf.name, rc=1 if index == 0 else 0) for index, leaf in enumerate(tree.leaves())]
+    pipeline = Pipeline("all", steps, False, tree, tree.path)
+    # Act
+    run_headless(pipeline, verbose=False)
+    # Assert
+    printed = capsys.readouterr().out
+    assert "step 0 (unit) names nothing, but the plan's leaf there is 'build.unit'" in printed
+
+
+def test_the_degrade_names_a_step_count_that_does_not_match_the_plan(capsys):
+    """The other fault a product hits: a step list built beside the plan rather than from it."""
+    # Arrange: five planned leaves, one step
+    tree = manifest_load(_with_flags(_GATES_MANIFEST, root=False, build=True, up=True)).plan_tree_for("all")
+    pipeline = Pipeline("all", [_command_step("build.unit", rc=1)], False, tree, tree.path)
+    # Act
+    run_headless(pipeline, verbose=False)
+    # Assert
+    assert "step count 1 does not match the plan's 5 leaves" in capsys.readouterr().out
+
+
 def test_a_usable_tree_degrades_nothing_and_therefore_warns_about_nothing(capsys):
     """The negative case for the warning: a well-paired plan must not cry wolf on every single run."""
     # Arrange

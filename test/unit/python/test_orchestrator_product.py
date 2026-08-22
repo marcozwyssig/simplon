@@ -260,3 +260,94 @@ def test_run_command_lines_up_steps_and_tree_leaves_index_for_index(monkeypatch)
     leaves = pipeline.tree.leaves()
     assert len(pipeline.steps) == len(leaves)
     assert [s.label for s in pipeline.steps] == [leaf.name for leaf in leaves]
+
+
+# --- #42: the kernel's own shim factory stamps the identity the pairing check needs -------------------
+
+
+_TWO_ALLS_MANIFEST = """
+groups:
+  test:
+    unit: { impl: "demo.impls:unit", help: "Unit gate." }
+    all:  { help: "Every test stage.", depends_on: [unit] }
+  deploy:
+    up:  { impl: "demo.impls:up", help: "Deploy up." }
+    all: { help: "Full bring-up.", depends_on: [up] }
+env_groups: [deploy]
+"""
+
+
+def test_for_shim_stamps_each_step_with_the_planned_commands_dotted_path():
+    # arrange: the kernel's factory for the usual `./<product>.sh <cmd>` shape
+    ctx = product.StepFactoryContext.for_shim("demo", "/repo/demo.sh", manifest_load(_DEPS_MANIFEST))
+
+    # act
+    step = ctx.step_factory("install")
+
+    # assert: the exact-command identity is the manifest's dotted path, not the argv the step happens to run
+    assert step.command == "build.install"
+    assert step.label == "install"
+
+
+def test_for_shim_falls_back_to_the_bare_name_when_several_groups_own_the_command():
+    # arrange: `all` is owned by test AND deploy (the #519 shape), so the manifest cannot resolve a path
+    ctx = product.StepFactoryContext.for_shim("demo", "/repo/demo.sh", manifest_load(_TWO_ALLS_MANIFEST))
+
+    # act
+    step = ctx.step_factory("all")
+
+    # assert: the bare name - the second spelling the kernel's pairing guard accepts
+    assert step.command == "all"
+
+
+def test_for_shim_runs_the_products_shim_with_the_command_as_its_argument(monkeypatch):
+    # arrange: capture the argv the step really streams, so the stamp is not mistaken for the command run
+    argvs: list[list[str]] = []
+    monkeypatch.setattr("delivery.orchestrator.steps.run_stream",
+                        lambda argv, on_line: (argvs.append(list(argv)), on_line("building"), 7)[2])
+    ctx = product.StepFactoryContext.for_shim("demo", "/repo/demo.sh", manifest_load(_DEPS_MANIFEST))
+
+    # act
+    outcome = ctx.step_factory("install").run()
+
+    # assert: `<script> <cmd>`, with the real rc and the streamed output carried back
+    assert argvs == [["/repo/demo.sh", "install"]]
+    assert outcome.rc == 7
+    assert outcome.output == "building"
+
+
+def test_a_shim_built_plan_keeps_the_tree_that_an_unstamped_factory_loses(monkeypatch):
+    """The A/B of #42, in one test: the SAME plan, dispatched with the same runner, keeps or loses its
+    tree purely on whether the factory stamped each step. Losing it drops every subtree's
+    `stop_on_failure`, which is why the scaffolded factory now uses `for_shim`."""
+    # arrange
+    captured: list = []
+    monkeypatch.setattr(product, "dispatch", lambda p: (captured.append(p), 0)[1])
+    mf = manifest_load(_DEPS_MANIFEST)
+    unstamped, _ = _factory()
+
+    # act: once through the kernel's stamping factory, once through one that names nothing
+    product.run_command("bringup", mf, product.StepFactoryContext.for_shim("demo", "/repo/demo.sh", mf))
+    product.run_command("bringup", mf, product.StepFactoryContext("demo", unstamped))
+
+    # assert
+    assert captured[0].usable_tree() is not None
+    assert captured[1].usable_tree() is None
+
+
+def test_a_dropped_plan_tree_is_warned_about_before_the_first_step_runs(monkeypatch, capsys):
+    """The warning is the only signal that a manifest's stop_on_failure was voided, and it used to surface
+    lazily - at the first failure, or after the last step - i.e. buried in the run's own output. The
+    verdict is decided when the pipeline is built, so it is asked for there."""
+    # arrange: a factory that stamps nothing, and a dispatch that marks where the run begins
+    monkeypatch.setattr(product, "dispatch", lambda p: (print("DISPATCHED", flush=True), 0)[1])
+    unstamped, _ = _factory()
+    ctx = product.StepFactoryContext("demo", unstamped)
+
+    # act
+    product.run_command("bringup", manifest_load(_DEPS_MANIFEST), ctx)
+
+    # assert: warned above the run, not inside it
+    out = capsys.readouterr().out
+    assert "does not pair with the steps that will run" in out
+    assert out.index("does not pair") < out.index("DISPATCHED")

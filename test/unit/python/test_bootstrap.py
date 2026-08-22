@@ -269,6 +269,42 @@ def test_scaffolded_aggregate_actually_runs_through_the_shared_runner(tmp_path):
     assert "AGGREGATE_REACHABLE" in res.stdout
 
 
+# --- #42: the scaffolded step factory stamps each step's exact-command identity -----------------------
+
+def test_scaffolded_aggregate_keeps_the_plan_tree_and_with_it_every_stop_scope(tmp_path):
+    """The scaffolded factory must stamp `command=` on every step it builds. Without it the kernel cannot
+    verify the leaf-to-step pairing, drops the WHOLE plan tree, and with it every subtree's
+    `stop_on_failure` - so a scaffolded product's `lint -> check-contract -> test` chain kept running
+    after a failure, its manifest's declaration silently void behind one warning in the log (#42).
+    Asserting the tree SURVIVED is the point; the stamped identities are how it can."""
+    # arrange: a real scaffold, driven through its `all` aggregate with dispatch patched to a recorder, so
+    # the verdict is read off the Pipeline the kernel really built
+    bootstrap.write("fooctl", tmp_path)
+    probe = (
+        "from delivery.orchestrator import product\n"
+        "seen = {}\n"
+        "def _record(pipeline):\n"
+        "    seen['commands'] = [s.command for s in pipeline.steps]\n"
+        "    seen['usable'] = pipeline.usable_tree() is not None\n"
+        "    return 0\n"
+        "product.dispatch = _record\n"           # run_command calls the module-level dispatch
+        "from typer.testing import CliRunner\n"
+        "from orchestrator import cli\n"         # import assembles the app (step_context binds `all`)
+        "result = CliRunner().invoke(cli.app, ['all'])\n"
+        "assert result.exit_code == 0, result.output\n"
+        "assert seen['commands'] == ['build.build', 'deploy.up'], seen\n"
+        "assert seen['usable'], seen\n"
+        "print('PLAN_TREE_VERIFIED')\n"
+    )
+
+    # act
+    res = _run_generated(tmp_path / "orchestrator" / "src" / "python", [], code=probe)
+
+    # assert: each step names its planned leaf's dotted path, so the kernel keeps the tree it was given
+    assert res.returncode == 0, res.stderr
+    assert "PLAN_TREE_VERIFIED" in res.stdout
+
+
 # --- gap #737-3: root detection is a marker-walk, robust to relocating the orchestrator dir -----------
 
 def test_root_detection_survives_relocating_the_orchestrator_dir(tmp_path):

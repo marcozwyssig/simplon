@@ -246,7 +246,6 @@ import typer
 from delivery import cli as delivery_cli
 from delivery import log
 from delivery.orchestrator.product import StepFactoryContext
-from delivery.orchestrator.steps import argv_step
 
 from . import environments
 from . import paths
@@ -277,13 +276,22 @@ def down() -> None:
     log.info("@@PRODUCT@@: down (placeholder)")
 
 
+# The parsed manifest, read ONCE: the CLI is assembled from it below, and the step factory resolves each
+# planned command's dotted identity through it.
+_MANIFEST = paths.CONTEXT.manifest()
+
 # The step-factory seam (#895/#896): a command NAME becomes a live-streamed `./@@PRODUCT@@.sh <cmd>` step,
 # so the manifest's impl-less aggregates (`all`: depends_on build->up) run as DATA through the shared
 # runner - no product Python per aggregate. Built once; StepFactoryContext is
 # delivery.orchestrator.product's step-factory seam (kept distinct from the identity context in
 # delivery.context, netctl#737).
-_STEP_CONTEXT = StepFactoryContext(
-    "@@PRODUCT@@", lambda cmd: argv_step(cmd, [str(paths.ROOT / "@@PRODUCT@@.sh"), cmd]))
+#
+# `for_shim` is the kernel's own factory for this shape, and using it is not a style choice: it STAMPS
+# each step with the planned command's exact-command identity (`build.build`, `deploy.up`), which is what
+# lets the kernel verify that step i really is the step for plan leaf i. A factory that does not stamp
+# leaves that pairing unverifiable, and the kernel then drops the whole plan tree - taking every subtree's
+# `stop_on_failure` with it, so a failing gate no longer stops the chain that declared it (#42).
+_STEP_CONTEXT = StepFactoryContext.for_shim("@@PRODUCT@@", paths.ROOT / "@@PRODUCT@@.sh", _MANIFEST)
 
 
 # Assemble the CLI from the manifest via the delivery binding layer. Runs at import (like netctl's cli.py):
@@ -291,8 +299,7 @@ _STEP_CONTEXT = StepFactoryContext(
 # already be defined; step_context lets the kernel synthesize the callback for each impl-less aggregate
 # (`all` runs its build->up dependency plan, reachable as `@@PRODUCT@@ all` or `@@PRODUCT@@ <env> deploy
 # all`). The product name only shapes the usage hints.
-delivery_cli.assemble(app, paths.CONTEXT.manifest(), product=paths.CONTEXT.name,
-                      step_context=_STEP_CONTEXT)
+delivery_cli.assemble(app, _MANIFEST, product=paths.CONTEXT.name, step_context=_STEP_CONTEXT)
 
 
 def main() -> None:
