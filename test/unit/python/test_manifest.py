@@ -885,3 +885,58 @@ groups:
     # assert: inherited from the subtree root, never restated on the child
     assert m.taxonomy().group_requires_env("deploy.rescue") is True
     assert m.taxonomy().env_verdict("deploy", env_explicit=False) == "gate-backend"
+
+
+# --- `with:` (netctl#1434): bind defaults, and reject a key the impl has no parameter for ------------
+
+def test_a_command_can_bind_defaults_with_the_with_key():
+    # arrange
+    text = """
+groups:
+  build:
+    build: { impl: "delivery.test_impls:seed", help: "Build it.", with: { sites: zh } }
+"""
+
+    # act
+    m = manifest.load(text)
+
+    # assert: the YAML key is `with`, the field is `with_` (keyword clash)
+    assert m.spec_for("build", "build").with_ == {"sites": "zh"}
+
+
+def test_a_command_without_a_with_key_binds_nothing():
+    # arrange
+    text = """
+groups:
+  build:
+    build: { impl: "delivery.test_impls:seed", help: "Build it." }
+"""
+
+    # act / assert: an absent block is an empty mapping, never None - callers must not branch
+    assert manifest.load(text).spec_for("build", "build").with_ == {}
+
+
+def test_a_with_key_that_is_not_a_parameter_of_the_impl_is_rejected():
+    # arrange: a typo must fail at LOAD, not become a silently ignored override
+    text = """
+groups:
+  build:
+    build: { impl: "delivery.test_impls:seed", help: "Build it.", with: { site: zh } }
+"""
+
+    # act / assert: the message names the bad key AND the parameters that exist
+    with pytest.raises(ValueError, match="site"):
+        manifest.load(text, validate_with=True)
+
+
+def test_a_with_key_on_an_unimportable_impl_is_rejected():
+    # arrange
+    text = """
+groups:
+  build:
+    build: { impl: "delivery.nope:missing", help: "Build it.", with: { sites: zh } }
+"""
+
+    # act / assert
+    with pytest.raises(ValueError):
+        manifest.load(text, validate_with=True)

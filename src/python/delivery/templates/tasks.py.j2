@@ -1,0 +1,25 @@
+"""GENERATED from {{ source }}. Do not edit.
+
+Regenerate with the product's task generator; the drift gate fails when this file and the manifest
+disagree. Each function below is a real Invoke task whose SIGNATURE was introspected from the body it
+delegates to - the manifest supplies only the name, the help and any `with:` overrides.
+"""
+from invoke import Collection, task
+
+{% for module in imports %}
+import {{ module }}
+{% endfor %}
+
+{% for t in tasks %}
+
+@task(name={{ t.name_repr }})
+def {{ t.func }}(c{% for p in t.params %}, {{ p.name }}{% if p.literal is not none %}={{ p.literal }}{% endif %}{% endfor %}):
+    {{ t.help_repr }}
+    return {{ t.impl }}({% if t.takes_context %}c{% endif %}{% for p in t.params %}{% if not loop.first or t.takes_context %}, {% endif %}{{ p.name }}={{ p.name }}{% endfor %})
+{% endfor %}
+
+
+ns = Collection()
+{% for group, funcs in groups %}
+ns.add_collection(Collection({{ group | tojson }}{% for f in funcs %}, {{ f }}{% endfor %}))
+{% endfor %}

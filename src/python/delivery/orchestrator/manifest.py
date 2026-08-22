@@ -29,7 +29,7 @@ import importlib
 from typing import Callable, NamedTuple
 
 import yaml
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from delivery.clitaxonomy import CommandTaxonomy, TaxonomyNode, merge_trees
 
@@ -88,6 +88,7 @@ class CommandSpec(NamedTuple):
     stop_on_failure: bool = False
     keep_awake: bool = False
     hidden: bool = False
+    with_: dict[str, object] = {}
 
 
 class Manifest(NamedTuple):
@@ -292,10 +293,11 @@ class _CommandSpecModel(BaseModel):
     and IGNORES unknown keys inside a spec. The non-empty-impl/help and 'module:function' rules live on the
     manifest model so their errors can name the owning group + command."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     impl: str = ""
     help: str = ""
+    with_: dict[str, object] = Field(default_factory=dict, alias="with")
     passthrough_args: bool = False
     depends_on: tuple[str, ...] = ()
     stop_on_failure: bool = False
@@ -571,7 +573,7 @@ def _validation_message(error: ValidationError) -> str:
     return f"{location}: {message}" if location else message
 
 
-def load(text: str) -> Manifest:
+def load(text: str, *, validate_with: bool = False) -> Manifest:
     """Parse a product manifest YAML into a validated Manifest (pure: no import of the impls, no Typer).
 
     Validates through the private `_ManifestModel`, failing loudly with ValueError so a bad manifest is
@@ -613,7 +615,7 @@ def load(text: str) -> Manifest:
     commands = {
         group: {name: CommandSpec(impl=spec.impl, help=spec.help, passthrough_args=spec.passthrough_args,
                                   depends_on=spec.depends_on, stop_on_failure=spec.stop_on_failure,
-                                  keep_awake=spec.keep_awake, hidden=spec.hidden)
+                                  keep_awake=spec.keep_awake, hidden=spec.hidden, with_=spec.with_)
                 for name, spec in members.items()}
         for group, members in model.groups.items()
     }
@@ -629,6 +631,8 @@ def load(text: str) -> Manifest:
             raise ValueError(
                 f"groups entry '{name}' names a nested group the `taxonomy:` block does not declare - "
                 f"declare it there, or move its commands to a top-level group")
+    if validate_with:
+        _validate_with_bindings(commands)
     return Manifest(groups=groups, env_groups=env_groups, commands=commands, tree=tree)
 
 
@@ -663,6 +667,32 @@ def _flat_tree(members: dict[str, tuple[str, ...]],
     """
     return {name: TaxonomyNode(name=name, commands=cmds, env_first=name in env_groups)
             for name, cmds in members.items() if "." not in name}
+
+
+def _validate_with_bindings(commands: dict[str, dict[str, "CommandSpec"]]) -> None:
+    """Reject a `with:` key that is not a parameter of the command's impl.
+
+    This is the check that makes `with:` worth having: without it a typo is a silently ignored override,
+    which is the failure mode the task generator exists to remove. It costs an IMPORT of every impl that
+    binds one, which is why it is opt-in - the pure-parse tests must stay import-free - and why the
+    generator always turns it on.
+    """
+    from delivery import signatures      # lazy: taskgen/signatures must not be a load-time dependency
+
+    for group, members in commands.items():
+        for name, spec in members.items():
+            if not spec.with_ or not spec.impl:
+                continue
+            body = resolve_ref(spec.impl, f"{group} {name}")
+            # BINDABLE parameters only, the same set the generator will substitute into. Using every
+            # signature name accepted `with: {c: ...}` - binding the Invoke Context, the likeliest real
+            # typo - and the generator then discarded it silently.
+            params = {p.name for p in signatures.bindable(body)}
+            unknown = sorted(set(spec.with_) - params)
+            if unknown:
+                raise ValueError(
+                    f"`{group} {name}` binds `with:` key(s) {', '.join(unknown)} that are not parameters "
+                    f"of {spec.impl} (it takes: {', '.join(sorted(params))})")
 
 
 def resolve_ref(ref: str, where: str) -> Callable[..., object]:
