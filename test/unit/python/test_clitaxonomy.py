@@ -132,3 +132,33 @@ def test_env_verdict_rejects_explicit_env_on_agnostic_gates_cd_and_is_ok_otherwi
     assert tax.env_verdict("build", env_explicit=False) == "ok"
     assert tax.env_verdict("frobnicate", env_explicit=True) == "ok"
     assert tax.env_verdict(None, env_explicit=False) == "ok"
+
+
+# --- the tree (netctl#1431): the declared flat shape IS a tree of depth one -------------------------
+
+def test_a_flat_declaration_becomes_a_depth_one_tree():
+    # arrange
+    groups = {"build": ("build", "gradle"), "deploy": ("up", "down")}
+
+    # act
+    tax = CommandTaxonomy(groups, frozenset({"deploy"}))
+
+    # assert: one node per declared group, its commands verbatim, no children
+    assert sorted(tax.tree) == ["build", "deploy"]
+    assert tax.tree["build"].commands == ("build", "gradle")
+    assert tax.tree["build"].groups == {}
+    assert tax.tree["deploy"].env_first is True
+    assert tax.tree["build"].env_first is False
+
+
+def test_the_flat_groups_projection_survives_the_tree_rewrite():
+    # arrange: delivery.cli:233 tests membership against `.groups`, so it must stay a mapping of
+    # group name -> ordered command names
+    groups = {"build": ("build", "gradle")}
+
+    # act
+    tax = CommandTaxonomy(groups, frozenset())
+
+    # assert
+    assert tax.groups == {"build": ("build", "gradle")}
+    assert "build" in tax.groups

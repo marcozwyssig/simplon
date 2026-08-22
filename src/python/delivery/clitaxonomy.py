@@ -5,6 +5,23 @@ decisions, no Typer, fully unit-testable.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class TaxonomyNode:
+    """One node of the command tree: the commands it owns, its child groups, and whether it is env-first.
+
+    A node is addressed by its dotted PATH from the root (`support`, `support.git`). `env_first` marks the
+    ROOT of an env-first subtree; every descendant inherits it (see group_requires_env), so the flag is
+    declared once and never restated per node.
+    """
+    name: str
+    commands: tuple[str, ...] = ()
+    groups: Mapping[str, "TaxonomyNode"] = field(default_factory=dict)
+    env_first: bool = False
+
 
 class CommandTaxonomy:
     """A CI/CD command taxonomy: which commands belong to which group, and which groups are env-first.
@@ -16,16 +33,27 @@ class CommandTaxonomy:
     def __init__(self, groups: dict[str, tuple[str, ...]], env_groups: frozenset[str]) -> None:
         self.groups = groups
         self.env_groups = env_groups
-        # multi-owner index: command name -> EVERY group that owns it, in declaration order. The same
-        # name may live in several groups (#519: `test all` next to `deploy all`); such a name is
-        # addressable only via its group token and has no flat form.
+        # The DECLARED shape is flat (group -> commands), which is a tree of depth one. Building it here
+        # rather than at every call site means the flat and the nested constructors share one engine.
+        self.tree: dict[str, TaxonomyNode] = {
+            name: TaxonomyNode(name=name, commands=tuple(cmds), env_first=name in env_groups)
+            for name, cmds in groups.items()
+        }
+        self._index()
+
+    def _index(self) -> None:
+        """Build the name -> owning-group indexes.
+
+        multi-owner index: command name -> EVERY group that owns it, in declaration order. The same
+        name may live in several groups (#519: `test all` next to `deploy all`); such a name is
+        addressable only via its group token and has no flat form. The flat reverse index holds the
+        UNAMBIGUOUS names only - an ambiguous one is deliberately absent, so resolve_group() treats its
+        bare token as unknown and a CLI knows not to register a flat alias for it.
+        """
         self.command_groups: dict[str, tuple[str, ...]] = {}
-        for g, cmds in groups.items():
+        for g, cmds in self.groups.items():
             for cmd in cmds:
                 self.command_groups[cmd] = (*self.command_groups.get(cmd, ()), g)
-        # flat reverse index: command name -> its group, for UNAMBIGUOUS names only. An ambiguous name
-        # is deliberately absent, so resolve_group() treats its bare token as unknown and a CLI knows
-        # not to register a flat alias for it.
         self.command_group: dict[str, str] = {
             cmd: gs[0] for cmd, gs in self.command_groups.items() if len(gs) == 1
         }
