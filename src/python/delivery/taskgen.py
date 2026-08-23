@@ -29,9 +29,11 @@ _TEMPLATES = Path(__file__).resolve().parent / "templates"
 class _Param(NamedTuple):
     name: str
     literal: str | None      # None for a REQUIRED parameter: it must not gain a default
+    presentation: object = None   # the manifest's `params:` entry, or None when it declares nothing
+    type_hint: str | None = None  # the annotation the wrapper carries; None when none can be written
 
 
-def _params(body: object, overrides: dict[str, object], *, where: str) -> list[_Param]:
+def _params(body: object, overrides: dict[str, object], presentation: dict, *, where: str) -> list[_Param]:
     """The body's payload parameters, with `with:` values substituted as defaults.
 
     A parameter the impl declared REQUIRED stays required. Rendering it as `=None` would silently turn a
@@ -40,12 +42,14 @@ def _params(body: object, overrides: dict[str, object], *, where: str) -> list[_
     """
     out: list[_Param] = []
     for param in signatures.bindable(body):
+        shown, hint = presentation.get(param.name), signatures.annotation(param)
         if param.name in overrides:
-            out.append(_Param(param.name, signatures.literal(overrides[param.name], where=where)))
+            out.append(_Param(param.name, signatures.literal(overrides[param.name], where=where),
+                              shown, hint))
         elif param.required:
-            out.append(_Param(param.name, None))
+            out.append(_Param(param.name, None, shown, hint))
         else:
-            out.append(_Param(param.name, signatures.literal(param.default, where=where)))
+            out.append(_Param(param.name, signatures.literal(param.default, where=where), shown, hint))
     return out
 
 
@@ -59,7 +63,8 @@ def _signature(params: list[_Param], *, takes_context: bool) -> str:
     parameter is a later step and a separate diff.
     """
     parts = ["ctx: typer.Context"] if takes_context else []
-    parts += [p.name if p.literal is None else f"{p.name}={p.literal}" for p in params]
+    parts += [signatures.option_decl(p.name, p.literal, p.presentation, p.type_hint)
+              for p in params]
     return ", ".join(parts)
 
 
@@ -89,7 +94,7 @@ def render(manifest: Manifest, *, source: str) -> str:
                 imports.append(module)
             func = signatures.identifier(name, where=where)
             takes_ctx = signatures.takes_context(body)
-            params = _params(body, spec.with_, where=where)
+            params = _params(body, spec.with_, spec.params, where=where)
             tasks.append({"func": func, "help_repr": repr(spec.help),
                           "signature": _signature(params, takes_context=takes_ctx),
                           "call": _call(f"{module}.{attribute}", params, takes_context=takes_ctx)})

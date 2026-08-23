@@ -66,9 +66,10 @@ def test_the_signature_comes_from_the_body_not_from_the_manifest():
     # arrange: the manifest names neither `sites` nor `dry_run`
     text = taskgen.render(_load(), source="demo.yaml")
 
-    # assert: introspected, with the `with:` override applied to `sites` only
-    assert "sites='zh'" in text
-    assert "dry_run=False" in text
+    # assert: introspected, with the `with:` override applied to `sites` only, and each parameter typed
+    # from the body - an UNANNOTATED default makes Typer read a bool as a text option
+    assert "sites: str = 'zh'" in text
+    assert "dry_run: bool = False" in text
 
 
 def test_the_wrapper_delegates_to_the_impl_by_keyword_and_raises_the_rc():
@@ -339,3 +340,106 @@ groups:
     # act / assert
     with pytest.raises(ValueError, match="ctx"):
         manifest.load(text, validate_with=True)
+
+
+# --- `params:` presentation in the rendered wrapper (netctl#1437) -------------------------------------
+
+def test_a_param_declaring_a_short_flag_renders_an_explicit_typer_option():
+    # arrange
+    m = _load("""
+groups:
+  git:
+    prune-branches:
+      impl: "delivery.test_impls:pruner"
+      help: "Delete merged branches."
+      params:
+        dry_run: { help: "preview only", short: "-n" }
+""")
+
+    # act
+    text = taskgen.render(m, source="demo.yaml")
+
+    # assert
+    assert ('dry_run: bool = typer.Option(False, "--dry-run", "-n", help=\'preview only\')' in text)
+
+
+def test_a_param_declaring_only_help_names_no_decl_of_its_own():
+    # arrange: naming a decl explicitly REPLACES Typer's derivation, so a help-only entry must not.
+    m = _load("""
+groups:
+  git:
+    prune-branches:
+      impl: "delivery.test_impls:pruner"
+      help: "Delete merged branches."
+      params:
+        dry_run: { help: "preview only" }
+""")
+
+    # act
+    text = taskgen.render(m, source="demo.yaml")
+
+    # assert
+    assert "dry_run: bool = typer.Option(False, help='preview only')" in text
+    assert '"--dry-run"' not in text
+
+
+def test_an_undeclared_param_is_left_to_typers_own_derivation():
+    # arrange: emitting an explicit decl for EVERY parameter would suppress the `--no-remote` secondary
+    # Typer derives for a bare bool, which is a working flag disappearing from the surface.
+    m = _load("""
+groups:
+  git:
+    prune-branches:
+      impl: "delivery.test_impls:pruner"
+      help: "Delete merged branches."
+      params:
+        dry_run: { help: "preview only" }
+""")
+
+    # act
+    text = taskgen.render(m, source="demo.yaml")
+
+    # assert
+    assert "remote: bool = False" in text
+    assert '"--remote"' not in text
+
+
+def test_a_declared_required_parameter_renders_a_typer_argument():
+    # arrange: a required parameter has no default to carry, and `typer.Option(...)` with an Ellipsis
+    # default would render it as a required OPTION - a different command line.
+    m = _load("""
+groups:
+  lab:
+    pin:
+      impl: "delivery.test_impls:needs_site"
+      help: "Pin a site."
+      params:
+        site: { help: "site name (e.g. be)" }
+""")
+
+    # act
+    text = taskgen.render(m, source="demo.yaml")
+
+    # assert
+    assert "site=typer.Argument(..., help='site name (e.g. be)')" in text
+
+
+def test_every_parameter_is_annotated_from_the_body(tmp_path):
+    # arrange: this is the one that bites. Typer infers a parameter's TYPE from its annotation, and an
+    # unannotated `dry_run=False` becomes a text option - `--dry-run TEXT` instead of a boolean flag -
+    # while every string assertion about decls and help still passes.
+    m = _load("""
+groups:
+  git:
+    prune-branches: { impl: "delivery.test_impls:pruner", help: "Delete merged branches." }
+    other:          { impl: "delivery.test_impls:nullary", help: "Other." }
+""")
+
+    # act
+    root = _assembled(m, tmp_path)
+    group = root.get_command(click.Context(root), "git")
+    leaf = group.get_command(click.Context(group), "prune-branches")
+
+    # assert
+    assert [(p.name, p.type.name, p.is_flag) for p in leaf.params] == [
+        ("dry_run", "boolean", True), ("remote", "boolean", True)]

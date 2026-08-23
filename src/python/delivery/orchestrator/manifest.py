@@ -25,6 +25,8 @@ ValidationError as a plain ValueError so a raw ValidationError never escapes.
 """
 from __future__ import annotations
 
+import re
+
 import importlib
 from typing import Callable, NamedTuple
 
@@ -89,6 +91,23 @@ class CommandSpec(NamedTuple):
     keep_awake: bool = False
     hidden: bool = False
     with_: dict[str, object] = {}
+    params: dict[str, "ParamPresentation"] = {}
+
+
+class ParamPresentation(NamedTuple):
+    """How a parameter is PRESENTED, never what it is (netctl#1437).
+
+    The signature - name, type, default - is introspected from the body; declaring it in YAML would state
+    it twice and let the two drift, which is the failure `impl:` already has. Its help text and its short
+    flag are a different kind of thing: user-facing copy that exists nowhere in the signature, and the
+    short flag in particular has no docstring form. They lived inside `typer.Option(...)` in the command
+    body until the bodies became framework-free, and this is where they went.
+
+    Only these two keys are accepted, so a `type:` or `default:` cannot bring the drift back through this
+    door.
+    """
+    help: str | None = None
+    short: str | None = None
 
 
 class Manifest(NamedTuple):
@@ -288,6 +307,31 @@ def _split_impl(impl: str, context: str) -> tuple[str, str]:
 # manifest-level `@model_validator` so the message can carry that name (the tests assert on those strings).
 
 
+class _ParamPresentationModel(BaseModel):
+    """Parse/validate view of one `params:` entry. Unlike every other spec model here this FORBIDS extra
+    keys rather than ignoring them: the whole point of the block is that it cannot express a signature,
+    and a silently dropped `default:` would read to its author as if it had been honoured."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    help: str | None = None
+    short: str | None = None
+
+    @field_validator("help", mode="before")
+    @classmethod
+    def _stripped_or_none(cls, value: object) -> str | None:
+        return None if value is None else str(value).strip()
+
+    @field_validator("short")
+    @classmethod
+    def _single_dashed_letter(cls, value: str | None) -> str | None:
+        # Click accepts more than this, and renders some of it unrecognisably; `--dry-run` in the SHORT
+        # slot would silently duplicate the long decl the generator derives from the parameter name.
+        if value is not None and not re.fullmatch(r"-[A-Za-z]", value):
+            raise ValueError(f"short flag {value!r} must be a single dash plus one letter, e.g. '-n'")
+        return value
+
+
 class _CommandSpecModel(BaseModel):
     """Parse/validate view of one command declaration. Coerces the scalars exactly like the former loader
     and IGNORES unknown keys inside a spec. The non-empty-impl/help and 'module:function' rules live on the
@@ -298,6 +342,7 @@ class _CommandSpecModel(BaseModel):
     impl: str = ""
     help: str = ""
     with_: dict[str, object] = Field(default_factory=dict, alias="with")
+    params: dict[str, _ParamPresentationModel] = Field(default_factory=dict)
     passthrough_args: bool = False
     depends_on: tuple[str, ...] = ()
     stop_on_failure: bool = False
@@ -615,7 +660,9 @@ def load(text: str, *, validate_with: bool = False) -> Manifest:
     commands = {
         group: {name: CommandSpec(impl=spec.impl, help=spec.help, passthrough_args=spec.passthrough_args,
                                   depends_on=spec.depends_on, stop_on_failure=spec.stop_on_failure,
-                                  keep_awake=spec.keep_awake, hidden=spec.hidden, with_=spec.with_)
+                                  keep_awake=spec.keep_awake, hidden=spec.hidden, with_=spec.with_,
+                                  params={pname: ParamPresentation(help=p.help, short=p.short)
+                                          for pname, p in spec.params.items()})
                 for name, spec in members.items()}
         for group, members in model.groups.items()
     }
@@ -632,7 +679,7 @@ def load(text: str, *, validate_with: bool = False) -> Manifest:
                 f"groups entry '{name}' names a nested group the `taxonomy:` block does not declare - "
                 f"declare it there, or move its commands to a top-level group")
     if validate_with:
-        _validate_with_bindings(commands)
+        _validate_param_bindings(commands)
     return Manifest(groups=groups, env_groups=env_groups, commands=commands, tree=tree)
 
 
@@ -669,30 +716,33 @@ def _flat_tree(members: dict[str, tuple[str, ...]],
             for name, cmds in members.items() if "." not in name}
 
 
-def _validate_with_bindings(commands: dict[str, dict[str, "CommandSpec"]]) -> None:
-    """Reject a `with:` key that is not a parameter of the command's impl.
+def _validate_param_bindings(commands: dict[str, dict[str, "CommandSpec"]]) -> None:
+    """Reject a `with:` or `params:` key that is not a parameter of the command's impl.
 
-    This is the check that makes `with:` worth having: without it a typo is a silently ignored override,
-    which is the failure mode the task generator exists to remove. It costs an IMPORT of every impl that
-    binds one, which is why it is opt-in - the pure-parse tests must stay import-free - and why the
-    generator always turns it on.
+    This is the check that makes both blocks worth having: without it a typo is a silently ignored
+    override, or a help text the author wrote and no user will ever see - which is the failure mode the
+    generator exists to remove. It costs an IMPORT of every impl that binds one, which is why it is
+    opt-in - the pure-parse tests must stay import-free - and why the generator always turns it on.
+
+    Both maps are checked against ONE walk of the signature rather than two, so they cannot come to
+    disagree about what a parameter is.
     """
     from delivery import signatures      # lazy: taskgen/signatures must not be a load-time dependency
 
     for group, members in commands.items():
         for name, spec in members.items():
-            if not spec.with_ or not spec.impl:
+            if not spec.impl or not (spec.with_ or spec.params):
                 continue
             body = resolve_ref(spec.impl, f"{group} {name}")
             # BINDABLE parameters only, the same set the generator will substitute into. Using every
             # signature name accepted `with: {c: ...}` - binding the CLI context, the likeliest real
             # typo - and the generator then discarded it silently.
             params = {p.name for p in signatures.bindable(body)}
-            unknown = sorted(set(spec.with_) - params)
+            unknown = sorted((set(spec.with_) | set(spec.params)) - params)
             if unknown:
                 raise ValueError(
-                    f"`{group} {name}` binds `with:` key(s) {', '.join(unknown)} that are not parameters "
-                    f"of {spec.impl} (it takes: {', '.join(sorted(params))})")
+                    f"`{group} {name}` binds key(s) {', '.join(unknown)} that are not parameters "
+                    f"of {spec.impl} (it takes: {', '.join(sorted(params)) or 'none'})")
 
 
 def resolve_ref(ref: str, where: str) -> Callable[..., object]:

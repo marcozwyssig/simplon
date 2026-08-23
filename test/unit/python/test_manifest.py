@@ -940,3 +940,96 @@ groups:
     # act / assert
     with pytest.raises(ValueError):
         manifest.load(text, validate_with=True)
+
+
+# --- `params:` - presentation, never signature (netctl#1437) ------------------------------------------
+
+_PRUNER = """
+groups:
+  git:
+    prune-branches:
+      impl: "delivery.test_impls:pruner"
+      help: "Delete merged branches."
+      params:
+%s
+env_groups: []
+"""
+
+
+def test_a_params_block_carries_help_and_a_short_flag():
+    # arrange
+    text = _PRUNER % '        dry_run: { help: "preview only", short: "-n" }'
+
+    # act
+    spec = manifest.load(text).spec_for("git", "prune-branches")
+
+    # assert
+    assert spec.params["dry_run"].help == "preview only"
+    assert spec.params["dry_run"].short == "-n"
+
+
+def test_a_command_without_a_params_block_has_an_empty_one():
+    # arrange: the generator asks every command, so absence must be an empty map rather than None
+    text = """
+groups:
+  git:
+    push: { impl: "delivery.test_impls:nullary", help: "Push." }
+env_groups: []
+"""
+
+    # act / assert
+    assert manifest.load(text).spec_for("git", "push").params == {}
+
+
+def test_a_params_key_naming_no_parameter_of_the_body_is_rejected():
+    # arrange: the same failure mode an unknown `with:` key has - a typo that would otherwise render a
+    # wrapper silently missing the help its author wrote, with nothing anywhere saying so.
+    text = _PRUNER % '        dryrun: { help: "preview only" }'
+
+    # act / assert
+    with pytest.raises(ValueError, match="dryrun"):
+        manifest.load(text, validate_with=True)
+
+
+def test_the_same_walk_of_the_signature_validates_with_and_params():
+    # arrange: both maps wrong at once - one message must name both, or the second typo survives the
+    # fix of the first and comes back as a new failure.
+    text = """
+groups:
+  git:
+    prune-branches:
+      impl: "delivery.test_impls:pruner"
+      help: "Delete merged branches."
+      with: { drirun: true }
+      params:
+        remot: { help: "typo" }
+env_groups: []
+"""
+
+    # act / assert
+    with pytest.raises(ValueError) as exc:
+        manifest.load(text, validate_with=True)
+    assert "drirun" in str(exc.value) and "remot" in str(exc.value)
+
+
+@pytest.mark.parametrize("bad", ["n", "--dry-run", "-nn", "", "-1"])
+def test_a_short_flag_that_is_not_a_single_dashed_letter_is_rejected(bad):
+    # arrange: Click accepts more than this and renders some of it unrecognisably; `--dry-run` in the
+    # SHORT slot would silently duplicate the long decl the generator derives from the parameter name.
+    text = _PRUNER % f'        dry_run: {{ short: "{bad}" }}'
+
+    # act / assert
+    with pytest.raises(ValueError, match="short"):
+        manifest.load(text)
+
+
+@pytest.mark.parametrize("key", ["default", "type", "metavar"])
+def test_a_params_block_rejects_any_key_other_than_help_and_short(key):
+    # arrange: a `type:` or `default:` here would restate the signature, which the design keeps
+    # introspected on purpose. Ignoring the key - what every other spec model does - would read to its
+    # author as if it had been honoured.
+    text = _PRUNER % f'        dry_run: {{ {key}: true }}'
+
+    # act / assert
+    with pytest.raises(ValueError, match=key):
+        manifest.load(text)

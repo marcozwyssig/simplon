@@ -27,6 +27,16 @@ class Parameter(NamedTuple):
     name: str
     default: object          # inspect.Parameter.empty when the parameter is REQUIRED
     required: bool
+    annotation: object = inspect.Parameter.empty
+
+
+# The annotations the generator may write into a wrapper's signature. Narrow on purpose: anything wider
+# would need an import the generated module does not have. Rendering NO annotation is not the safe
+# fallback it looks like - Typer infers a parameter's type from its annotation, and an UNANNOTATED
+# `dry_run=False` becomes a text option rather than a boolean flag, silently replacing `--dry-run` with
+# `--dry-run TEXT`. Whatever falls outside this set turns netctl's CLI-surface golden red, which is where
+# it should be dealt with rather than here.
+_ANNOTATIONS = {bool: "bool", int: "int", float: "float", str: "str"}
 
 
 def takes_context(body: object) -> bool:
@@ -49,7 +59,8 @@ def bindable(body: object) -> list[Parameter]:
         if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
             continue
         out.append(Parameter(name=param.name, default=param.default,
-                             required=param.default is param.empty))
+                             required=param.default is param.empty,
+                             annotation=param.annotation))
     return out
 
 
@@ -85,3 +96,55 @@ def identifier(name: str, *, where: str) -> str:
             f"{where}: command name {name!r} does not yield a legal Python identifier "
             f"({candidate!r}) - the generated module would not parse")
     return candidate
+
+
+def annotation(param: Parameter) -> str | None:
+    """The wrapper's type annotation for `param`, or None when none can be written.
+
+    Preferred source is the body's own annotation; a body without one is typed from the RUNTIME TYPE of
+    its default, which is the same fact stated less explicitly. A body whose module uses
+    `from __future__ import annotations` yields the annotation as a STRING, so both forms are matched.
+    """
+    for form, spelling in _ANNOTATIONS.items():
+        if param.annotation is form or param.annotation == spelling:
+            return spelling
+    if not param.required and type(param.default) in _ANNOTATIONS:
+        return _ANNOTATIONS[type(param.default)]
+    return None
+
+
+def option_decl(name: str, literal_default: str | None, presentation, type_hint: str | None = None) -> str:
+    """One wrapper parameter as source, given its rendered default and its manifest presentation.
+
+    Three shapes, and the choice between them is load-bearing rather than cosmetic:
+
+      - nothing declared -> `name=default`, so Typer derives everything exactly as it does today,
+        including the `--no-x` secondary it gives a bare bool. Emitting an explicit decl for every
+        parameter would suppress that secondary and silently delete a working flag from the surface;
+      - `help` only      -> `typer.Option(default, help=...)`, which adds the text without naming any
+        decl, so the derivation is still Typer's;
+      - a `short` flag   -> `typer.Option(default, "--long", "-s", help=...)`, which REPLACES the
+        derivation, because a short flag cannot be added to it.
+
+    A REQUIRED parameter has no default to carry, so it renders as a `typer.Argument` - the shape the
+    product's bodies already use for one.
+
+    `type_hint` is written in every shape, including the undeclared one: without it Typer reads a bool
+    default as a text option (see `annotation`).
+
+    The netctl CLI-surface golden is the oracle for all three: any of them changing an option's decls,
+    its secondaries or its type turns it red.
+    """
+    # PEP 8 spaces the `=` of an ANNOTATED parameter and closes up an unannotated one; generated code
+    # that a reviewer reads should not look like generated code.
+    typed, eq = (f"{name}: {type_hint}", " = ") if type_hint else (name, "=")
+    declared = presentation is not None and (presentation.help is not None or presentation.short is not None)
+    if not declared:
+        return typed if literal_default is None else f"{typed}{eq}{literal_default}"
+    args = ["..." if literal_default is None else literal_default]
+    if presentation.short:
+        args += [f'"--{name.replace("_", "-")}"', f'"{presentation.short}"']
+    if presentation.help:
+        args.append(f"help={presentation.help!r}")
+    factory = "typer.Argument" if literal_default is None else "typer.Option"
+    return f"{typed}{eq}{factory}({', '.join(args)})"
