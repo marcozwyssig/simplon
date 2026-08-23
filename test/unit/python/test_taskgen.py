@@ -27,18 +27,24 @@ def _load(text=_MANIFEST):
     return manifest.load(text)
 
 
-def _assembled(m, tmp_path, source="demo.yaml", product="sample"):
+def _module(m, tmp_path, source="demo.yaml", product="sample", groups=None):
+    """Render and import the generated module."""
+    path = tmp_path / "_generated_cli.py"
+    path.write_text(taskgen.render(m, source=source, product=product, groups=groups))
+    spec = importlib.util.spec_from_file_location(f"_generated_cli_{abs(hash(str(path)))}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _assembled(m, tmp_path, source="demo.yaml", product="sample", groups=None):
     """Render, import and register the module onto a fresh root app; return the Click tree.
 
     Asserting on the TREE rather than only on the rendered text is deliberate: the text says what was
     written, the tree says what Click made of it, and the tree is what netctl's cli_surface golden
     compares.
     """
-    path = tmp_path / "_generated_cli.py"
-    path.write_text(taskgen.render(m, source=source, product=product))
-    spec = importlib.util.spec_from_file_location(f"_generated_cli_{abs(hash(str(path)))}", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = _module(m, tmp_path, source, product, groups)
     app = typer.Typer(add_completion=False)
     module.register(app, aggregate=lambda name, group: 0)
     return get_command(app)
@@ -842,3 +848,104 @@ groups:
     # act / assert
     with pytest.raises(ValueError, match="pinned"):
         taskgen.render(m, source="demo.yaml", product="sample")
+
+
+# --- a partial render, and the hybrid it enables (netctl#1444) ----------------------------------------
+
+def test_rendering_a_subset_of_groups_covers_only_those(tmp_path):
+    # arrange: how a product migrates off the reflective assembly without one all-or-nothing PR
+    m = _load(_SHAPES)
+
+    # act
+    root = _assembled(m, tmp_path, groups=frozenset({"test"}))
+
+    # assert: the chosen group and its flat aliases, nothing else
+    assert _sub(root, "test") is not None
+    assert _sub(root, "deploy") is None
+    assert _sub(root, "unit").hidden is True
+
+
+def test_the_generated_module_names_what_it_covers(tmp_path):
+    # arrange: the product hands COVERED to the reflective assembly rather than restating the list
+    m = _load(_SHAPES)
+
+    # act
+    module = _module(m, tmp_path, groups=frozenset({"test"}))
+
+    # assert
+    assert module.COVERED == frozenset({("test", "all"), ("test", "unit"), ("test", "internal")})
+
+
+def test_covering_everything_is_the_default():
+    # arrange / act
+    full = taskgen.render(_load(_SHAPES), source="demo.yaml", product="sample")
+
+    # assert
+    assert '("deploy", "gradle")' in full and '("test", "unit")' in full
+
+
+def test_generating_a_group_the_manifest_does_not_declare_is_rejected():
+    # arrange: a typo in the migration list would otherwise generate nothing and read as "not migrated yet"
+    # act / assert
+    with pytest.raises(ValueError, match="tset"):
+        taskgen.render(_load(_SHAPES), source="demo.yaml", product="sample",
+                       groups=frozenset({"tset"}))
+
+
+def test_a_nested_group_pulls_its_ancestor_into_the_render(tmp_path):
+    # arrange: `support.git` cannot be registered without a `support` sub-app to hang from, and asking a
+    # product to list both would be bookkeeping the generator can do
+    m = _load("""
+taxonomy:
+  support:
+    help: "Host and tooling upkeep."
+    groups:
+      git: { help: "Version control verbs." }
+groups:
+  support.git:
+    commit: { impl: "delivery.test_impls:no_context", help: "Commit." }
+  test:
+    unit: { impl: "delivery.test_impls:nullary", help: "One gate." }
+env_groups: []
+""")
+
+    # act
+    root = _assembled(m, tmp_path, groups=frozenset({"support.git"}))
+
+    # assert
+    assert _sub(_sub(_sub(root, "support"), "git"), "commit") is not None
+    assert _sub(root, "test") is None
+
+
+# --- unrenderable(): which bodies still hold the migration back ---------------------------------------
+
+def test_unrenderable_names_the_commands_whose_bodies_cannot_be_written():
+    # arrange: a body carrying a typer.Option default, as the unmigrated kernel bodies do
+    import typer as _typer
+
+    def legacy(dry_run: bool = _typer.Option(False, "--dry-run")):
+        """A body that still has Typer in it."""
+
+    import delivery.test_impls as impls
+    impls.legacy = legacy
+    try:
+        m = _load("""
+groups:
+  git:
+    legacy: { impl: "delivery.test_impls:legacy", help: "Legacy." }
+    push:   { impl: "delivery.test_impls:nullary", help: "Push." }
+""")
+
+        # act
+        blocked = taskgen.unrenderable(m)
+
+        # assert: named, with the reason, and the clean neighbour absent
+        assert set(blocked) == {("git", "legacy")}
+        assert "OptionInfo" in blocked[("git", "legacy")]
+    finally:
+        del impls.legacy
+
+
+def test_unrenderable_is_empty_for_a_fully_migrated_manifest():
+    # arrange / act / assert
+    assert taskgen.unrenderable(_load(_SHAPES)) == {}

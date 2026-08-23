@@ -123,6 +123,10 @@ class Manifest(NamedTuple):
     env_groups: frozenset[str]
     commands: dict[str, dict[str, CommandSpec]]
     tree: dict[str, TaxonomyNode]
+    # The groups a product assembles from its GENERATED module rather than reflectively (netctl#1444).
+    # Migration state, and deliberately in the model: the diff of this list per wave is the ratchet, and
+    # a group left out of it must be held back by a body that cannot be rendered (taskgen.unrenderable).
+    generate: frozenset[str] = frozenset()
 
     def taxonomy(self) -> CommandTaxonomy:
         """The shared env-gate engine built from this manifest's tree (one env-gate, not a copy)."""
@@ -383,6 +387,7 @@ class _ManifestModel(BaseModel):
 
     groups: dict[str, dict[str, _CommandSpecModel]] = {}
     env_groups: tuple[str, ...] = ()
+    generate: tuple[str, ...] = ()
 
     @model_validator(mode="before")
     @classmethod
@@ -674,6 +679,10 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
         for group, members in model.groups.items()
     }
     env_groups = frozenset(model.env_groups)
+    unknown = sorted(set(model.generate) - set(groups))
+    if unknown:
+        raise ValueError(f"generate entry '{sorted(unknown)[0]}' is not a declared group")
+    generate = frozenset(model.generate)
     tree = merge_trees(_catalogue_tree(model.taxonomy, groups), _flat_tree(groups, env_groups))
     # Every DOTTED `groups:` key must name a node the `taxonomy:` block actually declares. Without this,
     # an unmatched path was dropped from the tree while `groups`/`commands` kept it: the commands stayed
@@ -687,7 +696,8 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
                 f"declare it there, or move its commands to a top-level group")
     if validate_with:
         _validate_param_bindings(commands)
-    return Manifest(groups=groups, env_groups=env_groups, commands=commands, tree=tree)
+    return Manifest(groups=groups, env_groups=env_groups, commands=commands, tree=tree,
+                    generate=generate)
 
 
 def _expand_imports(data: dict, catalogue: object) -> dict:

@@ -106,7 +106,8 @@ def _command_callback(mf: manifest.Manifest, group: str, name: str, spec: manife
 
 
 def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
-             step_context: StepFactoryContext | None = None) -> None:
+             step_context: StepFactoryContext | None = None,
+             skip: frozenset[tuple[str, str]] = frozenset()) -> None:
     """Assemble a product's Typer app from its loaded manifest (#437). One sub-app per non-flat group
     (rich-panelled CI vs CD); each command is registered under its group AND again as a HIDDEN flat
     back-compat alias bound to the SAME callback, so `<product> <env> deploy up` and the bare `<product> up`
@@ -120,6 +121,13 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
     its manifest impl ("module:function"). Per-command `--help` is unchanged: help stays with each callback's
     docstring, which Typer renders. The product name only shapes the usage hints (panel + group help), so a
     second product reads in its own voice.
+
+    `skip` names (group, command) pairs a product has already registered from its GENERATED module
+    (netctl#1444), so the two mechanisms can run side by side while the migration is under way. Whole
+    GROUPS are skipped, never single commands within one: a group registers exactly one sub-app, so a
+    group split across both mechanisms would have each of them call `add_typer` under the same name and
+    one would overwrite the other's members. A partial group is rejected here rather than producing that
+    silently.
 
     An impl-less AGGREGATE (#896) binds a kernel-synthesized callback that runs its #895 dependency plan
     (`run_command`) instead of a resolved impl; `step_context` injects the product's `StepFactoryContext`
@@ -139,6 +147,7 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
     meant for a human. See the loop below for how each registration shape threads the flag.
     """
     tax = mf.taxonomy()
+    skipped_groups = _skipped_groups(mf, skip)
     cd_panel = _cd_panel(product)
     # impl refs bound to MORE than one command (see the help override in the registration loop below).
     seen: dict[str, int] = {}
@@ -153,7 +162,7 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
     # its bare token runs the namesake member instead of printing group help.
     group_apps: dict[str, typer.Typer] = {}
     for group in mf.groups:
-        if tax.is_flat_command_group(group):
+        if group in skipped_groups or tax.is_flat_command_group(group):
             continue
         env_first = tax.group_requires_env(group)
         if tax.is_group_default_command(group):
@@ -185,6 +194,8 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
     #   - a group-default namesake never reaches this loop (the `continue` above) and `load()` already
     #     rejects `hidden` there, so there is nothing to thread for it here.
     for group, cmds in mf.groups.items():
+        if group in skipped_groups:
+            continue
         panel = cd_panel if tax.group_requires_env(group) else _CI_PANEL
         default_member = tax.is_group_default_command(group)
         for name in cmds:
@@ -205,6 +216,26 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
                 group_apps[group].command(name=name, hidden=spec.hidden, **kw)(fn)
                 if not tax.is_ambiguous(name):
                     app.command(name=name, hidden=True, **kw)(fn)
+
+
+def _skipped_groups(mf: manifest.Manifest, skip: frozenset[tuple[str, str]]) -> frozenset[str]:
+    """The groups `skip` covers ENTIRELY, or a ValueError naming the ones it covers only in part.
+
+    Half a group is the failure this exists to prevent: both mechanisms would register a sub-app under
+    the same name and Click keeps one of them, so the other's members vanish from the surface with
+    nothing raised. Rejecting is cheap; diagnosing that is not.
+    """
+    named = {group for group, _ in skip}
+    partial = sorted(group for group in named
+                     if set(mf.groups.get(group, ())) - {n for g, n in skip if g == group})
+    if partial:
+        raise ValueError(
+            f"skip covers group(s) {', '.join(partial)} only in part; a group registers ONE sub-app, so "
+            f"it belongs entirely to the generated module or entirely to this assembly")
+    unknown = sorted(named - set(mf.groups))
+    if unknown:
+        raise ValueError(f"skip names group(s) the manifest does not declare: {', '.join(unknown)}")
+    return frozenset(named)
 
 
 def main(*, app: typer.Typer, context: ProductContext,

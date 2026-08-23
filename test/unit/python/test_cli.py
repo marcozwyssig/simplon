@@ -12,6 +12,7 @@ import types
 
 import click
 import pytest
+import typer
 from typer.main import get_command
 from typer.testing import CliRunner
 
@@ -508,3 +509,66 @@ def test_assemble_leaves_an_unshared_impls_help_to_its_docstring(shared_impl_app
 
     # assert: no help override was applied, so Typer still reads the callback's own docstring
     assert lint.help is None
+
+
+# --- assemble(skip=...): the hybrid while the migration runs (netctl#1444) ----------------------------
+
+_HYBRID = """
+groups:
+  test:
+    unit:   { impl: "delivery.test_impls:nullary", help: "One gate." }
+    report: { impl: "delivery.test_impls:no_context", help: "Merge the results." }
+  git:
+    commit: { impl: "delivery.test_impls:no_context", help: "Commit." }
+env_groups: []
+"""
+
+
+def test_a_skipped_group_is_not_registered_at_all():
+    # arrange: the product's generated module already owns `test`, so this assembly must leave it alone -
+    # both registering it would have two add_typer calls under one name and one would win silently
+    mf = manifest.load(_HYBRID)
+    app = typer.Typer(add_completion=False)
+
+    # act
+    cli.assemble(app, mf, product="sample",
+                 skip=frozenset({("test", "unit"), ("test", "report")}))
+
+    # assert: `git` is here, `test` is not, and neither are the skipped flat aliases
+    root = get_command(app)
+    ctx = click.Context(root)
+    assert root.get_command(ctx, "git") is not None
+    assert root.get_command(ctx, "test") is None
+    assert root.get_command(ctx, "unit") is None
+    assert root.get_command(ctx, "commit") is not None
+
+
+def test_skipping_a_group_only_in_part_is_rejected():
+    # arrange: half a group would make both mechanisms register a sub-app under one name; Click keeps one
+    # and the other's members vanish with nothing raised
+    mf = manifest.load(_HYBRID)
+
+    # act / assert
+    with pytest.raises(ValueError, match="in part"):
+        cli.assemble(typer.Typer(add_completion=False), mf, product="sample",
+                     skip=frozenset({("test", "unit")}))
+
+
+def test_skipping_a_group_the_manifest_does_not_declare_is_rejected():
+    # arrange: a stale entry would silently protect nothing
+    mf = manifest.load(_HYBRID)
+
+    # act / assert
+    with pytest.raises(ValueError, match="tset"):
+        cli.assemble(typer.Typer(add_completion=False), mf, product="sample",
+                     skip=frozenset({("tset", "unit")}))
+
+
+def test_skipping_nothing_is_the_default_and_assembles_everything():
+    # arrange / act
+    app = typer.Typer(add_completion=False)
+    cli.assemble(app, manifest.load(_HYBRID), product="sample")
+
+    # assert
+    root = get_command(app)
+    assert root.get_command(click.Context(root), "test") is not None

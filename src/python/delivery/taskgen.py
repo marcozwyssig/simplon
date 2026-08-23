@@ -158,13 +158,24 @@ def _kwargs(spec, *, shared: set[str]) -> str:
     return "".join(", " + kw for kw in out)
 
 
-def render(manifest: Manifest, *, source: str, product: str) -> str:
+def render(manifest: Manifest, *, source: str, product: str,
+           groups: frozenset[str] | None = None) -> str:
     """The generated module's text for this manifest. Deterministic: same manifest, same bytes.
 
     `product` shapes only the usage hints (the CD panel and each group's blurb), exactly as it does in the
     reflective assembly, so a second *ctl product reads in its own voice from the same generator.
+
+    `groups` restricts the render to a subset of the taxonomy, which is how a product migrates off the
+    reflective assembly without one all-or-nothing PR (netctl#1444). Per GROUP rather than per command,
+    and that is forced rather than chosen: a group registers ONE sub-app, so a group split across the two
+    mechanisms would have both of them call `add_typer` under the same name and one would overwrite the
+    other's members. `None` renders everything.
+
+    The generated module names what it covers in `COVERED`, so the product can tell the reflective
+    assembly to leave those groups alone rather than restating the list on both sides.
     """
     tax = manifest.taxonomy()
+    selected = _selected(manifest, groups)
     shared = _shared_impls(manifest)
     cd_panel = _cd_panel(product)
     tasks: list[dict[str, object]] = []
@@ -175,6 +186,8 @@ def render(manifest: Manifest, *, source: str, product: str) -> str:
     # Every function first, so the module reads as a list of what a task IS before how it is wired.
     funcs = _function_names(manifest)
     for group, members in manifest.commands.items():
+        if group not in selected:
+            continue
         for name, spec in members.items():
             where = f"`{group} {name}`"
             func = funcs[(group, name)]
@@ -211,7 +224,7 @@ def render(manifest: Manifest, *, source: str, product: str) -> str:
     # group token, so a sub-app would collide with it.
     apps: dict[str, str] = {}
     for group in _group_paths(manifest):
-        if tax.is_flat_command_group(group):
+        if group not in selected or tax.is_flat_command_group(group):
             continue
         # `_g_` prefixed, and not merely for tidiness: a group-default group's sub-app variable would
         # otherwise SHADOW the module-level function of the same name, so its own callback would call the
@@ -249,6 +262,8 @@ def render(manifest: Manifest, *, source: str, product: str) -> str:
 
     # Each command under its group, plus the HIDDEN flat back-compat alias bound to the SAME function.
     for group, names in manifest.groups.items():
+        if group not in selected:
+            continue
         spec_of = {name: manifest.spec_for(group, name) for name in names}
         panel = cd_panel if tax.group_requires_env(group) else _CI_PANEL
         default_member = tax.is_group_default_command(group)
@@ -269,9 +284,51 @@ def render(manifest: Manifest, *, source: str, product: str) -> str:
 
     env = Environment(loader=FileSystemLoader(str(_TEMPLATES)), undefined=StrictUndefined,
                       trim_blocks=True, lstrip_blocks=True, keep_trailing_newline=True)
+    covered = sorted((group, name) for group in selected
+                     for name in manifest.groups.get(group, ()))
     return env.get_template("cli.py.j2").render(source=source, imports=sorted(imports),
-                                                tasks=tasks, body=body,
+                                                tasks=tasks, body=body, covered=covered,
                                                 has_aggregate=has_aggregate)
+
+
+def _selected(manifest: Manifest, groups: frozenset[str] | None) -> frozenset[str]:
+    """The group paths this render covers, ancestors included.
+
+    An ancestor is pulled in even when the caller did not name it: `support.git` cannot be registered
+    without a `support` sub-app to hang from, and asking a product to list both would be bookkeeping the
+    generator can do for it.
+    """
+    if groups is None:
+        return frozenset(_group_paths(manifest))
+    unknown = sorted(set(groups) - set(_group_paths(manifest)))
+    if unknown:
+        raise ValueError(f"cannot generate group(s) the manifest does not declare: {', '.join(unknown)}")
+    out: set[str] = set()
+    for group in groups:
+        parts = group.split(".")
+        out.update(".".join(parts[:depth]) for depth in range(1, len(parts) + 1))
+    return frozenset(out)
+
+
+def unrenderable(manifest: Manifest) -> dict[tuple[str, str], str]:
+    """Every command whose wrapper cannot be written, and why.
+
+    The blocker is always the same shape: a default that is not a literal, which today means a body still
+    carrying `typer.Option` / `typer.Argument` in its signature. A product uses this to prove that the
+    groups it has NOT migrated are held back by a real body rather than by forgetfulness - which is what
+    keeps the migration a ratchet instead of a list someone stops updating.
+    """
+    out: dict[tuple[str, str], str] = {}
+    for group, members in manifest.commands.items():
+        for name, spec in members.items():
+            if not spec.impl:
+                continue
+            where = f"`{group} {name}`"
+            try:
+                _params(resolve_ref(spec.impl, where), spec.with_, spec.params, where=where)
+            except ValueError as exc:
+                out[(group, name)] = str(exc)
+    return out
 
 
 def _group_paths(manifest: Manifest) -> list[str]:
@@ -328,9 +385,10 @@ def _function_names(manifest: Manifest) -> dict[tuple[str, str], str]:
     return out
 
 
-def write(manifest: Manifest, target: Path, *, source: str, product: str) -> bool:
+def write(manifest: Manifest, target: Path, *, source: str, product: str,
+          groups: frozenset[str] | None = None) -> bool:
     """Render the module to `target`. Returns True iff the bytes changed."""
-    text = render(manifest, source=source, product=product)
+    text = render(manifest, source=source, product=product, groups=groups)
     if target.exists() and target.read_text() == text:
         return False
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -338,13 +396,15 @@ def write(manifest: Manifest, target: Path, *, source: str, product: str) -> boo
     return True
 
 
-def check(manifest: Manifest, target: Path, *, source: str, product: str) -> str | None:
+def check(manifest: Manifest, target: Path, *, source: str, product: str,
+          groups: frozenset[str] | None = None) -> str | None:
     """A unified diff when `target` disagrees with the manifest, else None.
 
     A MISSING target is a diff, not an error: a fresh checkout that never generated must be told what to
     run, and a gate that raises there reads as a broken gate rather than as drift.
     """
-    text = render(manifest, source=source, product=product).splitlines(keepends=True)
+    text = render(manifest, source=source, product=product,
+                  groups=groups).splitlines(keepends=True)
     current = target.read_text().splitlines(keepends=True) if target.exists() else []
     if current == text:
         return None

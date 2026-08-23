@@ -54,6 +54,15 @@ def {{ t.func }}({{ t.signature }}) -> None:
 {% endfor %}
 
 
+# The (group, command) pairs this module registers. A product hands it to the reflective assembly so the
+# two never both register one group - see `delivery.cli.assemble(skip=...)`.
+COVERED = frozenset({
+{% for group, name in covered %}
+    ({{ group | tojson }}, {{ name | tojson }}),
+{% endfor %}
+})
+
+
 def register(app: typer.Typer, *, aggregate: object = None) -> None:
     """Register this manifest's commands onto a root app the product owns.
 
