@@ -274,3 +274,20 @@ env_groups: []
 
     # act / assert
     assert manifest.load(text).groups == {"git": ("commit",)}
+
+
+def test_an_import_without_a_catalogue_is_a_manifest_error_not_an_attribute_error():
+    # arrange: the expansion used to reach `catalogue.namespace(...)` on None and die deep inside itself,
+    # which reads as a broken loader rather than as the caller mistake it is
+    text = """
+import:
+  delivery: [vcs]
+groups:
+  git:
+    commit: { impl: "delivery.test_impls:no_context", help: "Commit." }
+env_groups: []
+"""
+
+    # act / assert
+    with pytest.raises(ValueError, match="catalogue"):
+        manifest.load(text)

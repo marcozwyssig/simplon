@@ -706,8 +706,13 @@ def _expand_imports(data: dict, catalogue: object) -> dict:
     imports, tasks = data.get("import") or {}, data.get("tasks") or {}
     if not imports and not tasks:
         return data
-    if tasks and catalogue is None and any("impl" not in (spec or {}) for spec in tasks.values()):
-        raise ValueError("manifest declares imported tasks but load() was given no catalogue")
+    if catalogue is None and (imports or any(not (spec or {}).get("impl") for spec in tasks.values())):
+        # Both halves matter. Without the first, an `import:` with no catalogue reached
+        # `catalogue.namespace(...)` on None and died as an AttributeError deep in the expansion rather
+        # than as the manifest error it is; without the second, an override would resolve against an
+        # empty map and be reported as a typo when the real fault is a caller that passed no catalogue.
+        raise ValueError("manifest declares `import:` or imported tasks, but load() was given no "
+                         "catalogue - pass catalogue=delivery.catalogue.load()")
 
     available: dict[str, dict] = {}
     for source, namespaces in imports.items():
