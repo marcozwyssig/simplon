@@ -40,7 +40,14 @@ def _cd_panel(product: str) -> str:
 
 
 def _group_help(group: str, product: str, *, env_first: bool) -> str:
-    return f"{group} commands. " + (f"Env-first: `{product} <env> {group} <cmd>` (default dev)."
+    """One group's `--help` blurb.
+
+    A nested group is named by its OWN segment and addressed by its PATH: `support.git` reads "git
+    commands." and is typed `<product> support git <cmd>`. Using the dotted path for either would put a
+    string on screen that nobody can type (netctl#1444, plan 5).
+    """
+    label, addressed = group.rpartition(".")[2], group.replace(".", " ")
+    return f"{label} commands. " + (f"Env-first: `{product} <env> {addressed} <cmd>` (default dev)."
                                     if env_first else "Environment-agnostic (no env).")
 
 

@@ -791,6 +791,35 @@ env_groups: [deploy]
     assert m.taxonomy().resolve_group("up") == "deploy"
 
 
+def test_a_group_can_hold_both_its_own_members_and_a_nested_child():
+    # arrange: the shape netctl#1444 plan 5 needs. `support` holds eight commands of its own AND parents
+    # `support.git`, so it must appear in the taxonomy block while keeping its bare `groups:` key. That
+    # used to raise "declared in BOTH the catalogue and the product manifest" - reported against a
+    # catalogue that was not involved, with both halves coming from the same file.
+    text = """
+taxonomy:
+  support:
+    help: "Host and tooling upkeep."
+    groups:
+      git: { help: "Version control verbs." }
+groups:
+  support:
+    doctor: { impl: "delivery.test_impls:nullary", help: "Check the host." }
+  support.git:
+    commit: { impl: "delivery.test_impls:no_context", help: "Commit." }
+env_groups: []
+"""
+
+    # act
+    m = manifest.load(text)
+
+    # assert: the parent keeps its OWN members and gains the child - the skip must not lose either
+    assert m.tree["support"].commands == ("doctor",)
+    assert sorted(m.tree["support"].groups) == ["git"]
+    assert m.tree["support"].groups["git"].commands == ("commit",)
+    assert m.taxonomy().resolve_path("support.git") is not None
+
+
 def test_a_nested_taxonomy_block_places_a_group_beneath_another():
     # arrange: what a catalogue will declare, exercised here through the product manifest
     text = """
@@ -812,19 +841,27 @@ groups:
     assert m.taxonomy().resolve_group("commit") == "support.git"
 
 
-def test_a_group_declared_in_both_the_taxonomy_block_and_as_a_flat_group_is_rejected():
-    # arrange: the merge contradiction, surfaced at manifest-load time rather than at dispatch
+def test_a_group_named_in_the_taxonomy_block_keeps_its_own_members_from_groups():
+    # arrange: this used to be rejected as "declared in BOTH the catalogue and the product manifest". It is
+    # not a contradiction: both halves come from ONE file, and it is the only way a group can have members
+    # AND children (netctl#1444, plan 5). The catalogue-vs-product clash the message describes is still
+    # guarded, on merge_trees itself, where a catalogue tree really is one of the inputs
+    # (test_clitaxonomy.py) - the loader merges no catalogue tree, so it could never produce that case.
     text = """
 taxonomy:
   build: { help: "Produce the artefacts." }
 groups:
   build:
-    build: { impl: "m:f", help: "Build it." }
+    build: { impl: "delivery.test_impls:nullary", help: "Build it." }
+env_groups: []
 """
 
-    # act / assert
-    with pytest.raises(ValueError, match="build"):
-        manifest.load(text)
+    # act
+    m = manifest.load(text)
+
+    # assert
+    assert m.tree["build"].commands == ("build",)
+    assert m.tree["build"].groups == {}
 
 
 def test_an_env_groups_entry_naming_a_nested_group_is_rejected():

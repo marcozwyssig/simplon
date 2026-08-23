@@ -170,9 +170,14 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
                                     _command_callback(mf, group, group, mf.spec_for(group, group),
                                                       step_context))
         else:
+            # A nested group is named by its OWN segment and addressed by its PATH: `support.git` reads
+            # "git commands." and is typed `<product> support git <cmd>`. Either spelled as the dotted
+            # path would put a string on screen that nobody can type (netctl#1444, plan 5).
+            label, addressed = group.rpartition(".")[2], group.replace(".", " ")
             ga = typer.Typer(add_completion=False, no_args_is_help=True,
-                             help=(f"{group} commands. " + ("Env-first: `" + product + " <env> " + group
-                                   + " <cmd>` (default dev)." if env_first else "Environment-agnostic (no env).")))
+                             help=(f"{label} commands. " + ("Env-first: `" + product + " <env> "
+                                   + addressed + " <cmd>` (default dev)."
+                                   if env_first else "Environment-agnostic (no env).")))
         group_apps[group] = ga
         app.add_typer(ga, name=group, rich_help_panel=(cd_panel if env_first else _CI_PANEL))
 

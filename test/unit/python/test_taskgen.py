@@ -401,6 +401,49 @@ groups:
     assert ('dry_run: bool = typer.Option(False, "--dry-run", "-n", help=\'preview only\')' in text)
 
 
+def test_a_nested_group_is_named_by_its_own_segment_and_addressed_by_its_path():
+    # arrange: `support.git` is not a string anyone can type. The blurb names the node ("git commands.")
+    # and any usage hint spells the PATH with spaces (netctl#1444, plan 5).
+    m = _load("""
+taxonomy:
+  support:
+    help: "Host and tooling upkeep."
+    groups:
+      git: { help: "Version control verbs." }
+groups:
+  support.git:
+    push: { impl: "delivery.test_impls:nullary", help: "Push." }
+""")
+
+    # act
+    text = taskgen.render(m, source="demo.yaml", product="sample")
+
+    # assert
+    assert "help='git commands. Environment-agnostic (no env).'" in text
+    assert "support.git commands" not in text
+
+
+def test_a_nested_env_first_group_spells_its_usage_hint_with_spaces():
+    # arrange: the hint is a command line, so a dotted path there would be unusable. A NESTED group takes
+    # its env-first flag from the taxonomy node - `env_groups:` names top-level groups only.
+    m = _load("""
+taxonomy:
+  cloud:
+    help: "Cloud."
+    groups:
+      stack: { help: "Stacks.", env_first: true }
+groups:
+  cloud.stack:
+    up: { impl: "delivery.test_impls:nullary", help: "Bring it up." }
+""")
+
+    # act
+    text = taskgen.render(m, source="demo.yaml", product="sample")
+
+    # assert
+    assert "`sample <env> cloud stack <cmd>`" in text
+
+
 def test_a_param_declaring_short_first_puts_the_short_decl_before_the_long_one():
     # arrange: Click renders the decls in DECLARATION order, so this is what a user reads in `--help`.
     # netctl's surface uses both orders - `--watch -w` on one command, `-f --follow` on the next - so the

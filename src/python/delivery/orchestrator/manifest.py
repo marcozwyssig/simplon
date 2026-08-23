@@ -714,7 +714,8 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     if unknown:
         raise ValueError(f"generate names group(s) the manifest does not declare: {', '.join(unknown)}")
     generate = frozenset(model.generate)
-    tree = merge_trees(_catalogue_tree(model.taxonomy, groups), _flat_tree(groups, env_groups))
+    tree = merge_trees(_catalogue_tree(model.taxonomy, groups),
+                       _flat_tree(groups, env_groups, frozenset(model.taxonomy)))
     # Every DOTTED `groups:` key must name a node the `taxonomy:` block actually declares. Without this,
     # an unmatched path was dropped from the tree while `groups`/`commands` kept it: the commands stayed
     # registered and runnable but were invisible to the taxonomy, so they were never env-gated and never
@@ -816,16 +817,26 @@ def _catalogue_tree(declared: dict[str, dict],
 
 
 def _flat_tree(members: dict[str, tuple[str, ...]],
-               env_groups: frozenset[str]) -> dict[str, TaxonomyNode]:
-    """The depth-1 tree for every BARE `groups:` key - the product's own top-level groups.
+               env_groups: frozenset[str],
+               declared: frozenset[str] = frozenset()) -> dict[str, TaxonomyNode]:
+    """The depth-1 tree for every BARE `groups:` key that the manifest's own `taxonomy:` block does not
+    already declare - the product's plain top-level groups.
 
-    A DOTTED key (`support.git`) names members of a node the taxonomy block already built, so it is not
-    a top-level group and is skipped here. A bare key is the product's, and if the catalogue declares it
-    too, merge_trees() raises - which is the point. Filtering these out by "the taxonomy block already
-    claims this name" would swallow exactly the contradiction the merge rule exists to catch.
+    A DOTTED key (`support.git`) names members of a node the taxonomy block already built, so it is not a
+    top-level group and is skipped here.
+
+    `declared` is what makes a group with BOTH members and children expressible (netctl#1444, plan 5):
+    `support` holds eight of its own commands under a bare `groups:` key AND parents `support.git`, so it
+    must appear in the taxonomy block. Emitting it here as well produced two nodes of the same name and
+    merge_trees() rejected them as a contradiction - reporting that "the catalogue owns it" when no
+    catalogue was involved and both halves came from the same file. Its own members are not lost by the
+    skip: `_catalogue_tree` attaches them by PATH, so `members["support"]` lands on the declared node.
+
+    The merge rule still catches what it was written for, a group owned by the CATALOGUE and redeclared by
+    the product, because that clash is between two files rather than two sections of one.
     """
     return {name: TaxonomyNode(name=name, commands=cmds, env_first=name in env_groups)
-            for name, cmds in members.items() if "." not in name}
+            for name, cmds in members.items() if "." not in name and name not in declared}
 
 
 def _validate_param_bindings(commands: dict[str, dict[str, "CommandSpec"]]) -> None:
