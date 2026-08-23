@@ -98,17 +98,19 @@ class ParamPresentation(NamedTuple):
     """How a parameter is PRESENTED, never what it is (netctl#1437).
 
     The signature - name, type, default - is introspected from the body; declaring it in YAML would state
-    it twice and let the two drift, which is the failure `impl:` already has. Its help text and its short
-    flag are a different kind of thing: user-facing copy that exists nowhere in the signature, and the
-    short flag in particular has no docstring form. They lived inside `typer.Option(...)` in the command
-    body until the bodies became framework-free, and this is where they went.
+    it twice and let the two drift, which is the failure `impl:` already has. Its help text, its short
+    flag and its metavar are a different kind of thing: user-facing copy that exists nowhere in the
+    signature, and the short flag in particular has no docstring form. They lived inside
+    `typer.Option(...)` in the command body until the bodies became framework-free, and this is where
+    they went.
 
-    Only these two keys are accepted, so a `type:` or `default:` cannot bring the drift back through this
-    door.
+    Only these presentation keys are accepted, so a `type:` or `default:` cannot bring the drift back
+    through this door.
     """
     help: str | None = None
     short: str | None = None
     argument: bool = False
+    metavar: str | None = None
 
 
 class Manifest(NamedTuple):
@@ -322,6 +324,7 @@ class _ParamPresentationModel(BaseModel):
     help: str | None = None
     short: str | None = None
     argument: bool = False
+    metavar: str | None = None
 
     @model_validator(mode="after")
     def _a_positional_takes_no_short_flag(self) -> "_ParamPresentationModel":
@@ -684,7 +687,8 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
                                   depends_on=spec.depends_on, stop_on_failure=spec.stop_on_failure,
                                   keep_awake=spec.keep_awake, hidden=spec.hidden, with_=spec.with_,
                                   params={pname: ParamPresentation(help=p.help, short=p.short,
-                                                                   argument=p.argument)
+                                                                   argument=p.argument,
+                                                                   metavar=p.metavar)
                                           for pname, p in spec.params.items()})
                 for name, spec in members.items()}
         for group, members in model.groups.items()

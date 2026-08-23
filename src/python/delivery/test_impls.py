@@ -45,3 +45,12 @@ def pruner(dry_run=False, remote=False):
     """Delete local branches already merged into main. Two plain bools, for the `params:` cases."""
     CALLS.append(("pruner", dry_run, remote))
     return 0
+
+
+def member_dispatch(member: str | None = None):
+    """Drive a group by member name; omit to list them (as delivery.commands.nexus:nexus_cmd).
+
+    An OPTIONAL positional whose annotation is `str | None`, for the `argument:` + `metavar:` cases.
+    """
+    CALLS.append(("member_dispatch", member))
+    return 0

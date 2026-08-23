@@ -176,9 +176,11 @@ def test_plan_on_a_complete_machine_is_empty_so_a_rerun_changes_nothing():
     assert todo.present_plugins == plugins
 
 
-def test_install_cmd_keeps_the_dry_run_option_typer_introspects():
-    # arrange: the manifest resolves this callable directly, so the Option must survive on the function the
-    # engine hands to Typer - a bare delegate would silently drop the flag
+def test_install_cmd_keeps_the_dry_run_payload_parameter():
+    # arrange: the manifest resolves this callable directly and the generator introspects it, so the
+    # PARAMETER has to survive even though its `--dry-run` / `-n` decls moved into manifest `params:`
+    # (netctl#1444). The ANNOTATION is load-bearing: Typer reads a parameter's type from it, and an
+    # unannotated `dry_run=False` renders as `--dry-run TEXT` rather than a boolean flag.
     import inspect
 
     # act
@@ -186,4 +188,19 @@ def test_install_cmd_keeps_the_dry_run_option_typer_introspects():
 
     # assert
     assert list(signature.parameters) == ["dry_run"]
-    assert signature.parameters["dry_run"].default.param_decls == ("--dry-run", "-n")
+    assert signature.parameters["dry_run"].annotation == "bool"
+    assert signature.parameters["dry_run"].default is False
+
+
+def test_install_cmd_returns_an_exit_code_rather_than_raising_typer_exit():
+    # arrange: the point of netctl#1444 - the body is callable from anything, not only a Click parser
+    from pathlib import Path as _Path
+
+    import delivery.commands.claudeplugins as module
+
+    # act
+    source = _Path(module.__file__).read_text(encoding="utf-8")
+
+    # assert
+    assert "typer.Exit" not in source
+    assert "\nimport typer" not in source

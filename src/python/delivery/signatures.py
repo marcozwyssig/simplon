@@ -51,6 +51,9 @@ _COMPOSITES = {
     "list[str] | None": "list[str] | None",
     "Optional[list[str]]": "list[str] | None",
     "typing.Optional[list[str]]": "list[str] | None",
+    "str | None": "str | None",
+    "Optional[str]": "str | None",
+    "typing.Optional[str]": "str | None",
 }
 
 
@@ -155,6 +158,12 @@ def option_decl(name: str, literal_default: str | None, presentation, type_hint:
     `type_hint` is written in every shape, including the undeclared one: without it Typer reads a bool
     default as a text option (see `annotation`).
 
+    `metavar:` is carried through where the manifest declares one. It names the placeholder Click prints
+    in the usage line, so `[up|down|status|repos|cleanup]` is the difference between a member argument
+    that lists its members and a bare `[MEMBER]`. It is the one presentation key netctl's CLI-surface
+    golden did NOT pin before this, which is exactly why it needs a home here rather than nowhere: a body
+    losing it on the way into generated source degrades `--help` while every assertion stays green.
+
     The netctl CLI-surface golden is the oracle for all three: any of them changing an option's decls,
     its secondaries or its type turns it red.
     """
@@ -163,6 +172,7 @@ def option_decl(name: str, literal_default: str | None, presentation, type_hint:
     typed, eq = (f"{name}: {type_hint}", " = ") if type_hint else (name, "=")
     declared = presentation is not None and (presentation.help is not None
                                              or presentation.short is not None
+                                             or getattr(presentation, "metavar", None) is not None
                                              or getattr(presentation, "argument", False))
     if not declared:
         return typed if literal_default is None else f"{typed}{eq}{literal_default}"
@@ -172,6 +182,8 @@ def option_decl(name: str, literal_default: str | None, presentation, type_hint:
         args.append(f'"--{name.replace("_", "-")}"')
         if presentation.short:
             args.append(f'"{presentation.short}"')
+    if getattr(presentation, "metavar", None):
+        args.append(f"metavar={presentation.metavar!r}")
     if presentation.help:
         args.append(f"help={presentation.help!r}")
     factory = "typer.Argument" if positional else "typer.Option"

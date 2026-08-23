@@ -15,6 +15,10 @@ knows where its settings.json lives and which marketplaces it is entitled to.
 The decision of WHAT IS MISSING is pure (`declared` + `plan`) and unit-tested against captured
 `claude plugin list --json` output; only `install` shells out. That split is why the tests need no `claude`
 CLI and no network.
+
+FRAMEWORK-FREE since netctl#1444: `install_cmd` takes plain parameters and returns an exit code, and the
+`--dry-run` / `-n` declaration that used to sit in its signature is manifest `params:` data the generated
+CLI module renders.
 """
 from __future__ import annotations
 
@@ -22,8 +26,6 @@ import json
 import shutil
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-
-import typer
 
 from delivery import context, log
 from delivery.run import run
@@ -235,9 +237,7 @@ def install(dry_run: bool = False) -> int:
     return 0
 
 
-def install_cmd(
-    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="print what is missing, change nothing"),
-) -> None:
+def install_cmd(dry_run: bool = False) -> int:
     """Install the Claude Code plugins this repo is developed with, as declared in the manifest's `claude`
     section.
 
@@ -250,4 +250,4 @@ def install_cmd(
     Idempotent: it asks the `claude` CLI what is already registered and installed and adds only the
     difference, so a second run reports the set as complete and changes nothing. Installs at USER scope, so
     the agent behaves the same in every checkout including linked worktrees."""
-    raise typer.Exit(install(dry_run=dry_run))
+    return install(dry_run=dry_run)

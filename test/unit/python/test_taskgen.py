@@ -444,6 +444,53 @@ groups:
     assert '"--remote"' not in text
 
 
+def test_a_param_declaring_a_metavar_carries_it_into_the_rendered_argument():
+    # arrange: the metavar names the placeholder Click prints in the usage line, so
+    # `[up|down|status|repos|cleanup]` is the difference between an argument that lists its members and a
+    # bare `[MEMBER]`. netctl's CLI-surface golden does not capture it, so nothing else would notice a
+    # body losing it on the way into generated source (netctl#1444).
+    m = _load("""
+groups:
+  support:
+    nexus:
+      impl: "delivery.test_impls:member_dispatch"
+      help: "Drive the proxy."
+      params:
+        member: { help: "the group member to run; omit to list them", argument: true,
+                  metavar: "[up|down|status|repos|cleanup]" }
+""")
+
+    # act
+    text = taskgen.render(m, source="demo.yaml", product="sample")
+
+    # assert: an optional POSITIONAL - `typer.Option` would have made it `--member`, a different command
+    # line - carrying both the metavar and the help.
+    assert ("member: str | None = typer.Argument(None, "
+            "metavar='[up|down|status|repos|cleanup]', "
+            "help='the group member to run; omit to list them')") in text
+
+
+def test_a_param_declaring_only_a_metavar_is_declared_enough_to_leave_typers_derivation():
+    # arrange: a metavar alone must count as a declaration. Treating it as "nothing declared" would render
+    # `member: str | None = None` and drop the metavar without a word - the exact silent loss this key
+    # exists to prevent.
+    m = _load("""
+groups:
+  support:
+    nexus:
+      impl: "delivery.test_impls:member_dispatch"
+      help: "Drive the proxy."
+      params:
+        member: { argument: true, metavar: "[up|down]" }
+""")
+
+    # act
+    text = taskgen.render(m, source="demo.yaml", product="sample")
+
+    # assert
+    assert "member: str | None = typer.Argument(None, metavar='[up|down]')" in text
+
+
 def test_a_declared_required_parameter_renders_a_typer_argument():
     # arrange: a required parameter has no default to carry, and `typer.Option(...)` with an Ellipsis
     # default would render it as a required OPTION - a different command line.

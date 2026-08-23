@@ -968,6 +968,19 @@ def test_a_params_block_carries_help_and_a_short_flag():
     assert spec.params["dry_run"].short == "-n"
 
 
+def test_a_params_block_carries_a_metavar():
+    # arrange: presentation like the other two - the placeholder Click prints in the usage line, which
+    # exists nowhere in the signature. It moved here out of a `typer.Argument(..., metavar=...)` body
+    # declaration in netctl#1444.
+    text = _PRUNER % '        dry_run: { metavar: "[yes|no]" }'
+
+    # act
+    spec = manifest.load(text).spec_for("git", "prune-branches")
+
+    # assert
+    assert spec.params["dry_run"].metavar == "[yes|no]"
+
+
 def test_a_command_without_a_params_block_has_an_empty_one():
     # arrange: the generator asks every command, so absence must be an empty map rather than None
     text = """
@@ -1023,11 +1036,11 @@ def test_a_short_flag_that_is_not_a_single_dashed_letter_is_rejected(bad):
         manifest.load(text)
 
 
-@pytest.mark.parametrize("key", ["default", "type", "metavar"])
-def test_a_params_block_rejects_any_key_other_than_help_and_short(key):
-    # arrange: a `type:` or `default:` here would restate the signature, which the design keeps
-    # introspected on purpose. Ignoring the key - what every other spec model does - would read to its
-    # author as if it had been honoured.
+@pytest.mark.parametrize("key", ["default", "type", "required"])
+def test_a_params_block_rejects_any_key_that_would_restate_the_signature(key):
+    # arrange: a `type:`, `default:` or `required:` here would restate the signature, which the design
+    # keeps introspected on purpose. Ignoring the key - what every other spec model does - would read to
+    # its author as if it had been honoured.
     text = _PRUNER % f'        dry_run: {{ {key}: true }}'
 
     # act / assert
