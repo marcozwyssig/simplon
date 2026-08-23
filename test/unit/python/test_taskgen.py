@@ -949,3 +949,44 @@ groups:
 def test_unrenderable_is_empty_for_a_fully_migrated_manifest():
     # arrange / act / assert
     assert taskgen.unrenderable(_load(_SHAPES)) == {}
+
+
+# --- import order (netctl#1446) -----------------------------------------------------------------------
+
+def test_the_impl_imports_come_after_register_so_either_import_order_works():
+    # arrange: the product's CLI module imports THIS one and calls register() from its own body, while
+    # this one imports the product's CLI module back for its impls. Whichever is imported first, the
+    # other's body runs to completion inside it - so `register` must be DEFINED by then, or importing
+    # this module first raises AttributeError on `register`.
+    text = taskgen.render(_load(_SHAPES), source="demo.yaml", product="sample")
+
+    # act
+    lines = text.splitlines()
+    register_at = next(i for i, line in enumerate(lines) if line.startswith("def register("))
+    imports_at = [i for i, line in enumerate(lines)
+                  if line.startswith("import delivery.test_impls")]
+
+    # assert
+    assert imports_at, "the impl import is missing entirely"
+    assert min(imports_at) > register_at
+
+
+def test_rendering_no_groups_at_all_still_runs_the_manifest_wide_clash_check():
+    # arrange: `unrenderable()` reports per COMMAND, so a manifest-wide identifier clash is invisible to
+    # it. This is how a product asserts none is hiding behind an empty report - render nothing, and the
+    # check that belongs to no single command still runs.
+    m = _load("""
+groups:
+  test:
+    all: { impl: "delivery.test_impls:nullary", help: "Every test." }
+  deploy:
+    all: { impl: "delivery.test_impls:no_context", help: "Every deploy step." }
+  misc:
+    test_all: { impl: "delivery.test_impls:seed", help: "Something else." }
+env_groups: [deploy]
+""")
+
+    # act / assert: nothing is rendered and the clash is still found
+    assert taskgen.unrenderable(m) == {}
+    with pytest.raises(ValueError, match="shadow"):
+        taskgen.render(m, source="demo.yaml", product="sample", groups=frozenset())

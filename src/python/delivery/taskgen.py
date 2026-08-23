@@ -317,6 +317,11 @@ def unrenderable(manifest: Manifest) -> dict[tuple[str, str], str]:
     carrying `typer.Option` / `typer.Argument` in its signature. A product uses this to prove that the
     groups it has NOT migrated are held back by a real body rather than by forgetfulness - which is what
     keeps the migration a ratchet instead of a list someone stops updating.
+
+    PER COMMAND, and that is the whole of it. `render` can also fail on a manifest-WIDE identifier clash
+    (`_function_names`), which belongs to no single command and is a manifest defect rather than migration
+    state. A caller that wants both must ask for both - `render(groups=frozenset())` renders nothing and
+    still runs that check, which is how a product asserts no clash is hiding behind an empty report here.
     """
     out: dict[tuple[str, str], str] = {}
     for group, members in manifest.commands.items():

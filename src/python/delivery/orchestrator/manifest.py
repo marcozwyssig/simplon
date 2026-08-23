@@ -681,7 +681,7 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     env_groups = frozenset(model.env_groups)
     unknown = sorted(set(model.generate) - set(groups))
     if unknown:
-        raise ValueError(f"generate entry '{sorted(unknown)[0]}' is not a declared group")
+        raise ValueError(f"generate names group(s) the manifest does not declare: {', '.join(unknown)}")
     generate = frozenset(model.generate)
     tree = merge_trees(_catalogue_tree(model.taxonomy, groups), _flat_tree(groups, env_groups))
     # Every DOTTED `groups:` key must name a node the `taxonomy:` block actually declares. Without this,

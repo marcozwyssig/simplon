@@ -9,10 +9,6 @@ commands stay outside this file.
 """
 import typer
 
-{% for module in imports %}
-import {{ module }}
-{% endfor %}
-
 
 def _rc(value: object) -> int:
     """A body's return value as a process exit code.
@@ -72,4 +68,16 @@ def register(app: typer.Typer, *, aggregate: object = None) -> None:
     """
 {% for line in body %}
     {{ line }}
+{% endfor %}
+
+
+# The impl imports sit at the BOTTOM, and that position is load-bearing rather than a style choice
+# (netctl#1446). A product's CLI module imports THIS one and calls `register()` from its own module body,
+# while this one imports the product's CLI module back for its impls. Whichever of the two is imported
+# first, the other's body runs to completion inside it - so `register` has to be DEFINED before that
+# happens, or importing this module first raises `AttributeError: partially initialized module ... has no
+# attribute 'register'`. The wrappers above dereference their impls at CALL time, so nothing above needs
+# these names at import time.
+{% for module in imports %}
+import {{ module }}  # noqa: E402
 {% endfor %}

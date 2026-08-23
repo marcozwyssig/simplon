@@ -1033,3 +1033,20 @@ def test_a_params_block_rejects_any_key_other_than_help_and_short(key):
     # act / assert
     with pytest.raises(ValueError, match=key):
         manifest.load(text)
+
+
+def test_generate_names_every_unknown_group_rather_than_only_the_first(): 
+    # arrange: every neighbouring check in the loader joins and reports all offenders; this one used to
+    # name `sorted(unknown)[0]`, so fixing one typo revealed the next as a fresh failure
+    text = """
+groups:
+  test:
+    unit: { impl: "delivery.test_impls:nullary", help: "One gate." }
+generate: [tset, biuld]
+env_groups: []
+"""
+
+    # act / assert
+    with pytest.raises(ValueError) as exc:
+        manifest.load(text)
+    assert "tset" in str(exc.value) and "biuld" in str(exc.value)
