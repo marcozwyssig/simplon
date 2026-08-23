@@ -618,7 +618,7 @@ def _validation_message(error: ValidationError) -> str:
     return f"{location}: {message}" if location else message
 
 
-def load(text: str, *, validate_with: bool = False) -> Manifest:
+def load(text: str, *, validate_with: bool = False, catalogue: object = None) -> Manifest:
     """Parse a product manifest YAML into a validated Manifest (pure: no import of the impls, no Typer).
 
     Validates through the private `_ManifestModel`, failing loudly with ValueError so a bad manifest is
@@ -642,6 +642,12 @@ def load(text: str, *, validate_with: bool = False) -> Manifest:
         differing policy, which is why the rule is scoped per plan rather than manifest-wide;
       - `hidden` (netctl#1277) is rejected on a group-default group's NAMESAKE member, because that member
         never reaches the registration `delivery.cli.assemble` would apply it to.
+
+    `catalogue` (netctl#1437) supplies the platform's coordinate space so an `import:` + `tasks:` pair can
+    be expanded into `groups:` BEFORE validation - which is the point of expanding there rather than
+    afterwards: every rule above then applies to an imported command exactly as it does to a declared one.
+    With no catalogue the behaviour is exactly today's, which is what lets a product adopt the mechanism
+    one command at a time.
     Unknown top-level keys stay ignored (backward compatible), with ONE exception: a leftover `composites:`
     key is rejected loudly (the concept was removed in netctl#898; declare an impl-less aggregate command
     with `depends_on` instead) - silently dropping it would turn a still-declared pipeline into dead data.
@@ -651,6 +657,7 @@ def load(text: str, *, validate_with: bool = False) -> Manifest:
     spec tree (group -> command -> spec).
     """
     data = yaml.safe_load(text) or {}
+    data = _expand_imports(data, catalogue)
     try:
         model = _ManifestModel.model_validate(data)
     except ValidationError as exc:
@@ -681,6 +688,57 @@ def load(text: str, *, validate_with: bool = False) -> Manifest:
     if validate_with:
         _validate_param_bindings(commands)
     return Manifest(groups=groups, env_groups=env_groups, commands=commands, tree=tree)
+
+
+def _expand_imports(data: dict, catalogue: object) -> dict:
+    """Fold a manifest's `import:` + `tasks:` sections into `groups:`.
+
+    `tasks:` carries two kinds of entry, told apart by the presence of `impl:`, deliberately in ONE
+    section rather than two that could drift:
+
+      - WITH `impl:` - a DEFINITION, the product's own body. Its key is the command name.
+      - WITHOUT     - an OVERRIDE of an imported coordinate. Its key IS the coordinate, and if no import
+                      offers it that is a typo, loud here rather than a silently missing command.
+
+    A command lands in the group its coordinate's namespace names unless `group:` says otherwise, so a
+    product places a task without restating anything else about it.
+    """
+    imports, tasks = data.get("import") or {}, data.get("tasks") or {}
+    if not imports and not tasks:
+        return data
+    if tasks and catalogue is None and any("impl" not in (spec or {}) for spec in tasks.values()):
+        raise ValueError("manifest declares imported tasks but load() was given no catalogue")
+
+    available: dict[str, dict] = {}
+    for source, namespaces in imports.items():
+        if source != "delivery":
+            raise ValueError(f"unknown import source '{source}' - the only catalogue is 'delivery'")
+        for namespace in namespaces or ():
+            for name, spec in catalogue.namespace(namespace).items():
+                available[f"{namespace}:{name}"] = spec
+
+    expanded = {group: dict(members) for group, members in (data.get("groups") or {}).items()}
+    for key, spec in tasks.items():
+        spec = dict(spec or {})
+        group = spec.pop("group", None)
+        if spec.get("impl"):
+            if ":" in str(key):
+                raise ValueError(f"task '{key}' declares an impl, so its key is a command NAME, not a "
+                                 f"coordinate - a coordinate is what the CATALOGUE assigns")
+            name = str(key)
+        else:
+            if key not in available:
+                raise ValueError(
+                    f"task '{key}' declares no impl, so it overrides an imported coordinate - and none "
+                    f"is imported under that name" +
+                    (f" (imported: {', '.join(sorted(available))})" if available else ""))
+            namespace, name = str(key).split(":", 1)
+            spec = {**available[key], **spec}
+            group = group or namespace
+        if not group:
+            raise ValueError(f"task '{key}' names no group")
+        expanded.setdefault(group, {})[name] = spec
+    return {**data, "groups": expanded}
 
 
 def _catalogue_tree(declared: dict[str, dict],
