@@ -1,10 +1,15 @@
-"""Render a committed module of Invoke tasks from a product manifest (netctl#1434).
+"""Render a committed module of Typer commands from a product manifest (netctl#1434, retargeted #1437).
 
 The manifest is the MODEL: it names each task, its help, its group and any `with:` overrides. Every
 SIGNATURE is introspected from the body the task delegates to - declaring it in YAML would state it
 twice and let the two drift, which is the failure `impl:` already has today.
 
 Product-agnostic on purpose (netctl#1280): the only product input is the Manifest it is handed.
+
+The target framework is Typer, and the coupling to it lives HERE and in the template, nowhere else.
+Invoke was measured during design and rejected: its task listing is a flat dotted list with no panels
+and it derives short flags of its own, so netctl's help display would have had to be rebuilt by hand
+(design section 0).
 """
 from __future__ import annotations
 
@@ -30,7 +35,7 @@ def _params(body: object, overrides: dict[str, object], *, where: str) -> list[_
     """The body's payload parameters, with `with:` values substituted as defaults.
 
     A parameter the impl declared REQUIRED stays required. Rendering it as `=None` would silently turn a
-    mandatory argument into an optional one, moving the failure out of Invoke's parser and into whatever
+    mandatory argument into an optional one, moving the failure out of the CLI parser and into whatever
     the body does with None.
     """
     out: list[_Param] = []
@@ -44,13 +49,36 @@ def _params(body: object, overrides: dict[str, object], *, where: str) -> list[_
     return out
 
 
+def _signature(params: list[_Param], *, takes_context: bool) -> str:
+    """The wrapper's parameter list as source.
+
+    A body that declares a CLI context gets one: the wrapper takes `ctx: typer.Context` and forwards it,
+    which is exactly how `delivery.cli.assemble` binds such a body today (it reads `ctx.args`, which is
+    how `passthrough_args` reaches the tool behind the command). Typer does not treat `ctx` as a CLI
+    parameter, so it stays invisible on the command line. Moving those bodies to a plain `extra: list[str]`
+    parameter is a later step and a separate diff.
+    """
+    parts = ["ctx: typer.Context"] if takes_context else []
+    parts += [p.name if p.literal is None else f"{p.name}={p.literal}" for p in params]
+    return ", ".join(parts)
+
+
+def _call(impl: str, params: list[_Param], *, takes_context: bool) -> str:
+    """The delegation into the body: the context positionally if it wants one, the payload by keyword."""
+    args = ["ctx"] if takes_context else []
+    args += [f"{p.name}={p.name}" for p in params]
+    return f"{impl}({', '.join(args)})"
+
+
 def render(manifest: Manifest, *, source: str) -> str:
     """The generated module's text for this manifest. Deterministic: same manifest, same bytes."""
     tasks: list[dict[str, object]] = []
     imports: list[str] = []
-    groups: list[tuple[str, list[str]]] = []
+    groups: list[dict[str, str]] = []
+    registrations: list[str] = []
     for group, members in manifest.commands.items():
-        funcs: list[str] = []
+        var = signatures.identifier(group, where=f"group `{group}`")
+        lines: list[str] = []
         for name, spec in members.items():
             if not spec.impl:      # an impl-less depends_on aggregate is a PLAN, and a plan step runs
                 continue           # as its own subprocess - there is no body to wrap
@@ -60,18 +88,21 @@ def render(manifest: Manifest, *, source: str) -> str:
             if module not in imports:
                 imports.append(module)
             func = signatures.identifier(name, where=where)
-            funcs.append(func)
+            takes_ctx = signatures.takes_context(body)
             params = _params(body, spec.with_, where=where)
-            tasks.append({"name_repr": repr(name), "func": func, "help_repr": repr(spec.help),
-                          "impl": f"{module}.{attribute}",
-                          "takes_context": signatures.takes_context(body),
-                          "params": params})
-        if funcs:
-            groups.append((group, funcs))
+            tasks.append({"func": func, "help_repr": repr(spec.help),
+                          "signature": _signature(params, takes_context=takes_ctx),
+                          "call": _call(f"{module}.{attribute}", params, takes_context=takes_ctx)})
+            lines.append(f"{var}.command(name={name!r})({func})")
+        if lines:
+            groups.append({"var": var, "help_repr": repr(f"{group} commands.")})
+            registrations += lines
+            registrations.append(f"app.add_typer({var}, name={group!r})")
     env = Environment(loader=FileSystemLoader(str(_TEMPLATES)), undefined=StrictUndefined,
                       trim_blocks=True, lstrip_blocks=True, keep_trailing_newline=True)
-    return env.get_template("tasks.py.j2").render(source=source, imports=sorted(imports),
-                                                  tasks=tasks, groups=groups)
+    return env.get_template("cli.py.j2").render(source=source, imports=sorted(imports),
+                                                tasks=tasks, groups=groups,
+                                                registrations=registrations)
 
 
 def write(manifest: Manifest, target: Path, *, source: str) -> bool:

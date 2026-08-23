@@ -1,0 +1,43 @@
+"""GENERATED from {{ source }}. Do not edit.
+
+Regenerate with the product's `tasks generate`; the drift gate fails when this file and the manifest
+disagree. Each function below is a real Typer command whose SIGNATURE was introspected from the body it
+delegates to - the manifest supplies only the name, the help, the presentation and any `with:` overrides.
+
+`register` adds to a root app the PRODUCT owns, so the root's help blurb and any product-only internal
+commands stay outside this file.
+"""
+import typer
+
+{% for module in imports %}
+import {{ module }}
+{% endfor %}
+
+
+def _rc(value: object) -> int:
+    """A body's return value as a process exit code.
+
+    A framework-free body returns an int. A body that has not been migrated yet raises `typer.Exit`
+    itself, so its `raise` wins and this never sees its value; when one returns None anyway that is a
+    clean run. Anything else raises here rather than being coerced into a plausible-looking 0 - a body
+    returning something that is not an exit code is a defect, and the generated wrapper is the wrong
+    place to paper over it.
+    """
+    return 0 if value is None else int(value)
+{% for t in tasks %}
+
+
+def {{ t.func }}({{ t.signature }}) -> None:
+    {{ t.help_repr }}
+    raise typer.Exit(_rc({{ t.call }}))
+{% endfor %}
+
+
+def register(app: typer.Typer) -> None:
+    """Register this manifest's commands onto a root app the product owns."""
+{% for g in groups %}
+    {{ g.var }} = typer.Typer(add_completion=False, no_args_is_help=True, help={{ g.help_repr }})
+{% endfor %}
+{% for line in registrations %}
+    {{ line }}
+{% endfor %}

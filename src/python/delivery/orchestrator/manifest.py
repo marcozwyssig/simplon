@@ -685,7 +685,7 @@ def _validate_with_bindings(commands: dict[str, dict[str, "CommandSpec"]]) -> No
                 continue
             body = resolve_ref(spec.impl, f"{group} {name}")
             # BINDABLE parameters only, the same set the generator will substitute into. Using every
-            # signature name accepted `with: {c: ...}` - binding the Invoke Context, the likeliest real
+            # signature name accepted `with: {c: ...}` - binding the CLI context, the likeliest real
             # typo - and the generator then discarded it silently.
             params = {p.name for p in signatures.bindable(body)}
             unknown = sorted(set(spec.with_) - params)

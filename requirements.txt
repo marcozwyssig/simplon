@@ -15,6 +15,3 @@ textual==8.2.8      # the split-pane step TUI (doctor + build/up/seed); headless
 pydantic==2.13.4    # the delivery manifest schema (delivery.orchestrator.manifest.load, netctl#651 strand 3)
 jinja2==3.1.4       # the delivery.clabrender template engine (netctl#731 Strand 2)
 cryptography==43.0.1  # delivery.clabrender.wg_keypair - WireGuard X25519 keygen (netctl#731 Strand 2)
-# netctl#1434: the task generator renders modules of Invoke @task functions, so a generated module
-# imports invoke at run time. Pure-python wheel; installs on 3.14 without a build toolchain.
-invoke==3.0.3

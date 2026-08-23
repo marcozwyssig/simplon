@@ -1,9 +1,8 @@
 """What a manifest may bind, and what may be embedded in generated source (netctl#1434).
 
 Two questions the generator and the manifest validator must answer THE SAME WAY, which is why they live
-here rather than in either caller: which of a body's parameters are real payload (as opposed to an
-Invoke Context the wrapper supplies), and whether a default value can be written into Python source at
-all. When the two disagreed, `with: {c: ...}` passed validation and was then silently discarded.
+here rather than in either caller: which of a body's parameters are real payload (as opposed to a CLI
+context the wrapper supplies), and whether a default value can be written into Python source at all. When the two disagreed, `with: {c: ...}` passed validation and was then silently discarded.
 """
 from __future__ import annotations
 
@@ -11,14 +10,14 @@ import inspect
 import keyword
 from typing import NamedTuple
 
-# Parameter names a body uses for the Invoke Context. Recognised BY NAME rather than by position: the
-# kernel's own command bodies do not all take one (delivery.commands.vcs:push takes nothing at all, and
-# vcs:commit's first parameter is its payload), so dropping index 0 unconditionally handed a Context
-# object to a payload parameter.
+# Parameter names a body uses for the CLI context (a `typer.Context`). Recognised BY NAME rather than
+# by position: the kernel's own command bodies do not all take one (delivery.commands.vcs:push takes
+# nothing at all, and vcs:commit's first parameter is its payload), so dropping index 0 unconditionally
+# handed a context object to a payload parameter.
 CONTEXT_NAMES = frozenset({"c", "ctx", "context"})
 
 # Types whose repr() is valid, stable Python source. Anything else - a datetime PyYAML produced from an
-# unquoted date, an Enum, a Typer OptionInfo, any object with the default <... at 0x...> repr - either
+# unquoted date, an Enum, a typer.OptionInfo, any object with the default <... at 0x...> repr - either
 # needs an import the generated module does not have or embeds a memory address, which would make the
 # render non-deterministic and the drift gate meaningless.
 _LITERAL_TYPES = (str, int, float, bool, type(None))
@@ -31,17 +30,17 @@ class Parameter(NamedTuple):
 
 
 def takes_context(body: object) -> bool:
-    """True iff the body's first parameter is named like an Invoke Context."""
+    """True iff the body's first parameter is named like a CLI context."""
     params = list(inspect.signature(body).parameters.values())
     return bool(params) and params[0].name in CONTEXT_NAMES
 
 
 def bindable(body: object) -> list[Parameter]:
-    """The body's payload parameters: everything except a leading Context and any *args / **kwargs.
+    """The body's payload parameters: everything except a leading context and any *args / **kwargs.
 
-    *args is dropped deliberately. Invoke has no task-level passthrough (test_invoke_contract pins it),
-    so a variadic body yields a task with no parameters; such commands are `passthrough_args` and the
-    facade bypasses the parser for them entirely.
+    *args is dropped deliberately. Neither Click nor Typer binds a variadic to a parameter, so a variadic
+    body yields a command with no declared parameters; such commands are `passthrough_args` and their raw
+    tail reaches the body through `ctx.args`, which the per-command context settings allow.
     """
     out: list[Parameter] = []
     for index, param in enumerate(inspect.signature(body).parameters.values()):

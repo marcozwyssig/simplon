@@ -1,10 +1,16 @@
-"""Unit tests for the task generator (delivery.taskgen, netctl#1434): signature introspection, `with:`
-binding, determinism, the drift gate, and the negative cases. Exercised against REAL importable bodies
-(delivery.test_impls), because introspecting a mock would verify the mock. AAA throughout."""
+"""Unit tests for the CLI generator (delivery.taskgen, netctl#1434, retargeted to Typer in #1437):
+signature introspection, `with:` binding, determinism, the drift gate, and the negative cases. Exercised
+against REAL importable bodies (delivery.test_impls), because introspecting a mock would verify the mock.
+
+Several tests import the RENDERED text and register it onto a Typer app. Asserting on the text says what
+was written; asserting on the assembled Click tree says what Click made of it, and the tree is what
+netctl's cli_surface golden compares. AAA throughout."""
 import importlib.util
 
+import click
 import pytest
-from invoke import Task
+import typer
+from typer.main import get_command
 
 from delivery import taskgen
 from delivery.orchestrator import manifest
@@ -20,16 +26,40 @@ def _load(text=_MANIFEST):
     return manifest.load(text)
 
 
+def _assembled(m, tmp_path, source="demo.yaml"):
+    """Render, import and register the module onto a fresh root app; return the Click tree."""
+    path = tmp_path / "_generated_cli.py"
+    path.write_text(taskgen.render(m, source=source))
+    spec = importlib.util.spec_from_file_location("_generated_cli", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    app = typer.Typer(add_completion=False)
+    module.register(app)
+    return get_command(app)
+
+
 # --- render: the manifest is the model, the signature comes from the body ---------------------------
 
-def test_the_rendered_module_declares_a_task_per_manifest_command():
+def test_the_rendered_module_declares_a_command_per_manifest_entry():
     # arrange / act
     text = taskgen.render(_load(), source="demo.yaml")
 
-    # assert: a real decorator carrying the manifest's name and help
-    assert "@task(" in text
-    assert "name='seed'" in text
+    # assert: a plain function plus its registration under the manifest's name, carrying its help
+    assert "def seed(" in text
+    assert "lab.command(name='seed')(seed)" in text
     assert "Seed the lab." in text
+
+
+def test_the_generated_module_registers_onto_a_caller_supplied_app():
+    # arrange: the product owns its ROOT app - its help blurb is its voice, and its own internal
+    # commands live on it. The generated module only ADDS, which is what keeps netctl's
+    # `wireguard-guard` and its `Internal` panel untouched by a regeneration.
+    text = taskgen.render(_load(), source="demo.yaml")
+
+    # assert
+    assert "def register(app: typer.Typer) -> None:" in text
+    assert "from invoke" not in text
+    assert "@task" not in text
 
 
 def test_the_signature_comes_from_the_body_not_from_the_manifest():
@@ -41,12 +71,13 @@ def test_the_signature_comes_from_the_body_not_from_the_manifest():
     assert "dry_run=False" in text
 
 
-def test_the_wrapper_delegates_to_the_impl_by_keyword():
+def test_the_wrapper_delegates_to_the_impl_by_keyword_and_raises_the_rc():
     # arrange / act
     text = taskgen.render(_load(), source="demo.yaml")
 
-    # assert
-    assert "delivery.test_impls.seed(c, sites=sites, dry_run=dry_run)" in text
+    # assert: the body returns an int; the WRAPPER is what knows about process exit codes
+    assert ("raise typer.Exit(_rc(delivery.test_impls.seed(ctx, sites=sites, dry_run=dry_run)))"
+            in text)
 
 
 def test_rendering_twice_is_byte_identical():
@@ -57,20 +88,14 @@ def test_rendering_twice_is_byte_identical():
     assert taskgen.render(m, source="demo.yaml") == taskgen.render(m, source="demo.yaml")
 
 
-def test_the_rendered_module_is_importable_and_yields_real_invoke_tasks(tmp_path):
-    # arrange: the point of committing generated code is that it IS code - so prove it runs
-    path = tmp_path / "generated_tasks.py"
-    path.write_text(taskgen.render(_load(), source="demo.yaml"))
+def test_the_rendered_module_imports_and_assembles_a_real_click_tree(tmp_path):
+    # arrange / act: the point of committing generated code is that it IS code - so prove it runs
+    root = _assembled(_load(), tmp_path)
 
-    # act
-    spec = importlib.util.spec_from_file_location("generated_tasks", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    # assert
-    assert isinstance(module.seed, Task)
-    assert [a.name for a in module.seed.get_arguments()] == ["sites", "dry_run"]
-    assert sorted(module.ns.task_names) == ["lab.seed"]
+    # assert: reachable as `lab seed`, with the introspected parameters on it
+    group = root.get_command(click.Context(root), "lab")
+    leaf = group.get_command(click.Context(group), "seed")
+    assert [p.name for p in leaf.params] == ["sites", "dry_run"]
 
 
 def test_a_command_name_with_a_dash_becomes_a_legal_identifier(tmp_path):
@@ -86,12 +111,12 @@ groups:
 
     # assert
     assert "def disk_guard(" in text
-    assert "name='disk-guard'" in text
+    assert "command(name='disk-guard')(disk_guard)" in text
 
 
-def test_a_variadic_body_renders_a_task_with_no_parameters():
-    # arrange: Invoke has no task-level passthrough (test_invoke_contract pins it), so emitting *args
-    # would produce a task that parses one positional and rejects every flag
+def test_a_variadic_body_renders_a_command_with_no_declared_parameters():
+    # arrange: neither Click nor Typer binds *args to a parameter. Such a command is `passthrough_args`
+    # and its raw tail reaches the body through `ctx.args`, which the per-command context settings allow.
     m = _load("""
 groups:
   build:
@@ -102,7 +127,7 @@ groups:
     text = taskgen.render(m, source="demo.yaml")
 
     # assert
-    assert "def gradle(c):" in text
+    assert "def gradle(ctx: typer.Context) -> None:" in text
     assert "*args" not in text
 
 
@@ -133,8 +158,8 @@ groups:
     text = taskgen.render(m, source="demo.yaml")
 
     # assert
-    assert "name='seed'" in text
-    assert "name='build'" not in text
+    assert "def seed(" in text
+    assert "def build(" not in text
 
 
 # --- the drift gate ----------------------------------------------------------------------------------
@@ -253,7 +278,7 @@ groups:
 
 def test_a_required_parameter_stays_required(tmp_path):
     # arrange: rendering it as =None turned a mandatory argument optional and moved the failure out of
-    # Invoke's parser into whatever the body does with None
+    # the CLI parser into whatever the body does with None
     m = _load('''
 groups:
   lab:
@@ -264,7 +289,7 @@ groups:
     text = taskgen.render(m, source="demo.yaml")
 
     # assert
-    assert "def pin(c, site):" in text
+    assert "def pin(ctx: typer.Context, site) -> None:" in text
     assert "site=None" not in text
 
 
@@ -280,8 +305,8 @@ groups:
     # act
     text = taskgen.render(m, source="demo.yaml")
 
-    # assert: the wrapper still takes `c` for Invoke, but does NOT forward it
-    assert "def commit(c, message=None):" in text
+    # assert: no context parameter at all, and the payload forwarded by keyword
+    assert "def commit(message=None) -> None:" in text
     assert "no_context(message=message)" in text
 
 
@@ -297,19 +322,20 @@ groups:
     text = taskgen.render(m, source="demo.yaml")
 
     # assert
-    assert "def push(c):" in text
+    assert "def push() -> None:" in text
     assert "nullary()" in text
 
 
 def test_binding_the_context_parameter_by_name_is_rejected():
-    # arrange: `c` IS a signature parameter name, so validating against every name accepted it - and the
-    # generator then discarded it silently. That is the likeliest real typo of all.
+    # arrange: the context IS a signature parameter, so validating against every name in the signature
+    # accepted it - and the generator then discarded it silently. Binding it is the likeliest real typo
+    # of all, so the fixture names the body's ACTUAL context parameter rather than a name it lacks.
     text = '''
 groups:
   lab:
-    seed: { impl: "delivery.test_impls:seed", help: "Seed it.", with: { c: nonsense } }
+    seed: { impl: "delivery.test_impls:seed", help: "Seed it.", with: { ctx: nonsense } }
 '''
 
     # act / assert
-    with pytest.raises(ValueError, match="c"):
+    with pytest.raises(ValueError, match="ctx"):
         manifest.load(text, validate_with=True)
