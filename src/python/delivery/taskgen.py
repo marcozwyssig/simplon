@@ -25,6 +25,24 @@ from delivery.orchestrator.manifest import Manifest, resolve_ref
 
 _TEMPLATES = Path(__file__).resolve().parent / "templates"
 
+# The rich panels the root listing is split into. Both are `delivery.cli`'s, reproduced here because the
+# generated module IS the assembly now; the CD one names the product token so the usage hint reads in the
+# product's own voice, which is why `render` takes a product name rather than hardcoding one.
+_CI_PANEL = "CI / agnostic (no env)"
+
+# What Click needs so a command forwards its unrecognised trailing args to the tool behind it. Per
+# COMMAND, which is the property that matters: an unknown flag stays an error on every other command.
+_PASSTHROUGH_CTX = {"allow_extra_args": True, "ignore_unknown_options": True}
+
+
+def _cd_panel(product: str) -> str:
+    return f"CD / env-first ({product} <env> <group> <cmd>, default dev)"
+
+
+def _group_help(group: str, product: str, *, env_first: bool) -> str:
+    return f"{group} commands. " + (f"Env-first: `{product} <env> {group} <cmd>` (default dev)."
+                                    if env_first else "Environment-agnostic (no env).")
+
 
 class _Param(NamedTuple):
     name: str
@@ -75,44 +93,196 @@ def _call(impl: str, params: list[_Param], *, takes_context: bool) -> str:
     return f"{impl}({', '.join(args)})"
 
 
-def render(manifest: Manifest, *, source: str) -> str:
-    """The generated module's text for this manifest. Deterministic: same manifest, same bytes."""
+def _shared_impls(manifest: Manifest) -> set[str]:
+    """The impl refs bound to MORE than one command.
+
+    Help normally comes from a wrapper's docstring, but a body several commands share has one docstring,
+    so all of them would render the same blurb (netctl#1406, where one kernel suite-runner backs every
+    declared test level). There the manifest's per-command `help:` wins, passed as a `help=` kwarg.
+    """
+    seen: dict[str, int] = {}
+    for members in manifest.commands.values():
+        for spec in members.values():
+            if spec.impl:
+                seen[spec.impl] = seen.get(spec.impl, 0) + 1
+    return {ref for ref, count in seen.items() if count > 1}
+
+
+def _docstring(spec, body: object, shared: set[str]) -> str:
+    """The wrapper's docstring - which is what Typer renders as the command's help summary.
+
+    The BODY's docstring wins, because that is what the reflective assembly showed: it bound the body
+    itself as the callback, so Typer read the docstring off it. The manifest's `help:` is used only where
+    the reflective assembly used it too - for an impl SEVERAL commands share, which has one docstring and
+    would otherwise give all of them the same blurb (netctl#1406).
+
+    Preferring the manifest everywhere would read as the more principled rule ("the manifest is the
+    model") and it silently rewords four netctl commands whose `help:` and docstring have drifted apart.
+    Reconciling that drift is a visible change and belongs in its own reviewed diff, not in the one that
+    moves the assembly.
+    """
+    if spec.impl and spec.impl not in shared:
+        doc = (getattr(body, "__doc__", None) or "").strip()
+        if doc:
+            return doc
+    return spec.help
+
+
+def _kwargs(spec, *, shared: set[str]) -> str:
+    """The registration kwargs a command carries beyond its name, as source."""
+    out = []
+    if spec.passthrough_args:
+        out.append(f"context_settings={_PASSTHROUGH_CTX!r}")
+    if spec.impl and spec.impl in shared:
+        out.append(f"help={spec.help!r}")
+    return "".join(", " + kw for kw in out)
+
+
+def render(manifest: Manifest, *, source: str, product: str) -> str:
+    """The generated module's text for this manifest. Deterministic: same manifest, same bytes.
+
+    `product` shapes only the usage hints (the CD panel and each group's blurb), exactly as it does in the
+    reflective assembly, so a second *ctl product reads in its own voice from the same generator.
+    """
+    tax = manifest.taxonomy()
+    shared = _shared_impls(manifest)
+    cd_panel = _cd_panel(product)
     tasks: list[dict[str, object]] = []
     imports: list[str] = []
-    groups: list[dict[str, str]] = []
-    registrations: list[str] = []
+    body: list[str] = []
+    has_aggregate = False
+
+    # Every function first, so the module reads as a list of what a task IS before how it is wired.
+    funcs: dict[tuple[str, str], str] = {}
     for group, members in manifest.commands.items():
-        var = signatures.identifier(group, where=f"group `{group}`")
-        lines: list[str] = []
         for name, spec in members.items():
-            if not spec.impl:      # an impl-less depends_on aggregate is a PLAN, and a plan step runs
-                continue           # as its own subprocess - there is no body to wrap
             where = f"`{group} {name}`"
-            body = resolve_ref(spec.impl, where)
-            module, attribute = spec.impl.split(":", 1)
-            if module not in imports:
-                imports.append(module)
-            func = signatures.identifier(name, where=where)
-            takes_ctx = signatures.takes_context(body)
-            params = _params(body, spec.with_, spec.params, where=where)
-            tasks.append({"func": func, "help_repr": repr(spec.help),
-                          "signature": _signature(params, takes_context=takes_ctx),
-                          "call": _call(f"{module}.{attribute}", params, takes_context=takes_ctx)})
-            lines.append(f"{var}.command(name={name!r})({func})")
-        if lines:
-            groups.append({"var": var, "help_repr": repr(f"{group} commands.")})
-            registrations += lines
-            registrations.append(f"app.add_typer({var}, name={group!r})")
+            func = signatures.identifier(f"{group}_{name}".replace(".", "_"), where=where) \
+                if _name_collides(manifest, name) else signatures.identifier(name, where=where)
+            funcs[(group, name)] = func
+            if spec.impl:
+                module, attribute = spec.impl.split(":", 1)
+                if module not in imports:
+                    imports.append(module)
+                impl_body = resolve_ref(spec.impl, where)
+                takes_ctx = signatures.takes_context(impl_body)
+                params = _params(impl_body, spec.with_, spec.params, where=where)
+                call = _call(f"{module}.{attribute}", params, takes_context=takes_ctx)
+                tasks.append({"func": func, "help_repr": repr(_docstring(spec, impl_body, shared)),
+                              "signature": _signature(params, takes_context=takes_ctx),
+                              "call": f"_rc({call})"})
+            else:
+                # An impl-less AGGREGATE has no body to wrap: it expands through its dependency plan,
+                # which the product dispatches. Skipping it would delete a real, invocable command
+                # (`netctl build`, `netctl test all`) from the surface.
+                has_aggregate = True
+                tasks.append({"func": func, "help_repr": repr(spec.help), "signature": "",
+                              "call": f"_aggregate({name!r}, group={group!r})"})
+
+    if has_aggregate:
+        body.append("if aggregate is None:")
+        body.append('    raise ValueError("this manifest declares impl-less aggregates; '
+                    'register(aggregate=...) is required to bind them")')
+        body.append("global _aggregate")
+        body.append("_aggregate = aggregate")
+
+    # One sub-app per non-flat group. A collapsed single-member flat group gets none - its member IS the
+    # group token, so a sub-app would collide with it.
+    apps: dict[str, str] = {}
+    for group in _group_paths(manifest):
+        if tax.is_flat_command_group(group):
+            continue
+        # `_g_` prefixed, and not merely for tidiness: a group-default group's sub-app variable would
+        # otherwise SHADOW the module-level function of the same name, so its own callback would call the
+        # Typer object instead of the command (`build = typer.Typer(...)` over `def build()`).
+        var = "_g_" + signatures.identifier(group.replace(".", "_"), where=f"group `{group}`")
+        apps[group] = var
+        env_first = tax.group_requires_env(group)
+        help_text = _group_help(group, product, env_first=env_first)
+        if group not in manifest.groups:
+            # An ANCESTOR node: declared in the taxonomy, holding subgroups rather than members of its
+            # own (`support` above `support.git`). It still needs a sub-app for its children to hang
+            # from. Its blurb follows the same shape every other group's does; the `taxonomy:` block's
+            # own `help:` is not carried on TaxonomyNode today, which is a gap step 7 has to close.
+            body.append(f"{var} = typer.Typer(add_completion=False, no_args_is_help=True, "
+                        f"help={help_text!r})")
+        elif tax.is_group_default_command(group):
+            # #592 D4: the bare token runs the namesake member as the group's DEFAULT action, so
+            # `<product> build` still runs the pipeline while `<product> build diff` dispatches a sibling
+            # and `--help` renders the listing before the callback runs.
+            body.append(f"{var} = typer.Typer(add_completion=False, invoke_without_command=True, "
+                        f"no_args_is_help=False, help={manifest.spec_for(group, group).help!r})")
+            body.append(f"@{var}.callback(invoke_without_command=True)")
+            body.append(f"def {var}_default(ctx: typer.Context) -> None:")
+            body.append("    if ctx.invoked_subcommand is None:")
+            body.append(f"        {funcs[(group, group)]}()")
+        else:
+            body.append(f"{var} = typer.Typer(add_completion=False, no_args_is_help=True, "
+                        f"help={help_text!r})")
+
+    for group, var in apps.items():
+        panel = cd_panel if tax.group_requires_env(group) else _CI_PANEL
+        parent, _, leaf = group.rpartition(".")
+        target = apps[parent] if parent else "app"
+        body.append(f"{target}.add_typer({var}, name={leaf!r}, rich_help_panel={panel!r})")
+
+    # Each command under its group, plus the HIDDEN flat back-compat alias bound to the SAME function.
+    for group, names in manifest.groups.items():
+        spec_of = {name: manifest.spec_for(group, name) for name in names}
+        panel = cd_panel if tax.group_requires_env(group) else _CI_PANEL
+        default_member = tax.is_group_default_command(group)
+        for name in names:
+            if default_member and name == group.rpartition(".")[2]:
+                continue      # the namesake is the sub-app's callback, registered above
+            spec = spec_of[name]
+            func, kw = funcs[(group, name)], _kwargs(spec, shared=shared)
+            if tax.is_flat_command_group(group):
+                body.append(f"app.command(name={name!r}, rich_help_panel={panel!r}, "
+                            f"hidden={spec.hidden!r}{kw})({func})")
+            else:
+                body.append(f"{apps[group]}.command(name={name!r}, hidden={spec.hidden!r}{kw})({func})")
+                # A name owned by SEVERAL groups gets NO flat alias: a bare ambiguous token must fail as
+                # unknown rather than silently pick one owner (`test all` vs `<env> deploy all`).
+                if not tax.is_ambiguous(name):
+                    body.append(f"app.command(name={name!r}, hidden=True{kw})({func})")
+
     env = Environment(loader=FileSystemLoader(str(_TEMPLATES)), undefined=StrictUndefined,
                       trim_blocks=True, lstrip_blocks=True, keep_trailing_newline=True)
     return env.get_template("cli.py.j2").render(source=source, imports=sorted(imports),
-                                                tasks=tasks, groups=groups,
-                                                registrations=registrations)
+                                                tasks=tasks, body=body,
+                                                has_aggregate=has_aggregate)
 
 
-def write(manifest: Manifest, target: Path, *, source: str) -> bool:
+def _group_paths(manifest: Manifest) -> list[str]:
+    """Every group that needs a sub-app, ancestors first.
+
+    `groups:` names only the nodes that HOLD members. A nested group's ancestors (`support` above
+    `support.git`) hold none and are declared in the `taxonomy:` block, yet each still needs a sub-app
+    for its children to hang from - and it must exist before them, which is why the order matters.
+    """
+    out: list[str] = []
+    for group in manifest.groups:
+        parts = group.split(".")
+        for depth in range(1, len(parts) + 1):
+            path = ".".join(parts[:depth])
+            if path not in out:
+                out.append(path)
+    return out
+
+
+def _name_collides(manifest: Manifest, name: str) -> bool:
+    """True when `name` is declared in more than one group.
+
+    Such a command needs a group-qualified FUNCTION name, because two `def all(...)` in one module would
+    silently shadow each other - the second definition wins and `test all` would run `deploy all`. The
+    command names themselves stay untouched; only the Python identifiers differ.
+    """
+    return sum(1 for members in manifest.commands.values() if name in members) > 1
+
+
+def write(manifest: Manifest, target: Path, *, source: str, product: str) -> bool:
     """Render the module to `target`. Returns True iff the bytes changed."""
-    text = render(manifest, source=source)
+    text = render(manifest, source=source, product=product)
     if target.exists() and target.read_text() == text:
         return False
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -120,13 +290,13 @@ def write(manifest: Manifest, target: Path, *, source: str) -> bool:
     return True
 
 
-def check(manifest: Manifest, target: Path, *, source: str) -> str | None:
+def check(manifest: Manifest, target: Path, *, source: str, product: str) -> str | None:
     """A unified diff when `target` disagrees with the manifest, else None.
 
     A MISSING target is a diff, not an error: a fresh checkout that never generated must be told what to
     run, and a gate that raises there reads as a broken gate rather than as drift.
     """
-    text = render(manifest, source=source).splitlines(keepends=True)
+    text = render(manifest, source=source, product=product).splitlines(keepends=True)
     current = target.read_text().splitlines(keepends=True) if target.exists() else []
     if current == text:
         return None

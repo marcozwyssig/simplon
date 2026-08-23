@@ -24,20 +24,30 @@ def _rc(value: object) -> int:
     place to paper over it.
     """
     return 0 if value is None else int(value)
+
+{% if has_aggregate %}
+
+# An impl-less aggregate has no body: it expands through its dependency plan, which only the PRODUCT can
+# dispatch (a plan step runs as its own subprocess). `register` binds the dispatcher here rather than
+# closing over it, so every command below stays a module-level def a reader can find.
+_aggregate = None
+{% endif %}
 {% for t in tasks %}
 
 
 def {{ t.func }}({{ t.signature }}) -> None:
     {{ t.help_repr }}
-    raise typer.Exit(_rc({{ t.call }}))
+    raise typer.Exit({{ t.call }})
 {% endfor %}
 
 
-def register(app: typer.Typer) -> None:
-    """Register this manifest's commands onto a root app the product owns."""
-{% for g in groups %}
-    {{ g.var }} = typer.Typer(add_completion=False, no_args_is_help=True, help={{ g.help_repr }})
-{% endfor %}
-{% for line in registrations %}
+def register(app: typer.Typer, *, aggregate: object = None) -> None:
+    """Register this manifest's commands onto a root app the product owns.
+
+    `aggregate` dispatches an impl-less command's dependency plan; it takes `(name, group)` and returns
+    an exit code. A manifest declaring one and given none fails HERE rather than at first invocation,
+    which is where the reflective assembly failed too.
+    """
+{% for line in body %}
     {{ line }}
 {% endfor %}
