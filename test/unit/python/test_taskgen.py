@@ -10,6 +10,7 @@ import importlib.util
 import click
 import pytest
 import typer
+from click.testing import CliRunner
 from typer.main import get_command
 
 from delivery import taskgen
@@ -47,6 +48,7 @@ def _sub(cmd, name):
     return cmd.get_command(click.Context(cmd), name)
 
 
+
 # --- render: the manifest is the model, the signature comes from the body ---------------------------
 
 def test_the_rendered_module_declares_a_command_per_manifest_entry():
@@ -76,18 +78,20 @@ def test_the_signature_comes_from_the_body_not_from_the_manifest():
     # arrange: the manifest names neither `sites` nor `dry_run`
     text = taskgen.render(_load(), source="demo.yaml", product="sample")
 
-    # assert: introspected, with the `with:` override applied to `sites` only, and each parameter typed
-    # from the body - an UNANNOTATED default makes Typer read a bool as a text option
-    assert "sites: str = 'zh'" in text
-    assert "dry_run: bool = False" in text
+    # assert: introspected and typed from the body - an UNANNOTATED default makes Typer read a bool as a
+    # text option. `sites` is fixed by `with:`, so it is not on the command line at all (netctl#1442).
+    assert "def seed(ctx: typer.Context, dry_run: bool = False)" in text
+    assert "sites" not in text.split("def register")[0].split("def seed")[1].split(")")[0]
 
 
 def test_the_wrapper_delegates_to_the_impl_by_keyword_and_raises_the_rc():
     # arrange / act
     text = taskgen.render(_load(), source="demo.yaml", product="sample")
 
-    # assert: the body returns an int; the WRAPPER is what knows about process exit codes
-    assert ("raise typer.Exit(_rc(delivery.test_impls.seed(ctx, sites=sites, dry_run=dry_run)))"
+    # assert: the body returns an int; the WRAPPER is what knows about process exit codes. The pinned
+    # `sites` is passed as its LITERAL - it never reached the command line, so there is no variable in
+    # scope to forward (netctl#1442).
+    assert ("raise typer.Exit(_rc(delivery.test_impls.seed(ctx, sites='zh', dry_run=dry_run)))"
             in text)
 
 
@@ -103,10 +107,11 @@ def test_the_rendered_module_imports_and_assembles_a_real_click_tree(tmp_path):
     # arrange / act: the point of committing generated code is that it IS code - so prove it runs
     root = _assembled(_load(), tmp_path)
 
-    # assert: reachable as `lab seed`, with the introspected parameters on it
+    # assert: reachable as `lab seed`, with the introspected parameters on it - minus the one `with:`
+    # pinned
     group = root.get_command(click.Context(root), "lab")
     leaf = group.get_command(click.Context(group), "seed")
-    assert [p.name for p in leaf.params] == ["sites", "dry_run"]
+    assert [p.name for p in leaf.params] == ["dry_run"]
 
 
 def test_a_command_name_with_a_dash_becomes_a_legal_identifier(tmp_path):
@@ -199,7 +204,7 @@ def test_check_returns_a_diff_when_the_manifest_moved_on(tmp_path):
 
     # assert: readable enough to act on without regenerating first
     assert diff is not None
-    assert "sites: str = 'be'" in diff
+    assert "sites='be'" in diff
 
 
 def test_check_is_blind_to_a_help_change_the_generated_module_does_not_carry(tmp_path):
@@ -758,3 +763,82 @@ def test_an_aggregate_invoked_before_register_says_so(tmp_path):
     # act / assert
     with pytest.raises(RuntimeError, match="no dispatcher is bound"):
         module.build()
+
+
+# --- `with:` pins (netctl#1442) -----------------------------------------------------------------------
+
+def test_a_with_override_on_a_required_parameter_does_not_give_it_a_default(tmp_path):
+    # arrange: the defect. Substituting the value as a DEFAULT turned a mandatory argument into an
+    # optional one and moved the failure out of the CLI parser into whatever the body does with a value
+    # nobody passed - the exact failure the required-parameter branch exists to prevent, reached through
+    # the branch above it.
+    m = _load("""
+groups:
+  lab:
+    pin:   { impl: "delivery.test_impls:needs_site", help: "Pin a site.", with: { site: be } }
+    other: { impl: "delivery.test_impls:nullary", help: "Other." }
+""")
+
+    # act
+    text = taskgen.render(m, source="demo.yaml", product="sample")
+    root = _assembled(m, tmp_path)
+
+    # assert: no default, because no parameter - and the body still receives the value
+    assert "def pin(ctx: typer.Context) -> None:" in text
+    assert "needs_site(ctx, site='be')" in text
+    leaf = _sub(_sub(root, "lab"), "pin")
+    assert [p.name for p in leaf.params] == []
+
+
+def test_a_pinned_parameter_cannot_be_set_from_the_command_line(tmp_path):
+    # arrange: this is what "pins" has to mean to be worth the name - the suite runner's gate name is the
+    # motivating case, and a user redirecting it would run one suite under another's identity
+    m = _load("""
+groups:
+  lab:
+    pin:   { impl: "delivery.test_impls:needs_site", help: "Pin a site.", with: { site: be } }
+    other: { impl: "delivery.test_impls:nullary", help: "Other." }
+""")
+    root = _assembled(m, tmp_path)
+
+    # act
+    result = CliRunner().invoke(root, ["lab", "pin", "--site", "zh"])
+
+    # assert
+    assert result.exit_code != 0
+
+
+def test_an_optional_parameter_is_pinned_by_with_too_rather_than_merely_redefaulted(tmp_path):
+    # arrange: one rule for one key. "sets the default" for an optional parameter and "pins" for a
+    # required one is a distinction a reader has to open the body to predict.
+    m = _load("""
+groups:
+  lab:
+    seed:  { impl: "delivery.test_impls:seed", help: "Seed.", with: { sites: zh } }
+    other: { impl: "delivery.test_impls:nullary", help: "Other." }
+""")
+
+    # act
+    leaf = _sub(_sub(_assembled(m, tmp_path), "lab"), "seed")
+
+    # assert: `dry_run` stays settable, `sites` is gone
+    assert [p.name for p in leaf.params] == ["dry_run"]
+
+
+def test_describing_a_pinned_parameter_in_params_is_rejected():
+    # arrange: a pinned parameter has no command line to appear on, so help text for it would be written
+    # and never shown
+    m = _load("""
+groups:
+  lab:
+    pin:
+      impl: "delivery.test_impls:needs_site"
+      help: "Pin a site."
+      with: { site: be }
+      params:
+        site: { help: "which site" }
+""")
+
+    # act / assert
+    with pytest.raises(ValueError, match="pinned"):
+        taskgen.render(m, source="demo.yaml", product="sample")

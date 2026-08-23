@@ -49,21 +49,34 @@ class _Param(NamedTuple):
     literal: str | None      # None for a REQUIRED parameter: it must not gain a default
     presentation: object = None   # the manifest's `params:` entry, or None when it declares nothing
     type_hint: str | None = None  # the annotation the wrapper carries; None when none can be written
+    pinned: bool = False          # fixed by `with:`, so it is not a command-line parameter at all
 
 
 def _params(body: object, overrides: dict[str, object], presentation: dict, *, where: str) -> list[_Param]:
-    """The body's payload parameters, with `with:` values substituted as defaults.
+    """The body's payload parameters: which reach the command line, and with what default.
 
-    A parameter the impl declared REQUIRED stays required. Rendering it as `=None` would silently turn a
-    mandatory argument into an optional one, moving the failure out of the CLI parser and into whatever
-    the body does with None.
+    **`with:` PINS** (netctl#1442). A parameter the manifest fixes leaves the wrapper's signature and the
+    call passes the literal, so it is not a command-line parameter at all.
+
+    That is one rule rather than two. Substituting the value as a DEFAULT instead reads the same for an
+    optional parameter and is wrong for a required one: the body declared it mandatory, and giving it a
+    default moves the failure out of the CLI parser into whatever the body does with a value nobody
+    passed. Pinning a required parameter is also a designed use - design section 6 replaces
+    `typer.Context.info_name` in the suite runner with a generator-supplied `gate(name="system")`, where
+    `name` is required - so rejecting the combination would have removed the feature the key exists for.
+
+    A parameter that should stay settable simply does not belong in `with:`.
     """
     out: list[_Param] = []
     for param in signatures.bindable(body):
         shown, hint = presentation.get(param.name), signatures.annotation(param)
         if param.name in overrides:
+            if shown is not None:
+                raise ValueError(
+                    f"{where}: `{param.name}` is fixed by `with:` and also described in `params:`, but a "
+                    f"pinned parameter has no command line to appear on - drop one of the two")
             out.append(_Param(param.name, signatures.literal(overrides[param.name], where=where),
-                              shown, hint))
+                              shown, hint, pinned=True))
         elif param.required:
             out.append(_Param(param.name, None, shown, hint))
         else:
@@ -74,6 +87,9 @@ def _params(body: object, overrides: dict[str, object], presentation: dict, *, w
 def _signature(params: list[_Param], *, takes_context: bool) -> str:
     """The wrapper's parameter list as source.
 
+    A pinned parameter is absent here and present in the CALL: `with:` fixes it, so it is not on the
+    command line (netctl#1442).
+
     A body that declares a CLI context gets one: the wrapper takes `ctx: typer.Context` and forwards it,
     which is exactly how `delivery.cli.assemble` binds such a body today (it reads `ctx.args`, which is
     how `passthrough_args` reaches the tool behind the command). Typer does not treat `ctx` as a CLI
@@ -82,14 +98,18 @@ def _signature(params: list[_Param], *, takes_context: bool) -> str:
     """
     parts = ["ctx: typer.Context"] if takes_context else []
     parts += [signatures.option_decl(p.name, p.literal, p.presentation, p.type_hint)
-              for p in params]
+              for p in params if not p.pinned]
     return ", ".join(parts)
 
 
 def _call(impl: str, params: list[_Param], *, takes_context: bool) -> str:
-    """The delegation into the body: the context positionally if it wants one, the payload by keyword."""
+    """The delegation into the body: the context positionally if it wants one, the payload by keyword.
+
+    A PINNED parameter is passed as its literal - it never reached the command line, so there is no
+    variable in scope to forward.
+    """
     args = ["ctx"] if takes_context else []
-    args += [f"{p.name}={p.name}" for p in params]
+    args += [f"{p.name}={p.literal if p.pinned else p.name}" for p in params]
     return f"{impl}({', '.join(args)})"
 
 
