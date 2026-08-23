@@ -981,6 +981,27 @@ def test_a_params_block_carries_a_metavar():
     assert spec.params["dry_run"].metavar == "[yes|no]"
 
 
+def test_short_first_without_a_short_flag_is_rejected():
+    # arrange: ordering nothing is not a harmless no-op - it reads to its author as if the decls had been
+    # reordered, while the rendered help silently disagrees with the manifest
+    text = _PRUNER % '        dry_run: { help: "preview only", short_first: true }'
+
+    # act / assert
+    with pytest.raises(ValueError, match="short"):
+        manifest.load(text)
+
+
+def test_a_params_block_carries_the_decl_order():
+    # arrange: Click renders the decls in DECLARATION order and netctl's surface uses both
+    text = _PRUNER % '        dry_run: { short: "-n", short_first: true }'
+
+    # act
+    spec = manifest.load(text).spec_for("git", "prune-branches")
+
+    # assert
+    assert spec.params["dry_run"].short_first is True
+
+
 def test_a_command_without_a_params_block_has_an_empty_one():
     # arrange: the generator asks every command, so absence must be an empty map rather than None
     text = """

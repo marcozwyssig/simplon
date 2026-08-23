@@ -401,6 +401,46 @@ groups:
     assert ('dry_run: bool = typer.Option(False, "--dry-run", "-n", help=\'preview only\')' in text)
 
 
+def test_a_param_declaring_short_first_puts_the_short_decl_before_the_long_one():
+    # arrange: Click renders the decls in DECLARATION order, so this is what a user reads in `--help`.
+    # netctl's surface uses both orders - `--watch -w` on one command, `-f --follow` on the next - so the
+    # order is not a house style the generator may pick (netctl#1444).
+    m = _load("""
+groups:
+  monitor:
+    logs:
+      impl: "delivery.test_impls:pruner"
+      help: "Show logs."
+      params:
+        dry_run: { help: "follow the log", short: "-f", short_first: true }
+""")
+
+    # act
+    text = taskgen.render(m, source="demo.yaml", product="sample")
+
+    # assert
+    assert 'dry_run: bool = typer.Option(False, "-f", "--dry-run", help=\'follow the log\')' in text
+
+
+def test_a_param_without_short_first_keeps_the_long_decl_in_front():
+    # arrange: the default, and the shape every other declared parameter in netctl's surface has
+    m = _load("""
+groups:
+  monitor:
+    logs:
+      impl: "delivery.test_impls:pruner"
+      help: "Show logs."
+      params:
+        dry_run: { help: "follow the log", short: "-f" }
+""")
+
+    # act
+    text = taskgen.render(m, source="demo.yaml", product="sample")
+
+    # assert
+    assert 'dry_run: bool = typer.Option(False, "--dry-run", "-f", help=\'follow the log\')' in text
+
+
 def test_a_param_declaring_only_help_still_names_its_long_decl():
     # arrange: naming the long decl is what SUPPRESSES the `--no-x` secondary Typer derives for a bare
     # bool, and not one parameter in netctl's whole surface carries one. A bool that wanted the secondary

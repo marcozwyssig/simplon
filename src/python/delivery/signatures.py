@@ -146,7 +146,8 @@ def option_decl(name: str, literal_default: str | None, presentation, type_hint:
       - nothing declared -> `name=default`, so Typer derives everything exactly as it does today,
         including the `--no-x` secondary it gives a bare bool. Emitting an explicit decl for every
         parameter would suppress that secondary and silently delete a working flag from the surface;
-      - anything declared -> `typer.Option(default, "--long"[, "-s"], help=...)`. Naming the long decl
+      - anything declared -> `typer.Option(default, "--long"[, "-s"], help=...)`, or `"-s", "--long"`
+        where `short_first:` says so. Naming the long decl
         explicitly is what SUPPRESSES the `--no-x` secondary Typer derives for a bare bool, and that is
         the shape netctl's whole surface has: not one of its parameters carries a `--no-x`. A bool that
         wanted one would therefore have to stay out of `params:` - which is consistent, since it wants
@@ -179,9 +180,15 @@ def option_decl(name: str, literal_default: str | None, presentation, type_hint:
     positional = literal_default is None or getattr(presentation, "argument", False)
     args = ["..." if literal_default is None else literal_default]
     if not positional:
-        args.append(f'"--{name.replace("_", "-")}"')
-        if presentation.short:
-            args.append(f'"{presentation.short}"')
+        # Click renders the decls in DECLARATION order, and netctl's surface uses both orders: `--watch
+        # -w` on one command and `-f --follow` on the next. `short_first` is the one degree of freedom
+        # there is, since the long decl is derived from the parameter name rather than declared.
+        long_decl = f'"--{name.replace("_", "-")}"'
+        short_decl = f'"{presentation.short}"' if presentation.short else None
+        if short_decl and getattr(presentation, "short_first", False):
+            args += [short_decl, long_decl]
+        else:
+            args += [long_decl] + ([short_decl] if short_decl else [])
     if getattr(presentation, "metavar", None):
         args.append(f"metavar={presentation.metavar!r}")
     if presentation.help:

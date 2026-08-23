@@ -99,10 +99,15 @@ class ParamPresentation(NamedTuple):
 
     The signature - name, type, default - is introspected from the body; declaring it in YAML would state
     it twice and let the two drift, which is the failure `impl:` already has. Its help text, its short
-    flag and its metavar are a different kind of thing: user-facing copy that exists nowhere in the
-    signature, and the short flag in particular has no docstring form. They lived inside
-    `typer.Option(...)` in the command body until the bodies became framework-free, and this is where
-    they went.
+    flag, its metavar and the ORDER its decls are declared in are a different kind of thing: user-facing
+    copy that exists nowhere in the signature, and the short flag in particular has no docstring form.
+    They lived inside `typer.Option(...)` in the command body until the bodies became framework-free,
+    and this is where they went.
+
+    `short_first` exists because Click renders a parameter's decls in DECLARATION order and netctl's
+    surface uses both: `--watch -w` on one command and `-f --follow` on the next. The long decl is still
+    derived from the parameter name - listing both decls here would restate the signature, which is the
+    drift this block refuses. What is declared is which of the two comes first.
 
     Only these presentation keys are accepted, so a `type:` or `default:` cannot bring the drift back
     through this door.
@@ -111,6 +116,7 @@ class ParamPresentation(NamedTuple):
     short: str | None = None
     argument: bool = False
     metavar: str | None = None
+    short_first: bool = False
 
 
 class Manifest(NamedTuple):
@@ -325,6 +331,15 @@ class _ParamPresentationModel(BaseModel):
     short: str | None = None
     argument: bool = False
     metavar: str | None = None
+    short_first: bool = False
+
+    @model_validator(mode="after")
+    def _short_first_needs_a_short_flag_to_order(self) -> "_ParamPresentationModel":
+        # Ordering nothing is not a harmless no-op: it reads to its author as if the decls had been
+        # reordered, and the rendered help would silently disagree with the manifest.
+        if self.short_first and not self.short:
+            raise ValueError("`short_first: true` needs a `short:` flag to put first")
+        return self
 
     @model_validator(mode="after")
     def _a_positional_takes_no_short_flag(self) -> "_ParamPresentationModel":
@@ -688,7 +703,8 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
                                   keep_awake=spec.keep_awake, hidden=spec.hidden, with_=spec.with_,
                                   params={pname: ParamPresentation(help=p.help, short=p.short,
                                                                    argument=p.argument,
-                                                                   metavar=p.metavar)
+                                                                   metavar=p.metavar,
+                                                                   short_first=p.short_first)
                                           for pname, p in spec.params.items()})
                 for name, spec in members.items()}
         for group, members in model.groups.items()
