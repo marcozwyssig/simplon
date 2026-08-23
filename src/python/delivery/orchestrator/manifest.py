@@ -742,6 +742,14 @@ def _expand_imports(data: dict, catalogue: object) -> dict:
             group = group or namespace
         if not group:
             raise ValueError(f"task '{key}' names no group")
+        if name in expanded.get(group, {}):
+            # Silently replacing it would contradict every other rule here, and it is the likeliest
+            # mistake of the whole migration: a product adopting `import:` one command at a time keeps
+            # its own `groups:` declaration next to the new one, and the local body - the one still
+            # being maintained - is the half that disappears.
+            raise ValueError(
+                f"task '{key}' lands on '{group} {name}', which the `groups:` block already declares - "
+                f"a command has one declaration; remove the `groups:` entry once the import owns it")
         expanded.setdefault(group, {})[name] = spec
     return {**data, "groups": expanded}
 

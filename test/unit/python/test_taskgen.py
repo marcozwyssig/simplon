@@ -173,7 +173,7 @@ groups:
     # assert
     assert "def seed(" in text
     assert "def build() -> None:" in text
-    assert "raise typer.Exit(_aggregate('build', group='build'))" in text
+    assert "raise typer.Exit(_plan('build', 'build'))" in text
 
 
 # --- the drift gate ----------------------------------------------------------------------------------
@@ -677,3 +677,84 @@ groups:
 
     # assert
     assert _sub(root, "build").get_short_help_str(limit=250) == "Build the images."
+
+
+# --- collisions the generator must refuse rather than resolve (netctl#1440) ---------------------------
+
+def test_a_qualified_name_colliding_with_a_literal_command_name_is_rejected():
+    # arrange: `test all` and `deploy all` are ambiguous, so both are qualified - and `test_all` is then
+    # the identifier of a command literally NAMED test_all in a third group, which is unambiguous by its
+    # bare name and therefore NOT qualified. Two `def test_all` in one module: Python binds the second
+    # over the first and `test all` dispatches the wrong body.
+    m = _load("""
+groups:
+  test:
+    all: { impl: "delivery.test_impls:nullary", help: "Every test." }
+  deploy:
+    all: { impl: "delivery.test_impls:no_context", help: "Every deploy step." }
+  misc:
+    test_all: { impl: "delivery.test_impls:seed", help: "Something else entirely." }
+env_groups: [deploy]
+""")
+
+    # act / assert: named, both culprits, rather than silently shadowed
+    with pytest.raises(ValueError) as exc:
+        taskgen.render(m, source="demo.yaml", product="sample")
+    assert "test all" in str(exc.value) and "misc test_all" in str(exc.value)
+
+
+def test_two_dashed_names_rendering_one_identifier_are_rejected():
+    # arrange: `disk-guard` and `disk_guard` are different COMMANDS and one Python name
+    m = _load("""
+groups:
+  support:
+    disk-guard: { impl: "delivery.test_impls:nullary", help: "Guard the disk." }
+    disk_guard: { impl: "delivery.test_impls:no_context", help: "Guard it differently." }
+""")
+
+    # act / assert
+    with pytest.raises(ValueError, match="shadow"):
+        taskgen.render(m, source="demo.yaml", product="sample")
+
+
+def test_registering_a_second_dispatcher_onto_one_module_is_rejected(tmp_path):
+    # arrange: the dispatcher is MODULE state, so a second register() would rebind it under the commands
+    # the first call already registered - they would start dispatching through the new one
+    path = tmp_path / "_gen.py"
+    path.write_text(taskgen.render(_load(_SHAPES), source="demo.yaml", product="sample"))
+    spec = importlib.util.spec_from_file_location("_gen_twice", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.register(typer.Typer(add_completion=False), aggregate=lambda name, group: 0)
+
+    # act / assert
+    with pytest.raises(ValueError, match="different aggregate dispatcher"):
+        module.register(typer.Typer(add_completion=False), aggregate=lambda name, group: 1)
+
+
+def test_registering_the_same_dispatcher_twice_is_allowed(tmp_path):
+    # arrange: idempotence is not the failure - rebinding to something ELSE is
+    path = tmp_path / "_gen.py"
+    path.write_text(taskgen.render(_load(_SHAPES), source="demo.yaml", product="sample"))
+    spec = importlib.util.spec_from_file_location("_gen_same", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    dispatcher = lambda name, group: 0
+
+    # act / assert: no raise
+    module.register(typer.Typer(add_completion=False), aggregate=dispatcher)
+    module.register(typer.Typer(add_completion=False), aggregate=dispatcher)
+
+
+def test_an_aggregate_invoked_before_register_says_so(tmp_path):
+    # arrange: `_aggregate(...)` on None was a TypeError about NoneType, which names neither the command
+    # nor the missing call
+    path = tmp_path / "_gen.py"
+    path.write_text(taskgen.render(_load(_SHAPES), source="demo.yaml", product="sample"))
+    spec = importlib.util.spec_from_file_location("_gen_unbound", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    # act / assert
+    with pytest.raises(RuntimeError, match="no dispatcher is bound"):
+        module.build()

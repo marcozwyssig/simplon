@@ -153,13 +153,11 @@ def render(manifest: Manifest, *, source: str, product: str) -> str:
     has_aggregate = False
 
     # Every function first, so the module reads as a list of what a task IS before how it is wired.
-    funcs: dict[tuple[str, str], str] = {}
+    funcs = _function_names(manifest)
     for group, members in manifest.commands.items():
         for name, spec in members.items():
             where = f"`{group} {name}`"
-            func = signatures.identifier(f"{group}_{name}".replace(".", "_"), where=where) \
-                if _name_collides(manifest, name) else signatures.identifier(name, where=where)
-            funcs[(group, name)] = func
+            func = funcs[(group, name)]
             if spec.impl:
                 module, attribute = spec.impl.split(":", 1)
                 if module not in imports:
@@ -177,13 +175,16 @@ def render(manifest: Manifest, *, source: str, product: str) -> str:
                 # (`netctl build`, `netctl test all`) from the surface.
                 has_aggregate = True
                 tasks.append({"func": func, "help_repr": repr(spec.help), "signature": "",
-                              "call": f"_aggregate({name!r}, group={group!r})"})
+                              "call": f"_plan({name!r}, {group!r})"})
 
     if has_aggregate:
         body.append("if aggregate is None:")
         body.append('    raise ValueError("this manifest declares impl-less aggregates; '
                     'register(aggregate=...) is required to bind them")')
         body.append("global _aggregate")
+        body.append("if _aggregate is not None and _aggregate is not aggregate:")
+        body.append('    raise ValueError("this module is already registered with a different '
+                    'aggregate dispatcher; it belongs to one manifest and one product")')
         body.append("_aggregate = aggregate")
 
     # One sub-app per non-flat group. A collapsed single-member flat group gets none - its member IS the
@@ -270,14 +271,41 @@ def _group_paths(manifest: Manifest) -> list[str]:
     return out
 
 
-def _name_collides(manifest: Manifest, name: str) -> bool:
-    """True when `name` is declared in more than one group.
+def _function_names(manifest: Manifest) -> dict[tuple[str, str], str]:
+    """One Python identifier per command, proven unique across the whole module.
 
-    Such a command needs a group-qualified FUNCTION name, because two `def all(...)` in one module would
-    silently shadow each other - the second definition wins and `test all` would run `deploy all`. The
-    command names themselves stay untouched; only the Python identifiers differ.
+    A name declared in several groups is qualified with its group, because two `def all(...)` in one
+    module would silently shadow each other - the second definition wins and `test all` would run the
+    deploy plan.
+
+    Qualifying is not enough on its own, which is why this ends in a uniqueness check rather than in the
+    qualification. The invented `test_all` can collide with a command literally NAMED `test_all` in some
+    third group: that one is unambiguous by its bare name, so it is not qualified, and the two land on
+    one identifier. Python then binds the second `def` over the first and the wrong body is dispatched -
+    the exact failure the qualification exists to prevent, one shape further out.
+
+    There is no automatic disambiguation to reach for here. A generated suffix would make the identifier
+    depend on manifest ORDER, and the drift gate compares text. So a genuine clash is a manifest error
+    with both culprits named.
     """
-    return sum(1 for members in manifest.commands.values() if name in members) > 1
+    out: dict[tuple[str, str], str] = {}
+    owners: dict[str, list[str]] = {}
+    ambiguous = {name for name in {n for members in manifest.commands.values() for n in members}
+                 if sum(1 for members in manifest.commands.values() if name in members) > 1}
+    for group, members in manifest.commands.items():
+        for name in members:
+            where = f"`{group} {name}`"
+            candidate = f"{group}_{name}".replace(".", "_") if name in ambiguous else name
+            func = signatures.identifier(candidate, where=where)
+            owners.setdefault(func, []).append(f"{group} {name}")
+            out[(group, name)] = func
+    clashes = {func: who for func, who in owners.items() if len(who) > 1}
+    if clashes:
+        func, who = sorted(clashes.items())[0]
+        raise ValueError(
+            f"commands {' and '.join(sorted(who))} both render the Python function `{func}`, so one "
+            f"would silently shadow the other and dispatch the wrong body - rename one of them")
+    return out
 
 
 def write(manifest: Manifest, target: Path, *, source: str, product: str) -> bool:

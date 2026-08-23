@@ -291,3 +291,43 @@ env_groups: []
     # act / assert
     with pytest.raises(ValueError, match="catalogue"):
         manifest.load(text)
+
+
+def test_an_imported_task_landing_on_an_existing_groups_entry_is_rejected():
+    # arrange: the likeliest mistake of the whole migration. A product adopting `import:` one command at
+    # a time keeps its own `groups:` declaration next to the new one - and the LOCAL body, the one still
+    # being maintained, is the half that used to disappear without a word.
+    text = """
+import:
+  delivery: [vcs]
+groups:
+  git:
+    commit: { impl: "delivery.test_impls:nullary", help: "The product's own commit." }
+tasks:
+  vcs:commit: { group: git }
+env_groups: []
+"""
+
+    # act / assert
+    with pytest.raises(ValueError) as exc:
+        _loaded(text)
+    assert "git commit" in str(exc.value)
+
+
+def test_a_products_own_definition_landing_on_an_existing_groups_entry_is_rejected():
+    # arrange: same rule for a definition - a command has ONE declaration
+    text = """
+groups:
+  support:
+    disk-guard: { impl: "delivery.test_impls:nullary", help: "Guard the disk." }
+tasks:
+  disk-guard:
+    impl: "delivery.test_impls:no_context"
+    help: "Guard it differently."
+    group: support
+env_groups: []
+"""
+
+    # act / assert
+    with pytest.raises(ValueError, match="disk-guard"):
+        manifest.load(text)

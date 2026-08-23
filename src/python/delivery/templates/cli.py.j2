@@ -30,7 +30,20 @@ def _rc(value: object) -> int:
 # An impl-less aggregate has no body: it expands through its dependency plan, which only the PRODUCT can
 # dispatch (a plan step runs as its own subprocess). `register` binds the dispatcher here rather than
 # closing over it, so every command below stays a module-level def a reader can find.
+#
+# The price of module state is that it is MODULE state: a second `register()` would rebind it under the
+# commands the first one already registered, so those would start dispatching through the new one. This
+# module belongs to one manifest and one dispatcher, and `register` says so rather than letting the
+# second call quietly win.
 _aggregate = None
+
+
+def _plan(name: str, group: str) -> int:
+    """Run an aggregate's dependency plan through the dispatcher `register` bound."""
+    if _aggregate is None:
+        raise RuntimeError(f"`{group} {name}` is an aggregate and no dispatcher is bound - "
+                           f"call register(app, aggregate=...) before invoking it")
+    return _aggregate(name, group=group)
 {% endif %}
 {% for t in tasks %}
 
