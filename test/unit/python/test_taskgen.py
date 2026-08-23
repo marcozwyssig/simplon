@@ -401,8 +401,11 @@ groups:
     assert ('dry_run: bool = typer.Option(False, "--dry-run", "-n", help=\'preview only\')' in text)
 
 
-def test_a_param_declaring_only_help_names_no_decl_of_its_own():
-    # arrange: naming a decl explicitly REPLACES Typer's derivation, so a help-only entry must not.
+def test_a_param_declaring_only_help_still_names_its_long_decl():
+    # arrange: naming the long decl is what SUPPRESSES the `--no-x` secondary Typer derives for a bare
+    # bool, and not one parameter in netctl's whole surface carries one. A bool that wanted the secondary
+    # stays out of `params:` entirely - which is consistent, since `params:` is where a command departs
+    # from the derivation.
     m = _load("""
 groups:
   git:
@@ -417,8 +420,7 @@ groups:
     text = taskgen.render(m, source="demo.yaml", product="sample")
 
     # assert
-    assert "dry_run: bool = typer.Option(False, help='preview only')" in text
-    assert '"--dry-run"' not in text
+    assert 'dry_run: bool = typer.Option(False, "--dry-run", help=\'preview only\')' in text
 
 
 def test_an_undeclared_param_is_left_to_typers_own_derivation():

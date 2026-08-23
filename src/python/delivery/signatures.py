@@ -38,6 +38,21 @@ class Parameter(NamedTuple):
 # it should be dealt with rather than here.
 _ANNOTATIONS = {bool: "bool", int: "int", float: "float", str: "str"}
 
+# Composite annotations recognised by their SOURCE SPELLING, mapped to the spelling the generator emits.
+# A body written under `from __future__ import annotations` hands `inspect.signature` a string, so both
+# the text and the object form are matched. `Optional[...]` normalises to the `| None` form, which needs
+# no import in the generated module.
+#
+# Narrow on purpose, extended only when a body needs it: a variadic `list[str]` is what makes Typer
+# render `nargs=-1`, and getting it wrong silently turns a positional argument list into a single
+# `--message TEXT`. The golden is the oracle.
+_COMPOSITES = {
+    "list[str]": "list[str]",
+    "list[str] | None": "list[str] | None",
+    "Optional[list[str]]": "list[str] | None",
+    "typing.Optional[list[str]]": "list[str] | None",
+}
+
 
 def takes_context(body: object) -> bool:
     """True iff the body's first parameter is named like a CLI context."""
@@ -108,6 +123,10 @@ def annotation(param: Parameter) -> str | None:
     for form, spelling in _ANNOTATIONS.items():
         if param.annotation is form or param.annotation == spelling:
             return spelling
+    if param.annotation is not inspect.Parameter.empty:
+        text = param.annotation if isinstance(param.annotation, str) else str(param.annotation)
+        if text in _COMPOSITES:
+            return _COMPOSITES[text]
     if not param.required and type(param.default) in _ANNOTATIONS:
         return _ANNOTATIONS[type(param.default)]
     return None
@@ -118,13 +137,17 @@ def option_decl(name: str, literal_default: str | None, presentation, type_hint:
 
     Three shapes, and the choice between them is load-bearing rather than cosmetic:
 
+      - `argument: true` -> `typer.Argument`, for a parameter that is POSITIONAL rather than a flag.
+        Typer cannot infer that: a `list[str] | None = None` parameter becomes `--name TEXT` unless the
+        declaration says otherwise, and that is a different command line from a variadic positional.
       - nothing declared -> `name=default`, so Typer derives everything exactly as it does today,
         including the `--no-x` secondary it gives a bare bool. Emitting an explicit decl for every
         parameter would suppress that secondary and silently delete a working flag from the surface;
-      - `help` only      -> `typer.Option(default, help=...)`, which adds the text without naming any
-        decl, so the derivation is still Typer's;
-      - a `short` flag   -> `typer.Option(default, "--long", "-s", help=...)`, which REPLACES the
-        derivation, because a short flag cannot be added to it.
+      - anything declared -> `typer.Option(default, "--long"[, "-s"], help=...)`. Naming the long decl
+        explicitly is what SUPPRESSES the `--no-x` secondary Typer derives for a bare bool, and that is
+        the shape netctl's whole surface has: not one of its parameters carries a `--no-x`. A bool that
+        wanted one would therefore have to stay out of `params:` - which is consistent, since it wants
+        Typer's derivation and `params:` is where a command departs from it.
 
     A REQUIRED parameter has no default to carry, so it renders as a `typer.Argument` - the shape the
     product's bodies already use for one.
@@ -138,13 +161,18 @@ def option_decl(name: str, literal_default: str | None, presentation, type_hint:
     # PEP 8 spaces the `=` of an ANNOTATED parameter and closes up an unannotated one; generated code
     # that a reviewer reads should not look like generated code.
     typed, eq = (f"{name}: {type_hint}", " = ") if type_hint else (name, "=")
-    declared = presentation is not None and (presentation.help is not None or presentation.short is not None)
+    declared = presentation is not None and (presentation.help is not None
+                                             or presentation.short is not None
+                                             or getattr(presentation, "argument", False))
     if not declared:
         return typed if literal_default is None else f"{typed}{eq}{literal_default}"
+    positional = literal_default is None or getattr(presentation, "argument", False)
     args = ["..." if literal_default is None else literal_default]
-    if presentation.short:
-        args += [f'"--{name.replace("_", "-")}"', f'"{presentation.short}"']
+    if not positional:
+        args.append(f'"--{name.replace("_", "-")}"')
+        if presentation.short:
+            args.append(f'"{presentation.short}"')
     if presentation.help:
         args.append(f"help={presentation.help!r}")
-    factory = "typer.Argument" if literal_default is None else "typer.Option"
+    factory = "typer.Argument" if positional else "typer.Option"
     return f"{typed}{eq}{factory}({', '.join(args)})"

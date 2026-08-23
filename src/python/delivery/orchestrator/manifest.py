@@ -108,6 +108,7 @@ class ParamPresentation(NamedTuple):
     """
     help: str | None = None
     short: str | None = None
+    argument: bool = False
 
 
 class Manifest(NamedTuple):
@@ -320,6 +321,15 @@ class _ParamPresentationModel(BaseModel):
 
     help: str | None = None
     short: str | None = None
+    argument: bool = False
+
+    @model_validator(mode="after")
+    def _a_positional_takes_no_short_flag(self) -> "_ParamPresentationModel":
+        # A short flag IS a flag; a positional argument has none. Accepting both would render decls Click
+        # ignores, so the manifest would claim something the command line does not do.
+        if self.argument and self.short:
+            raise ValueError("a parameter declared `argument: true` is positional and takes no `short:`")
+        return self
 
     @field_validator("help", mode="before")
     @classmethod
@@ -673,7 +683,8 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
         group: {name: CommandSpec(impl=spec.impl, help=spec.help, passthrough_args=spec.passthrough_args,
                                   depends_on=spec.depends_on, stop_on_failure=spec.stop_on_failure,
                                   keep_awake=spec.keep_awake, hidden=spec.hidden, with_=spec.with_,
-                                  params={pname: ParamPresentation(help=p.help, short=p.short)
+                                  params={pname: ParamPresentation(help=p.help, short=p.short,
+                                                                   argument=p.argument)
                                           for pname, p in spec.params.items()})
                 for name, spec in members.items()}
         for group, members in model.groups.items()
