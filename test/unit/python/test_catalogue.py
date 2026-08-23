@@ -103,7 +103,7 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
     cat = catalogue.load()
 
     # assert
-    assert cat.namespaces() == ["support", "test", "vcs"]
+    assert cat.namespaces() == ["support", "tasks", "test", "vcs"]
     assert sorted(cat.namespace("vcs")) == ["commit", "prune-branches", "push", "submodules"]
 
 
