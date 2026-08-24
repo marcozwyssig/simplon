@@ -28,6 +28,12 @@ def generate(target: str, check: bool = False) -> int:
 
     `--check` returning 1 on drift is deliberate: it makes the same command usable as a pre-commit hook or
     a CI step without a second entry point.
+
+    MOVING A KERNEL BODY IS A THREE-STEP DANCE, and this is where that bites. A coordinate frees the
+    product MANIFEST from naming a module path, but the generated module still imports one, and
+    regenerating runs through the product's CLI - which imports that stale module. Delete the old module
+    first and the regeneration fails to import before it can fix itself. So: add the new module, point the
+    catalogue at it, regenerate, then delete the old one.
     """
     ctx = context.current()
     mf = ctx.manifest()

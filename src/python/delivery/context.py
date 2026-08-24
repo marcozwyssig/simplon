@@ -48,8 +48,19 @@ class ProductContext:
 
     def manifest(self) -> Manifest:
         """The parsed + validated command manifest the CLI engine assembles the product's CLI from
-        (delegates to ``delivery.orchestrator.manifest.load``)."""
-        return _load_manifest(self.manifest_path.read_text(encoding="utf-8"))
+        (delegates to ``delivery.orchestrator.manifest.load``).
+
+        The kernel's task CATALOGUE is passed in, which is what lets a product write `import:` and name a
+        coordinate (`vcs:commit`) instead of a module path (netctl#1437, adopted #1444). A product that
+        imports nothing is unaffected: the loader only consults the catalogue where a coordinate appears.
+
+        Imported lazily so this module keeps no import-time dependency on the catalogue, which itself
+        imports the manifest models.
+        """
+        from delivery import catalogue
+
+        return _load_manifest(self.manifest_path.read_text(encoding="utf-8"),
+                              catalogue=catalogue.load())
 
     @classmethod
     def resolve(cls, name: str, root: Path, manifest_path: Path) -> "ProductContext":
