@@ -331,3 +331,106 @@ env_groups: []
     # act / assert
     with pytest.raises(ValueError, match="disk-guard"):
         manifest.load(text)
+
+
+# --- the catalogue owns the tree's SHAPE (netctl#1444, spec step 7) -------------------------------------
+
+_SHAPED = """
+taxonomy:
+  build:   { help: "Produce the artefacts." }
+  deploy:  { help: "Put them somewhere.", env_first: true }
+  support:
+    help: "Host upkeep."
+    groups:
+      git: { help: "Version control." }
+tasks:
+  vcs:push: { impl: "delivery.test_impls:nullary", help: "Push." }
+"""
+
+
+def test_a_product_contributes_members_to_a_group_the_catalogue_shapes():
+    # arrange: THE point of the catalogue owning the loop. The product's bare `groups:` key carries the
+    # group's MEMBERS; it is not a second declaration of the group, and treating it as one made "the
+    # platform owns the tree" unimplementable.
+    text = """
+groups:
+  build:
+    compile: { impl: "delivery.test_impls:nullary", help: "Compile." }
+env_groups: []
+"""
+
+    # act
+    mf = manifest.load(text, catalogue=catalogue.loads(_SHAPED))
+
+    # assert
+    assert mf.tree["build"].commands == ("compile",)
+    assert mf.groups["build"] == ("compile",)
+
+
+def test_a_group_shaped_in_both_the_catalogue_and_the_product_is_rejected():
+    # arrange: the contradiction the merge rule exists for, and the ONE the loader can now actually
+    # produce - two files, each declaring the same group's shape. With a winner a reader would have to
+    # know which file won to predict the surface.
+    text = """
+taxonomy:
+  build: { help: "The product's own build." }
+groups:
+  build:
+    compile: { impl: "delivery.test_impls:nullary", help: "Compile." }
+env_groups: []
+"""
+
+    # act / assert
+    with pytest.raises(ValueError, match="build"):
+        manifest.load(text, catalogue=catalogue.loads(_SHAPED))
+
+
+def test_env_gating_comes_with_the_shape_so_the_product_need_not_restate_it():
+    # arrange: env-first is part of a group's shape, so a product contributing members to `deploy` must
+    # not have to list it in `env_groups:` as well - that would be the shape stated twice, in two files.
+    text = """
+groups:
+  deploy:
+    up: { impl: "delivery.test_impls:nullary", help: "Bring it up." }
+env_groups: []
+"""
+
+    # act
+    mf = manifest.load(text, catalogue=catalogue.loads(_SHAPED))
+
+    # assert
+    assert mf.tree["deploy"].env_first is True
+    assert mf.taxonomy().group_requires_env("deploy") is True
+
+
+def test_a_product_may_still_declare_a_group_the_catalogue_does_not_have():
+    # arrange: the documented exception - a product's own group, visible as one
+    text = """
+groups:
+  bespoke:
+    thing: { impl: "delivery.test_impls:nullary", help: "Do the thing." }
+env_groups: []
+"""
+
+    # act
+    mf = manifest.load(text, catalogue=catalogue.loads(_SHAPED))
+
+    # assert
+    assert sorted(mf.tree) == ["bespoke", "build", "deploy", "support"]
+
+
+def test_a_catalogue_taxonomy_that_is_not_a_mapping_is_rejected():
+    # arrange: a list here would silently shape nothing at all
+    with pytest.raises(ValueError, match="taxonomy"):
+        catalogue.loads("taxonomy: [build, test]\ntasks: {}\n")
+
+
+def test_the_shipped_catalogue_declares_the_ci_cd_loop():
+    # arrange / act: the real file - the loop every *ctl product inherits
+    cat = catalogue.load()
+
+    # assert
+    assert sorted(cat.taxonomy) == ["build", "deploy", "monitor", "release", "support", "tasks", "test"]
+    assert cat.taxonomy["deploy"]["env_first"] is True
+    assert "git" in cat.taxonomy["support"]["groups"]
+

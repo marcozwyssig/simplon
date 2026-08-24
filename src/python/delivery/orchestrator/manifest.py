@@ -714,8 +714,17 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     if unknown:
         raise ValueError(f"generate names group(s) the manifest does not declare: {', '.join(unknown)}")
     generate = frozenset(model.generate)
-    tree = merge_trees(_catalogue_tree(model.taxonomy, groups),
-                       _flat_tree(groups, env_groups, frozenset(model.taxonomy)))
+    # THREE sources, and only two of them can contradict each other. The CATALOGUE's `taxonomy:` and the
+    # PRODUCT's are two files describing the same shape, so a group in both is the contradiction
+    # `merge_trees` exists to catch. The flat tree is neither: it is the product's own `groups:` keys, and
+    # a bare key whose shape either taxonomy already declares is that group's MEMBERS, not a second
+    # declaration of it - contributing members to a catalogue group is the whole point (netctl#1444).
+    catalogue_taxonomy = getattr(catalogue, "taxonomy", {}) or {}
+    shaped = merge_trees(_catalogue_tree(catalogue_taxonomy, groups),
+                         _catalogue_tree(model.taxonomy, groups))
+    tree = {**shaped,
+            **_flat_tree(groups, env_groups,
+                         frozenset(catalogue_taxonomy) | frozenset(model.taxonomy))}
     # Every DOTTED `groups:` key must name a node the `taxonomy:` block actually declares. Without this,
     # an unmatched path was dropped from the tree while `groups`/`commands` kept it: the commands stayed
     # registered and runnable but were invisible to the taxonomy, so they were never env-gated and never

@@ -28,9 +28,17 @@ DEFAULT_PATH = Path(__file__).resolve().parents[5] / "delivery.yaml"
 
 
 class Catalogue(NamedTuple):
-    """The coordinates the platform offers, keyed `<namespace>:<name>`."""
+    """What the platform offers a product: the task coordinates, keyed `<namespace>:<name>`, and the
+    shape of the command tree they live in.
+
+    `taxonomy` is the CI/CD loop itself (netctl#1444, spec step 7). Every `*ctl` product runs the same
+    build -> test -> release -> deploy -> monitor loop, so declaring it once here beats each product
+    restating it. A product contributes MEMBERS to those groups and never redeclares their shape; it may
+    still declare a group of its own, which is the exception and visible as one.
+    """
 
     tasks: dict[str, dict]
+    taxonomy: dict[str, dict] = {}
 
     def resolve(self, coordinate: str) -> dict:
         """The declaration a coordinate names, or a ValueError listing what the namespace does offer."""
@@ -65,6 +73,9 @@ def loads(text: str) -> Catalogue:
     tasks = data.get("tasks") or {}
     if not isinstance(tasks, dict):
         raise ValueError("catalogue 'tasks' must be a mapping of '<namespace>:<name>' to a declaration")
+    taxonomy = data.get("taxonomy") or {}
+    if not isinstance(taxonomy, dict):
+        raise ValueError("catalogue 'taxonomy' must be a mapping of group name to its declaration")
     out: dict[str, dict] = {}
     for coordinate, spec in tasks.items():
         # A bare `commit:` has no coordinate space, so two namespaces could not both offer one and a
@@ -80,7 +91,7 @@ def loads(text: str) -> Catalogue:
             # importing it would resolve a coordinate to no code at all.
             raise ValueError(f"catalogue task '{coordinate}' declares no impl")
         out[str(coordinate)] = dict(spec or {})
-    return Catalogue(tasks=out)
+    return Catalogue(tasks=out, taxonomy=taxonomy)
 
 
 def load(path: Path | str = DEFAULT_PATH) -> Catalogue:

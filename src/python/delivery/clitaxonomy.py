@@ -27,11 +27,17 @@ def merge_trees(catalogue: dict[str, TaxonomyNode],
                 product: dict[str, TaxonomyNode]) -> dict[str, TaxonomyNode]:
     """Merge the platform catalogue's taxonomy with the product's own.
 
-    A group declared in BOTH is an error rather than a precedence rule: with a winner, a reader has to
-    know which manifest won in order to predict the surface, and the shadowed declaration is invisible in
-    the file that lost. With an error there is no winner to reason about, only a contradiction to fix -
-    which is what lets the catalogue take the tree over one group at a time, leaving a half-migrated tree
-    that works rather than one that silently disagrees with itself.
+    Both arguments are SHAPE declarations - a `taxonomy:` block in one file each. A group declared in both
+    is an error rather than a precedence rule: with a winner, a reader has to know which file won in order
+    to predict the surface, and the shadowed declaration is invisible in the one that lost. With an error
+    there is no winner to reason about, only a contradiction to fix - which is what lets the catalogue take
+    the tree over one group at a time, leaving a half-migrated tree that works rather than one that
+    silently disagrees with itself.
+
+    What is NOT a contradiction, and never reaches here: a product's bare `groups:` key naming a group the
+    catalogue shapes. That key carries the group's MEMBERS, and contributing members to a catalogue group
+    is the entire point of the catalogue owning the loop (netctl#1444). The loader filters those out
+    before merging; passing them in would have made "the platform owns the tree" unimplementable.
     """
     clashes = sorted(set(catalogue) & set(product))
     if clashes:
