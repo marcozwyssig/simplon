@@ -135,6 +135,52 @@ def annotation(param: Parameter) -> str | None:
     return None
 
 
+class Shape(NamedTuple):
+    """The declaration shape of one parameter: whether the manifest describes it at all, whether it lands
+    as a positional, and the option decls in the order Click must see them."""
+
+    declared: bool
+    positional: bool
+    decls: tuple[str, ...] = ()
+
+
+def shape(name: str, *, required: bool, presentation) -> Shape:
+    """The shape decision shared by BOTH renderings of a `params:` block (netctl#1444).
+
+    `taskgen` renders a parameter as SOURCE for the generated module; `delivery.cli.assemble` builds the
+    same declaration as a live Typer object at assembly time. They must agree exactly - a body is supposed
+    to behave identically under either mechanism - so the decision lives here once instead of twice.
+    """
+    declared = presentation is not None and (presentation.help is not None
+                                             or presentation.short is not None
+                                             or getattr(presentation, "metavar", None) is not None
+                                             or getattr(presentation, "argument", False))
+    if not declared:
+        return Shape(declared=False, positional=False)
+    positional = required or getattr(presentation, "argument", False)
+    if positional and presentation.short:
+        # A positional has no flags, so a short decl on one renders nothing at all. The manifest model
+        # already rejects `argument: true` + `short:`, but it cannot see the OTHER way a parameter becomes
+        # positional - being REQUIRED in the body - so that pairing reached here and was silently dropped
+        # while `help:` and `metavar:` beside it survived. "A flag that does nothing where it is written is
+        # worse than no flag" is the rule this file's neighbours already follow.
+        raise ValueError(
+            f"parameter {name!r} declares short flag {presentation.short!r}, but it renders as a "
+            f"POSITIONAL argument (it is required in the body, or declares `argument: true`) and a "
+            f"positional has no flags - drop the `short:` or give the parameter a default")
+    if positional:
+        return Shape(declared=True, positional=True)
+    # Click renders the decls in DECLARATION order, and netctl's surface uses both orders: `--watch -w` on
+    # one command and `-f --follow` on the next. `short_first` is the one degree of freedom there is, since
+    # the long decl is derived from the parameter name rather than declared.
+    long_decl = f"--{name.replace('_', '-')}"
+    short = presentation.short
+    if short and getattr(presentation, "short_first", False):
+        return Shape(declared=True, positional=False, decls=(short, long_decl))
+    return Shape(declared=True, positional=False,
+                 decls=(long_decl,) + ((short,) if short else ()))
+
+
 def option_decl(name: str, literal_default: str | None, presentation, type_hint: str | None = None) -> str:
     """One wrapper parameter as source, given its rendered default and its manifest presentation.
 
@@ -171,27 +217,14 @@ def option_decl(name: str, literal_default: str | None, presentation, type_hint:
     # PEP 8 spaces the `=` of an ANNOTATED parameter and closes up an unannotated one; generated code
     # that a reviewer reads should not look like generated code.
     typed, eq = (f"{name}: {type_hint}", " = ") if type_hint else (name, "=")
-    declared = presentation is not None and (presentation.help is not None
-                                             or presentation.short is not None
-                                             or getattr(presentation, "metavar", None) is not None
-                                             or getattr(presentation, "argument", False))
-    if not declared:
+    form = shape(name, required=literal_default is None, presentation=presentation)
+    if not form.declared:
         return typed if literal_default is None else f"{typed}{eq}{literal_default}"
-    positional = literal_default is None or getattr(presentation, "argument", False)
     args = ["..." if literal_default is None else literal_default]
-    if not positional:
-        # Click renders the decls in DECLARATION order, and netctl's surface uses both orders: `--watch
-        # -w` on one command and `-f --follow` on the next. `short_first` is the one degree of freedom
-        # there is, since the long decl is derived from the parameter name rather than declared.
-        long_decl = f'"--{name.replace("_", "-")}"'
-        short_decl = f'"{presentation.short}"' if presentation.short else None
-        if short_decl and getattr(presentation, "short_first", False):
-            args += [short_decl, long_decl]
-        else:
-            args += [long_decl] + ([short_decl] if short_decl else [])
+    args += [f'"{decl}"' for decl in form.decls]
     if getattr(presentation, "metavar", None):
         args.append(f"metavar={presentation.metavar!r}")
     if presentation.help:
         args.append(f"help={presentation.help!r}")
-    factory = "typer.Argument" if positional else "typer.Option"
+    factory = "typer.Argument" if form.positional else "typer.Option"
     return f"{typed}{eq}{factory}({', '.join(args)})"

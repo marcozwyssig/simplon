@@ -16,13 +16,15 @@ Product responsibilities that stay OUTSIDE this module:
 """
 from __future__ import annotations
 
+import functools
+import inspect
 import os
 import sys
 from typing import Callable, Mapping, Protocol
 
 import typer
 
-from delivery import log
+from delivery import log, signatures
 from delivery.context import ProductContext
 from delivery.orchestrator import manifest
 from delivery.orchestrator.product import StepFactoryContext, run_command
@@ -81,6 +83,90 @@ def _group_default_app(help_text: str, default_fn: Callable[..., object]) -> typ
     return ga
 
 
+def _rc(value: object) -> int:
+    """A body's return value as a process exit code.
+
+    `None` and an int are exit codes; ANYTHING ELSE IS IGNORED, deliberately differing from the generated
+    module's stricter `_rc`, which raises there. The two are not serving the same contract: a generated
+    module is rendered against bodies whose shape the product controls, while `assemble` binds whatever
+    body an arbitrary product already wrote - and Click has always discarded those return values, so a
+    body returning a log line or a result object is not a defect, it is a body written when the return
+    value could not matter. Raising would turn a working CLI into a crashing one on upgrade.
+
+    A bool is excluded on purpose: `return True` from such a body means success, and `int(True)` would
+    exit 1.
+    """
+    if value is None:
+        return 0
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return 0
+
+
+def _declaration(name: str, param, presentation) -> object:
+    """One parameter's LIVE Typer declaration, or its plain default when the manifest describes none.
+
+    The runtime twin of `signatures.option_decl`, which renders the same decision as SOURCE for the
+    generated module. Both ask `signatures.shape` so they cannot disagree: a body is meant to behave
+    identically under either mechanism, and until netctl#1444 it did not - `assemble` bound the raw body,
+    so a framework-free one lost every help text, every short flag and the positional-ness of its
+    arguments, silently turning `<product> commit some words` into `--message TEXT`.
+
+    Undeclared means UNTOUCHED: the body's own default is returned as-is. That is what keeps a product
+    whose bodies still carry `typer.Option(...)` defaults (infractl, biz-cockpit) assembling exactly as
+    before - their defaults ARE those objects, and they pass through here unchanged.
+    """
+    form = signatures.shape(name, required=param.required, presentation=presentation)
+    if not form.declared:
+        return param.default
+    kwargs: dict[str, object] = {}
+    if getattr(presentation, "metavar", None):
+        kwargs["metavar"] = presentation.metavar
+    if presentation.help:
+        kwargs["help"] = presentation.help
+    default = ... if param.required else param.default
+    if form.positional:
+        return typer.Argument(default, **kwargs)
+    return typer.Option(default, *form.decls, **kwargs)
+
+
+def _bound(fn: Callable[..., object], spec: manifest.CommandSpec,
+           *, where: str) -> Callable[..., object]:
+    """`fn` as a Typer callback: the manifest's `params:` applied, its `with:` pinned, its return value
+    coerced into the process exit code.
+
+    The wrapper carries an explicit `__signature__` rather than `*args/**kwargs` because Typer derives the
+    whole command line from it - every option, argument, default and annotation. A pinned parameter is
+    absent from that signature and supplied at call time, which is what `with:` means: the manifest fixes
+    it, so it is not on the command line at all (netctl#1442).
+    """
+    pinned = dict(spec.with_ or {})
+    presentation = spec.params or {}
+    params = signatures.bindable(fn)
+    known = {p.name for p in params}
+    unknown = sorted((set(pinned) | set(presentation)) - known)
+    if unknown:
+        raise ValueError(f"{where}: `with:`/`params:` name parameter(s) the impl does not take: "
+                         f"{', '.join(unknown)}")
+
+    sig = inspect.signature(fn)
+    keep = [p for p in sig.parameters.values()
+            if p.name not in pinned and not (p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD))]
+    by_name = {p.name: p for p in params}
+    new_params = [
+        p.replace(default=_declaration(p.name, by_name[p.name], presentation.get(p.name)))
+        if p.name in by_name else p
+        for p in keep
+    ]
+
+    @functools.wraps(fn)
+    def _wrapped(*args: object, **kwargs: object) -> None:
+        raise typer.Exit(code=_rc(fn(*args, **{**kwargs, **pinned})))
+
+    _wrapped.__signature__ = sig.replace(parameters=new_params)
+    return _wrapped
+
+
 def _command_callback(mf: manifest.Manifest, group: str, name: str, spec: manifest.CommandSpec,
                       step_context: StepFactoryContext | None) -> Callable[..., object]:
     """The Typer callback for one manifest command. A leaf resolves to its own impl callable, unchanged.
@@ -90,9 +176,17 @@ def _command_callback(mf: manifest.Manifest, group: str, name: str, spec: manife
     its own plan (`test all` vs `deploy all`). Binding an aggregate requires the product's
     `StepFactoryContext` (the `step_context` kwarg on `assemble`); a manifest that declares an aggregate
     while the product supplied none fails loudly at ASSEMBLY time, not at first invocation. The spec's
-    help becomes the closure's docstring, which Typer renders as the command help."""
+    help becomes the closure's docstring, which Typer renders as the command help.
+
+    A leaf's impl is WRAPPED rather than bound raw (netctl#1444). Click discards a callback's return
+    value in standalone mode - only a raised `typer.Exit` sets the process exit code - so a
+    framework-free body (`delivery.commands.*`: plain parameters, `return rc`) bound directly here
+    produced a CLI that always exited 0, however the body failed. The generated module has always
+    coerced (`_rc` + `typer.Exit` in the template); this is the same coercion, so one body behaves
+    identically under either mechanism. A body that raises `typer.Exit` itself never reaches the
+    coercion, so the older style is untouched."""
     if spec.impl:
-        return manifest.resolve_impl(spec)
+        return _bound(manifest.resolve_impl(spec), spec, where=f"{group} {name}")
     if step_context is None:
         raise ValueError(f"command '{group}.{name}' is an impl-less aggregate; "
                          "assemble(step_context=...) is required to bind it")
@@ -161,9 +255,7 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
     # no name collision with its same-named flat command). A group-default group (D4) is a sub-app too, but
     # its bare token runs the namesake member instead of printing group help.
     group_apps: dict[str, typer.Typer] = {}
-    for group in mf.groups:
-        if group in skipped_groups or tax.is_flat_command_group(group):
-            continue
+    for group in _group_paths(mf, tax, skipped_groups):
         env_first = tax.group_requires_env(group)
         if tax.is_group_default_command(group):
             ga = _group_default_app(mf.spec_for(group, group).help,
@@ -179,7 +271,17 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
                                    + addressed + " <cmd>` (default dev)."
                                    if env_first else "Environment-agnostic (no env).")))
         group_apps[group] = ga
-        app.add_typer(ga, name=group, rich_help_panel=(cd_panel if env_first else _CI_PANEL))
+
+    # A nested group hangs from its PARENT's sub-app under its LEAF name, not from the root under its
+    # dotted path (netctl#1444). Registering `support.git` on the root produced one shell token literally
+    # containing a dot - invokable only as `<product> support.git <cmd>`, which is not what any help text
+    # here or in the generated module claims. `_group_paths` yields ancestors first, so a parent's sub-app
+    # always exists by the time its child is attached.
+    for group, ga in group_apps.items():
+        parent, _, leaf = group.rpartition(".")
+        target = group_apps[parent] if parent else app
+        panel = cd_panel if tax.group_requires_env(group) else _CI_PANEL
+        target.add_typer(ga, name=leaf, rich_help_panel=panel)
 
     # each command under its group + a HIDDEN flat alias (same callback); a collapsed flat group's member is
     # registered ONCE as a VISIBLE flat top-level command. The callback comes from the manifest impl
@@ -221,6 +323,29 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
                 group_apps[group].command(name=name, hidden=spec.hidden, **kw)(fn)
                 if not tax.is_ambiguous(name):
                     app.command(name=name, hidden=True, **kw)(fn)
+
+
+def _group_paths(mf: manifest.Manifest, tax, skipped: frozenset[str]) -> list[str]:
+    """Every group that needs a sub-app, ANCESTORS FIRST.
+
+    `groups:` names only the nodes that hold members, so a nested group's ancestors (`support` above
+    `support.git`) can be declared in the `taxonomy:` block alone and still need a sub-app for their
+    children to hang from. Ordering matters because a child is attached to its parent's app.
+
+    A collapsed flat group is skipped: it has no sub-app, its single member is a top-level command. So is
+    a group the product registered from its generated module. Mirrors `taskgen._group_paths`, which is
+    what makes the two mechanisms produce the same tree.
+    """
+    out: list[str] = []
+    for group in mf.groups:
+        if group in skipped or tax.is_flat_command_group(group):
+            continue
+        parts = group.split(".")
+        for depth in range(1, len(parts) + 1):
+            path = ".".join(parts[:depth])
+            if path not in out and path not in skipped:
+                out.append(path)
+    return out
 
 
 def _skipped_groups(mf: manifest.Manifest, skip: frozenset[tuple[str, str]]) -> frozenset[str]:

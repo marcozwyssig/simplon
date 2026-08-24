@@ -93,7 +93,12 @@ def test_a_grouped_command_gets_a_hidden_flat_back_compat_alias_on_the_same_call
 
     # assert: hidden, and bound to the exact same callable resolved from the manifest impl.
     assert alias.hidden is True
-    assert alias.callback is sys.modules["demo_impls"].up
+    # `is` on the raw impl no longer holds: assemble WRAPS a leaf so the manifest's params:/with: apply
+    # and the body's return value becomes the exit code (netctl#1444). `functools.wraps` keeps the
+    # binding provable, and the flat alias must still be the SAME wrapper as the grouped registration -
+    # two wrappers would mean two callbacks that could drift.
+    assert alias.callback.__wrapped__ is sys.modules["demo_impls"].up
+    assert alias.callback is _group_command(assembled, "deploy", "up").callback
 
 
 def test_a_single_member_flat_group_is_one_visible_top_level_command_not_a_sub_app(assembled):
@@ -104,7 +109,7 @@ def test_a_single_member_flat_group_is_one_visible_top_level_command_not_a_sub_a
     # assert: 'build' is a VISIBLE flat command and has no sub-app.
     assert "build" not in groups
     assert flat["build"].hidden is False
-    assert flat["build"].callback is sys.modules["demo_impls"].build
+    assert flat["build"].callback.__wrapped__ is sys.modules["demo_impls"].build
 
 
 def test_a_name_owned_by_several_groups_gets_no_flat_alias(assembled):
@@ -236,7 +241,7 @@ def test_a_group_default_sibling_keeps_its_hidden_flat_back_compat_alias(gd_asse
 
     # assert: `diff` is registered as a HIDDEN top-level flat alias on the same callback...
     assert flat["diff"].hidden is True
-    assert flat["diff"].callback is sys.modules["gd_impls"].diff
+    assert flat["diff"].callback.__wrapped__ is sys.modules["gd_impls"].diff
     # ...and invoking it runs the sibling
     result = CliRunner().invoke(app, ["diff"])
     assert result.exit_code == 0, result.output
@@ -322,7 +327,7 @@ def test_a_hidden_grouped_command_keeps_its_hidden_flat_alias_and_stays_invocabl
 
     # assert: the flat alias was always hidden regardless, and dispatches the same callback
     assert flat["lint"].hidden is True
-    assert flat["lint"].callback is sys.modules["hidden_impls"].lint
+    assert flat["lint"].callback.__wrapped__ is sys.modules["hidden_impls"].lint
     result = CliRunner().invoke(hidden_assembled, ["lint"])
     assert result.exit_code == 0, result.output
 
@@ -498,7 +503,11 @@ def test_assemble_takes_help_from_the_manifest_for_commands_sharing_one_impl(sha
                 get_command(shared_impl_app).commands["test"].commands["smoke"].get_short_help_str(200))
 
     # assert: each renders its OWN manifest help, not the shared docstring
-    assert system.callback is smoke.callback
+    # Two commands sharing one impl now get their OWN wrapper each, and that is the stronger property:
+    # a wrapper carries that command's `params:` and its `with:` pins, so sharing one would make #1406's
+    # `gate(name="system")` next to `gate(name="smoke")` impossible. What must be shared is the BODY.
+    assert system.callback is not smoke.callback
+    assert system.callback.__wrapped__ is smoke.callback.__wrapped__
     assert rendered[0].startswith("SYSTEM gate")
     assert rendered[1].startswith("SMOKE gate")
 
@@ -572,3 +581,183 @@ def test_skipping_nothing_is_the_default_and_assembles_everything():
     # assert
     root = get_command(app)
     assert root.get_command(click.Context(root), "test") is not None
+
+
+# --- what assemble owes a framework-free body (netctl#1444) -------------------------------------------
+
+_RC_MANIFEST = """
+product: demo
+groups:
+  code:
+    ok:    { impl: "rc_impls:ok",     help: "Succeed." }
+    fail:  { impl: "rc_impls:fail",   help: "Fail with 3." }
+    chatty: { impl: "rc_impls:chatty", help: "Return something that is not an exit code." }
+env_groups: []
+"""
+
+
+@pytest.fixture
+def rc_app():
+    mod = types.ModuleType("rc_impls")
+    mod.ok = lambda: None
+    mod.fail = lambda: 3
+    mod.chatty = lambda: "done"
+    for name in ("ok", "fail", "chatty"):
+        getattr(mod, name).__name__ = name
+    sys.modules["rc_impls"] = mod
+    try:
+        app = typer.Typer(add_completion=False, no_args_is_help=True)
+        cli.assemble(app, manifest.load(_RC_MANIFEST), product="demo")
+        yield app
+    finally:
+        sys.modules.pop("rc_impls", None)
+
+
+def test_a_body_that_returns_an_exit_code_exits_with_it(rc_app):
+    # arrange: Click DISCARDS a callback's return value in standalone mode - only a raised typer.Exit sets
+    # the code. A framework-free body (`return rc`) bound raw therefore produced a CLI that always exited
+    # 0 however it failed, which is what this coupling exists to stop.
+    runner = CliRunner()
+
+    # act
+    result = runner.invoke(rc_app, ["code", "fail"])
+
+    # assert
+    assert result.exit_code == 3
+
+
+def test_a_body_that_returns_none_exits_zero(rc_app):
+    # arrange / act
+    result = CliRunner().invoke(rc_app, ["code", "ok"])
+
+    # assert
+    assert result.exit_code == 0
+
+
+def test_a_body_returning_something_that_is_not_an_exit_code_is_ignored_rather_than_fatal(rc_app):
+    # arrange: assemble binds whatever body a product ALREADY wrote, and Click has always thrown those
+    # values away - so a body returning a log line is not a defect, it is one written when the return
+    # value could not matter. Raising on it would turn a working CLI into a crashing one on upgrade.
+    # act
+    result = CliRunner().invoke(rc_app, ["code", "chatty"])
+
+    # assert
+    assert result.exit_code == 0
+
+
+_PRESENTED_MANIFEST = """
+product: demo
+groups:
+  code:
+    commit:
+      impl: "pres_impls:commit"
+      help: "Commit."
+      params:
+        message: { help: "commit message", argument: true }
+        dry_run: { help: "preview only", short: "-n" }
+    pin:
+      impl: "pres_impls:pin"
+      help: "Pin a site."
+      with: { site: "be" }
+env_groups: []
+"""
+
+
+@pytest.fixture
+def presented_app():
+    mod = types.ModuleType("pres_impls")
+
+    def commit(message: str = "", dry_run: bool = False):
+        return 0
+
+    def pin(site: str):
+        return 0
+
+    mod.commit, mod.pin = commit, pin
+    sys.modules["pres_impls"] = mod
+    try:
+        app = typer.Typer(add_completion=False, no_args_is_help=True)
+        cli.assemble(app, manifest.load(_PRESENTED_MANIFEST), product="demo")
+        yield app
+    finally:
+        sys.modules.pop("pres_impls", None)
+
+
+def test_assemble_applies_the_manifests_params_block(presented_app):
+    # arrange: the whole point of making bodies framework-free is that ONE body serves both mechanisms.
+    # Until netctl#1444 assemble bound the raw body, so everything the `params:` block carries - help,
+    # short flags, positional-ness - was silently absent on this path while the generated module had it.
+    cmd = get_command(presented_app).commands["code"].commands["commit"]
+
+    # act
+    by_name = {p.name: p for p in cmd.params}
+
+    # assert
+    assert isinstance(by_name["message"], click.Argument)
+    assert by_name["dry_run"].opts == ["--dry-run"] and by_name["dry_run"].secondary_opts == ["-n"] or \
+           by_name["dry_run"].opts == ["--dry-run", "-n"]
+    assert by_name["dry_run"].help == "preview only"
+
+
+def test_a_pinned_parameter_is_absent_from_the_command_line(presented_app):
+    # arrange: `with:` FIXES a parameter, so it is not a command-line parameter at all - the same rule the
+    # generated module follows. A required parameter pinned this way must not resurface as an argument.
+    cmd = get_command(presented_app).commands["code"].commands["pin"]
+
+    # act / assert
+    assert [p.name for p in cmd.params] == []
+
+
+def test_a_with_key_naming_no_parameter_of_the_impl_is_rejected():
+    # arrange: a silently ignored pin is the failure this check exists for
+    text = _PRESENTED_MANIFEST.replace('with: { site: "be" }', 'with: { sight: "be" }')
+    mod = types.ModuleType("pres_impls")
+    mod.commit = lambda message="", dry_run=False: 0
+    mod.pin = lambda site: 0
+    sys.modules["pres_impls"] = mod
+    try:
+        app = typer.Typer(add_completion=False, no_args_is_help=True)
+
+        # act / assert
+        with pytest.raises(ValueError, match="sight"):
+            cli.assemble(app, manifest.load(text), product="demo")
+    finally:
+        sys.modules.pop("pres_impls", None)
+
+
+_NESTED_MANIFEST = """
+product: demo
+taxonomy:
+  support:
+    help: "Host upkeep."
+    groups:
+      git: { help: "Version control." }
+groups:
+  support:
+    doctor: { impl: "demo_impls:lint", help: "Check the host." }
+  support.git:
+    push: { impl: "demo_impls:up", help: "Push." }
+env_groups: []
+"""
+
+
+def test_a_nested_group_hangs_from_its_parent_not_from_the_root():
+    # arrange: assemble used to call add_typer(name="support.git") on the ROOT, producing one shell token
+    # containing a dot - invokable only as `demo support.git push`, which no help text ever claimed
+    # (netctl#1444). The generated module always nested; this is the two mechanisms agreeing again.
+    sys.modules["demo_impls"] = _impls_module()
+    try:
+        app = typer.Typer(add_completion=False, no_args_is_help=True)
+        cli.assemble(app, manifest.load(_NESTED_MANIFEST), product="demo")
+        root = get_command(app)
+        ctx = click.Context(root)
+
+        # act
+        support = root.get_command(ctx, "support")
+
+        # assert
+        assert [n for n in root.list_commands(ctx) if "." in n] == []
+        assert "git" in support.list_commands(click.Context(support))
+        assert support.get_command(click.Context(support), "git").get_short_help_str(60).startswith("git")
+    finally:
+        sys.modules.pop("demo_impls", None)
