@@ -16,9 +16,9 @@ from delivery.commands import tasks
 
 _MANIFEST = """
 groups:
-  git:
+  support.git:
     push: { impl: "delivery.test_impls:nullary", help: "Push." }
-generate: [git]
+generate: [support.git]
 env_groups: []
 """
 

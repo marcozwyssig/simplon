@@ -12,7 +12,7 @@ product: sample
 images:
   web: sample:local
 groups:
-  code:
+  test:
     lint: { impl: "sample.cli:lint", help: "Lint the thing." }
 env_groups: []
 """
@@ -71,8 +71,8 @@ def test_manifest_parses_and_validates_the_command_taxonomy(tmp_path):
     mf = ctx.manifest()
 
     # assert: the CLI engine gets the parsed taxonomy
-    assert mf.groups == {"code": ("lint",)}
-    assert mf.spec_for("code", "lint").help == "Lint the thing."
+    assert mf.groups == {"test": ("lint",)}
+    assert mf.spec_for("test", "lint").help == "Lint the thing."
 
 
 def test_manifest_data_fails_loudly_on_a_missing_file(tmp_path):

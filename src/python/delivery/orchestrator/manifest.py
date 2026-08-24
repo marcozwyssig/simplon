@@ -720,6 +720,8 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     # a bare key whose shape either taxonomy already declares is that group's MEMBERS, not a second
     # declaration of it - contributing members to a catalogue group is the whole point (netctl#1444).
     catalogue_taxonomy = getattr(catalogue, "taxonomy", {}) or {}
+    if catalogue_taxonomy:
+        _enforce_the_catalogue_owns_the_groups(groups, model.taxonomy, catalogue_taxonomy)
     shaped = merge_trees(_catalogue_tree(catalogue_taxonomy, groups),
                          _catalogue_tree(model.taxonomy, groups))
     tree = {**shaped,
@@ -846,6 +848,56 @@ def _flat_tree(members: dict[str, tuple[str, ...]],
     """
     return {name: TaxonomyNode(name=name, commands=cmds, env_first=name in env_groups)
             for name, cmds in members.items() if "." not in name and name not in declared}
+
+
+def _enforce_the_catalogue_owns_the_groups(members: dict[str, tuple[str, ...]],
+                                           product_taxonomy: dict[str, dict],
+                                           catalogue_taxonomy: dict[str, dict]) -> None:
+    """Once the catalogue shapes the loop, it owns which groups EXIST - not merely what they look like.
+
+    netctl#1444 moved the `taxonomy:` block onto the platform so every *ctl product runs the same
+    build -> test -> release -> deploy -> monitor loop. It stopped one step short: a product could still
+    invent a top-level group by writing a bare `groups:` key nobody had declared, and `_flat_tree` would
+    dutifully emit a node for it. Shape without existence is most of the value gone - the promise is that
+    a person moving between two products finds the same groups with the same general tasks in them, and a
+    product that can put `lint` beside `test` or `ci` beside `build` has broken exactly that promise. This
+    is not hypothetical: biz-cockpit declares four such groups today (netctl#1462).
+
+    Two things are refused, and the second is what makes the first stick:
+
+      - a bare `groups:` key the catalogue's taxonomy does not declare;
+      - the product's OWN `taxonomy:` block, in full. It is the loophole: a product free to declare its
+        own shape can declare anything and then pass a check that asks only whether SOME taxonomy knows
+        the group. Refusing it outright is the only version of this rule that holds.
+
+    What stays wide open is the thing products actually need - adding TASKS. A product contributes members
+    to a platform group exactly as before, including commands the catalogue has never heard of, which is
+    how a product-specific body lives in a shared group.
+
+    Dotted keys are not checked here. `support.git` names members of a node the catalogue already built,
+    and `load()` validates every dotted key against the finished tree straight after this - a check that
+    predates the lock and is strictly stronger for that case.
+
+    The whole rule is conditional on the catalogue declaring a taxonomy. A product on a tasks-only
+    catalogue, and every fixture that parses a manifest with no catalogue at all, keeps today's freedom -
+    which is what lets a product adopt the shape in its own time rather than in one jump.
+    """
+    if product_taxonomy:
+        raise ValueError(
+            "a product manifest may not declare `taxonomy:` when the catalogue declares one: the platform "
+            "owns the CI/CD loop's shape so every product runs the same one (declared here: "
+            f"{', '.join(sorted(product_taxonomy))}). Contribute MEMBERS through `groups:` instead, or add "
+            "the group to the catalogue's `taxonomy:`, where every product gets it")
+
+    unknown = sorted(name for name in members if "." not in name and name not in catalogue_taxonomy)
+    if unknown:
+        raise ValueError(
+            f"groups entry '{unknown[0]}' names a group the catalogue's `taxonomy:` does not declare"
+            + (f" (also: {', '.join(unknown[1:])})" if len(unknown) > 1 else "")
+            + f". The platform owns which groups exist, so that the same groups and the same general "
+              f"tasks are there in every product. Available: {', '.join(sorted(catalogue_taxonomy))}. "
+              f"Either put these commands in one of those, or declare the new group in the catalogue's "
+              f"`taxonomy:` - once, for everybody")
 
 
 def _validate_param_bindings(commands: dict[str, dict[str, "CommandSpec"]]) -> None:

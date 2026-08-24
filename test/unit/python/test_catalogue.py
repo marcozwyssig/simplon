@@ -367,10 +367,11 @@ env_groups: []
     assert mf.groups["build"] == ("compile",)
 
 
-def test_a_group_shaped_in_both_the_catalogue_and_the_product_is_rejected():
-    # arrange: the contradiction the merge rule exists for, and the ONE the loader can now actually
-    # produce - two files, each declaring the same group's shape. With a winner a reader would have to
-    # know which file won to predict the surface.
+def test_a_product_may_not_shape_the_tree_at_all_once_the_catalogue_does():
+    # arrange: the `taxonomy:` block is the loophole in the lock below - a product that may declare its
+    # own shape can declare any group and then satisfy a check that asks "is it in SOME taxonomy". So
+    # once the catalogue shapes the loop, the product's block is refused outright rather than merged.
+    # This case used to be allowed as a "contradiction" only when the two files named the SAME group.
     text = """
 taxonomy:
   build: { help: "The product's own build." }
@@ -381,7 +382,7 @@ env_groups: []
 """
 
     # act / assert
-    with pytest.raises(ValueError, match="build"):
+    with pytest.raises(ValueError, match="taxonomy"):
         manifest.load(text, catalogue=catalogue.loads(_SHAPED))
 
 
@@ -403,8 +404,71 @@ env_groups: []
     assert mf.taxonomy().group_requires_env("deploy") is True
 
 
-def test_a_product_may_still_declare_a_group_the_catalogue_does_not_have():
-    # arrange: the documented exception - a product's own group, visible as one
+def test_a_group_the_catalogue_does_not_declare_is_rejected(): 
+    # arrange: the lock (netctl#1462). A product used to be able to invent a top-level group out of thin
+    # air, which left the catalogue owning a group's SHAPE but not its EXISTENCE - and that is most of
+    # the value gone. The point of hoisting the taxonomy onto the platform is that every *ctl product
+    # runs the SAME loop under the SAME group names, so the general tasks sit in the same place
+    # everywhere. A product that can put `lint` next to `test` has the drift back.
+    text = """
+groups:
+  bespoke:
+    thing: { impl: "delivery.test_impls:nullary", help: "Do the thing." }
+env_groups: []
+"""
+
+    # act / assert: the message has to name the way out, because "not allowed" alone leaves an author
+    # with a legitimate new group nowhere to go - the way out is the catalogue, where every product
+    # gets it.
+    with pytest.raises(ValueError, match="bespoke") as exc:
+        manifest.load(text, catalogue=catalogue.loads(_SHAPED))
+    assert "taxonomy" in str(exc.value)
+
+
+def test_a_product_adds_a_task_the_catalogue_never_heard_of_to_a_platform_group():
+    # arrange: the freedom the lock must NOT touch. Groups are fixed; TASKS are the product's own. This
+    # command exists in no catalogue at all - it is netctl's `wireguard-guard` case, a product-specific
+    # body in a platform group.
+    text = """
+groups:
+  build:
+    something-only-this-product-has: { impl: "delivery.test_impls:nullary", help: "Very specific." }
+env_groups: []
+"""
+
+    # act
+    mf = manifest.load(text, catalogue=catalogue.loads(_SHAPED))
+
+    # assert
+    assert mf.tree["build"].commands == ("something-only-this-product-has",)
+
+
+def test_a_nested_group_the_catalogue_declares_is_reachable_by_its_dotted_path():
+    # arrange: the lock is on TOP-LEVEL keys; a dotted key names members of a node the catalogue already
+    # built, and has always been validated against the tree separately. Asserted here so a future
+    # tightening of the lock cannot quietly take `support.git` with it.
+    text = """
+groups:
+  support.git:
+    push: { impl: "delivery.test_impls:nullary", help: "Push." }
+env_groups: []
+"""
+
+    # act
+    mf = manifest.load(text, catalogue=catalogue.loads(_SHAPED))
+
+    # assert
+    assert mf.tree["support"].groups["git"].commands == ("push",)
+
+
+def test_without_a_catalogue_taxonomy_a_product_still_owns_its_own_tree():
+    # arrange: the lock is conditional on the catalogue actually shaping something. A product on a
+    # catalogue that offers only tasks - and every pure-parse fixture, which loads with no catalogue at
+    # all - keeps the freedom it has today, which is what lets a product adopt the shape in its own time.
+    tasks_only = """
+tasks:
+  vcs:push: { impl: "delivery.test_impls:nullary", help: "Push." }
+"""
     text = """
 groups:
   bespoke:
@@ -413,10 +477,10 @@ env_groups: []
 """
 
     # act
-    mf = manifest.load(text, catalogue=catalogue.loads(_SHAPED))
+    mf = manifest.load(text, catalogue=catalogue.loads(tasks_only))
 
     # assert
-    assert sorted(mf.tree) == ["bespoke", "build", "deploy", "support"]
+    assert sorted(mf.tree) == ["bespoke"]
 
 
 def test_a_catalogue_taxonomy_that_is_not_a_mapping_is_rejected():
