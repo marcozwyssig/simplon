@@ -97,3 +97,70 @@ def _merge_commands(base: dict, extra: dict, where: str) -> dict:
                 f"task-backed and aggregate is a different command wearing the same name - give it one")
         out[name] = {**inherited, **spec}
     return out
+
+
+# Keys a task supplies to every command that instantiates it, where the command does not say otherwise.
+# `impl` is not here because it is never the command's to declare; `with` is not here because a template
+# that pinned a value would not be a template.
+INHERITED = ("help", "passthrough_args")
+
+
+def resolve(flat: dict, product_tasks: dict, catalogue_tasks: dict) -> dict:
+    """Every command's `task:` replaced by the template it names.
+
+    ONE resolution function, two sources: a name CONTAINING a colon is a catalogue coordinate, a name
+    without one is a task defined in the manifest doing the referring. The two name spaces cannot
+    intersect, so nothing shadows anything and there is no precedence rule to remember.
+    """
+    out: dict[str, dict] = {}
+    for path, members in (flat or {}).items():
+        resolved: dict[str, dict] = {}
+        for name, spec in (members or {}).items():
+            resolved[str(name)] = _resolve_one(dict(spec or {}), f"{path} {name}",
+                                               product_tasks, catalogue_tasks)
+        out[str(path)] = resolved
+    return out
+
+
+def _resolve_one(spec: dict, where: str, product_tasks: dict, catalogue_tasks: dict) -> dict:
+    if "impl" in spec:
+        raise ValueError(
+            f"command '{where}' declares `impl:`. A command is an instance of a task: declare the body "
+            f"once under `tasks:` and point this command at it with `task:`")
+    ref = spec.pop("task", None)
+    if ref is None:
+        if not spec.get("depends_on"):
+            raise ValueError(
+                f"command '{where}' declares neither `task:` nor `depends_on:`. A command either "
+                f"instantiates a task or is an aggregate that plans other commands")
+        return spec
+    if spec.get("depends_on"):
+        raise ValueError(
+            f"command '{where}' declares both `task:` and `depends_on:`. A command either instantiates "
+            f"a task or plans other commands, never both - split it into two")
+
+    ref = str(ref)
+    source, kind = (catalogue_tasks, "the platform catalogue") if ":" in ref else (product_tasks,
+                                                                                  "this manifest")
+    if ref not in (source or {}):
+        offered = ", ".join(sorted(source or {})) or "(none)"
+        raise ValueError(
+            f"command '{where}' names no task: '{ref}' is not declared by {kind}. A name with a colon "
+            f"is a platform coordinate, a name without one is a task in this manifest's `tasks:`. "
+            f"Available there: {offered}")
+
+    template = dict((source or {})[ref])
+    out = {"impl": template["impl"], **spec}
+    for key in INHERITED:
+        if key not in out and key in template:
+            out[key] = template[key]
+    params = {**(template.get("params") or {}), **(spec.get("params") or {})}
+    pinned = sorted(set(spec.get("with") or {}) & set(params))
+    if pinned:
+        raise ValueError(
+            f"command '{where}' pins {', '.join(pinned)} with `with:` and also declares `params:` for "
+            f"it. A pinned parameter is off the command line, so its presentation renders nowhere - "
+            f"drop the `params:` entry, or drop the pin if the user should still be able to set it")
+    if params:
+        out["params"] = params
+    return out
