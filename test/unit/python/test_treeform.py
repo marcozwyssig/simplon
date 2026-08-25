@@ -387,6 +387,35 @@ def test_a_mixed_manifest_loads_both_halves(tmp_path):
     assert mf.commands["test"]["unit-java"].impl == "demo.cli:unit_java"
 
 
+def test_a_group_the_platform_places_a_command_in_while_the_product_keeps_it_old_form_is_rejected():
+    # arrange: `merge` seeds its output from EVERY catalogue group, not only the ones this manifest
+    # migrated, so `resolved` can carry a platform-placed command for a group ("test") the product has
+    # NOT touched at all - meanwhile the product's own `groups:` still declares "test" the old way, with
+    # its own members. A silent `{**resolved, **old_form}` would let one side vanish with no error.
+    catalogue = catalogue_mod.loads(textwrap.dedent("""
+        tasks:
+          unit-py: { impl: "delivery.tasks.x:y", help: "run the python gate." }
+        groups:
+          build: { help: "Produce the artefacts." }
+          test:  { help: "Verify them.", commands: { unit-py: { task: unit-py, help: "run it." } } }
+    """))
+    text = textwrap.dedent("""
+        product: demo
+        tasks:
+          img: { impl: "demo.tooling:image", help: "Build an image." }
+        groups:
+          build:
+            commands:
+              web-image: { task: img, help: "Build the web image." }
+          test:
+            unit-java: { impl: "demo.cli:unit_java", help: "Run the Java unit gate." }
+    """)
+
+    # act / assert
+    with pytest.raises(ValueError, match="placed by the platform's command tree AND still declared"):
+        manifest.load(text, catalogue=catalogue)
+
+
 def test_a_block_whose_nodes_carry_node_keys_is_new_form():
     # arrange
     new = {"build": {"help": "Produce.", "commands": {"web-image": {"task": "img"}}}}

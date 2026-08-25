@@ -725,8 +725,25 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
         product_tasks = dict(tasks_block or {})
         treeform.check_every_task_is_used(flat, product_tasks)
         resolved = treeform.resolve(flat, product_tasks, getattr(catalogue, "tasks", {}) or {})
-        # See the precedence note above `partition`'s call: the two halves have disjoint keys by
-        # construction, so `{**resolved, **old_form}` is documentation rather than logic.
+        # `resolved` and `old_form` are NOT disjoint in general, despite `partition` splitting THIS
+        # manifest's `groups:` block by key: `treeform.merge` seeds its output with EVERY top-level key
+        # of the platform's own `catalogue.groups`, not only the ones `new_form` named, so `resolved`
+        # always carries every platform group - most of them empty until a product places a command
+        # there. An EMPTY overlap is the normal, safe state during a migration: the platform group has
+        # no command of its own yet, so `old_form` winning it in the merge below drops nothing. A
+        # NON-EMPTY overlap means a command is placed on BOTH sides of one group name - the platform (or
+        # an already-migrated sibling) under the new form, this manifest still under the old - and the
+        # dict merge would silently pick one side and drop the other's commands with no error anywhere.
+        # That case is rejected rather than merged.
+        collisions = {group: members for group, members in resolved.items()
+                     if members and group in old_form}
+        if collisions:
+            group, members = sorted(collisions.items())[0]
+            raise ValueError(
+                f"group '{group}' is placed by the platform's command tree AND still declared old-form "
+                f"in this manifest. New-form commands: {sorted(members)}; old-form commands: "
+                f"{sorted(old_form[group])}. Migrate '{group}' to the new form (add `commands:`/`task:` "
+                f"under it) before its old-form entry can be removed")
         data = {**data, "groups": {**resolved, **old_form}, "tasks": {}}
     else:
         data = _expand_imports(data, catalogue)
