@@ -79,15 +79,33 @@ def catalogue() -> int:
 
 
 def _imported_namespaces(data: dict) -> frozenset[str]:
-    """The namespaces a product's raw manifest imports from the delivery catalogue.
+    """The namespaces a product's command tree actually points a `task:` coordinate at.
 
-    Read from the RAW mapping rather than the parsed manifest on purpose: `import:` is folded into
-    `groups:` during loading and is gone by the time the parsed form exists, so the parsed manifest cannot
-    answer which namespaces were named. A product that imports nothing yields an empty set rather than an
-    error - naming no coordinate is a legitimate state, and the listing is still worth printing.
+    Derived from the `task:` references the product's RAW `groups:` tree uses, not from a separate
+    declaration (netctl#1469 plan 2). `import:` only recorded what a product declared it MIGHT use, and
+    the new command-tree form forbids the section outright - a marker built on it would go silent, and
+    quietly, the moment a product finishes migrating. This is more useful than the old marker anyway: it
+    reflects what the product's commands actually reach, not what it once declared it might.
+
+    Walked generically rather than via `treeform`'s node-shaped walk, because the raw tree can be a MIX
+    of old-form groups (no `task:` concept at all) and new-form ones for as long as a migration takes
+    (plan 2's per-group partition) - a plain recursive walk over whatever nesting is there needs no
+    knowledge of which shape a given node is in. A `task:` value containing a colon is a platform
+    coordinate ("namespace:name"); a bare name refers to a task the manifest defines itself and carries
+    no namespace to report.
     """
-    section = (data or {}).get("import") or {}
-    if not isinstance(section, dict):
-        return frozenset()
-    names = section.get("delivery") or []
-    return frozenset(str(name) for name in names) if isinstance(names, list) else frozenset()
+    found: set[str] = set()
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            ref = node.get("task")
+            if isinstance(ref, str) and ":" in ref:
+                found.add(ref.split(":", 1)[0])
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk((data or {}).get("groups") or {})
+    return frozenset(found)

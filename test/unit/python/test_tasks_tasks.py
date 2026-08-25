@@ -9,6 +9,8 @@ listing survives a product importing nothing.
 
 AAA throughout, including the negative cases.
 """
+import textwrap
+
 import pytest
 
 from delivery import context
@@ -122,10 +124,18 @@ def test_catalogue_prints_every_namespace_the_kernel_offers(product, capsys):
     assert "prune-branches" in out
 
 
-def test_catalogue_marks_the_namespaces_the_product_imports(tmp_path, monkeypatch, capsys):
-    # arrange
+def test_catalogue_marks_the_namespaces_a_task_coordinate_actually_reaches(tmp_path, monkeypatch, capsys):
+    # arrange: a new-form command tree naming a platform coordinate under `task:` (netctl#1469 plan 2) -
+    # the marker no longer comes from a separate `import:` declaration
     manifest_path = tmp_path / "sample.yaml"
-    manifest_path.write_text("import:\n  delivery: [vcs]\n" + _MANIFEST, encoding="utf-8")
+    manifest_path.write_text(textwrap.dedent("""
+        groups:
+          support:
+            commands:
+              push: { task: "vcs:push", help: "Push." }
+        generate: [support]
+        env_groups: []
+    """), encoding="utf-8")
     monkeypatch.setattr(context, "_current", context.ProductContext(
         name="sample", root=tmp_path, manifest_path=manifest_path))
 
@@ -136,6 +146,31 @@ def test_catalogue_marks_the_namespaces_the_product_imports(tmp_path, monkeypatc
     out = capsys.readouterr().out
     assert "vcs (imported)" in out
     assert "test (imported)" not in out
+
+
+def test_catalogue_marks_nothing_for_a_bare_task_name_with_no_namespace(tmp_path, monkeypatch, capsys):
+    # arrange: a `task:` naming a task the manifest defines ITSELF carries no colon and no namespace -
+    # only a platform coordinate is a namespace reference
+    manifest_path = tmp_path / "sample.yaml"
+    manifest_path.write_text(textwrap.dedent("""
+        tasks:
+          lab-image: { impl: "demo.tooling:image", help: "Build an image." }
+        groups:
+          build:
+            commands:
+              frr-image: { task: lab-image, help: "Build the FRR image." }
+        generate: [build]
+        env_groups: []
+    """), encoding="utf-8")
+    monkeypatch.setattr(context, "_current", context.ProductContext(
+        name="sample", root=tmp_path, manifest_path=manifest_path))
+
+    # act
+    rc = tasks.catalogue()
+
+    # assert
+    assert rc == 0
+    assert "(imported)" not in capsys.readouterr().out
 
 
 def test_catalogue_marks_nothing_for_a_product_that_imports_no_coordinate(product, capsys):
