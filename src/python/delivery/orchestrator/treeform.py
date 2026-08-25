@@ -164,3 +164,47 @@ def _resolve_one(spec: dict, where: str, product_tasks: dict, catalogue_tasks: d
     if params:
         out["params"] = params
     return out
+
+
+def is_new_form(groups: dict) -> bool:
+    """Whether a `groups:` block is a command TREE rather than the old group -> member mapping.
+
+    A node that declares any of the four node keys is a tree node; a node whose keys are all command
+    names is an old-form group. Total in practice, and checked before this rule shipped: no group member
+    in netctl.yaml or infractl.yaml is named `help`, `env_first`, `groups` or `commands`.
+    """
+    return any(isinstance(node, dict) and any(key in node for key in NODE_KEYS)
+               for node in (groups or {}).values())
+
+
+def check_no_stale_import(data: dict) -> None:
+    """Reject an `import:` section in a new-form manifest (netctl#1469).
+
+    `import:` made catalogue coordinates AVAILABLE so a product could place them. The platform now
+    places the general ones itself and a command names any other coordinate directly, so the section has
+    no meaning - and a section with no meaning that loads without complaint is how a product comes to
+    believe it imported something.
+    """
+    if data.get("import"):
+        raise ValueError(
+            "`import:` has no meaning in a manifest that declares a command tree: the platform places "
+            "the general commands itself, and a command names any other task directly with "
+            "`task: \"<namespace>:<name>\"`. Delete the section")
+
+
+def check_every_task_is_used(flat: dict, product_tasks: dict) -> None:
+    """Reject a task this manifest declares and no command in it instantiates.
+
+    Scoped to the PRODUCT on purpose. The kernel's `tasks:` is an offer - it deliberately declares more
+    than its own `groups:` places, because a task needing product data (a `nexus:` section, a running
+    lab) must not become a baseline command that dies on its first line.
+    """
+    used = {str(spec.get("task")) for members in (flat or {}).values()
+            for spec in (members or {}).values() if spec.get("task")}
+    orphans = sorted(name for name in (product_tasks or {}) if name not in used)
+    if orphans:
+        raise ValueError(
+            f"task '{orphans[0]}' is declared and no command instantiates it"
+            + (f" (also: {', '.join(orphans[1:])})" if len(orphans) > 1 else "")
+            + ". A template nobody uses is a dead declaration: add a command for it under `groups:`, or "
+              "delete it")

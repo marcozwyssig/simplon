@@ -201,3 +201,56 @@ def test_a_params_entry_for_a_pinned_parameter_is_rejected():
     # act / assert
     with pytest.raises(ValueError, match="pins .* with `with:`"):
         treeform.resolve(flat, tasks, {})
+
+
+def test_a_block_whose_nodes_carry_node_keys_is_new_form():
+    # arrange
+    new = {"build": {"help": "Produce.", "commands": {"web-image": {"task": "img"}}}}
+
+    # act / assert
+    assert treeform.is_new_form(new) is True
+
+
+def test_the_old_group_to_member_block_is_not_new_form():
+    # arrange: the shape netctl.yaml carries today
+    old = {"build": {"web-image": {"impl": "orchestrator.cli:web_image_cmd", "help": "h."}}}
+
+    # act / assert
+    assert treeform.is_new_form(old) is False
+
+
+def test_an_empty_block_is_not_new_form():
+    # arrange / act / assert: no nodes means nothing to detect, and the old path is the safe default
+    assert treeform.is_new_form({}) is False
+
+
+def test_an_import_section_in_a_new_form_manifest_is_rejected():
+    # arrange: `import:` is the OLD form's way of making coordinates available. Left in a new-form
+    # manifest it would be quietly ignored, which is how a product ends up believing it imported
+    # something. Loud beats ignored.
+    with pytest.raises(ValueError, match="`import:` has no meaning"):
+        treeform.check_no_stale_import({"import": {"delivery": ["vcs"]}})
+
+
+def test_a_new_form_manifest_without_an_import_section_passes_the_check():
+    # arrange / act / assert: no exception
+    treeform.check_no_stale_import({"product": "demo", "groups": {}})
+
+
+def test_a_product_task_no_command_instantiates_is_rejected():
+    # arrange: a template nobody uses is a dead declaration
+    flat = {"build": {"frr-image": {"task": "lab-image"}}}
+    tasks = {"lab-image": {"impl": "a:b", "help": "h."}, "orphan": {"impl": "c:d", "help": "h."}}
+
+    # act / assert
+    with pytest.raises(ValueError, match="no command instantiates"):
+        treeform.check_every_task_is_used(flat, tasks)
+
+
+def test_every_instantiated_product_task_passes_the_check():
+    # arrange
+    flat = {"build": {"frr-image": {"task": "lab-image"}, "web-image": {"depends_on": ["aot"]}}}
+    tasks = {"lab-image": {"impl": "a:b", "help": "h."}}
+
+    # act / assert: no exception
+    treeform.check_every_task_is_used(flat, tasks)
