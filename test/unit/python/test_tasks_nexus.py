@@ -1,4 +1,4 @@
-"""Unit tests for delivery.commands.nexus (netctl#1405, framework-free since netctl#1444): the thin body
+"""Unit tests for delivery.tasks.nexus (netctl#1405, framework-free since netctl#1444): the thin body
 a product's manifest points its `impl:` at.
 
 The MECHANISM - probe, reconcile, report - is `delivery.nexus` and is covered by test_nexus.py. What is
@@ -10,7 +10,7 @@ AAA throughout.
 import inspect
 from pathlib import Path
 
-from delivery.commands import nexus as nexus_cmd
+from delivery.tasks import nexus as nexus_cmd
 
 
 def test_nexus_cmd_keeps_its_member_payload_parameter():

@@ -134,7 +134,7 @@ def test_an_unknown_key_on_a_group_node_in_merge_is_rejected():
         treeform.merge(KERNEL, product)
 
 
-CATALOGUE_TASKS = {"vcs:push": {"impl": "delivery.commands.vcs:push", "help": "push it.",
+CATALOGUE_TASKS = {"vcs:push": {"impl": "delivery.tasks.vcs:push", "help": "push it.",
                                 "params": {"remote": {"help": "the remote"}}}}
 PRODUCT_TASKS = {"lab-image": {"impl": "orchestrator.tooling:lab_image", "help": "build an image."}}
 
@@ -148,7 +148,7 @@ def test_a_coordinate_resolves_against_the_catalogue():
 
     # assert: impl and the template's help and params come along, and `task` is gone
     assert resolved["support.git"]["push"] == {
-        "impl": "delivery.commands.vcs:push", "help": "push it.",
+        "impl": "delivery.tasks.vcs:push", "help": "push it.",
         "params": {"remote": {"help": "the remote"}}}
 
 
@@ -170,7 +170,7 @@ def test_two_commands_may_instantiate_one_task():
     # arrange: the case netctl#1406 recorded as unmigratable - one coordinate, two commands
     flat = {"test": {"system": {"task": "gate", "with": {"name": "system"}},
                      "acceptance": {"task": "gate", "with": {"name": "acceptance"}}}}
-    tasks = {"gate": {"impl": "delivery.commands.testrun:gate", "help": "run a suite."}}
+    tasks = {"gate": {"impl": "delivery.tasks.testrun:gate", "help": "run a suite."}}
 
     # act
     resolved = treeform.resolve(flat, tasks, {})
@@ -178,7 +178,7 @@ def test_two_commands_may_instantiate_one_task():
     # assert
     assert resolved["test"]["system"]["with"] == {"name": "system"}
     assert resolved["test"]["acceptance"]["with"] == {"name": "acceptance"}
-    assert {c["impl"] for c in resolved["test"].values()} == {"delivery.commands.testrun:gate"}
+    assert {c["impl"] for c in resolved["test"].values()} == {"delivery.tasks.testrun:gate"}
 
 
 def test_a_command_naming_a_task_that_does_not_exist_is_rejected():
@@ -223,7 +223,7 @@ def test_a_params_entry_for_a_pinned_parameter_is_rejected():
     # declaration that renders nowhere - the failure this model exists to stop
     flat = {"test": {"system": {"task": "gate", "with": {"name": "system"},
                                 "params": {"name": {"help": "the suite"}}}}}
-    tasks = {"gate": {"impl": "delivery.commands.testrun:gate", "help": "run a suite."}}
+    tasks = {"gate": {"impl": "delivery.tasks.testrun:gate", "help": "run a suite."}}
 
     # act / assert
     with pytest.raises(ValueError, match="pins .* with `with:`"):

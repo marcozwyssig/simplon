@@ -1,4 +1,4 @@
-"""Unit tests for delivery.commands.tasks (netctl#1444): the two verbs that make the task machinery
+"""Unit tests for delivery.tasks.tasks (netctl#1444): the two verbs that make the task machinery
 addressable - `generate` (write the product's committed CLI module) and `catalogue` (print the coordinate
 space).
 
@@ -12,7 +12,7 @@ AAA throughout, including the negative cases.
 import pytest
 
 from delivery import context
-from delivery.commands import tasks
+from delivery.tasks import tasks
 
 _MANIFEST = """
 groups:

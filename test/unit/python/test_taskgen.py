@@ -333,7 +333,7 @@ groups:
 
 
 def test_a_body_without_a_context_parameter_is_not_handed_one(tmp_path):
-    # arrange: delivery.commands.vcs:commit takes its payload FIRST and no Context at all. Dropping
+    # arrange: delivery.tasks.vcs:commit takes its payload FIRST and no Context at all. Dropping
     # parameter 0 by position discarded the payload and passed a Context object in its place.
     m = _load('''
 groups:
@@ -350,7 +350,7 @@ groups:
 
 
 def test_a_body_with_no_parameters_at_all_is_called_with_none(tmp_path):
-    # arrange: delivery.commands.vcs:push takes nothing; `push(c)` raised TypeError at call time
+    # arrange: delivery.tasks.vcs:push takes nothing; `push(c)` raised TypeError at call time
     m = _load('''
 groups:
   git:

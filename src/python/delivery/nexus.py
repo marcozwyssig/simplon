@@ -221,7 +221,7 @@ class NexusConfig:
 def declared(data: Mapping[str, object], root: Path, source: str = "manifest") -> NexusConfig:
     """The `nexus` section as a NexusConfig, validated LOUDLY.
 
-    Same discipline as `delivery.commands.claudeplugins.declared`: a malformed section fails HERE, naming
+    Same discipline as `delivery.tasks.claudeplugins.declared`: a malformed section fails HERE, naming
     the offending key and the file, rather than surfacing later as a probe of a nonsense URL or a
     `docker compose -f` on a path that was never a path. The two file keys are resolved RELATIVE TO THE
     PRODUCT ROOT, so the manifest carries a repo-relative path and never an absolute one.

@@ -180,7 +180,7 @@ def _command_callback(mf: manifest.Manifest, group: str, name: str, spec: manife
 
     A leaf's impl is WRAPPED rather than bound raw (netctl#1444). Click discards a callback's return
     value in standalone mode - only a raised `typer.Exit` sets the process exit code - so a
-    framework-free body (`delivery.commands.*`: plain parameters, `return rc`) bound directly here
+    framework-free body (`delivery.tasks.*`: plain parameters, `return rc`) bound directly here
     produced a CLI that always exited 0, however the body failed. The generated module has always
     coerced (`_rc` + `typer.Exit` in the template); this is the same coercion, so one body behaves
     identically under either mechanism. A body that raises `typer.Exit` itself never reaches the

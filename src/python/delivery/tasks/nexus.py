@@ -1,6 +1,6 @@
 """The `nexus` group's command body (netctl#1405): the manifest points its `impl:` straight at this.
 
-Same shape as `delivery.commands.vcs`: the MECHANISM lives in `delivery.nexus`, and this module exists
+Same shape as `delivery.tasks.vcs`: the MECHANISM lives in `delivery.nexus`, and this module exists
 because a manifest-resolved impl must be a real callable whose signature the CLI is derived from - a bare
 `nexus_cmd = delivery.nexus.dispatch` alias would silently drop the member argument.
 

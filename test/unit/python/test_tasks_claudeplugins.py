@@ -1,4 +1,4 @@
-"""Unit tests for delivery.commands.claudeplugins (netctl#1286): the manifest's `claude` section as the one
+"""Unit tests for delivery.tasks.claudeplugins (netctl#1286): the manifest's `claude` section as the one
 declaration of a product's agent plugin set, and the pure derivation of what a machine is missing.
 
 Nothing here shells out. `declared` and `plan` are pure, and the CLI answers are captured `--json` output
@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from delivery.commands import claudeplugins
+from delivery.tasks import claudeplugins
 
 # Captured verbatim from `claude plugin marketplace list --json` and `claude plugin list --json` on a
 # configured machine, trimmed to the fields the module reads. The plugin listing KEEPS the duplicate the
@@ -196,7 +196,7 @@ def test_install_cmd_returns_an_exit_code_rather_than_raising_typer_exit():
     # arrange: the point of netctl#1444 - the body is callable from anything, not only a Click parser
     from pathlib import Path as _Path
 
-    import delivery.commands.claudeplugins as module
+    import delivery.tasks.claudeplugins as module
 
     # act
     source = _Path(module.__file__).read_text(encoding="utf-8")

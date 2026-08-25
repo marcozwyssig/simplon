@@ -11,7 +11,7 @@ import keyword
 from typing import NamedTuple
 
 # Parameter names a body uses for the CLI context (a `typer.Context`). Recognised BY NAME rather than
-# by position: the kernel's own command bodies do not all take one (delivery.commands.vcs:push takes
+# by position: the kernel's own command bodies do not all take one (delivery.tasks.vcs:push takes
 # nothing at all, and vcs:commit's first parameter is its payload), so dropping index 0 unconditionally
 # handed a context object to a payload parameter.
 CONTEXT_NAMES = frozenset({"c", "ctx", "context"})

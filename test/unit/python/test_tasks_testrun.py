@@ -1,4 +1,4 @@
-"""Unit tests for delivery.commands.testrun (netctl#1406): the lab-based suite runner, whose every product
+"""Unit tests for delivery.tasks.testrun (netctl#1406): the lab-based suite runner, whose every product
 decision - which suite lives where, which gate CLEARS the shared allure results versus APPENDS into it, what
 the report merges - arrives as manifest DATA rather than as a branch in here.
 
@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from delivery import context
-from delivery.commands import testrun
+from delivery.tasks import testrun
 from delivery.context import ProductContext
 
 

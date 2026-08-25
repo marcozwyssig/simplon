@@ -1,11 +1,11 @@
-"""Unit tests for delivery.commands.env (netctl#1280, epic #1274 slice S6): the environments listing,
+"""Unit tests for delivery.tasks.env (netctl#1280, epic #1274 slice S6): the environments listing,
 driven purely by the `environments:` / `default:` / `env_var:` keys of the manifest, read straight
 through delivery.context - no backend registry, no product import. AAA throughout.
 """
 import pytest
 
 from delivery import context
-from delivery.commands import env as env_cmd
+from delivery.tasks import env as env_cmd
 from delivery.context import ProductContext
 
 _ENVS = {

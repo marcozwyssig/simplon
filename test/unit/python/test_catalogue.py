@@ -507,7 +507,7 @@ def test_the_catalogue_carries_the_command_tree_it_declares():
     # arrange: a catalogue that declares a group with a command in it
     text = """
     tasks:
-      vcs:commit: { impl: delivery.commands.vcs:commit, help: "commit." }
+      vcs:commit: { impl: delivery.tasks.vcs:commit, help: "commit." }
     groups:
       support:
         help: "Host tooling."
@@ -527,7 +527,7 @@ def test_the_catalogue_carries_the_command_tree_it_declares():
 
 def test_a_catalogue_without_a_groups_block_carries_an_empty_tree():
     # arrange: the shape every catalogue had before netctl#1469
-    text = 'tasks:\n  vcs:commit: { impl: delivery.commands.vcs:commit, help: "commit." }\n'
+    text = 'tasks:\n  vcs:commit: { impl: delivery.tasks.vcs:commit, help: "commit." }\n'
 
     # act
     cat = catalogue.loads(text)
