@@ -560,3 +560,23 @@ def test_a_groups_block_that_is_not_a_mapping_is_rejected():
     with pytest.raises(ValueError, match="catalogue 'groups' must be a mapping"):
         catalogue.loads(text)
 
+
+def test_an_old_form_product_still_cannot_invent_a_group_after_the_tree_moved():
+    # arrange: the netctl#1462 lock, now reading the tree instead of the deleted `taxonomy:` block. Not
+    # a hypothetical - Plan 1 Task 7 removed the block the lock used to read.
+    cat = catalogue.loads(textwrap.dedent("""
+        tasks:
+          vcs:push: { impl: delivery.commands.vcs:push, help: "push it." }
+        groups:
+          build: { help: "Produce the artefacts." }
+    """))
+    old_form = textwrap.dedent("""
+        product: demo
+        groups:
+          wildwest:
+            yeehaw: { impl: "demo.cli:yeehaw", help: "ride." }
+    """)
+
+    # act / assert
+    with pytest.raises(ValueError, match="does not declare"):
+        manifest.load(old_form, catalogue=cat)
