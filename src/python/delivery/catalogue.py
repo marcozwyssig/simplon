@@ -39,6 +39,10 @@ class Catalogue(NamedTuple):
 
     tasks: dict[str, dict]
     taxonomy: dict[str, dict] = {}
+    # The kernel's own command tree (netctl#1469): the groups that exist, and the baseline commands the
+    # platform places in them. `taxonomy` is its predecessor and is read only while a product still
+    # declares the old two-block form; the two never both carry a group.
+    groups: dict[str, dict] = {}
 
     def resolve(self, coordinate: str) -> dict:
         """The declaration a coordinate names, or a ValueError listing what the namespace does offer."""
@@ -76,6 +80,9 @@ def loads(text: str) -> Catalogue:
     taxonomy = data.get("taxonomy") or {}
     if not isinstance(taxonomy, dict):
         raise ValueError("catalogue 'taxonomy' must be a mapping of group name to its declaration")
+    groups = data.get("groups") or {}
+    if not isinstance(groups, dict):
+        raise ValueError("catalogue 'groups' must be a mapping of group name to its declaration")
     out: dict[str, dict] = {}
     for coordinate, spec in tasks.items():
         # A bare `commit:` has no coordinate space, so two namespaces could not both offer one and a
@@ -91,7 +98,7 @@ def loads(text: str) -> Catalogue:
             # importing it would resolve a coordinate to no code at all.
             raise ValueError(f"catalogue task '{coordinate}' declares no impl")
         out[str(coordinate)] = dict(spec or {})
-    return Catalogue(tasks=out, taxonomy=taxonomy)
+    return Catalogue(tasks=out, taxonomy=taxonomy, groups=groups)
 
 
 def load(path: Path | str = DEFAULT_PATH) -> Catalogue:

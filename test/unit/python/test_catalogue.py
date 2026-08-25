@@ -8,6 +8,8 @@ typo that offers nothing, an override matching no import, a coordinate with no n
 
 AAA throughout, including the negative cases.
 """
+import textwrap
+
 import pytest
 
 from delivery import catalogue
@@ -497,4 +499,48 @@ def test_the_shipped_catalogue_declares_the_ci_cd_loop():
     assert sorted(cat.taxonomy) == ["build", "deploy", "monitor", "release", "support", "tasks", "test"]
     assert cat.taxonomy["deploy"]["env_first"] is True
     assert "git" in cat.taxonomy["support"]["groups"]
+
+
+# --- the kernel's command tree (netctl#1469) -----------------------------------------------------------
+
+def test_the_catalogue_carries_the_command_tree_it_declares():
+    # arrange: a catalogue that declares a group with a command in it
+    text = """
+    tasks:
+      vcs:commit: { impl: delivery.commands.vcs:commit, help: "commit." }
+    groups:
+      support:
+        help: "Host tooling."
+        groups:
+          git:
+            help: "Version-control helpers."
+            commands:
+              commit: { task: "vcs:commit" }
+    """
+
+    # act
+    cat = catalogue.loads(textwrap.dedent(text))
+
+    # assert
+    assert cat.groups["support"]["groups"]["git"]["commands"]["commit"] == {"task": "vcs:commit"}
+
+
+def test_a_catalogue_without_a_groups_block_carries_an_empty_tree():
+    # arrange: the shape every catalogue had before netctl#1469
+    text = 'tasks:\n  vcs:commit: { impl: delivery.commands.vcs:commit, help: "commit." }\n'
+
+    # act
+    cat = catalogue.loads(text)
+
+    # assert
+    assert cat.groups == {}
+
+
+def test_a_groups_block_that_is_not_a_mapping_is_rejected():
+    # arrange
+    text = 'tasks:\n  vcs:commit: { impl: a:b, help: "h." }\ngroups: [build, test]\n'
+
+    # act / assert
+    with pytest.raises(ValueError, match="catalogue 'groups' must be a mapping"):
+        catalogue.loads(text)
 
