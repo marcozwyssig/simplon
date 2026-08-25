@@ -491,14 +491,30 @@ def test_a_catalogue_taxonomy_that_is_not_a_mapping_is_rejected():
         catalogue.loads("taxonomy: [build, test]\ntasks: {}\n")
 
 
-def test_the_shipped_catalogue_declares_the_ci_cd_loop():
-    # arrange / act: the real file - the loop every *ctl product inherits
+def test_the_shipped_catalogue_places_the_general_commands_and_nothing_that_needs_product_data():
+    # arrange: the real delivery.yaml, not a fixture - this is the assertion that the platform's own
+    # data obeys the rule the platform enforces
     cat = catalogue.load()
 
+    # act
+    git = cat.groups["support"]["groups"]["git"]["commands"]
+    tasks = cat.groups["tasks"]["commands"]
+    placed = {spec["task"] for node in (git, tasks) for spec in node.values()}
+
     # assert
-    assert sorted(cat.taxonomy) == ["build", "deploy", "monitor", "release", "support", "tasks", "test"]
-    assert cat.taxonomy["deploy"]["env_first"] is True
-    assert "git" in cat.taxonomy["support"]["groups"]
+    assert set(git) == {"commit", "push", "prune-branches", "submodules"}
+    assert set(tasks) == {"catalogue", "generate"}
+    assert "support:nexus" not in placed and "test:gate" not in placed
+
+
+def test_the_shipped_catalogue_declares_the_whole_ci_cd_loop():
+    # arrange
+    cat = catalogue.load()
+
+    # act / assert: the shape every *ctl product inherits, and the two env-first groups
+    assert set(cat.groups) == {"build", "test", "release", "deploy", "monitor", "support", "tasks"}
+    assert cat.groups["deploy"]["env_first"] is True
+    assert cat.groups["monitor"]["env_first"] is True
 
 
 # --- the kernel's command tree (netctl#1469) -----------------------------------------------------------
