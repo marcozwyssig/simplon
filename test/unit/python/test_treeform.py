@@ -3,8 +3,12 @@
 AAA throughout. Every rejection has a negative test, because a rule that only ever runs on valid input
 is a rule nobody has seen work.
 """
+import textwrap
+
 import pytest
 
+from delivery import catalogue as catalogue_mod
+from delivery.orchestrator import manifest
 from delivery.orchestrator.model import treeform
 
 
@@ -327,6 +331,60 @@ def test_a_non_mapping_with_block_is_rejected():
     # act / assert
     with pytest.raises(ValueError, match="`with:` as list, not a mapping"):
         treeform.resolve(flat, tasks, {})
+
+
+def test_a_block_with_both_forms_is_partitioned_by_top_level_key():
+    # arrange: the shape a migrating product has for exactly as long as the migration takes
+    groups = {"build": {"commands": {"web-image": {"task": "img"}}},
+              "test":  {"unit-java": {"impl": "orchestrator.cli:unit_java", "help": "h."}}}
+
+    # act
+    new, old = treeform.partition(groups)
+
+    # assert
+    assert set(new) == {"build"}
+    assert set(old) == {"test"}
+
+
+def test_a_wholly_old_form_block_partitions_to_nothing_new():
+    # arrange
+    groups = {"test": {"unit-java": {"impl": "a:b", "help": "h."}}}
+
+    # act
+    new, old = treeform.partition(groups)
+
+    # assert
+    assert new == {} and set(old) == {"test"}
+    assert treeform.is_new_form(groups) is False
+
+
+def test_a_mixed_manifest_loads_both_halves(tmp_path):
+    # arrange: the migration's central claim - a converted group and an unconverted one coexist
+    catalogue = catalogue_mod.loads(textwrap.dedent("""
+        tasks:
+          vcs:push: { impl: delivery.tasks.vcs:push, help: "push it." }
+        groups:
+          build: { help: "Produce the artefacts." }
+          test:  { help: "Verify them." }
+    """))
+    text = textwrap.dedent("""
+        product: demo
+        tasks:
+          img: { impl: "demo.tooling:image", help: "Build an image." }
+        groups:
+          build:
+            commands:
+              web-image: { task: img, with: { key: web }, help: "Build the web image." }
+          test:
+            unit-java: { impl: "demo.cli:unit_java", help: "Run the Java unit gate." }
+    """)
+
+    # act
+    mf = manifest.load(text, catalogue=catalogue)
+
+    # assert: both groups carry their member, and each resolved through its own path
+    assert mf.commands["build"]["web-image"].impl == "demo.tooling:image"
+    assert mf.commands["test"]["unit-java"].impl == "demo.cli:unit_java"
 
 
 def test_a_block_whose_nodes_carry_node_keys_is_new_form():

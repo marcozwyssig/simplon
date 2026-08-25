@@ -692,13 +692,18 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     """
     data = yaml.safe_load(text) or {}
     lowered_taxonomy: dict[str, dict] = {}
-    if treeform.is_new_form(data.get("groups") or {}):
+    new_form, old_form = treeform.partition(data.get("groups") or {})
+    if new_form:
         # The new form (netctl#1469) is a FRONT END: merge the product's tree onto the platform's,
         # resolve each command's `task:`, and hand the rest of this function exactly the two structures
         # it already consumes - a taxonomy mapping and a flat group -> members mapping. Nothing below
         # this seam knows the difference, which is what makes each migration step provable as a
         # zero-diff on the product's CLI-surface golden.
-        merged = treeform.merge(getattr(catalogue, "groups", {}) or {}, data["groups"])
+        #
+        # Partitioned PER TOP-LEVEL GROUP rather than per manifest (plan 2), so a product migrates one
+        # group at a time. An old-form group keeps its members verbatim below - it has not migrated yet,
+        # and the whole point of partitioning is that the two halves do not interfere.
+        merged = treeform.merge(getattr(catalogue, "groups", {}) or {}, new_form)
         lowered_taxonomy, flat = treeform.lower(merged)
         treeform.check_no_stale_import(data)
         tasks_block = data.get("tasks")
@@ -719,9 +724,10 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
                     f"`groups:`")
         product_tasks = dict(tasks_block or {})
         treeform.check_every_task_is_used(flat, product_tasks)
-        data = {**data, "groups": treeform.resolve(flat, product_tasks,
-                                                   getattr(catalogue, "tasks", {}) or {}),
-                "tasks": {}}
+        resolved = treeform.resolve(flat, product_tasks, getattr(catalogue, "tasks", {}) or {})
+        # See the precedence note above `partition`'s call: the two halves have disjoint keys by
+        # construction, so `{**resolved, **old_form}` is documentation rather than logic.
+        data = {**data, "groups": {**resolved, **old_form}, "tasks": {}}
     else:
         data = _expand_imports(data, catalogue)
     try:

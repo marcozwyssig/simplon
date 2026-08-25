@@ -235,15 +235,26 @@ def _resolve_one(spec: dict, where: str, product_tasks: dict, catalogue_tasks: d
     return out
 
 
-def is_new_form(groups: dict) -> bool:
-    """Whether a `groups:` block is a command TREE rather than the old group -> member mapping.
+def partition(groups: dict) -> tuple[dict, dict]:
+    """A `groups:` block split into its new-form nodes and its old-form ones, by TOP-LEVEL key.
 
-    A node that declares any of the four node keys is a tree node; a node whose keys are all command
-    names is an old-form group. Total in practice, and checked before this rule shipped: no group member
-    in netctl.yaml or infractl.yaml is named `help`, `env_first`, `groups` or `commands`.
+    Per node rather than per block, so a product migrates one group at a time and the CLI-surface
+    golden proves each step (netctl#1469 plan 2). A node that declares any of the four node keys is a
+    tree node; a node whose keys are all command names is an old-form group.
+
+    Temporary by construction: plan 3 deletes the old form, and this function goes with it.
     """
-    return any(isinstance(node, dict) and any(key in node for key in NODE_KEYS)
-               for node in (groups or {}).values())
+    new: dict = {}
+    old: dict = {}
+    for name, node in (groups or {}).items():
+        target = new if isinstance(node, dict) and any(key in node for key in NODE_KEYS) else old
+        target[str(name)] = node
+    return new, old
+
+
+def is_new_form(groups: dict) -> bool:
+    """Whether any top-level group is a command tree. Kept for callers that only need the question."""
+    return bool(partition(groups)[0])
 
 
 def check_no_stale_import(data: dict) -> None:
