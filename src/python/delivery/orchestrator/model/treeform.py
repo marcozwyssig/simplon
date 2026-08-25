@@ -159,6 +159,37 @@ def _check_command_is_mapping(spec, where: str, name: str) -> None:
 # that pinned a value would not be a template.
 INHERITED = ("help", "passthrough_args")
 
+# What a TASK may declare. Everything else that `_CommandSpecModel` accepts belongs to the instance:
+# a template that pinned a value, hid itself or planned other commands would not be a template.
+TASK_KEYS = ("impl", "help", "passthrough_args", "params")
+COMMAND_ONLY_KEYS = ("hidden", "keep_awake", "stop_on_failure", "depends_on", "with", "task")
+
+
+def check_task(name: str, spec: dict) -> None:
+    """Reject a task declaration that would be read only in part.
+
+    Four keys are read; anything else was silently dropped before this check, including keys that read
+    as entirely plausible on a template. `_ParamPresentationModel`'s `extra="forbid"` is the precedent:
+    a declaration that renders nowhere is worse than one that fails.
+    """
+    if not isinstance(spec, dict):
+        raise ValueError(
+            f"task '{name}' is not a mapping: found {type(spec).__name__}. A task declares `impl:` and "
+            f"optionally `help:`, `passthrough_args:` and `params:`")
+    if not spec.get("impl"):
+        raise ValueError(
+            f"task '{name}' declares no `impl:`. A task is a template for a body, so it names one as "
+            f"\"module:function\"; a command that plans other commands uses `depends_on:` instead")
+    for key in spec:
+        if key in COMMAND_ONLY_KEYS:
+            raise ValueError(
+                f"task '{name}' declares `{key}:`, which belongs on a command rather than on the task "
+                f"it instantiates. Move it to the command under `groups:`")
+        if key not in TASK_KEYS:
+            raise ValueError(
+                f"task '{name}' declares unknown key `{key}:`. A task takes "
+                f"{', '.join(TASK_KEYS)} - check the spelling")
+
 
 def resolve(flat: dict, product_tasks: dict, catalogue_tasks: dict) -> dict:
     """Every command's `task:` replaced by the template it names.
@@ -211,6 +242,7 @@ def _resolve_one(spec: dict, where: str, product_tasks: dict, catalogue_tasks: d
             f"Available there: {offered}")
 
     template = dict((source or {})[ref])
+    check_task(ref, template)
     out = {"impl": template["impl"], **spec}
     for key in INHERITED:
         if key not in out and key in template:

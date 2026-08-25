@@ -416,6 +416,33 @@ def test_a_group_the_platform_places_a_command_in_while_the_product_keeps_it_old
         manifest.load(text, catalogue=catalogue)
 
 
+TASK_KEYS_OK = {"impl": "a:b", "help": "h.", "passthrough_args": True, "params": {"x": {"help": "y"}}}
+
+
+def test_a_task_declaring_every_allowed_key_is_accepted():
+    # arrange / act / assert: no exception
+    treeform.check_task("lab-image", TASK_KEYS_OK)
+
+
+def test_a_task_without_an_impl_is_rejected_by_name():
+    # arrange: today this dies as a bare KeyError deep inside resolve()
+    with pytest.raises(ValueError, match="declares no `impl:`"):
+        treeform.check_task("lab-image", {"help": "h."})
+
+
+def test_a_task_declaring_a_command_only_key_is_rejected():
+    # arrange: `hidden` is a real _CommandSpecModel key and reads as plausible on a template, which is
+    # exactly why silently dropping it is worse than refusing it
+    with pytest.raises(ValueError, match="belongs on a command"):
+        treeform.check_task("lab-image", {"impl": "a:b", "help": "h.", "hidden": True})
+
+
+def test_a_task_declaring_an_unknown_key_is_rejected():
+    # arrange
+    with pytest.raises(ValueError, match="unknown key"):
+        treeform.check_task("lab-image", {"impl": "a:b", "help": "h.", "helo": "typo"})
+
+
 def test_a_block_whose_nodes_carry_node_keys_is_new_form():
     # arrange
     new = {"build": {"help": "Produce.", "commands": {"web-image": {"task": "img"}}}}
