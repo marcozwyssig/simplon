@@ -31,8 +31,13 @@ def lower(tree: dict, _path: tuple[str, ...] = ()) -> tuple[dict, dict]:
     taxonomy: dict[str, dict] = {}
     flat: dict[str, dict] = {}
     for name, node in (tree or {}).items():
-        node = node or {}
         path = _path + (str(name),)
+        if node is not None and not isinstance(node, dict):
+            raise ValueError(
+                f"group '{'.'.join(path)}' is not a mapping: found {type(node).__name__} instead. A "
+                f"group node's value must be a mapping with its own keys (help, env_first, groups, "
+                f"commands) - check the indentation under this entry")
+        node = node or {}
         shape = {key: node[key] for key in ("help", "env_first") if key in node}
         child_taxonomy, child_flat = lower(node.get("groups") or {}, path)
         if child_taxonomy:
@@ -54,8 +59,14 @@ def merge(kernel: dict, product: dict, _path: tuple[str, ...] = ()) -> dict:
     """
     out = {name: dict(node or {}) for name, node in (kernel or {}).items()}
     for name, node in (product or {}).items():
-        name, node = str(name), dict(node or {})
+        name = str(name)
         path = _path + (name,)
+        if node is not None and not isinstance(node, dict):
+            raise ValueError(
+                f"group '{'.'.join(path)}' is not a mapping: found {type(node).__name__} instead. A "
+                f"group node's value must be a mapping with its own keys (help, env_first, groups, "
+                f"commands) - check the indentation under this entry")
+        node = dict(node or {})
         if name not in out:
             raise ValueError(
                 f"groups entry '{'.'.join(path)}' names a group the platform's tree does not declare. "
@@ -71,8 +82,13 @@ def merge(kernel: dict, product: dict, _path: tuple[str, ...] = ()) -> dict:
             elif key == "commands":
                 merged["commands"] = _merge_commands(base.get("commands") or {}, value,
                                                      ".".join(path))
-            else:
+            elif key in NODE_KEYS:
                 merged[key] = value
+            else:
+                raise ValueError(
+                    f"group '{'.'.join(path)}' declares unknown key '{key}'. A group node's keys are "
+                    f"help, env_first, groups and commands - rename it, or if this is meant to be a "
+                    f"command, move it under `commands:`")
         out[name] = merged
     return out
 

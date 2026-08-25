@@ -37,6 +37,15 @@ def test_a_nested_group_lowers_to_a_bare_taxonomy_child_and_a_dotted_member_key(
     assert flat == {"support": {}, "support.git": {"push": {"task": "vcs:push"}}}
 
 
+def test_a_non_mapping_group_node_in_lower_is_rejected():
+    # arrange: a manifest typo that turns a group node into a scalar
+    tree = {"build": "not-a-mapping"}
+
+    # act / assert
+    with pytest.raises(ValueError, match="is not a mapping"):
+        treeform.lower(tree)
+
+
 def test_env_first_survives_the_lowering():
     # arrange
     tree = {"deploy": {"help": "Deploy.", "env_first": True, "commands": {}}}
@@ -104,6 +113,24 @@ def test_refining_a_task_backed_command_into_an_aggregate_is_rejected():
 
     # act / assert
     with pytest.raises(ValueError, match="declared as one kind of command and refined as another"):
+        treeform.merge(KERNEL, product)
+
+
+def test_a_non_mapping_group_node_in_merge_is_rejected():
+    # arrange: a manifest typo that turns a group node into a scalar
+    product = {"build": ["not", "a", "mapping"]}
+
+    # act / assert
+    with pytest.raises(ValueError, match="is not a mapping"):
+        treeform.merge(KERNEL, product)
+
+
+def test_an_unknown_key_on_a_group_node_in_merge_is_rejected():
+    # arrange: a typo'd `helo:` would otherwise be copied through silently and render nowhere
+    product = {"build": {"helo": "typo"}}
+
+    # act / assert
+    with pytest.raises(ValueError, match="unknown key"):
         treeform.merge(KERNEL, product)
 
 
