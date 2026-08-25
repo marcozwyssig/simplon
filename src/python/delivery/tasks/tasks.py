@@ -59,20 +59,21 @@ def generate(target: str, check: bool = False) -> int:
 def catalogue() -> int:
     """List the task coordinates the delivery kernel offers, and which of them this product imports.
 
-    KEPT VERBATIM (netctl#1469 fix round 1): this exact sentence is netctl's CLI-surface golden's
-    "summary:" line for `netctl catalogue`/`netctl tasks catalogue` - `taskgen`/`delivery.cli.assemble`
-    both take a command's short help from the BODY's docstring's first paragraph, not from the
-    manifest's `help:`, whenever the body is bound to only one command (see `_docstring` in taskgen.py).
-    "Imports" is no longer the full picture - `_reached_namespaces` below now also counts a `task:`
-    reference - but rewording this specific paragraph moves that golden for an unmigrated netctl with no
-    netctl-side change to pair it with, which is exactly the failure class this migration's zero-diff
-    discipline exists to prevent. The rest of this module's wording is fixed; this one paragraph is not.
-
     The coordinate space is the whole reason a product can name `<namespace>:<name>` instead of a module
     path: a body moves inside the kernel and no product manifest changes. That only helps someone who can
     see what is on offer, which is what this prints - namespace by namespace, each coordinate with the
-    kernel's own one-line summary, and a marker on the namespaces this product's commands reach.
+    kernel's own one-line summary, and a marker on the namespaces this product's manifest imports.
     """
+    # KEPT VERBATIM as a COMMENT rather than fixed prose (netctl#1469 fix round 1): the whole docstring
+    # above - not only its first line - is embedded into the generated module's `help=` for this command
+    # (taskgen._docstring keeps the BODY's docstring whenever it is bound to only one command), and its
+    # FIRST PARAGRAPH specifically is also netctl's CLI-surface golden's "summary:" line for `netctl
+    # catalogue`/`netctl tasks catalogue`. Rewording either would move that golden, or leak this
+    # migration's internal reasoning into a product's `--help` text, for an unmigrated netctl with no
+    # netctl-side change to pair it with - the same failure class change 3's docstring comment records
+    # for the `name` parameter. "Imports" is no longer the full picture below - `_reached_namespaces`
+    # also counts a `task:` reference - but the docstring stays exactly as it was; only the code and the
+    # rest of this module's wording change.
     cat = catalogue_mod.load()
     reached = _reached_namespaces(context.current().manifest_data())
 
