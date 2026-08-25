@@ -5,7 +5,7 @@ is a rule nobody has seen work.
 """
 import pytest
 
-from delivery.orchestrator import treeform
+from delivery.orchestrator.model import treeform
 
 
 def test_a_flat_group_lowers_to_a_taxonomy_entry_and_a_member_map():
