@@ -12,6 +12,7 @@ import os
 from types import SimpleNamespace
 
 import pytest
+import typer
 
 from delivery import context
 from delivery.tasks import testrun
@@ -177,6 +178,39 @@ def test_gate_lookup_failsLoudly_forACommandNameTheTaxonomyDoesNotDeclare(monkey
     # act / assert: a command bound to the runner with no matching gate is a manifest typo
     with pytest.raises(ValueError, match="declares no gate 'integration'"):
         cfg.gate("integration")
+
+
+# --- the gate callback's name resolution (netctl#1469 plan 2) --------------------------------------------
+
+
+def test_gate_runs_the_suite_the_command_pinned_rather_than_its_invocation_name(monkeypatch, tmp_path):
+    # arrange: a command pinned via `with: { name: ... }` takes `name` off the command line entirely, so
+    # the callback must resolve the gate from the parameter rather than from ctx.info_name
+    _register(monkeypatch, tmp_path, _data())
+    seen = {}
+    monkeypatch.setattr(testrun, "run_gate",
+                        lambda gate, cfg, extra, *, filtered: seen.update(gate=gate.name) or 0)
+    ctx = SimpleNamespace(info_name="whatever-this-command-is-called", args=[])
+
+    # act / assert
+    with pytest.raises(typer.Exit):
+        testrun.gate(ctx, name="acceptance-dataplane")
+    assert seen["gate"] == "acceptance-dataplane"
+
+
+def test_gate_falls_back_to_the_invocation_name_when_no_name_is_pinned(monkeypatch, tmp_path):
+    # arrange: the transitional path for a product that has not migrated (netctl#1406) - two commands
+    # bound to this one body are told apart by the name each was invoked as
+    _register(monkeypatch, tmp_path, _data())
+    seen = {}
+    monkeypatch.setattr(testrun, "run_gate",
+                        lambda gate, cfg, extra, *, filtered: seen.update(gate=gate.name) or 0)
+    ctx = SimpleNamespace(info_name="system", args=[])
+
+    # act / assert
+    with pytest.raises(typer.Exit):
+        testrun.gate(ctx)
+    assert seen["gate"] == "system"
 
 
 # --- the canonical run ----------------------------------------------------------------------------------

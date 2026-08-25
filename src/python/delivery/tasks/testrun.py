@@ -317,16 +317,37 @@ def _warn_filtered(cfg: Suites) -> None:
 # shared by several commands cannot carry per-command help in its docstring, so `delivery.cli.assemble`
 # takes the help from each command's manifest `help:` instead; that is the product's own wording anyway.
 
-def gate(ctx: typer.Context) -> None:
+def gate(ctx: typer.Context, name: str = "") -> None:
     """Run one declared test level against the running lab. Which suite that is, where its results go and
     whether it clears or appends to the shared allure results comes from the product manifest's `suites`
-    section; trailing args reach pytest verbatim where the level declares `args: true`."""
+    section; trailing args reach pytest verbatim where the level declares `args: true`.
+
+    `name` is a manifest-pinned parameter (`with: { name: ... }`, netctl#1469 plan 2): the command-tree
+    form places this ONE task at several commands, each pinning its own suite name, so the gate resolves
+    from a value rather than from which command it was invoked as. The empty default plus the
+    `or ctx.info_name` fallback is TRANSITIONAL - it is what lets a product that has not migrated keep
+    naming this module raw per command and telling two commands bound to it apart by invocation name
+    (netctl#1406). Plan 3 deletes the fallback along with the old form it exists for.
+
+    THIS IS A BREAKING CHANGE for a caller that does not pin `name`, BY CONSTRUCTION, not by accident -
+    measured, not assumed. `signatures.shape` renders every NON-PINNED parameter as a visible option
+    regardless of whether the manifest describes it (`params:` only shapes an ALREADY-visible parameter's
+    presentation, it does not hide one); only `with:` removes a parameter from the wrapper's signature
+    entirely (`treeform`/`taskgen`'s pin logic). So `name`'s empty default does NOT keep it invisible - a
+    command bound to this function that pins nothing (netctl's current `system` / `acceptance-dataplane`,
+    both still old-form `impl: "delivery.tasks.testrun:gate"`) grows a real, stray `--name` option the
+    moment the generated module is regenerated against this signature. That is why this lands as its own
+    platform PR rather than folded into the per-group-partition PR: netctl's pointer bump to THIS commit
+    must happen in the same commit as its `test` group migration, which supplies the `with: { name: ... }`
+    pins that make the option disappear again. A red `tasks generate --check` / `test_mechanism_parity`
+    on an unmigrated caller between the two pointer bumps is expected, not a regression.
+    """
     cfg = config()
     extra = list(ctx.args)
     filtered = bool(extra)
     if filtered:
         _warn_filtered(cfg)
-    raise typer.Exit(run_gate(cfg.gate(ctx.info_name), cfg, extra, filtered=filtered))
+    raise typer.Exit(run_gate(cfg.gate(name or ctx.info_name), cfg, extra, filtered=filtered))
 
 
 def report_cmd() -> None:
