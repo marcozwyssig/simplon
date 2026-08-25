@@ -34,6 +34,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from delivery.clitaxonomy import CommandTaxonomy, TaxonomyNode, merge_trees
+from delivery.orchestrator.model import treeform
 
 
 class CommandSpec(NamedTuple):
@@ -690,7 +691,24 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     spec tree (group -> command -> spec).
     """
     data = yaml.safe_load(text) or {}
-    data = _expand_imports(data, catalogue)
+    lowered_taxonomy: dict[str, dict] = {}
+    if treeform.is_new_form(data.get("groups") or {}):
+        # The new form (netctl#1469) is a FRONT END: merge the product's tree onto the platform's,
+        # resolve each command's `task:`, and hand the rest of this function exactly the two structures
+        # it already consumes - a taxonomy mapping and a flat group -> members mapping. Nothing below
+        # this seam knows the difference, which is what makes each migration step provable as a
+        # zero-diff on the product's CLI-surface golden.
+        merged = treeform.merge(getattr(catalogue, "groups", {}) or {}, data["groups"])
+        lowered_taxonomy, flat = treeform.lower(merged)
+        treeform.check_no_stale_import(data)
+        product_tasks = {name: spec for name, spec in (data.get("tasks") or {}).items()
+                         if ":" not in str(name)}
+        treeform.check_every_task_is_used(flat, product_tasks)
+        data = {**data, "groups": treeform.resolve(flat, product_tasks,
+                                                   getattr(catalogue, "tasks", {}) or {}),
+                "tasks": {}}
+    else:
+        data = _expand_imports(data, catalogue)
     try:
         model = _ManifestModel.model_validate(data)
     except ValidationError as exc:
@@ -719,7 +737,14 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     # `merge_trees` exists to catch. The flat tree is neither: it is the product's own `groups:` keys, and
     # a bare key whose shape either taxonomy already declares is that group's MEMBERS, not a second
     # declaration of it - contributing members to a catalogue group is the whole point (netctl#1444).
-    catalogue_taxonomy = getattr(catalogue, "taxonomy", {}) or {}
+    # THREE sources of the shape, in falling precedence. A new-form manifest has already produced the
+    # merged tree - the platform's groups with the product's refinements folded in. An old-form one
+    # reads the catalogue's `taxonomy:` if it still has one, and otherwise the lowered shape of the
+    # catalogue's `groups:` - which is what keeps netctl#1462's group lock alive for a product that has
+    # not migrated yet. The last branch goes away in Plan 3 with the old form itself.
+    catalogue_taxonomy = (lowered_taxonomy
+                          or (getattr(catalogue, "taxonomy", {}) or {})
+                          or treeform.lower(getattr(catalogue, "groups", {}) or {})[0])
     if catalogue_taxonomy:
         _enforce_the_catalogue_owns_the_groups(groups, model.taxonomy, catalogue_taxonomy)
     shaped = merge_trees(_catalogue_tree(catalogue_taxonomy, groups),

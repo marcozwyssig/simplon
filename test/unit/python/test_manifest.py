@@ -8,9 +8,11 @@ import os
 import pathlib
 import subprocess
 import sys
+import textwrap
 
 import pytest
 
+from delivery import catalogue as catalogue_mod
 from delivery.orchestrator import manifest
 
 _OK = """
@@ -1121,3 +1123,64 @@ env_groups: []
     with pytest.raises(ValueError) as exc:
         manifest.load(text)
     assert "tset" in str(exc.value) and "biuld" in str(exc.value)
+
+
+def test_a_new_form_manifest_and_its_old_form_twin_load_identically():
+    # arrange: the SAME surface written both ways. This is the oracle for the whole migration - if the
+    # two Manifests differ, some product's CLI is about to change without anyone deciding to.
+    catalogue = catalogue_mod.loads(textwrap.dedent("""
+        tasks:
+          vcs:push: { impl: delivery.commands.vcs:push, help: "push it." }
+        groups:
+          build: { help: "Produce the artefacts." }
+          support:
+            help: "Host tooling."
+            groups:
+              git:
+                help: "VCS helpers."
+                commands:
+                  push: { task: "vcs:push" }
+    """))
+    new_form = textwrap.dedent("""
+        product: demo
+        tasks:
+          lab-image: { impl: "demo.tooling:lab_image", help: "Build an image." }
+        groups:
+          build:
+            commands:
+              frr-image: { task: lab-image, with: { key: frr }, help: "Build the FRR image." }
+    """)
+    old_form = textwrap.dedent("""
+        product: demo
+        taxonomy:
+          build: { help: "Produce the artefacts." }
+          support:
+            help: "Host tooling."
+            groups:
+              git: { help: "VCS helpers." }
+        groups:
+          build:
+            frr-image: { impl: "demo.tooling:lab_image", with: { key: frr }, help: "Build the FRR image." }
+          support: {}
+          support.git:
+            push: { impl: delivery.commands.vcs:push, help: "push it." }
+    """)
+
+    # act
+    new = manifest.load(new_form, catalogue=catalogue)
+    old = manifest.load(old_form)
+
+    # assert
+    assert new.groups == old.groups
+    assert new.commands == old.commands
+    assert new.tree == old.tree
+
+
+def test_a_new_form_manifest_cannot_invent_a_group():
+    # arrange
+    catalogue = catalogue_mod.loads('tasks: {}\ngroups:\n  build: { help: "Produce." }\n')
+    text = 'product: demo\ntasks: {}\ngroups:\n  wildwest:\n    commands: {}\n'
+
+    # act / assert
+    with pytest.raises(ValueError, match="the platform's tree does not declare"):
+        manifest.load(text, catalogue=catalogue)
