@@ -42,3 +42,58 @@ def lower(tree: dict, _path: tuple[str, ...] = ()) -> tuple[dict, dict]:
                                 for command, spec in (node.get("commands") or {}).items()}
         flat.update(child_flat)
     return taxonomy, flat
+
+
+def merge(kernel: dict, product: dict, _path: tuple[str, ...] = ()) -> dict:
+    """The product's tree merged onto the kernel's.
+
+    Three outcomes, and the first is the group lock: a PATH the kernel does not declare is an error, a
+    command NAME it does not declare is an addition, and a name it does declare is a refinement. The lock
+    is therefore the structure rather than a check over it - there is one tree, so there is no second way
+    to bring a group into existence (this replaces netctl#1462's separate enforcement).
+    """
+    out = {name: dict(node or {}) for name, node in (kernel or {}).items()}
+    for name, node in (product or {}).items():
+        name, node = str(name), dict(node or {})
+        path = _path + (name,)
+        if name not in out:
+            raise ValueError(
+                f"groups entry '{'.'.join(path)}' names a group the platform's tree does not declare. "
+                f"The platform owns which groups exist, so that the same groups and the same general "
+                f"tasks are there in every product. Available here: "
+                f"{', '.join(sorted(out)) or '(none)'}. Either put these commands in one of those, or "
+                f"declare the new group in the platform's `groups:` - once, for everybody")
+        base = out[name]
+        merged = dict(base)
+        for key, value in node.items():
+            if key == "groups":
+                merged["groups"] = merge(base.get("groups") or {}, value, path)
+            elif key == "commands":
+                merged["commands"] = _merge_commands(base.get("commands") or {}, value,
+                                                     ".".join(path))
+            else:
+                merged[key] = value
+        out[name] = merged
+    return out
+
+
+def _merge_commands(base: dict, extra: dict, where: str) -> dict:
+    """A group's members, with the product's refinements folded in per KEY rather than per node.
+
+    Per-key matters: netctl pins `tasks generate`'s target with a `with:` and expects to keep the
+    kernel's `params:` for `check`. Replacing the whole node would silently drop it.
+    """
+    out = {str(name): dict(spec or {}) for name, spec in (base or {}).items()}
+    for name, spec in (extra or {}).items():
+        name, spec = str(name), dict(spec or {})
+        inherited = out.get(name)
+        if inherited is None:
+            out[name] = spec
+            continue
+        if ("depends_on" in spec and "task" in inherited) or ("task" in spec and "depends_on" in inherited):
+            raise ValueError(
+                f"command '{where} {name}' is declared as one kind of command and refined as another. A "
+                f"refinement may set help, params, hidden, with and task; moving a command between "
+                f"task-backed and aggregate is a different command wearing the same name - give it one")
+        out[name] = {**inherited, **spec}
+    return out
