@@ -109,6 +109,8 @@ def test_check_reports_a_module_that_was_never_generated_rather_than_creating_it
     assert not (product.root / "pkg" / "_generated_cli.py").exists()
 
 
+
+
 # --- catalogue ----------------------------------------------------------------------------------------
 
 def test_catalogue_prints_every_namespace_the_kernel_offers(product, capsys):
@@ -124,9 +126,8 @@ def test_catalogue_prints_every_namespace_the_kernel_offers(product, capsys):
     assert "prune-branches" in out
 
 
-def test_catalogue_marks_the_namespaces_a_task_coordinate_actually_reaches(tmp_path, monkeypatch, capsys):
-    # arrange: a new-form command tree naming a platform coordinate under `task:` (netctl#1469 plan 2) -
-    # the marker no longer comes from a separate `import:` declaration
+def test_catalogue_marks_the_namespace_a_task_coordinate_reaches(tmp_path, monkeypatch, capsys):
+    # arrange: a new-form command tree naming a platform coordinate under `task:` (netctl#1469 plan 2)
     manifest_path = tmp_path / "sample.yaml"
     manifest_path.write_text(textwrap.dedent("""
         groups:
@@ -144,8 +145,8 @@ def test_catalogue_marks_the_namespaces_a_task_coordinate_actually_reaches(tmp_p
 
     # assert
     out = capsys.readouterr().out
-    assert "vcs (imported)" in out
-    assert "test (imported)" not in out
+    assert "vcs (reached)" in out
+    assert "test (reached)" not in out
 
 
 def test_catalogue_marks_nothing_for_a_bare_task_name_with_no_namespace(tmp_path, monkeypatch, capsys):
@@ -170,10 +171,58 @@ def test_catalogue_marks_nothing_for_a_bare_task_name_with_no_namespace(tmp_path
 
     # assert
     assert rc == 0
-    assert "(imported)" not in capsys.readouterr().out
+    assert "(reached)" not in capsys.readouterr().out
 
 
-def test_catalogue_marks_nothing_for_a_product_that_imports_no_coordinate(product, capsys):
+def test_catalogue_marks_the_namespaces_the_product_still_imports_the_old_way(tmp_path, monkeypatch, capsys):
+    # arrange: netctl TODAY - wholly old-form, placing platform coordinates via `import:` + a bare
+    # `tasks:` override that only becomes `impl:` inside `_expand_imports`, which `manifest_data()`'s raw
+    # mapping never sees. There is no `task:` key anywhere in such a manifest, so the walk alone would
+    # mark nothing - this is the regression the fix restores a signal for.
+    manifest_path = tmp_path / "sample.yaml"
+    manifest_path.write_text("import:\n  delivery: [vcs]\n" + _MANIFEST, encoding="utf-8")
+    monkeypatch.setattr(context, "_current", context.ProductContext(
+        name="sample", root=tmp_path, manifest_path=manifest_path))
+
+    # act
+    tasks.catalogue()
+
+    # assert
+    out = capsys.readouterr().out
+    assert "vcs (reached)" in out
+    assert "test (reached)" not in out
+
+
+def test_catalogue_marks_namespaces_from_both_mechanisms_at_once(tmp_path, monkeypatch, capsys):
+    # arrange: the shape every product has for exactly as long as its migration takes - one group still
+    # placed the OLD way via `import:`, a DIFFERENT group already migrated to a `task:` coordinate. Both
+    # signals must be unioned, neither may shadow the other.
+    manifest_path = tmp_path / "sample.yaml"
+    manifest_path.write_text(textwrap.dedent("""
+        import:
+          delivery: [vcs]
+        groups:
+          support.git:
+            push: { impl: "delivery.test_impls:nullary", help: "Push." }
+          test:
+            commands:
+              gate: { task: "test:gate", help: "run it." }
+        generate: [support.git]
+        env_groups: []
+    """), encoding="utf-8")
+    monkeypatch.setattr(context, "_current", context.ProductContext(
+        name="sample", root=tmp_path, manifest_path=manifest_path))
+
+    # act
+    tasks.catalogue()
+
+    # assert: the import:-based signal and the task:-based signal both land, independently
+    out = capsys.readouterr().out
+    assert "vcs (reached)" in out
+    assert "test (reached)" in out
+
+
+def test_catalogue_marks_nothing_for_a_product_that_reaches_no_coordinate(product, capsys):
     # arrange: naming no coordinate is a legitimate state - netctl's own manifest is in it - so the
     # listing is still printed rather than failing on a missing section
     # act
@@ -181,4 +230,4 @@ def test_catalogue_marks_nothing_for_a_product_that_imports_no_coordinate(produc
 
     # assert
     assert rc == 0
-    assert "(imported)" not in capsys.readouterr().out
+    assert "(reached)" not in capsys.readouterr().out
