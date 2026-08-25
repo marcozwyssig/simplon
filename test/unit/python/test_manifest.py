@@ -1130,7 +1130,7 @@ def test_a_new_form_manifest_and_its_old_form_twin_load_identically():
     # two Manifests differ, some product's CLI is about to change without anyone deciding to.
     catalogue = catalogue_mod.loads(textwrap.dedent("""
         tasks:
-          vcs:push: { impl: delivery.commands.vcs:push, help: "push it." }
+          vcs:push: { impl: delivery.tasks.vcs:push, help: "push it." }
         groups:
           build: { help: "Produce the artefacts." }
           support:
@@ -1163,7 +1163,7 @@ def test_a_new_form_manifest_and_its_old_form_twin_load_identically():
             frr-image: { impl: "demo.tooling:lab_image", with: { key: frr }, help: "Build the FRR image." }
           support: {}
           support.git:
-            push: { impl: delivery.commands.vcs:push, help: "push it." }
+            push: { impl: delivery.tasks.vcs:push, help: "push it." }
     """)
 
     # act
@@ -1183,4 +1183,33 @@ def test_a_new_form_manifest_cannot_invent_a_group():
 
     # act / assert
     with pytest.raises(ValueError, match="the platform's tree does not declare"):
+        manifest.load(text, catalogue=catalogue)
+
+
+def test_a_coordinate_keyed_entry_under_a_new_form_tasks_block_is_rejected():
+    # arrange: the shape a migration leaves behind - `groups:` was added but a coordinate placement was
+    # never moved out of `tasks:`. Filtering it out used to make it vanish: not resolved, not rejected,
+    # and invisible to the orphan check because that check only ever saw the filtered map.
+    catalogue = catalogue_mod.loads('tasks: {}\ngroups:\n  build: { help: "Produce." }\n')
+    text = textwrap.dedent("""
+        product: demo
+        tasks:
+          vcs:push: { impl: "demo.tooling:push", help: "push it." }
+        groups:
+          build:
+            commands: {}
+    """)
+
+    # act / assert
+    with pytest.raises(ValueError, match="names a platform coordinate"):
+        manifest.load(text, catalogue=catalogue)
+
+
+def test_a_new_form_tasks_block_that_is_not_a_mapping_is_rejected():
+    # arrange: `tasks:` given as a list - a raw AttributeError from `.items()` would name no path
+    catalogue = catalogue_mod.loads('tasks: {}\ngroups:\n  build: { help: "Produce." }\n')
+    text = 'product: demo\ntasks: [lab-image]\ngroups:\n  build:\n    commands: {}\n'
+
+    # act / assert
+    with pytest.raises(ValueError, match="`tasks:` is not a mapping"):
         manifest.load(text, catalogue=catalogue)

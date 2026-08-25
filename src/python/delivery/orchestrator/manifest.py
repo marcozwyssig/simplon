@@ -701,8 +701,23 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
         merged = treeform.merge(getattr(catalogue, "groups", {}) or {}, data["groups"])
         lowered_taxonomy, flat = treeform.lower(merged)
         treeform.check_no_stale_import(data)
-        product_tasks = {name: spec for name, spec in (data.get("tasks") or {}).items()
-                         if ":" not in str(name)}
+        tasks_block = data.get("tasks")
+        if tasks_block is not None and not isinstance(tasks_block, dict):
+            raise ValueError(
+                f"`tasks:` is not a mapping: found {type(tasks_block).__name__} instead. It maps each "
+                f"task's bare name to its declaration - check the indentation under this key")
+        # A coordinate-keyed entry here is not a second way to place a platform task: it is the shape
+        # the old two-block form left behind by a migration that added `groups:` and never removed the
+        # matching `import:` placement from `tasks:`. Filtering it out would make it vanish rather than
+        # fail - unresolved, unreported, and invisible to `check_every_task_is_used` below, which only
+        # ever sees the filtered map.
+        for name in (tasks_block or {}):
+            if ":" in str(name):
+                raise ValueError(
+                    f"task '{name}' names a platform coordinate. A manifest's own tasks are bare names; "
+                    f"to place a platform task, declare a command with `task: \"{name}\"` under "
+                    f"`groups:`")
+        product_tasks = dict(tasks_block or {})
         treeform.check_every_task_is_used(flat, product_tasks)
         data = {**data, "groups": treeform.resolve(flat, product_tasks,
                                                    getattr(catalogue, "tasks", {}) or {}),
@@ -732,11 +747,6 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     if unknown:
         raise ValueError(f"generate names group(s) the manifest does not declare: {', '.join(unknown)}")
     generate = frozenset(model.generate)
-    # THREE sources, and only two of them can contradict each other. The CATALOGUE's `taxonomy:` and the
-    # PRODUCT's are two files describing the same shape, so a group in both is the contradiction
-    # `merge_trees` exists to catch. The flat tree is neither: it is the product's own `groups:` keys, and
-    # a bare key whose shape either taxonomy already declares is that group's MEMBERS, not a second
-    # declaration of it - contributing members to a catalogue group is the whole point (netctl#1444).
     # THREE sources of the shape, in falling precedence. A new-form manifest has already produced the
     # merged tree - the platform's groups with the product's refinements folded in. An old-form one
     # reads the catalogue's `taxonomy:` if it still has one, and otherwise the lowered shape of the
@@ -917,12 +927,12 @@ def _enforce_the_catalogue_owns_the_groups(members: dict[str, tuple[str, ...]],
     unknown = sorted(name for name in members if "." not in name and name not in catalogue_taxonomy)
     if unknown:
         raise ValueError(
-            f"groups entry '{unknown[0]}' names a group the catalogue's `taxonomy:` does not declare"
+            f"groups entry '{unknown[0]}' names a group the catalogue's `groups:` does not declare"
             + (f" (also: {', '.join(unknown[1:])})" if len(unknown) > 1 else "")
             + f". The platform owns which groups exist, so that the same groups and the same general "
               f"tasks are there in every product. Available: {', '.join(sorted(catalogue_taxonomy))}. "
               f"Either put these commands in one of those, or declare the new group in the catalogue's "
-              f"`taxonomy:` - once, for everybody")
+              f"`groups:` - once, for everybody")
 
 
 def _validate_param_bindings(commands: dict[str, dict[str, "CommandSpec"]]) -> None:

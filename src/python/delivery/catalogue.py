@@ -30,18 +30,18 @@ DEFAULT_PATH = Path(__file__).resolve().parents[5] / "delivery.yaml"
 class Catalogue(NamedTuple):
     """What the platform offers a product: the task coordinates, keyed `<namespace>:<name>`, and the
     shape of the command tree they live in.
-
-    `taxonomy` is the CI/CD loop itself (netctl#1444, spec step 7). Every `*ctl` product runs the same
-    build -> test -> release -> deploy -> monitor loop, so declaring it once here beats each product
-    restating it. A product contributes MEMBERS to those groups and never redeclares their shape; it may
-    still declare a group of its own, which is the exception and visible as one.
     """
 
     tasks: dict[str, dict]
+    # `taxonomy` is `groups`'s predecessor (netctl#1444, spec step 7, superseded by netctl#1469). It
+    # survives only for a catalogue that has not yet moved to a command tree; the two never both carry
+    # a group.
     taxonomy: dict[str, dict] = {}
     # The kernel's own command tree (netctl#1469): the groups that exist, and the baseline commands the
-    # platform places in them. `taxonomy` is its predecessor and is read only while a product still
-    # declares the old two-block form; the two never both carry a group.
+    # platform places in them. Every `*ctl` product runs the same build -> test -> release -> deploy ->
+    # monitor loop, so declaring it once here beats each product restating it. A product contributes
+    # MEMBERS to those groups and never redeclares their shape; it may still declare a group of its own,
+    # which is the exception and visible as one.
     groups: dict[str, dict] = {}
 
     def resolve(self, coordinate: str) -> dict:

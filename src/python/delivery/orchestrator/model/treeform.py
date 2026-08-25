@@ -20,13 +20,29 @@ from __future__ import annotations
 NODE_KEYS = ("help", "env_first", "groups", "commands")
 
 
+def _check_node_keys(node: dict, path: tuple[str, ...]) -> None:
+    """Reject a group node key outside NODE_KEYS, wherever a node is read.
+
+    Shared by `lower` and `merge` so the kernel's own tree - which only `lower` ever walks directly - is
+    checked exactly as strictly as a product's, rather than having a typo copied through verbatim.
+    """
+    for key in node:
+        if key not in NODE_KEYS:
+            raise ValueError(
+                f"group '{'.'.join(path)}' declares unknown key '{key}'. A group node's keys are "
+                f"help, env_first, groups and commands - rename it, or if this is meant to be a "
+                f"command, move it under `commands:`")
+
+
 def lower(tree: dict, _path: tuple[str, ...] = ()) -> tuple[dict, dict]:
     """A command tree, split into the `taxonomy:` shape and the flat `group path -> members` map.
 
     The two spellings are not interchangeable and the difference is load-bearing: the taxonomy nests its
     children by BARE name under a `groups:` key, while the flat map keys every group by its DOTTED path.
     A group with no commands still appears in both - the shape exists whether or not anyone has put a
-    command in it yet, and an empty member map is what stops it being registered in the CLI.
+    command in it yet, and that emitted key is what gives even an empty group its own sub-app:
+    `taskgen._group_paths` derives one per key of `manifest.groups`, so a migrated product gets a
+    sub-app for every platform group whether or not it has added a command to it.
     """
     taxonomy: dict[str, dict] = {}
     flat: dict[str, dict] = {}
@@ -38,7 +54,8 @@ def lower(tree: dict, _path: tuple[str, ...] = ()) -> tuple[dict, dict]:
                 f"group node's value must be a mapping with its own keys (help, env_first, groups, "
                 f"commands) - check the indentation under this entry")
         node = node or {}
-        shape = {key: node[key] for key in ("help", "env_first") if key in node}
+        _check_node_keys(node, path)
+        shape = {key: node[key] for key in NODE_KEYS if key in node and key not in ("groups", "commands")}
         child_taxonomy, child_flat = lower(node.get("groups") or {}, path)
         if child_taxonomy:
             shape["groups"] = child_taxonomy
@@ -56,6 +73,11 @@ def merge(kernel: dict, product: dict, _path: tuple[str, ...] = ()) -> dict:
     command NAME it does not declare is an addition, and a name it does declare is a refinement. The lock
     is therefore the structure rather than a check over it - there is one tree, so there is no second way
     to bring a group into existence (this replaces netctl#1462's separate enforcement).
+
+    A product may add `groups:` and `commands:` to a group it already has - never rewrite `help:` or
+    `env_first:`. Both are the platform's call on the group's SHAPE (env-gating in particular: a product
+    switching `env_first` off would silently ungate every descendant), and the group lock exists so that
+    shape is the same in every product.
     """
     out = {name: dict(node or {}) for name, node in (kernel or {}).items()}
     for name, node in (product or {}).items():
@@ -74,6 +96,7 @@ def merge(kernel: dict, product: dict, _path: tuple[str, ...] = ()) -> dict:
                 f"tasks are there in every product. Available here: "
                 f"{', '.join(sorted(out)) or '(none)'}. Either put these commands in one of those, or "
                 f"declare the new group in the platform's `groups:` - once, for everybody")
+        _check_node_keys(node, path)
         base = out[name]
         merged = dict(base)
         for key, value in node.items():
@@ -82,13 +105,12 @@ def merge(kernel: dict, product: dict, _path: tuple[str, ...] = ()) -> dict:
             elif key == "commands":
                 merged["commands"] = _merge_commands(base.get("commands") or {}, value,
                                                      ".".join(path))
-            elif key in NODE_KEYS:
-                merged[key] = value
             else:
                 raise ValueError(
-                    f"group '{'.'.join(path)}' declares unknown key '{key}'. A group node's keys are "
-                    f"help, env_first, groups and commands - rename it, or if this is meant to be a "
-                    f"command, move it under `commands:`")
+                    f"group '{'.'.join(path)}' declares `{key}:`, which the platform's node already "
+                    f"sets. A product may add commands and sub-groups to a platform group, never "
+                    f"change its shape - change it in the platform's `groups:` instead, once, for "
+                    f"everybody")
         out[name] = merged
     return out
 
@@ -99,9 +121,15 @@ def _merge_commands(base: dict, extra: dict, where: str) -> dict:
     Per-key matters: netctl pins `tasks generate`'s target with a `with:` and expects to keep the
     kernel's `params:` for `check`. Replacing the whole node would silently drop it.
     """
-    out = {str(name): dict(spec or {}) for name, spec in (base or {}).items()}
+    out: dict[str, dict] = {}
+    for name, spec in (base or {}).items():
+        name = str(name)
+        _check_command_is_mapping(spec, where, name)
+        out[name] = dict(spec or {})
     for name, spec in (extra or {}).items():
-        name, spec = str(name), dict(spec or {})
+        name = str(name)
+        _check_command_is_mapping(spec, where, name)
+        spec = dict(spec or {})
         inherited = out.get(name)
         if inherited is None:
             out[name] = spec
@@ -113,6 +141,17 @@ def _merge_commands(base: dict, extra: dict, where: str) -> dict:
                 f"task-backed and aggregate is a different command wearing the same name - give it one")
         out[name] = {**inherited, **spec}
     return out
+
+
+def _check_command_is_mapping(spec, where: str, name: str) -> None:
+    """Reject a command entry that is not a mapping, before a blind `dict(spec)` turns it into an
+    unreadable stdlib TypeError naming no path (`commands: { push: "vcs:push" }` is the realistic typo -
+    a `task:` string written where the whole command mapping belongs)."""
+    if spec is not None and not isinstance(spec, dict):
+        raise ValueError(
+            f"command '{where} {name}' is not a mapping: found {type(spec).__name__} instead. A "
+            f"command's value must be a mapping (task, with, params, help, depends_on) - check the "
+            f"indentation under this entry")
 
 
 # Keys a task supplies to every command that instantiates it, where the command does not say otherwise.
@@ -155,6 +194,12 @@ def _resolve_one(spec: dict, where: str, product_tasks: dict, catalogue_tasks: d
             f"command '{where}' declares both `task:` and `depends_on:`. A command either instantiates "
             f"a task or plans other commands, never both - split it into two")
 
+    with_ = spec.get("with")
+    if with_ is not None and not isinstance(with_, dict):
+        raise ValueError(
+            f"command '{where}' declares `with:` as {type(with_).__name__}, not a mapping. `with:` "
+            f"pins parameter values by name - make it a mapping of parameter name to pinned value")
+
     ref = str(ref)
     source, kind = (catalogue_tasks, "the platform catalogue") if ":" in ref else (product_tasks,
                                                                                   "this manifest")
@@ -170,13 +215,21 @@ def _resolve_one(spec: dict, where: str, product_tasks: dict, catalogue_tasks: d
     for key in INHERITED:
         if key not in out and key in template:
             out[key] = template[key]
-    params = {**(template.get("params") or {}), **(spec.get("params") or {})}
-    pinned = sorted(set(spec.get("with") or {}) & set(params))
+    # The conflict this guards is a parameter THIS command pins with `with:` while also describing its
+    # own presentation with `params:` - that presentation would render nowhere, since the value is off
+    # the command line. It is scoped to the command's OWN `params:`, not the merged template+command map:
+    # a parameter the TEMPLATE declares and this command pins is the design's canonical shape (one task
+    # documents a parameter once, every instance may pin it), and any command that leaves it unpinned
+    # still gets that documentation - so a pinned key is dropped from the merged map rather than rejected.
+    own = spec.get("params") or {}
+    pinned = sorted(set(with_ or {}) & set(own))
     if pinned:
         raise ValueError(
             f"command '{where}' pins {', '.join(pinned)} with `with:` and also declares `params:` for "
             f"it. A pinned parameter is off the command line, so its presentation renders nowhere - "
             f"drop the `params:` entry, or drop the pin if the user should still be able to set it")
+    params = {key: value for key, value in {**(template.get("params") or {}), **own}.items()
+              if key not in (with_ or {})}
     if params:
         out["params"] = params
     return out

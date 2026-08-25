@@ -420,11 +420,11 @@ env_groups: []
 """
 
     # act / assert: the message has to name the way out, because "not allowed" alone leaves an author
-    # with a legitimate new group nowhere to go - the way out is the catalogue, where every product
-    # gets it.
+    # with a legitimate new group nowhere to go - the way out is the catalogue's `groups:`, where every
+    # product gets it.
     with pytest.raises(ValueError, match="bespoke") as exc:
         manifest.load(text, catalogue=catalogue.loads(_SHAPED))
-    assert "taxonomy" in str(exc.value)
+    assert "`groups:`" in str(exc.value)
 
 
 def test_a_product_adds_a_task_the_catalogue_never_heard_of_to_a_platform_group():
@@ -566,7 +566,7 @@ def test_an_old_form_product_still_cannot_invent_a_group_after_the_tree_moved():
     # a hypothetical - Plan 1 Task 7 removed the block the lock used to read.
     cat = catalogue.loads(textwrap.dedent("""
         tasks:
-          vcs:push: { impl: delivery.commands.vcs:push, help: "push it." }
+          vcs:push: { impl: delivery.tasks.vcs:push, help: "push it." }
         groups:
           build: { help: "Produce the artefacts." }
     """))

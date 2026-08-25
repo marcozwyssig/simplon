@@ -134,6 +134,47 @@ def test_an_unknown_key_on_a_group_node_in_merge_is_rejected():
         treeform.merge(KERNEL, product)
 
 
+def test_an_unknown_key_on_a_group_node_in_lower_is_rejected():
+    # arrange: the kernel's OWN tree, which only `lower` ever walks directly when a product has not
+    # migrated - a `commmands:` typo here used to be copied through silently, dropping every baseline
+    # command in every product with no gate ever seeing it
+    tree = {"build": {"help": "Produce.", "commmands": {}}}
+
+    # act / assert
+    with pytest.raises(ValueError, match="unknown key"):
+        treeform.lower(tree)
+
+
+def test_a_product_overriding_env_first_on_a_platform_group_is_rejected():
+    # arrange: switching the platform's env-first gate off from a product manifest would ungate every
+    # descendant command silently
+    product = {"support": {"env_first": False}}
+
+    # act / assert
+    with pytest.raises(ValueError, match="which the platform's node already sets"):
+        treeform.merge(KERNEL, product)
+
+
+def test_a_product_overriding_help_on_a_platform_group_is_rejected():
+    # arrange: the same rule for `help:` - a group's own attributes are the platform's shape, not a
+    # product's to rewrite
+    product = {"build": {"help": "my own wording"}}
+
+    # act / assert
+    with pytest.raises(ValueError, match="which the platform's node already sets"):
+        treeform.merge(KERNEL, product)
+
+
+def test_a_non_mapping_command_spec_in_merge_is_rejected():
+    # arrange: a `task:` string written where the whole command mapping belongs - the realistic typo is
+    # `commands: { push: "vcs:push" }` instead of `commands: { push: { task: "vcs:push" } }`
+    product = {"build": {"commands": {"web-image": "vcs:push"}}}
+
+    # act / assert
+    with pytest.raises(ValueError, match="is not a mapping"):
+        treeform.merge(KERNEL, product)
+
+
 CATALOGUE_TASKS = {"vcs:push": {"impl": "delivery.tasks.vcs:push", "help": "push it.",
                                 "params": {"remote": {"help": "the remote"}}}}
 PRODUCT_TASKS = {"lab-image": {"impl": "orchestrator.tooling:lab_image", "help": "build an image."}}
@@ -227,6 +268,64 @@ def test_a_params_entry_for_a_pinned_parameter_is_rejected():
 
     # act / assert
     with pytest.raises(ValueError, match="pins .* with `with:`"):
+        treeform.resolve(flat, tasks, {})
+
+
+def test_a_command_pinning_a_parameter_the_template_declares_loads():
+    # arrange: the design's own canonical `lab-image` shape (spec 3.7) - the TASK declares `key` and
+    # `dockerfile`, and every command instantiating it pins both with `with:`. The earlier conflict check
+    # intersected against the merged template+command map and rejected exactly this
+    flat = {"build": {"frr-image": {"task": "lab-image", "with": {"key": "frr", "dockerfile": "Frr"}}}}
+    tasks = {"lab-image": {"impl": "orchestrator.tooling:lab_image", "help": "build an image.",
+                           "params": {"key": {"help": "the image key"},
+                                      "dockerfile": {"help": "the Dockerfile"}}}}
+
+    # act
+    resolved = treeform.resolve(flat, tasks, {})
+
+    # assert: both pinned keys are gone from `with:`'s target - no presentation renders for a value the
+    # command line never shows
+    assert resolved["build"]["frr-image"] == {
+        "impl": "orchestrator.tooling:lab_image", "help": "build an image.",
+        "with": {"key": "frr", "dockerfile": "Frr"}}
+
+
+def test_one_command_pins_a_template_parameter_and_another_leaves_it_documented():
+    # arrange: the mixed case the earlier check made unrepresentable - one instance pins `key`, another
+    # leaves it on the command line and keeps the template's documentation for it
+    flat = {"build": {"frr-image": {"task": "lab-image", "with": {"key": "frr"}},
+                      "generic-image": {"task": "lab-image"}}}
+    tasks = {"lab-image": {"impl": "orchestrator.tooling:lab_image", "help": "build an image.",
+                           "params": {"key": {"help": "the image key"}}}}
+
+    # act
+    resolved = treeform.resolve(flat, tasks, {})
+
+    # assert
+    assert "params" not in resolved["build"]["frr-image"]
+    assert resolved["build"]["generic-image"]["params"] == {"key": {"help": "the image key"}}
+
+
+def test_a_command_params_entry_for_a_parameter_it_also_pins_itself_is_still_rejected():
+    # arrange: the check narrows to the command's OWN `params:`, so a command declaring both for the SAME
+    # key must still fail - only the template/command split changed, not this rule
+    flat = {"build": {"frr-image": {"task": "lab-image", "with": {"key": "frr"},
+                                    "params": {"key": {"help": "own wording"}}}}}
+    tasks = {"lab-image": {"impl": "orchestrator.tooling:lab_image", "help": "build an image."}}
+
+    # act / assert
+    with pytest.raises(ValueError, match="pins .* with `with:`"):
+        treeform.resolve(flat, tasks, {})
+
+
+def test_a_non_mapping_with_block_is_rejected():
+    # arrange: `with:` given as a list instead of a mapping - would otherwise compute a nonsense pin set
+    # from the list's elements rather than failing where the mistake is
+    flat = {"build": {"frr-image": {"task": "lab-image", "with": ["key", "frr"]}}}
+    tasks = {"lab-image": {"impl": "orchestrator.tooling:lab_image", "help": "build an image."}}
+
+    # act / assert
+    with pytest.raises(ValueError, match="`with:` as list, not a mapping"):
         treeform.resolve(flat, tasks, {})
 
 
