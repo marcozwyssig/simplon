@@ -394,10 +394,10 @@ def test_a_group_the_platform_places_a_command_in_while_the_product_keeps_it_old
     # its own members. A silent `{**resolved, **old_form}` would let one side vanish with no error.
     catalogue = catalogue_mod.loads(textwrap.dedent("""
         tasks:
-          unit-py: { impl: "delivery.tasks.x:y", help: "run the python gate." }
+          test:unit-py: { impl: "delivery.tasks.x:y", help: "run the python gate." }
         groups:
           build: { help: "Produce the artefacts." }
-          test:  { help: "Verify them.", commands: { unit-py: { task: unit-py, help: "run it." } } }
+          test:  { help: "Verify them.", commands: { unit-py: { task: "test:unit-py", help: "run it." } } }
     """))
     text = textwrap.dedent("""
         product: demo
