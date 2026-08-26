@@ -6,6 +6,7 @@ Several tests import the RENDERED text and register it onto a Typer app. Asserti
 was written; asserting on the assembled Click tree says what Click made of it, and the tree is what
 netctl's cli_surface golden compares. AAA throughout."""
 import importlib.util
+import textwrap
 
 import click
 import pytest
@@ -13,6 +14,7 @@ import typer
 from click.testing import CliRunner
 from typer.main import get_command
 
+from delivery import catalogue as catalogue_mod
 from delivery import taskgen
 from delivery.orchestrator import manifest
 
@@ -61,11 +63,11 @@ def test_the_rendered_module_declares_a_command_per_manifest_entry():
     # arrange / act
     text = taskgen.render(_load(), source="demo.yaml", product="sample")
 
-    # assert: a plain function plus its registration under the manifest's name, carrying the body's
-    # docstring as the help summary (see the docstring rule below)
+    # assert: a plain function plus its registration under the manifest's name, carrying the manifest's
+    # own help as the help summary (see the docstring rule below - command help wins over the body's)
     assert "def seed(" in text
     assert "_g_lab.command(name='seed', hidden=False)(seed)" in text
-    assert "'Seed the lab and run the smoke test.'" in text
+    assert "'Seed the lab.'" in text
 
 
 def test_the_generated_module_registers_onto_a_caller_supplied_app():
@@ -213,18 +215,20 @@ def test_check_returns_a_diff_when_the_manifest_moved_on(tmp_path):
     assert "sites='be'" in diff
 
 
-def test_check_is_blind_to_a_help_change_the_generated_module_does_not_carry(tmp_path):
-    # arrange: a non-shared impl takes its summary from the BODY's docstring, so editing the manifest's
-    # `help:` legitimately does not move the generated file. Stating that here rather than leaving it
-    # implied: `help:` still drives the plan/TUI labels and a shared impl's blurb, and a manifest whose
-    # `help:` disagrees with its body's docstring is a real defect - one this gate cannot see, and one
-    # that has to be caught by making the two agree.
+def test_check_reports_a_diff_when_the_manifests_help_is_reworded(tmp_path):
+    # arrange: command help wins the chain regardless of sharing (netctl#1469 spec 3.7), so a reworded
+    # `help:` now DOES move the generated file - the opposite of the old rule, where a non-shared impl's
+    # summary came from the body's docstring and this gate stayed blind to a `help:` edit.
     target = tmp_path / "_generated.py"
     taskgen.write(_load(), target, source="demo.yaml", product="sample")
     reworded = _load(_MANIFEST.replace("Seed the lab.", "Seed it and smoke-test it."))
 
-    # act / assert
-    assert taskgen.check(reworded, target, source="demo.yaml", product="sample") is None
+    # act
+    diff = taskgen.check(reworded, target, source="demo.yaml", product="sample")
+
+    # assert
+    assert diff is not None
+    assert "Seed it and smoke-test it." in diff
 
 
 def test_check_reports_a_missing_target_as_a_diff_rather_than_crashing(tmp_path):
@@ -768,12 +772,13 @@ env_groups: []
     assert _sub(root, "commit").hidden is True
 
 
-# --- where a command's help summary comes from (netctl#1437) ------------------------------------------
+# --- where a command's help summary comes from: command help, then task help, then the docstring
+# (netctl#1469 spec 3.7, replacing #1437's non-shared-docstring-wins rule) -------------------------------
 
-def test_the_help_summary_comes_from_the_body_docstring(tmp_path):
-    # arrange: the reflective assembly bound the BODY as the callback, so Typer read the docstring off
-    # it. Preferring the manifest everywhere would read as the more principled rule and would silently
-    # reword four netctl commands whose help: and docstring have drifted apart.
+def test_a_commands_own_help_wins_over_its_bodys_docstring_even_when_the_impl_is_unshared(tmp_path):
+    # arrange: this is the exact case the OLD rule got backwards - an impl bound to only ONE command let
+    # the body's docstring beat the manifest. The new chain puts the command's own `help:` first,
+    # regardless of how many commands share the body.
     m = _load("""
 groups:
   lab:
@@ -784,8 +789,50 @@ groups:
     # act
     group = _sub(_assembled(m, tmp_path), "lab")
 
+    # assert: the manifest's own help renders, NOT "Seed the lab and run the smoke test." (the body's
+    # docstring) - the old rule would have asserted the opposite here.
+    assert _sub(group, "seed").get_short_help_str(limit=250) == "A DIFFERENT summary."
+
+
+def test_a_task_help_wins_over_the_body_docstring_when_the_command_declares_none(tmp_path):
+    # arrange: a command that instantiates a task and states no `help:` of its own inherits the task's
+    # (netctl#1469 spec 3.7's second link in the chain) - a distinction the old rule, which only ever
+    # compared the manifest against the docstring, could not express at all.
+    cat = catalogue_mod.loads(textwrap.dedent("""
+        groups:
+          lab: {}
+    """))
+    m = manifest.load(textwrap.dedent("""
+        product: demo
+        tasks:
+          seed: { impl: "delivery.test_impls:seed", help: "Seed every declared site." }
+        groups:
+          lab:
+            commands:
+              seed: { task: seed }
+    """), catalogue=cat)
+
+    # act
+    group = _sub(_assembled(m, tmp_path), "lab")
+
+    # assert: the TASK's help renders, not the body's own "Seed the lab and run the smoke test."
+    assert _sub(group, "seed").get_short_help_str(limit=250) == "Seed every declared site."
+
+
+def test_the_body_docstring_is_the_last_resort_when_neither_command_nor_task_declares_help():
+    # arrange: `load()` itself never produces a command with empty help (rule 3 requires one somewhere in
+    # the chain), so this exercises `_docstring` directly - the shape a task nobody described would take
+    # (netctl#1469 spec 3.7's third link) and the negative the two tests above cannot cover.
+    spec = manifest.CommandSpec(impl="delivery.test_impls:seed", help="")
+
+    def body():
+        """A body's own docstring, used only when nothing else describes it."""
+
+    # act
+    result = taskgen._docstring(spec, body)
+
     # assert
-    assert _sub(group, "seed").get_short_help_str(limit=250) == "Seed the lab and run the smoke test."
+    assert result == "A body's own docstring, used only when nothing else describes it."
 
 
 def test_an_impl_shared_by_several_commands_takes_each_summary_from_the_manifest(tmp_path):

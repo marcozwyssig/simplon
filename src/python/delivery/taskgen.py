@@ -120,48 +120,25 @@ def _call(impl: str, params: list[_Param], *, takes_context: bool) -> str:
     return f"{impl}({', '.join(args)})"
 
 
-def _shared_impls(manifest: Manifest) -> set[str]:
-    """The impl refs bound to MORE than one command.
+def _docstring(spec, body: object) -> str:
+    """The wrapper's docstring, which is what Typer renders as the command's help summary.
 
-    Help normally comes from a wrapper's docstring, but a body several commands share has one docstring,
-    so all of them would render the same blurb (netctl#1406, where one kernel suite-runner backs every
-    declared test level). There the manifest's per-command `help:` wins, passed as a `help=` kwarg.
+    Command help wins, then the task's, then the body's docstring: an instance's own wording is instance
+    data, a template's is the fallback, and the body's is the last resort for a task nobody described
+    (netctl#1469 spec 3.7). This replaces the rule where a non-shared body's docstring beat the
+    manifest - an artefact of the reflective assembly, which bound the body itself as the callback.
     """
-    seen: dict[str, int] = {}
-    for members in manifest.commands.values():
-        for spec in members.values():
-            if spec.impl:
-                seen[spec.impl] = seen.get(spec.impl, 0) + 1
-    return {ref for ref, count in seen.items() if count > 1}
+    if spec.help:
+        return spec.help
+    doc = (getattr(body, "__doc__", None) or "").strip()
+    return doc or spec.help
 
 
-def _docstring(spec, body: object, shared: set[str]) -> str:
-    """The wrapper's docstring - which is what Typer renders as the command's help summary.
-
-    The BODY's docstring wins, because that is what the reflective assembly showed: it bound the body
-    itself as the callback, so Typer read the docstring off it. The manifest's `help:` is used only where
-    the reflective assembly used it too - for an impl SEVERAL commands share, which has one docstring and
-    would otherwise give all of them the same blurb (netctl#1406).
-
-    Preferring the manifest everywhere would read as the more principled rule ("the manifest is the
-    model") and it silently rewords four netctl commands whose `help:` and docstring have drifted apart.
-    Reconciling that drift is a visible change and belongs in its own reviewed diff, not in the one that
-    moves the assembly.
-    """
-    if spec.impl and spec.impl not in shared:
-        doc = (getattr(body, "__doc__", None) or "").strip()
-        if doc:
-            return doc
-    return spec.help
-
-
-def _kwargs(spec, *, shared: set[str]) -> str:
+def _kwargs(spec) -> str:
     """The registration kwargs a command carries beyond its name, as source."""
     out = []
     if spec.passthrough_args:
         out.append(f"context_settings={_PASSTHROUGH_CTX!r}")
-    if spec.impl and spec.impl in shared:
-        out.append(f"help={spec.help!r}")
     return "".join(", " + kw for kw in out)
 
 
@@ -183,7 +160,6 @@ def render(manifest: Manifest, *, source: str, product: str,
     """
     tax = manifest.taxonomy()
     selected = _selected(manifest, groups)
-    shared = _shared_impls(manifest)
     cd_panel = _cd_panel(product)
     tasks: list[dict[str, object]] = []
     imports: list[str] = []
@@ -206,7 +182,7 @@ def render(manifest: Manifest, *, source: str, product: str,
                 takes_ctx = signatures.takes_context(impl_body)
                 params = _params(impl_body, spec.with_, spec.params, where=where)
                 call = _call(f"{module}.{attribute}", params, takes_context=takes_ctx)
-                tasks.append({"func": func, "help_repr": repr(_docstring(spec, impl_body, shared)),
+                tasks.append({"func": func, "help_repr": repr(_docstring(spec, impl_body)),
                               "signature": _signature(params, takes_context=takes_ctx),
                               "call": f"_rc({call})"})
             else:
@@ -278,7 +254,7 @@ def render(manifest: Manifest, *, source: str, product: str,
             if default_member and name == group.rpartition(".")[2]:
                 continue      # the namesake is the sub-app's callback, registered above
             spec = spec_of[name]
-            func, kw = funcs[(group, name)], _kwargs(spec, shared=shared)
+            func, kw = funcs[(group, name)], _kwargs(spec)
             if tax.is_flat_command_group(group):
                 body.append(f"app.command(name={name!r}, rich_help_panel={panel!r}, "
                             f"hidden={spec.hidden!r}{kw})({func})")
