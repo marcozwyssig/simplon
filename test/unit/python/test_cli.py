@@ -459,6 +459,41 @@ def test_the_aggregates_help_line_is_its_synthesized_callbacks_docstring(agg_ass
     assert bringup.callback.__doc__ == "Full bring-up."
 
 
+# --- a leaf's docstring chain: command help, then the body's docstring (netctl#1469 spec 3.7), the same
+# chain `taskgen._docstring` renders into the generated module. `_bound` is exercised directly rather
+# than through `assemble`, mirroring `test_taskgen.py`'s direct `_docstring` case: `manifest.load()`
+# itself never produces a command with empty help (rule 3 requires one somewhere in the chain), so the
+# fallback link is only reachable by constructing a `CommandSpec` by hand. ------------------------------
+
+def test_bound_renders_the_commands_own_help_over_its_bodys_docstring():
+    # arrange: `functools.wraps` copies the body's docstring onto the wrapper unconditionally - the exact
+    # drift `test_mechanism_parity` exists to catch. The command's own help must win over it regardless.
+    def body():
+        """The body's own docstring, which must lose to the command's help."""
+
+    spec = manifest.CommandSpec(impl="demo_impls:body", help="The command's own help.")
+
+    # act
+    wrapped = cli._bound(body, spec, where="demo cmd")
+
+    # assert
+    assert wrapped.__doc__ == "The command's own help."
+
+
+def test_bound_falls_back_to_the_bodys_docstring_when_the_command_declares_none():
+    # arrange: the shape a task nobody described would take (netctl#1469 spec 3.7's last resort link)
+    def body():
+        """The body's own docstring, used only when nothing else describes it."""
+
+    spec = manifest.CommandSpec(impl="demo_impls:body", help="")
+
+    # act
+    wrapped = cli._bound(body, spec, where="demo cmd")
+
+    # assert
+    assert wrapped.__doc__ == "The body's own docstring, used only when nothing else describes it."
+
+
 # --- one impl bound to several commands (netctl#1406) ---------------------------------------------------
 
 

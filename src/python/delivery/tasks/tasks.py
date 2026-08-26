@@ -65,16 +65,15 @@ def catalogue() -> int:
     see what is on offer, which is what this prints - namespace by namespace, each coordinate with the
     kernel's own one-line summary, and a marker on the namespaces this product's manifest imports.
     """
-    # KEPT VERBATIM as a COMMENT rather than fixed prose (netctl#1469 fix round 1): the whole docstring
-    # above - not only its first line - is embedded into the generated module's `help=` for this command
-    # (taskgen._docstring keeps the BODY's docstring whenever it is bound to only one command), and its
-    # FIRST PARAGRAPH specifically is also netctl's CLI-surface golden's "summary:" line for `netctl
-    # catalogue`/`netctl tasks catalogue`. Rewording either would move that golden, or leak this
-    # migration's internal reasoning into a product's `--help` text, for an unmigrated netctl with no
-    # netctl-side change to pair it with - the same failure class change 3's docstring comment records
-    # for the `name` parameter. "Imports" is no longer the full picture below - `_reached_namespaces`
-    # reads the ASSEMBLED manifest, not what the product typed - but the docstring stays exactly as it
-    # was; only the code and the rest of this module's wording change (netctl#1469 fix round 2).
+    # CORRECTED (netctl#1469 fix round 3): the reasoning that used to sit here predates the docstring
+    # chain (spec 3.7) and no longer holds. The docstring above is NOT embedded into the generated
+    # module's `help=` for this command - the kernel task `tasks:catalogue` declares its own `help:` in
+    # delivery.yaml, and the chain puts a command's help, then its task's, ahead of the body's docstring
+    # (both `taskgen._docstring` and `cli._bound` render it), so that `help:` wins here and this
+    # docstring's first paragraph never renders as `netctl catalogue`/`netctl tasks catalogue`'s
+    # summary line. Rewording the docstring therefore no longer moves that golden; only editing
+    # `delivery.yaml`'s `tasks:catalogue.help:` does. "Imports" is still not the full picture below -
+    # `_reached_namespaces` reads the ASSEMBLED manifest, not what the product typed.
     cat = catalogue_mod.load()
     reached = _reached_namespaces(context.current().manifest(), cat)
 

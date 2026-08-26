@@ -28,6 +28,7 @@ from delivery import log, signatures
 from delivery.context import ProductContext
 from delivery.orchestrator import manifest
 from delivery.orchestrator.product import StepFactoryContext, run_command
+from delivery.taskgen import _docstring
 
 # The passthrough context settings: a passthrough command forwards unrecognised trailing args to its
 # underlying tool (e.g. accept -> pytest). The manifest declares the intent (passthrough_args); this maps
@@ -163,6 +164,11 @@ def _bound(fn: Callable[..., object], spec: manifest.CommandSpec,
     def _wrapped(*args: object, **kwargs: object) -> None:
         raise typer.Exit(code=_rc(fn(*args, **{**kwargs, **pinned})))
 
+    # `functools.wraps` copied `fn.__doc__` onto `_wrapped` unconditionally, which is the OLD rule (the
+    # body's docstring always renders). The chain is now the same one `taskgen._docstring` renders into
+    # the generated module: the manifest's resolved `help` (command, then task) wins, the body's
+    # docstring is only the last resort - so this must run AFTER `wraps`, overwriting what it copied.
+    _wrapped.__doc__ = _docstring(spec, fn)
     _wrapped.__signature__ = sig.replace(parameters=new_params)
     return _wrapped
 
