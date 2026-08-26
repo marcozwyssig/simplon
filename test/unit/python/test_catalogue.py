@@ -491,20 +491,59 @@ def test_a_catalogue_taxonomy_that_is_not_a_mapping_is_rejected():
         catalogue.loads("taxonomy: [build, test]\ntasks: {}\n")
 
 
+def _placed_tasks(groups: dict) -> set[str]:
+    """Every coordinate placed anywhere in a group tree, however deeply nested - `commands` at THIS level
+    plus whatever `groups` nests below it."""
+    placed: set[str] = set()
+    for node in groups.values():
+        placed |= {spec["task"] for spec in (node.get("commands") or {}).values()}
+        placed |= _placed_tasks(node.get("groups") or {})
+    return placed
+
+
 def test_the_shipped_catalogue_places_the_general_commands_and_nothing_that_needs_product_data():
     # arrange: the real delivery.yaml, not a fixture - this is the assertion that the platform's own
     # data obeys the rule the platform enforces
     cat = catalogue.load()
 
-    # act
+    # act: walk the WHOLE tree, not just support.git and tasks - the mistake this guards against would
+    # realistically place a product-data task under a group this narrower walk never inspected (e.g.
+    # `test:gate` under `test:`), and a two-branch walk would stay green while that happened
     git = cat.groups["support"]["groups"]["git"]["commands"]
     tasks = cat.groups["tasks"]["commands"]
-    placed = {spec["task"] for node in (git, tasks) for spec in node.values()}
+    placed = _placed_tasks(cat.groups)
 
     # assert
     assert set(git) == {"commit", "push", "prune-branches", "submodules"}
     assert set(tasks) == {"catalogue", "generate"}
-    assert "support:nexus" not in placed and "test:gate" not in placed
+    assert placed == {"vcs:commit", "vcs:push", "vcs:prune-branches", "vcs:submodules",
+                       "tasks:catalogue", "tasks:generate"}
+
+
+def test_the_shipped_gate_task_documents_name_while_every_real_instantiation_pins_it():
+    # arrange: delivery.yaml's `test:gate` declares `params: { name: ... }` to document the option for a
+    # caller that leaves it unpinned, while netctl's two real commands each pin `name` with `with:`. The
+    # question this proves an answer to (netctl#1469 vocabulary review, item F5): `treeform.resolve` only
+    # rejects a COMMAND's OWN `params:` for a key it also pins - never the TEMPLATE's - so a task
+    # documents a parameter once and every pinning instance still resolves clean.
+    cat = catalogue.load()
+    text = """
+groups:
+  test:
+    commands:
+      system:              { task: "test:gate", with: { name: system } }
+      acceptance-dataplane: { task: "test:gate", with: { name: acceptance-dataplane } }
+env_groups: []
+"""
+
+    # act
+    mf = manifest.load(text, catalogue=cat, validate_with=True)
+
+    # assert: both resolve, each keeps its own pin, and `name` renders as a stray option for neither
+    system = mf.spec_for("test", "system")
+    dataplane = mf.spec_for("test", "acceptance-dataplane")
+    assert system.with_ == {"name": "system"} and system.params == {}
+    assert dataplane.with_ == {"name": "acceptance-dataplane"} and dataplane.params == {}
 
 
 def test_the_shipped_catalogue_declares_the_whole_ci_cd_loop():
