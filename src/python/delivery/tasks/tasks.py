@@ -46,7 +46,7 @@ def generate(target: str, check: bool = False) -> int:
         if diff is None:
             log.ok(f"{target} agrees with {source}")
             return 0
-        log.warn(f"{target} disagrees with {source} - regenerate with `<product> tasks generate`")
+        log.warn(f"{target} disagrees with {source} - regenerate with `<product> support tasks generate`")
         print(diff)
         return 1
 

@@ -510,7 +510,7 @@ def test_the_shipped_catalogue_places_the_general_commands_and_nothing_that_need
     # realistically place a product-data task under a group this narrower walk never inspected (e.g.
     # `test:gate` under `test:`), and a two-branch walk would stay green while that happened
     git = cat.groups["support"]["groups"]["git"]["commands"]
-    tasks = cat.groups["tasks"]["commands"]
+    tasks = cat.groups["support"]["groups"]["tasks"]["commands"]
     placed = _placed_tasks(cat.groups)
 
     # assert
@@ -551,7 +551,8 @@ def test_the_shipped_catalogue_declares_the_whole_ci_cd_loop():
     cat = catalogue.load()
 
     # act / assert: the shape every *ctl product inherits, and the two env-first groups
-    assert set(cat.groups) == {"build", "test", "release", "deploy", "monitor", "support", "tasks"}
+    assert set(cat.groups) == {"build", "test", "release", "deploy", "monitor", "support"}
+    assert set(cat.groups["support"]["groups"]) == {"git", "tasks"}
     assert cat.groups["deploy"]["env_first"] is True
     assert cat.groups["monitor"]["env_first"] is True
 
