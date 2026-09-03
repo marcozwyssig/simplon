@@ -105,8 +105,11 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
     cat = catalogue.load()
 
     # assert
-    assert cat.namespaces() == ["support", "tasks", "test", "vcs"]
+    assert cat.namespaces() == ["docs", "support", "tasks", "test", "vcs"]
     assert sorted(cat.namespace("vcs")) == ["commit", "prune-branches", "push", "submodules"]
+    # `docs` is the newest (netctl#1280): the render is a kernel mechanism, its pinned image tag is the
+    # product's data, so the coordinate lives here and the version stays in the product manifest.
+    assert sorted(cat.namespace("docs")) == ["render"]
 
 
 # --- the `import:` + `tasks:` expansion ------------------------------------------------------------------
