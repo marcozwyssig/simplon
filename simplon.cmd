@@ -2,6 +2,12 @@
 setlocal
 rem simplon.cmd - the Windows entry point. Same four parameters and the
 rem same exec contract as simplon.sh; only the path separators differ.
+rem
+rem The ensurepip/apt provisioning simplon.sh carries has no counterpart
+rem here: the python.org and Store installers both ship a working venv module,
+rem and there is no package manager to drive without a prompt. What DOES apply
+rem is the broken-venv rebuild - an interrupted first run leaves the same
+rem python-without-pip directory on any platform.
 
 set "LAUNCH_PRODUCT=simplon"
 set "LAUNCH_ROOT=%~dp0"
@@ -15,7 +21,27 @@ set "STAMP=%VENV%\.deps-stamp"
 set "VPY=%VENV%\Scripts\python.exe"
 set "VPIP=%VENV%\Scripts\pip.exe"
 
-if not exist "%VPY%" python -m venv "%VENV%" || exit /b 1
+where python >nul 2>&1
+if errorlevel 1 (
+    >&2 echo simplon: python is required ^(the orchestrator is host-Python^)
+    exit /b 1
+)
+
+rem Create the venv on first use, and REBUILD it when it is broken. The condition is
+rem pip, not the directory and not the interpreter: an interrupted first run leaves a
+rem venv that has python.exe and no pip.exe, and a check on either of those would call
+rem that healthy and then fail on the install below, every run, forever. Remove the
+rem tree first so nothing half-built survives the rebuild - that takes the stamp with
+rem it, which is what forces the fresh dependency install afterwards.
+if not exist "%VPIP%" (
+    if exist "%VENV%" rmdir /s /q "%VENV%"
+    python -m venv "%VENV%"
+)
+if not exist "%VPIP%" (
+    >&2 echo simplon: could not provision pip into %VENV%. Check that this Python
+    >&2 echo simplon: has venv support: python -m ensurepip --version
+    exit /b 1
+)
 
 rem cmd.exe cannot compare file times; Python can.
 python -c "import os,sys; s,r=sys.argv[1],sys.argv[2]; sys.exit(0 if os.path.exists(s) and os.path.getmtime(s)>=os.path.getmtime(r) else 1)" "%STAMP%" "%REQ%"
