@@ -1,6 +1,6 @@
-# Simplon baut und prueft sich mit sich selbst. Genau der Kernel, der hier
-# gebaut wird, montiert diese CLI aus diesem Manifest -- bricht ein Commit
-# die Montage, faellt es in derselben Runde auf statt nach dem Release.
+# Simplon builds and tests itself with itself. The very kernel built here
+# assembles this CLI from this manifest -- if a commit breaks the assembly,
+# it fails in the same round instead of after a release.
 product: simplon
 default: dev
 
@@ -15,13 +15,13 @@ default: dev
 groups:
   build:
     wheel:
-      help: "Wheel bauen."
+      help: "Build the wheel."
       impl: "orchestrator.cli:build_wheel"
   test:
     all:
-      help: "Alle Tests."
+      help: "Run every test."
       impl: "orchestrator.cli:test_all"
   support:
     doctor:
-      help: "Werkzeuge und Umgebung pruefen."
+      help: "Check the tools and the environment."
       impl: "orchestrator.cli:doctor"

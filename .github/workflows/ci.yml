@@ -9,9 +9,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # Stufe 0 ist der Arbeitsbaum selbst: der NEUE Code faehrt seinen
-      # eigenen Build. Die letzte Release-Version zu nehmen waere reiner,
-      # aber ein kaputter Release vergiftete dann den naechsten Build.
-      - run: pip install -e . build pytest
+      # Stage zero is the working tree. The launcher provisions its own venv and
+      # installs this checkout with `-e .`, so the code under test is the code
+      # that runs the test -- a commit that breaks CLI assembly fails here, in
+      # the same round, rather than after a release.
       - run: ./simplon.sh test all
       - run: ./simplon.sh build wheel

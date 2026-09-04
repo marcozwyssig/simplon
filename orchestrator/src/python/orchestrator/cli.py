@@ -37,8 +37,8 @@ app = typer.Typer(add_completion=False, no_args_is_help=True,
 # fresh product; add entries here as you rename commands and want the old muscle memory to keep working.
 _ALIASES: dict[str, str] = {}
 
-# cli.py liegt unter orchestrator/src/python/orchestrator/ -- vier Ebenen
-# unter der Wurzel, nicht drei.
+# cli.py lands under orchestrator/src/python/orchestrator/ -- four levels
+# below the root, not three.
 ROOT = Path(__file__).resolve().parents[4]
 
 
@@ -47,24 +47,24 @@ def _run(*args: str) -> int:
 
 
 def build_wheel() -> int:
-    """Wheel bauen."""
+    """Build the wheel."""
     return _run("-m", "build", "--wheel")
 
 
 def test_all() -> int:
-    """Alle Tests. Laeuft aus tests/, damit conftest greift."""
+    """Run every test. Runs from tests/, so conftest applies."""
     return subprocess.run([sys.executable, "-m", "pytest", "-q"],
                           cwd=ROOT / "tests").returncode
 
 
 def doctor() -> int:
-    """Werkzeuge und Umgebung pruefen."""
+    """Check the tools and the environment."""
     ok = True
     for mod in ("build", "pytest"):
         try:
             __import__(mod)
         except ImportError:
-            print(f"fehlt: {mod}", file=sys.stderr)
+            print(f"missing: {mod}", file=sys.stderr)
             ok = False
     print(f"python {sys.version.split()[0]}")
     return 0 if ok else 1

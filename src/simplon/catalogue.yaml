@@ -2,8 +2,13 @@
 # *ctl product. A product imports a NAMESPACE and refers to `<namespace>:<name>`, never to a module path,
 # so a body can move inside the kernel without breaking a product manifest.
 #
-# The kernel generates no module of its own - it has no CLI, only bodies and this registry. Only a
-# product generates, because only a product has a surface.
+# The kernel is a product of itself too (simplon.yaml, orchestrator/): its build/test/support
+# commands are assembled from this same catalogue, exactly like any other *ctl product. That
+# reverses an earlier rule ("only a product generates, because only a product has a surface") -
+# the reversal exists because a spike found this catalogue resolved by walking five directories
+# up to the old monorepo's root, correct only while vendored and silently wrong once installed.
+# Nobody had noticed, because nobody had ever run the kernel the way a consumer does. A tool
+# never used in its own house rots unseen.
 #
 # Exactly the thirteen coordinates netctl references today, no more. A catalogue that offers what nobody
 # imports is speculation, and the design's own rule is the minimum that solves the problem.
