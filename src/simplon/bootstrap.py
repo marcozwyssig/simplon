@@ -243,7 +243,7 @@ from __future__ import annotations
 
 import typer
 
-from simplon import cli as delivery_cli
+from simplon import cli as simplon_cli
 from simplon import log
 from simplon.orchestrator.product import StepFactoryContext
 
@@ -299,14 +299,14 @@ _STEP_CONTEXT = StepFactoryContext.for_shim("@@PRODUCT@@", paths.ROOT / "@@PRODU
 # already be defined; step_context lets the kernel synthesize the callback for each impl-less aggregate
 # (`all` runs its build->up dependency plan, reachable as `@@PRODUCT@@ all` or `@@PRODUCT@@ <env> deploy
 # all`). The product name only shapes the usage hints.
-delivery_cli.assemble(app, _MANIFEST, product=paths.CONTEXT.name, step_context=_STEP_CONTEXT)
+simplon_cli.assemble(app, _MANIFEST, product=paths.CONTEXT.name, step_context=_STEP_CONTEXT)
 
 
 def main() -> None:
     """Entry point (`python -m orchestrator`): env-first dispatch via the delivery binding layer. The
     product context, the environments module and the alias map are injected, so simplon.cli hardcodes
     nothing product-specific."""
-    delivery_cli.main(app=app, context=paths.CONTEXT, environments=environments.PROVIDER,
+    simplon_cli.main(app=app, context=paths.CONTEXT, environments=environments.PROVIDER,
                       aliases=_ALIASES)
 '''
 
