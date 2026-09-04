@@ -36,6 +36,11 @@ groups:
   monitor: { help: "Watch what is running there.", env_first: true }
   support:
     help: "Host preflight, environment introspection and host tooling."
+    commands:
+      # The one command that PROVISIONS rather than inspects. It sits at the support level rather than
+      # in a subgroup because it is about the machine as a whole, and a fresh checkout should reach it
+      # without knowing which tool is missing.
+      install: { task: "support:install" }
     groups:
       git:
         help: "Version-control helpers."
@@ -54,6 +59,9 @@ groups:
               remote:   { help: "also delete merged branches on origin" }
               unmerged: { help: "ALSO delete branches that cannot be proven merged (destructive)" }
           submodules: { task: "vcs:submodules" }
+          # Credentials, not tooling - which is why this is here and not in `support install`: it opens
+          # a browser and asks a human to authorise something, rather than touching the machine.
+          auth-scopes: { task: "vcs:auth-scopes" }
       # tasks: the task machinery itself, NESTED under support for the same reason `git` is - it is host
       # tooling for whoever develops the product, not a stage of the CI/CD loop the other six groups
       # describe. A top-level `tasks` also claimed a very generic token beside `build`/`test`/`deploy`.
@@ -84,6 +92,9 @@ tasks:
   vcs:prune-branches:
     impl: simplon.tasks.vcs:prune_branches
     help: "Delete local branches already merged into main (squash-aware via gh)."
+  vcs:auth-scopes:
+    impl: simplon.tasks.vcs:auth_scopes
+    help: "Grant the stored gh token the package scopes GHCR needs (interactive, idempotent)."
   vcs:submodules:
     impl: simplon.tasks.vcs:submodules
     help: "git submodule update --init lib/platform (init the submodule a fresh worktree needs)."
@@ -127,6 +138,9 @@ tasks:
   support:nexus:
     impl: simplon.tasks.nexus:nexus_cmd
     help: "Drive the LAN Sonatype Nexus artefact proxy: up | down | status | repos | cleanup."
+  support:install:
+    impl: simplon.tasks.hosttools:install
+    help: "Provision the host tooling the kernel needs - today oras; idempotent."
   support:claude-plugins:
     impl: simplon.tasks.claudeplugins:install_cmd
     help: "Install the Claude Code plugins declared in the manifest's `claude` section; idempotent."

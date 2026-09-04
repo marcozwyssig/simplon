@@ -25,6 +25,7 @@ from pathlib import Path
 
 from simplon import context
 from simplon import log
+from simplon import tools
 from simplon.run import run
 
 # Pinned static-CLI release (download.docker.com/linux/static/stable); bump deliberately.
@@ -50,9 +51,12 @@ def static_cli_url(machine: str, version: str = DOCKER_CLI_VERSION) -> str:
 
 
 def tools_bin() -> Path:
-    """Product-owned tool directory the bootstrap installs into (wiped by `clean` with build/). The repo
-    root comes from the registered product context, so the layout convention stays product-agnostic."""
-    return context.current().root / "build" / "tools" / "bin"
+    """Product-owned tool directory the bootstrap installs into (wiped by `clean` with build/).
+
+    The convention itself lives in simplon.tools, shared with the oras gate: two bootstraps answering
+    "where does a fetched binary go" separately is one of them drifting later.
+    """
+    return tools.bin_dir()
 
 
 def _fetch_static_cli(dest: Path) -> None:
@@ -137,7 +141,7 @@ def ensure_docker() -> None:
             cli = tools_bin() / "docker"
             if not cli.is_file():
                 _fetch_static_cli(cli)
-            os.environ["PATH"] = f"{cli.parent}{os.pathsep}{os.environ.get('PATH', '')}"
+            tools.prepend_to_path(cli.parent)
         if shutil.which("docker") is None:
             log.die("docker bootstrap failed: no usable docker CLI after engine install / static fetch")
     # Bootstrap mode verifies the daemon end to end and self-fixes what privileges allow.

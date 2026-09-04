@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from simplon import context
+from simplon import context, githubpackages
 from simplon.tasks import vcs as vcs_cmd
 from simplon.context import ProductContext
 
@@ -189,3 +189,57 @@ def test_no_body_in_this_module_raises_typer_exit_any_more():
     # assert
     assert "typer.Exit" not in source
     assert "\nimport typer" not in source
+
+
+# --- auth-scopes: the gh token's package permissions -------------------------------------------------
+
+def test_the_refresh_asks_for_the_package_scopes_the_registry_needs(monkeypatch):
+    # arrange: a terminal, no environment token, and a gh token without the package scopes
+    asked = []
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setattr(vcs_cmd.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(vcs_cmd.vcs, "gh_scopes", lambda: ("gist", "repo"))
+    monkeypatch.setattr(vcs_cmd.vcs, "refresh_scopes", lambda scopes: asked.append(tuple(scopes)) or 0)
+
+    # act
+    rc = vcs_cmd.auth_scopes()
+
+    # assert: exactly the scopes githubpackages declares, so the two never drift apart
+    assert asked == [githubpackages.PACKAGE_SCOPES]
+    assert rc == 0
+
+
+def test_nothing_is_refreshed_when_the_token_already_carries_the_scopes(monkeypatch):
+    # arrange
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setattr(vcs_cmd.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(vcs_cmd.vcs, "gh_scopes",
+                        lambda: ("repo", "read:packages", "write:packages"))
+    monkeypatch.setattr(vcs_cmd.vcs, "refresh_scopes", _must_not_run)
+
+    # act / assert: idempotent, so it can be run before every publish without a browser opening
+    assert vcs_cmd.auth_scopes() == 0
+
+
+def test_an_environment_token_is_named_instead_of_refreshing_a_token_nobody_reads(monkeypatch):
+    # arrange: GITHUB_TOKEN wins in githubpackages.token(), so a refreshed gh token would never be used
+    monkeypatch.setenv("GITHUB_TOKEN", "from-the-environment")
+    monkeypatch.setattr(vcs_cmd.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(vcs_cmd.vcs, "refresh_scopes", _must_not_run)
+
+    # act / assert: says so and does nothing, rather than appearing to fix something
+    assert vcs_cmd.auth_scopes() == 0
+
+
+def test_without_a_terminal_it_does_not_start_a_browser_flow_nobody_can_answer(monkeypatch):
+    # arrange: `gh auth refresh` is a device flow - in CI it would hang until the job times out
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setattr(vcs_cmd.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(vcs_cmd.vcs, "refresh_scopes", _must_not_run)
+
+    # act / assert
+    assert vcs_cmd.auth_scopes() == 0
+
+
+def _must_not_run(*args, **kwargs):
+    raise AssertionError("must not have refreshed the token")

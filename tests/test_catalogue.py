@@ -106,7 +106,11 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
 
     # assert
     assert cat.namespaces() == ["docs", "support", "tasks", "test", "vcs"]
-    assert sorted(cat.namespace("vcs")) == ["commit", "prune-branches", "push", "submodules"]
+    assert sorted(cat.namespace("vcs")) == ["auth-scopes", "commit", "prune-branches", "push",
+                                            "submodules"]
+    # `support:install` provisions the host tooling the kernel cannot work without (oras), and
+    # `vcs:auth-scopes` the gh token's package scopes - the two halves of "this machine can publish".
+    assert "install" in cat.namespace("support")
     # `docs` is the newest (netctl#1280): the render is a kernel mechanism, its pinned image tag is the
     # product's data, so the coordinate lives here and the version stays in the product manifest.
     assert sorted(cat.namespace("docs")) == ["render"]
@@ -517,10 +521,13 @@ def test_the_shipped_catalogue_places_the_general_commands_and_nothing_that_need
     placed = _placed_tasks(cat.groups)
 
     # assert
-    assert set(git) == {"commit", "push", "prune-branches", "submodules"}
+    assert set(git) == {"commit", "push", "prune-branches", "submodules", "auth-scopes"}
     assert set(tasks) == {"catalogue", "generate"}
+    # `support:install` and `vcs:auth-scopes` are placed for the same reason the git verbs are: both
+    # read nothing from a product manifest - one drives the tool gates, the other the gh token.
     assert placed == {"vcs:commit", "vcs:push", "vcs:prune-branches", "vcs:submodules",
-                       "tasks:catalogue", "tasks:generate"}
+                      "vcs:auth-scopes", "support:install",
+                      "tasks:catalogue", "tasks:generate"}
 
 
 def test_the_shipped_gate_task_documents_name_while_every_real_instantiation_pins_it():
