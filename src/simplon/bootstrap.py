@@ -1,4 +1,4 @@
-"""delivery.bootstrap - scaffold a fresh product onto the delivery orchestrator (netctl#651 strand 4).
+"""simplon.bootstrap - scaffold a fresh product onto the delivery orchestrator (netctl#651 strand 4).
 
 A brand-new product has no shim, no manifest and no product package yet, so it cannot reach the kernel
 through its own CLI. This module is the ONE kernel entry that runs WITHOUT a product context: it writes a
@@ -7,7 +7,7 @@ minimal, valid product skeleton and prints the next steps, after which the new p
 
 Run it standalone (the kernel's python source must be on sys.path, e.g. via a checked-out submodule)::
 
-    python -m delivery.bootstrap <product> [--dir DIR] [--force]
+    python -m simplon.bootstrap <product> [--dir DIR] [--force]
 
 It renders, mirroring the shape netctl's own `netctl.yaml` + `netctl.sh` use but stripped to the bones:
 
@@ -21,11 +21,11 @@ It renders, mirroring the shape netctl's own `netctl.yaml` + `netctl.sh` use but
         __main__.py                                  `python -m orchestrator` entry
         cli.py                                       composition root: root Typer app + assemble
                                                      (step_context binds the `all` aggregate) + main
-        paths.py                                     the ProductContext wiring (delivery.context); repo root
+        paths.py                                     the ProductContext wiring (simplon.context); repo root
                                                      found by walking up to the manifest marker, not a depth
         environments.py                              the EnvironmentProvider (its three product values)
 
-The generated manifest VALIDATES through `delivery.orchestrator.manifest.load`; the generated `paths.py`
+The generated manifest VALIDATES through `simplon.orchestrator.manifest.load`; the generated `paths.py`
 registers a `ProductContext` exactly as netctl's adapter does, so a `git submodule add ... lib/platform`
 away the new product has a working, manifest-driven CLI (`./<product>.sh help`).
 
@@ -45,7 +45,7 @@ Design / scope (best-effort MINIMAL slice; netctl#651 strand 4 is under-specifie
 
     DEFERRED to a fuller scaffolder (documented, deliberately NOT built here)
       - a real `delivery` console-script / a `bootstrap` subcommand woven into the assembled product CLI
-        (today it is `python -m delivery.bootstrap`, the only honest entry before a product exists);
+        (today it is `python -m simplon.bootstrap`, the only honest entry before a product exists);
       - `git init` automation (side-effecting VCS state); the `git submodule add lib/platform` + bootstrap
         + verify one-command flow now lives in the repo-root `init-product.sh` wrapper (netctl#740);
       - schema-per-section docs, includes/anchors and a `--profile` menu (network-lab vs plain-service) that
@@ -96,8 +96,8 @@ def env_var_name(name: str) -> str:
 
 _MANIFEST = """\
 # @@PRODUCT@@ delivery manifest - the single declarative source the delivery kernel
-# (delivery.orchestrator.manifest) assembles @@PRODUCT@@'s CLI from. Scaffolded by
-# `python -m delivery.bootstrap` (netctl#651 strand 4). Fill it in: add your real groups + commands and
+# (simplon.orchestrator.manifest) assembles @@PRODUCT@@'s CLI from. Scaffolded by
+# `python -m simplon.bootstrap` (netctl#651 strand 4). Fill it in: add your real groups + commands and
 # wire each `impl` to a "module:function" your orchestrator package exports.
 #
 # Sections:
@@ -225,15 +225,15 @@ if __name__ == "__main__":
 _CLI = '''\
 """The @@PRODUCT@@ host CLI (Typer), assembled from @@PRODUCT@@.yaml by the delivery kernel.
 
-Scaffolded by `python -m delivery.bootstrap` (netctl#651 strand 4). This is the product's composition root:
+Scaffolded by `python -m simplon.bootstrap` (netctl#651 strand 4). This is the product's composition root:
 it creates the root Typer app, ships the command-impl callables the manifest's "module:function" refs
 resolve to, and hands the app + product context + environments + aliases to the delivery binding layer
-(delivery.cli). The generic assembly (a sub-app per group, hidden flat aliases, the flat-group collapse,
+(simplon.cli). The generic assembly (a sub-app per group, hidden flat aliases, the flat-group collapse,
 the CI/CD panels) and the env-first dispatch live in the kernel, driven entirely by the manifest - so a
 fresh product adds groups/commands in @@PRODUCT@@.yaml and impl callables HERE, and nowhere else.
 
 Replace the placeholder commands (build/up/down) with your own; keep them as module-level callables so the
-manifest's impl refs resolve (delivery.orchestrator.manifest.resolve_impl imports THIS module and getattrs
+manifest's impl refs resolve (simplon.orchestrator.manifest.resolve_impl imports THIS module and getattrs
 the function named after the `:`). The `all` command in @@PRODUCT@@.yaml is a WORKING example of an
 impl-less AGGREGATE (#895/#896): it carries only `depends_on: [build, up]` and the kernel binds it at
 assembly time via the step context below, so a fresh product sees the pattern live instead of a dead
@@ -243,9 +243,9 @@ from __future__ import annotations
 
 import typer
 
-from delivery import cli as delivery_cli
-from delivery import log
-from delivery.orchestrator.product import StepFactoryContext
+from simplon import cli as delivery_cli
+from simplon import log
+from simplon.orchestrator.product import StepFactoryContext
 
 from . import environments
 from . import paths
@@ -283,8 +283,8 @@ _MANIFEST = paths.CONTEXT.manifest()
 # The step-factory seam (#895/#896): a command NAME becomes a live-streamed `./@@PRODUCT@@.sh <cmd>` step,
 # so the manifest's impl-less aggregates (`all`: depends_on build->up) run as DATA through the shared
 # runner - no product Python per aggregate. Built once; StepFactoryContext is
-# delivery.orchestrator.product's step-factory seam (kept distinct from the identity context in
-# delivery.context, netctl#737).
+# simplon.orchestrator.product's step-factory seam (kept distinct from the identity context in
+# simplon.context, netctl#737).
 #
 # `for_shim` is the kernel's own factory for this shape, and using it is not a style choice: it STAMPS
 # each step with the planned command's exact-command identity (`build.build`, `deploy.up`), which is what
@@ -304,7 +304,7 @@ delivery_cli.assemble(app, _MANIFEST, product=paths.CONTEXT.name, step_context=_
 
 def main() -> None:
     """Entry point (`python -m orchestrator`): env-first dispatch via the delivery binding layer. The
-    product context, the environments module and the alias map are injected, so delivery.cli hardcodes
+    product context, the environments module and the alias map are injected, so simplon.cli hardcodes
     nothing product-specific."""
     delivery_cli.main(app=app, context=paths.CONTEXT, environments=environments.PROVIDER,
                       aliases=_ALIASES)
@@ -313,10 +313,10 @@ def main() -> None:
 _PATHS = '''\
 """@@PRODUCT@@'s product adapter onto the delivery kernel: derive the repo ROOT + the manifest path and
 register ONE ProductContext at import, so kernel code reads them back product-agnostically via
-delivery.context.current() and never hardcodes "@@PRODUCT@@".
+simplon.context.current() and never hardcodes "@@PRODUCT@@".
 
 The walk up to the marker, the DELIVERY_* overrides and the fail-loud on a broken checkout are the
-KERNEL's (delivery.context.bootstrap). What only this product knows is its name and where this file
+KERNEL's (simplon.context.bootstrap). What only this product knows is its name and where this file
 sits, so that is all this module says. Extend it to read the manifest's raw build-data sections
 (images/volumes/...) through CONTEXT.manifest_data() as your pipeline grows.
 """
@@ -324,7 +324,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from delivery import context
+from simplon import context
 
 CONTEXT = context.bootstrap("@@PRODUCT@@", Path(__file__).resolve().parent)
 ROOT = CONTEXT.root
@@ -334,20 +334,20 @@ MANIFEST = CONTEXT.manifest_path
 _ENVIRONMENTS = '''\
 """@@PRODUCT@@'s named, isolated deployment environments. The matrix itself lives in @@PRODUCT@@.yaml
 (the `environments:`/`default:` sections); this adapter supplies the three things that are @@PRODUCT@@'s
-own and lets delivery.environments.Provider do the rest.
+own and lets simplon.environments.Provider do the rest.
 
-  * the process variable the active environment rides in (set by delivery.cli.main);
+  * the process variable the active environment rides in (set by simplon.cli.main);
   * the backends this product IMPLEMENTS - `local` today; add your cloud backend (e.g. a VM-per-site
     provider) here and gate a command on it with PROVIDER.require_backend();
   * how this product's shim spells a command, so an error message can hand an operator a line that
     actually dispatches.
 
-PROVIDER satisfies the delivery.cli EnvironmentProvider protocol structurally, so nothing named is
+PROVIDER satisfies the simplon.cli EnvironmentProvider protocol structurally, so nothing named is
 imported by the kernel - the coupling flows product -> kernel, never the reverse.
 """
 from __future__ import annotations
 
-from delivery.environments import LOCAL, Provider
+from simplon.environments import LOCAL, Provider
 
 ENV_VAR = "@@ENV_VAR@@"
 
@@ -381,7 +381,7 @@ def render(name: str) -> dict[str, str]:
 
 
 def manifest_yaml(name: str) -> str:
-    """Just the rendered starter manifest text (the piece a test feeds to delivery.orchestrator.manifest.load)."""
+    """Just the rendered starter manifest text (the piece a test feeds to simplon.orchestrator.manifest.load)."""
     return render(name)[f"{validate_product_name(name)}.yaml"]
 
 
@@ -402,7 +402,7 @@ def write(name: str, target: Path, *, force: bool = False) -> list[Path]:
     existing = sorted(rel for rel in files if (target / rel).exists())
     if existing and not force:
         raise FileExistsError(
-            f"delivery.bootstrap: refusing to overwrite existing files under {target}: {existing}; "
+            f"simplon.bootstrap: refusing to overwrite existing files under {target}: {existing}; "
             f"pass force=True (--force) to overwrite")
 
     written: list[Path] = []
@@ -433,11 +433,11 @@ def next_steps(name: str, target: Path) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """`python -m delivery.bootstrap <product> [--dir DIR] [--force]`: scaffold a product skeleton and print
+    """`python -m simplon.bootstrap <product> [--dir DIR] [--force]`: scaffold a product skeleton and print
     the next steps. Returns 0 on success, 2 on a bad product name or a clobber conflict (fail loud, no
     traceback)."""
     parser = argparse.ArgumentParser(
-        prog="python -m delivery.bootstrap",
+        prog="python -m simplon.bootstrap",
         description="Scaffold a fresh product onto the delivery orchestrator (netctl#651 strand 4).")
     parser.add_argument("product", help="the product slug (lowercase; letters, digits, hyphens), e.g. 'fooctl'")
     parser.add_argument("--dir", dest="directory", default=None,
@@ -449,7 +449,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         product = validate_product_name(args.product)
     except ValueError as exc:
-        print(f"delivery.bootstrap: {exc}", file=sys.stderr)
+        print(f"simplon.bootstrap: {exc}", file=sys.stderr)
         return 2
 
     target = Path(args.directory).resolve() if args.directory else (Path.cwd() / product)

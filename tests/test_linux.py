@@ -3,7 +3,7 @@ Moved here from netctl's orchestrator - the mechanism is platform's now (netctl#
 headline is the netctl#95 modprobe-`-a` regression guard. AAA throughout, negatives included."""
 import pytest
 
-from delivery import linux
+from simplon import linux
 
 
 def test_modprobe_argv_always_uses_dash_a_and_loads_every_module():

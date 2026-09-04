@@ -1,4 +1,4 @@
-"""Smoke tests for the shared Textual split-pane app (delivery.orchestrator.tui): drive it headlessly via
+"""Smoke tests for the shared Textual split-pane app (simplon.orchestrator.tui): drive it headlessly via
 run_test() and assert the worker ran every step to its real state, that the LEFT pane is the plan tree and
 that the RIGHT pane answers for both kinds of row - a leaf's output, an aggregate's children with their exit
 codes. Skipped when Textual is not installed. The pure-data half of the same tree (state derivation, the
@@ -10,9 +10,9 @@ import pytest
 
 pytest.importorskip("textual")
 
-from delivery.orchestrator.manifest import load as manifest_load  # noqa: E402
-from delivery.orchestrator.steps import Outcome, Pipeline, Step, StepState  # noqa: E402
-from delivery.orchestrator.tui import _StepApp  # noqa: E402
+from simplon.orchestrator.manifest import load as manifest_load  # noqa: E402
+from simplon.orchestrator.steps import Outcome, Pipeline, Step, StepState  # noqa: E402
+from simplon.orchestrator.tui import _StepApp  # noqa: E402
 
 _NESTED_MANIFEST = """
 groups:
@@ -92,7 +92,7 @@ def test_the_step_list_shows_the_speaking_name_and_the_details_pane_the_exact_co
     invocations looked fine. That made ONE renderer look like two - the bring-up read well and the image
     build did not - and it is invisible in a test that only uses label-only steps.
     """
-    from delivery.orchestrator.steps import argv_step
+    from simplon.orchestrator.steps import argv_step
 
     # arrange: exactly the shape that exposed it - a speaking label over a long real command
     real = ("docker run --rm -v /work:/work -e GRADLE_USER_HOME=/home/gradle/.gradle "

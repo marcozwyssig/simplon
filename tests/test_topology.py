@@ -1,4 +1,4 @@
-"""Unit tests for the generic containerlab topology manifest schema (delivery.topology): the pure YAML load
+"""Unit tests for the generic containerlab topology manifest schema (simplon.topology): the pure YAML load
 + Pydantic validation of nodes/links/bridges/sites/vendor_kinds/instance_scoping, the cross-object integrity
 rules (unique names, dangling references, endpoint resolution, kind resolution) and the resolution helpers.
 Exercised on SYNTHETIC manifests so the schema is validated independently of any product's mesh. AAA
@@ -6,7 +6,7 @@ throughout, including the negative cases (the fail-loud contract is the whole va
 """
 import pytest
 
-from delivery import topology
+from simplon import topology
 
 _OK = """
 name: demo-lab

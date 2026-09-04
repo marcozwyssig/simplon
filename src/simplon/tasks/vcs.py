@@ -7,18 +7,18 @@ option declarations that used to live here as `typer.Option`/`typer.Argument` de
 anything, not only from a Click parser, and the decorator lives only in generated code.
 
 The mechanism - git/gh subprocess wrappers and the pure `prune_verdict` decision - already lives in
-`delivery.vcs`; this module is the thin layer that points it at the calling product's repo root. ROOT
-comes from `delivery.context.current().root`, never from a product import: this module knows no product
+`simplon.vcs`; this module is the thin layer that points it at the calling product's repo root. ROOT
+comes from `simplon.context.current().root`, never from a product import: this module knows no product
 name and no product layout beyond the one path every product in the family vendors this repo at
 (`lib/platform`).
 """
 from __future__ import annotations
 
-from delivery import context, vcs
+from simplon import context, vcs
 
 
 def _configure() -> None:
-    """Point the delivery.vcs wrappers at the calling product's repo root."""
+    """Point the simplon.vcs wrappers at the calling product's repo root."""
     vcs.configure(context.current().root)
 
 

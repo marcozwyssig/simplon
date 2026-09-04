@@ -9,12 +9,12 @@ product specific is in the spec, so the module names NO product.
 
 Extracted from netctl's `orchestrator.lab` (the `_clab` wrapper, `oob_up`/`oob_down`, `up_deploy`, `down`,
 `_sweep_leftovers`, `_lab_container_count`, `up_verdict`). The DECISIONS were already unit-tested in
-`delivery.labnet` (`deploy_verdict`, the OOB-bridge snippets); this is the I/O wiring around them + the amd64
-watchdog from `delivery.labhost`.
+`simplon.labnet` (`deploy_verdict`, the OOB-bridge snippets); this is the I/O wiring around them + the amd64
+watchdog from `simplon.labhost`.
 
 The degraded-file contract. A product runs `deploy()` and `up_verdict()` in SEPARATE processes (netctl's
 `_up deploy` / `_up finish` sub-phases): `deploy()` records a partial-deploy degradation via
-`delivery.degraded.add`, which appends to the shared `DELIVERY_DEGRADED_FILE`, and a later `up_verdict()`
+`simplon.degraded.add`, which appends to the shared `DELIVERY_DEGRADED_FILE`, and a later `up_verdict()`
 reads the union back (`degraded.items()`). So the substrate writes and the product's finish phase reads the
 SAME degraded channel across processes - the coupling that must survive the extraction verbatim.
 
@@ -32,9 +32,9 @@ import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
-from delivery import degraded, labhost, labnet, log
-from delivery.host import Host
-from delivery.run import Result
+from simplon import degraded, labhost, labnet, log
+from simplon.host import Host
+from simplon.run import Result
 
 
 @dataclass(frozen=True)

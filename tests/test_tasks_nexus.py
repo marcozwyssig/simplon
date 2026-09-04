@@ -1,7 +1,7 @@
-"""Unit tests for delivery.tasks.nexus (netctl#1405, framework-free since netctl#1444): the thin body
+"""Unit tests for simplon.tasks.nexus (netctl#1405, framework-free since netctl#1444): the thin body
 a product's manifest points its `impl:` at.
 
-The MECHANISM - probe, reconcile, report - is `delivery.nexus` and is covered by test_nexus.py. What is
+The MECHANISM - probe, reconcile, report - is `simplon.nexus` and is covered by test_nexus.py. What is
 asserted here is the seam the generator introspects: the payload parameter survives, its annotation is the
 one Typer needs to render an optional positional, and nothing in the module raises `typer.Exit` any more.
 
@@ -10,7 +10,7 @@ AAA throughout.
 import inspect
 from pathlib import Path
 
-from delivery.tasks import nexus as nexus_cmd
+from simplon.tasks import nexus as nexus_cmd
 
 
 def test_nexus_cmd_keeps_its_member_payload_parameter():
@@ -30,7 +30,7 @@ def test_nexus_cmd_keeps_its_member_payload_parameter():
 def test_nexus_cmd_returns_the_dispatch_exit_code_rather_than_raising_typer_exit(monkeypatch):
     # arrange: the point of netctl#1444 - the body is callable from anything, not only a Click parser
     seen = []
-    monkeypatch.setattr("delivery.nexus.dispatch", lambda member: seen.append(member) or 3)
+    monkeypatch.setattr("simplon.nexus.dispatch", lambda member: seen.append(member) or 3)
 
     # act
     rc = nexus_cmd.nexus_cmd("status")
@@ -44,7 +44,7 @@ def test_nexus_cmd_passes_a_missing_member_through_as_none(monkeypatch):
     # arrange: a bare call must reach dispatch as None so it LISTS the members - pure group logic, no
     # default action. Substituting a member here would give the group a silent default.
     seen = []
-    monkeypatch.setattr("delivery.nexus.dispatch", lambda member: seen.append(member) or 0)
+    monkeypatch.setattr("simplon.nexus.dispatch", lambda member: seen.append(member) or 0)
 
     # act
     rc = nexus_cmd.nexus_cmd()

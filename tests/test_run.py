@@ -1,7 +1,7 @@
 """Unit tests for run - the subprocess seam: the live line-streaming helper the TUI builds on, and the
 two shapes a command impl runs external tools with (platform#43). Real `sh` subprocesses, because what is
 under test IS the plumbing of the real exit code."""
-from delivery.run import chain, run_stream, stream
+from simplon.run import chain, run_stream, stream
 
 
 def test_run_stream_emits_each_line_and_returns_the_real_rc():

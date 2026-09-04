@@ -1,11 +1,11 @@
-"""Unit tests for delivery.labhost - the dev-lab Colima VM substrate (netctl#731 Strand 3, extracted from
+"""Unit tests for simplon.labhost - the dev-lab Colima VM substrate (netctl#731 Strand 3, extracted from
 netctl's orchestrator.hostsetup + orchestrator.lab). Covers the PURE VM sizing (#425), the amd64 binfmt
 watchdog (#583), the ensure-colima install-callback seam, and the host install dispatch. No real
 subprocess / VM: run/_have/IS_DARWIN are stubbed. AAA throughout."""
 import pytest
 
-from delivery import labhost
-from delivery.run import Result
+from simplon import labhost
+from simplon.run import Result
 
 
 # --- #425 VM sizing (pure) --------------------------------------------------------------------------

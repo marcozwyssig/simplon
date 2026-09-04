@@ -51,7 +51,7 @@ def {{ t.func }}({{ t.signature }}) -> None:
 
 
 # The (group, command) pairs this module registers. A product hands it to the reflective assembly so the
-# two never both register one group - see `delivery.cli.assemble(skip=...)`.
+# two never both register one group - see `simplon.cli.assemble(skip=...)`.
 COVERED = frozenset({
 {% for group, name in covered %}
     ({{ group | tojson }}, {{ name | tojson }}),

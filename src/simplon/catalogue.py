@@ -19,7 +19,7 @@ from typing import NamedTuple
 
 import yaml
 
-from delivery.orchestrator.manifest import _CommandSpecModel
+from simplon.orchestrator.manifest import _CommandSpecModel
 
 # The catalogue ships beside the delivery block rather than inside the python package: it is DATA a
 # product reads, the same way a product's own manifest is.

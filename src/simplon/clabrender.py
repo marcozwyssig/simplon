@@ -1,6 +1,6 @@
-"""A generic containerlab RENDER ENGINE that consumes a ``delivery.topology`` manifest (netctl#731 Strand 2).
+"""A generic containerlab RENDER ENGINE that consumes a ``simplon.topology`` manifest (netctl#731 Strand 2).
 
-Strand 1 (``delivery.topology``) proved a product-agnostic topology manifest can EXPRESS a containerlab mesh.
+Strand 1 (``simplon.topology``) proved a product-agnostic topology manifest can EXPRESS a containerlab mesh.
 Strand 2 extracts the generic RENDER STAGE that turns a fully-derived context into on-disk artifacts: a Jinja
 environment with the byte-exact containerlab flags, the #453 multi-tenant INSTANCE-SCOPING apply (topology
 name + mgmt network + mgmt subnet), and the WireGuard X25519 KEYGEN. A product's derivation compiler (netctl:
@@ -31,7 +31,7 @@ from typing import Any, Mapping, NamedTuple
 
 from jinja2 import Environment, FileSystemLoader
 
-from delivery.topology import InstanceScoping, Node, TopologyManifest
+from simplon.topology import InstanceScoping, Node, TopologyManifest
 
 # The reserved instance that renders byte-for-byte (no token infix, no subnet offset). A manifest's
 # ``InstanceScoping.default_instance`` overrides this per-product; kept as a module default for the
@@ -215,7 +215,7 @@ class ClabRenderer:
     @classmethod
     def generic(cls, manifest: TopologyManifest, *, instance: str = DEFAULT_INSTANCE) -> "ClabRenderer":
         """A renderer bound to the kernel's OWN built-in generic clab template (``GENERIC_TEMPLATES_DIR``),
-        needing NO product templates dir. The fully-generic path: it renders ANY ``delivery.topology``
+        needing NO product templates dir. The fully-generic path: it renders ANY ``simplon.topology``
         manifest to a valid ``*.clab.yml`` with zero product code, so a deliberately-non-netctl topology
         (Strand 4's ``clos-2t``) proves the schema + engine are containerlab-shaped, not netctl-shaped."""
         return cls(manifest, templates_dir=GENERIC_TEMPLATES_DIR, instance=instance)

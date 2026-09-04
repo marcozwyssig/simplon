@@ -3,7 +3,7 @@ string, the tagged reference). Moved here from netctl's tooling (netctl#730) and
 no docker, no subprocess; AAA throughout."""
 import pytest
 
-from delivery import images
+from simplon import images
 
 
 def test_image_version_prefers_env_override():

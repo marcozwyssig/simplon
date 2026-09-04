@@ -7,9 +7,9 @@ import textwrap
 
 import pytest
 
-from delivery import catalogue as catalogue_mod
-from delivery.orchestrator import manifest
-from delivery.orchestrator.model import treeform
+from simplon import catalogue as catalogue_mod
+from simplon.orchestrator import manifest
+from simplon.orchestrator.model import treeform
 
 
 def test_a_flat_group_lowers_to_a_taxonomy_entry_and_a_member_map():
@@ -179,7 +179,7 @@ def test_a_non_mapping_command_spec_in_merge_is_rejected():
         treeform.merge(KERNEL, product)
 
 
-CATALOGUE_TASKS = {"vcs:push": {"impl": "delivery.tasks.vcs:push", "help": "push it.",
+CATALOGUE_TASKS = {"vcs:push": {"impl": "simplon.tasks.vcs:push", "help": "push it.",
                                 "params": {"remote": {"help": "the remote"}}}}
 PRODUCT_TASKS = {"lab-image": {"impl": "orchestrator.tooling:lab_image", "help": "build an image."}}
 
@@ -193,7 +193,7 @@ def test_a_coordinate_resolves_against_the_catalogue():
 
     # assert: impl and the template's help and params come along, and `task` is gone
     assert resolved["support.git"]["push"] == {
-        "impl": "delivery.tasks.vcs:push", "help": "push it.",
+        "impl": "simplon.tasks.vcs:push", "help": "push it.",
         "params": {"remote": {"help": "the remote"}}}
 
 
@@ -215,7 +215,7 @@ def test_two_commands_may_instantiate_one_task():
     # arrange: the case netctl#1406 recorded as unmigratable - one coordinate, two commands
     flat = {"test": {"system": {"task": "gate", "with": {"name": "system"}},
                      "acceptance": {"task": "gate", "with": {"name": "acceptance"}}}}
-    tasks = {"gate": {"impl": "delivery.tasks.testrun:gate", "help": "run a suite."}}
+    tasks = {"gate": {"impl": "simplon.tasks.testrun:gate", "help": "run a suite."}}
 
     # act
     resolved = treeform.resolve(flat, tasks, {})
@@ -223,7 +223,7 @@ def test_two_commands_may_instantiate_one_task():
     # assert
     assert resolved["test"]["system"]["with"] == {"name": "system"}
     assert resolved["test"]["acceptance"]["with"] == {"name": "acceptance"}
-    assert {c["impl"] for c in resolved["test"].values()} == {"delivery.tasks.testrun:gate"}
+    assert {c["impl"] for c in resolved["test"].values()} == {"simplon.tasks.testrun:gate"}
 
 
 def test_a_command_naming_a_task_that_does_not_exist_is_rejected():
@@ -268,7 +268,7 @@ def test_a_params_entry_for_a_pinned_parameter_is_rejected():
     # declaration that renders nowhere - the failure this model exists to stop
     flat = {"test": {"system": {"task": "gate", "with": {"name": "system"},
                                 "params": {"name": {"help": "the suite"}}}}}
-    tasks = {"gate": {"impl": "delivery.tasks.testrun:gate", "help": "run a suite."}}
+    tasks = {"gate": {"impl": "simplon.tasks.testrun:gate", "help": "run a suite."}}
 
     # act / assert
     with pytest.raises(ValueError, match="pins .* with `with:`"):
@@ -362,7 +362,7 @@ def test_a_mixed_manifest_loads_both_halves(tmp_path):
     # arrange: the migration's central claim - a converted group and an unconverted one coexist
     catalogue = catalogue_mod.loads(textwrap.dedent("""
         tasks:
-          vcs:push: { impl: delivery.tasks.vcs:push, help: "push it." }
+          vcs:push: { impl: simplon.tasks.vcs:push, help: "push it." }
         groups:
           build: { help: "Produce the artefacts." }
           test:  { help: "Verify them." }
@@ -394,7 +394,7 @@ def test_a_group_the_platform_places_a_command_in_while_the_product_keeps_it_old
     # its own members. A silent `{**resolved, **old_form}` would let one side vanish with no error.
     catalogue = catalogue_mod.loads(textwrap.dedent("""
         tasks:
-          test:unit-py: { impl: "delivery.tasks.x:y", help: "run the python gate." }
+          test:unit-py: { impl: "simplon.tasks.x:y", help: "run the python gate." }
         groups:
           build: { help: "Produce the artefacts." }
           test:  { help: "Verify them.", commands: { unit-py: { task: "test:unit-py", help: "run it." } } }

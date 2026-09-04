@@ -9,8 +9,8 @@ import signal
 
 import pytest
 
-from delivery import ports
-from delivery.run import Result
+from simplon import ports
+from simplon.run import Result
 
 
 @pytest.fixture

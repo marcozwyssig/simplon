@@ -1,10 +1,10 @@
-"""Unit tests for the generic CommandTaxonomy env-gate engine (delivery.clitaxonomy): the reverse
+"""Unit tests for the generic CommandTaxonomy env-gate engine (simplon.clitaxonomy): the reverse
 index, group/flat-command resolution, env-requirement, and the verdict - exercised on a SYNTHETIC taxonomy
 so the engine is validated independently of any product's command set. AAA throughout."""
 import pytest
 
-from delivery import clitaxonomy
-from delivery.clitaxonomy import CommandTaxonomy, TaxonomyNode
+from simplon import clitaxonomy
+from simplon.clitaxonomy import CommandTaxonomy, TaxonomyNode
 
 
 def _tax() -> CommandTaxonomy:
@@ -155,7 +155,7 @@ def test_a_flat_declaration_becomes_a_depth_one_tree():
 
 
 def test_the_flat_groups_projection_survives_the_tree_rewrite():
-    # arrange: delivery.cli:233 tests membership against `.groups`, so it must stay a mapping of
+    # arrange: simplon.cli:233 tests membership against `.groups`, so it must stay a mapping of
     # group name -> ordered command names
     groups = {"build": ("build", "gradle")}
 
@@ -211,7 +211,7 @@ def test_an_unknown_path_resolves_to_none():
 
 
 def test_the_flat_groups_projection_of_a_nested_tree_lists_only_the_top_level():
-    # arrange / act / assert: delivery.cli:233 asks "is argv[1] a group token?", which is a
+    # arrange / act / assert: simplon.cli:233 asks "is argv[1] a group token?", which is a
     # TOP-LEVEL question; a nested group is never a leading token.
     assert sorted(_nested().groups) == ["build", "deploy", "support"]
 

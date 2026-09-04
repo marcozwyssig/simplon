@@ -20,12 +20,12 @@ from typing import NamedTuple
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
-from delivery import signatures
-from delivery.orchestrator.manifest import Manifest, resolve_ref
+from simplon import signatures
+from simplon.orchestrator.manifest import Manifest, resolve_ref
 
 _TEMPLATES = Path(__file__).resolve().parent / "templates"
 
-# The rich panels the root listing is split into. Both are `delivery.cli`'s, reproduced here because the
+# The rich panels the root listing is split into. Both are `simplon.cli`'s, reproduced here because the
 # generated module IS the assembly now; the CD one names the product token so the usage hint reads in the
 # product's own voice, which is why `render` takes a product name rather than hardcoding one.
 _CI_PANEL = "CI / agnostic (no env)"
@@ -98,7 +98,7 @@ def _signature(params: list[_Param], *, takes_context: bool) -> str:
     command line (netctl#1442).
 
     A body that declares a CLI context gets one: the wrapper takes `ctx: typer.Context` and forwards it,
-    which is exactly how `delivery.cli.assemble` binds such a body today (it reads `ctx.args`, which is
+    which is exactly how `simplon.cli.assemble` binds such a body today (it reads `ctx.args`, which is
     how `passthrough_args` reaches the tool behind the command). Typer does not treat `ctx` as a CLI
     parameter, so it stays invisible on the command line. Moving those bodies to a plain `extra: list[str]`
     parameter is a later step and a separate diff.

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 
-from delivery import log
+from simplon import log
 
 # Env var naming the cross-process degraded file. Product-neutral by default; a product may override this
 # module constant at bootstrap if it needs its own name. Both the orchestrator that SETS the file and this

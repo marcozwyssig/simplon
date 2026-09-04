@@ -1,8 +1,8 @@
 """The `nexus` group's command body (netctl#1405): the manifest points its `impl:` straight at this.
 
-Same shape as `delivery.tasks.vcs`: the MECHANISM lives in `delivery.nexus`, and this module exists
+Same shape as `simplon.tasks.vcs`: the MECHANISM lives in `simplon.nexus`, and this module exists
 because a manifest-resolved impl must be a real callable whose signature the CLI is derived from - a bare
-`nexus_cmd = delivery.nexus.dispatch` alias would silently drop the member argument.
+`nexus_cmd = simplon.nexus.dispatch` alias would silently drop the member argument.
 
 FRAMEWORK-FREE since netctl#1444: the body takes plain parameters and RETURNS an exit code. What used to
 sit in its signature - the `typer.Argument`, its metavar and its help - is declared in the product
@@ -11,12 +11,12 @@ be generated rather than assembled reflectively; the command line it produces is
 product's CLI-surface golden asserts.
 
 The product's Nexus DATA (container, compose file, repository script, proxy repositories, the one
-client-side base-URL variable) is read from its manifest through `delivery.context.current()`, never from a
+client-side base-URL variable) is read from its manifest through `simplon.context.current()`, never from a
 product import, so nothing here knows which product it is serving.
 """
 from __future__ import annotations
 
-from delivery import nexus
+from simplon import nexus
 
 
 def nexus_cmd(member: str | None = None) -> int:

@@ -1,6 +1,6 @@
 """Typer binding layer for the manifest-driven CLI (netctl#592 Train D).
 
-The framework-free engine (delivery.orchestrator.manifest + delivery.clitaxonomy + delivery.environments)
+The framework-free engine (simplon.orchestrator.manifest + simplon.clitaxonomy + simplon.environments)
 stays Typer-free on purpose - it parses, validates and decides, but binds to no CLI framework. THIS is the
 one delivery module that imports Typer: it turns a validated Manifest into a Typer app (`assemble`) and
 runs the env-first dispatch (`main`). Both are product-AGNOSTIC - the product name, its environments and
@@ -24,11 +24,11 @@ from typing import Callable, Mapping, Protocol
 
 import typer
 
-from delivery import log, signatures
-from delivery.context import ProductContext
-from delivery.orchestrator import manifest
-from delivery.orchestrator.product import StepFactoryContext, run_command
-from delivery.taskgen import _docstring
+from simplon import log, signatures
+from simplon.context import ProductContext
+from simplon.orchestrator import manifest
+from simplon.orchestrator.product import StepFactoryContext, run_command
+from simplon.taskgen import _docstring
 
 # The passthrough context settings: a passthrough command forwards unrecognised trailing args to its
 # underlying tool (e.g. accept -> pytest). The manifest declares the intent (passthrough_args); this maps
@@ -186,7 +186,7 @@ def _command_callback(mf: manifest.Manifest, group: str, name: str, spec: manife
 
     A leaf's impl is WRAPPED rather than bound raw (netctl#1444). Click discards a callback's return
     value in standalone mode - only a raised `typer.Exit` sets the process exit code - so a
-    framework-free body (`delivery.tasks.*`: plain parameters, `return rc`) bound directly here
+    framework-free body (`simplon.tasks.*`: plain parameters, `return rc`) bound directly here
     produced a CLI that always exited 0, however the body failed. The generated module has always
     coerced (`_rc` + `typer.Exit` in the template); this is the same coercion, so one body behaves
     identically under either mechanism. A body that raises `typer.Exit` itself never reaches the

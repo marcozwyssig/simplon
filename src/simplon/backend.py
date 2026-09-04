@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Mapping, Protocol, runtime_checkable
 
-from delivery.environments import Environment
+from simplon.environments import Environment
 
 
 @runtime_checkable

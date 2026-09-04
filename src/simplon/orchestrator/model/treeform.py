@@ -7,7 +7,7 @@ exactly the two structures `_ManifestModel` accepts - a `taxonomy:` mapping and 
 members` mapping.
 
 Lowering rather than replacing is deliberate. `CommandSpec`, `Manifest`, the six validation rules,
-`taskgen` and `delivery.cli.assemble` all keep working on shapes they already consume, which is what
+`taskgen` and `simplon.cli.assemble` all keep working on shapes they already consume, which is what
 lets every migration step be proved by a zero-diff on the product's CLI-surface golden.
 
 Pure functions over plain dicts: no pydantic, no I/O, no import of any body.

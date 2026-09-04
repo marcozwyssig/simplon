@@ -1,4 +1,4 @@
-"""Unit tests for the manifest-driven CLI assembly engine (delivery.orchestrator.manifest): the pure
+"""Unit tests for the manifest-driven CLI assembly engine (simplon.orchestrator.manifest): the pure
 YAML load + schema validation of the nested group -> command -> spec TREE (#729), the impl-reference
 resolution, and the shared-taxonomy build - exercised on a SYNTHETIC manifest so the engine is validated
 independently of any product's command set. No Typer, no product impls; AAA throughout.
@@ -12,8 +12,8 @@ import textwrap
 
 import pytest
 
-from delivery import catalogue as catalogue_mod
-from delivery.orchestrator import manifest
+from simplon import catalogue as catalogue_mod
+from simplon.orchestrator import manifest
 
 _OK = """
 product: demo
@@ -530,7 +530,7 @@ def test_the_named_plan_is_the_alphabetically_first_candidate_whatever_the_hash_
     # load under several PYTHONHASHSEEDs instead and require ONE message out of all of them.
     source = str(pathlib.Path(manifest.__file__).parents[2])
     probe = (f"import sys; sys.path.insert(0, {source!r})\n"
-             "from delivery.orchestrator import manifest\n"
+             "from simplon.orchestrator import manifest\n"
              "try:\n"
              f"    manifest.load({_TWO_PLANS_COLLIDE!r})\n"
              "except ValueError as exc:\n"
@@ -806,9 +806,9 @@ taxonomy:
       git: { help: "Version control verbs." }
 groups:
   support:
-    doctor: { impl: "delivery.test_impls:nullary", help: "Check the host." }
+    doctor: { impl: "simplon.test_impls:nullary", help: "Check the host." }
   support.git:
-    commit: { impl: "delivery.test_impls:no_context", help: "Commit." }
+    commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
 env_groups: []
 """
 
@@ -854,7 +854,7 @@ taxonomy:
   build: { help: "Produce the artefacts." }
 groups:
   build:
-    build: { impl: "delivery.test_impls:nullary", help: "Build it." }
+    build: { impl: "simplon.test_impls:nullary", help: "Build it." }
 env_groups: []
 """
 
@@ -933,7 +933,7 @@ def test_a_command_can_bind_defaults_with_the_with_key():
     text = """
 groups:
   build:
-    build: { impl: "delivery.test_impls:seed", help: "Build it.", with: { sites: zh } }
+    build: { impl: "simplon.test_impls:seed", help: "Build it.", with: { sites: zh } }
 """
 
     # act
@@ -948,7 +948,7 @@ def test_a_command_without_a_with_key_binds_nothing():
     text = """
 groups:
   build:
-    build: { impl: "delivery.test_impls:seed", help: "Build it." }
+    build: { impl: "simplon.test_impls:seed", help: "Build it." }
 """
 
     # act / assert: an absent block is an empty mapping, never None - callers must not branch
@@ -960,7 +960,7 @@ def test_a_with_key_that_is_not_a_parameter_of_the_impl_is_rejected():
     text = """
 groups:
   build:
-    build: { impl: "delivery.test_impls:seed", help: "Build it.", with: { site: zh } }
+    build: { impl: "simplon.test_impls:seed", help: "Build it.", with: { site: zh } }
 """
 
     # act / assert: the message names the bad key AND the parameters that exist
@@ -973,7 +973,7 @@ def test_a_with_key_on_an_unimportable_impl_is_rejected():
     text = """
 groups:
   build:
-    build: { impl: "delivery.nope:missing", help: "Build it.", with: { sites: zh } }
+    build: { impl: "simplon.nope:missing", help: "Build it.", with: { sites: zh } }
 """
 
     # act / assert
@@ -987,7 +987,7 @@ _PRUNER = """
 groups:
   git:
     prune-branches:
-      impl: "delivery.test_impls:pruner"
+      impl: "simplon.test_impls:pruner"
       help: "Delete merged branches."
       params:
 %s
@@ -1046,7 +1046,7 @@ def test_a_command_without_a_params_block_has_an_empty_one():
     text = """
 groups:
   git:
-    push: { impl: "delivery.test_impls:nullary", help: "Push." }
+    push: { impl: "simplon.test_impls:nullary", help: "Push." }
 env_groups: []
 """
 
@@ -1071,7 +1071,7 @@ def test_the_same_walk_of_the_signature_validates_with_and_params():
 groups:
   git:
     prune-branches:
-      impl: "delivery.test_impls:pruner"
+      impl: "simplon.test_impls:pruner"
       help: "Delete merged branches."
       with: { drirun: true }
       params:
@@ -1114,7 +1114,7 @@ def test_generate_names_every_unknown_group_rather_than_only_the_first():
     text = """
 groups:
   test:
-    unit: { impl: "delivery.test_impls:nullary", help: "One gate." }
+    unit: { impl: "simplon.test_impls:nullary", help: "One gate." }
 generate: [tset, biuld]
 env_groups: []
 """
@@ -1130,7 +1130,7 @@ def test_a_new_form_manifest_and_its_old_form_twin_load_identically():
     # two Manifests differ, some product's CLI is about to change without anyone deciding to.
     catalogue = catalogue_mod.loads(textwrap.dedent("""
         tasks:
-          vcs:push: { impl: delivery.tasks.vcs:push, help: "push it." }
+          vcs:push: { impl: simplon.tasks.vcs:push, help: "push it." }
         groups:
           build: { help: "Produce the artefacts." }
           support:
@@ -1163,7 +1163,7 @@ def test_a_new_form_manifest_and_its_old_form_twin_load_identically():
             frr-image: { impl: "demo.tooling:lab_image", with: { key: frr }, help: "Build the FRR image." }
           support: {}
           support.git:
-            push: { impl: delivery.tasks.vcs:push, help: "push it." }
+            push: { impl: simplon.tasks.vcs:push, help: "push it." }
     """)
 
     # act

@@ -1,4 +1,4 @@
-"""Runner tests for delivery.orchestrator.product: run_command (#896), the product-agnostic runner that
+"""Runner tests for simplon.orchestrator.product: run_command (#896), the product-agnostic runner that
 expands a command NAME through the #895 dependency plan (`Manifest.plan_tree_for`), maps each planned leaf
 through the product's step factory (`StepFactoryContext`) and dispatches the resulting Pipeline. Fake
 step_factory (no real subprocess, no Textual) so the mapping, the stop_on_failure carry-through and the
@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import pytest
 
-from delivery.orchestrator import product
-from delivery.orchestrator.manifest import load as manifest_load
-from delivery.orchestrator.steps import Outcome, Step, run_headless
+from simplon.orchestrator import product
+from simplon.orchestrator.manifest import load as manifest_load
+from simplon.orchestrator.steps import Outcome, Step, run_headless
 
 
 def _factory(rc_by_cmd: dict[str, int] | None = None):
@@ -194,7 +194,7 @@ def test_run_command_raises_a_clear_error_for_an_unknown_command():
 
 def test_product_context_is_a_back_compat_alias_of_step_factory_context():
     # The class was renamed ProductContext -> StepFactoryContext (netctl#737) to stop colliding with
-    # delivery.context.ProductContext; the old name stays as an alias so a not-yet-bumped consumer keeps
+    # simplon.context.ProductContext; the old name stays as an alias so a not-yet-bumped consumer keeps
     # importing it until it migrates.
     # act / assert: same class, so `product.ProductContext(...)` still builds a usable step-factory context
     assert product.ProductContext is product.StepFactoryContext
@@ -303,7 +303,7 @@ def test_for_shim_falls_back_to_the_bare_name_when_several_groups_own_the_comman
 def test_for_shim_runs_the_products_shim_with_the_command_as_its_argument(monkeypatch):
     # arrange: capture the argv the step really streams, so the stamp is not mistaken for the command run
     argvs: list[list[str]] = []
-    monkeypatch.setattr("delivery.orchestrator.steps.run_stream",
+    monkeypatch.setattr("simplon.orchestrator.steps.run_stream",
                         lambda argv, on_line: (argvs.append(list(argv)), on_line("building"), 7)[2])
     ctx = product.StepFactoryContext.for_shim("demo", "/repo/demo.sh", manifest_load(_DEPS_MANIFEST))
 

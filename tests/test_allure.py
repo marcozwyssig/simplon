@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 from types import SimpleNamespace
 
-from delivery import allure
+from simplon import allure
 
 
 def test_report_filename_produces_a_timestamped_single_file_html_name_for_a_given_time():

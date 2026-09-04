@@ -24,10 +24,10 @@ import shutil
 import time
 from typing import Callable
 
-from delivery import diskguard, log
-from delivery import host as host_mod     # module-level, so a test can monkeypatch the socket probe
-from delivery.host import Host
-from delivery.run import run
+from simplon import diskguard, log
+from simplon import host as host_mod     # module-level, so a test can monkeypatch the socket probe
+from simplon.host import Host
+from simplon.run import run
 
 # Self-detected host platform. Module-level (not a per-call probe) so a test flips it once to drive the
 # Darwin or Linux path with no real host - the seam the netctl tests already keyed on (`paths.IS_DARWIN`).
@@ -284,7 +284,7 @@ def ensure_colima_vm(*, install: Callable[[], object]) -> None:
 
 def disk_guard(host: Host | None = None, *, enabled: bool = True, min_free_pct: int = 15) -> int:
     """Prune docker dangling images + build cache when the data fs is low, so a full disk never silently
-    breaks an initdb / a clab deploy. The mechanism is the shared delivery.diskguard; this is the substrate
+    breaks an initdb / a clab deploy. The mechanism is the shared simplon.diskguard; this is the substrate
     TOGGLE the host preflight drives. The consuming product owns the enable flag + the threshold VALUES (it
     reads its own env) and passes them in; `enabled=False` short-circuits before any probe. Returns 0."""
     if not enabled:

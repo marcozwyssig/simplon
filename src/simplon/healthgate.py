@@ -27,8 +27,8 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-from delivery import log
-from delivery.run import run
+from simplon import log
+from simplon.run import run
 
 # Docker's own health states, plus the two absences the gate has to name itself. `missing` is a container
 # docker does not know (a partial deploy that dropped one); `none` is a container without a HEALTHCHECK,

@@ -1,4 +1,4 @@
-"""netctl#731 Strand 2 - the generic clab render engine (delivery.clabrender) renders a topology manifest to
+"""netctl#731 Strand 2 - the generic clab render engine (simplon.clabrender) renders a topology manifest to
 files, applies the #453 instance-scoping from the manifest's policy, and mints WireGuard keys - all with ZERO
 product knowledge. The manifest used here is a deliberately-minimal, NON-netctl lab (a 2-node linear topology),
 so a green suite proves the engine is not netctl-shaped: the same engine renders any product's manifest. AAA
@@ -9,7 +9,7 @@ import base64
 import pytest
 import yaml
 
-from delivery import clabrender, topology
+from simplon import clabrender, topology
 
 # A tiny, deliberately non-netctl manifest: two linux nodes on a mgmt net, one link, an instance policy.
 _MINIMAL = """

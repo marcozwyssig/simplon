@@ -11,7 +11,7 @@ import keyword
 from typing import NamedTuple
 
 # Parameter names a body uses for the CLI context (a `typer.Context`). Recognised BY NAME rather than
-# by position: the kernel's own command bodies do not all take one (delivery.tasks.vcs:push takes
+# by position: the kernel's own command bodies do not all take one (simplon.tasks.vcs:push takes
 # nothing at all, and vcs:commit's first parameter is its payload), so dropping index 0 unconditionally
 # handed a context object to a payload parameter.
 CONTEXT_NAMES = frozenset({"c", "ctx", "context"})
@@ -147,7 +147,7 @@ class Shape(NamedTuple):
 def shape(name: str, *, required: bool, presentation) -> Shape:
     """The shape decision shared by BOTH renderings of a `params:` block (netctl#1444).
 
-    `taskgen` renders a parameter as SOURCE for the generated module; `delivery.cli.assemble` builds the
+    `taskgen` renders a parameter as SOURCE for the generated module; `simplon.cli.assemble` builds the
     same declaration as a live Typer object at assembly time. They must agree exactly - a body is supposed
     to behave identically under either mechanism - so the decision lives here once instead of twice.
     """

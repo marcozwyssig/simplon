@@ -17,7 +17,7 @@ import socket
 from dataclasses import dataclass
 from enum import Enum
 
-from delivery.run import Result, run
+from simplon.run import Result, run
 
 # The docker socket colima publishes on the HOST filesystem, per profile - reachable WITHOUT the
 # `colima ssh` hop, which is the entire point.

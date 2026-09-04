@@ -2,7 +2,7 @@
 `_keep_awake_argv` helper is PURE - it maps an OS name to the argv of an idle-sleep inhibitor (or None) -
 so it is tested here without spawning any process. AAA throughout; goal-stating names.
 """
-from delivery.awake import _keep_awake_argv
+from simplon.awake import _keep_awake_argv
 
 
 def test_keep_awake_on_darwin_maps_to_the_caffeinate_inhibitor_argv():

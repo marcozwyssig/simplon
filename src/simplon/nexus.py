@@ -72,8 +72,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from delivery import context, log
-from delivery.run import run
+from simplon import context, log
+from simplon.run import run
 
 # --- the manifest section this module owns -----------------------------------------------------------
 
@@ -221,7 +221,7 @@ class NexusConfig:
 def declared(data: Mapping[str, object], root: Path, source: str = "manifest") -> NexusConfig:
     """The `nexus` section as a NexusConfig, validated LOUDLY.
 
-    Same discipline as `delivery.tasks.claudeplugins.declared`: a malformed section fails HERE, naming
+    Same discipline as `simplon.tasks.claudeplugins.declared`: a malformed section fails HERE, naming
     the offending key and the file, rather than surfacing later as a probe of a nonsense URL or a
     `docker compose -f` on a path that was never a path. The two file keys are resolved RELATIVE TO THE
     PRODUCT ROOT, so the manifest carries a repo-relative path and never an absolute one.
@@ -756,7 +756,7 @@ def unknown_member_message(member: str) -> str:
 # --- impure edges ------------------------------------------------------------------------------------
 
 def _require_docker() -> None:
-    from delivery import docker
+    from simplon import docker
     docker.ensure_docker()
 
 

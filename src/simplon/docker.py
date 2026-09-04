@@ -11,7 +11,7 @@ product's `install` command, which provisions the full engine on a real host. A 
 the flag for its self-hosted runner, where the socket-mount shape is intended.
 
 Product-agnostic: the repo root and the product name (for the install hint) come from the registered
-`delivery.context`, so both netctl and infractl reuse this gate unchanged - "gleiche Maschine, anderer
+`simplon.context`, so both netctl and infractl reuse this gate unchanged - "gleiche Maschine, anderer
 Katalog".
 """
 from __future__ import annotations
@@ -23,9 +23,9 @@ import tarfile
 import urllib.request
 from pathlib import Path
 
-from delivery import context
-from delivery import log
-from delivery.run import run
+from simplon import context
+from simplon import log
+from simplon.run import run
 
 # Pinned static-CLI release (download.docker.com/linux/static/stable); bump deliberately.
 DOCKER_CLI_VERSION = "29.6.1"

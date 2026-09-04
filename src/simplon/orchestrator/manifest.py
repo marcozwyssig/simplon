@@ -10,7 +10,7 @@ group-scoped keys `test.all` / `deploy.all` it needed because `all` collides acr
 namespace) is gone - the collision is resolved by NESTING instead.
 
 The engine is PURE and framework-free: it parses + validates the manifest (loudly, like
-delivery.environments.parse), resolves an impl reference to the real callable, and builds the shared
+simplon.environments.parse), resolves an impl reference to the real callable, and builds the shared
 CommandTaxonomy (the env-gate) from the manifest so that logic is reused, not copied. It deliberately
 imports no CLI framework: registering Typer commands / sub-apps / help panels is the PRODUCT's job (the
 engine must not bind to one CLI framework). "One source, two outputs": the same manifest assembles the
@@ -33,8 +33,8 @@ from typing import Callable, NamedTuple
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from delivery.clitaxonomy import CommandTaxonomy, TaxonomyNode, merge_trees
-from delivery.orchestrator.model import treeform
+from simplon.clitaxonomy import CommandTaxonomy, TaxonomyNode, merge_trees
+from simplon.orchestrator.model import treeform
 
 
 class CommandSpec(NamedTuple):
@@ -61,13 +61,13 @@ class CommandSpec(NamedTuple):
     run (netctl#1317): a failing `up` aborts its own phases while the `test all` that planned it carries on
     to the next gate, which is what a flag declared PER AGGREGATE has to mean. The scope of a failure is the
     OUTERMOST ancestor whose flag is true, so an explicit `false` reads the same as an unset one and cannot
-    shield its subtree from a `true` above it. `delivery.orchestrator.steps.abort_after` owns the walk.
+    shield its subtree from a `true` above it. `simplon.orchestrator.steps.abort_after` owns the walk.
     Because a plan tree is a SPANNING tree, a dependency two aggregates both declare is planned under one
     of them only, and the other's flag would never fire for it; `load()` rule 6 (netctl#1319) rejects that
     ambiguity where the two aggregates sit in ONE plan and their flags disagree.
 
     `keep_awake` (an aggregate's flag, netctl#1238) declares that the host must not idle-sleep while this
-    command's PLAN runs: `run_command` wraps the whole dispatch in `delivery.awake.keep_awake`. It exists
+    command's PLAN runs: `run_command` wraps the whole dispatch in `simplon.awake.keep_awake`. It exists
     because a plan has no product code around it - the callback the CLI binds for an aggregate is
     kernel-synthesized - so an aggregate that replaced a hand-written multi-minute pipeline would silently
     lose the inhibitor that pipeline's command had. Declaring it beats each leaf arming its own: the
@@ -77,7 +77,7 @@ class CommandSpec(NamedTuple):
     `hidden` (netctl#1277) declares that the command must not appear in any `--help` listing while staying
     fully INVOCABLE - a plan step named in a `depends_on` (loader rule 4) must be a real manifest command,
     but a bring-up PHASE or a raw `-only` leaf ("prefer the aggregate") clutters the listing meant for a
-    human. `delivery.cli.assemble` is the sole consumer: it threads the flag onto the command's GROUP
+    human. `simplon.cli.assemble` is the sole consumer: it threads the flag onto the command's GROUP
     registration, on top of the flat back-compat alias, which has always been hidden regardless of this
     flag. On a group-default group's NAMESAKE member the flag is meaningless - that member is never a
     listed subcommand or a separate flat command to begin with, it is the sub-app's default callback - so
@@ -151,7 +151,7 @@ class Manifest(NamedTuple):
     def spec_by_name(self, name: str) -> CommandSpec | None:
         """The spec for a command by its BARE name when exactly ONE group owns it, else None - an absent
         name OR an ambiguous one owned by several groups (#519: `all`). This flat view resolves the bare
-        dependency names in a `depends_on` plan (delivery.orchestrator.product maps each planned leaf
+        dependency names in a `depends_on` plan (simplon.orchestrator.product maps each planned leaf
         through the product step factory); a caller that must disambiguate an owned-by-many name uses
         spec_for(group, name)."""
         owners = [group for group, specs in self.commands.items() if name in specs]
@@ -496,7 +496,7 @@ class _ManifestModel(BaseModel):
                     raise ValueError(
                         f"command '{group}.{name}': keep_awake applies to an aggregate's plan "
                         f"(depends_on); a leaf's own impl arms it itself")
-                # hidden (netctl#1277) is honoured by delivery.cli.assemble, which threads it onto a
+                # hidden (netctl#1277) is honoured by simplon.cli.assemble, which threads it onto a
                 # command's GROUP registration. A group-default group's NAMESAKE member (#592 D4: the
                 # member whose name equals its multi-member group's name) never reaches that registration
                 # at all - it is bound as the sub-app's default callback, never a listed subcommand or a
@@ -675,7 +675,7 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
         points that never meet, such as a strict bring-up chain next to a test collection) keep their
         differing policy, which is why the rule is scoped per plan rather than manifest-wide;
       - `hidden` (netctl#1277) is rejected on a group-default group's NAMESAKE member, because that member
-        never reaches the registration `delivery.cli.assemble` would apply it to.
+        never reaches the registration `simplon.cli.assemble` would apply it to.
 
     `catalogue` (netctl#1437) supplies the platform's coordinate space so an `import:` + `tasks:` pair can
     be expanded into `groups:` BEFORE validation - which is the point of expanding there rather than
@@ -823,7 +823,7 @@ def _expand_imports(data: dict, catalogue: object) -> dict:
         # than as the manifest error it is; without the second, an override would resolve against an
         # empty map and be reported as a typo when the real fault is a caller that passed no catalogue.
         raise ValueError("manifest declares `import:` or imported tasks, but load() was given no "
-                         "catalogue - pass catalogue=delivery.catalogue.load()")
+                         "catalogue - pass catalogue=simplon.catalogue.load()")
 
     available: dict[str, dict] = {}
     for source, namespaces in imports.items():
@@ -969,7 +969,7 @@ def _validate_param_bindings(commands: dict[str, dict[str, "CommandSpec"]]) -> N
     Both maps are checked against ONE walk of the signature rather than two, so they cannot come to
     disagree about what a parameter is.
     """
-    from delivery import signatures      # lazy: taskgen/signatures must not be a load-time dependency
+    from simplon import signatures      # lazy: taskgen/signatures must not be a load-time dependency
 
     for group, members in commands.items():
         for name, spec in members.items():

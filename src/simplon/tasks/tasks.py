@@ -10,14 +10,14 @@ instead of a module path, and a registry nobody can read is a registry nobody us
 
 Both are kernel mechanisms under netctl#1280's rule - they need no product knowledge. What is product-
 specific reaches them the usual way: the repo root, the manifest and its filename through
-`delivery.context.current()`, and the path of the generated module as a manifest-pinned parameter
+`simplon.context.current()`, and the path of the generated module as a manifest-pinned parameter
 (`with: { target: ... }`), never through an import.
 """
 from __future__ import annotations
 
-from delivery import catalogue as catalogue_mod
-from delivery import context, log, taskgen
-from delivery.orchestrator.manifest import Manifest
+from simplon import catalogue as catalogue_mod
+from simplon import context, log, taskgen
+from simplon.orchestrator.manifest import Manifest
 
 
 def generate(target: str, check: bool = False) -> int:

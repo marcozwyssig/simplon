@@ -31,7 +31,7 @@ def parse(text: str, valid_backends: Iterable[str]) -> Registry:
 
 def parse_data(data: Mapping[str, object], valid_backends: Iterable[str]) -> Registry:
     """Build the registry from an ALREADY-parsed mapping - a product's standalone environments.yml OR the
-    `environments:`/`default:` section of its one manifest (delivery.context.manifest_data()). Validates
+    `environments:`/`default:` section of its one manifest (simplon.context.manifest_data()). Validates
     that every backend is one of valid_backends and that `default` names a real environment, so a bad
     descriptor fails loudly here, not deep in a deployment."""
     valid = tuple(valid_backends)
@@ -70,7 +70,7 @@ class Provider:
     the backend names that product implements, and how its shim spells a command. Everything else -
     reading the matrix out of the manifest, the precedence, the gate - is the same everywhere.
 
-    Satisfies `delivery.cli.EnvironmentProvider` structurally, exactly as the generated module did, so a
+    Satisfies `simplon.cli.EnvironmentProvider` structurally, exactly as the generated module did, so a
     product swaps `environments` for `environments.Provider(...)` and nothing downstream notices.
     """
 
@@ -87,7 +87,7 @@ class Provider:
 
         A manifest with no `environments:` section falls back to a single local environment rather than
         raising: a product that has not reached deployment yet still has to be able to run its CLI."""
-        from delivery import context  # local: context imports the manifest layer, this module is a leaf
+        from simplon import context  # local: context imports the manifest layer, this module is a leaf
 
         data = context.current().manifest_data()
         if not data.get("environments"):
@@ -103,7 +103,7 @@ class Provider:
         names a known environment, else the manifest's `default:`.
 
         ONE precedence, and `current()` reads it too - which is the divergence this class removes.
-        `delivery.cli.main` consumes a leading env token only when that token names no GROUP, so an
+        `simplon.cli.main` consumes a leading env token only when that token names no GROUP, so an
         environment whose name is also a group name (netctl and biz-cockpit both have some) can only be
         reached through the variable. If `default()` ignored it, the CLI would select one environment
         while the commands acted on another:
@@ -128,7 +128,7 @@ class Provider:
     def require_backend(self, backend: str = "") -> None:
         """Gate a deployment command on the active environment's backend, so a target whose backend the
         product has not implemented dies clean instead of mis-running the local path."""
-        from delivery import log  # local: keeps this module importable by anything, log imports nothing
+        from simplon import log  # local: keeps this module importable by anything, log imports nothing
 
         wanted = backend or self.LOCAL
         env = self.current()
@@ -142,7 +142,7 @@ class Provider:
         line that silently targets something else: with a `test` GROUP present, `<shim> test deploy down`
         runs the group, not the test instance. Read off the live manifest taxonomy, so a renamed group
         cannot leave a stale instruction behind in a runbook."""
-        from delivery import context
+        from simplon import context
 
         if env in context.current().manifest().taxonomy().groups:
             return f"{self.ENV_VAR}={env} {self._shim} {command}"

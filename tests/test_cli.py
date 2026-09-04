@@ -1,4 +1,4 @@
-"""Unit tests for the Typer binding layer (delivery.cli.assemble): the manifest -> Typer wiring exercised
+"""Unit tests for the Typer binding layer (simplon.cli.assemble): the manifest -> Typer wiring exercised
 on a SYNTHETIC manifest so the assembly is validated independently of any product's command set. Covers
 the sub-app-per-group shape, the hidden flat back-compat aliases, the single-member flat-group collapse,
 the ambiguous-name no-alias rule, the passthrough context settings, and the product-named CD panel.
@@ -16,8 +16,8 @@ import typer
 from typer.main import get_command
 from typer.testing import CliRunner
 
-from delivery import cli
-from delivery.orchestrator import manifest
+from simplon import cli
+from simplon.orchestrator import manifest
 
 
 def _impls_module():
@@ -391,8 +391,8 @@ def agg_assembled(monkeypatch):
     steps; the steps themselves are instant)."""
     import typer
 
-    from delivery.orchestrator import product
-    from delivery.orchestrator.steps import Outcome, Step, run_headless
+    from simplon.orchestrator import product
+    from simplon.orchestrator.steps import Outcome, Step, run_headless
 
     monkeypatch.setattr(product, "dispatch", run_headless)
     built: list[str] = []
@@ -560,10 +560,10 @@ def test_assemble_leaves_an_unshared_impls_help_to_its_docstring(shared_impl_app
 _HYBRID = """
 groups:
   test:
-    unit:   { impl: "delivery.test_impls:nullary", help: "One gate." }
-    report: { impl: "delivery.test_impls:no_context", help: "Merge the results." }
+    unit:   { impl: "simplon.test_impls:nullary", help: "One gate." }
+    report: { impl: "simplon.test_impls:no_context", help: "Merge the results." }
   git:
-    commit: { impl: "delivery.test_impls:no_context", help: "Commit." }
+    commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
 env_groups: []
 """
 

@@ -20,7 +20,7 @@ import platform
 import subprocess
 from collections.abc import Iterator
 
-from delivery import log
+from simplon import log
 
 __all__ = ["keep_awake"]
 

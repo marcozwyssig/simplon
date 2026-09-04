@@ -1,6 +1,6 @@
 """A generic, Pydantic-validated containerlab TOPOLOGY MANIFEST (netctl#731 Strand 1).
 
-The delivery kernel already turns a product's CLI + CI taxonomy into DATA (``delivery.orchestrator.manifest``).
+The delivery kernel already turns a product's CLI + CI taxonomy into DATA (``simplon.orchestrator.manifest``).
 This module is the second "one source, typed data" seam: a product-agnostic description of a containerlab
 lab as a set of NODES (with a clab ``kind``, image, env, binds, exec, ports and an optional per-node config
 template) wired by LINKS (``node:iface`` endpoint pairs), on one MGMT network, with first-class OOB BRIDGES
@@ -26,7 +26,7 @@ quarantined behind three indirections so it stays DATA, never new schema:
 
 Validation is FAIL-LOUD (the whole point of a schema): ``model_config = extra="forbid"`` catches a mistyped
 key, and ``load()`` re-raises any Pydantic ``ValidationError`` as a plain ``ValueError`` (a raw
-ValidationError never escapes), mirroring ``delivery.orchestrator.manifest.load``. Cross-object rules (unique
+ValidationError never escapes), mirroring ``simplon.orchestrator.manifest.load``. Cross-object rules (unique
 names, dangling site/vendor references, link endpoints naming a real node/bridge, resolvable kind) run in a
 manifest-level ``@model_validator`` so the message can name the offending object (the tests assert the
 strings).
@@ -334,7 +334,7 @@ def _reject_dupes(values: list, what: str) -> None:
 
 
 def _validation_message(error: ValidationError) -> str:
-    """Reduce a Pydantic ValidationError to a single human message (mirrors delivery.orchestrator.manifest):
+    """Reduce a Pydantic ValidationError to a single human message (mirrors simplon.orchestrator.manifest):
     a rule ValueError is surfaced verbatim (its ctx carries the original), a pure shape/type error as
     ``<location>: <message>``. Only the first error is reported."""
     details = error.errors(include_url=False)

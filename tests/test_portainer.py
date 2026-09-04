@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from delivery import portainer
+from simplon import portainer
 
 STACK = "someproduct-prod"
 

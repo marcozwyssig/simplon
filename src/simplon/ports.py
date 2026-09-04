@@ -18,8 +18,8 @@ import signal
 import time
 from collections.abc import Callable, Iterable
 
-from delivery import log
-from delivery.run import run
+from simplon import log
+from simplon.run import run
 
 # How long a listener may take to shut down on its own before it is killed, and how often to look.
 DEFAULT_GRACE_S = 5.0

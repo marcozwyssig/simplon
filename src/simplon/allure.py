@@ -19,8 +19,8 @@ import os
 import shutil
 from datetime import datetime
 
-from delivery import log
-from delivery.run import run
+from simplon import log
+from simplon.run import run
 
 
 def report_filename(now: datetime | None = None, *, prefix: str = "allure") -> str:

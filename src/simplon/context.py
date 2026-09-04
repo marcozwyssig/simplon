@@ -21,8 +21,8 @@ from pathlib import Path
 
 import yaml
 
-from delivery.orchestrator.manifest import Manifest
-from delivery.orchestrator.manifest import load as _load_manifest
+from simplon.orchestrator.manifest import Manifest
+from simplon.orchestrator.manifest import load as _load_manifest
 
 ROOT_ENV = "DELIVERY_PRODUCT_ROOT"
 MANIFEST_ENV = "DELIVERY_MANIFEST"
@@ -44,11 +44,11 @@ class ProductContext:
         try:
             return yaml.safe_load(self.manifest_path.read_text(encoding="utf-8")) or {}
         except (OSError, yaml.YAMLError) as exc:
-            raise RuntimeError(f"delivery: cannot read manifest {self.manifest_path}: {exc}") from exc
+            raise RuntimeError(f"simplon: cannot read manifest {self.manifest_path}: {exc}") from exc
 
     def manifest(self) -> Manifest:
         """The parsed + validated command manifest the CLI engine assembles the product's CLI from
-        (delegates to ``delivery.orchestrator.manifest.load``).
+        (delegates to ``simplon.orchestrator.manifest.load``).
 
         The kernel's task CATALOGUE is passed in, which is what lets a product write `import:` and name a
         coordinate (`vcs:commit`) instead of a module path (netctl#1437, adopted #1444). A product that
@@ -57,7 +57,7 @@ class ProductContext:
         Imported lazily so this module keeps no import-time dependency on the catalogue, which itself
         imports the manifest models.
         """
-        from delivery import catalogue
+        from simplon import catalogue
 
         return _load_manifest(self.manifest_path.read_text(encoding="utf-8"),
                               catalogue=catalogue.load())
@@ -92,8 +92,8 @@ def current() -> ProductContext:
     imported yet (which is what registers it) - never a silent None the kernel would trip over later."""
     if _current is None:
         raise RuntimeError(
-            "delivery: no ProductContext registered; the product's paths adapter must call "
-            "delivery.context.set_current(...) at import before the kernel reads the context")
+            "simplon: no ProductContext registered; the product's paths adapter must call "
+            "simplon.context.set_current(...) at import before the kernel reads the context")
     return _current
 
 

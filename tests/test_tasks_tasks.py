@@ -1,9 +1,9 @@
-"""Unit tests for delivery.tasks.tasks (netctl#1444): the two verbs that make the task machinery
+"""Unit tests for simplon.tasks.tasks (netctl#1444): the two verbs that make the task machinery
 addressable - `generate` (write the product's committed CLI module) and `catalogue` (print the coordinate
 space).
 
 The generator itself is covered by test_taskgen.py. What is asserted here is the seam: that the verbs read
-the product's root, manifest and manifest FILENAME from `delivery.context` rather than knowing a product,
+the product's root, manifest and manifest FILENAME from `simplon.context` rather than knowing a product,
 that `--check` reports drift as a non-zero exit so one command serves both a gate and a hook, and that the
 listing survives a product importing nothing.
 
@@ -13,13 +13,13 @@ import textwrap
 
 import pytest
 
-from delivery import context
-from delivery.tasks import tasks
+from simplon import context
+from simplon.tasks import tasks
 
 _MANIFEST = """
 groups:
   support.git:
-    push: { impl: "delivery.test_impls:nullary", help: "Push." }
+    push: { impl: "simplon.test_impls:nullary", help: "Push." }
 generate: [support.git]
 env_groups: []
 """
@@ -203,7 +203,7 @@ def test_catalogue_marks_a_namespace_reached_via_a_raw_impl_naming_a_kernel_modu
             commands:
               noop: { task: local-task, help: "Do nothing." }
           test:
-            report: { impl: "delivery.tasks.testrun:report_cmd", help: "Merge results." }
+            report: { impl: "simplon.tasks.testrun:report_cmd", help: "Merge results." }
         generate: [build]
         env_groups: []
     """), encoding="utf-8")
@@ -233,7 +233,7 @@ def test_catalogue_marks_a_namespace_placed_via_the_old_import_mechanism(tmp_pat
           vcs:push: { group: support }
         groups:
           build:
-            frr-image: { impl: "delivery.test_impls:nullary", help: "Build the FRR image." }
+            frr-image: { impl: "simplon.test_impls:nullary", help: "Build the FRR image." }
         generate: [build]
         env_groups: []
     """), encoding="utf-8")

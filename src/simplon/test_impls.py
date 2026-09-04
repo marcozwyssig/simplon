@@ -30,13 +30,13 @@ def needs_site(ctx, site):
 
 
 def no_context(message=None):
-    """A body whose first parameter is its PAYLOAD, not a context (as delivery.tasks.vcs:commit)."""
+    """A body whose first parameter is its PAYLOAD, not a context (as simplon.tasks.vcs:commit)."""
     CALLS.append(("no_context", message))
     return 0
 
 
 def nullary():
-    """A body taking nothing at all (as delivery.tasks.vcs:push)."""
+    """A body taking nothing at all (as simplon.tasks.vcs:push)."""
     CALLS.append(("nullary",))
     return 0
 
@@ -48,7 +48,7 @@ def pruner(dry_run=False, remote=False):
 
 
 def member_dispatch(member: str | None = None):
-    """Drive a group by member name; omit to list them (as delivery.tasks.nexus:nexus_cmd).
+    """Drive a group by member name; omit to list them (as simplon.tasks.nexus:nexus_cmd).
 
     An OPTIONAL positional whose annotation is `str | None`, for the `argument:` + `metavar:` cases.
     """

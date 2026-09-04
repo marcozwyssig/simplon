@@ -1,4 +1,4 @@
-"""Unit tests for delivery.labinstance (netctl#1404, epic netctl#1403): the lab-instance resolution
+"""Unit tests for simplon.labinstance (netctl#1404, epic netctl#1403): the lab-instance resolution
 precedence, moved out of netctl's orchestrator.paths so any `*ctl` product running N isolated labs
 inherits it instead of restating it.
 
@@ -11,15 +11,15 @@ Two load-bearing contracts:
      validation.
 
 The three product values (env var spelling, default id, id-length budget) arrive as manifest DATA
-through delivery.context; the tests register a fake ProductContext exactly as test_commands_env.py does.
+through simplon.context; the tests register a fake ProductContext exactly as test_commands_env.py does.
 AAA throughout; goal-stating names, incl. the negative manifest cases.
 """
 import re
 
 import pytest
 
-from delivery import context, labinstance
-from delivery.context import ProductContext
+from simplon import context, labinstance
+from simplon.context import ProductContext
 
 # The sample product's instance section: a 2-char budget, as netctl's IFNAMSIZ ceiling yields.
 _SPEC = {"env_var": "SAMPLE_INSTANCE", "default": "dev", "max_id_len": 2}

@@ -1,8 +1,10 @@
-"""pytest bootstrap for the delivery unit tests: put the delivery block's python language level
-(src/delivery/src/python) on sys.path so `from delivery import ...` resolves without an install
-(mirrors netctl's convention)."""
+"""pytest bootstrap for the simplon unit tests: put the src-layout source tree on sys.path so
+`from simplon import ...` resolves without an install (mirrors netctl's convention)."""
 import sys
 from pathlib import Path
 
-BLOCK = Path(__file__).resolve().parents[3]  # src/delivery
-sys.path.insert(0, str(BLOCK / "src" / "python"))
+# The source tree now sits in src-layout one level above the tests. The wheel check
+# (test_wheel.py) deliberately runs WITHOUT this path -- it is the only test that uses the
+# package the way a consumer would.
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))

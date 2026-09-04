@@ -1,4 +1,4 @@
-"""Unit tests for the product scaffolder (delivery.bootstrap, netctl#651 strand 4): the PURE render (the
+"""Unit tests for the product scaffolder (simplon.bootstrap, netctl#651 strand 4): the PURE render (the
 generated starter manifest validates through the real delivery loader, the file set + placeholder
 substitution are exact) and the file-writing (every file lands, the shim is executable, an existing tree is
 not clobbered). No Typer, no product deps; AAA throughout, incl. negative cases.
@@ -10,16 +10,16 @@ from pathlib import Path
 
 import pytest
 
-import delivery
-from delivery import bootstrap
-from delivery import environments as env_mod
-from delivery.orchestrator import manifest
+import simplon
+from simplon import bootstrap
+from simplon import environments as env_mod
+from simplon.orchestrator import manifest
 
 
 def _kernel_src() -> Path:
-    """The kernel's python source dir (…/src/delivery/src/python), the parent of the `delivery` package -
-    so a subprocess can import the kernel exactly as the product shim's PYTHONPATH does."""
-    return Path(delivery.__file__).resolve().parents[1]
+    """The kernel's python source dir (…/src), the parent of the `simplon` package - so a subprocess can
+    import the kernel exactly as the product shim's PYTHONPATH does."""
+    return Path(simplon.__file__).resolve().parents[1]
 
 
 def _run_generated(pkg_src: Path, argv: list[str], *, code: str | None = None) -> subprocess.CompletedProcess:
@@ -246,7 +246,7 @@ def test_scaffolded_aggregate_actually_runs_through_the_shared_runner(tmp_path):
     # so we observe the aggregate really being planned + dispatched (behavioural, not just declared)
     bootstrap.write("fooctl", tmp_path)
     probe = (
-        "from delivery.orchestrator import product\n"
+        "from simplon.orchestrator import product\n"
         "seen = {}\n"
         "def _record(pipeline):\n"
         "    seen['name'] = pipeline.name\n"
@@ -282,7 +282,7 @@ def test_scaffolded_aggregate_keeps_the_plan_tree_and_with_it_every_stop_scope(t
     # the verdict is read off the Pipeline the kernel really built
     bootstrap.write("fooctl", tmp_path)
     probe = (
-        "from delivery.orchestrator import product\n"
+        "from simplon.orchestrator import product\n"
         "seen = {}\n"
         "def _record(pipeline):\n"
         "    seen['commands'] = [s.command for s in pipeline.steps]\n"

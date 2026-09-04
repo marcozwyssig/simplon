@@ -33,10 +33,10 @@ Every rule carries `-m comment --comment "<tag>:<instance>"`; install flushes ex
 rules first (re-up safe) and teardown removes exactly its own and nothing else. Failure to install is
 FATAL (isolation is a correctness property of the lab, not best-effort); the escape hatch is the
 product's isolation env var set to 0, loudly. The rule CONSTRUCTION is pure and unit-tested; the
-iptables/sysctl I/O is thin and routed through `delivery.host.Host` so it lands on the docker host (a VM
+iptables/sysctl I/O is thin and routed through `simplon.host.Host` so it lands on the docker host (a VM
 on macOS, the host itself on Linux), like every other lab-host mutation.
 
-What the PRODUCT supplies, as manifest data read through `delivery.context` - never as an import:
+What the PRODUCT supplies, as manifest data read through `simplon.context` - never as an import:
 
 ```yaml
 lab_egress:
@@ -74,9 +74,9 @@ import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
-from delivery import context, log
-from delivery.host import Host
-from delivery.run import Result, run
+from simplon import context, log
+from simplon.host import Host
+from simplon.run import Result, run
 
 # The manifest section carrying the three product values above.
 MANIFEST_SECTION = "lab_egress"
@@ -102,24 +102,24 @@ class EgressSpec:
 
 
 def spec() -> EgressSpec:
-    """Read the product's ``lab_egress:`` section RAW through ``delivery.context``, the same seam the
+    """Read the product's ``lab_egress:`` section RAW through ``simplon.context``, the same seam the
     build data and `labinstance` use. Fails loudly naming the manifest and the missing key: a silently
     defaulted env-var name would mean the operator's documented escape hatch does nothing, and a
     silently defaulted tag would make one product's teardown delete another's rules."""
     ctx = context.current()
     data = ctx.manifest_data().get(MANIFEST_SECTION)
     if not isinstance(data, dict):
-        raise ValueError(f"delivery: manifest {ctx.manifest_path} is missing the '{MANIFEST_SECTION}' section")
+        raise ValueError(f"simplon: manifest {ctx.manifest_path} is missing the '{MANIFEST_SECTION}' section")
     values = {}
     for key in ("isolation_env", "harden_env", "rule_tag"):
         value = str(data.get(key) or "").strip()
         if not value:
-            raise ValueError(f"delivery: manifest {ctx.manifest_path} is missing '{MANIFEST_SECTION}.{key}'")
+            raise ValueError(f"simplon: manifest {ctx.manifest_path} is missing '{MANIFEST_SECTION}.{key}'")
         values[key] = value
     # A tag carrying the separator would make `<tag>:<instance>` ambiguous, and the whole point of the
     # tag is that one instance's teardown can never match another's rule.
     if ":" in values["rule_tag"]:
-        raise ValueError(f"delivery: manifest {ctx.manifest_path} '{MANIFEST_SECTION}.rule_tag' must not "
+        raise ValueError(f"simplon: manifest {ctx.manifest_path} '{MANIFEST_SECTION}.rule_tag' must not "
                          f"contain ':' (it is the separator in the rule comment), got {values['rule_tag']!r}")
     return EgressSpec(**values)
 

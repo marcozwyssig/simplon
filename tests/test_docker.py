@@ -3,8 +3,8 @@ netctl - the gate is platform's now (netctl#649). No network, no real downloads,
 beyond the monkeypatched environment; AAA throughout."""
 import pytest
 
-from delivery import context
-from delivery import docker
+from simplon import context
+from simplon import docker
 
 
 def _boom(msg):
@@ -194,7 +194,7 @@ def test_sudo_prefix_maps_root_sudo_and_unprivileged(monkeypatch):
     assert docker._sudo_prefix() == []
 
     # non-root with working passwordless sudo
-    from delivery.run import Result as R
+    from simplon.run import Result as R
     monkeypatch.setattr(docker.os, "getuid", lambda: 1000)
     monkeypatch.setattr(docker, "run", lambda argv, **kw: R(rc=0, out="", err=""))
     assert docker._sudo_prefix() == ["sudo", "-n"]
@@ -233,7 +233,7 @@ def test_bootstrap_installs_the_engine_when_privileged(monkeypatch, tmp_path):
 
 def test_bootstrap_selffixes_socket_access_when_daemon_unreachable_with_privileges(monkeypatch, tmp_path):
     # arrange: CLI present, daemon dead until the socket grant; socket exists but is unwritable
-    from delivery.run import Result as R
+    from simplon.run import Result as R
     sock = tmp_path / "docker.sock"
     sock.touch()
     monkeypatch.setenv(docker.DOCKER_BOOTSTRAP_ENV, "1")

@@ -57,7 +57,7 @@ def stream(argv: list[str], *, cwd: str | None = None) -> int:
     (platform#43): a tool's own output IS the user interface - a test runner's progress, a build's log, a
     compose bring-up - so capturing it would only hide it, and the rc is the single thing the caller needs
     back. `cwd` is where the command runs; a product passes its repo root
-    (`delivery.context.current().root`) to reproduce what a Makefile recipe did from the top of the tree.
+    (`simplon.context.current().root`) to reproduce what a Makefile recipe did from the top of the tree.
     """
     return run(argv, capture=False, cwd=cwd).rc
 

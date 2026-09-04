@@ -1,4 +1,4 @@
-"""Unit tests for delivery.labegress (netctl#1408, epic netctl#1403): the lab's egress isolation, moved
+"""Unit tests for simplon.labegress (netctl#1408, epic netctl#1403): the lab's egress isolation, moved
 out of netctl's orchestrator.firewall so any `*ctl` product with a containerlab mesh inherits it.
 
 What is worth testing here is the part a lab gate cannot show quickly and a mistake in which is silent:
@@ -6,14 +6,14 @@ the exact iptables argv, and the SCOPING that keeps two concurrent labs from del
 rules. The rules themselves are proven on a real lab (the isolation probes in the acceptance level);
 these tests prove the construction is what gets sent.
 
-The three product values arrive as manifest DATA through delivery.context; the tests register a fake
+The three product values arrive as manifest DATA through simplon.context; the tests register a fake
 ProductContext, and use a `democtl` tag throughout precisely because a module that named a product
 would pass with netctl's and fail for the next one. AAA throughout, negative cases included.
 """
 import pytest
 
-from delivery import context, labegress
-from delivery.context import ProductContext
+from simplon import context, labegress
+from simplon.context import ProductContext
 
 _SPEC = {"isolation_env": "DEMO_LAB_ISOLATION", "harden_env": "DEMO_HOST_HARDEN", "rule_tag": "democtl"}
 

@@ -1,5 +1,5 @@
-"""Unit tests for the task catalogue (delivery.catalogue, netctl#1437) and the `import:` expansion it
-feeds (delivery.orchestrator.manifest).
+"""Unit tests for the task catalogue (simplon.catalogue, netctl#1437) and the `import:` expansion it
+feeds (simplon.orchestrator.manifest).
 
 The catalogue is the coordinate space between the platform and a product: `<namespace>:<name>` resolves
 to whatever module currently holds the body, so a body can move inside the kernel without breaking a
@@ -12,14 +12,14 @@ import textwrap
 
 import pytest
 
-from delivery import catalogue
-from delivery.orchestrator import manifest
+from simplon import catalogue
+from simplon.orchestrator import manifest
 
 _CATALOGUE = """
 tasks:
-  vcs:commit: { impl: "delivery.test_impls:no_context", help: "Commit." }
-  vcs:push:   { impl: "delivery.test_impls:nullary",    help: "Push." }
-  test:gate:  { impl: "delivery.test_impls:gradle",     help: "Run a suite.", passthrough_args: true }
+  vcs:commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
+  vcs:push:   { impl: "simplon.test_impls:nullary",    help: "Push." }
+  test:gate:  { impl: "simplon.test_impls:gradle",     help: "Run a suite.", passthrough_args: true }
 """
 
 
@@ -33,7 +33,7 @@ def test_a_coordinate_resolves_to_the_declaration_it_names():
     spec = cat.resolve("vcs:commit")
 
     # assert
-    assert spec["impl"] == "delivery.test_impls:no_context"
+    assert spec["impl"] == "simplon.test_impls:no_context"
 
 
 def test_importing_a_namespace_pulls_every_task_in_it_and_nothing_from_a_neighbour():
@@ -50,8 +50,8 @@ def test_importing_a_namespace_pulls_every_task_in_it_and_nothing_from_a_neighbo
 def test_a_moved_body_keeps_the_coordinate_stable():
     # arrange: the whole point of the indirection - the product names the coordinate, never the module
     before = catalogue.loads(_CATALOGUE)
-    after = catalogue.loads(_CATALOGUE.replace("delivery.test_impls:no_context",
-                                               "delivery.test_impls:nullary"))
+    after = catalogue.loads(_CATALOGUE.replace("simplon.test_impls:no_context",
+                                               "simplon.test_impls:nullary"))
 
     # act / assert
     assert set(before.tasks) == set(after.tasks)
@@ -131,7 +131,7 @@ env_groups: []
 
     # assert
     assert mf.groups == {"vcs": ("commit", "push")}
-    assert mf.spec_for("vcs", "commit").impl == "delivery.test_impls:no_context"
+    assert mf.spec_for("vcs", "commit").impl == "simplon.test_impls:no_context"
 
 
 def test_an_imported_task_can_be_placed_into_a_group_of_the_products_choosing():
@@ -163,7 +163,7 @@ env_groups: []
 
     # assert: the product's wording, the catalogue's body and its other flags
     assert spec.help == "SYSTEM gate."
-    assert spec.impl == "delivery.test_impls:gradle"
+    assert spec.impl == "simplon.test_impls:gradle"
     assert spec.passthrough_args is True
 
 
@@ -204,7 +204,7 @@ def test_a_products_own_definition_needs_no_catalogue_and_keeps_its_key_as_the_c
     text = """
 tasks:
   disk-guard:
-    impl: "delivery.test_impls:nullary"
+    impl: "simplon.test_impls:nullary"
     help: "Guard the disk."
     group: support
 env_groups: []
@@ -223,7 +223,7 @@ def test_a_definition_keyed_by_a_coordinate_is_rejected():
     text = """
 tasks:
   vcs:disk-guard:
-    impl: "delivery.test_impls:nullary"
+    impl: "simplon.test_impls:nullary"
     help: "Guard the disk."
     group: support
 env_groups: []
@@ -270,7 +270,7 @@ def test_a_manifest_with_neither_section_is_untouched_by_the_expansion():
     text = """
 groups:
   git:
-    commit: { impl: "delivery.test_impls:no_context", help: "Commit." }
+    commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
 env_groups: []
 """
 
@@ -286,7 +286,7 @@ import:
   delivery: [vcs]
 groups:
   git:
-    commit: { impl: "delivery.test_impls:no_context", help: "Commit." }
+    commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
 env_groups: []
 """
 
@@ -304,7 +304,7 @@ import:
   delivery: [vcs]
 groups:
   git:
-    commit: { impl: "delivery.test_impls:nullary", help: "The product's own commit." }
+    commit: { impl: "simplon.test_impls:nullary", help: "The product's own commit." }
 tasks:
   vcs:commit: { group: git }
 env_groups: []
@@ -321,10 +321,10 @@ def test_a_products_own_definition_landing_on_an_existing_groups_entry_is_reject
     text = """
 groups:
   support:
-    disk-guard: { impl: "delivery.test_impls:nullary", help: "Guard the disk." }
+    disk-guard: { impl: "simplon.test_impls:nullary", help: "Guard the disk." }
 tasks:
   disk-guard:
-    impl: "delivery.test_impls:no_context"
+    impl: "simplon.test_impls:no_context"
     help: "Guard it differently."
     group: support
 env_groups: []
@@ -346,7 +346,7 @@ taxonomy:
     groups:
       git: { help: "Version control." }
 tasks:
-  vcs:push: { impl: "delivery.test_impls:nullary", help: "Push." }
+  vcs:push: { impl: "simplon.test_impls:nullary", help: "Push." }
 """
 
 
@@ -357,7 +357,7 @@ def test_a_product_contributes_members_to_a_group_the_catalogue_shapes():
     text = """
 groups:
   build:
-    compile: { impl: "delivery.test_impls:nullary", help: "Compile." }
+    compile: { impl: "simplon.test_impls:nullary", help: "Compile." }
 env_groups: []
 """
 
@@ -379,7 +379,7 @@ taxonomy:
   build: { help: "The product's own build." }
 groups:
   build:
-    compile: { impl: "delivery.test_impls:nullary", help: "Compile." }
+    compile: { impl: "simplon.test_impls:nullary", help: "Compile." }
 env_groups: []
 """
 
@@ -394,7 +394,7 @@ def test_env_gating_comes_with_the_shape_so_the_product_need_not_restate_it():
     text = """
 groups:
   deploy:
-    up: { impl: "delivery.test_impls:nullary", help: "Bring it up." }
+    up: { impl: "simplon.test_impls:nullary", help: "Bring it up." }
 env_groups: []
 """
 
@@ -415,7 +415,7 @@ def test_a_group_the_catalogue_does_not_declare_is_rejected():
     text = """
 groups:
   bespoke:
-    thing: { impl: "delivery.test_impls:nullary", help: "Do the thing." }
+    thing: { impl: "simplon.test_impls:nullary", help: "Do the thing." }
 env_groups: []
 """
 
@@ -434,7 +434,7 @@ def test_a_product_adds_a_task_the_catalogue_never_heard_of_to_a_platform_group(
     text = """
 groups:
   build:
-    something-only-this-product-has: { impl: "delivery.test_impls:nullary", help: "Very specific." }
+    something-only-this-product-has: { impl: "simplon.test_impls:nullary", help: "Very specific." }
 env_groups: []
 """
 
@@ -452,7 +452,7 @@ def test_a_nested_group_the_catalogue_declares_is_reachable_by_its_dotted_path()
     text = """
 groups:
   support.git:
-    push: { impl: "delivery.test_impls:nullary", help: "Push." }
+    push: { impl: "simplon.test_impls:nullary", help: "Push." }
 env_groups: []
 """
 
@@ -469,12 +469,12 @@ def test_without_a_catalogue_taxonomy_a_product_still_owns_its_own_tree():
     # all - keeps the freedom it has today, which is what lets a product adopt the shape in its own time.
     tasks_only = """
 tasks:
-  vcs:push: { impl: "delivery.test_impls:nullary", help: "Push." }
+  vcs:push: { impl: "simplon.test_impls:nullary", help: "Push." }
 """
     text = """
 groups:
   bespoke:
-    thing: { impl: "delivery.test_impls:nullary", help: "Do the thing." }
+    thing: { impl: "simplon.test_impls:nullary", help: "Do the thing." }
 env_groups: []
 """
 
@@ -563,7 +563,7 @@ def test_the_catalogue_carries_the_command_tree_it_declares():
     # arrange: a catalogue that declares a group with a command in it
     text = """
     tasks:
-      vcs:commit: { impl: delivery.tasks.vcs:commit, help: "commit." }
+      vcs:commit: { impl: simplon.tasks.vcs:commit, help: "commit." }
     groups:
       support:
         help: "Host tooling."
@@ -583,7 +583,7 @@ def test_the_catalogue_carries_the_command_tree_it_declares():
 
 def test_a_catalogue_without_a_groups_block_carries_an_empty_tree():
     # arrange: the shape every catalogue had before netctl#1469
-    text = 'tasks:\n  vcs:commit: { impl: delivery.tasks.vcs:commit, help: "commit." }\n'
+    text = 'tasks:\n  vcs:commit: { impl: simplon.tasks.vcs:commit, help: "commit." }\n'
 
     # act
     cat = catalogue.loads(text)
@@ -606,7 +606,7 @@ def test_an_old_form_product_still_cannot_invent_a_group_after_the_tree_moved():
     # a hypothetical - Plan 1 Task 7 removed the block the lock used to read.
     cat = catalogue.loads(textwrap.dedent("""
         tasks:
-          vcs:push: { impl: delivery.tasks.vcs:push, help: "push it." }
+          vcs:push: { impl: simplon.tasks.vcs:push, help: "push it." }
         groups:
           build: { help: "Produce the artefacts." }
     """))

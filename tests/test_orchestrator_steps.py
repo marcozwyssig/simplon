@@ -1,4 +1,4 @@
-"""Engine tests for the shared steps-runner (delivery.orchestrator.steps): the product-agnostic step
+"""Engine tests for the shared steps-runner (simplon.orchestrator.steps): the product-agnostic step
 model + runners moved out of netctl. Fake actions (no real subprocess, no Textual) so the state
 transitions + overall verdict are tested in isolation. This is now the home of the generic runner + its
 coverage (moved here from netctl's test_steps.py)."""
@@ -8,8 +8,8 @@ import shlex
 
 import pytest
 
-from delivery.orchestrator.manifest import load as manifest_load
-from delivery.orchestrator.steps import (
+from simplon.orchestrator.manifest import load as manifest_load
+from simplon.orchestrator.steps import (
     VERBOSE_ENV,
     Abort,
     Outcome,
@@ -253,7 +253,7 @@ def test_pipeline_still_takes_name_steps_and_stop_on_failure_positionally():
 
 def test_pipeline_carries_the_plan_tree_and_the_invoked_commands_dotted_path():
     # Arrange
-    from delivery.orchestrator.manifest import CommandSpec, PlanNode
+    from simplon.orchestrator.manifest import CommandSpec, PlanNode
 
     node = PlanNode(name="seed", path="deploy.seed", spec=CommandSpec(impl="demo.impls:seed", help="Seed."))
     # Act

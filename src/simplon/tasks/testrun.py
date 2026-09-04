@@ -3,8 +3,8 @@ orchestrator.testrun).
 
 Creating a per-suite venv, running pytest into a shared allure results dir, merging the already-written
 per-module results and rendering the single-file archive is MECHANISM: it needs to know nothing about the
-product whose suites it runs. The kernel already owned the two primitives it is built on (`delivery.pyvenv`,
-`delivery.allure`), so this finishes a seam that was half-built.
+product whose suites it runs. The kernel already owned the two primitives it is built on (`simplon.pyvenv`,
+`simplon.allure`), so this finishes a seam that was half-built.
 
 WHAT THE PRODUCT CONTRIBUTES IS DATA, in its manifest's `suites` section, read RAW through
 `ProductContext.manifest_data()` the way every other product-owned section is. That section is the test-level
@@ -39,10 +39,10 @@ from typing import Callable
 
 import typer
 
-from delivery import allure, context, log, pyvenv
-from delivery.awake import keep_awake
-from delivery.orchestrator.manifest import resolve_ref
-from delivery.run import run
+from simplon import allure, context, log, pyvenv
+from simplon.awake import keep_awake
+from simplon.orchestrator.manifest import resolve_ref
+from simplon.run import run
 
 # The manifest section this module owns.
 SECTION = "suites"
@@ -314,7 +314,7 @@ def _warn_filtered(cfg: Suites) -> None:
 # --- the Typer callbacks a product's manifest points its `impl:` at ------------------------------------
 # `gate` is bound to SEVERAL commands - one per declared level - so it identifies itself by the name it was
 # INVOKED as (`ctx.info_name`), which is the manifest command name and therefore the gate name. A callback
-# shared by several commands cannot carry per-command help in its docstring, so `delivery.cli.assemble`
+# shared by several commands cannot carry per-command help in its docstring, so `simplon.cli.assemble`
 # takes the help from each command's manifest `help:` instead; that is the product's own wording anyway.
 
 def gate(ctx: typer.Context, name: str = "") -> None:
@@ -335,7 +335,7 @@ def gate(ctx: typer.Context, name: str = "") -> None:
     presentation, it does not hide one); only `with:` removes a parameter from the wrapper's signature
     entirely (`treeform`/`taskgen`'s pin logic). So `name`'s empty default does NOT keep it invisible - a
     command bound to this function that pins nothing (netctl's current `system` / `acceptance-dataplane`,
-    both still old-form `impl: "delivery.tasks.testrun:gate"`) grows a real, stray `--name` option the
+    both still old-form `impl: "simplon.tasks.testrun:gate"`) grows a real, stray `--name` option the
     moment the generated module is regenerated against this signature. That is why this lands as its own
     platform PR rather than folded into the per-group-partition PR: netctl's pointer bump to THIS commit
     must happen in the same commit as its `test` group migration, which supplies the `with: { name: ... }`

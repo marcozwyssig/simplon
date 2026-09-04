@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from delivery import log
+from simplon import log
 
 
 def image_version(build_gradle_text: str, env_override: str | None = None) -> str:

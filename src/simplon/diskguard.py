@@ -1,20 +1,20 @@
 """Docker-disk guard: prune dangling images + build cache when the docker data filesystem runs low, so a
 full disk never silently breaks an initdb-style bootstrap or a container deploy. The parse/decision is
-delivery.disk; this wires it to the real df probe + prune via a Host. The consuming product owns the
+simplon.disk; this wires it to the real df probe + prune via a Host. The consuming product owns the
 enable toggle + the threshold and calls this.
 """
 from __future__ import annotations
 
 import shutil
 
-from delivery import disk, log
-from delivery.host import Host
-from delivery.run import run
+from simplon import disk, log
+from simplon.host import Host
+from simplon.run import run
 
 
 def disk_guard(host: Host | None = None, *, min_free_pct: int = 15,
                docker_data_dir: str = "/var/lib/docker") -> int:
-    """Prune when the docker data fs free-% drops below min_free_pct. Pure decision via delivery.disk;
+    """Prune when the docker data fs free-% drops below min_free_pct. Pure decision via simplon.disk;
     the df probe + prune are the only I/O. A docker-less host is a no-op. Returns 0 (best-effort)."""
     if shutil.which("docker") is None:
         return 0

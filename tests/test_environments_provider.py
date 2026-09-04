@@ -1,11 +1,11 @@
-"""Unit tests for delivery.environments.Provider - the stateful environments seam every adopting product
+"""Unit tests for simplon.environments.Provider - the stateful environments seam every adopting product
 used to carry as a scaffolded copy. The precedence and the group/environment collision are what these
 pin down, because that is where the copies had already drifted apart. AAA throughout.
 """
 import pytest
 
-from delivery import context, environments
-from delivery.environments import Provider
+from simplon import context, environments
+from simplon.environments import Provider
 
 _MANIFEST = """\
 product: sample
@@ -132,7 +132,7 @@ def test_a_hint_for_an_unshadowed_environment_uses_the_plain_token(provider):
 
 
 def test_the_provider_exposes_what_the_cli_seam_reads_off_it(provider):
-    # arrange: delivery.cli.EnvironmentProvider is structural, so the attributes ARE the contract
+    # arrange: simplon.cli.EnvironmentProvider is structural, so the attributes ARE the contract
 
     seam = (provider.ENV_VAR, provider.LOCAL)
 

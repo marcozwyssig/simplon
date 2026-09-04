@@ -13,8 +13,8 @@ import shutil
 import urllib.request
 from pathlib import Path
 
-from delivery import log
-from delivery.run import run
+from simplon import log
+from simplon.run import run
 
 GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
 

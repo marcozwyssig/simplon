@@ -1,8 +1,8 @@
-"""Unit tests for delivery.environments.parse - the pure environments.yml -> Registry parsing and
+"""Unit tests for simplon.environments.parse - the pure environments.yml -> Registry parsing and
 validation with product-supplied valid backends. No I/O; AAA throughout."""
 import pytest
 
-from delivery.environments import parse, parse_data
+from simplon.environments import parse, parse_data
 
 _BACKENDS = ("local", "cloud")
 _OK = """

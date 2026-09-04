@@ -1,4 +1,4 @@
-"""The bring-up health-gate DISCIPLINE (delivery.healthgate), moved here from netctl by netctl#1407.
+"""The bring-up health-gate DISCIPLINE (simplon.healthgate), moved here from netctl by netctl#1407.
 
 The rule under test is product-agnostic: a bring-up verdict must read a health channel the deployed
 system writes, not merely the deploy tool's exit code and a container count. netctl#1100/#1083 is the
@@ -19,7 +19,7 @@ AAA throughout; goal-stating names incl. the negative cases (a healthy deploymen
 """
 import pytest
 
-from delivery import healthgate
+from simplon import healthgate
 
 
 def _spec(subjects, **kw):

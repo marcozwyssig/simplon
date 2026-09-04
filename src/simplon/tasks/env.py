@@ -3,11 +3,11 @@ product's manifest points its `impl:` straight at.
 
 Fully manifest-driven: the `environments:` mapping, the `default:` key and the new `env_var:` key (the
 name of the environment variable a product's own env-first CLI prefix publishes the active environment
-into, e.g. netctl's `NETCTL_ENV`) are all read RAW through `delivery.context.current().manifest_data()`.
+into, e.g. netctl's `NETCTL_ENV`) are all read RAW through `simplon.context.current().manifest_data()`.
 `env_var:` is what makes this fully manifest-driven rather than needing a second, product-owned registry
 beside `context` just to learn which variable to read.
 
-Deliberately does NOT validate backend names against a registry (`delivery.environments.parse_data`
+Deliberately does NOT validate backend names against a registry (`simplon.environments.parse_data`
 does that, with the product's own valid-backends set). A listing has nothing to reject: an unknown
 backend must fail loudly the moment a command tries to USE that environment, which is the product's own
 env parsing, not a read-only listing. Importing the product's backend registry here just to print a
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import os
 
-from delivery import context, log
+from simplon import context, log
 
 
 def _active(envs: dict, default: str, env_var: str) -> str:

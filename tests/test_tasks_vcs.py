@@ -1,5 +1,5 @@
-"""Unit tests for delivery.tasks.vcs (netctl#1280, epic #1274 slice S6): the framework-free skin
-around delivery.vcs. Nothing here shells out to git - every delivery.vcs function is monkeypatched, so
+"""Unit tests for simplon.tasks.vcs (netctl#1280, epic #1274 slice S6): the framework-free skin
+around simplon.vcs. Nothing here shells out to git - every simplon.vcs function is monkeypatched, so
 the suite proves the wiring (ROOT resolution, parameter survival, return-code propagation) without
 touching a real repository.
 
@@ -14,9 +14,9 @@ from pathlib import Path
 
 import pytest
 
-from delivery import context
-from delivery.tasks import vcs as vcs_cmd
-from delivery.context import ProductContext
+from simplon import context
+from simplon.tasks import vcs as vcs_cmd
+from simplon.context import ProductContext
 
 
 @pytest.fixture(autouse=True)
@@ -181,7 +181,7 @@ def test_prune_branches_keeps_the_dry_run_remote_and_unmerged_parameters():
 
 def test_no_body_in_this_module_raises_typer_exit_any_more():
     # arrange: the point of netctl#1444 - these are callable from anything, not only a Click parser
-    import delivery.tasks.vcs as module
+    import simplon.tasks.vcs as module
 
     # act
     source = Path(module.__file__).read_text(encoding="utf-8")

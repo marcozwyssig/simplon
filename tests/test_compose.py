@@ -11,7 +11,7 @@ first one", "any one" or "all of them" cannot pass by accident.
 """
 import pytest
 
-from delivery import compose
+from simplon import compose
 
 # One realistic two-service instance: a proxy publishing the front door, a backend with the data tree.
 # Bind mounts are declared UNSORTED on purpose, and the read-only workbook mount is a bind the container

@@ -9,7 +9,7 @@ awake for the duration (the `keep_awake` spec flag, netctl#1238). Multi-command 
 runner and its own aggregates for free.
 
 This module is PURE of any product import: the ONLY product-specific thing is the injected `step_factory`
-on the `StepFactoryContext`. That name is deliberately DISTINCT from `delivery.context.ProductContext`
+on the `StepFactoryContext`. That name is deliberately DISTINCT from `simplon.context.ProductContext`
 (which carries a product's identity/root/manifest path for the CLI engine): the two used to share the name
 `ProductContext`, disambiguated only by a docstring, which was a footgun (netctl#737). This seam is the
 step-runner one - a command name -> Step factory - so it is named for what it is.
@@ -21,9 +21,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from delivery.awake import keep_awake
-from delivery.orchestrator.manifest import Manifest
-from delivery.orchestrator.steps import Pipeline, Step, argv_step, dispatch
+from simplon.awake import keep_awake
+from simplon.orchestrator.manifest import Manifest
+from simplon.orchestrator.steps import Pipeline, Step, argv_step, dispatch
 
 
 @dataclass(frozen=True)
@@ -32,7 +32,7 @@ class StepFactoryContext:
     the Step that runs it (typically a streaming `./<product>.sh <cmd>` subprocess step). Immutable; the
     product builds it once and passes it in, so the runner never imports the product.
 
-    Named `StepFactoryContext` (not `ProductContext`) so it never collides with `delivery.context`'s
+    Named `StepFactoryContext` (not `ProductContext`) so it never collides with `simplon.context`'s
     identity `ProductContext` (netctl#737): the two live in different modules for different jobs, and a
     shared name disambiguated only by a docstring was a footgun."""
 
@@ -58,7 +58,7 @@ class StepFactoryContext:
         `run_command` does not stamp the steps it receives.
 
         `manifest` is the parsed manifest the product assembles its CLI from; a product that has none at
-        hand reads it back through `delivery.context.current().manifest()`.
+        hand reads it back through `simplon.context.current().manifest()`.
         """
         argv0 = str(script)
 
@@ -69,7 +69,7 @@ class StepFactoryContext:
 
 
 # Back-compat alias for the pre-rename name (netctl#737). netctl's orchestrator still imports
-# `delivery.orchestrator.product.ProductContext`; it keeps working until that consumer bumps its submodule
+# `simplon.orchestrator.product.ProductContext`; it keeps working until that consumer bumps its submodule
 # pointer and switches to `StepFactoryContext`, after which this alias can be dropped. New code uses the
 # explicit name.
 ProductContext = StepFactoryContext
@@ -83,7 +83,7 @@ def run_command(name: str, manifest: Manifest, ctx: StepFactoryContext, *, group
     runner (TUI when available, else headless).
 
     `stop_on_failure` rides along on the TREE, where it is declared: every node carries its own spec, and
-    `delivery.orchestrator.steps.abort_after` scopes a failure to the OUTERMOST ancestor whose flag is true
+    `simplon.orchestrator.steps.abort_after` scopes a failure to the OUTERMOST ancestor whose flag is true
     (netctl#1317). The Pipeline's own single flag is still set from the ROOT spec, as the fallback for the
     tree-less / degraded shape - with a usable tree it is the root NODE's flag that is read, and the two
     are the same value by construction.
@@ -101,7 +101,7 @@ def run_command(name: str, manifest: Manifest, ctx: StepFactoryContext, *, group
     `./<product>.sh <cmd>` shape and stamps it; a product writing its own owes the same stamp (#42).
 
     A command that declares `keep_awake` (netctl#1238) has its WHOLE plan wrapped in
-    `delivery.awake.keep_awake`, so a multi-minute aggregate inhibits host idle-sleep exactly as the
+    `simplon.awake.keep_awake`, so a multi-minute aggregate inhibits host idle-sleep exactly as the
     hand-written pipeline it replaced did. The wrap belongs here because an aggregate has no product code
     around it - its CLI callback is kernel-synthesized - and because one inhibitor spanning the plan also
     covers the GAPS between steps, which per-leaf arming does not. Best-effort by keep_awake's own

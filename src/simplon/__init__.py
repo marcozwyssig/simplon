@@ -1,8 +1,8 @@
-"""delivery - the Delivery Orchestrator kernel, the domain-agnostic shared core for the *ctl
+"""simplon - the delivery orchestrator kernel, the domain-agnostic shared core for the *ctl
 product family (netctl, infractl).
 
 Consumed by each product via the lib/platform submodule on sys.path (dev-time; editable-install /
-published artefacts come later). NOTE: the import package is deliberately `delivery`, not
+published artefacts come later). NOTE: the import package is deliberately `simplon`, not
 `platform` (a top-level `platform` package would shadow the Python stdlib `platform` module) and
 not bare `orchestrator` (collides with product packages).
 """

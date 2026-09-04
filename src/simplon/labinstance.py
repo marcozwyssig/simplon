@@ -13,7 +13,7 @@ Step 3 is the one that looks product-specific and is not: it exists because an a
 worktree must not act on the main checkout's lab, which is a property of the TOOLING, not of the product.
 
 The three product-specific values - the env var's spelling, the reserved default id and the id-length
-budget - reach this module as manifest DATA through ``delivery.context``, never as an import:
+budget - reach this module as manifest DATA through ``simplon.context``, never as an import:
 
 ```yaml
 instance:
@@ -34,7 +34,7 @@ import re
 from pathlib import Path
 from typing import NamedTuple
 
-from delivery import context
+from simplon import context
 
 # The manifest section carrying the three product values above.
 MANIFEST_SECTION = "instance"
@@ -58,13 +58,13 @@ class InstanceSpec(NamedTuple):
 
 
 def spec() -> InstanceSpec:
-    """Read the product's ``instance:`` section RAW through ``delivery.context`` (the same seam the build
+    """Read the product's ``instance:`` section RAW through ``simplon.context`` (the same seam the build
     data and the environments listing use). Fails loudly naming the manifest and the missing/invalid key,
     so a yaml typo surfaces here rather than as a lab silently resolving to the wrong tenant."""
     ctx = context.current()
     data = ctx.manifest_data().get(MANIFEST_SECTION)
     if not isinstance(data, dict):
-        raise ValueError(f"delivery: manifest {ctx.manifest_path} is missing the '{MANIFEST_SECTION}' section")
+        raise ValueError(f"simplon: manifest {ctx.manifest_path} is missing the '{MANIFEST_SECTION}' section")
     env_var = str(data.get("env_var") or "").strip()
     default = str(data.get("default") or "").strip()
     raw_len = data.get("max_id_len")
@@ -72,18 +72,18 @@ def spec() -> InstanceSpec:
                          ("max_id_len", raw_len is not None)):
         if not present:
             raise ValueError(
-                f"delivery: manifest {ctx.manifest_path} is missing '{MANIFEST_SECTION}.{key}'")
+                f"simplon: manifest {ctx.manifest_path} is missing '{MANIFEST_SECTION}.{key}'")
     # `isinstance` rather than `int(...)`: yaml parses `2.5` to a float, and int() would silently truncate
     # it to a legal-looking 2 - exactly the quiet drift this loud read exists to prevent. bool is an int
     # subclass, so `max_id_len: true` has to be rejected explicitly.
     if isinstance(raw_len, bool) or not isinstance(raw_len, int):
         raise ValueError(
-            f"delivery: manifest {ctx.manifest_path} '{MANIFEST_SECTION}.max_id_len' must be an integer, "
+            f"simplon: manifest {ctx.manifest_path} '{MANIFEST_SECTION}.max_id_len' must be an integer, "
             f"got {raw_len!r}")
     max_id_len = raw_len
     if max_id_len < 1:
         raise ValueError(
-            f"delivery: manifest {ctx.manifest_path} '{MANIFEST_SECTION}.max_id_len' must be >= 1, "
+            f"simplon: manifest {ctx.manifest_path} '{MANIFEST_SECTION}.max_id_len' must be >= 1, "
             f"got {max_id_len}")
     return InstanceSpec(env_var, default, max_id_len)
 
@@ -131,7 +131,7 @@ def resolve(flag: str | None = None, *, worktree: object = _PROBE) -> str:
     The MAIN checkout has no worktree basename (its ``.git`` is a directory) and still resolves to the
     default, so a product's single-tenant human UX is byte-for-byte unchanged. ``worktree`` is injectable
     purely for tests (the basename, or ``None`` to assert the main-checkout branch); left unset it probes
-    the real checkout via ``delivery.context.current().root``. The derived id always satisfies the
+    the real checkout via ``simplon.context.current().root``. The derived id always satisfies the
     product's id validation, so import-time resolution never fails loudly."""
     if flag is not None and flag.strip():
         return flag.strip()
