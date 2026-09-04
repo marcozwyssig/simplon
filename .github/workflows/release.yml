@@ -1,0 +1,26 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write        # Trusted Publishing: no API token in the repo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The release gate: tests first, then the wheel, then PyPI. The launcher
+      # provisions its own venv and installs this checkout with `-e .`, so no
+      # separate install step is needed here (the same redundant step was
+      # dropped from ci.yml for the same reason). The wheel check in tests/
+      # installs the built package and loads its catalogue from
+      # site-packages -- it is the only one that catches a path escape
+      # before it ships.
+      - run: ./simplon.sh test all
+      - run: ./simplon.sh build wheel
+      - uses: pypa/gh-action-pypi-publish@release/v1
