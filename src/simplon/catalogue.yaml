@@ -103,9 +103,11 @@ tasks:
     passthrough_args: true
     params:
       name: { help: "the declared suite level to run (normally pinned per command with `with:`)" }
-  # The Python type gate. A product declares the command the day it has a ; the kernel carries
-  # the mechanism AND the tool (mypy is pinned in the kernel's requirements), so adopting it is one
-  # manifest line plus the config file that states what is covered.
+  # The Python type gate. A product declares the command the day it has a mypy.ini. The kernel carries
+  # the MECHANISM; the tool is an optional extra rather than a kernel runtime dependency, because a
+  # product that never declares this command should not inherit a constraint on which type checker it
+  # may install. Adopting the gate is therefore three things: this one manifest line, the config file
+  # that states what is covered, and `simplon[typecheck]` in the product's own requirements.
   test:typecheck-python:
     impl: simplon.tasks.typecheck:check
     help: "Type-check the product's Python sources with mypy, in the host venv (no Docker, no lab)."

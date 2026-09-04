@@ -28,10 +28,11 @@ dependencies = [
   "PyYAML>=6.0.3,<7",    # the manifest and catalogue loader. safe_load/safe_dump have been stable
                          # across all of 6.x, so only the major is a real boundary; the floor is
                          # simply the version this was verified against.
-  "rich>=15.0.0",        # a FLOOR only, and a weak one: the kernel imports nothing from rich and uses
-                         # plain ANSI. It is listed because textual pulls it, and textual's own
-                         # constraint governs the upper end - a ceiling here would only invent a
-                         # conflict.
+  # NOT listed: rich. The kernel imports nothing from it - the only mentions in the source are typer's
+  # `rich_help_panel=` keyword, which is typer's integration and not ours. Both typer (rich>=10.11.0)
+  # and textual (rich>=14.2.0) require it, so it is installed either way, and a floor of our own could
+  # only be tighter than theirs: `>=15.0.0` would have refused a consumer holding rich 14.x for no
+  # constraint simplon actually has. A dependency we do not import is a claim we cannot keep.
   "textual>=8.2.8,<9",   # the split-pane step TUI (headless fallback without it). Real API surface -
                          # App/ComposeResult, RichLog, Tree, TreeNode - which textual rearranges across
                          # majors, so the major IS the ceiling.
