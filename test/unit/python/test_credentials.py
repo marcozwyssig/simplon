@@ -107,7 +107,9 @@ def test_a_username_without_its_password_names_the_variable_to_ask_for():
 
 def test_a_run_that_supplies_neither_half_is_missing_nothing():
     # Neither half means the run is not asking for the protected thing at all.
-    variable = credentials.missing_password_variable([PREFIX], {})
+    env = {}
+
+    variable = credentials.missing_password_variable([PREFIX], env)
 
     assert variable is None
 
