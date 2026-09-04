@@ -39,10 +39,11 @@ def lower(tree: dict, _path: tuple[str, ...] = ()) -> tuple[dict, dict]:
 
     The two spellings are not interchangeable and the difference is load-bearing: the taxonomy nests its
     children by BARE name under a `groups:` key, while the flat map keys every group by its DOTTED path.
-    A group with no commands still appears in both - the shape exists whether or not anyone has put a
-    command in it yet, and that emitted key is what gives even an empty group its own sub-app:
-    `taskgen._group_paths` derives one per key of `manifest.groups`, so a migrated product gets a
-    sub-app for every platform group whether or not it has added a command to it.
+    A group with no commands still appears in both - `lower` itself does not decide whether an empty
+    group renders. That call belongs to `load()`, which is the one place that can tell a group nobody
+    placed anything in APART FROM the catalogue (silently dropped, see `declared_paths`) from a group
+    this very `tree` names itself with nothing in it (already rejected by `merge`, so `load()` never sees
+    that shape here at all).
     """
     taxonomy: dict[str, dict] = {}
     flat: dict[str, dict] = {}
@@ -66,6 +67,49 @@ def lower(tree: dict, _path: tuple[str, ...] = ()) -> tuple[dict, dict]:
     return taxonomy, flat
 
 
+def _is_empty(node: dict) -> bool:
+    """Whether a merged group node's subtree carries no command anywhere - directly or in any
+    descendant group.
+
+    Used only for the load-error check in `merge` below: a group the PRODUCT names in its own tree and
+    leaves this way announced something it does not have. Whether an empty group RENDERS at all is a
+    separate question `merge` does not answer - see `declared_paths` and its caller in `load()`.
+    """
+    if node.get("commands"):
+        return False
+    return not node.get("groups")
+
+
+def declared_paths(tree: dict) -> frozenset[str]:
+    """Every dotted group path this tree names itself, at any depth - regardless of whether that group
+    ends up with a command.
+
+    Feed it the PRODUCT's own new-form tree (before `merge`) and the result is exactly the set of groups
+    the product itself asked for. That is the other half of the empty-group question `merge` raises on: a
+    kernel-only group left empty is not an error, it is a group the catalogue offers that this set proves
+    the product never took - `load()` uses that proof to drop it from the assembled CLI rather than
+    render a sub-app with nothing in it. `lower()` already computes exactly this key set as a side effect
+    of building the flat member map, so this is that map's keys, named for what THIS caller wants from it.
+    """
+    return frozenset(lower(tree)[1])
+
+
+def paths_with_commands(flat: dict) -> frozenset[str]:
+    """Every path in a flat member map (`lower`'s second return value) whose own subtree - itself or any
+    descendant path - carries at least one command.
+
+    `flat` keys every group by its DOTTED path but each entry's members are that group's OWN, direct
+    commands only - `support` and `support.git` are two separate keys, so `support` can look empty by
+    that measure alone while `support.git` underneath it is not. A group is only truly unused if NOTHING
+    anywhere in its subtree is, which is what `load()` needs to tell `release` (nothing under it, drop
+    it) apart from a bare ancestor like `support` that merely holds no DIRECT command of its own while a
+    child does (keep it, or its child has nowhere to hang from).
+    """
+    return frozenset(path for path in flat
+                     if any(members for other, members in flat.items()
+                            if other == path or other.startswith(f"{path}.")))
+
+
 def merge(kernel: dict, product: dict, _path: tuple[str, ...] = ()) -> dict:
     """The product's tree merged onto the kernel's.
 
@@ -78,6 +122,16 @@ def merge(kernel: dict, product: dict, _path: tuple[str, ...] = ()) -> dict:
     `env_first:`. Both are the platform's call on the group's SHAPE (env-gating in particular: a product
     switching `env_first` off would silently ungate every descendant), and the group lock exists so that
     shape is the same in every product.
+
+    A group the PRODUCT itself names in ITS OWN tree - even as an empty node - is a promise: it exists, so
+    it must have at least one command somewhere in its subtree. Left empty, that is a load error naming
+    the group; deliberately NOT a decision this function makes for a group it only inherited from the
+    KERNEL (`build`/`test`/`release`/`deploy`/`monitor` all start life as bare `{help: ...}` nodes in the
+    catalogue) - a product that never mentions one of those has made no promise, and whether such a group
+    renders is `load()`'s call, made with information (the OLD-form half of a still-migrating manifest,
+    invisible here) this function does not have. Keeping the merged tree complete either way - the
+    platform's own copy of every group it offers, touched or not - is what lets `load()` make that call
+    correctly instead of guessing from an already-pruned result.
     """
     out = {name: dict(node or {}) for name, node in (kernel or {}).items()}
     for name, node in (product or {}).items():
@@ -111,6 +165,11 @@ def merge(kernel: dict, product: dict, _path: tuple[str, ...] = ()) -> dict:
                     f"sets. A product may add commands and sub-groups to a platform group, never "
                     f"change its shape - change it in the platform's `groups:` instead, once, for "
                     f"everybody")
+        if _is_empty(merged):
+            raise ValueError(
+                f"group '{'.'.join(path)}' declares no commands. A group this manifest names is a "
+                f"promise it has at least one, directly or in a subgroup - add one, or remove the "
+                f"declaration and leave the group to the platform's default (nothing rendered)")
         out[name] = merged
     return out
 

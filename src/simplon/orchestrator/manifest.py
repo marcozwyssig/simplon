@@ -33,6 +33,7 @@ from typing import Callable, NamedTuple
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from simplon import log
 from simplon.clitaxonomy import CommandTaxonomy, TaxonomyNode, merge_trees
 from simplon.orchestrator.model import treeform
 
@@ -705,6 +706,19 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
         # and the whole point of partitioning is that the two halves do not interfere.
         merged = treeform.merge(getattr(catalogue, "groups", {}) or {}, new_form)
         lowered_taxonomy, flat = treeform.lower(merged)
+        # `merged` deliberately keeps every group the CATALOGUE offers, touched or not (see `merge`'s own
+        # docstring) - `lowered_taxonomy` above needs the full tree so the "which groups exist" check
+        # below still recognises a group this manifest fills the OLD way (`old_form`), which `merge` never
+        # sees. `flat` is the OUTPUT surface instead: a path with no command ANYWHERE in its subtree
+        # (`paths_with_commands`) that this manifest's OWN tree never named (`declared_paths`) is a
+        # platform group nobody took, dropped here rather than assembled as a sub-app with nothing in it.
+        # A bare ancestor that holds no DIRECT command while a child does (`support` above `support.git`)
+        # is not this case - `paths_with_commands` looks at the whole subtree, not the one path, so the
+        # parent survives for its child to hang from. The "declares no commands" load error above already
+        # catches the other case (a path the manifest DOES name, left empty), so nothing empty and
+        # self-declared ever reaches this filter.
+        keep = treeform.declared_paths(new_form) | treeform.paths_with_commands(flat)
+        flat = {path: members for path, members in flat.items() if path in keep}
         treeform.check_no_stale_import(data)
         tasks_block = data.get("tasks")
         if tasks_block is not None and not isinstance(tasks_block, dict):
@@ -813,6 +827,13 @@ def _expand_imports(data: dict, catalogue: object) -> dict:
 
     A command lands in the group its coordinate's namespace names unless `group:` says otherwise, so a
     product places a task without restating anything else about it.
+
+    `import:` only ever MAKES a coordinate available; a `tasks:` entry keyed by that coordinate is what
+    actually PLACES it (the `else` branch below). A manifest that declares the former and never writes
+    the latter loads clean and places nothing - the flat form has no other mechanism that would notice,
+    since `treeform.merge` (which places a whole platform group automatically) never runs for it. That is
+    caught below, once every entry has had its chance to consume an import, rather than as a hard error:
+    a stray `import:` is a manifest that forgot a step, not a corrupt one.
     """
     imports, tasks = data.get("import") or {}, data.get("tasks") or {}
     if not imports and not tasks:
@@ -834,6 +855,7 @@ def _expand_imports(data: dict, catalogue: object) -> dict:
                 available[f"{namespace}:{name}"] = spec
 
     expanded = {group: dict(members) for group, members in (data.get("groups") or {}).items()}
+    used: set[str] = set()
     for key, spec in tasks.items():
         spec = dict(spec or {})
         group = spec.pop("group", None)
@@ -851,6 +873,7 @@ def _expand_imports(data: dict, catalogue: object) -> dict:
             namespace, name = str(key).split(":", 1)
             spec = {**available[key], **spec}
             group = group or namespace
+            used.add(str(key))
         if not group:
             raise ValueError(f"task '{key}' names no group")
         if name in expanded.get(group, {}):
@@ -862,6 +885,14 @@ def _expand_imports(data: dict, catalogue: object) -> dict:
                 f"task '{key}' lands on '{group} {name}', which the `groups:` block already declares - "
                 f"a command has one declaration; remove the `groups:` entry once the import owns it")
         expanded.setdefault(group, {})[name] = spec
+    if available and not used:
+        # `available` non-empty means `import:` named at least one namespace; `used` empty means not one
+        # of its coordinates was ever referenced by a `tasks:` override. The likely cause, not just the
+        # symptom: a `commands:` block is the NEW form's placement mechanism, and this manifest is old
+        # form throughout, so the merge that would place a catalogue group never runs for it.
+        log.warn(
+            "import: declared, but the manifest is entirely flat form, so the catalogue tree is never "
+            "merged - a group must declare commands: for its coordinates to be placed")
     return {**data, "groups": expanded}
 
 

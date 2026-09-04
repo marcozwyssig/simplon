@@ -169,6 +169,64 @@ def test_a_product_overriding_help_on_a_platform_group_is_rejected():
         treeform.merge(KERNEL, product)
 
 
+def test_a_kernel_only_group_the_product_never_touches_stays_in_the_merged_tree():
+    # arrange: `release`/`monitor` in the real catalogue are exactly this shape - a bare `{help: ...}`
+    # node with no commands, that a product simply never places anything into (defect 1, first half).
+    # `merge` itself keeps it (see its docstring): whether it RENDERS is `load()`'s call, made with
+    # `declared_paths` plus the OLD-form half of the manifest that `merge` never sees at all.
+    kernel = {**KERNEL, "release": {"help": "Publish them."}}
+    product = {"build": {"commands": {"web-image": {"task": "img"}}}}
+
+    # act
+    merged = treeform.merge(kernel, product)
+
+    # assert
+    assert merged["release"] == {"help": "Publish them."}
+    assert "build" in merged and "support" in merged
+
+
+def test_declared_paths_names_every_path_a_tree_declares_regardless_of_content():
+    # arrange: the product's OWN (un-merged) tree - the set `load()` uses to tell "the product named
+    # this and it is empty" (a load error, raised by `merge`) apart from "the product never named this"
+    # (a silent drop, decided in `load()`)
+    tree = {"build": {"commands": {"web-image": {"task": "img"}}},
+           "support": {"groups": {"git": {"commands": {"push": {"task": "vcs:push"}}}}}}
+
+    # act
+    paths = treeform.declared_paths(tree)
+
+    # assert: every level the tree names, bare and nested alike
+    assert paths == {"build", "support", "support.git"}
+
+
+def test_declared_paths_of_an_empty_tree_is_empty():
+    # arrange / act / assert: nothing named, nothing declared - the safe default for a manifest with no
+    # new-form groups at all
+    assert treeform.declared_paths({}) == frozenset()
+
+
+def test_a_product_declared_group_left_with_no_commands_is_rejected():
+    # arrange: the SAME empty shape, but this time the PRODUCT names the group itself - an announcement
+    # with nothing behind it, which is a load error rather than a silent drop (defect 1, second half)
+    kernel = {**KERNEL, "release": {"help": "Publish them."}}
+    product = {"release": {}}
+
+    # act / assert
+    with pytest.raises(ValueError, match="declares no commands"):
+        treeform.merge(kernel, product)
+
+
+def test_a_product_declared_nested_group_left_with_no_commands_is_rejected():
+    # arrange: the same rule one level down - a product naming a subgroup it never fills
+    kernel = {**KERNEL, "support": {**KERNEL["support"],
+                                    "groups": {**KERNEL["support"]["groups"], "empty-sub": {}}}}
+    product = {"support": {"groups": {"empty-sub": {}}}}
+
+    # act / assert
+    with pytest.raises(ValueError, match="support.empty-sub.*declares no commands"):
+        treeform.merge(kernel, product)
+
+
 def test_a_non_mapping_command_spec_in_merge_is_rejected():
     # arrange: a `task:` string written where the whole command mapping belongs - the realistic typo is
     # `commands: { push: "vcs:push" }` instead of `commands: { push: { task: "vcs:push" } }`
@@ -385,6 +443,68 @@ def test_a_mixed_manifest_loads_both_halves(tmp_path):
     # assert: both groups carry their member, and each resolved through its own path
     assert mf.commands["build"]["web-image"].impl == "demo.tooling:image"
     assert mf.commands["test"]["unit-java"].impl == "demo.cli:unit_java"
+
+
+def test_a_catalogue_group_the_product_never_fills_does_not_render(tmp_path):
+    # arrange: the agile-cockpit shape (defect 1) - a tree-form manifest that uses `build` and `test` but
+    # never mentions `release`, exactly like the real catalogue's bare CI/CD groups
+    catalogue = catalogue_mod.loads(textwrap.dedent("""
+        tasks: {}
+        groups:
+          build:   { help: "Produce the artefacts." }
+          test:    { help: "Verify them." }
+          release: { help: "Publish them." }
+    """))
+    text = textwrap.dedent("""
+        product: demo
+        tasks:
+          img: { impl: "demo.tooling:image", help: "Build an image." }
+        groups:
+          build:
+            commands:
+              web-image: { task: img, help: "Build the web image." }
+          test:
+            commands:
+              unit: { task: img, help: "Run the unit gate." }
+    """)
+
+    # act
+    mf = manifest.load(text, catalogue=catalogue)
+
+    # assert: the untouched catalogue group is gone from the assembled surface, the used ones are not
+    assert "release" not in mf.groups
+    assert set(mf.groups) == {"build", "test"}
+
+
+def test_a_catalogue_group_the_product_fills_old_form_still_renders_even_though_new_form_never_touches_it(
+        tmp_path):
+    # arrange: the exact regression the naive "prune inside merge()" fix produced - `test` looks
+    # untouched from the NEW-form side (this manifest's `test:` is still old-form), but the product DOES
+    # fill it, just through the other half of a still-migrating manifest. It must render, and the
+    # catalogue's ownership check must still recognise it as a real group (not "unknown group 'test'")
+    catalogue = catalogue_mod.loads(textwrap.dedent("""
+        tasks: {}
+        groups:
+          build: { help: "Produce the artefacts." }
+          test:  { help: "Verify them." }
+    """))
+    text = textwrap.dedent("""
+        product: demo
+        tasks:
+          img: { impl: "demo.tooling:image", help: "Build an image." }
+        groups:
+          build:
+            commands:
+              web-image: { task: img, help: "Build the web image." }
+          test:
+            unit-java: { impl: "demo.cli:unit_java", help: "Run the Java unit gate." }
+    """)
+
+    # act
+    mf = manifest.load(text, catalogue=catalogue)
+
+    # assert
+    assert mf.groups["test"] == ("unit-java",)
 
 
 def test_a_group_the_platform_places_a_command_in_while_the_product_keeps_it_old_form_is_rejected():

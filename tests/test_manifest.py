@@ -1197,7 +1197,8 @@ def test_a_coordinate_keyed_entry_under_a_new_form_tasks_block_is_rejected():
           vcs:push: { impl: "demo.tooling:push", help: "push it." }
         groups:
           build:
-            commands: {}
+            commands:
+              noop: { impl: "demo.tooling:noop", help: "does nothing." }
     """)
 
     # act / assert
@@ -1206,9 +1207,11 @@ def test_a_coordinate_keyed_entry_under_a_new_form_tasks_block_is_rejected():
 
 
 def test_a_new_form_tasks_block_that_is_not_a_mapping_is_rejected():
-    # arrange: `tasks:` given as a list - a raw AttributeError from `.items()` would name no path
+    # arrange: `tasks:` given as a list - a raw AttributeError from `.items()` would name no path. `build`
+    # carries a real command so the (unrelated) empty-group check does not pre-empt the one under test.
     catalogue = catalogue_mod.loads('tasks: {}\ngroups:\n  build: { help: "Produce." }\n')
-    text = 'product: demo\ntasks: [lab-image]\ngroups:\n  build:\n    commands: {}\n'
+    text = ('product: demo\ntasks: [lab-image]\ngroups:\n  build:\n    commands:\n'
+           '      noop: { impl: "demo.tooling:noop", help: "does nothing." }\n')
 
     # act / assert
     with pytest.raises(ValueError, match="`tasks:` is not a mapping"):

@@ -272,6 +272,28 @@ env_groups: []
         _loaded(text)
 
 
+def test_an_import_with_no_referencing_tasks_entry_warns_and_places_nothing(capsys):
+    # arrange: defect 2 - `import:` only makes coordinates AVAILABLE; nothing ever REFERENCES one here
+    # (no `tasks:` override, and the flat form has no other mechanism that would place it), so the CLI
+    # loads clean and nothing appears. The warning has to name the cause, not just "nothing happened".
+    text = """
+import:
+  delivery: [vcs]
+env_groups: []
+groups:
+  support:
+    doctor: { impl: "simplon.test_impls:nullary", help: "Doctor." }
+"""
+
+    # act
+    mf = _loaded(text)
+    printed = capsys.readouterr().out
+
+    # assert: no vcs command was placed, and the warning names the actual cause
+    assert mf.groups == {"support": ("doctor",)}
+    assert "import:" in printed and "entirely flat form" in printed and "commands:" in printed
+
+
 def test_a_manifest_with_neither_section_is_untouched_by_the_expansion():
     # arrange: this is what lets a product adopt the mechanism one command at a time
     text = """
