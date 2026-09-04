@@ -141,6 +141,92 @@ def test_the_half_supplied_prefix_is_the_one_named():
 
 # --- asking -----------------------------------------------------------------------------------------
 
+def test_a_secret_already_set_is_never_asked_for_again(terminal):
+    # Asking twice for something already supplied is impossible by construction, not by convention.
+    env = {PASSWORD_VAR: STORED}
+
+    variable = credentials.ask_for_secret(PASSWORD_VAR, env)
+
+    assert variable is None
+    assert terminal == []
+
+
+def test_a_secret_is_asked_for_and_stored(terminal):
+    env = {}
+
+    variable = credentials.ask_for_secret(PASSWORD_VAR, env)
+
+    assert variable == PASSWORD_VAR
+    assert env[PASSWORD_VAR] == TYPED
+
+
+def test_a_name_is_asked_for_in_the_clear(monkeypatch):
+    # Echoed on purpose: hiding a username helps nobody and makes a typo invisible.
+    class _Tty:
+        def isatty(self):
+            return True
+    monkeypatch.setattr(credentials.sys, "stdin", _Tty())
+    monkeypatch.setattr("builtins.input", lambda prompt="": NAME)
+    env = {}
+
+    variable = credentials.ask_for_name(USER_VAR, "username", env)
+
+    assert variable == USER_VAR
+    assert env[USER_VAR] == NAME
+
+
+def test_asking_for_a_credential_fills_in_both_halves(monkeypatch, terminal):
+    # The caller has just watched something fail for want of exactly this credential, so a run that
+    # named nothing is still asked - and is asked for the username too.
+    monkeypatch.setattr("builtins.input", lambda prompt="": NAME)
+    env = {}
+
+    answered = credentials.ask_for_credential(PREFIX, env)
+
+    assert answered == PREFIX
+    assert env[USER_VAR] == NAME and env[PASSWORD_VAR] == TYPED
+
+
+def test_asking_for_a_credential_fills_in_only_the_missing_half(monkeypatch, terminal):
+    def refuse(prompt=""):
+        raise AssertionError("asked for a username that was already known")
+    monkeypatch.setattr("builtins.input", refuse)
+    env = {USER_VAR: NAME}
+
+    answered = credentials.ask_for_credential(PREFIX, env)
+
+    assert answered == PREFIX
+    assert env[PASSWORD_VAR] == TYPED
+
+
+def test_a_declined_credential_is_reported_as_incomplete(monkeypatch):
+    # An operator who declines once must not be asked in a loop, so this says "no credential" rather
+    # than "ask again".
+    class _Tty:
+        def isatty(self):
+            return True
+    monkeypatch.setattr(credentials.sys, "stdin", _Tty())
+    monkeypatch.setattr("builtins.input", lambda prompt="": "")
+    monkeypatch.setattr(credentials.getpass, "getpass", lambda prompt="": "")
+    env = {}
+
+    answered = credentials.ask_for_credential(PREFIX, env)
+
+    assert answered is None
+
+
+def test_a_credential_is_not_asked_for_without_a_terminal(no_terminal, monkeypatch):
+    def refuse(prompt=""):
+        raise AssertionError("asked for a username with no terminal to ask on")
+    monkeypatch.setattr("builtins.input", refuse)
+    env = {}
+
+    answered = credentials.ask_for_credential(PREFIX, env)
+
+    assert answered is None
+    assert env == {}
+
+
 def test_asking_sets_the_variable_it_named(terminal):
     env = {USER_VAR: NAME}
 

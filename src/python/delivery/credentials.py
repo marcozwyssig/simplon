@@ -78,23 +78,19 @@ def missing_password_variable(prefixes: Iterable[str], env: Mapping[str, str]) -
     return None
 
 
-def ask_for_password(prefixes: Iterable[str],
-                     env: MutableMapping[str, str] | None = None) -> str | None:
-    """Ask on the terminal for the password a half-supplied credential needs. Returns what it set.
+def ask_for_secret(variable: str, env: MutableMapping[str, str] | None = None) -> str | None:
+    """Ask on the terminal for one secret and put it in `variable`. Returns the NAME it set, or None.
 
-    Silent and None in all three cases where asking would be wrong: no terminal (see the module note on
-    hanging a CI job), nothing missing, and nobody having named a username.
+    THE PRIMITIVE the rest of this module asks through. Silent and None without a terminal - see the
+    module note on hanging a CI job - and silent when the variable already has a value, so asking twice
+    for something already supplied is impossible by construction.
 
-    An empty answer is left UNSET on purpose. Carrying a blank password to the server produces a 401
-    whose message blames the repository; leaving it unset lets the caller's own "skipped, and named"
-    path report what actually happened.
+    An empty answer is left UNSET on purpose. A blank secret carried to a server produces a rejection
+    whose message blames the server; leaving it unset lets the caller's own "skipped, and named" path
+    report what actually happened.
     """
     env = os.environ if env is None else env
-    if not sys.stdin.isatty():
-        return None
-
-    variable = missing_password_variable(prefixes, env)
-    if not variable:
+    if not sys.stdin.isatty() or (env.get(variable) or "").strip():
         return None
 
     answer = getpass.getpass(f"{variable} (not echoed): ")
@@ -104,3 +100,55 @@ def ask_for_password(prefixes: Iterable[str],
 
     env[variable] = answer
     return variable
+
+
+def ask_for_name(variable: str, what: str,
+                 env: MutableMapping[str, str] | None = None) -> str | None:
+    """Ask for something that is NOT a secret - a username - and put it in `variable`.
+
+    Echoed, unlike `ask_for_secret`, because hiding a username helps nobody and makes a typo invisible.
+    A username may also be passed as a command-line argument, which a password may not; this is for the
+    case where it was not.
+    """
+    env = os.environ if env is None else env
+    if not sys.stdin.isatty() or (env.get(variable) or "").strip():
+        return None
+
+    answer = input(f"{what} ({variable}): ").strip()
+    if not answer:
+        return None
+
+    env[variable] = answer
+    return variable
+
+
+def ask_for_password(prefixes: Iterable[str],
+                     env: MutableMapping[str, str] | None = None) -> str | None:
+    """Ask for the password a HALF-SUPPLIED credential needs. Returns what it set, or None.
+
+    Deliberately asks nothing when no username was named: half a credential is the signal that a run
+    wants the protected thing, and a run supplying neither half is asking for nothing. Use
+    `ask_for_credential` where the caller already knows the credential IS wanted.
+    """
+    env = os.environ if env is None else env
+    variable = missing_password_variable(prefixes, env)
+    return ask_for_secret(variable, env) if variable else None
+
+
+def ask_for_credential(prefix: str, env: MutableMapping[str, str] | None = None) -> str | None:
+    """Ask for BOTH halves of one credential, whichever are missing. Returns the prefix once complete.
+
+    The difference from `ask_for_password` is who decided the credential is wanted. There, the operator
+    said so by naming a username. Here the CALLER knows - it has just watched something fail for want
+    of exactly this credential - so a run that named nothing is still asked, and is asked for the
+    username too.
+
+    Returns None when the credential is still incomplete afterwards: no terminal, or an empty answer.
+    The caller must treat that as "no credential" rather than retrying, or an operator who declines
+    once is asked in a loop.
+    """
+    env = os.environ if env is None else env
+    user_var, password_var = variables(prefix)
+    ask_for_name(user_var, "username", env)
+    ask_for_secret(password_var, env)
+    return prefix if credential(prefix, env) else None
