@@ -25,12 +25,17 @@ def test_no_shim_reaches_for_a_submodule(tmp_path):
     for name in ("democtl.sh", "democtl.cmd"):
         text = (tmp_path / name).read_text()
         assert "lib/platform" not in text, f"{name} still expects the submodule"
-        # PLATFORM_SRC was the old shim's kernel-source variable: a hardcoded second
-        # directory joined onto PYTHONPATH ahead of the product's own orchestrator path.
-        # A plain "PYTHONPATH" absence check is unsatisfiable here - every shim that sets
-        # PYTHONPATH at all (correctly, to just its own orchestrator/src/python) contains
-        # that literal substring as the assignment target.
-        assert "PLATFORM_SRC" not in text, f"{name} still prepends a kernel source path"
+
+        # It is not the variable name but the value that is the rule: nothing but the
+        # product's own orchestrator path may sit on PYTHONPATH. A kernel path prepended
+        # ahead of it would silently shadow the installed package - on every call, with no
+        # error - so pin the whole assignment, not a substring a renamed variable would dodge.
+        expected = {
+            "democtl.sh": 'export PYTHONPATH="$LAUNCH_ORCH_DIR/src/python${PYTHONPATH:+:$PYTHONPATH}"',
+            "democtl.cmd": 'set "PYTHONPATH=%LAUNCH_ORCH_DIR%\\src\\python;%PYTHONPATH%"',
+        }
+        lines = [l.strip() for l in text.splitlines() if "PYTHONPATH=" in l]
+        assert lines == [expected[name]], f"{name}: {lines}"
 
 
 def test_requirements_pin_the_kernel_by_version(tmp_path):

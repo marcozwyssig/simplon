@@ -5,17 +5,19 @@ through its own CLI. This module is the ONE kernel entry that runs WITHOUT a pro
 minimal, valid product skeleton and prints the next steps, after which the new product configures only its
 `<product>.yaml`.
 
-Run it standalone (the kernel's python source must be on sys.path, e.g. via a checked-out submodule)::
+Run it standalone (with `simplon` installed, e.g. `pip install simplon`)::
 
     python -m simplon.bootstrap <product> [--dir DIR] [--force]
 
 It renders, mirroring the shape netctl's own `netctl.yaml` + `netctl.sh` use but stripped to the bones:
 
-    <product>.sh                                     the thin shim onto lib/platform's launch.sh
+    <product>.sh                                     the entry point (bash): declares the four LAUNCH_*
+                                                     params, provisions a host venv, execs the CLI
+    <product>.cmd                                    the same entry point for Windows (cmd.exe)
     <product>.yaml                                   the starter manifest (groups tree/env_groups/
                                                      environments the Pydantic loader accepts)
-    orchestrator/requirements.txt                    the host-venv deps: `-r` the kernel's requirements
-                                                     (netctl#730) + product-only pins (no re-pinned kernel)
+    orchestrator/requirements.txt                    the host-venv deps: the kernel pinned by version
+                                                     (`simplon==...`) + product-only pins
     orchestrator/src/python/orchestrator/
         __init__.py                                  the product package
         __main__.py                                  `python -m orchestrator` entry
@@ -26,8 +28,9 @@ It renders, mirroring the shape netctl's own `netctl.yaml` + `netctl.sh` use but
         environments.py                              the EnvironmentProvider (its three product values)
 
 The generated manifest VALIDATES through `simplon.orchestrator.manifest.load`; the generated `paths.py`
-registers a `ProductContext` exactly as netctl's adapter does, so a `git submodule add ... lib/platform`
-away the new product has a working, manifest-driven CLI (`./<product>.sh help`).
+registers a `ProductContext` exactly as netctl's adapter does, so the new product has a working,
+manifest-driven CLI right away (`./<product>.sh help`) - the launcher provisions its own venv and installs
+the pinned kernel from PyPI on first run; nothing needs vendoring.
 
 Design / scope (best-effort MINIMAL slice; netctl#651 strand 4 is under-specified on purpose):
 
@@ -37,8 +40,8 @@ Design / scope (best-effort MINIMAL slice; netctl#651 strand 4 is under-specifie
         an impl-less `depends_on: [build, up]` command the kernel binds via assemble(step_context=...), so
         `<product> all` runs build->up, not a dead placeholder) and the env matrix;
       - the full product-adapter wiring (paths/environments/cli/__main__) so the CLI actually assembles;
-      - the shim + requirements (kernel deps via `-r`, netctl#730), so `./<product>.sh help` runs once
-        lib/platform is vendored;
+      - the two launchers (`.sh` + `.cmd`) + requirements (the kernel pinned by version), so
+        `./<product>.sh help` runs on a fresh clone with nothing to vendor;
       - PURE render (text only, no I/O, no yaml/pydantic import) split from the file-writing, so the manifest
         can be validated and the file set asserted in unit tests;
       - clobber-safety: refuses to overwrite an existing file unless `--force`.
@@ -46,8 +49,8 @@ Design / scope (best-effort MINIMAL slice; netctl#651 strand 4 is under-specifie
     DEFERRED to a fuller scaffolder (documented, deliberately NOT built here)
       - a real `delivery` console-script / a `bootstrap` subcommand woven into the assembled product CLI
         (today it is `python -m simplon.bootstrap`, the only honest entry before a product exists);
-      - `git init` automation (side-effecting VCS state); the `git submodule add lib/platform` + bootstrap
-        + verify one-command flow now lives in the repo-root `init-product.sh` wrapper (netctl#740);
+      - `git init` automation (side-effecting VCS state); a one-command scaffold + verify flow is left
+        to a repo-root wrapper script, deferred here;
       - schema-per-section docs, includes/anchors and a `--profile` menu (network-lab vs plain-service) that
         seeds a richer manifest;
       - product-name -> package-name derivation (the package is the fixed identifier `orchestrator`, as in
@@ -157,8 +160,8 @@ def _render_launcher(name: str, template: str) -> str:
     humans debugging a broken checkout, and a .sh file in the tree beats a
     triple-quoted blob in a Python module.
     """
-    # files("simplon") und dann joinpath -- nicht files("simplon.templates"):
-    # das Vorlagenverzeichnis ist kein Paket und hat kein __init__.py.
+    # files("simplon") and then joinpath -- not files("simplon.templates"):
+    # the templates directory is not a package and has no __init__.py.
     raw = files("simplon").joinpath("templates", template).read_text(encoding="utf-8")
     return raw.replace("{{ product }}", name)
 
@@ -387,7 +390,8 @@ def write(name: str, target: Path, *, force: bool = False) -> list[Path]:
 
 
 def next_steps(name: str, target: Path) -> str:
-    """The post-scaffold guidance printed after a successful write: vendor the kernel, then run the CLI."""
+    """The post-scaffold guidance printed after a successful write: nothing to vendor, just run the CLI -
+    the launcher provisions its own venv and installs the pinned kernel from PyPI on first run."""
     product = validate_product_name(name)
     return "\n".join([
         f"Scaffolded '{product}' under {target}",
@@ -395,8 +399,7 @@ def next_steps(name: str, target: Path) -> str:
         "Next steps:",
         f"  1. cd {target}",
         "  2. git init  (if this is a fresh repo)",
-        "  3. vendor the delivery kernel as a submodule at lib/platform:",
-        "       git submodule add https://github.com/marcozwyssig/platform.git lib/platform",
+        f"  3. fill in {product}.yaml with your real groups and commands",
         f"  4. run the CLI:  ./{product}.sh help",
         f"  5. grow it: add groups + commands in {product}.yaml and impl callables in",
         f"       {_PKG_DIR}/cli.py",

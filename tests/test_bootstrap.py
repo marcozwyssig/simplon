@@ -191,14 +191,18 @@ def test_env_var_name_derives_the_active_env_variable(name, expected):
     assert bootstrap.env_var_name(name) == expected
 
 
-def test_next_steps_names_the_product_the_target_and_the_submodule(tmp_path):
+def test_next_steps_names_the_product_and_the_target_but_no_submodule(tmp_path):
     # arrange / act
     steps = bootstrap.next_steps("fooctl", tmp_path)
 
-    # assert: it points at the CLI, the manifest and the lib/platform vendoring the new product needs
+    # assert: it points at the CLI and the manifest
     assert "./fooctl.sh help" in steps
     assert "fooctl.yaml" in steps
-    assert "lib/platform" in steps
+    assert str(tmp_path) in steps
+
+    # assert: nothing tells the user to vendor a kernel - there is nothing left to vendor
+    assert "lib/platform" not in steps
+    assert "submodule" not in steps
 
 
 # --- the kernel is a pinned PyPI dependency now, not a -r include into a vendored submodule ------------
