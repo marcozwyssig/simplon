@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -231,6 +232,20 @@ def test_requirements_kernel_pin_matches_the_installed_simplon_version(tmp_path)
     # assert: the scaffolder pins the SAME kernel version it ships with, so a fresh product's first
     # `pip install -r requirements.txt` lands on the kernel it was generated against, not a stale guess
     assert pinned == simplon.__version__
+
+
+def test_the_declared_distribution_version_matches_the_package_version():
+    # arrange: pyproject.toml is what the release workflow uploads under, and nothing else reads it back.
+    # The pin test above only chains __version__ to the scaffolder, so a bumped __init__ with a forgotten
+    # pyproject (or the reverse) stays green there and only surfaces as a wrong or rejected PyPI upload.
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+
+    # act
+    declared = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["version"]
+
+    # assert
+    assert declared == simplon.__version__, (
+        f"pyproject.toml says {declared}, simplon.__version__ says {simplon.__version__}")
 
 
 # --- gap #737-2: the `all` aggregate is reachable (the kernel binds it), not a dead placeholder --------

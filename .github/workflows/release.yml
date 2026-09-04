@@ -21,6 +21,13 @@ jobs:
       # installs the built package and loads its catalogue from
       # site-packages -- it is the only one that catches a path escape
       # before it ships.
+      # The tag is what a human types; pyproject.toml decides what is uploaded. Nothing local pairs
+      # them, so a tag ahead of the version would silently re-upload the old one (or be rejected by
+      # PyPI as a duplicate) after the whole gate had already gone green.
+      - name: The tag must name the version being published
+        run: |
+          test "${GITHUB_REF_NAME#v}" = "$(python -c 'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')" \
+            || { echo "tag ${GITHUB_REF_NAME} does not match the project version"; exit 1; }
       - run: ./simplon.sh test all
       - run: ./simplon.sh build wheel
       - uses: pypa/gh-action-pypi-publish@release/v1
