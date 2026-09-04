@@ -86,7 +86,7 @@ tasks:
     help: "Delete local branches already merged into main (squash-aware via gh)."
   vcs:submodules:
     impl: simplon.tasks.vcs:submodules
-    help: "git submodule update --init lib/platform (init the delivery-kernel submodule a fresh worktree needs)."
+    help: "git submodule update --init lib/platform (init the submodule a fresh worktree needs)."
 
   # --- test: the suite runner ------------------------------------------------------------------------
   # `gate` backs EVERY declared suite level: one body, several commands, each pinning its own level with

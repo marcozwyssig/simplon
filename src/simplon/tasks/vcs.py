@@ -9,8 +9,8 @@ anything, not only from a Click parser, and the decorator lives only in generate
 The mechanism - git/gh subprocess wrappers and the pure `prune_verdict` decision - already lives in
 `simplon.vcs`; this module is the thin layer that points it at the calling product's repo root. ROOT
 comes from `simplon.context.current().root`, never from a product import: this module knows no product
-name and no product layout beyond the one path every product in the family vendors this repo at
-(`lib/platform`).
+name and no product layout. The one exception is `submodules`, which carries a conventional default
+path - a convention, not a claim about what any particular product vendors there.
 """
 from __future__ import annotations
 
@@ -48,7 +48,9 @@ def prune_branches(dry_run: bool = False, remote: bool = False, unmerged: bool =
 
 
 def submodules() -> int:
-    """git submodule update --init lib/platform - init the delivery-kernel submodule a fresh
-    worktree/clone needs before the product's CLI can boot."""
+    """git submodule update --init lib/platform - init the submodule a fresh worktree/clone needs.
+
+    A product that vendors nothing at that path simply has no use for this command; the kernel itself
+    is a PyPI dependency and is never what gets initialised here."""
     _configure()
     return vcs.init_submodule()

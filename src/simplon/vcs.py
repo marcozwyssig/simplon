@@ -91,8 +91,9 @@ def commit(message: str) -> int:
 def init_submodule(path: str = "lib/platform") -> int:
     """`git submodule update --init <path>` - init a vendored submodule a fresh worktree/clone needs
     before the product's CLI can boot. git no-ops on an already-initialised checkout, so this composes
-    as a plain CLI command. The default path is the platform kernel's own vendored location, shared by
-    every product in the family (netctl#434/#435/#658)."""
+    as a plain CLI command. `lib/platform` is only the family's conventional vendoring path
+    (netctl#434/#435/#658), not this kernel: simplon is installed from PyPI, never vendored. A product
+    vendoring something else passes its own path."""
     _require("git")
     return 0 if _git(["submodule", "update", "--init", path]).ok else 1
 
