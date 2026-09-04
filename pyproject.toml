@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simplon"
+version = "0.1.0"
+description = "Delivery orchestrator kernel for the *ctl product family"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Marco Zwyssig" }]
+dependencies = [
+  "typer==0.12.5",
+  "click==8.1.7",        # typer 0.12.5 predates Click 8.2's make_metavar(ctx) change
+  "PyYAML==6.0.3",
+  "rich==15.0.0",        # pulled by textual; the kernel uses plain ANSI
+  "textual==8.2.8",      # the split-pane step TUI; headless fallback without it
+  "pydantic==2.13.4",    # the manifest schema
+  "jinja2==3.1.4",       # the clabrender template engine
+  "cryptography==46.0.0",  # WireGuard X25519 keygen. 46.0.0 is the FIRST release
+                           # publishing win_arm64 wheels; below it pip builds from
+                           # source and needs a Rust toolchain, so a product
+                           # targeting that platform cannot install at all.
+]
+
+[project.scripts]
+simplon = "simplon.bootstrap:main"
+
+[project.urls]
+Homepage = "https://github.com/marcozwyssig/simplon"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+simplon = ["catalogue.yaml", "templates/*.j2"]

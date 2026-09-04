@@ -1,0 +1,129 @@
+# The delivery kernel's task catalogue (netctl#1437): the coordinate space between the platform and a
+# *ctl product. A product imports a NAMESPACE and refers to `<namespace>:<name>`, never to a module path,
+# so a body can move inside the kernel without breaking a product manifest.
+#
+# The kernel generates no module of its own - it has no CLI, only bodies and this registry. Only a
+# product generates, because only a product has a surface.
+#
+# Exactly the twelve coordinates netctl references today, no more. A catalogue that offers what nobody
+# imports is speculation, and the design's own rule is the minimum that solves the problem.
+#
+# `help:` here is the fallback wording. A product's own `help:` wins where it declares one, and for a
+# non-shared body the CLI summary comes from the body's DOCSTRING anyway (see simplon.taskgen).
+
+# The CI/CD loop, owned by the platform (netctl#1444, netctl#1469). Every *ctl product runs the same
+# build -> test -> release -> deploy -> monitor loop, so declaring it once here beats each product
+# restating it - and a product CANNOT restate it: `treeform.merge` rejects a path this block does not
+# declare, so the group lock is the structure rather than a check over it.
+#
+# This block also PLACES the general commands, which is what makes "the same groups holding the same
+# general tasks" true rather than a convention every product has to keep by hand. It places only what
+# needs no product data: the four git verbs and the two task verbs. `support:nexus` reads a `nexus:`
+# section, `support:claude-plugins` a `claude:` one, `support:environments` an `environments:` one, and
+# `test:gate`/`test:accept` need a running lab - placed here, each would be a command that dies on its
+# first line in a product that has none of that. They stay tasks, and a product declares a command for
+# one the day it has the data.
+groups:
+  build:   { help: "Produce the artefacts." }
+  test:    { help: "Verify them." }
+  release: { help: "Publish them." }
+  deploy:  { help: "Put them into an environment.", env_first: true }
+  monitor: { help: "Watch what is running there.", env_first: true }
+  support:
+    help: "Host preflight, environment introspection and host tooling."
+    groups:
+      git:
+        help: "Version-control helpers."
+        commands:
+          commit:
+            task: "vcs:commit"
+            # `argument: true` is what keeps `message` a variadic POSITIONAL - without it Typer would
+            # render a single `--message TEXT`.
+            params:
+              message: { help: "commit message", argument: true }
+          push: { task: "vcs:push" }
+          prune-branches:
+            task: "vcs:prune-branches"
+            params:
+              dry_run:  { help: "preview only", short: "-n" }
+              remote:   { help: "also delete merged branches on origin" }
+              unmerged: { help: "ALSO delete branches that cannot be proven merged (destructive)" }
+          submodules: { task: "vcs:submodules" }
+      # tasks: the task machinery itself, NESTED under support for the same reason `git` is - it is host
+      # tooling for whoever develops the product, not a stage of the CI/CD loop the other six groups
+      # describe. A top-level `tasks` also claimed a very generic token beside `build`/`test`/`deploy`.
+      #
+      # The TASK COORDINATES are untouched: `tasks:catalogue` and `tasks:generate` keep their namespace,
+      # so `cat.namespaces()` and every product's `with:` pin are unaffected. What moves is the GROUP
+      # PATH - `<product> tasks generate` becomes `<product> support tasks generate` - and the hidden
+      # flat aliases (`<product> generate`, `<product> catalogue`) survive it exactly as the vcs verbs'
+      # did, because a flat alias is registered per unambiguous NAME, not per path.
+      tasks:
+        help: "The task machinery itself: regenerate the CLI module, list the tasks."
+        commands:
+          catalogue: { task: "tasks:catalogue" }
+          generate:
+            task: "tasks:generate"
+            params:
+              check: { help: "report drift and write nothing" }
+
+tasks:
+
+  # --- vcs: the version-control verbs -----------------------------------------------------------------
+  vcs:commit:
+    impl: simplon.tasks.vcs:commit
+    help: "git add -A + git commit -m."
+  vcs:push:
+    impl: simplon.tasks.vcs:push
+    help: "git pull --rebase then push (current branch)."
+  vcs:prune-branches:
+    impl: simplon.tasks.vcs:prune_branches
+    help: "Delete local branches already merged into main (squash-aware via gh)."
+  vcs:submodules:
+    impl: simplon.tasks.vcs:submodules
+    help: "git submodule update --init lib/platform (init the delivery-kernel submodule a fresh worktree needs)."
+
+  # --- test: the suite runner ------------------------------------------------------------------------
+  # `gate` backs EVERY declared suite level: one body, several commands, each pinning its own level with
+  # `with: { name: ... }` (netctl#1469 plan 2, replacing the old invocation-name trick of netctl#1406). A
+  # product declares one command per level, pins `name` and overrides the help, which is the case the
+  # shared-impl rule in simplon.taskgen exists for. A product that instantiates this WITHOUT a `name`
+  # pin gets a real, undocumented `--name` option and the body falls back to resolving the suite by
+  # invocation name (transitional, see `gate`'s own docstring) - `params.name` below only documents the
+  # option for that unpinned case; a command that pins it drops the presentation, since the value is off
+  # the command line (`treeform.resolve`).
+  test:gate:
+    impl: simplon.tasks.testrun:gate
+    help: "Run a declared pytest suite against the running lab."
+    passthrough_args: true
+    params:
+      name: { help: "the declared suite level to run (normally pinned per command with `with:`)" }
+  test:report:
+    impl: simplon.tasks.testrun:report_cmd
+    help: "Merge the unit results into the shared Allure results and render the HTML archive."
+  test:accept:
+    impl: simplon.tasks.testrun:accept_cmd
+    help: "Run the lab-based suites in sequence against the running lab."
+    passthrough_args: true
+
+  # --- support: host and tooling upkeep ---------------------------------------------------------------
+  support:nexus:
+    impl: simplon.tasks.nexus:nexus_cmd
+    help: "Drive the LAN Sonatype Nexus artefact proxy: up | down | status | repos | cleanup."
+  support:claude-plugins:
+    impl: simplon.tasks.claudeplugins:install_cmd
+    help: "Install the Claude Code plugins declared in the manifest's `claude` section; idempotent."
+  support:environments:
+    impl: simplon.tasks.env:environments
+    help: "List the named environments and the backend each targets, marking the active one."
+
+  # --- tasks: the task machinery, addressable ---------------------------------------------------------
+  # `generate` writes the product's committed CLI module; `catalogue` prints this file. Both are kernel
+  # mechanisms: what is product-specific reaches them through simplon.context and a manifest-pinned
+  # `with: { target: ... }`, never through an import.
+  tasks:generate:
+    impl: simplon.tasks.tasks:generate
+    help: "Regenerate the product's CLI module from its manifest (--check reports drift and writes nothing)."
+  tasks:catalogue:
+    impl: simplon.tasks.tasks:catalogue
+    help: "List the task coordinates the delivery kernel offers, marking the namespaces this product's commands reach."

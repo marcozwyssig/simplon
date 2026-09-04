@@ -21,10 +21,10 @@ import yaml
 
 from simplon.orchestrator.manifest import _CommandSpecModel
 
-# The catalogue ships beside the delivery block rather than inside the python package: it is DATA a
-# product reads, the same way a product's own manifest is.
-# .../lib/platform/src/delivery/src/python/delivery/catalogue.py -> .../lib/platform/delivery.yaml
-DEFAULT_PATH = Path(__file__).resolve().parents[5] / "delivery.yaml"
+# The catalogue file belongs to the kernel, so it travels INSIDE the package. This used to read
+# parents[5] -- a reach five levels up to the repo root, correct only as long as the code was
+# vendored rather than installed.
+DEFAULT_PATH = Path(__file__).resolve().parent / "catalogue.yaml"
 
 
 class Catalogue(NamedTuple):
