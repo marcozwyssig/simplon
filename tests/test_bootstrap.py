@@ -4,6 +4,7 @@ substitution are exact) and the file-writing (every file lands, the shim is exec
 not clobbered). No Typer, no product deps; AAA throughout, incl. negative cases.
 """
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -35,6 +36,7 @@ def _run_generated(pkg_src: Path, argv: list[str], *, code: str | None = None) -
 
 _EXPECTED_FILES = {
     "fooctl.sh",
+    "fooctl.cmd",
     "fooctl.yaml",
     "orchestrator/requirements.txt",
     "orchestrator/src/python/orchestrator/__init__.py",
@@ -49,7 +51,7 @@ def test_render_produces_the_expected_minimal_file_set():
     # arrange / act
     rendered = bootstrap.render("fooctl")
 
-    # assert: exactly the shim + manifest + the orchestrator package wiring, nothing more
+    # assert: exactly the two launchers (sh + cmd) + manifest + the orchestrator package wiring, nothing more
     assert set(rendered) == _EXPECTED_FILES
 
 
@@ -137,8 +139,9 @@ def test_write_creates_every_file_and_marks_only_the_shim_executable(tmp_path):
     assert on_disk == _EXPECTED_FILES
     assert all(p.exists() for p in written)
 
-    # assert: the shim is executable, a plain file (the manifest) is not
+    # assert: the sh launcher is executable, the cmd launcher and a plain file (the manifest) are not
     assert (tmp_path / "fooctl.sh").stat().st_mode & 0o111
+    assert not (tmp_path / "fooctl.cmd").stat().st_mode & 0o111
     assert not (tmp_path / "fooctl.yaml").stat().st_mode & 0o111
 
 
@@ -198,32 +201,32 @@ def test_next_steps_names_the_product_the_target_and_the_submodule(tmp_path):
     assert "lib/platform" in steps
 
 
-# --- gap #737-1: kernel deps via -r, not re-pinned inline (netctl#730) --------------------------------
+# --- the kernel is a pinned PyPI dependency now, not a -r include into a vendored submodule ------------
 
-def test_requirements_reference_the_kernel_via_dash_r_and_do_not_repin():
+def test_requirements_pin_the_kernel_by_version_and_do_not_repin_its_deps():
     # arrange / act
     req = bootstrap.render("fooctl")["orchestrator/requirements.txt"]
 
-    # assert: the kernel's own deps come in via -r (netctl#730), not copied inline
-    assert "-r ../lib/platform/src/delivery/requirements.txt" in req
-    # assert: no kernel dep is re-pinned in the product file (the exact breakage #737-1 describes)
+    # assert: the kernel is a version-pinned ordinary dependency, not a -r include
+    assert re.search(r"^simplon==\d+\.\d+\.\d+", req, re.M), req
+    assert "-r " not in req, "the kernel is a dependency now, not an include"
+    # assert: none of the kernel's OWN deps are re-pinned in the product file - simplon's own pins cover them
     for kernel_pin in ("typer==", "click==", "pydantic==", "textual==", "rich==", "PyYAML=="):
-        assert kernel_pin not in req, f"kernel dep {kernel_pin!r} is re-pinned inline instead of -r'd"
+        assert kernel_pin not in req, f"kernel dep {kernel_pin!r} is re-pinned inline instead of via simplon's own deps"
 
 
-def test_requirements_relative_r_path_resolves_to_the_vendored_kernel(tmp_path):
+def test_requirements_kernel_pin_matches_the_installed_simplon_version(tmp_path):
     # arrange: a real scaffold on disk
     bootstrap.write("fooctl", tmp_path)
     req_file = tmp_path / "orchestrator" / "requirements.txt"
 
-    # act: resolve the -r target relative to the requirements file, exactly as pip does
-    rel = next(line.split(None, 1)[1].strip()
-               for line in req_file.read_text(encoding="utf-8").splitlines() if line.startswith("-r "))
-    resolved = (req_file.parent / rel).resolve()
+    # act: pull the pinned version out of the written file
+    text = req_file.read_text(encoding="utf-8")
+    pinned = re.search(r"^simplon==(\d+\.\d+\.\d+)", text, re.M).group(1)
 
-    # assert: it lands on <root>/lib/platform/src/delivery/requirements.txt (where the submodule is vendored),
-    # so the `../` count matches the scaffolded orchestrator-dir depth
-    assert resolved == (tmp_path / "lib" / "platform" / "src" / "delivery" / "requirements.txt").resolve()
+    # assert: the scaffolder pins the SAME kernel version it ships with, so a fresh product's first
+    # `pip install -r requirements.txt` lands on the kernel it was generated against, not a stale guess
+    assert pinned == simplon.__version__
 
 
 # --- gap #737-2: the `all` aggregate is reachable (the kernel binds it), not a dead placeholder --------

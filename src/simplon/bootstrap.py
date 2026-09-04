@@ -59,6 +59,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from importlib.resources import files
 from pathlib import Path
 
 # A product name is a lowercase slug: it becomes the shim/manifest filename, the manifest `product:` label,
@@ -148,59 +149,28 @@ environments:
   dev: { backend: local, description: "Local development environment (the default)." }
 """
 
-_SHIM = """\
-#!/usr/bin/env bash
-#
-# @@PRODUCT@@.sh - thin shim onto the shared delivery launcher (scaffolded, netctl#651 strand 4).
-#
-# Its ONLY job is to declare @@PRODUCT@@'s product parameters (ROOT, the orchestrator dir, the module, the
-# name), export the PYTHONPATH it wants, and delegate the whole host-venv bootstrap + exec to lib/platform's
-# launch.sh. Every command lives in Python under orchestrator/src/python/orchestrator. Run
-# `./@@PRODUCT@@.sh help` for the command list; edit @@PRODUCT@@.yaml to grow the CLI.
-#
-set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$ROOT"
+def _render_launcher(name: str, template: str) -> str:
+    """Read a launcher template from package data and fill in the product name.
 
-# The delivery kernel, vendored as a git submodule at lib/platform. The launcher lives INSIDE it, so its
-# absence means the submodule was never populated. Add it once with:
-#   git submodule add https://github.com/marcozwyssig/platform.git lib/platform
-# and re-init a fresh checkout with `git submodule update --init lib/platform`.
-PLATFORM_SRC="$ROOT/lib/platform/src/delivery/src/python"
-LAUNCH="$ROOT/lib/platform/src/delivery/src/sh/launch.sh"
-if [ ! -f "$LAUNCH" ]; then
-    printf '@@PRODUCT@@: delivery launcher not found at %s\\n' "$LAUNCH" >&2
-    printf '@@PRODUCT@@: run: git submodule update --init lib/platform\\n' >&2
-    exit 1
-fi
+    Package data rather than a string constant: the launchers are read by
+    humans debugging a broken checkout, and a .sh file in the tree beats a
+    triple-quoted blob in a Python module.
+    """
+    # files("simplon") und dann joinpath -- nicht files("simplon.templates"):
+    # das Vorlagenverzeichnis ist kein Paket und hat kein __init__.py.
+    raw = files("simplon").joinpath("templates", template).read_text(encoding="utf-8")
+    return raw.replace("{{ product }}", name)
 
-# The kernel source + this product's orchestrator package, prepended to PYTHONPATH; the launcher execs the
-# venv python with it inherited.
-export PYTHONPATH="$PLATFORM_SRC:$ROOT/orchestrator/src/python${PYTHONPATH:+:$PYTHONPATH}"
-
-LAUNCH_PRODUCT=@@PRODUCT@@ \\
-LAUNCH_ROOT="$ROOT" \\
-LAUNCH_ORCH_DIR="$ROOT/orchestrator" \\
-LAUNCH_MODULE=orchestrator \\
-    exec "$LAUNCH" "$@"
-"""
 
 _REQUIREMENTS = """\
-# Host-Python deps for the @@PRODUCT@@ delivery orchestrator, scaffolded on the delivery kernel
-# (netctl#651 strand 4). Installed into a host venv by @@PRODUCT@@.sh via the shared launcher.
+# Host-Python deps for the @@PRODUCT@@ orchestrator.
 #
-# The delivery KERNEL owns its own dependency declaration (typer/click/PyYAML/rich/textual/pydantic drive
-# manifest assembly + the split-pane step TUI); reference it here with -r rather than re-pinning it, so a
-# kernel dep bump lands in ONE place and this file carries ONLY @@PRODUCT@@-product deps (netctl#730). pip
-# resolves the -r path relative to THIS file: the kernel is vendored at <root>/lib/platform and this file is
-# <root>/orchestrator/requirements.txt, so a single `../` reaches the root. (Relocate the orchestrator dir
-# deeper and this is the one path to re-tune - one `../` per extra level - the Python side self-locates.)
--r ../lib/platform/src/delivery/requirements.txt
+# The kernel is an ordinary dependency now. Bump the pin to move to a new
+# kernel; nothing is vendored and nothing is included by path.
+simplon==0.1.0
 
 # --- @@PRODUCT@@-product-only deps ---
-# Add @@PRODUCT@@'s OWN runtime deps below (HTTP clients, template engines, cloud SDKs, ...). The kernel's
-# CLI/TUI stack is already covered by the -r reference above; do not re-pin it here.
 """
 
 _INIT = '''\
@@ -357,7 +327,8 @@ PROVIDER = Provider(ENV_VAR, shim="./@@PRODUCT@@.sh", valid_backends=(LOCAL,))
 def _templates(name: str) -> dict[str, str]:
     """The (relative POSIX path -> template) map for a product, BEFORE placeholder substitution."""
     return {
-        f"{name}.sh": _SHIM,
+        f"{name}.sh": _render_launcher(name, "launch.sh.j2"),
+        f"{name}.cmd": _render_launcher(name, "launch.cmd.j2"),
         f"{name}.yaml": _MANIFEST,
         f"{_ORCH_DIR}/requirements.txt": _REQUIREMENTS,
         f"{_PKG_DIR}/__init__.py": _INIT,
@@ -433,9 +404,16 @@ def next_steps(name: str, target: Path) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """`python -m simplon.bootstrap <product> [--dir DIR] [--force]`: scaffold a product skeleton and print
-    the next steps. Returns 0 on success, 2 on a bad product name or a clobber conflict (fail loud, no
+    """`simplon init <product> [--dir DIR] [--force]`: scaffold a product skeleton and print the next
+    steps. Returns 0 on success, 2 on a bad product name or a clobber conflict (fail loud, no
     traceback)."""
+    # `simplon init <name>` reads like a command; the bare product name as the first argument read like a
+    # typo. The old call pattern stays valid, so `python -m simplon.bootstrap <name>` keeps working.
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv and argv[0] == "init":
+        argv = argv[1:]
+
     parser = argparse.ArgumentParser(
         prog="python -m simplon.bootstrap",
         description="Scaffold a fresh product onto the delivery orchestrator (netctl#651 strand 4).")

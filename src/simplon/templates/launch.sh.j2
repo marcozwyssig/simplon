@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+#
+# {{ product }}.sh - the {{ product }} entry point.
+#
+# It declares {{ product }}'s four parameters, provisions the host venv, and
+# execs the CLI. The kernel arrives as an ordinary dependency (simplon on
+# PyPI), so there is nothing to vendor and no submodule to init: a fresh
+# clone plus this script is the whole setup.
+#
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+
+LAUNCH_PRODUCT={{ product }}
+LAUNCH_ROOT="$ROOT"
+LAUNCH_ORCH_DIR="$ROOT/orchestrator"
+LAUNCH_MODULE=orchestrator
+
+VENV="$LAUNCH_ORCH_DIR/.venv"
+REQ="$LAUNCH_ORCH_DIR/requirements.txt"
+STAMP="$VENV/.deps-stamp"
+PY="$VENV/bin/python"
+
+[ -x "$PY" ] || python3 -m venv "$VENV"
+
+# Reinstall only when requirements.txt is newer than the last successful
+# install. Without the stamp every invocation pays a pip resolve.
+if [ ! -f "$STAMP" ] || [ "$REQ" -nt "$STAMP" ]; then
+    "$VENV/bin/pip" install -q --disable-pip-version-check -r "$REQ"
+    touch "$STAMP"
+fi
+
+export PYTHONPATH="$LAUNCH_ORCH_DIR/src/python${PYTHONPATH:+:$PYTHONPATH}"
+export LAUNCH_PRODUCT LAUNCH_ROOT LAUNCH_ORCH_DIR LAUNCH_MODULE
+exec "$PY" -u -m "$LAUNCH_MODULE" "$@"
