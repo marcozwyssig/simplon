@@ -14,7 +14,10 @@ path - a convention, not a claim about what any particular product vendors there
 """
 from __future__ import annotations
 
-from simplon import context, vcs
+import os
+import sys
+
+from simplon import context, githubpackages, log, vcs
 
 
 def _configure() -> None:
@@ -54,3 +57,34 @@ def submodules() -> int:
     is a PyPI dependency and is never what gets initialised here."""
     _configure()
     return vcs.init_submodule()
+
+
+def auth_scopes() -> int:
+    """Grant the stored `gh` token the package permissions GHCR needs; idempotent.
+
+    `gh auth login` asks for gist, read:org, repo and workflow - never read:packages/write:packages - so
+    a developer who is fully logged in still cannot pull or publish a package, and the registry says so
+    in terms of the package rather than of the token. This is that one command, with the scope list
+    taken from githubpackages rather than restated, so the two cannot drift apart.
+
+    Three things it deliberately does NOT do. It does not refresh when the scopes are already there (it
+    is run before a publish, and a browser opening every time is a reason to stop running it). It does
+    not refresh when GITHUB_TOKEN is set, because githubpackages.token() prefers the environment and the
+    refreshed token would never be read - the fix there is a token minted WITH the scopes. And it does
+    not start the device flow without a terminal: in CI that does not fail, it HANGS until the job times
+    out, and CI has the workflow token anyway.
+    """
+    if (os.getenv("GITHUB_TOKEN") or "").strip():
+        log.warn("GITHUB_TOKEN is set and wins over the gh token, so refreshing gh would change "
+                 "nothing. Unset it, or mint that token with "
+                 f"{', '.join(githubpackages.PACKAGE_SCOPES)}.")
+        return 0
+    if not sys.stdin.isatty():
+        log.info("no terminal: `gh auth refresh` is an interactive device flow. In CI the workflow "
+                 "token already carries its package scopes - nothing to do.")
+        return 0
+    missing = [s for s in githubpackages.PACKAGE_SCOPES if s not in vcs.gh_scopes()]
+    if not missing:
+        log.ok(f"the gh token already carries {', '.join(githubpackages.PACKAGE_SCOPES)}")
+        return 0
+    return vcs.refresh_scopes(githubpackages.PACKAGE_SCOPES)

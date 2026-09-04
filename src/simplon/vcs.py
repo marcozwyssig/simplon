@@ -9,8 +9,10 @@ The git wrappers run `git -C <ROOT>`; a consuming product points ROOT at its rep
 """
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
+from typing import Sequence
 
 from simplon import log
 from simplon.run import run
@@ -208,3 +210,44 @@ def prune_branches(dry: bool = False, remote: bool = False, unmerged: bool = Fal
         for b in kept:
             print(f"  {b}")
     return 0
+
+
+# --- the gh token's scopes --------------------------------------------------------------------------
+#
+# `gh auth login` requests gist, read:org, repo and workflow - never the package scopes GHCR needs, so
+# the first publish from a fresh login fails at the REGISTRY with "permission_denied" and reads like a
+# problem with the package rather than with the token. Reading and refreshing them is a git-host chore,
+# which is why it lives beside the other gh wrappers; WHICH scopes are wanted is the caller's business
+# (simplon.tasks.vcs takes them from githubpackages).
+
+_SCOPE_LINE = re.compile(r"Token scopes:\s*(.+)")
+
+
+def parse_scopes(status_text: str) -> tuple[str, ...]:
+    """The scopes named on `gh auth status`' "Token scopes:" line, in order. Pure.
+
+    An empty tuple when there is no such line: nobody logged in is a state to report, not to crash on.
+    """
+    match = _SCOPE_LINE.search(status_text)
+    if match is None:
+        return ()
+    return tuple(part.strip().strip("'\"") for part in match.group(1).split(",") if part.strip())
+
+
+def gh_scopes(host: str = "github.com") -> tuple[str, ...]:
+    """The scopes the stored gh token actually carries."""
+    _require("gh")
+    result = run(["gh", "auth", "status", "-h", host])
+    return parse_scopes(f"{result.out}\n{result.err}")
+
+
+def refresh_scopes(scopes: Sequence[str], host: str = "github.com") -> int:
+    """Ask gh to re-authorise its token WITH `scopes` added; 0 on success.
+
+    Interactive by nature - gh opens a browser and waits for a one-time code - so a caller without a
+    terminal must not reach this. capture=False for the same reason: the code has to be visible.
+    """
+    _require("gh")
+    log.info(f"refreshing the gh token with: {', '.join(scopes)}")
+    return 0 if run(["gh", "auth", "refresh", "-h", host, "-s", ",".join(scopes)],
+                    capture=False).ok else 1

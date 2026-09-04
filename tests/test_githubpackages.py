@@ -137,3 +137,25 @@ def test_a_refused_listing_names_both_of_its_causes(monkeypatch):
     message = str(caught.value)
     assert "gh auth refresh" in message
     assert "grant this repository read access" in message
+
+
+# --- oras: provided, not merely demanded ------------------------------------------------------------
+
+def test_the_oras_requirement_provisions_it_instead_of_only_reporting_it(monkeypatch):
+    """A missing oras used to stop a build with an instruction. The gate installs it."""
+    provisioned = []
+    monkeypatch.setattr(githubpackages.oras, "ensure_oras", lambda: provisioned.append(1))
+
+    githubpackages.require_oras()
+
+    assert provisioned == [1]
+
+
+def test_a_gate_failure_reaches_the_caller_as_a_package_error(monkeypatch):
+    """Every failure in this module is a PackageError - the contract its callers catch on."""
+    def refuse():
+        raise githubpackages.oras.OrasError("no oras and no way to get one")
+    monkeypatch.setattr(githubpackages.oras, "ensure_oras", refuse)
+
+    with pytest.raises(githubpackages.PackageError, match="no way to get one"):
+        githubpackages.require_oras()

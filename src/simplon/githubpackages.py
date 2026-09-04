@@ -20,10 +20,9 @@ at the token. Every failure here says the command that fixes it.
 from __future__ import annotations
 
 import os
-import shutil
 from typing import Sequence
 
-from simplon import log, run
+from simplon import log, oras, run
 
 # The scopes `gh auth login` does not request, and every package operation needs.
 PACKAGE_SCOPES: tuple = ("read:packages", "write:packages")
@@ -60,12 +59,18 @@ def token() -> str:
 
 
 def require_oras() -> None:
-    """Fail with the reason oras is needed, not merely that it is absent."""
-    if not shutil.which("oras"):
-        raise PackageError(
-            "oras is not on PATH. It is what moves a plain file in and out of a registry as an OCI "
-            "artifact; a container image cannot carry a macOS or Windows archive. Install it, or add "
-            "oras-project/setup-oras to the workflow.")
+    """oras, PROVIDED rather than merely demanded - see simplon.oras for how.
+
+    This used to raise "oras is not on PATH" with an install instruction, which is a correct message and
+    a stopped build: the tool is one every package operation in the family needs, and no host ships it.
+    The gate installs it (package manager first, pinned release as the fallback) and only fails when
+    even that could not produce one. The failure is translated into this module's own error type,
+    because PackageError is the contract every caller here catches on.
+    """
+    try:
+        oras.ensure_oras()
+    except oras.OrasError as failure:
+        raise PackageError(str(failure)) from failure
 
 
 def reference(registry: str, repository: str, tag: str) -> str:

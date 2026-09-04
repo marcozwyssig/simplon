@@ -182,7 +182,12 @@ def test_catalogue_marks_a_namespace_the_platform_places_with_no_task_ref_anywhe
     assert rc == 0
     assert "vcs (reached)" in out
     assert "tasks (reached)" in out
-    assert "support (reached)" not in out
+    # `support` joins them, and for the same reason: the kernel's own groups block now PLACES
+    # `support:install`. `docs` is the namespace that stays unreached - the kernel declares `docs:render`
+    # as a task and places no command for it - so it is what pins the behaviour down here: a fix that
+    # marked everything once any group migrated would light `docs` up too.
+    assert "support (reached)" in out
+    assert "docs (reached)" not in out
     assert "test (reached)" not in out
 
 
@@ -217,7 +222,7 @@ def test_catalogue_marks_a_namespace_reached_via_a_raw_impl_naming_a_kernel_modu
     out = capsys.readouterr().out
     assert rc == 0
     assert "test (reached)" in out
-    assert "support (reached)" not in out
+    assert "docs (reached)" not in out
 
 
 def test_catalogue_marks_a_namespace_placed_via_the_old_import_mechanism(tmp_path, monkeypatch, capsys):

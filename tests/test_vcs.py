@@ -155,3 +155,34 @@ def test_init_submodule_returns_1_when_git_fails(monkeypatch, tmp_path):
 
     # assert
     assert rc == 1
+
+
+# --- the gh token's scopes --------------------------------------------------------------------------
+
+def test_the_reported_scopes_are_read_off_the_status_line():
+    status = ("github.com\n"
+              "  - Active account: true\n"
+              "  - Token: gho_************\n"
+              "  - Token scopes: 'gist', 'read:org', 'repo', 'workflow'\n")
+
+    scopes = vcs.parse_scopes(status)
+
+    assert scopes == ("gist", "read:org", "repo", "workflow")
+
+
+def test_a_status_without_a_scope_line_reports_no_scopes():
+    # `gh auth status` prints this shape when nobody is logged in - an empty tuple, never a crash.
+    scopes = vcs.parse_scopes("You are not logged into any GitHub hosts.\n")
+
+    assert scopes == ()
+
+
+def test_the_refresh_asks_for_exactly_the_scopes_it_was_given(monkeypatch):
+    argv_seen = []
+    monkeypatch.setattr(vcs.shutil, "which", lambda tool: "/usr/bin/gh")
+    monkeypatch.setattr(vcs, "run", lambda argv, **kw: argv_seen.append(argv) or _FakeResult(True))
+
+    vcs.refresh_scopes(("read:packages", "write:packages"))
+
+    assert argv_seen == [["gh", "auth", "refresh", "-h", "github.com",
+                          "-s", "read:packages,write:packages"]]
