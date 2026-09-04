@@ -1,10 +1,10 @@
 """Line-ending policy for the batch launcher (platform#78).
 
-launch.sh and launch.cmd themselves move to src/sh/ only as scaffolded templates from Task 4
-onward (bootstrap.py renders them per product); this repo carries no launcher of its own to test
-directly any more. What does survive here is the crlf policy: cmd.exe mis-parses multi-line
-blocks in an LF-only .cmd, and every file in this repo is authored on Linux, so .gitattributes
-has to keep pinning *.cmd to crlf regardless of what generates the file.
+launch.sh and launch.cmd live in `src/simplon/templates/` as Jinja templates that `simplon init`
+renders per product, so there is no single launcher file to assert against. What survives is the
+crlf policy, which covers both the rendered launchers and simplon's own `simplon.cmd`: cmd.exe
+mis-parses multi-line blocks in an LF-only .cmd, and every file in this repo is authored on Linux,
+so .gitattributes has to keep pinning *.cmd to crlf regardless of what generates the file.
 """
 from pathlib import Path
 

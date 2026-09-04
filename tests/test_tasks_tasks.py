@@ -157,7 +157,7 @@ def test_catalogue_marks_a_namespace_the_platform_places_with_no_task_ref_anywhe
     # block PLACES `support.git.*` and `tasks.catalogue`/`tasks.generate` itself, unconditionally, in
     # every product that has migrated even one group. `vcs` and `tasks` are therefore reached even though
     # this manifest's own text never says so; a walk over the RAW manifest (the bug) cannot see that,
-    # because the reference lives in the KERNEL's delivery.yaml, never in this file.
+    # because the reference lives in the KERNEL's catalogue.yaml, never in this file.
     manifest_path = tmp_path / "sample.yaml"
     manifest_path.write_text(textwrap.dedent("""
         tasks:

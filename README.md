@@ -13,11 +13,13 @@ particular product.
 The very first launcher has a chicken-and-egg: a fresh product has no venv,
 so it has no Simplon to write its launcher with. Break it once by hand:
 
-    pipx run simplon init myctl
+    pipx run simplon init myctl --dir .
 
-or `pip install simplon` into any venv and run `simplon init myctl` in the
-product repo. After that the generated `myctl.sh` carries itself, and a later
-`simplon init` refreshes it.
+or `pip install simplon` into any venv and run `simplon init myctl --dir .` in
+the product repo. Without `--dir` the skeleton lands in a new `./myctl/`
+subdirectory instead of at the repo root, so pass `--dir .` whenever the repo
+is already the product. After that the generated `myctl.sh` carries itself, and
+a later `simplon init` refreshes it.
 
 ## Layout
 

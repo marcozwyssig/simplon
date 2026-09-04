@@ -68,11 +68,11 @@ def catalogue() -> int:
     # CORRECTED (netctl#1469 fix round 3): the reasoning that used to sit here predates the docstring
     # chain (spec 3.7) and no longer holds. The docstring above is NOT embedded into the generated
     # module's `help=` for this command - the kernel task `tasks:catalogue` declares its own `help:` in
-    # delivery.yaml, and the chain puts a command's help, then its task's, ahead of the body's docstring
+    # catalogue.yaml, and the chain puts a command's help, then its task's, ahead of the body's docstring
     # (both `taskgen._docstring` and `cli._bound` render it), so that `help:` wins here and this
     # docstring's first paragraph never renders as `netctl catalogue`/`netctl tasks catalogue`'s
     # summary line. Rewording the docstring therefore no longer moves that golden; only editing
-    # `delivery.yaml`'s `tasks:catalogue.help:` does. "Imports" is still not the full picture below -
+    # `catalogue.yaml`'s `tasks:catalogue.help:` does. "Imports" is still not the full picture below -
     # `_reached_namespaces` reads the ASSEMBLED manifest, not what the product typed.
     cat = catalogue_mod.load()
     reached = _reached_namespaces(context.current().manifest(), cat)
@@ -94,7 +94,7 @@ def _reached_namespaces(manifest: Manifest, cat: catalogue_mod.Catalogue) -> fro
     Reads the LOADED `Manifest` rather than the raw manifest text, because a namespace can be reached
     three ways and none of them has to appear as a `task:` coordinate in the product's OWN manifest:
 
-      - the PLATFORM places a command itself, in the kernel's own `delivery.yaml` `groups:` block
+      - the PLATFORM places a command itself, in the kernel's own `catalogue.yaml` `groups:` block
         (`support.git`, `tasks.catalogue`/`tasks.generate`) - `treeform.merge` folds that block onto
         every product that has migrated even one group, whether or not that group is the one the
         platform placed a command in;

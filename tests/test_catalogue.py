@@ -505,7 +505,7 @@ def _placed_tasks(groups: dict) -> set[str]:
 
 
 def test_the_shipped_catalogue_places_the_general_commands_and_nothing_that_needs_product_data():
-    # arrange: the real delivery.yaml, not a fixture - this is the assertion that the platform's own
+    # arrange: the real catalogue.yaml, not a fixture - this is the assertion that the platform's own
     # data obeys the rule the platform enforces
     cat = catalogue.load()
 
@@ -524,7 +524,7 @@ def test_the_shipped_catalogue_places_the_general_commands_and_nothing_that_need
 
 
 def test_the_shipped_gate_task_documents_name_while_every_real_instantiation_pins_it():
-    # arrange: delivery.yaml's `test:gate` declares `params: { name: ... }` to document the option for a
+    # arrange: catalogue.yaml's `test:gate` declares `params: { name: ... }` to document the option for a
     # caller that leaves it unpinned, while netctl's two real commands each pin `name` with `with:`. The
     # question this proves an answer to (netctl#1469 vocabulary review, item F5): `treeform.resolve` only
     # rejects a COMMAND's OWN `params:` for a key it also pins - never the TEMPLATE's - so a task

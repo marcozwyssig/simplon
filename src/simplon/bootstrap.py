@@ -7,7 +7,10 @@ minimal, valid product skeleton and prints the next steps, after which the new p
 
 Run it standalone (with `simplon` installed, e.g. `pip install simplon`)::
 
-    python -m simplon.bootstrap <product> [--dir DIR] [--force]
+    simplon init <product> [--dir DIR] [--force]
+
+`python -m simplon.bootstrap <product> ...` keeps working for anyone who has it in muscle memory, but
+the console script is the entry point the README documents.
 
 It renders, mirroring the shape netctl's own `netctl.yaml` + `netctl.sh` use but stripped to the bones:
 
@@ -47,8 +50,8 @@ Design / scope (best-effort MINIMAL slice; netctl#651 strand 4 is under-specifie
       - clobber-safety: refuses to overwrite an existing file unless `--force`.
 
     DEFERRED to a fuller scaffolder (documented, deliberately NOT built here)
-      - a real `delivery` console-script / a `bootstrap` subcommand woven into the assembled product CLI
-        (today it is `python -m simplon.bootstrap`, the only honest entry before a product exists);
+      - a `bootstrap`/`init` subcommand woven into an assembled product CLI (the `simplon` console
+        script covers the pre-product case, which is the only one that cannot go through a product);
       - `git init` automation (side-effecting VCS state); a one-command scaffold + verify flow is left
         to a repo-root wrapper script, deferred here;
       - schema-per-section docs, includes/anchors and a `--profile` menu (network-lab vs plain-service) that
@@ -101,7 +104,7 @@ def env_var_name(name: str) -> str:
 _MANIFEST = """\
 # @@PRODUCT@@ delivery manifest - the single declarative source the delivery kernel
 # (simplon.orchestrator.manifest) assembles @@PRODUCT@@'s CLI from. Scaffolded by
-# `python -m simplon.bootstrap` (netctl#651 strand 4). Fill it in: add your real groups + commands and
+# `simplon init` (netctl#651 strand 4). Fill it in: add your real groups + commands and
 # wire each `impl` to a "module:function" your orchestrator package exports.
 #
 # Sections:
@@ -198,7 +201,7 @@ if __name__ == "__main__":
 _CLI = '''\
 """The @@PRODUCT@@ host CLI (Typer), assembled from @@PRODUCT@@.yaml by the delivery kernel.
 
-Scaffolded by `python -m simplon.bootstrap` (netctl#651 strand 4). This is the product's composition root:
+Scaffolded by `simplon init` (netctl#651 strand 4). This is the product's composition root:
 it creates the root Typer app, ships the command-impl callables the manifest's "module:function" refs
 resolve to, and hands the app + product context + environments + aliases to the delivery binding layer
 (simplon.cli). The generic assembly (a sub-app per group, hidden flat aliases, the flat-group collapse,
@@ -416,9 +419,17 @@ def main(argv: list[str] | None = None) -> int:
         argv = sys.argv[1:]
     if argv and argv[0] == "init":
         argv = argv[1:]
+    elif not argv:
+        # A bare `simplon` must name the one thing it can do. argparse alone would only complain about a
+        # missing `product`, which tells a first-time user nothing about the subcommand they omitted.
+        print("simplon: nothing to do. The one command is `simplon init <product> [--dir DIR] [--force]`; "
+              "use `simplon init --help` for the options.", file=sys.stderr)
+        return 2
 
     parser = argparse.ArgumentParser(
-        prog="python -m simplon.bootstrap",
+        # The console script is the documented entry point, so its usage line is the one to print.
+        # `python -m simplon.bootstrap <product>` still works, it is just no longer what we advertise.
+        prog="simplon init",
         description="Scaffold a fresh product onto the delivery orchestrator (netctl#651 strand 4).")
     parser.add_argument("product", help="the product slug (lowercase; letters, digits, hyphens), e.g. 'fooctl'")
     parser.add_argument("--dir", dest="directory", default=None,
@@ -430,7 +441,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         product = validate_product_name(args.product)
     except ValueError as exc:
-        print(f"simplon.bootstrap: {exc}", file=sys.stderr)
+        print(f"simplon init: {exc}", file=sys.stderr)
         return 2
 
     target = Path(args.directory).resolve() if args.directory else (Path.cwd() / product)
