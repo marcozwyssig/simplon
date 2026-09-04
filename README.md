@@ -8,6 +8,14 @@ particular product.
 
     pip install simplon
 
+The runtime dependencies are ranges, not exact pins: a product's own
+`requirements.txt` is where exact versions belong, and a published package's
+pins become its consumers' pins.
+
+One extra: `pip install simplon[typecheck]` adds mypy, which the
+`test:typecheck-python` gate runs. A product that does not declare that
+command does not need it.
+
 ## Starting a product
 
 The very first launcher has a chicken-and-egg: a fresh product has no venv,

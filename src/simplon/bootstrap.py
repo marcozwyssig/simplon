@@ -173,7 +173,9 @@ _REQUIREMENTS = """\
 # Host-Python deps for the @@PRODUCT@@ orchestrator.
 #
 # The kernel is an ordinary dependency now. Bump the pin to move to a new
-# kernel; nothing is vendored and nothing is included by path.
+# kernel; nothing is vendored and nothing is included by path. Declaring the
+# `test:typecheck-python` gate? Its mypy is an optional extra, so write
+# `simplon[typecheck]==...` here instead.
 simplon==0.1.0
 
 # --- @@PRODUCT@@-product-only deps ---

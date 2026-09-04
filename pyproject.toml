@@ -14,22 +14,48 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Marco Zwyssig" }]
 dependencies = [
-  "typer==0.12.5",
-  "click==8.1.7",        # typer 0.12.5 predates Click 8.2's make_metavar(ctx) change
-  "PyYAML==6.0.3",
-  "rich==15.0.0",        # pulled by textual; the kernel uses plain ANSI
-  "textual==8.2.8",      # the split-pane step TUI; headless fallback without it
-  "pydantic==2.13.4",    # the manifest schema
-  "jinja2==3.1.4",       # the clabrender template engine
-  "cryptography==46.0.0",  # WireGuard X25519 keygen. 46.0.0 is the FIRST release
-                           # publishing win_arm64 wheels; below it pip builds from
-                           # source and needs a Rust toolchain, so a product
-                           # targeting that platform cannot install at all.
-  "mypy==1.18.2",        # the test:typecheck-python gate (simplon.tasks.typecheck).
-                         # In the KERNEL's set, not each product's: the task is the
-                         # kernel's, so the tool it runs is too, and a product adopts
-                         # the gate with one manifest line plus its own mypy.ini.
-  "types-PyYAML==6.0.12.20250915",  # a stub for a kernel dependency belongs beside it
+  # Ranges, not `==`. Inside this family every product has its own venv and exact pins are ideal, but
+  # a published package's constraints are also its consumers' constraints, forever: an `==` here says
+  # which pydantic and which click anyone combining with simplon may have. Each bound below states the
+  # reason it exists, and a floor is not a ceiling - read the comment before tightening one.
+  "typer~=0.12.5",       # >=0.12.5, <0.13. Typer is 0.x, so the MINOR is its breaking boundary, and the
+                         # CLI generator drives Typer's own help/metavar/single-command-collapse
+                         # behaviour rather than just its decorators (tests/test_typer_contract.py
+                         # pins each of those decisions). 0.13+ is a deliberate upgrade, not a range.
+  "click~=8.1.7",        # >=8.1.7, <8.2 - a CEILING: typer 0.12.5 predates Click 8.2's
+                         # make_metavar(ctx) change, so 8.2 breaks the generated CLI. Lifts together
+                         # with the typer bound, never on its own.
+  "PyYAML>=6.0.3,<7",    # the manifest and catalogue loader. safe_load/safe_dump have been stable
+                         # across all of 6.x, so only the major is a real boundary; the floor is
+                         # simply the version this was verified against.
+  "rich>=15.0.0",        # a FLOOR only, and a weak one: the kernel imports nothing from rich and uses
+                         # plain ANSI. It is listed because textual pulls it, and textual's own
+                         # constraint governs the upper end - a ceiling here would only invent a
+                         # conflict.
+  "textual>=8.2.8,<9",   # the split-pane step TUI (headless fallback without it). Real API surface -
+                         # App/ComposeResult, RichLog, Tree, TreeNode - which textual rearranges across
+                         # majors, so the major IS the ceiling.
+  "pydantic>=2.13.4,<3", # the manifest schema, written against the v2 API. v3 is a rewrite boundary.
+  "jinja2>=3.1.4,<4",    # the clabrender template engine. Environment/Template are the whole surface
+                         # in use and are 3.x-stable, so the major is the API boundary.
+  "cryptography>=46.0.0",  # WireGuard X25519 keygen, imported lazily. A FLOOR, deliberately with no
+                           # ceiling: 46.0.0 is the FIRST release publishing win_arm64 wheels, and
+                           # below it pip builds from source and needs a Rust toolchain, so a product
+                           # targeting that platform cannot install at all. The constraint is "not
+                           # below 46" - `~=46.0.0` would read as a ceiling nobody asked for, over an
+                           # API (X25519PrivateKey) that has been stable for years.
+]
+
+[project.optional-dependencies]
+# The type gate's tooling, optional rather than runtime. `test:typecheck-python` (simplon.tasks.typecheck)
+# shells out to mypy, and the TASK belongs to the kernel rather than to each product - so the tool it runs
+# belongs beside it, and a product adopts the gate with one manifest line plus its own mypy.ini. But a
+# product that never declares that command should not be told which mypy it may have, which is what a
+# runtime dependency on a type checker does to everyone downstream. A product adopting the gate installs
+# `simplon[typecheck]`; the task says so by name when mypy is missing.
+typecheck = [
+  "mypy~=1.18.2",
+  "types-PyYAML~=6.0.12",  # a stub for a kernel dependency belongs beside the checker that reads it
 ]
 
 [project.scripts]

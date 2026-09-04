@@ -25,6 +25,12 @@ against the config's own location. A product whose config sits inside a block th
 run there, which is `with: { workdir: ... }`. It defaults to the product root, so a product with one
 config at the top names nothing.
 
+WHY THE TOOL IS AN EXTRA. mypy is not a runtime dependency of the kernel - a product that never
+declares this command should not inherit a constraint on which type checker it may install. It lives in
+`simplon[typecheck]` instead, which means the checker can legitimately be absent from the interpreter
+this task points at. That is a SETUP error, not a finding, and the two must not look alike: a gate that
+reports "mypy found problems" when mypy was never installed teaches a product to distrust it.
+
 WHY A CONFIG FILE IS REQUIRED. mypy without one checks whatever it is pointed at, with defaults nobody
 wrote down. A gate whose rules are implicit cannot be argued with when it goes red, and the first
 argument it loses is its own existence. The file is the product's stated position - which layers are
@@ -72,6 +78,22 @@ def _interpreter(workdir: Path, python: str) -> str:
     return str(named)
 
 
+def _require_mypy(python_exe: str) -> None:
+    """Fail with the name of the extra when the checker is absent from the target interpreter.
+
+    Probed rather than inferred from the exit code: `python -m mypy` and a real type error both exit
+    non-zero, so without this the missing tool would be reported as findings. The probe is cheap next
+    to a mypy run, and it has to be a subprocess because the interpreter may not be this one.
+    """
+    if run([python_exe, "-c", "import mypy"]).rc == 0:
+        return
+    raise ValueError(
+        f"mypy: not installed in {python_exe} - the type gate's tooling is an optional extra, so "
+        f"install it with `pip install simplon[typecheck]` (or add `simplon[typecheck]` to the "
+        f"requirements file for that interpreter). This is a setup error, not a type finding"
+    )
+
+
 def mypy_argv(python_exe: str, config: Path) -> list[str]:
     """PURE: the argv for the type gate. Separated so the wiring is assertable without running mypy."""
     return [python_exe, "-m", "mypy", "--config-file", str(config)]
@@ -90,6 +112,7 @@ def check(config: str = DEFAULT_CONFIG, workdir: str = "", python: str = "") -> 
     where = ctx.root / workdir if workdir else ctx.root
     resolved = _config_path(where, config)
     python_exe = _interpreter(where, python)
+    _require_mypy(python_exe)
 
     log.info(f"typecheck-python: mypy --config-file {resolved.relative_to(ctx.root)} "
              f"({'host venv' if not python else python})")

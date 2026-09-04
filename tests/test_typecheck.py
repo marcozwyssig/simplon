@@ -11,7 +11,11 @@ The second is the REFUSAL. A gate without a configuration file would run with my
 nobody wrote down, and therefore rules nobody can argue with when the gate goes red. The first argument
 such a gate loses is its own existence, so the absence of the file is an error and not a fallback.
 
-No subprocess, no mypy, no product checkout; AAA throughout.
+The third is that a MISSING CHECKER does not read as a finding. mypy is an optional extra
+(`simplon[typecheck]`), so a product can legitimately adopt the gate and forget the install; `python -m
+mypy` then exits non-zero exactly as a real type error does, and the two must not be reported alike.
+
+No real subprocess, no mypy, no product checkout; AAA throughout.
 """
 import sys
 from pathlib import Path
@@ -19,6 +23,13 @@ from pathlib import Path
 import pytest
 
 from simplon.tasks import typecheck
+
+
+class _Result:
+    """The one field of simplon.run.Result this module reads, so the probe needs no subprocess."""
+
+    def __init__(self, rc: int) -> None:
+        self.rc = rc
 
 
 def test_the_argv_runs_mypy_as_a_module_of_the_given_interpreter() -> None:
@@ -97,3 +108,31 @@ def test_a_named_interpreter_that_is_absent_is_refused_not_replaced(tmp_path: Pa
 
     assert "no interpreter at" in str(raised.value)
     assert sys.executable not in str(raised.value)
+
+
+# --- the tooling is an extra, so its absence is a setup error and has to say so -------------------------
+
+def test_a_missing_checker_names_the_extra_instead_of_reporting_findings(monkeypatch) -> None:
+    # arrange: the target interpreter has no mypy - `import mypy` fails, exactly as a type finding does
+    monkeypatch.setattr(typecheck, "run", lambda argv, **kw: _Result(1))
+
+    # act / assert
+    with pytest.raises(ValueError) as raised:
+        typecheck._require_mypy("/venv/bin/python")
+
+    message = str(raised.value)
+    assert "simplon[typecheck]" in message, message
+    assert "not a type finding" in message, message
+
+
+def test_a_present_checker_passes_the_probe_silently(monkeypatch) -> None:
+    # arrange
+    probed: list[list[str]] = []
+    monkeypatch.setattr(typecheck, "run",
+                        lambda argv, **kw: probed.append(argv) or _Result(0))
+
+    # act
+    typecheck._require_mypy("/venv/bin/python")
+
+    # assert: the probe asks the NAMED interpreter, not this one - the whole point of the parameter
+    assert probed == [["/venv/bin/python", "-c", "import mypy"]]
