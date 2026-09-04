@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from simplon import context
+from simplon import allure
 from simplon.tasks import testrun
 from simplon.context import ProductContext
 
@@ -367,13 +368,14 @@ def test_run_gate_clearsTheQuarantineDir_soAFilteredRunIsNeverMixedWithTheLastOn
 # --- accept: the whole chain ------------------------------------------------------------------------------
 
 
-def _stub_chain(monkeypatch, rcs):
+def _stub_chain(monkeypatch, rcs, report_rc=0):
     """Record the gates accept ran (with the args each received) and inject each one's rc."""
     ran = []
     monkeypatch.setattr(testrun, "run_gate",
                         lambda gate, cfg, extra, *, filtered: ran.append((gate.name, extra, filtered))
                         or rcs.get(gate.name, 0))
-    monkeypatch.setattr(testrun, "report", lambda cfg=None, *, filtered=False: ran.append(("report", [], filtered)) or 0)
+    monkeypatch.setattr(testrun, "report",
+                        lambda cfg=None, *, filtered=False: ran.append(("report", [], filtered)) or report_rc)
     return ran
 
 
@@ -440,7 +442,9 @@ def test_report_mergesTheDeclaredResultDirs_intoTheSharedResults(monkeypatch, tm
     monkeypatch.setattr(testrun.allure, "merge_results",
                         lambda dst, srcs, parent_suite="Unit": merged.update(dst=dst, srcs=srcs,
                                                                              parent_suite=parent_suite))
-    monkeypatch.setattr(testrun.allure, "render_report", lambda *a, **k: merged.update(rendered=(a, k)))
+    monkeypatch.setattr(testrun.allure, "render_report",
+                        lambda *a, **k: merged.update(rendered=(a, k))
+                        or allure.Render(report="/r/allure-1.html", tool="allure"))
 
     # act
     rc = testrun.report()
@@ -458,7 +462,8 @@ def test_report_rendersAFilteredRunUnderItsOwnPrefix_soItCannotPassAsTheCanonica
     seen = {}
     monkeypatch.setattr(testrun.allure, "merge_results", lambda *a, **k: None)
     monkeypatch.setattr(testrun.allure, "render_report",
-                        lambda report_dir, results, prefix="allure": seen.update(results=results, prefix=prefix))
+                        lambda report_dir, results, prefix="allure": seen.update(results=results, prefix=prefix)
+                        or allure.Render(report="/r/allure-1.html", tool="allure"))
 
     # act
     testrun.report(filtered=True)
@@ -466,3 +471,45 @@ def test_report_rendersAFilteredRunUnderItsOwnPrefix_soItCannotPassAsTheCanonica
     # assert
     assert seen["results"] == str(tmp_path / "test/reports/allure-results-filtered")
     assert seen["prefix"] == "allure-filtered"
+
+
+def test_report_isRed_whenARenderToolWasPresentAndTheRenderFailed(monkeypatch, tmp_path, runner):
+    # arrange: allure (or docker) IS installed and the render failed - the run has no archive and used to
+    # say so with a warning behind rc 0, which no CI reads (#6)
+    _register(monkeypatch, tmp_path, _data())
+    monkeypatch.setattr(testrun.allure, "merge_results", lambda *a, **k: None)
+    monkeypatch.setattr(testrun.allure, "render_report", lambda *a, **k: allure.Render(tool="docker"))
+
+    # act
+    rc = testrun.report()
+
+    # assert: the missing archive reaches the exit code
+    assert rc == 1
+
+
+def test_report_staysGreen_whenNoRenderToolIsInstalledAtAll(monkeypatch, tmp_path, runner):
+    # arrange: no allure CLI and no docker. The rule stands: archiving must not itself be the reason a run
+    # is red when the host simply has no render tool.
+    _register(monkeypatch, tmp_path, _data())
+    monkeypatch.setattr(testrun.allure, "merge_results", lambda *a, **k: None)
+    monkeypatch.setattr(testrun.allure, "render_report", lambda *a, **k: allure.Render())
+
+    # act
+    rc = testrun.report()
+
+    # assert
+    assert rc == 0
+
+
+def test_accept_isRed_whenTheArchiveRenderFailed_eventhoughEveryGateWasGreen(monkeypatch, tmp_path, runner):
+    # arrange: every gate green, the report step red - accept must not swallow the report's rc, or the
+    # second entry point keeps exactly the blind spot the first one just lost
+    _register(monkeypatch, tmp_path, _data())
+    ran = _stub_chain(monkeypatch, {}, report_rc=1)
+
+    # act
+    rc = testrun.accept([])
+
+    # assert: red, and every gate still ran
+    assert rc == 1
+    assert [name for name, _, _ in ran] == ["system", "acceptance-dataplane", "report"]

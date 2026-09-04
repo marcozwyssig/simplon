@@ -263,8 +263,15 @@ def run_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool) -> in
 def report(cfg: Suites | None = None, *, filtered: bool = False) -> int:
     """Merge the per-module results the product's OTHER gates already wrote into this run's results dir,
     then render the merged single-file archive. Runs NO tests: it archives the verdict of what ran before
-    it. Always rc 0 - archiving is best-effort and never itself the reason a run is red, because the gates
-    carry the verdict."""
+    it.
+
+    rc 0 when the archive was written AND when the host has no render tool at all - archiving is
+    best-effort there and never itself the reason a run is red, because the gates carry the verdict. rc 1
+    when a render tool WAS present and failed (#6): that is not best-effort any more, it is a step that was
+    asked to do something it can do and did not, and a run that silently ships no archive is
+    indistinguishable from one that shipped a good one - which is precisely how the broken docker render
+    survived several releases.
+    """
     cfg = cfg or config()
     root = context.current().root
     results = results_dir(cfg, filtered=filtered)
@@ -273,9 +280,9 @@ def report(cfg: Suites | None = None, *, filtered: bool = False) -> int:
         allure.merge_results(results, [str(root / d) for d in cfg.merge], parent_suite=cfg.parent_suite)
         log.ok(f"per-module results merged (parentSuite={cfg.parent_suite})")
     log.ok(f"allure results written to {results}")
-    allure.render_report(_reports_dir(cfg), results,
-                         prefix="allure-filtered" if filtered else "allure")
-    return 0
+    render = allure.render_report(_reports_dir(cfg), results,
+                                  prefix="allure-filtered" if filtered else "allure")
+    return 1 if render.failed else 0
 
 
 def accept(extra: list[str], cfg: Suites | None = None) -> int:
@@ -283,8 +290,10 @@ def accept(extra: list[str], cfg: Suites | None = None) -> int:
 
     All gates run - no fail-fast - because the point of the convenience is the full red/green picture and an
     archived report either way; but a red suite MUST surface as a red exit code (netctl#571: a chained
-    overnight gate read 0 with seven failed tests). The section-level precondition is the one exception: an
-    unhealthy cluster aborts in seconds rather than wasting the whole collection.
+    overnight gate read 0 with seven failed tests). The report step counts towards that verdict for the same
+    reason (#6) - a run whose archive silently failed to render is not a green run - though only when a
+    render tool was there to fail; the section-level precondition is the one exception: an unhealthy cluster
+    aborts in seconds rather than wasting the whole collection.
     """
     cfg = cfg or config()
     if cfg.precondition:
@@ -297,7 +306,7 @@ def accept(extra: list[str], cfg: Suites | None = None) -> int:
     log.info(f"accept: running the lab-based suites ({' + '.join(g.name for g in cfg.gates)} + report)")
     rcs = {gate.name: run_gate(gate, cfg, extra if gate.args else [], filtered=filtered)
            for gate in cfg.gates}
-    report(cfg, filtered=filtered)
+    rcs["report"] = report(cfg, filtered=filtered)
     if any(rc != 0 for rc in rcs.values()):
         log.warn("accept is RED (" + ", ".join(f"{name} rc {rc}" for name, rc in rcs.items()) + ")")
         return 1
@@ -353,7 +362,8 @@ def gate(ctx: typer.Context, name: str = "") -> int:
 def report_cmd() -> int:
     """REPORT step: merge the per-module results the earlier gates already wrote into the shared Allure
     results and render the merged single-file Allure HTML archive. Runs NO tests; it archives the verdict of
-    the gates that ran before it, and is always green so archiving never reddens a run."""
+    the gates that ran before it. Green when the archive was written, and green on a host with no render
+    tool at all; red only when a render tool was present and failed to produce the archive (#6)."""
     return report()
 
 

@@ -173,3 +173,118 @@ def test_render_report_writes_no_report_and_keeps_results_when_neither_allure_no
     # assert: no dated report was produced; the raw results dir is left intact for a later `allure serve`
     assert not any(f.startswith("allure-") and f.endswith(".html") for f in os.listdir(report_dir))
     assert os.path.isdir(os.path.join(report_dir, "allure-results"))
+
+
+def _fake_docker_allure(report_dir):
+    """Stand in for `docker run ... allure generate`: write index.html where the CONTAINER path maps to on
+    the host, so the fake obeys the same `-v {report_dir}:/work` mount the real call declares."""
+    def _run(argv, **kwargs):
+        out = argv[argv.index("-o") + 1]
+        host = os.path.join(report_dir, os.path.relpath(out, "/work"))
+        os.makedirs(host, exist_ok=True)
+        with open(os.path.join(host, "index.html"), "w", encoding="utf-8") as fh:
+            fh.write("<html>allure single-file</html>")
+        return SimpleNamespace(ok=True, rc=0)
+    return _run
+
+
+def test_render_report_via_docker_runs_as_the_calling_user_so_the_mounted_report_dir_stays_writable(tmp_path, monkeypatch):
+    # arrange: no local allure CLI, docker present. The image runs as uid 1000; the mounted report dir
+    # belongs to the HOST user, so a container writing as its own uid hits
+    # java.nio.file.AccessDeniedException: /work/allure-report on every host whose uid is not 1000 (#6).
+    report_dir = str(tmp_path)
+    os.makedirs(os.path.join(report_dir, "allure-results"))
+    monkeypatch.setattr(allure.shutil, "which", lambda name: "/usr/bin/docker" if name == "docker" else None)
+    seen = {}
+    monkeypatch.setattr(allure, "run",
+                        lambda argv, **kw: seen.update(argv=argv) or _fake_docker_allure(report_dir)(argv, **kw))
+
+    # act
+    allure.render_report(report_dir)
+
+    # assert: the container writes as the calling user, and the flag is a `docker run` flag (before the image)
+    argv = seen["argv"]
+    assert "--user" in argv, f"docker render must pass --user; got {argv}"
+    assert argv[argv.index("--user") + 1] == f"{os.getuid()}:{os.getgid()}"
+    assert argv.index("--user") < argv.index("frankescobar/allure-docker-service")
+
+
+def test_render_report_returns_the_archive_path_it_wrote(tmp_path, monkeypatch):
+    # arrange: a working local CLI
+    report_dir = str(tmp_path)
+    os.makedirs(os.path.join(report_dir, "allure-results"))
+    monkeypatch.setattr(allure.shutil, "which", lambda name: "/usr/bin/allure" if name == "allure" else None)
+    monkeypatch.setattr(allure, "report_filename", lambda **kw: "allure-20260708-143015.html")
+    monkeypatch.setattr(allure, "run", _fake_allure_generate)
+
+    # act
+    render = allure.render_report(report_dir)
+
+    # assert: the caller can tell an archive was written, and where
+    assert render.ok
+    assert not render.failed
+    assert render.report == os.path.join(report_dir, "allure-20260708-143015.html")
+    assert render.tool == "allure"
+
+
+def test_render_report_calls_a_present_local_cli_that_exits_nonzero_a_failure(tmp_path, monkeypatch):
+    # arrange: the allure CLI is installed and the generate fails
+    report_dir = str(tmp_path)
+    os.makedirs(os.path.join(report_dir, "allure-results"))
+    monkeypatch.setattr(allure.shutil, "which", lambda name: "/usr/bin/allure" if name == "allure" else None)
+    monkeypatch.setattr(allure, "run", lambda argv, **kw: SimpleNamespace(ok=False, rc=1))
+
+    # act
+    render = allure.render_report(report_dir)
+
+    # assert: a tool that IS there and failed is a failure the caller can act on - the case a bare warning
+    # hid behind rc 0 (#6). Still no exception: the caller decides how loud it gets.
+    assert render.failed
+    assert not render.ok
+    assert render.tool == "allure"
+
+
+def test_render_report_calls_a_present_docker_render_that_exits_nonzero_a_failure(tmp_path, monkeypatch):
+    # arrange: docker is there (so the tool exists) and the container fails - the AccessDenied case of #6
+    report_dir = str(tmp_path)
+    os.makedirs(os.path.join(report_dir, "allure-results"))
+    monkeypatch.setattr(allure.shutil, "which", lambda name: "/usr/bin/docker" if name == "docker" else None)
+    monkeypatch.setattr(allure, "run", lambda argv, **kw: SimpleNamespace(ok=False, rc=1))
+
+    # act
+    render = allure.render_report(report_dir)
+
+    # assert
+    assert render.failed
+    assert render.tool == "docker"
+
+
+def test_render_report_calls_a_tool_that_produced_no_index_html_a_failure(tmp_path, monkeypatch):
+    # arrange: the CLI exits 0 but writes nothing - green rc, no archive; still a present tool that failed
+    report_dir = str(tmp_path)
+    os.makedirs(os.path.join(report_dir, "allure-results"))
+    monkeypatch.setattr(allure.shutil, "which", lambda name: "/usr/bin/allure" if name == "allure" else None)
+    monkeypatch.setattr(allure, "run", lambda argv, **kw: SimpleNamespace(ok=True, rc=0))
+
+    # act
+    render = allure.render_report(report_dir)
+
+    # assert
+    assert render.failed
+    assert render.report is None
+
+
+def test_render_report_does_not_call_a_MISSING_tool_a_failure(tmp_path, monkeypatch):
+    # arrange: neither allure nor docker. This stays a hint, NOT a failure - archiving must not itself be
+    # the reason a run is red when the host simply has no render tool (the rule the docstring states).
+    report_dir = str(tmp_path)
+    os.makedirs(os.path.join(report_dir, "allure-results"))
+    monkeypatch.setattr(allure.shutil, "which", lambda name: None)
+
+    # act
+    render = allure.render_report(report_dir)
+
+    # assert: nothing rendered, and nothing to report as broken
+    assert not render.ok
+    assert not render.failed
+    assert render.tool is None

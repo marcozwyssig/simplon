@@ -1,10 +1,11 @@
 """Logging + ANSI colorizers for the *ctl orchestrators, ported byte-for-byte from netctl.sh:77-81
 and 1449-1480 so the CLI's output is diff-identical to the bash original during the #102 migration.
 
-`info/ok/warn/die` carry the same `[HH:MM:SS] ==>` timestamped prefixes; the colorizers
+`info/ok/warn/error/die` carry the same `[HH:MM:SS] ==>` timestamped prefixes; the colorizers
 (`dot/code_color/boot_color/err_color`) reproduce the exact escape sequences and width padding the
 status dashboard used. `die` prints to stderr and raises SystemExit(1) - the Python equivalent of the
-bash `die() { ... >&2; exit 1; }`.
+bash `die() { ... >&2; exit 1; }`; `error` is that same stderr line WITHOUT the exit, for a caller that
+must report a real failure and still finish its own cleanup or hand a non-zero rc back itself.
 """
 from __future__ import annotations
 
@@ -33,8 +34,14 @@ def warn(msg: str) -> None:
     print(f"\033[1;33m[{_ts()}]   !\033[0m {msg}", flush=True)
 
 
-def die(msg: str) -> NoReturn:
+def error(msg: str) -> None:
+    """A real failure, on STDERR - louder than `warn` (which goes to stdout for the merely notable) and
+    without `die`'s exit, so the caller keeps control of the exit code."""
     print(f"\033[1;31m[{_ts()}] ERR\033[0m {msg}", file=sys.stderr)
+
+
+def die(msg: str) -> NoReturn:
+    error(msg)
     raise SystemExit(1)
 
 
