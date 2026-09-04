@@ -20,3 +20,9 @@ cryptography==46.0.0  # delivery.clabrender.wg_keypair - WireGuard X25519 keygen
                       # a stock runner - so a product targeting that platform cannot install the kernel at
                       # all. Only X25519PrivateKey.generate()/private_bytes_raw() is used and that API is
                       # unchanged across 43 -> 46.
+mypy==1.18.2          # the test:typecheck-python gate (delivery.tasks.typecheck). In the KERNEL's
+                      # set, not each product's: the task is the kernel's, so the tool it runs is
+                      # too, and a product adopts the gate with one manifest line plus its own
+                      # mypy.ini. types-PyYAML because PyYAML is pinned right here - a stub for a
+                      # kernel dependency belongs beside the dependency.
+types-PyYAML==6.0.12.20250915
