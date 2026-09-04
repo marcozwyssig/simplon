@@ -1,8 +1,14 @@
 # Simplon
 
-The delivery orchestrator kernel for the `*ctl` product family: it assembles
-a product's CLI from a manifest, runs the steps, and knows nothing about any
-particular product.
+Simplon is a delivery orchestrator for any software component that wants to
+follow a CI/CD flow. It gives you a framework for the tasks that make up that
+flow -- build, test, release, deploy, monitor -- and a way to bring in
+additional tasks of your own.
+
+A component declares its commands in one manifest. Simplon assembles the CLI
+from it, runs the steps, and knows nothing about the component itself. The
+`*ctl` product family (netctl, infractl) is where it grew up and is its first
+user -- an example of who uses it, not a limit on who can.
 
 ## Using it
 

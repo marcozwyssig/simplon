@@ -102,7 +102,7 @@ def env_var_name(name: str) -> str:
 # stay verbatim and free of escaping. render() substitutes both tokens.
 
 _MANIFEST = """\
-# @@PRODUCT@@ delivery manifest - the single declarative source the delivery kernel
+# @@PRODUCT@@ delivery manifest - the single declarative source Simplon
 # (simplon.orchestrator.manifest) assembles @@PRODUCT@@'s CLI from. Scaffolded by
 # `simplon init` (netctl#651 strand 4). Fill it in: add your real groups + commands and
 # wire each `impl` to a "module:function" your orchestrator package exports.
@@ -176,15 +176,15 @@ _REQUIREMENTS = """\
 # kernel; nothing is vendored and nothing is included by path. Declaring the
 # `test:typecheck-python` gate? Its mypy is an optional extra, so write
 # `simplon[typecheck]==...` here instead.
-simplon==0.1.0
+simplon==0.1.1
 
 # --- @@PRODUCT@@-product-only deps ---
 """
 
 _INIT = '''\
-"""@@PRODUCT@@ - host-Python delivery orchestrator, scaffolded on the delivery kernel (netctl#651 strand 4).
+"""@@PRODUCT@@ - the host-Python delivery orchestrator, scaffolded on Simplon (netctl#651 strand 4).
 
-The CLI is assembled from @@PRODUCT@@.yaml by the delivery binding layer; see cli.py for the composition
+The CLI is assembled from @@PRODUCT@@.yaml by Simplon's binding layer; see cli.py for the composition
 root and paths.py for the ProductContext wiring. Grow the CLI by editing the manifest, not this package.
 """
 
@@ -201,11 +201,11 @@ if __name__ == "__main__":
 '''
 
 _CLI = '''\
-"""The @@PRODUCT@@ host CLI (Typer), assembled from @@PRODUCT@@.yaml by the delivery kernel.
+"""The @@PRODUCT@@ host CLI (Typer), assembled from @@PRODUCT@@.yaml by Simplon.
 
 Scaffolded by `simplon init` (netctl#651 strand 4). This is the product's composition root:
 it creates the root Typer app, ships the command-impl callables the manifest's "module:function" refs
-resolve to, and hands the app + product context + environments + aliases to the delivery binding layer
+resolve to, and hands the app + product context + environments + aliases to Simplon's binding layer
 (simplon.cli). The generic assembly (a sub-app per group, hidden flat aliases, the flat-group collapse,
 the CI/CD panels) and the env-first dispatch live in the kernel, driven entirely by the manifest - so a
 fresh product adds groups/commands in @@PRODUCT@@.yaml and impl callables HERE, and nowhere else.
@@ -229,7 +229,7 @@ from . import environments
 from . import paths
 
 app = typer.Typer(add_completion=False, no_args_is_help=True,
-                  help=("@@PRODUCT@@ orchestrator (scaffolded on the delivery kernel). AGNOSTIC groups take "
+                  help=("@@PRODUCT@@ orchestrator (scaffolded on Simplon). AGNOSTIC groups take "
                         "no env (build); ENV-FIRST CD groups run against a target env as the outer prefix "
                         "`@@PRODUCT@@ <env> <group> <cmd>` (default dev): deploy (up/down/all, where `all` "
                         "runs the build->up dependency plan). Fill in @@PRODUCT@@.yaml to grow the CLI."))
@@ -272,7 +272,7 @@ _MANIFEST = paths.CONTEXT.manifest()
 _STEP_CONTEXT = StepFactoryContext.for_shim("@@PRODUCT@@", paths.ROOT / "@@PRODUCT@@.sh", _MANIFEST)
 
 
-# Assemble the CLI from the manifest via the delivery binding layer. Runs at import (like netctl's cli.py):
+# Assemble the CLI from the manifest via Simplon's binding layer. Runs at import (like netctl's cli.py):
 # resolve_impl imports this module and binds each leaf command's callback, so every command above must
 # already be defined; step_context lets the kernel synthesize the callback for each impl-less aggregate
 # (`all` runs its build->up dependency plan, reachable as `@@PRODUCT@@ all` or `@@PRODUCT@@ <env> deploy
@@ -281,7 +281,7 @@ simplon_cli.assemble(app, _MANIFEST, product=paths.CONTEXT.name, step_context=_S
 
 
 def main() -> None:
-    """Entry point (`python -m orchestrator`): env-first dispatch via the delivery binding layer. The
+    """Entry point (`python -m orchestrator`): env-first dispatch via Simplon's binding layer. The
     product context, the environments module and the alias map are injected, so simplon.cli hardcodes
     nothing product-specific."""
     simplon_cli.main(app=app, context=paths.CONTEXT, environments=environments.PROVIDER,
@@ -289,7 +289,7 @@ def main() -> None:
 '''
 
 _PATHS = '''\
-"""@@PRODUCT@@'s product adapter onto the delivery kernel: derive the repo ROOT + the manifest path and
+"""@@PRODUCT@@'s product adapter onto Simplon: derive the repo ROOT + the manifest path and
 register ONE ProductContext at import, so kernel code reads them back product-agnostically via
 simplon.context.current() and never hardcodes "@@PRODUCT@@".
 

@@ -1,4 +1,4 @@
-"""simplon's product adapter onto the delivery kernel: derive the repo ROOT + the manifest path and
+"""simplon's product adapter onto Simplon: derive the repo ROOT + the manifest path and
 register ONE ProductContext at import, so kernel code reads them back product-agnostically via
 simplon.context.current() and never hardcodes "simplon".
 

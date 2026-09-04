@@ -1,9 +1,9 @@
-"""The simplon host CLI (Typer), assembled from simplon.yaml by the delivery kernel.
+"""The simplon host CLI (Typer), assembled from simplon.yaml by Simplon.
 
 Scaffolded by `python -m simplon.bootstrap` (netctl#651 strand 4), then filled in with simplon's OWN
 commands: this is the kernel building and testing itself with the kernel. It is the product's composition
 root: it creates the root Typer app, ships the command-impl callables the manifest's "module:function" refs
-resolve to, and hands the app + product context + environments + aliases to the delivery binding layer
+resolve to, and hands the app + product context + environments + aliases to Simplon's binding layer
 (simplon.cli). The generic assembly (a sub-app per group, hidden flat aliases, the flat-group collapse,
 the CI/CD panels) and the env-first dispatch live in the kernel, driven entirely by the manifest - so a
 fresh product adds groups/commands in simplon.yaml and impl callables HERE, and nowhere else.
@@ -84,14 +84,14 @@ _MANIFEST = paths.CONTEXT.manifest()
 _STEP_CONTEXT = StepFactoryContext.for_shim("simplon", paths.ROOT / "simplon.sh", _MANIFEST)
 
 
-# Assemble the CLI from the manifest via the delivery binding layer. Runs at import (like netctl's cli.py):
+# Assemble the CLI from the manifest via Simplon's binding layer. Runs at import (like netctl's cli.py):
 # resolve_impl imports this module and binds each leaf command's callback (build_wheel, test_all, doctor),
 # so every command above must already be defined. The product name only shapes the usage hints.
 simplon_cli.assemble(app, _MANIFEST, product=paths.CONTEXT.name, step_context=_STEP_CONTEXT)
 
 
 def main() -> None:
-    """Entry point (`python -m orchestrator`): env-first dispatch via the delivery binding layer. The
+    """Entry point (`python -m orchestrator`): env-first dispatch via Simplon's binding layer. The
     product context, the environments module and the alias map are injected, so simplon.cli hardcodes
     nothing product-specific."""
     simplon_cli.main(app=app, context=paths.CONTEXT, environments=environments.PROVIDER,
