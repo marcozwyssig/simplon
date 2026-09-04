@@ -1,0 +1,18 @@
+# Host-Python deps for the simplon orchestrator.
+#
+# Every OTHER product pins `simplon==<version>` off PyPI here. Simplon is the
+# one exception: it cannot depend on its own last release without poisoning
+# the next build the moment that release is broken, and no release exists
+# yet anyway. `-e .` installs the kernel from THIS working tree instead - a
+# relative path in a requirements file resolves against the CWD pip is run
+# from, and simplon.sh cds to the repo root before it installs, so this
+# always resolves to the checkout that is being built and tested.
+-e .
+
+# `build` and `pytest` are dev tools the three commands below shell out to
+# (build_wheel, test_all, doctor); a product depending on the published
+# kernel would list its OWN dev tools the same way.
+build
+pytest
+
+# --- simplon-product-only deps ---

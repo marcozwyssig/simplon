@@ -1,0 +1,27 @@
+# Simplon baut und prueft sich mit sich selbst. Genau der Kernel, der hier
+# gebaut wird, montiert diese CLI aus diesem Manifest -- bricht ein Commit
+# die Montage, faellt es in derselben Runde auf statt nach dem Release.
+product: simplon
+default: dev
+
+# NOTE: no `commands:` nesting under each group. That shape is the manifest loader's "new form", reserved
+# for a command that INSTANTIATES a task declared under `tasks:` (`task: <name>`, netctl catalogue
+# coordinates included) - it rejects a bare `impl:` outright ("declare the body once under `tasks:` and
+# point this command at it with `task:`"). build/test/support are also catalogue coordinates (see
+# src/simplon/catalogue.yaml), but simplon's own three commands are one-off callables, not reusable task
+# templates, so this stays the flat "old form": group -> command name -> spec, `impl:` straight on the
+# command. Same CLI surface either way (`simplon build wheel`, `simplon test all`, `simplon support
+# doctor`); only the internal schema differs.
+groups:
+  build:
+    wheel:
+      help: "Wheel bauen."
+      impl: "orchestrator.cli:build_wheel"
+  test:
+    all:
+      help: "Alle Tests."
+      impl: "orchestrator.cli:test_all"
+  support:
+    doctor:
+      help: "Werkzeuge und Umgebung pruefen."
+      impl: "orchestrator.cli:doctor"

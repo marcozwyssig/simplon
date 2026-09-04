@@ -1,0 +1,17 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  self-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Stufe 0 ist der Arbeitsbaum selbst: der NEUE Code faehrt seinen
+      # eigenen Build. Die letzte Release-Version zu nehmen waere reiner,
+      # aber ein kaputter Release vergiftete dann den naechsten Build.
+      - run: pip install -e . build pytest
+      - run: ./simplon.sh test all
+      - run: ./simplon.sh build wheel
