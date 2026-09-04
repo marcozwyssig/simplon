@@ -10,7 +10,7 @@ commands stay outside this file.
 import typer
 
 
-def _rc(value: object) -> int:
+def _rc(value: int | None) -> int:
     """A body's return value as a process exit code.
 
     A framework-free body returns an int. A body that has not been migrated yet raises `typer.Exit`

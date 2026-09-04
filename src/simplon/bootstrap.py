@@ -176,7 +176,7 @@ _REQUIREMENTS = """\
 # kernel; nothing is vendored and nothing is included by path. Declaring the
 # `test:typecheck-python` gate? Its mypy is an optional extra, so write
 # `simplon[typecheck]==...` here instead.
-simplon==0.1.2
+simplon==0.1.3
 
 # --- @@PRODUCT@@-product-only deps ---
 """
@@ -239,19 +239,26 @@ app = typer.Typer(add_completion=False, no_args_is_help=True,
 _ALIASES: dict[str, str] = {}
 
 
-def build() -> None:
+def build() -> int:
     """Build the product artefacts (placeholder). Replace with your real build pipeline."""
     log.info("@@PRODUCT@@: build (placeholder) - wire me up in orchestrator/src/python/orchestrator/cli.py")
+    # The generated wrapper's exit code IS this return value (cli.py.j2's `_rc` reads it), not a
+    # raise - a framework-free body reports success by what it returns.
+    return 0
 
 
-def up() -> None:
+def up() -> int:
     """Deploy the product to the target environment (placeholder)."""
     log.info("@@PRODUCT@@: up (placeholder)")
+    # See build() above: the exit code is the return value, not a raise.
+    return 0
 
 
-def down() -> None:
+def down() -> int:
     """Tear the deployment down (placeholder)."""
     log.info("@@PRODUCT@@: down (placeholder)")
+    # See build() above: the exit code is the return value, not a raise.
+    return 0
 
 
 # The parsed manifest, read ONCE: the CLI is assembled from it below, and the step factory resolves each
