@@ -32,7 +32,7 @@ def _active(envs: dict, default: str, env_var: str) -> str:
     return default
 
 
-def environments() -> None:
+def environments() -> int:
     """List the named environments declared in the manifest, marking the active one. Select an
     environment env-first: `<product> <env> <command>` (falls back to `default:` with none given)."""
     ctx = context.current()
@@ -54,3 +54,7 @@ def environments() -> None:
         backend = str(spec.get("backend", ""))
         description = str(spec.get("description", ""))
         print(f"  {mark} {name:<11} {backend:<9} {description}")
+    # A listing has nothing to fail on once past the two validations above (both raise), so it is
+    # always the green exit code - explicit `-> int` rather than an implicit `None` return, which is
+    # what let the func-returns-value finding through at every call site that coerces this via `_rc`.
+    return 0

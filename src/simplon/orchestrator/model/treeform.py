@@ -110,8 +110,14 @@ def paths_with_commands(flat: dict) -> frozenset[str]:
                             if other == path or other.startswith(f"{path}.")))
 
 
-def merge(kernel: dict, product: dict, _path: tuple[str, ...] = ()) -> dict:
+def merge(kernel: dict, product: dict, _path: tuple[str, ...] = (),
+         *, product_tasks: dict | None = None, catalogue_tasks: dict | None = None) -> dict:
     """The product's tree merged onto the kernel's.
+
+    `product_tasks`/`catalogue_tasks` are the RAW `tasks:` maps (product's own, and the catalogue's),
+    threaded through for no reason but a better error message: `_merge_commands` needs them to name the
+    two `impl:` a `task:` collision hides behind one command name, and this is the only path from
+    `load()` down to it. Neither is otherwise this function's concern - it merges trees, not bodies.
 
     Three outcomes, and the first is the group lock: a PATH the kernel does not declare is an error, a
     command NAME it does not declare is an addition, and a name it does declare is a refinement. The lock
@@ -155,10 +161,13 @@ def merge(kernel: dict, product: dict, _path: tuple[str, ...] = ()) -> dict:
         merged = dict(base)
         for key, value in node.items():
             if key == "groups":
-                merged["groups"] = merge(base.get("groups") or {}, value, path)
+                merged["groups"] = merge(base.get("groups") or {}, value, path,
+                                         product_tasks=product_tasks, catalogue_tasks=catalogue_tasks)
             elif key == "commands":
                 merged["commands"] = _merge_commands(base.get("commands") or {}, value,
-                                                     ".".join(path))
+                                                     ".".join(path),
+                                                     product_tasks=product_tasks or {},
+                                                     catalogue_tasks=catalogue_tasks or {})
             else:
                 raise ValueError(
                     f"group '{'.'.join(path)}' declares `{key}:`, which the platform's node already "
@@ -174,11 +183,41 @@ def merge(kernel: dict, product: dict, _path: tuple[str, ...] = ()) -> dict:
     return out
 
 
-def _merge_commands(base: dict, extra: dict, where: str) -> dict:
+def _impl_of(ref: str, product_tasks: dict, catalogue_tasks: dict) -> str:
+    """The `impl:` a task ref names, for a COLLISION MESSAGE a human must act on.
+
+    A bare name like `install` tells nobody which of two bodies it is - `install` and `install` read
+    identically. Resolving it to `module:function` is what lets the message name the actual difference
+    (oras vs Colima) rather than just the name they share. Same source rule `_resolve_one` uses: a colon
+    means a catalogue coordinate, no colon means a task this manifest itself declares.
+
+    Falls back to the bare ref when it does not resolve. This runs at MERGE time, before `resolve()` has
+    validated that every ref exists - a typo'd ref belongs to that error, not to this message, so this
+    never raises over one.
+    """
+    source = catalogue_tasks if ":" in ref else product_tasks
+    spec = (source or {}).get(ref) or {}
+    return str(spec.get("impl") or ref)
+
+
+def _merge_commands(base: dict, extra: dict, where: str,
+                    *, product_tasks: dict, catalogue_tasks: dict) -> dict:
     """A group's members, with the product's refinements folded in per KEY rather than per node.
 
     Per-key matters: netctl pins `tasks generate`'s target with a `with:` and expects to keep the
     kernel's `params:` for `check`. Replacing the whole node would silently drop it.
+
+    A command the product ALSO names is a REFINEMENT only while it points at the same `task:` the base
+    already does (or names none, leaving the base's untouched) - changing `help:`, `params:` or `with:`
+    on the platform's own body. A product node that names a DIFFERENT `task:` for a name the base already
+    places is not a refinement, it is a second, different body under one name, and simply letting the
+    product's dict win (`{**inherited, **spec}`, key order be damned) is exactly the silence the loader
+    used to produce: the command resolves, the help even reads plausibly, and the only proof of which
+    body actually ran is what the host looks like afterwards (netctl's oras-vs-Colima `support install`).
+    So a differing `task:` is rejected UNLESS the product's node opts in with `override: true` - the
+    explicit "yes, I mean to replace it" the platform cannot infer from silence. `override: true` makes
+    the product's node the WHOLE command (no merge with the base's `help:`/`params:`): those describe the
+    body being replaced, not the one that now runs.
     """
     out: dict[str, dict] = {}
     for name, spec in (base or {}).items():
@@ -189,6 +228,7 @@ def _merge_commands(base: dict, extra: dict, where: str) -> dict:
         name = str(name)
         _check_command_is_mapping(spec, where, name)
         spec = dict(spec or {})
+        override = bool(spec.pop("override", False))
         inherited = out.get(name)
         if inherited is None:
             out[name] = spec
@@ -198,6 +238,26 @@ def _merge_commands(base: dict, extra: dict, where: str) -> dict:
                 f"command '{where} {name}' is declared as one kind of command and refined as another. A "
                 f"refinement may set help, params, hidden, with and task; moving a command between "
                 f"task-backed and aggregate is a different command wearing the same name - give it one")
+        new_task = spec.get("task")
+        if new_task is not None and inherited.get("task") not in (None, new_task):
+            if not override:
+                old_ref, new_ref = inherited["task"], new_task
+                old_impl = _impl_of(old_ref, product_tasks, catalogue_tasks)
+                new_impl = _impl_of(new_ref, product_tasks, catalogue_tasks)
+                raise ValueError(
+                    f"command '{where} {name}' redeclares `task:` from '{old_ref}' to '{new_ref}' - two "
+                    f"different bodies placed under one name: the platform's is `{old_impl}`, the "
+                    f"product's is `{new_impl}`. Which one runs is exactly the silent choice this loader "
+                    f"refuses to make - `{name}` and `{name}` look the same, `{old_impl}` and "
+                    f"`{new_impl}` do not. If the product's body ({new_impl}) must deliberately replace "
+                    f"the platform's ({old_impl}) here, add `override: true` next to `task: \"{new_ref}\"` "
+                    f"under this command in `groups: {where}: commands: {name}:`. If it should not, drop "
+                    f"the `task:` line here and keep refining the platform's command instead (help:, "
+                    f"params:, with: only)")
+            # A deliberate replacement stands alone: merging the base's `help:`/`params:` in would
+            # describe the body it no longer runs.
+            out[name] = spec
+            continue
         out[name] = {**inherited, **spec}
     return out
 

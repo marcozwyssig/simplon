@@ -317,7 +317,7 @@ def _warn_filtered(cfg: Suites) -> None:
 # shared by several commands cannot carry per-command help in its docstring, so `simplon.cli.assemble`
 # takes the help from each command's manifest `help:` instead; that is the product's own wording anyway.
 
-def gate(ctx: typer.Context, name: str = "") -> None:
+def gate(ctx: typer.Context, name: str = "") -> int:
     """Run one declared test level against the running lab. Which suite that is, where its results go and
     whether it clears or appends to the shared allure results comes from the product manifest's `suites`
     section; trailing args reach pytest verbatim where the level declares `args: true`.
@@ -347,19 +347,19 @@ def gate(ctx: typer.Context, name: str = "") -> None:
     filtered = bool(extra)
     if filtered:
         _warn_filtered(cfg)
-    raise typer.Exit(run_gate(cfg.gate(name or ctx.info_name), cfg, extra, filtered=filtered))
+    return run_gate(cfg.gate(name or ctx.info_name), cfg, extra, filtered=filtered)
 
 
-def report_cmd() -> None:
+def report_cmd() -> int:
     """REPORT step: merge the per-module results the earlier gates already wrote into the shared Allure
     results and render the merged single-file Allure HTML archive. Runs NO tests; it archives the verdict of
     the gates that ran before it, and is always green so archiving never reddens a run."""
-    raise typer.Exit(report())
+    return report()
 
 
-def accept_cmd(ctx: typer.Context) -> None:
+def accept_cmd(ctx: typer.Context) -> int:
     """Convenience: run every lab-based gate in its declared order and then the report step, against the
     running lab. Trailing args reach the pytest of the gate that declares `args: true`; a run carrying any
     is exploratory and is quarantined into its own results dir, leaving the archive of the last full gate
     intact. The gates it chains are also addressable individually."""
-    raise typer.Exit(accept(list(ctx.args)))
+    return accept(list(ctx.args))

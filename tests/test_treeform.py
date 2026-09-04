@@ -536,6 +536,91 @@ def test_a_group_the_platform_places_a_command_in_while_the_product_keeps_it_old
         manifest.load(text, catalogue=catalogue)
 
 
+# --- one command name, one or two bodies (netctl's silent oras-vs-Colima `support install`) ---------------
+
+def _support_install_catalogue():
+    """A minimal catalogue that PLACES `support install`, the way `simplon.catalogue.yaml` has since
+    0.1.4 - just enough tree for the collision/refinement/override tests below."""
+    return catalogue_mod.loads(textwrap.dedent("""
+        tasks:
+          support:install: { impl: "simplon.tasks.hosttools:install", help: "Provision oras." }
+        groups:
+          support:
+            help: "Host tooling."
+            commands:
+              install: { task: "support:install" }
+    """))
+
+
+def test_a_product_command_that_points_a_placed_name_at_a_different_task_is_rejected():
+    # arrange: netctl's own `support install` names a DIFFERENT body (its own Colima/containerlab
+    # provisioning) than the one the catalogue already placed there (oras) - two bodies, one name, no
+    # `override:` opt-in. Silently picking either would be exactly netctl's reported defect.
+    catalogue = _support_install_catalogue()
+    text = textwrap.dedent("""
+        product: netctl
+        tasks:
+          install: { impl: "orchestrator.cli:install", help: "Provision Colima and containerlab." }
+        groups:
+          support:
+            commands:
+              install: { task: install, help: "Provision Colima and containerlab." }
+    """)
+
+    # act / assert: the message must name BOTH bodies by their real `module:function` - `install` and
+    # `install` look identical, only `simplon.tasks.hosttools:install` and `orchestrator.cli:install` show
+    # a human what they would be choosing between
+    with pytest.raises(ValueError, match=(r"redeclares `task:`.*"
+                                          r"simplon\.tasks\.hosttools:install.*"
+                                          r"orchestrator\.cli:install.*"
+                                          r"override: true")):
+        manifest.load(text, catalogue=catalogue)
+
+
+def test_a_product_refining_help_and_params_on_a_placed_command_stays_silent():
+    # arrange: same `task:` the catalogue already placed - this is a REFINEMENT (its own help text),
+    # not a second body, so it must keep resolving with no error and no `override:` needed.
+    catalogue = _support_install_catalogue()
+    text = textwrap.dedent("""
+        product: netctl
+        groups:
+          support:
+            commands:
+              install: { task: "support:install", help: "Provision the host tools this product needs." }
+    """)
+
+    # act
+    mf = manifest.load(text, catalogue=catalogue)
+
+    # assert: the catalogue's body runs, under the product's own wording
+    spec = mf.commands["support"]["install"]
+    assert spec.impl == "simplon.tasks.hosttools:install"
+    assert spec.help == "Provision the host tools this product needs."
+
+
+def test_a_product_command_with_explicit_override_replaces_the_placed_task_silently():
+    # arrange: the same collision as the rejection test above, but with the opt-in the error message
+    # names - the product's body must now win, cleanly (not merged with the catalogue's own help/params).
+    catalogue = _support_install_catalogue()
+    text = textwrap.dedent("""
+        product: netctl
+        tasks:
+          install: { impl: "orchestrator.cli:install", help: "Provision Colima and containerlab." }
+        groups:
+          support:
+            commands:
+              install: { task: install, override: true, help: "Provision Colima and containerlab." }
+    """)
+
+    # act
+    mf = manifest.load(text, catalogue=catalogue)
+
+    # assert
+    spec = mf.commands["support"]["install"]
+    assert spec.impl == "orchestrator.cli:install"
+    assert spec.help == "Provision Colima and containerlab."
+
+
 TASK_KEYS_OK = {"impl": "a:b", "help": "h.", "passthrough_args": True, "params": {"x": {"help": "y"}}}
 
 

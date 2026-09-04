@@ -12,7 +12,6 @@ import os
 from types import SimpleNamespace
 
 import pytest
-import typer
 
 from simplon import context
 from simplon.tasks import testrun
@@ -192,9 +191,13 @@ def test_gate_runs_the_suite_the_command_pinned_rather_than_its_invocation_name(
                         lambda gate, cfg, extra, *, filtered: seen.update(gate=gate.name) or 0)
     ctx = SimpleNamespace(info_name="whatever-this-command-is-called", args=[])
 
-    # act / assert
-    with pytest.raises(typer.Exit):
-        testrun.gate(ctx, name="acceptance-dataplane")
+    # act: `gate` returns the rc rather than raising `typer.Exit` itself (netctl#1444/#defect2) - the
+    # wrapper that binds it (`simplon.cli._bound`, or the generated module's template) is the one place
+    # that turns a returned int into the process exit code, so the body stays a plain framework-free call
+    rc = testrun.gate(ctx, name="acceptance-dataplane")
+
+    # assert
+    assert rc == 0
     assert seen["gate"] == "acceptance-dataplane"
 
 
@@ -207,9 +210,11 @@ def test_gate_falls_back_to_the_invocation_name_when_no_name_is_pinned(monkeypat
                         lambda gate, cfg, extra, *, filtered: seen.update(gate=gate.name) or 0)
     ctx = SimpleNamespace(info_name="system", args=[])
 
-    # act / assert
-    with pytest.raises(typer.Exit):
-        testrun.gate(ctx)
+    # act: same rc-return contract as above
+    rc = testrun.gate(ctx)
+
+    # assert
+    assert rc == 0
     assert seen["gate"] == "system"
 
 

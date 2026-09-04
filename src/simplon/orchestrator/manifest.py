@@ -704,7 +704,13 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
         # Partitioned PER TOP-LEVEL GROUP rather than per manifest (plan 2), so a product migrates one
         # group at a time. An old-form group keeps its members verbatim below - it has not migrated yet,
         # and the whole point of partitioning is that the two halves do not interfere.
-        merged = treeform.merge(getattr(catalogue, "groups", {}) or {}, new_form)
+        # Passed through for no reason but a collision message: `_merge_commands` needs both `impl:` to
+        # tell a human which two bodies a `task:` clash actually names, and `data.get("tasks")` here is
+        # the same raw dict `tasks_block` reads a few lines down - reading it early costs nothing since
+        # it is already fully parsed.
+        merged = treeform.merge(getattr(catalogue, "groups", {}) or {}, new_form,
+                                product_tasks=data.get("tasks") or {},
+                                catalogue_tasks=getattr(catalogue, "tasks", {}) or {})
         lowered_taxonomy, flat = treeform.lower(merged)
         # `merged` deliberately keeps every group the CATALOGUE offers, touched or not (see `merge`'s own
         # docstring) - `lowered_taxonomy` above needs the full tree so the "which groups exist" check
