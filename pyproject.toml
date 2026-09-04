@@ -1,5 +1,7 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+# 77 is the first setuptools that understands PEP 639: the SPDX `license` string
+# and `license-files` below. Older ones fall back to the deprecated license table.
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +10,8 @@ version = "0.1.0"
 description = "Delivery orchestrator kernel for the *ctl product family"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Marco Zwyssig" }]
 dependencies = [
   "typer==0.12.5",
