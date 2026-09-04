@@ -22,6 +22,11 @@ dependencies = [
                            # publishing win_arm64 wheels; below it pip builds from
                            # source and needs a Rust toolchain, so a product
                            # targeting that platform cannot install at all.
+  "mypy==1.18.2",        # the test:typecheck-python gate (simplon.tasks.typecheck).
+                         # In the KERNEL's set, not each product's: the task is the
+                         # kernel's, so the tool it runs is too, and a product adopts
+                         # the gate with one manifest line plus its own mypy.ini.
+  "types-PyYAML==6.0.12.20250915",  # a stub for a kernel dependency belongs beside it
 ]
 
 [project.scripts]
@@ -34,4 +39,4 @@ Homepage = "https://github.com/marcozwyssig/simplon"
 where = ["src"]
 
 [tool.setuptools.package-data]
-simplon = ["catalogue.yaml", "templates/*.j2"]
+simplon = ["catalogue.yaml", "py.typed", "templates/*.j2"]
