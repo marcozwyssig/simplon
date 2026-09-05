@@ -346,3 +346,71 @@ def test_the_project_page_links_the_documentation_website():
     # Assert
     assert linked == manifest["site"]["base_url"]
     assert linked.startswith("https://")
+
+
+# --- the release guard's reporting half (#23, built with #32) --------------------------------------------
+
+@pytest.fixture(scope="module")
+def on_main_step(publish_job):
+    """The step that says whether the tagged commit is one `main` carries."""
+    named = [step for step in publish_job["steps"]
+             if str(step.get("name", "")).startswith("Is this tag on main")]
+    assert len(named) == 1, "exactly one step reports the tag's relation to main"
+    return named[0]
+
+
+def test_the_workflow_says_whether_the_tag_is_on_main(on_main_step):
+    """#23's question, asked on the path the command's own guard cannot see.
+
+    The command REFUSES an off-main commit, and that refusal is deliberately escapable by typing the two
+    git commands - which is the hotfix route #23 asked to keep. A hand-pushed tag still triggers THIS
+    workflow (no branch filter on `on:`), so this is the one place that sees every release there is.
+    """
+    # Arrange / Act
+    script = on_main_step["run"]
+
+    # Assert
+    assert "merge-base --is-ancestor" in script
+    assert "$GITHUB_SHA" in script
+    assert "refs/remotes/origin/main" in script
+
+
+def test_the_report_is_a_report_and_never_a_gate(on_main_step):
+    """It must not fail the job, now or by a later edit.
+
+    A reporting step that quietly became a gate would close the escape hatch #23 asked to keep open, and
+    nobody would find out until a hotfix release was refused by a step whose name says "report only".
+    Every branch ends in `exit 0` and there is no `exit 1` anywhere in it; `continue-on-error` is
+    deliberately NOT how this is done, because that would hide a real crash in the step as well.
+    """
+    # Arrange / Act
+    script = on_main_step["run"]
+
+    # Assert
+    assert "exit 1" not in script
+    assert script.rstrip().endswith("exit 0")
+    assert on_main_step.get("continue-on-error") is None
+
+
+def test_the_report_comes_before_anything_is_published(publish_job, on_main_step):
+    """A tag cannot be taken back; a publication can still be stopped by whoever is watching the run.
+    That ordering is the only thing that makes a report worth more than a log line after the fact."""
+    # Arrange
+    steps = publish_job["steps"]
+    reported = steps.index(on_main_step)
+    published = [i for i, step in enumerate(steps) if "pypi-publish" in str(step.get("uses", ""))]
+
+    # Act / Assert
+    assert published, "the publish step is what this ordering is about"
+    assert reported < min(published)
+
+
+def test_an_unanswerable_question_is_reported_as_unanswerable(on_main_step):
+    """Never as "off main". A fetch failure that read as a verdict would cry wolf on every flaky
+    network, and a warning that fires when nothing is wrong is a warning people learn to skip."""
+    # Arrange / Act
+    script = on_main_step["run"]
+
+    # Assert
+    assert "NOT CLASSIFIED" in script
+    assert "possibly stale ref" in script
