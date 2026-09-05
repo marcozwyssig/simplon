@@ -54,6 +54,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
+from enum import Enum
 
 import click
 
@@ -153,15 +154,24 @@ def _metavar(param: click.Parameter) -> str:
     the parameter, because the table beside the usage line already carries the type and `--title TITLE`
     then says the one thing the type does not.
 
-    The exception is a CHOICE, where the type IS the information. Its members are rendered `[a|b]` - the
-    spelling Click uses - because a placeholder that swallowed the accepted values would leave the page
-    saying less than `--help` does, which is the one thing a generated reference may never do.
+    The exception is a CHOICE, where the type IS the information: a placeholder that swallowed the
+    accepted values would leave the page saying less than `--help` does, which is the one thing a
+    generated reference may never do. Its members are always spelled `{a|b}`.
+
+    ALWAYS BRACES, which is NOT what Click does. Click's `Choice.get_metavar` writes `{a|b}` only for a
+    required ARGUMENT and `[a|b]` for an option or an optional argument - it can afford the square
+    bracket because it never lists individual options in a usage line. This page does list them, and
+    there the square bracket carries one meaning and has to keep carrying only that one: OPTIONAL. A
+    required `--level [info|debug]` would read as optional beside a table that calls it required, which
+    is the very contradiction `_usage` refuses for a plain option. So the brace is used in all four
+    positions - one rule about brackets, no exception to remember - and the required-argument case is
+    Click's own spelling anyway.
 
     `Parameter.make_metavar()` is not called for any of it: its signature changed between Click 8.1 and
     8.2 (it now takes a context), so calling it would tie the page to one Click release.
     """
     choices = getattr(param.type, "choices", None)
-    base = param.metavar or (f"[{'|'.join(str(choice) for choice in choices)}]" if choices
+    base = param.metavar or ("{" + "|".join(str(choice) for choice in choices) + "}" if choices
                              else (param.name or "").upper())
     return f"{base}..." if param.nargs == -1 else base
 
@@ -281,6 +291,10 @@ def _default(param: Param) -> str:
         # Click lets a default be computed at parse time. Printing it would put a function repr - with a
         # memory address in it - on the page, which is both meaningless and different on every run.
         return "computed"
+    if isinstance(param.default, Enum):
+        # An enum default arrives as the MEMBER, whose str() is `Level.info` - a spelling no command line
+        # accepts. What a user types is the value, which is what Click matches the choice against.
+        return f"`{param.default.value}`"
     if param.default == "":
         return '`""`'
     return f"`{param.default}`"
@@ -313,8 +327,11 @@ def _param_table(entry: Entry) -> list[str]:
         return []
     rows = ["", "| Parameter | Type | Default | Description |", "| --- | --- | --- | --- |"]
     for param in entry.params:
-        shown = param.metavar if param.is_argument else ", ".join(f"`{d}`" for d in param.decls)
-        name = f"`{shown}`" if param.is_argument else shown
+        # `_cell` INSIDE the code span, not around it: a choice metavar carries the column separator
+        # (`{info|debug}`), and GFM requires that pipe escaped even within a code span - an unescaped one
+        # silently gives that one row an extra column.
+        shown = [_cell(param.metavar)] if param.is_argument else [_cell(d) for d in param.decls]
+        name = ", ".join(f"`{part}`" for part in shown)
         rows.append(f"| {name} | {_cell(param.type_name)} | {_default(param)} | {_cell(param.help)} |")
     return rows
 
@@ -422,10 +439,11 @@ def render(found: Sequence[Entry], *, product: str, title: str,
                 "product instantiates, so they are in no group above and cannot be typed here. The list "
                 "is what the PLATFORM offers - not what this manifest imports, which for a flat-form "
                 "manifest is a separate declaration.", "",
-                "Adopting one is not always just a command declaration. Most of them read product data "
+                "Adopting one is not always just a command declaration. Some of them read product data "
                 "of their own - a manifest section, a configuration file, a running environment - and "
-                "placed without it they would fail on their first line. The kernel's catalogue says, at "
-                "each coordinate, what that one needs.", "",
+                "placed without it they would fail on their first line; others need nothing but the "
+                "declaration. The kernel's catalogue says, at each coordinate, which of the two it is.",
+                "",
                 "| Task | What it does |", "| --- | --- |"]
         out += [f"| `{coordinate}` | {_cell(help_text)} |" for coordinate, help_text in rows]
     return "\n".join(out) + "\n"

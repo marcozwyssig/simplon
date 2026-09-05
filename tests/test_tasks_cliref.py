@@ -15,6 +15,7 @@ The two measured acceptances of the plan live here:
 AAA throughout.
 """
 import enum
+import re
 import sys
 import types
 
@@ -405,8 +406,10 @@ def _direct_app():
     app = typer.Typer(add_completion=False, no_args_is_help=True, help="direct")
 
     @app.command(name="publish")
-    def publish(channel: str = typer.Option(..., "--channel", help="where it goes"),
-                level: _Level = typer.Option(_Level.info, "--level", help="how loud")):
+    def publish(target: _Level = typer.Argument(..., help="what to publish"),
+                channel: str = typer.Option(..., "--channel", help="where it goes"),
+                level: _Level = typer.Option(_Level.info, "--level", help="how loud"),
+                extra: _Level = typer.Argument(_Level.info, help="and also")):
         """Publish it."""
 
     @app.command(name="idle")
@@ -429,16 +432,66 @@ def test_a_required_option_is_not_shown_as_optional_in_the_usage_line():
     assert "[--channel" not in usage
 
 
-def test_a_choice_option_shows_the_values_it_accepts():
-    # arrange: without this the page would print a placeholder and drop the only thing that matters
+def test_a_choice_shows_the_values_it_accepts_in_braces_whether_required_or_not():
+    # arrange: Click spells a choice `{a|b}` for a REQUIRED ARGUMENT and `[a|b]` everywhere else. Here it
+    # is `{a|b}` in all four positions, because the square bracket is spent on optionality in the usage
+    # line and a metavar that also used it would put `--level [info|debug]` next to a table saying
+    # "required".
     root = _direct_app()
 
     # act
     entry = next(e for e in cliref.entries(root) if e.path == ("publish",))
-    level = next(p for p in entry.params if p.name == "level")
+    by_name = {p.name: p for p in entry.params}
 
     # assert
-    assert level.metavar == "[info|debug]"
+    assert by_name["level"].metavar == "{info|debug}"      # optional option
+    assert by_name["target"].metavar == "{info|debug}"     # required argument - Click would say {..}
+    assert by_name["extra"].metavar == "{info|debug}"      # optional argument - Click would say [..]
+
+
+def test_the_square_bracket_in_a_usage_line_means_optional_and_nothing_else():
+    # arrange: the rule the required-option fix introduced. It is a rule only if NOTHING else spends the
+    # bracket - a choice metavar that did would make the line contradict the table beside it.
+    root = _direct_app()
+
+    # act
+    entry = next(e for e in cliref.entries(root) if e.path == ("publish",))
+    usage = cliref._usage(entry, "direct")
+
+    # assert: exactly one bracketed token per optional parameter, and none for a required one
+    assert usage.count("[") == usage.count("]") == len([p for p in entry.params if not p.required])
+    assert "publish {info|debug}" in usage                 # required choice argument, bare
+    assert "--channel CHANNEL" in usage and "[--channel" not in usage
+    assert "[--level {info|debug}]" in usage               # optional choice option
+    assert "[{info|debug}]" in usage                       # optional choice argument
+
+
+def test_a_pipe_inside_a_metavar_does_not_split_the_table_row():
+    # arrange: `{a|b}` carries the column separator INSIDE a cell. GFM needs it escaped even in a code
+    # span, and an unescaped one silently turns one row into a row with extra columns.
+    root = _direct_app()
+
+    # act
+    entry = next(e for e in cliref.entries(root) if e.path == ("publish",))
+    rows = [row for row in cliref._param_table(entry) if row.startswith("|")]
+
+    # assert: every row has the same cell count as the header
+    counts = {len(re.findall(r"(?<!\\)\|", row)) for row in rows}
+    assert counts == {5}
+
+
+def test_an_enum_default_is_shown_as_the_value_a_user_types():
+    # arrange: the default arrives as the enum MEMBER, whose str() is `_Level.info` - a spelling no
+    # command line accepts
+    root = _direct_app()
+
+    # act
+    entry = next(e for e in cliref.entries(root) if e.path == ("publish",))
+    page = cliref.render([entry], product="direct", title="t")
+
+    # assert
+    assert "`info`" in page
+    assert "_Level" not in page
 
 
 def test_the_front_matter_stays_valid_yaml_when_the_title_carries_quotes():
@@ -507,7 +560,10 @@ def test_the_unplaced_section_claims_no_more_than_the_catalogue_supports(impls):
 
     # assert
     assert "not a port" not in section
-    assert "product data of their own" in section
+    # and no quantifier the page cannot back: 8 of the kernel's 17 unplaced coordinates read product data,
+    # so "most of them" overstates the cost exactly as "not a port" understated it
+    assert "Most of them" not in section and "most of them" not in section
+    assert "Some of them" in section
     # and it says what the list IS, since a flat-form manifest must import a namespace before placing
     assert "not what this manifest imports" in section
 
