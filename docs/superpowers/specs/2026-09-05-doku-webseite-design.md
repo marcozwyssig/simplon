@@ -20,15 +20,30 @@ wurde: die AsciiDoc-Architekturdokumentation eines Produkts ueber docToolchain
 verschiedene Dinge mit zwei verschiedenen Lesern; sie durch dasselbe Werkzeug zu
 zwingen, weil es schon da ist, waere die falsche Sparsamkeit.
 
-**Der Kernel baut seine Doku trotzdem mit sich selbst.** Der Hugo-Lauf gehoert
-hinter einen Simplon-Task, nicht in ein Skript daneben -- sonst waere Simplons
-eigene Webseite das einzige, was Simplon nicht baut. Ob dieser Task im Katalog
-landet (und damit jedem Produkt zur Verfuegung steht) oder produkteigen bleibt,
-ist eine offene Frage: **kein anderes Produkt hat bisher danach gefragt**, und
-eine Faehigkeit auf Vorrat in den Kernel zu legen ist genau das, was der
-Katalogkommentar verbietet. Die Spec entscheidet sie bewusst nicht; der Plan
-soll mit der produkteigenen Fassung anfangen und den Weg in den Katalog offen
-lassen.
+**Der Kernel baut seine Doku mit sich selbst**, und zwar ueber einen Task **im
+Katalog** -- Entscheidung des Eigentuemers. Der Hugo-Lauf gehoert nicht in ein
+Skript daneben, sonst waere Simplons eigene Webseite das einzige, was Simplon
+nicht baut.
+
+Der Task heisst sinngemaess `docs:site` und steht neben `docs:render`. Damit
+kann jedes Produkt eine Hugo-Seite bauen, nicht nur der Kernel.
+
+**Die Gegenrede, und warum sie hier nicht traegt.** Der Katalogkommentar
+verbietet Faehigkeiten auf Vorrat, und heute hat genau ein Produkt eine Seite
+-- Simplon selbst. Dagegen steht: der Kernel traegt bereits `docs:render` als
+allgemeine Doku-Faehigkeit, und ein zweites Werkzeug daneben ist keine neue
+Kategorie, sondern eine zweite Auspraegung derselben. Die Mechanik (Hugo
+aufrufen, Ausgabeverzeichnis, Theme aufloesen) traegt kein Produktwissen. Was
+das Produkt beitraegt, sind Daten: wo die Inhalte liegen, wie die Seite heisst,
+welches Theme. Das ist genau die Trennung, nach der `docs:render` schon gebaut
+ist.
+
+**Was daraus folgt, und der Plan muss es einhalten:** ein Katalog-Task ist ein
+Versprechen an drei Produkte, nicht eine Bequemlichkeit fuer eines. Er muss
+seine Daten aus dem Manifest lesen statt Simplons Verzeichnisse anzunehmen, und
+er muss laut werden, wenn Hugo fehlt -- nach derselben Regel, die 0.1.7 gelernt
+hat: ein Werkzeug, das fehlt, ist nicht dasselbe wie ein Werkzeug, das
+gescheitert ist.
 
 ## Vier Entscheidungen des Eigentuemers
 
@@ -116,10 +131,19 @@ womit gesetzt wird. Drei Dinge aendern sich konkret:
 
 1. **Das Format ist Markdown**, nicht AsciiDoc. Die erzeugte Befehlsreferenz
    muss also Markdown ausgeben, das Hugo einliest -- nicht AsciiDoc.
-2. **Ein Theme wird gebraucht.** Das ist der Grund fuer den Wechsel und keine
-   Nebensache: eine Seite, die nach Rohtext aussieht, wird nicht gelesen. Die
-   Wahl gehoert in den Plan, samt der Frage, ob sie als Submodul, als
-   Hugo-Modul oder vendored hereinkommt -- die drei Wege altern verschieden.
+2. **Das Theme ist entschieden: Hextra, als Hugo-Modul.** Ein Doku-Theme mit
+   Suche, Dunkelmodus und Navigation ab Werk, das kein npm braucht -- nur Hugo
+   Extended. Als Hugo-Modul steht die Version in `go.mod`, Aktualisieren ist ein
+   Befehl, und das Repo bleibt schlank; der CI-Lauf braucht dafuer Go, das auf
+   GitHub-Runnern ohnehin liegt.
+
+   Ausdruecklich **kein Submodul**: agile-cockpit ist heute erst eines
+   losgeworden, weil Submodule bei jedem Klon und in jeder Pipeline eigene
+   Aufmerksamkeit verlangen. Und **nicht vendored**: ein kopiertes Theme hat
+   keinen Aktualisierungspfad, und niemand merkt, wenn das Original weiterzieht.
+
+   Da der Task im Katalog steht, ist das Theme **Produktdatum, nicht
+   Kernelentscheidung** -- Hextra ist Simplons Wahl, nicht die aller Produkte.
 3. **Der Bau braucht Hugo, nicht Docker.** `docs:render` umgeht eine lokale
    Installation, indem es containerisiert laeuft; fuer Hugo ist das nicht noetig,
    aber der CI-Lauf muss die Binaerdatei bekommen. Wie -- Action, Container oder
