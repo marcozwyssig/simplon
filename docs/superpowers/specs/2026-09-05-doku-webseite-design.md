@@ -14,11 +14,25 @@ Entscheidung des Eigentuemers: die Seite entsteht mit **Hugo**, damit sie wie
 eine professionelle Seite aussieht, und die Inhalte werden in **Markdown**
 geschrieben.
 
-Das ersetzt nicht `simplon.tasks.docs:render`. Der bleibt, wofuer er gebaut
-wurde: die AsciiDoc-Architekturdokumentation eines Produkts ueber docToolchain
-(netctl#1280). Eine Architekturdoku und eine Produktwebseite sind zwei
-verschiedene Dinge mit zwei verschiedenen Lesern; sie durch dasselbe Werkzeug zu
-zwingen, weil es schon da ist, waere die falsche Sparsamkeit.
+**Das ersetzt `simplon.tasks.docs:render` nicht. Es sind zwei verschiedene
+Anwendungsfaelle, und sie bleiben nebeneinander stehen.**
+
+| | `docs:render` (docToolchain) | `docs:site` (Hugo) |
+|---|---|---|
+| Was | Architekturdokumentation eines Produkts | Produktwebseite |
+| Fuer wen | Entwickler und Architekten, die AM System arbeiten | Benutzer und Uebernehmer, die MIT dem System arbeiten |
+| Format | AsciiDoc, arc42-naeher Aufbau | Markdown |
+| Ausgabe | HTML **und PDF** -- das PDF ist dort der Zweck (Abgabe, Ablage, Review) | HTML, und nur HTML |
+| Lebt | im Repo, versioniert mit dem Code | veroeffentlicht, versioniert mit dem Release |
+| Aussehen | zweitrangig, Inhalt zaehlt | erstrangig, es ist die Aussenseite |
+
+Sie durch dasselbe Werkzeug zu zwingen, weil eines schon da ist, waere die
+falsche Sparsamkeit -- und umgekehrt `docs:render` abzuschaffen, weil Hugo
+huebscher aussieht, waere es genauso: eine Architekturdoku als Webseite zu
+veroeffentlichen loest kein Problem, das jemand hat.
+
+**Ein Produkt kann beides brauchen.** netctl hat heute `docs:render`; wenn es
+morgen eine Webseite will, bekommt es `docs:site` daneben, nicht statt dessen.
 
 **Der Kernel baut seine Doku mit sich selbst**, und zwar ueber einen Task **im
 Katalog** -- Entscheidung des Eigentuemers. Der Hugo-Lauf gehoert nicht in ein
