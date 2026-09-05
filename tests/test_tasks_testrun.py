@@ -470,8 +470,8 @@ def _stub_chain(monkeypatch, rcs, report_rc=0):
     """Record the gates accept ran (with the args each received) and inject each one's rc."""
     ran = []
     monkeypatch.setattr(testrun, "assess_gate",
-                        lambda gate, cfg, extra, *, filtered: ran.append((gate.name, extra, filtered))
-                        or _gv(gate.name, rcs.get(gate.name, 0)))
+                        lambda gate, cfg, extra, *, filtered, earlier=():
+                        ran.append((gate.name, extra, filtered)) or _gv(gate.name, rcs.get(gate.name, 0)))
     monkeypatch.setattr(testrun, "report",
                         lambda cfg=None, *, filtered=False, run=None:
                         ran.append(("report", [], filtered)) or report_rc)
@@ -746,10 +746,15 @@ def test_aSuiteThatClaimsABrokenSetupAndStillExitsZeroIsNotGreen(monkeypatch, tm
 
     # act
     gv = testrun.assess_gate(cfg.gates[0], cfg, [], filtered=False)
+    rc = testrun.run_gate(cfg.gates[0], cfg, [], filtered=False)
 
     # assert: an empty marker still counts, and gets the generic wording rather than being dropped
     assert gv.verdict is Verdict.SETUP_FAILED
     assert gv.stage == "the suite's own setup"
+    # AND the gate is red on the way out. A `setup-failed` record handed back with rc 0 is a red run that
+    # CI reports as a success - the failure class of this ticket with its two halves swapped, and the half
+    # this test's name has always promised to measure.
+    assert gv.rc != 0 and rc != 0
 
 
 def test_theMarkerPathIsHandedToTheSuiteAndRestoredAfterwards(monkeypatch, tmp_path, runner):
@@ -802,7 +807,7 @@ def test_accept_reportsTheWeakestClaimOfTheWholeRun_soOneBrokenSetupIsNotHiddenB
                 "acceptance-dataplane": GateVerdict("acceptance-dataplane", Verdict.SETUP_FAILED, 1,
                                                     "preamble")}
     monkeypatch.setattr(testrun, "assess_gate",
-                        lambda gate, cfg, extra, *, filtered: verdicts[gate.name])
+                        lambda gate, cfg, extra, *, filtered, earlier=(): verdicts[gate.name])
 
     # act
     rc = testrun.accept([])
@@ -843,3 +848,157 @@ def test_report_putsTheRunsVerdictIntoTheArchiveItArchives(monkeypatch, tmp_path
     # assert
     written = (tmp_path / "test/reports/allure-results" / allure.ENVIRONMENT).read_text(encoding="utf-8")
     assert "verdict=setup-failed" in written
+
+
+# --- an exploratory run must not speak for the archive it did not run (#30, review 1) ---------------------
+#
+# The quarantine rule already keeps a `-k` run's RESULTS out of the shared archive. Its VERDICT has to
+# follow, or the two records of one directory contradict each other in silence: a green one-test hunt
+# stamping `passed` over the finding of a red full gate is the worse direction, and it is exactly the
+# "partial run that does not look like one" the quarantine exists for.
+
+
+def _run_gate_as_command(name, args, tmp_path):
+    """Invoke the gate the way the CLI does, so the stamp is written by the code path a user reaches."""
+    return testrun.gate(SimpleNamespace(info_name=name, args=list(args)), name=name)
+
+
+def test_anExploratoryRunStampsIntoItsOwnFile_leavingTheFullGatesRecordAlone(monkeypatch, tmp_path, runner):
+    # arrange: a full, green gate has stamped the canonical record
+    _register(monkeypatch, tmp_path, _data())
+    reports = str(tmp_path / "test/reports")
+    _run_gate_as_command("system", [], tmp_path)
+
+    # act: a one-test hunt that goes red
+    runner["rc"] = 1
+    rc = _run_gate_as_command("system", ["-k", "one_test"], tmp_path)
+
+    # assert: red on the way out, its own record written, and the canonical one untouched
+    assert rc == 1
+    assert verdict_module.read_stamp(reports)["verdict"] == "passed"
+    partial = verdict_module.read_stamp(reports, filtered=True)
+    assert partial["verdict"] == "failed" and partial["filtered"] is True
+    assert partial["line"].startswith("partial run - ")
+
+
+def test_aGreenExploratoryRunCannotStampOverTheFindingOfARedFullGate(monkeypatch, tmp_path, runner):
+    # arrange: the worse direction - a red full gate's finding is the thing that must survive
+    _register(monkeypatch, tmp_path, _data())
+    reports = str(tmp_path / "test/reports")
+    runner["rc"] = 1
+    _run_gate_as_command("system", [], tmp_path)
+
+    # act: a green `-k` run afterwards
+    runner["rc"] = 0
+    _run_gate_as_command("system", ["-k", "the_one_that_passes"], tmp_path)
+
+    # assert: the canonical record still says the full gate was red
+    assert verdict_module.read_stamp(reports)["verdict"] == "failed"
+    assert verdict_module.read_stamp(reports, filtered=True)["verdict"] == "passed"
+
+
+def test_accept_stampsAnExploratoryRunIntoItsOwnFileToo(monkeypatch, tmp_path, runner):
+    # arrange
+    _register(monkeypatch, tmp_path, _data())
+    reports = str(tmp_path / "test/reports")
+    verdict_module.write_stamp(reports, RunVerdict((GateVerdict("system", Verdict.PASSED),)))
+    _stub_chain(monkeypatch, {"system": 1})
+
+    # act
+    testrun.accept(["-k", "one"])
+
+    # assert
+    assert verdict_module.read_stamp(reports)["verdict"] == "passed"
+    assert verdict_module.read_stamp(reports, filtered=True)["verdict"] == "failed"
+
+
+def test_accept_stampsAnExploratoryAbortIntoTheExploratoryFile_notTheCanonicalOne(monkeypatch, tmp_path,
+                                                                                  runner):
+    # arrange: the section precondition refuses a `-k` run - the abort must be quarantined like the run
+    _register(monkeypatch, tmp_path, _data())
+    reports = str(tmp_path / "test/reports")
+    verdict_module.write_stamp(reports, RunVerdict((GateVerdict("system", Verdict.PASSED),)))
+    runner["rc:product.health:check"] = 7
+    _stub_chain(monkeypatch, {})
+
+    # act
+    assert testrun.accept(["-k", "one"]) == 7
+
+    # assert
+    assert verdict_module.read_stamp(reports)["verdict"] == "passed"
+    assert verdict_module.read_stamp(reports, filtered=True)["verdict"] == "not-run"
+
+
+# --- the run's verdict in the archive, not one gate's guess (#30, review 4) -------------------------------
+
+
+def test_aLaterGreenGateCannotOverwriteAnEarlierGatesSetupFailureInTheArchive(monkeypatch, tmp_path, runner):
+    # arrange: gate 1's setup fell over; gate 2 then runs green into the SAME results dir
+    _register(monkeypatch, tmp_path, _data())
+    cfg = testrun.config()
+    broke = GateVerdict("system", Verdict.SETUP_FAILED, 1, "preamble")
+
+    # act
+    testrun.assess_gate(cfg.gates[1], cfg, [], filtered=False, earlier=(broke,))
+
+    # assert: the archive states the RUN's weakest claim, not the last gate's own - the environment write
+    # is a last-wins merge, so a gate stating a run verdict from its own knowledge would defeat the
+    # precedence rule inside the one artefact it protects
+    written = (tmp_path / "test/reports/allure-results" / allure.ENVIRONMENT).read_text(encoding="utf-8")
+    assert "verdict=setup-failed" in written
+    assert "verdict.gate.system=setup failed (preamble, rc 1)" in written
+    assert "verdict.gate.acceptance-dataplane=passed" in written
+
+
+def test_report_leavesTheLastRealRunsArchiveAlone_whenNoGateOfThisRunEverStarted(monkeypatch, tmp_path,
+                                                                                 runner):
+    # arrange: a full run's archive, and a run whose every gate refused before touching anything
+    _register(monkeypatch, tmp_path, _data())
+    cfg = testrun.config()
+    results = tmp_path / "test/reports/allure-results"
+    results.mkdir(parents=True)
+    allure.write_environment(str(results), {"verdict": "passed"})
+    monkeypatch.setattr(testrun.allure, "render_report", lambda *a, **kw: allure.Render())
+
+    # act
+    testrun.report(cfg, run=RunVerdict((GateVerdict("system", Verdict.NOT_RUN, 7, "precondition"),)))
+
+    # assert: untouched - stating this run's verdict there is the stale-verdict defect pointing the
+    # other way
+    assert "verdict=passed" in (results / allure.ENVIRONMENT).read_text(encoding="utf-8")
+
+
+# --- the report step gets its own words (#30, review 3) ---------------------------------------------------
+
+
+def test_theReportStepIsNotDescribedAsASuiteThatRanAndFoundSomething(monkeypatch, tmp_path, runner):
+    # arrange: every gate green, the archive render red (#6)
+    _register(monkeypatch, tmp_path, _data())
+    reports = str(tmp_path / "test/reports")
+    _stub_chain(monkeypatch, {}, report_rc=1)
+
+    # act
+    assert testrun.accept([]) == 1
+
+    # assert: it ran no suite, so it must not borrow the sentence written for one - the stamp would
+    # otherwise carry a false statement of exactly the kind this whole change removes
+    stamp = verdict_module.read_stamp(reports)
+    step = [g for g in stamp["gates"] if g["gate"] == "report"][0]
+    assert step["verdict"] == "failed"
+    assert "the suite ran" not in step["line"]
+    assert "no archive" in step["line"] or "wrote no archive" in step["line"]
+
+
+def test_aRedReportStepThatIsTheWeakestElementDoesNotPutSuiteWordingIntoTheRunSummary(monkeypatch, tmp_path,
+                                                                                      runner):
+    # arrange: gates green, render red - the report step IS then the run's weakest element
+    _register(monkeypatch, tmp_path, _data())
+    _stub_chain(monkeypatch, {}, report_rc=1)
+
+    # act
+    testrun.accept([])
+
+    # assert
+    stamp = verdict_module.read_stamp(str(tmp_path / "test/reports"))
+    assert stamp["line"].startswith("report: failed")
+    assert "the suite ran" not in stamp["line"]

@@ -87,14 +87,26 @@ failed stage into the file named by `$SIMPLON_SETUP_FAILED`:
 
 ```python
 def pytest_sessionfinish(session, exitstatus):
-    if lab_never_came_up:
-        with open(os.environ["SIMPLON_SETUP_FAILED"], "w") as fh:
+    marker = os.environ.get("SIMPLON_SETUP_FAILED")
+    if lab_never_came_up and marker:
+        with open(marker, "w") as fh:
             fh.write("provision\n")
 ```
+
+`.get`, not `[...]`: the same suite has to run under a bare `pytest` too -- from
+an IDE, or in a checkout without the kernel -- and a `KeyError` raised out of
+`pytest_sessionfinish` would turn "the lab did not come up" into an internal
+error about a missing variable.
 
 Nothing is imported from the kernel to do that, on purpose: it is a path in the
 environment and a file with a stage name in it, so a suite in its own venv needs
 no version of anything to stay in step with.
+
+A run carrying passthrough args (`test system -k something`) is exploratory and
+therefore partial. Its results are quarantined into their own dir, its archive
+gets its own prefix, and its verdict gets its own stamp
+(`test-verdict-filtered.json`) -- a one-test hunt can never overwrite the record
+of the last full gate, in either direction.
 
 ## Developing Simplon
 

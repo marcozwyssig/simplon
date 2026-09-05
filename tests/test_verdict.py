@@ -159,3 +159,85 @@ def test_write_stamp_overwritesTheEarlierRunsRecord_soTheStampIsAlwaysThisInvoca
 def test_read_stamp_returnsNothingForAReportDirNobodyHasRunAGateInto(tmp_path):
     # arrange / act / assert: a missing stamp is not an error and, above all, not a pass
     assert verdict_module.read_stamp(str(tmp_path)) is None
+
+
+# --- the invariant that was missing in the other direction (#30, review 2) --------------------------------
+
+
+def test_aRedVerdictCannotCarryRcZero_becauseThatIsARedRecordWithAGreenExitCode():
+    # arrange / act / assert: the pair `simplon.cli._rc` would turn into a successful process while the
+    # record says the setup broke - this ticket's failure class with its two halves swapped
+    with pytest.raises(ValueError, match="cannot carry rc 0"):
+        GateVerdict("system", Verdict.SETUP_FAILED, 0, "provision")
+    with pytest.raises(ValueError, match="cannot carry rc 0"):
+        GateVerdict("system", Verdict.FAILED, 0)
+    with pytest.raises(ValueError, match="cannot carry rc 0"):
+        GateVerdict("system", Verdict.NOT_RUN, 0, "precondition")
+
+
+# --- a step that runs no suite gets its own words (#30, review 3) -----------------------------------------
+
+
+def test_detail_replacesTheClauseWrittenForAGateThatRunsASuite():
+    # arrange: the report step renders an archive and runs no tests at all
+    gv = GateVerdict("report", Verdict.FAILED, 1, detail="a render tool was present and wrote no archive")
+
+    # act / assert: the outcome and the rc stay the value object's, the sentence about WHAT ran is the
+    # producer's - and the default, which talks about a suite, would be false here
+    assert gv.line == "failed (rc 1) - a render tool was present and wrote no archive"
+    assert "the suite ran" not in gv.line
+
+
+def test_aGateWithoutADetailStillGetsTheWordingWrittenForASuite():
+    # arrange / act / assert: the default is not lost by making it overridable
+    assert GateVerdict("system", Verdict.FAILED, 1).line.endswith("the suite ran and reported failures")
+
+
+# --- one gate states one gate (#30, review 4) -------------------------------------------------------------
+
+
+def test_aSingleGatesEnvironmentHoldsOnlyItsOwnLine_neverTheRunsVerdict():
+    # arrange
+    gv = GateVerdict("system", Verdict.SETUP_FAILED, 1, "preamble")
+
+    # act
+    env = gv.environment()
+
+    # assert: the environment write is a last-wins merge over a shared dir, so a gate that also stated
+    # `verdict=` would have a later green gate overwrite this finding
+    assert list(env) == ["verdict.gate.system"]
+
+
+def test_wrote_results_isFalseForARunWhoseGatesAllRefusedBeforeTouchingAnything():
+    # arrange / act / assert: the condition under which the run's verdict may enter the archive at all
+    assert not RunVerdict((GateVerdict("a", Verdict.NOT_RUN, 7, "precondition"),)).wrote_results
+    assert RunVerdict((GateVerdict("a", Verdict.NOT_RUN, 7, "precondition"),
+                       GateVerdict("b", Verdict.FAILED, 1))).wrote_results
+    assert not RunVerdict().wrote_results
+
+
+# --- an exploratory run's record says so (#30, review 1) --------------------------------------------------
+
+
+def test_anExploratoryRunWritesItsOwnStampFile_soItCannotOverwriteTheCanonicalOne(tmp_path):
+    # arrange: the canonical record of a full, red gate
+    reports = str(tmp_path / "reports")
+    verdict_module.write_stamp(reports, RunVerdict((GateVerdict("system", Verdict.FAILED, 1),)))
+
+    # act: a green one-test hunt afterwards
+    verdict_module.write_stamp(reports, RunVerdict((GateVerdict("system", Verdict.PASSED),), filtered=True))
+
+    # assert: two records, each about its own kind of run, neither overwriting the other
+    assert verdict_module.read_stamp(reports)["verdict"] == "failed"
+    assert verdict_module.read_stamp(reports, filtered=True)["verdict"] == "passed"
+    assert verdict_module.stamp_name(filtered=True) != verdict_module.stamp_name()
+
+
+def test_anExploratoryRunSaysSoInItsSentenceAndItsEnvironment():
+    # arrange
+    run = RunVerdict((GateVerdict("system", Verdict.FAILED, 1),), filtered=True)
+
+    # act / assert: a reader handed only the sentence must not read a one-test hunt as a full gate
+    assert run.line.startswith("partial run - ")
+    assert run.environment()["verdict.partial"] == "true"
+    assert run.as_dict()["filtered"] is True
