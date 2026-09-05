@@ -170,6 +170,19 @@ tasks:
   docs:site:
     impl: simplon.tasks.site:build
     help: "Build the product's documentation website with Hugo, in Docker (HTML only)."
+  # The THIRD documentation shape, and the only one that is not a render of something a human wrote: the
+  # product's command reference, read off the app the CLI has just assembled. It is here rather than in a
+  # script beside the website for the reason every other entry in this file is: the mechanism (walk the
+  # Click tree, format Markdown) carries no product knowledge, while WHERE the page belongs is the
+  # product's own layout and arrives as `output`. A product with a website pins it with
+  # `with: { output: ... }`; one without still gets a usable command, because the path is an ordinary
+  # positional argument when nothing pins it.
+  docs:reference:
+    impl: simplon.tasks.cliref:reference
+    help: "Write the product's command reference as Markdown, read off its BUILT command line."
+    params:
+      output: { help: "where the Markdown page goes, relative to the product root" }
+      title:  { help: "the page title in the front matter (default: '<product> command reference')" }
 
   # --- tasks: the task machinery, addressable ---------------------------------------------------------
   # `generate` writes the product's committed CLI module; `catalogue` prints this file. Both are kernel
