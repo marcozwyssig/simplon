@@ -1,9 +1,23 @@
-"""Version-control commands (commit / push / prune-branches): git/gh subprocess wrappers.
+"""Version-control commands (commit / push / prune-branches) and the git primitives the release tag is
+cut with: git/gh subprocess wrappers.
 
-The one piece of real logic - whether a local branch is obsolete and why (merged into main, a merged PR's
-head branch, or kept because it is active/unmerged) - is the pure, unit-tested prune_verdict. The
-squash-merge workflow is why this matters: a squash-merged branch is NOT an ancestor of main, so the
-merged-PR-name check (via gh) is the authoritative signal.
+The two pieces of real logic are pure and unit-tested. `prune_verdict` decides whether a local branch is
+obsolete and why (merged into main, a merged PR's head branch, or kept because it is active/unmerged) -
+the squash-merge workflow is why it matters, since a squash-merged branch is NOT an ancestor of main, so
+the merged-PR-name check (via gh) is the authoritative signal. `tag_verdict` (#32/#23) decides what
+`release:tag` may do before it touches the remote.
+
+WHY THE TAG PRIMITIVES ARE HERE AND THE COMMAND IS NOT. This module is the kernel's single `git -C
+<ROOT>` seam, and a second one would be the drift every rule in this repository refuses; the pure
+verdict belongs beside its primitives for the same reason `prune_verdict` does. The COMMAND, though,
+lives in `simplon.tasks.release`, because its coordinate is `release:tag` - a phase command, not one of
+the git helpers `simplon.tasks.vcs` places under `support git`.
+
+The tag primitives below are also SILENT, unlike `commit`/`push`/`prune_branches` above, which log as
+they go. That is deliberate rather than inconsistent: the message `release:tag` has to produce describes
+a COMPOSITE state - whether the tag was cut by this run or left over from an earlier one, and whether it
+survived a rejected push - and no single primitive knows it. One caller composes them, so one caller
+owns every word about the outcome.
 
 The git wrappers run `git -C <ROOT>`; a consuming product points ROOT at its repo root via configure().
 """
@@ -15,7 +29,7 @@ from pathlib import Path
 from typing import Sequence
 
 from simplon import log
-from simplon.run import run
+from simplon.run import Result, run
 
 ROOT = Path.cwd()
 
@@ -33,6 +47,17 @@ def _git(args: list[str], *, capture: bool = True):
 def _require(tool: str) -> None:
     if shutil.which(tool) is None:
         log.die(f"missing required tool: {tool}")
+
+
+def require_git() -> None:
+    """The tool gate as a PUBLIC name, for a caller outside this module.
+
+    The commands below reach `_require` directly, but `simplon.tasks.release` composes the primitives
+    itself and needs the same gate - and `run()` does not turn a missing binary into a return code, it
+    raises FileNotFoundError from inside a wrapper the reader did not write. One named entry point beats
+    either a second `shutil.which` or a sibling module reaching for a private.
+    """
+    _require("git")
 
 
 # --- pure decision (unit-tested) --------------------------------------------------------------------
@@ -72,6 +97,38 @@ def prune_verdict(*, is_main_or_current: bool, in_worktree: bool,
     return ("delete", "unmerged") if prune_unmerged else ("keep", "unmerged")
 
 
+def tag_verdict(*, carried_by_main: bool, local_tag_at: str, head: str) -> tuple[str, str]:
+    """Decide what `release:tag` may do BEFORE it touches the remote (#32, guard #23):
+
+    - ("refuse", "off-main")  - HEAD is not carried by the remote's default branch. #23's question, and
+                               the state nothing stops anyone from tagging today: the release workflow
+                               builds whatever the tag points at, so a feature branch would publish.
+    - ("refuse", "moved")     - the tag already exists HERE, naming a different commit. Re-pointing it
+                               silently would publish something other than the earlier run promised.
+    - ("resume", "unpushed")  - the tag is already cut at HEAD. This is the state a REJECTED PUSH leaves
+                               behind, and it is neither "nothing to do" nor "done" - which is exactly
+                               why it needs a name (#32 acceptance 5). The answer is to push it, not to
+                               read it as a release that already happened.
+    - ("cut", "")             - no such tag here yet: the ordinary first run.
+
+    Order matters: off-main > moved > resume > cut. The guard is first because a tag an earlier run cut
+    on a feature branch is still a tag on a feature branch - resuming it would walk the guard's own
+    refusal straight to the remote.
+
+    WHAT IS NOT DECIDED HERE, deliberately: whether the REMOTE already carries the tag. That question is
+    the remote's to answer, and #3's whole mechanism rests on it - a tag is unique on the remote,
+    whoever pushes first has the number, and the loser is told by `git push` rather than by a reviewer.
+    A pre-flight `ls-remote` would move that decision here, where it would be raced anyway (the answer
+    can go stale between the check and the push) and where losing would look like this task's opinion
+    rather than a fact about the world.
+    """
+    if not carried_by_main:
+        return ("refuse", "off-main")
+    if not local_tag_at:
+        return ("cut", "")
+    return ("resume", "unpushed") if local_tag_at == head else ("refuse", "moved")
+
+
 # --- commands ---------------------------------------------------------------------------------------
 
 def commit(message: str) -> int:
@@ -98,6 +155,19 @@ def init_submodule(path: str = "lib/platform") -> int:
     vendoring something else passes its own path."""
     _require("git")
     return 0 if _git(["submodule", "update", "--init", path]).ok else 1
+
+
+def default_branch() -> str:
+    """The BARE name of the branch `origin/HEAD` points at, falling back to `main`.
+
+    Extracted from `prune_branches`, which has asked this question since it existed, so `release:tag`
+    asks it the same way rather than restating the expression. The fallback earns its place: a
+    repository whose remote-tracking symbolic ref was never set - `git remote add` + `git push -u`,
+    without a clone - has no `origin/HEAD` at all, which is the ordinary state of a repository created
+    rather than cloned.
+    """
+    named = (_git(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]).out or "").strip()
+    return named[len("origin/"):] if named.startswith("origin/") else (named or "main")
 
 
 def push() -> int:
@@ -131,8 +201,7 @@ def prune_branches(dry: bool = False, remote: bool = False, unmerged: bool = Fal
     if not _git(["fetch", "--prune", "--quiet"]).ok:
         log.die("git fetch failed")
 
-    main = (_git(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]).out or "").strip()
-    main = main[len("origin/"):] if main.startswith("origin/") else (main or "main")
+    main = default_branch()
     cur = (_git(["rev-parse", "--abbrev-ref", "HEAD"]).out or "").strip()
 
     wt = _git(["worktree", "list", "--porcelain"]).out or ""
@@ -251,3 +320,146 @@ def refresh_scopes(scopes: Sequence[str], host: str = "github.com") -> int:
     log.info(f"refreshing the gh token with: {', '.join(scopes)}")
     return 0 if run(["gh", "auth", "refresh", "-h", host, "-s", ",".join(scopes)],
                     capture=False).ok else 1
+
+
+# --- the release tag (#32; the guard it carries is #23) ---------------------------------------------
+#
+# Silent by design - see this module's head. `simplon.tasks.release` composes them and owns every word
+# printed about the outcome, because the outcome is a composite of what these each answer separately.
+
+def head_commit() -> str:
+    """The full sha of HEAD, or "" when this is not a git repository (or has no commit yet)."""
+    result = _git(["rev-parse", "--verify", "--quiet", "HEAD"])
+    return (result.out or "").strip() if result.ok else ""
+
+
+def describe(commit: str) -> str:
+    """`<short sha> ("<subject>")` for a commit, or the bare ref when git cannot resolve it.
+
+    Both messages that report a refusal print two commits against each other, and a bare sha pair does
+    not let a human see which is which - the subject line is what makes "this is my feature commit" and
+    "this is what main carries" tell themselves apart (#23's third open question).
+    """
+    result = _git(["log", "-1", "--format=%h (%s)", commit])
+    return (result.out or "").strip() if result.ok else commit
+
+
+def current_branch() -> str:
+    """The branch name HEAD is on, or "HEAD" on a detached checkout - git's own word for it."""
+    return (_git(["rev-parse", "--abbrev-ref", "HEAD"]).out or "").strip()
+
+
+def ref_exists(ref: str) -> bool:
+    """Whether `ref` resolves here. Used on `origin/<branch>`, where the distinction matters: a ref that
+    does not exist is not an ancestor of anything, so without this check a repository with no remote
+    would be diagnosed as a feature branch."""
+    return _git(["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"]).ok
+
+
+def valid_tag_name(name: str) -> bool:
+    """Whether git itself would accept `name` as a tag - `git check-ref-format`, not a convention.
+
+    The kernel deliberately validates nothing beyond this. WHICH tags publish is the product's own
+    statement, made in its release workflow's trigger (`tags: ["v*"]` here) and in its setuptools-scm
+    configuration; a kernel that enforced a shape would be imposing simplon's convention on every
+    product, and the one it enforced could disagree with the workflow that actually listens.
+    """
+    return bool(name) and _git(["check-ref-format", f"refs/tags/{name}"]).ok
+
+
+def tag_commit(name: str) -> str:
+    """The commit a LOCAL tag names, or "" when there is no such tag.
+
+    `^{commit}` peels an annotated tag to the commit it points at, so an annotated and a lightweight tag
+    on the same commit compare equal - the verdict is about which commit is being released, not about
+    which of the two shapes somebody used.
+    """
+    result = _git(["rev-parse", "--verify", "--quiet", f"refs/tags/{name}^{{commit}}"])
+    return (result.out or "").strip() if result.ok else ""
+
+
+def carried_by(commit: str, ref: str) -> bool:
+    """Whether `ref` contains `commit` - `git merge-base --is-ancestor`, the expression #23 named.
+
+    Note what this is NOT: a check that the tag matches a file. It asks whether the version being cut is
+    built from a commit the default branch carries, which is the same question netctl has asked of its
+    container images since #1088.
+    """
+    return _git(["merge-base", "--is-ancestor", commit, ref]).ok
+
+
+def fetch_branches() -> bool:
+    """Refresh the remote-tracking branches - and NOT the tags.
+
+    `--no-tags` is load-bearing rather than tidy. A plain fetch brings down every tag reachable from
+    what it fetched, so a rival's tag would land here as a LOCAL tag, and the collision would then be
+    refused by `git tag` ("already exists") instead of by the remote. That is precisely the pre-flight
+    check #32's acceptance 3 forbids, arrived at by accident - the remote must be what says no.
+
+    The refresh itself is worth having because the guard judges against `origin/<branch>`: a stale one
+    can only make the guard refuse a commit main really does carry (a false red, annoying), never let
+    an off-main commit through (a false green, the thing being guarded against). A failure to reach the
+    remote is therefore reported and survivable, not fatal.
+    """
+    return _git(["fetch", "--quiet", "--no-tags", "origin"]).ok
+
+
+def create_tag(name: str) -> bool:
+    """Cut a LIGHTWEIGHT tag at HEAD.
+
+    Lightweight because that is what `git tag vX.Y.Z` - the two-command route this command replaces, and
+    the one the README documents - produces, and what every tag in this repository already is. The
+    command and the hand-typed route have to be the same act; a command that produced a different KIND
+    of object would make "the freedom is two typed git commands" quietly untrue.
+    """
+    return _git(["tag", name]).ok
+
+
+def push_tag(name: str) -> Result:
+    """`git push origin <tag>` - ONE tag, named.
+
+    NEVER `--tags`, and the difference is not cosmetic: `--tags` pushes every local tag, including
+    whatever somebody cut to try something out. Measured in this repository: 14 local tags, none
+    missing from origin, so today it is harmless - and a `--dry-run --tags` in a scratch pair with two
+    stray tags offers both of them to the remote. The blast radius is a property of the flag, not of
+    today's tag list.
+
+    Captured rather than streamed, unlike the branch `push` above, because the caller must both SHOW
+    what git said and read WHY it said it - a rejection because the number is taken needs different
+    advice from a rejection because the network is down, and one message for both would say nothing.
+    """
+    return _git(["push", "origin", f"refs/tags/{name}"])
+
+
+def remote_tag_commit(name: str) -> str | None:
+    """What `origin` has under this tag, asked of the REMOTE. THREE answers, not two:
+
+      - a commit sha - origin carries the tag, there;
+      - `""`         - origin was asked and has no such tag;
+      - `None`       - origin could not be asked at all (no remote, no network, no permission).
+
+    The third is not pedantry. Both callers change their mind on it: a read-back that cannot reach the
+    remote has not verified anything, and a diagnosis that treats "could not ask" as "origin does not
+    have it" would tell somebody a rival's tag is their own leftover. Measured: `ls-remote` exits 0 with
+    empty output for a tag that is absent, and 128 when it cannot reach the remote, so `result.ok` is
+    exactly this distinction.
+
+    The read-back after the push exists for the reason `release:image` states about its own: a push
+    nobody verifies is the same defect as a report nobody reads, and this project has shipped that
+    twice. `ls-remote` talks to the remote over the wire and keeps no local store, so it cannot answer
+    out of a cache the way a local ref could.
+
+    The peeled `^{}` line wins where there is one: an annotated tag's own line carries the tag OBJECT's
+    id, and comparing that with a commit would report a mismatch for a tag that is perfectly correct.
+    """
+    result = _git(["ls-remote", "--tags", "origin", f"refs/tags/{name}"])
+    if not result.ok:
+        return None
+    found = ""
+    for line in (result.out or "").splitlines():
+        sha, _, ref = line.partition("\t")
+        if ref.strip() == f"refs/tags/{name}^{{}}":
+            return sha.strip()
+        if ref.strip() == f"refs/tags/{name}":
+            found = sha.strip()
+    return found

@@ -53,7 +53,7 @@ groups:
 # work. The command NAME is the coordinate's second half under that form, which is why the two commands
 # are `build reference` and `build site` and the aggregate over them had to be called something else.
 import:
-  delivery: [docs, test]
+  delivery: [docs, test, release]
 tasks:
   # `output` is PINNED now (#2, task 3): the Hugo project exists, so where the page belongs is no longer
   # an open question a caller answers on the command line. Pinned with `with:`, the parameter leaves the
@@ -86,6 +86,22 @@ tasks:
   # installed set the kernel runs against), and the roots stated by the config rather than on the argv.
   test:typecheck-python:
     group: test
+  # The release itself (#32). Simplon cuts its own releases with the command it ships, for the same
+  # reason it builds and tests itself with itself: a step never run in its own house rots unseen, and
+  # this one had rotted the furthest - it was the only part of the loop that lived in the README as
+  # prose instead of in the manifest as a command.
+  #
+  # `group: release` is not a choice made here. `release:tag` is a `release` coordinate, and a
+  # coordinate that opens with a phase name belongs to that phase; the kernel's own catalogue places it
+  # in exactly the same group for every product that adopts the new manifest form. This entry is the
+  # old form's way of saying the same thing, and it is what brings the `release` group into existence in
+  # this CLI - simplon had none, because until now it published nothing it had a command for.
+  #
+  # Note what is NOT here: a version. There is nowhere to put one. `pyproject.toml` declares
+  # `dynamic = ["version"]`, setuptools-scm derives the number from the tag, and the tag is the
+  # argument - so `./simplon.sh release tag v0.1.14` IS the whole act of choosing 0.1.14.
+  release:tag:
+    group: release
 
 # The documentation website's data (#2). Five values, every one of them required to BE declared: the
 # kernel defaults none of them, because a default would be simplon's own directory layout imposed on
