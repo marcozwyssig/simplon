@@ -20,6 +20,9 @@ at the token. Every failure here says the command that fixes it.
 from __future__ import annotations
 
 import os
+import shutil
+import zipfile
+from pathlib import Path
 from typing import Sequence
 
 from simplon import log, oras, run
@@ -147,3 +150,73 @@ def tags(registry: str, repository: str) -> list:
             "If the scopes are right, the package has to grant this repository read access - GHCR "
             "does not do that across repositories in one account automatically.")
     return result.out.split()
+
+
+# --- a DIRECTORY as an artifact ---------------------------------------------------------------------
+#
+# `push` and `pull` move a FILE, which is the registry's own shape. What products actually publish is
+# usually a DIRECTORY - a p2 update site, a rendered website, a folder of jars - so each of them zipped
+# it first, pulled and unzipped on the way back, and answered "which of these files is the archive"
+# themselves. That is the same six lines in every product and one place they can each get subtly
+# different, which is the argument this module was created with.
+
+
+def newest_tag(registry: str, repository: str) -> str:
+    """The most recently published tag of a package.
+
+    `oras repo tags` lists OLDEST FIRST, so the answer is the last line - a fact about someone else's
+    tool that was living in a shell pipeline in a workflow, where nothing tests it.
+    """
+    published = tags(registry, repository)
+    if not published:
+        raise PackageError(
+            f"{repository} has no tags in {registry}: there is nothing published to fetch. Publish one "
+            f"first, or check the name - a package that does not exist and one that is empty look the "
+            f"same from here.")
+    return published[-1]
+
+
+def push_directory(reference_: str, directory: Path | str, media_type: str,
+                   *, archive_dir: Path | None = None) -> Path:
+    """Zip `directory` and push the archive as an OCI artifact; returns the archive that was pushed.
+
+    The archive is named after the directory, beside it by default, because the name is what a consumer
+    sees after pulling: `site.zip` out of `site/` says what it holds, and a temporary name does not.
+    """
+    source = Path(directory)
+    if not source.is_dir():
+        raise PackageError(f"nothing to publish: {source} is not a directory")
+    target_dir = Path(archive_dir) if archive_dir else source.parent
+    target_dir.mkdir(parents=True, exist_ok=True)
+    archive = target_dir / f"{source.name}.zip"
+    # Rebuilt every time: the archive IS the directory, and a stale one would publish one version's
+    # number over another version's content.
+    archive.unlink(missing_ok=True)
+    shutil.make_archive(str(archive)[: -len(".zip")], "zip", source)
+    push(reference_, str(archive), media_type)
+    return archive
+
+
+def fetch_directory(reference_: str, destination: Path | str) -> Path:
+    """Pull an artifact published with `push_directory` and unpack it into `destination`.
+
+    The pulled archive's name is the publisher's business, not the consumer's, so this finds it rather
+    than making the caller guess: exactly one zip is expected, and anything else is said out loud.
+    """
+    target = Path(destination)
+    target.mkdir(parents=True, exist_ok=True)
+    scratch = target / ".pull"
+    shutil.rmtree(scratch, ignore_errors=True)
+    scratch.mkdir(parents=True)
+    try:
+        pull(reference_, str(scratch))
+        archives = sorted(scratch.glob("*.zip"))
+        if len(archives) != 1:
+            raise PackageError(
+                f"expected exactly one archive in {reference_}, found "
+                f"{[a.name for a in archives] or 'none'}")
+        with zipfile.ZipFile(archives[0]) as content:
+            content.extractall(target)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    return target
