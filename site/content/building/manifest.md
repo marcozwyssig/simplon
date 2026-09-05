@@ -40,7 +40,7 @@ merge. There is one tree, so there is no second way to bring a group into existe
 **A group you name is a promise.** Declare a group in your own tree and leave it without a single
 command anywhere in its subtree, and the manifest fails to load, naming the group. A group only the
 *catalogue* offers, that your tree never mentions, is simply dropped from the assembled CLI - see [the
-rule](../rules/#a-group-with-no-commands-does-not-appear) and the defect that forced it.
+rule](../rules/#a-group-with-no-commands-does-not-appear) and why both halves are needed.
 
 ## `task:`, and what the command adds
 
