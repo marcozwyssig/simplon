@@ -66,6 +66,13 @@ from simplon.orchestrator.manifest import Manifest
 #: the platform merely offers, and a test asserts nothing from the first half leaks into the second.
 UNPLACED_HEADING = "## Platform tasks this product has not placed"
 
+#: The section holding every command that has no group token: a single-member group collapsed onto its one
+#: command (`clitaxonomy.is_flat_command_group`) and a command the product registered on the root app
+#: itself. They share a section because they share the only thing a reader needs to know about them - that
+#: there is no group to type - and NOT a group note, because they are not one group and need not agree
+#: about the environment token.
+TOP_LEVEL_HEADING = "## Top-level commands"
+
 #: How a flag is named in the type column. Click's `ParamType.name` for a boolean is "boolean", which is
 #: true and useless: the thing a user types is a flag, not a value.
 FLAG = "flag"
@@ -111,6 +118,12 @@ class Entry:
     params: tuple[Param, ...]
     alias: str = ""
     default_action: bool = False
+    #: A leaf sitting directly on the ROOT, so there is no group token between the product and it. Two
+    #: unrelated shapes land here and neither is a group: a single-member group whose one command carries
+    #: its name, which `assemble` collapses to one visible top-level command, and a command the product
+    #: registered on the root app itself. Describing either as a group put a command line on the page
+    #: (`<product> <name> <command>`) that nothing can execute.
+    top_level: bool = False
 
 
 def root_command() -> click.Command:
@@ -133,13 +146,23 @@ def root_command() -> click.Command:
 
 
 def _metavar(param: click.Parameter) -> str:
-    """The placeholder a user sees for a parameter, without asking Click to format it.
+    """The placeholder a user sees for a parameter.
 
-    `Parameter.make_metavar()` changed signature between Click 8.1 and 8.2 (it now requires a context), so
-    calling it would tie the page to one Click release for no gain - the rule is `metavar or NAME`, and the
-    `...` on a variadic is the same suffix Click appends.
+    NOT Click's own rule, and the difference is chosen rather than overlooked. Click names a plain OPTION
+    after its TYPE (`--title TEXT`) and an ARGUMENT after its NAME (`TARGET`); here both are named after
+    the parameter, because the table beside the usage line already carries the type and `--title TITLE`
+    then says the one thing the type does not.
+
+    The exception is a CHOICE, where the type IS the information. Its members are rendered `[a|b]` - the
+    spelling Click uses - because a placeholder that swallowed the accepted values would leave the page
+    saying less than `--help` does, which is the one thing a generated reference may never do.
+
+    `Parameter.make_metavar()` is not called for any of it: its signature changed between Click 8.1 and
+    8.2 (it now takes a context), so calling it would tie the page to one Click release.
     """
-    base = param.metavar or param.name.upper()
+    choices = getattr(param.type, "choices", None)
+    base = param.metavar or (f"[{'|'.join(str(choice) for choice in choices)}]" if choices
+                             else (param.name or "").upper())
     return f"{base}..." if param.nargs == -1 else base
 
 
@@ -172,13 +195,15 @@ def _summary(text: str) -> str:
     return " ".join(first.split())
 
 
-def _aliases(root: click.Command) -> frozenset[str]:
-    """The names registered as HIDDEN commands on the root: the flat back-compat spellings.
+def _flat_spellings(root: click.Command) -> frozenset[str]:
+    """Every HIDDEN leaf registered on the ROOT - which is more than the back-compat aliases, and is meant
+    to be: it is the raw set, and a name only becomes a second spelling further down, where it matches the
+    leaf name of a command documented inside a group.
 
-    Matched by NAME, which is the same rule `assemble` registers them by - it gives a flat alias to every
-    UNAMBIGUOUS command name, so a name that reaches here belongs to exactly one command and the match
-    cannot go to the wrong one. Callback identity would not work: Typer builds a fresh wrapper per
-    registration, so the two spellings of one command share no object.
+    That match is by NAME, which is the same rule `assemble` registers an alias by - it gives one to every
+    UNAMBIGUOUS command name, so a matching name belongs to exactly one command and cannot be attached to
+    the wrong one. Callback identity would not work: Typer builds a fresh wrapper per registration, so the
+    two spellings of one command share no object.
     """
     return frozenset(name for name, cmd in getattr(root, "commands", {}).items()
                      if cmd.hidden and not isinstance(cmd, click.Group))
@@ -191,18 +216,23 @@ def entries(root: click.Command, *,
     Declaration order rather than alphabetical: it is the order the product's manifest chose, which groups
     a build stage next to the stage it feeds instead of next to whatever starts with the same letter.
     """
-    aliases = _aliases(root)
+    aliases = _flat_spellings(root)
     found: list[Entry] = []
 
     def entry(cmd: click.Command, path: tuple[str, ...], *, default_action: bool) -> Entry:
-        # A group's bare token IS its group; a leaf's group is its parent, and a leaf sitting on the root
-        # is a flat-collapsed single-member group whose path is its own name.
+        # A group's bare token IS its group. A leaf's group is its parent - and a leaf on the ROOT has
+        # none, so its own name is used for the env-gate lookup only: that answers correctly for a
+        # collapsed single-member group (the taxonomy knows it under exactly that name) and falsely-but-
+        # harmlessly for a product-only root command (the taxonomy has no such path, and
+        # `group_requires_env` answers False for a path it cannot resolve). What the name must NEVER
+        # become is a group token on the page, which is what `top_level` below is for.
+        top_level = len(path) == 1 and not default_action
         group = ".".join(path) if default_action else (".".join(path[:-1]) or path[0])
         text = str(cmd.help or "").strip()
         return Entry(path=path, group=group, summary=_summary(text), help=text,
                      env_first=bool(env_first(group)), params=_params(cmd),
                      alias=path[-1] if len(path) > 1 and path[-1] in aliases else "",
-                     default_action=default_action)
+                     default_action=default_action, top_level=top_level)
 
     def walk(cmd: click.Command, path: tuple[str, ...]) -> None:
         for name, sub in getattr(cmd, "commands", {}).items():
@@ -263,11 +293,14 @@ def _usage(entry: Entry, product: str) -> str:
     tokens = [product] + (["<env>"] if entry.env_first else []) + list(entry.path)
     for param in entry.params:
         if param.is_argument:
-            tokens.append(param.metavar if param.required else f"[{param.metavar}]")
+            token = param.metavar
         elif param.type_name == FLAG:
-            tokens.append(f"[{param.decls[0]}]")
+            token = param.decls[0]
         else:
-            tokens.append(f"[{param.decls[0]} {param.metavar}]")
+            token = f"{param.decls[0]} {param.metavar}"
+        # Brackets mean OPTIONAL. Putting them round a required option would have the usage line
+        # contradict the table beside it, which says "required" for the same parameter.
+        tokens.append(token if param.required else f"[{token}]")
     return " ".join(tokens)
 
 
@@ -286,6 +319,30 @@ def _param_table(entry: Entry) -> list[str]:
     return rows
 
 
+def _yaml(value: str) -> str:
+    """A YAML double-quoted scalar.
+
+    Not `repr`. The title arrives from a manifest, so it is not the kernel's to trust, and Python picks a
+    quote style by what the string happens to contain - a title carrying both quote characters comes out
+    as valid Python source and invalid YAML, which breaks the front matter and with it the page's title.
+    Whitespace is collapsed first, so a newline in the value cannot end the scalar either.
+    """
+    text = " ".join(str(value).split())
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _top_level_note(entry: Entry) -> str:
+    """The environment statement for a command with no group token.
+
+    Stated per COMMAND here, while a real group states it once for all its members: env-firstness is a
+    property of a GROUP, and the top-level section is not one group - it is every command that has no
+    group at all, and two of them need not agree.
+    """
+    if entry.env_first:
+        return "*Environment-first: takes a leading environment token.*"
+    return "*Environment-agnostic: takes no environment token.*"
+
+
 def _group_note(group: str, env_first: bool, product: str) -> str:
     spelled = group.replace(".", " ")
     if env_first:
@@ -296,7 +353,7 @@ def _group_note(group: str, env_first: bool, product: str) -> str:
 
 
 def render(found: Sequence[Entry], *, product: str, title: str,
-           unplaced: Iterable[tuple[str, str]] = ()) -> str:
+           unplaced_tasks: Iterable[tuple[str, str]] = ()) -> str:
     """The whole page, as Markdown with Hugo front matter.
 
     The front matter carries a `title` because without one Hugo names the page after its FILE, and a
@@ -306,7 +363,7 @@ def render(found: Sequence[Entry], *, product: str, title: str,
     count = len(found)
     out: list[str] = [
         "---",
-        f"title: {title!r}",
+        f"title: {_yaml(title)}",
         "---",
         "",
         "<!-- GENERATED by the simplon task `docs:reference` from the built command-line application.",
@@ -328,14 +385,27 @@ def render(found: Sequence[Entry], *, product: str, title: str,
         kind = "env-first" if entry.env_first else "agnostic"
         out.append(f"| `{_spelling(entry, product)}` | {kind} | {_cell(entry.summary)} |")
 
+    # Sections are keyed on the GROUP, with one shared key for everything that has no group: a section
+    # per top-level command would head a one-command section with the command's own name and then have to
+    # say something about a group that is not there.
     seen: set[str] = set()
     for entry in found:
-        if entry.group not in seen:
-            seen.add(entry.group)
-            out += ["", f"## {entry.group.replace('.', ' ')}", "",
-                    _group_note(entry.group, entry.env_first, product)]
-        out += ["", f"### `{_spelling(entry, product)}`", "", "```text",
-                _usage(entry, product), "```"]
+        section = "" if entry.top_level else entry.group
+        if section not in seen:
+            seen.add(section)
+            if entry.top_level:
+                out += ["", TOP_LEVEL_HEADING, "",
+                        f"These take no group token: each is typed straight after `{product}`. A "
+                        f"single-member group collapses onto its one command, and a product may also "
+                        f"register a command on the root itself; neither has a group to type. Each says "
+                        f"below whether it takes an environment token."]
+            else:
+                out += ["", f"## {entry.group.replace('.', ' ')}", "",
+                        _group_note(entry.group, entry.env_first, product)]
+        out += ["", f"### `{_spelling(entry, product)}`"]
+        if entry.top_level:
+            out += ["", _top_level_note(entry)]
+        out += ["", "```text", _usage(entry, product), "```"]
         if entry.default_action:
             out += ["", f"The group's default action: `{_spelling(entry, product)}` with no subcommand "
                         f"runs this."]
@@ -345,12 +415,17 @@ def render(found: Sequence[Entry], *, product: str, title: str,
             out += ["", entry.help]
         out += _param_table(entry)
 
-    rows = list(unplaced)
+    rows = list(unplaced_tasks)
     if rows:
         out += ["", UNPLACED_HEADING, "",
-                "These are tasks the delivery kernel offers that this product declares no command for, so "
-                "they are in no group above and cannot be typed here. They are listed because adopting "
-                "one is a manifest line, not a port.", "",
+                "These are coordinates the delivery kernel's catalogue offers that no command of this "
+                "product instantiates, so they are in no group above and cannot be typed here. The list "
+                "is what the PLATFORM offers - not what this manifest imports, which for a flat-form "
+                "manifest is a separate declaration.", "",
+                "Adopting one is not always just a command declaration. Most of them read product data "
+                "of their own - a manifest section, a configuration file, a running environment - and "
+                "placed without it they would fail on their first line. The kernel's catalogue says, at "
+                "each coordinate, what that one needs.", "",
                 "| Task | What it does |", "| --- | --- |"]
         out += [f"| `{coordinate}` | {_cell(help_text)} |" for coordinate, help_text in rows]
     return "\n".join(out) + "\n"
@@ -378,7 +453,7 @@ def reference(output: str, title: str = "") -> int:
     page = render(entries(root_command(), env_first=mf.taxonomy().group_requires_env),
                   product=ctx.name,
                   title=title or f"{ctx.name} command reference",
-                  unplaced=unplaced(mf, catalogue_mod.load()))
+                  unplaced_tasks=unplaced(mf, catalogue_mod.load()))
     path = ctx.root / relative
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(page, encoding="utf-8")

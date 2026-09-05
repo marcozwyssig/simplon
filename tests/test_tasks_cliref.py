@@ -14,12 +14,14 @@ The two measured acceptances of the plan live here:
 
 AAA throughout.
 """
+import enum
 import sys
 import types
 
 import click
 import pytest
 import typer
+import yaml
 from click.testing import CliRunner
 from typer.main import get_command
 
@@ -146,7 +148,7 @@ def _entries(root, mf):
 
 def _page(root, mf, product="sample", unplaced=()):
     return cliref.render(_entries(root, mf), product=product, title=f"{product} commands",
-                         unplaced=unplaced)
+                         unplaced_tasks=unplaced)
 
 
 def _visible_commands(root):
@@ -247,6 +249,74 @@ def test_the_env_first_distinction_comes_from_the_taxonomy_and_not_from_a_help_p
     assert by_path[("support", "git", "commit")].env_first is False
 
 
+# --- the shapes that have no group token -----------------------------------------------------------------
+
+_FLAT = """
+product: sample
+groups:
+  package:
+    package: { impl: "cliref_impls:wheel", help: "Package the artefacts." }
+  build:
+    wheel: { impl: "cliref_impls:up", help: "Build the wheel." }
+env_groups: [package]
+"""
+
+
+def test_a_single_member_group_that_collapses_is_never_described_as_a_group(impls):
+    # arrange: `is_flat_command_group` - a first-class, documented manifest shape. `sample package` IS the
+    # command; there is no `sample package <command>` to type, and claiming one is a lie on the page.
+    root, mf = _built(manifest_text=_FLAT, catalogue_text="tasks: {}\n")
+    assert mf.taxonomy().is_flat_command_group("package")
+
+    # act
+    found = _entries(root, mf)
+    page = cliref.render(found, product="sample", title="t")
+    package = next(e for e in found if e.path == ("package",))
+
+    # assert
+    assert package.top_level is True
+    assert "sample package <command>" not in page
+    assert "sample <env> package <command>" not in page
+    assert cliref.TOP_LEVEL_HEADING in page
+    # it is still env-first, and the usage line is where that has to show
+    assert "sample <env> package" in page
+
+
+def test_a_command_the_product_registers_on_the_root_itself_is_documented_as_one(impls):
+    # arrange: the seam `simplon.cli.assemble` documents - and the reason the source here is the RUNNING
+    # app. It is not a group either, so it must not be described as one.
+    mf = manifest.load(_MANIFEST, catalogue=catalogue_mod.loads(_CATALOGUE))
+    app = typer.Typer(add_completion=False, no_args_is_help=True, help="sample root")
+
+    @app.command(name="probe")
+    def probe():
+        """A command no manifest knows about."""
+
+    cli.assemble(app, mf, product="sample")
+    root = get_command(app)
+
+    # act
+    found = cliref.entries(root, env_first=mf.taxonomy().group_requires_env)
+    page = cliref.render(found, product="sample", title="t")
+
+    # assert
+    assert ("probe",) in [e.path for e in found]
+    assert "sample probe <command>" not in page
+    assert "`sample probe`" in page
+
+
+def test_a_grouped_command_still_gets_the_group_shape_it_really_has(impls):
+    # arrange: the fix must not flatten the case that WAS right
+    root, mf = _built()
+
+    # act
+    page = _page(root, mf)
+
+    # assert
+    assert "sample support git <command>" in page
+    assert "sample <env> deploy <command>" in page
+
+
 # --- the parameters, read off the Click objects ----------------------------------------------------------
 
 
@@ -323,6 +393,67 @@ def test_the_help_option_is_not_a_documented_parameter(impls):
     assert "help" not in names
 
 
+class _Level(str, enum.Enum):
+    info = "info"
+    debug = "debug"
+
+
+def _direct_app():
+    """A Typer app built the way a product's own module would build one, for the parameter shapes a
+    manifest cannot express: a REQUIRED option and an enum that Click turns into a Choice. Two commands,
+    because Typer collapses a one-command app into a bare command rather than a group."""
+    app = typer.Typer(add_completion=False, no_args_is_help=True, help="direct")
+
+    @app.command(name="publish")
+    def publish(channel: str = typer.Option(..., "--channel", help="where it goes"),
+                level: _Level = typer.Option(_Level.info, "--level", help="how loud")):
+        """Publish it."""
+
+    @app.command(name="idle")
+    def idle():
+        """Do nothing."""
+
+    return get_command(app)
+
+
+def test_a_required_option_is_not_shown_as_optional_in_the_usage_line():
+    # arrange: the table says "required"; a usage line bracketing it would contradict the table
+    root = _direct_app()
+
+    # act
+    entry = next(e for e in cliref.entries(root) if e.path == ("publish",))
+    usage = cliref._usage(entry, "direct")
+
+    # assert
+    assert "--channel CHANNEL" in usage
+    assert "[--channel" not in usage
+
+
+def test_a_choice_option_shows_the_values_it_accepts():
+    # arrange: without this the page would print a placeholder and drop the only thing that matters
+    root = _direct_app()
+
+    # act
+    entry = next(e for e in cliref.entries(root) if e.path == ("publish",))
+    level = next(p for p in entry.params if p.name == "level")
+
+    # assert
+    assert level.metavar == "[info|debug]"
+
+
+def test_the_front_matter_stays_valid_yaml_when_the_title_carries_quotes():
+    # arrange: the title comes from a manifest, so it is not the kernel's to trust
+    entry = cliref.Entry(path=("x",), group="x", summary="s", help="h", env_first=False, params=())
+
+    # act
+    title = 'it\'s a "reference"'
+    page = cliref.render([entry], product="p", title=title)
+
+    # assert
+    front = yaml.safe_load(page.split("---", 2)[1])
+    assert front["title"] == title
+
+
 # --- the rendered page ------------------------------------------------------------------------------------
 
 
@@ -362,6 +493,23 @@ def test_the_page_names_the_second_spelling_of_a_command_that_has_one(impls):
 
     # assert
     assert "`sample commit`" in page
+
+
+def test_the_unplaced_section_claims_no_more_than_the_catalogue_supports(impls):
+    # arrange: the catalogue itself says `support:nexus` reads a `nexus:` section, `test:gate` needs a
+    # running lab, and so on - "placed here, each would be a command that dies on its first line". A page
+    # promising that adopting one is a manifest line contradicts the source of truth in the same repo.
+    root, mf = _built()
+
+    # act
+    page = _page(root, mf, unplaced=cliref.unplaced(mf, catalogue_mod.loads(_CATALOGUE)))
+    section = page.split(cliref.UNPLACED_HEADING)[1]
+
+    # assert
+    assert "not a port" not in section
+    assert "product data of their own" in section
+    # and it says what the list IS, since a flat-form manifest must import a namespace before placing
+    assert "not what this manifest imports" in section
 
 
 def test_the_page_lists_the_platform_tasks_this_product_has_not_placed(impls):
