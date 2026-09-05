@@ -8,6 +8,12 @@ build/
 dist/
 *.egg-info/
 
+# The version file setuptools-scm writes at build time (#3). It is a build OUTPUT that happens to land
+# among the sources, because it has to sit inside the package to be shipped in the wheel - the same shape
+# as the generated command reference below. Committing it would put a fourth spelling of the version back
+# into the tree, which is the whole thing #3 removes; `src/simplon/__init__.py` copes with its absence.
+src/simplon/_version.py
+
 # The documentation website (#2): the SOURCES belong here, the generated half does not.
 #
 # The site is built into build/website/, which the build/ rule above already covers - it is a build

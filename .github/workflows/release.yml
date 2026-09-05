@@ -10,7 +10,14 @@ jobs:
     permissions:
       id-token: write        # Trusted Publishing: no API token in the repo
     steps:
+      # fetch-depth: 0, and it is load-bearing (#3). The version is DERIVED from the tag by
+      # setuptools-scm, and checkout's default depth of 1 gives it the tag without the history behind
+      # it: it then produces a version that is merely wrong rather than failing, and PyPI accepts the
+      # wheel. The old hand-written gate below was loud; a shallow clone is not, which is why the depth
+      # is stated here instead of inherited. tests/test_release_workflow.py holds it.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -21,15 +28,36 @@ jobs:
       # installs the built package and loads its catalogue from
       # site-packages -- it is the only one that catches a path escape
       # before it ships.
-      # The tag is what a human types; pyproject.toml decides what is uploaded. Nothing local pairs
-      # them, so a tag ahead of the version would silently re-upload the old one (or be rejected by
-      # PyPI as a duplicate) after the whole gate had already gone green.
-      - name: The tag must name the version being published
-        run: |
-          test "${GITHUB_REF_NAME#v}" = "$(python -c 'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')" \
-            || { echo "tag ${GITHUB_REF_NAME} does not match the project version"; exit 1; }
       - run: ./simplon.sh test all
       - run: ./simplon.sh build wheel
+      # WHAT REPLACED "the tag must name the version being published" (#3).
+      #
+      # That step compared the tag a human typed with the number a human had typed into pyproject.toml.
+      # There is no number in pyproject.toml any more, and comparing the tag with a version derived FROM
+      # the tag would be a tautology - so the old step is gone rather than rewritten.
+      #
+      # What is NOT tautological is whether the derivation ran on the inputs it needed. Three things
+      # make it quietly produce the wrong string: a shallow clone (guarded above, but a default can be
+      # restored by someone who does not know why it is there), a dirty working tree, which appends a
+      # local `+g….dYYYYMMDD` segment, and a tag that is not where the build is standing. All three are
+      # visible in ONE place - the filename of the wheel that was actually built - so that is what is
+      # read. Recomputing the version here would only repeat whatever mistake produced it.
+      #
+      # It runs AFTER the build for that reason, and before the upload: PyPI rejects a local version
+      # outright, but by then the tests have run and the failure arrives as a red publish rather than
+      # as an answer.
+      - name: The wheel that was built must be the tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          built="$(ls dist/simplon-*.whl | sed -E 's|.*/simplon-([^-]+)-.*|\1|')"
+          test "$built" = "$version" || {
+            echo "tag ${GITHUB_REF_NAME} was built as ${built}, not ${version}."
+            echo "The version is derived from git by setuptools-scm, so a mismatch means the derivation"
+            echo "saw something other than a clean checkout standing exactly on the tag: a shallow"
+            echo "clone (fetch-depth), an unclean working tree (a '+local' segment), or a tag that does"
+            echo "not point at this commit."
+            exit 1
+          }
       - uses: pypa/gh-action-pypi-publish@release/v1
 
   # The documentation website, published to GitHub Pages by the SAME tag that published the wheel.
@@ -68,7 +96,13 @@ jobs:
       group: pages
       cancel-in-progress: false
     steps:
+      # The same full history as the publish job, for the same reason (#3): the site build installs and
+      # imports the kernel, which reports its own setuptools-scm version, and a shallow clone would put a
+      # wrong one on the page. This job runs after the wheel is already on PyPI, so nothing downstream
+      # would catch it.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

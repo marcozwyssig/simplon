@@ -18,12 +18,16 @@ The generated-CLI check below goes one step further: it renders a scaffolded pro
 `test:typecheck-python` runs. A product's own sources passing that gate proves nothing about the file
 the kernel hands it - see the regression this guards (generated-typeclean-report.md).
 """
+import re
 import subprocess
 import sys
 import venv
 from pathlib import Path
 
 import pytest
+
+import simplon
+from simplon import bootstrap
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -158,3 +162,62 @@ def test_the_generated_cli_passes_its_own_type_gate(installed_typecheck, tmp_pat
 
     # assert
     assert out.returncode == 0, out.stdout + out.stderr
+
+
+# --- the version, proved against a BUILT and INSTALLED package (#3) ---------------------------------------
+#
+# The version comes from the git tag now, and every other test in this repository reads it out of a source
+# tree that has `.git` sitting right beside it. An installed package has no such thing: the tag has to have
+# been baked in at build time, into `_version.py` and into the distribution metadata. Configuration cannot
+# be trusted to say so - a wrong `version_file` path, a package-data omission, a build that silently fell
+# back - so this builds the wheel, installs it, and asks it.
+
+_VERSION_PROBE = (
+    "import simplon, importlib.metadata as md;"
+    "print(simplon.__version__);"
+    "print(md.version('simplon'));"
+    "import simplon._version as v; print(v.version)"
+)
+
+
+def test_the_installed_package_reports_the_version_the_source_tree_derives(installed):
+    """One number, three ways of asking, and it is the same number the checkout says.
+
+    `simplon.__version__` is what the scaffolder's pin is computed from; `importlib.metadata.version` is
+    what pip resolves against; `_version.py` is the file that had to make it into the wheel for either to
+    work without git. If the three disagree, or if any of them disagrees with the tree the wheel was built
+    from, the wheel is mislabelled - and PyPI would take it anyway.
+    """
+    # arrange
+    py = installed / ("python.exe" if sys.platform == "win32" else "python")
+
+    # act: run OUTSIDE the repo, so no stray `.git` and no source tree can answer for the installed package
+    out = subprocess.run([str(py), "-c", _VERSION_PROBE], cwd=str(Path(py).parent),
+                         capture_output=True, text=True)
+
+    # assert
+    assert out.returncode == 0, out.stderr
+    dunder, metadata, from_file = out.stdout.split()
+    assert dunder == metadata == from_file, out.stdout
+    assert dunder == simplon.__version__, (
+        f"the built wheel says {dunder}, the tree it was built from says {simplon.__version__}")
+
+
+def test_a_product_scaffolded_by_the_installed_kernel_pins_an_installable_kernel(installed, tmp_path):
+    """The end of the chain the ticket cares about: whatever version the wheel calls itself - and on any
+    branch that is a `.postN.devM+g...` one - the requirements.txt it writes for somebody else's product
+    must name a version that is on PyPI. A dev pin there is not a cosmetic wart; it is a product that
+    cannot install at all, discovered by its author and not by us."""
+    # arrange
+    exe = installed / ("simplon.exe" if sys.platform == "win32" else "simplon")
+    product = tmp_path / "pinned"
+
+    # act
+    out = subprocess.run([str(exe), "init", "demo", "--dir", str(product)], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    text = (product / "orchestrator" / "requirements.txt").read_text(encoding="utf-8")
+    pinned = re.search(r"^simplon==(\S+)", text, re.M).group(1)
+
+    # assert: a plain release, and specifically the one this kernel descends from
+    assert re.fullmatch(r"\d+\.\d+\.\d+", pinned), f"scaffolded pin {pinned!r} is not a released version"
+    assert pinned == bootstrap.released_pin(simplon.__version__)

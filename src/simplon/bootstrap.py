@@ -73,6 +73,8 @@ import sys
 from importlib.resources import files
 from pathlib import Path
 
+import simplon
+
 # A product name is a lowercase slug: it becomes the shim/manifest filename, the manifest `product:` label,
 # the LAUNCH_PRODUCT diagnostic token and the `<PRODUCT>_ENV` variable stem. The package itself is the FIXED
 # identifier `orchestrator` (as in netctl), so a hyphenated slug never has to be a Python identifier.
@@ -155,7 +157,55 @@ def env_var_name(name: str) -> str:
     return name.upper().replace("-", "_") + "_ENV"
 
 
-# --- file templates (PURE text; @@PRODUCT@@ / @@ENV_VAR@@ are the only substitutions) ----------------------
+# The version this kernel calls itself, reduced to one PyPI can resolve. Two shapes get through, and they
+# are exactly the two `[tool.setuptools_scm]`'s `no-guess-dev` scheme produces:
+#
+#   0.1.12                                  built from the tag v0.1.12 - a release, and the pin is itself
+#   0.1.12.post1.dev3[+g1234abc[.d2026…]]   three commits past it - the pin is the 0.1.12 on the front
+#
+# The second group is optional and DISCARDED; the first is the whole answer. Anything else is refused by
+# `released_pin` below rather than trimmed into something plausible.
+_RELEASED_PIN_RE = re.compile(r"^(?P<release>\d+\.\d+\.\d+)(?:\.post\d+\.dev\d+)?(?:\+[A-Za-z0-9.]+)?$")
+
+
+def released_pin(version: str) -> str:
+    """The kernel version a scaffolded product may pin, derived from `version`, or ValueError.
+
+    THE PROBLEM THIS SOLVES (#3). The pin goes into a generated product's `requirements.txt` as
+    `simplon==<x>`, and that file is the first thing its author runs `pip install -r` against. It must
+    therefore name a version that EXISTS on PyPI. Since the kernel's own version now comes from the git
+    tag, a kernel built anywhere but at a tag calls itself something like `0.1.12.post1.dev3+g1234abc` -
+    correct for the kernel, and fatal as a pin: `pip install simplon==0.1.12.post1.dev3+g1234abc` resolves
+    to nothing, and the product arrives broken.
+
+    THE DECISION, and why it is not "pin what we are". A dev build is not published, so no `==` pin can
+    name it truthfully. The closest true statement available is the release the build DESCENDS FROM, and
+    the `no-guess-dev` version scheme was chosen precisely so that this string carries it: the release is
+    the part before `.post`. So a product scaffolded from a developer's checkout pins the newest kernel
+    that actually shipped - older than the one doing the scaffolding, never newer, and always installable.
+
+    THE ALTERNATIVES, and why not. Pinning `0.1.13.dev3+…` writes a broken file. Pinning the default
+    scheme's guessed `0.1.13` writes a file that is broken TODAY and might start working later on a
+    version nobody verified against. Refusing to scaffold at all from an untagged tree would fail the one
+    command every new user runs first, for a reason that is the kernel's business and not theirs.
+
+    ANYTHING ELSE RAISES, and that is deliberate: a pre-release, a version scheme somebody changed, or the
+    `0.0.0.dev0+unknown` a kernel reports when it is neither built nor installed. Each of those means "no
+    released version can be derived from this", and the honest place to say so is here - loudly, in the
+    scaffolder's own process - rather than in somebody else's `pip install` a week later.
+    """
+    match = _RELEASED_PIN_RE.match((version or "").strip())
+    if not match:
+        raise ValueError(
+            f"simplon.bootstrap: cannot derive a released kernel version from {version!r}, so there is "
+            f"no pin a scaffolded product could install; expected a release ('0.1.12') or a "
+            f"no-guess-dev descendant of one ('0.1.12.post1.dev3+g1234abc'). If this kernel reports "
+            f"'0.0.0.dev0+unknown' it is neither built nor installed - install it (`pip install -e .`) "
+            f"and scaffold again")
+    return match.group("release")
+
+
+# --- file templates (PURE text; @@PRODUCT@@ / @@ENV_VAR@@ / @@PKG_DIR@@ / @@KERNEL_PIN@@ substitute) ------
 # Kept as literal strings with sentinel placeholders (not str.format) so the embedded shell/python braces
 # stay verbatim and free of escaping. render() substitutes both tokens.
 
@@ -243,7 +293,12 @@ _REQUIREMENTS = """\
 # kernel; nothing is vendored and nothing is included by path. Declaring the
 # `test:typecheck-python` gate? Its mypy is an optional extra, so write
 # `simplon[typecheck]==...` here instead.
-simplon==0.1.12
+#
+# The number below is not typed by anyone: it is the RELEASED version of the
+# kernel that scaffolded this product (simplon.bootstrap.released_pin). When
+# that kernel was itself a development build, this is the release it descended
+# from - the newest simplon on PyPI at the time, and one that installs.
+simplon==@@KERNEL_PIN@@
 
 # --- @@PRODUCT@@-product-only deps ---
 """
@@ -424,7 +479,7 @@ def _templates(name: str, orch_dir: str) -> dict[str, str]:
 
 def render(name: str, *, orch_dir: str = _ORCH_DIR) -> dict[str, str]:
     """PURE: the product skeleton as a {relative POSIX path -> file content} map, with @@PRODUCT@@,
-    @@ENV_VAR@@ and @@PKG_DIR@@ substituted. No I/O, no yaml/pydantic import - so a test can validate the
+    @@ENV_VAR@@, @@PKG_DIR@@ and @@KERNEL_PIN@@ substituted. No I/O, no yaml/pydantic import - so a test can validate the
     rendered manifest through the real loader and assert the exact file set without a filesystem or the
     product's deps.
 
@@ -435,10 +490,15 @@ def render(name: str, *, orch_dir: str = _ORCH_DIR) -> dict[str, str]:
     block = validate_orch_dir(orch_dir)
     env_var = env_var_name(product)
     pkg_dir = pkg_dir_for(block)
+    # Still pure - a module constant read, no I/O - and it raises BEFORE any of the other files are
+    # rendered, so a kernel that cannot name a released version scaffolds nothing at all rather than a
+    # tree with one un-installable file in it.
+    kernel_pin = released_pin(simplon.__version__)
     return {
         rel: (template.replace("@@PRODUCT@@", product)
                       .replace("@@ENV_VAR@@", env_var)
-                      .replace("@@PKG_DIR@@", pkg_dir))
+                      .replace("@@PKG_DIR@@", pkg_dir)
+                      .replace("@@KERNEL_PIN@@", kernel_pin))
         for rel, template in _templates(product, block).items()
     }
 

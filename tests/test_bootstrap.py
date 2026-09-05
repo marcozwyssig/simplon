@@ -7,7 +7,6 @@ import os
 import re
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 import pytest
@@ -220,32 +219,65 @@ def test_requirements_pin_the_kernel_by_version_and_do_not_repin_its_deps():
         assert kernel_pin not in req, f"kernel dep {kernel_pin!r} is re-pinned inline instead of via simplon's own deps"
 
 
-def test_requirements_kernel_pin_matches_the_installed_simplon_version(tmp_path):
+def test_requirements_kernel_pin_matches_the_released_kernel_this_one_descends_from(tmp_path):
     # arrange: a real scaffold on disk
     bootstrap.write("fooctl", tmp_path)
     req_file = tmp_path / "orchestrator" / "requirements.txt"
 
     # act: pull the pinned version out of the written file
     text = req_file.read_text(encoding="utf-8")
-    pinned = re.search(r"^simplon==(\d+\.\d+\.\d+)", text, re.M).group(1)
+    pinned = re.search(r"^simplon==(\S+)", text, re.M).group(1)
 
-    # assert: the scaffolder pins the SAME kernel version it ships with, so a fresh product's first
-    # `pip install -r requirements.txt` lands on the kernel it was generated against, not a stale guess
-    assert pinned == simplon.__version__
+    # assert: the scaffolder pins the kernel it ships with, REDUCED to a released version - identical to
+    # __version__ when this kernel was built from a tag, and the release it descends from otherwise. A
+    # fresh product's first `pip install -r requirements.txt` must land on a kernel that is on PyPI.
+    assert pinned == bootstrap.released_pin(simplon.__version__)
 
 
-def test_the_declared_distribution_version_matches_the_package_version():
-    # arrange: pyproject.toml is what the release workflow uploads under, and nothing else reads it back.
-    # The pin test above only chains __version__ to the scaffolder, so a bumped __init__ with a forgotten
-    # pyproject (or the reverse) stays green there and only surfaces as a wrong or rejected PyPI upload.
-    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+# --- the pin must name a version PyPI HAS, which is not always the version this kernel IS (#3) ---------
+#
+# With the version coming from the tag, a kernel built from an untagged tree calls itself
+# `0.1.12.post1.dev3+g1234abc`. That is the right answer for the kernel and poison for the pin:
+# `pip install simplon==0.1.12.post1.dev3+g1234abc` finds nothing on PyPI, so a product scaffolded from a
+# developer's checkout would arrive un-installable. `released_pin` is the one place that reduction is
+# decided, and it refuses rather than guesses when it cannot make a released version out of what it has.
 
-    # act
-    declared = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["version"]
 
-    # assert
-    assert declared == simplon.__version__, (
-        f"pyproject.toml says {declared}, simplon.__version__ says {simplon.__version__}")
+def test_released_pin_passes_a_release_version_through_unchanged():
+    # arrange / act / assert: a kernel built from a tag IS a release; the pin is the version, as before
+    assert bootstrap.released_pin("0.1.12") == "0.1.12"
+
+
+def test_released_pin_reduces_a_dev_build_to_the_release_it_descends_from():
+    # arrange: what `no-guess-dev` renders three commits after v0.1.12, with and without the local part
+    # (the local part carries the node, and a `.dYYYYMMDD` suffix when the working tree is dirty)
+    # act / assert: the answer is the last version that actually shipped, never the next one
+    assert bootstrap.released_pin("0.1.12.post1.dev3") == "0.1.12"
+    assert bootstrap.released_pin("0.1.12.post1.dev3+g1234abc") == "0.1.12"
+    assert bootstrap.released_pin("0.1.12.post1.dev3+g1234abc.d20260905") == "0.1.12"
+
+
+@pytest.mark.parametrize("version", [
+    "0.1.13.dev3+g1234abc",   # `guess-next-dev`: names the NEXT version, which nobody has published
+    "0.0.0.dev0+unknown",     # simplon neither built nor installed - there is no true answer to give
+    "0.2.0rc1",               # a pre-release: on PyPI, but `pip install` skips it without --pre
+    "",
+])
+def test_released_pin_refuses_anything_it_cannot_turn_into_a_released_version(version):
+    # arrange / act / assert: loudly, and naming the value - writing a broken pin into somebody else's
+    # requirements.txt is a failure they would meet later and elsewhere
+    with pytest.raises(ValueError, match="released"):
+        bootstrap.released_pin(version)
+
+
+def test_the_scaffolded_pin_is_a_plain_release_whatever_this_kernel_calls_itself():
+    # arrange / act: the pin as it is actually rendered, from whatever version this checkout produces
+    req = bootstrap.render("fooctl")["orchestrator/requirements.txt"]
+    pinned = re.search(r"^simplon==(\S+)", req, re.M).group(1)
+
+    # assert: three final numbers and nothing else - no `.dev`, no `.post`, no local `+...` segment
+    assert re.fullmatch(r"\d+\.\d+\.\d+", pinned), (
+        f"the scaffolder would pin {pinned!r}, which PyPI cannot resolve")
 
 
 # --- gap #737-2: the `all` aggregate is reachable (the kernel binds it), not a dead placeholder --------
