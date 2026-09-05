@@ -189,6 +189,43 @@ mechanism working, not a fault: the manifest is the single place the theme versi
 clean tree after a site build.
 {{< /callout >}}
 
+### `images:` - the container image
+
+`build:image` and `release:image` read one entry of this section, pinned per command with
+`with: { name: ... }`, because a product may build more than one:
+
+```yaml
+images:
+  app:
+    registry: ghcr.io/example
+    repository: myctl
+    dockerfile: Dockerfile
+    context: .
+    tag: latest                 # optional; `--tag` overrides it
+    build_args:                 # optional; yours, on top of the two the kernel derives
+      PYTHON_VERSION: "3.12"
+```
+
+The first four are required, `registry` included even if you only ever build locally: the reference the
+build tags is the reference the release pushes, and an unqualified name is one docker resolves against
+Docker Hub. `dockerfile` and `context` must stay under the product root - `context: /` would stream your
+whole filesystem to the daemon as a build context.
+
+**`VERSION` and `REVISION` are passed on every build, and you do not declare them.** The kernel derives
+them from *your* checkout - `git describe --tags --always --dirty` and `git rev-parse HEAD` - so the
+image built on a laptop carries its provenance exactly as the one built in Actions does. Declare either
+name in `build_args:` and yours wins; a Dockerfile that declares neither `ARG` ignores both at no cost.
+The two are missing, with a warning, only when there is no checkout to ask - an exported tarball - and
+your Dockerfile's own `ARG VERSION=dev` then stands rather than being overwritten with a placeholder.
+
+{{< callout type="info" >}}
+A shallow CI clone has no tags, so `git describe` falls back to the short commit. If you want the
+release tag in the label, check out with `fetch-depth: 0`.
+{{< /callout >}}
+
+`release:image` asks the **registry** whether the tag arrived before it reports success. A push whose
+result nobody reads is the same defect as a report nobody reads, and this project has shipped that twice.
+
 Other sections work the same way: `suites:` is the test-level taxonomy a product's own test tree
 defines, `environments:` the deployment matrix, `nexus:` and `claude:` the data their respective tasks
 read. A task that needs a section it does not find fails on its first line, which is why such tasks stay

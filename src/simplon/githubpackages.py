@@ -16,6 +16,12 @@ to mint and export a second credential, so `gh auth token` is the fallback. What
 the package scopes - `gh auth login` asks for gist, read:org, repo and workflow - so the very first
 local publish fails with `denied: permission_denied: read_package` and points at the package rather than
 at the token. Every failure here says the command that fixes it.
+
+WHAT ELSE READS THAT TOKEN. `simplon.tasks.image` publishes CONTAINER images, which are the shape this
+module deliberately does not push - but they go to the same registry with the same credential, so the
+docker client's login lives here too (`docker_login`) rather than growing a second token story beside
+this one. The two clients keep separate credential stores, which is the only reason there are two
+logins at all.
 """
 from __future__ import annotations
 
@@ -86,23 +92,51 @@ def registry_host(registry: str) -> str:
     return registry.split("/")[0]
 
 
-def login(registry: str, *, username: str = "") -> None:
-    """Log in to the registry that `registry` names.
+def _login(command: Sequence[str], registry: str, username: str) -> None:
+    """Hand `command` (`oras login`, `docker login`, ...) this module's credential and check the rc.
 
     The token goes over STDIN, never as an argv element: argv is world-readable in /proc.
 
-    `username` is ignored by GHCR when the password is a token, but oras requires one; the actor is used
-    when the environment names it so a CI log shows who pushed.
+    `username` is ignored by GHCR when the password is a token, but both clients require one; the actor
+    is used when the environment names it so a CI log shows who pushed.
+
+    ONE BODY FOR TWO CLIENTS, which is this module's whole argument applied to itself: the twelve lines
+    that mint the token, pick the host, feed stdin and translate a failure are the same for either, and
+    a second copy is the copy that would stop naming `gh auth refresh` the day somebody edited only one
+    of them. What differs is the executable, and that is all the caller passes.
     """
-    require_oras()
     host = registry_host(registry)
     user = username or os.getenv("GITHUB_ACTOR") or os.getenv("GITHUB_USERNAME") or "x"
 
-    result = run.run(["oras", "login", host, "-u", user, "--password-stdin"],
+    result = run.run([*command, host, "-u", user, "--password-stdin"],
                      capture=True, input_text=token())
     if result.rc != 0:
-        raise PackageError(f"oras login to {host} failed: {result.err or result.out}\n"
+        raise PackageError(f"{' '.join(command)} to {host} failed: {result.err or result.out}\n"
                            + scope_advice())
+
+
+def login(registry: str, *, username: str = "") -> None:
+    """Log in to the registry that `registry` names, for ORAS - the artifact side of this module."""
+    require_oras()
+    _login(["oras", "login"], registry, username)
+
+
+def docker_login(registry: str, *, username: str = "") -> None:
+    """Log in to the registry that `registry` names, for the DOCKER client.
+
+    WHY A SECOND LOGIN AND NOT A SECOND MODULE. A container image is not an OCI artifact in this
+    module's sense (the head above says why oras is used at all), and `oras login` does not write the
+    credential `docker push` reads: the two keep separate stores, so an image push after an oras login
+    fails with `no basic auth credentials` - measured against a local `registry:2` with htpasswd. What
+    the two DO share is everything this module exists for: where the token comes from, that it never
+    touches argv, and that a rejection names `gh auth refresh -h github.com -s read:packages,
+    write:packages` rather than leaving the caller with a bare 401. So the credential story stays in one
+    file and only the command differs.
+
+    The caller gates docker's presence (`simplon.docker.ensure_docker`); this reports what the client
+    said, it does not decide whether the host should have had one.
+    """
+    _login(["docker", "login"], registry, username)
 
 
 def push(reference_: str, file_path: str, media_type: str) -> None:
