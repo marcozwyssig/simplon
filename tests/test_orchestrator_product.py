@@ -351,3 +351,43 @@ def test_a_dropped_plan_tree_is_warned_about_before_the_first_step_runs(monkeypa
     out = capsys.readouterr().out
     assert "does not pair with the steps that will run" in out
     assert out.index("does not pair") < out.index("DISPATCHED")
+
+
+# --- for_module: the steps of a plan are Python, not a second trip through the shim ------------------
+
+def test_for_module_runs_the_products_module_with_this_interpreter(monkeypatch):
+    """A shim exists to BOOTSTRAP - make a venv, install requirements, exec Python. By the time a plan
+    is being run, all of that has happened and this process IS the venv's Python, so re-entering
+    through the shell script repeats the bootstrap and, worse, forces every product to know which of
+    `<product>.sh` and `<product>.cmd` this host can execute. cleon's Windows cell died on exactly that
+    (`WinError 193: %1 is not a valid Win32 application`) on the first run that ever reached it."""
+    argvs: list[list[str]] = []
+    monkeypatch.setattr("simplon.orchestrator.steps.run_stream",
+                        lambda argv, on_line: (argvs.append(list(argv)), on_line("building"), 3)[2])
+    monkeypatch.setattr(product.sys, "executable", "/venv/bin/python")
+    ctx = product.StepFactoryContext.for_module("demo", "orchestrator", manifest_load(_DEPS_MANIFEST))
+
+    outcome = ctx.step_factory("install").run()
+
+    assert argvs == [["/venv/bin/python", "-u", "-m", "orchestrator", "install"]]
+    assert outcome.rc == 3
+    assert outcome.output == "building"
+
+
+def test_for_module_stamps_the_step_exactly_as_for_shim_does():
+    """The stamp is what lets the kernel verify leaf-to-step pairing; losing it drops the plan tree and
+    every subtree's `stop_on_failure` with it (#42). Changing HOW a step is spawned must not change
+    what it is."""
+    ctx = product.StepFactoryContext.for_module("demo", "orchestrator", manifest_load(_DEPS_MANIFEST))
+
+    step = ctx.step_factory("install")
+
+    assert step.command == "build.install"
+    assert step.label == "install"
+
+
+def test_for_module_falls_back_to_the_bare_name_like_the_shim_factory():
+    ctx = product.StepFactoryContext.for_module("demo", "orchestrator",
+                                                manifest_load(_TWO_ALLS_MANIFEST))
+
+    assert ctx.step_factory("all").command == "all"

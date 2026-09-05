@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Callable
 
 from simplon.awake import keep_awake
+import sys
+
 from simplon.orchestrator.manifest import Manifest
 from simplon.orchestrator.steps import Pipeline, Step, argv_step, dispatch
 
@@ -64,6 +66,37 @@ class StepFactoryContext:
 
         def factory(cmd: str) -> Step:
             return argv_step(cmd, [argv0, cmd], command=manifest.path_by_name(cmd) or cmd)
+
+        return cls(product=product, step_factory=factory)
+
+
+    @classmethod
+    def for_module(cls, product: str, module: str, manifest: Manifest) -> "StepFactoryContext":
+        """The same shape as `for_shim`, spawned as THIS interpreter running `-m <module>`.
+
+        WHY A SECOND FACTORY. A shim exists to BOOTSTRAP: make the venv, install requirements.txt, exec
+        `python -u -m <module>`. By the time a plan is being run all of that has happened and this
+        process IS the venv's Python - so re-entering through the shell script repeats the bootstrap for
+        every step, and forces the product to know which of `<product>.sh` and `<product>.cmd` the host
+        can execute. That second thing is not theoretical: cleon's Windows cell died with
+        `WinError 193: %1 is not a valid Win32 application` on the first run that ever reached it,
+        because a POSIX shim was written into the factory. With this factory the question does not
+        arise - there is one interpreter and it is already running.
+
+        `sys.executable`, not `python`: PATH is not guaranteed to resolve to the venv the caller was
+        provisioned into, and a step that runs under a different interpreter than its parent is the kind
+        of difference that shows up as a missing dependency three steps later.
+
+        The STAMP is identical to `for_shim`'s and deliberately so - it is what lets the kernel verify
+        the leaf-to-step pairing, and losing it drops the plan tree with every subtree's
+        `stop_on_failure` in it (#42). Changing how a step is spawned must not change what it is.
+
+        `for_shim` stays: a product whose steps must re-do the bootstrap - a self-updating launcher, a
+        requirements change mid-plan - still wants the script, and that is a real if rare shape.
+        """
+        def factory(cmd: str) -> Step:
+            return argv_step(cmd, [sys.executable, "-u", "-m", module, cmd],
+                             command=manifest.path_by_name(cmd) or cmd)
 
         return cls(product=product, step_factory=factory)
 
