@@ -98,16 +98,26 @@ Simplon's own repository is the honest example here, because it builds itself wi
 ```text
 $ ./simplon.sh test all
 $ ./simplon.sh build wheel
-$ git tag v0.1.12 && git push --tags
+$ git tag v0.1.13 && git push --tags
 ```
 
 Tests first, and not as ceremony: the release workflow runs them again, and a tag whose tests fail is a
 tag you now have to delete from a public remote. Finding out locally costs thirty seconds.
 
+**Notice what is not in that list: editing a version number.** There is nowhere to edit one.
+`pyproject.toml` declares its version `dynamic` and setuptools-scm reads it off the tag, so typing
+`git tag v0.1.13` *is* how 0.1.13 gets chosen. Between tags the kernel calls itself
+`0.1.12.post1.dev4+g1234abc` - the release it descends from, and how far past it you are.
+
+That is worth more than the saved keystrokes. A number kept by hand can be chosen twice: two people
+working at once each pick the next one, and neither finds out until one of them is in review. A tag
+cannot - it is one name on one remote, so whoever pushes first has it and the second push is refused on
+the spot.
+
 The tag is what publishes. The workflow builds the wheel and pushes it to PyPI through Trusted
 Publishing, so every published version points at a named commit and there is no path from a dirty
-working tree to a release. If you need to know what a release *contains*, the tag is the answer, not the
-branch.
+working tree to a release - a dirty tree would carry a `+local` segment that PyPI refuses outright. If
+you need to know what a release *contains*, the tag is the answer, not the branch.
 
 ## 5. Deploy to one environment - and find out you cannot
 

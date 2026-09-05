@@ -1,12 +1,26 @@
 [build-system]
 # 77 is the first setuptools that understands PEP 639: the SPDX `license` string
 # and `license-files` below. Older ones fall back to the deprecated license table.
-requires = ["setuptools>=77", "wheel"]
+#
+# setuptools-scm is what makes `version` dynamic below (#3). 8 is the first release with the
+# `version_file` spelling this file uses (`write_to` is its deprecated predecessor); the range is open
+# upwards because the config keys it reads have been stable since.
+requires = ["setuptools>=77", "setuptools-scm>=8", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "simplon"
-version = "0.1.12"
+# NO `version = "..."` here, and that absence is the point of #3. The number used to be typed into three
+# files - this one, `src/simplon/__init__.py`, and the `simplon==` pin in `bootstrap.py` - while the git
+# tag was a fourth spelling that nothing local paired with any of them. In one day that cost three
+# collisions with concurrent sessions (0.1.4, 0.1.8, 0.1.9), and the 0.1.9 one could not have been
+# prevented by looking first: the number a stranger had reserved for themselves was in no tag and in no
+# commit on `main` at the time we looked. It was in a branch.
+#
+# So the version now comes from the tag, via setuptools-scm (`[tool.setuptools_scm]` at the bottom of this
+# file). A tag is unique by construction: whoever pushes it first owns the number, and the second session
+# is told so by `git push` instead of by a reviewer. There is nothing left here to disagree with it.
+dynamic = ["version"]
 description = "Delivery orchestrator for any software component that follows a CI/CD flow"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -80,3 +94,29 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 simplon = ["catalogue.yaml", "py.typed", "templates/*.j2"]
+
+# --- the version, and the only place it comes from (#3) ---------------------------------------------------
+#
+# `version_scheme = "no-guess-dev"` is a deliberate choice over the default `guess-next-dev`, and the
+# reason is the `simplon==` pin the scaffolder writes into a generated product's requirements.txt.
+#
+#   guess-next-dev  0.1.12 + 3 commits -> "0.1.13.dev3+g1234abc" - it names a version that DOES NOT EXIST
+#                   yet and may never (the next tag could be 0.2.0). Nothing in that string points back to
+#                   a release anybody can install.
+#   no-guess-dev    0.1.12 + 3 commits -> "0.1.12.post1.dev3+g1234abc" - it names the release the tree
+#                   DESCENDS FROM. `simplon.bootstrap.released_pin` reads 0.1.12 straight off the front of
+#                   it, which is a version that is on PyPI, so a product scaffolded from an untagged
+#                   working tree still gets a pin that installs.
+#
+# Both spellings sort correctly (a dev build is above the release it descends from and below the next
+# one); only one of them can be turned back into something a `pip install` can resolve.
+#
+# The local part (`+g1234abc`, plus `.dYYYYMMDD` when the tree is dirty) is left at the default. PyPI
+# REFUSES a local version, which makes it a free guard: a release built from anything other than a clean
+# tree at the tag cannot be uploaded, whatever else went wrong.
+[tool.setuptools_scm]
+version_scheme = "no-guess-dev"
+# Written into the package at build time, and it is what a tree with no `.git` reads - an installed wheel,
+# an unpacked sdist. It is a build OUTPUT and therefore gitignored; `src/simplon/__init__.py` falls back to
+# the installed distribution metadata when it is absent, which is the case in a fresh clone.
+version_file = "src/simplon/_version.py"

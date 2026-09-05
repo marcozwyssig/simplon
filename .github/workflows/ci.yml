@@ -5,7 +5,13 @@ jobs:
   self-build:
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 (#3). The version comes from the git tag via setuptools-scm, and checkout's
+      # default shallow clone has no tags at all - the kernel would then call itself something the
+      # scaffolder cannot turn into a released pin, and a suite that is green in every checkout would go
+      # red only here. Full history is a precondition of the build, not an optimisation of it.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

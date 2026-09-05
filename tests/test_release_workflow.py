@@ -243,6 +243,95 @@ def test_no_step_gates_on_a_clean_working_tree(workflow):
     assert "status --porcelain" not in runs
 
 
+# --- the version the release publishes, and what still has to be checked about it (#3) --------------------
+#
+# The workflow used to carry a step titled "The tag must name the version being published", which compared
+# `${GITHUB_REF_NAME#v}` with `project.version` out of pyproject.toml. With setuptools-scm that comparison
+# is a tautology - the version IS derived from the tag - and pyproject.toml no longer holds a number for it
+# to read. So the step is gone.
+#
+# It does NOT follow that nothing needs checking. setuptools-scm has one precondition, and
+# actions/checkout's default breaks it: a shallow clone (`fetch-depth: 1`) has the tag but not the history
+# behind it, and setuptools-scm then derives a version that is merely wrong - it does not fail. That is
+# strictly worse than the old failure mode, because the old one was loud. Two things below replace the
+# step: the full history the derivation needs, and an assertion that what came out equals the tag, which
+# now checks the MECHANISM (depth, dirty tree, a tag that is not where the build thinks it is) rather than
+# what a human typed into a file.
+
+PUBLISH_JOB = "publish"
+
+
+@pytest.fixture(scope="module")
+def publish_job(workflow):
+    return workflow["jobs"][PUBLISH_JOB]
+
+
+def test_no_step_compares_the_tag_to_a_version_in_a_file(workflow):
+    """The absence the ticket asked for. A step reading `project.version` back out of pyproject.toml would
+    mean somebody had put a static number there again - the three-places defect returning by the back
+    door, and this time wearing a green check."""
+    # Arrange / Act
+    runs = " ".join(_runs(workflow))
+
+    # Assert
+    assert "pyproject.toml" not in runs, "the workflow is reading a version out of a file again (#3)"
+    assert "tomllib" not in runs, "the workflow is reading a version out of a file again (#3)"
+
+
+def test_the_publishing_checkout_fetches_the_whole_history(publish_job):
+    """THE precondition, and the real replacement for the deleted step.
+
+    actions/checkout defaults to depth 1. setuptools-scm on such a clone cannot see the tag's distance from
+    anything and produces a wrong version SILENTLY - no error, a bad wheel, and PyPI accepts it. `0` is the
+    setting that makes the derivation possible at all, so it is asserted rather than left to a default that
+    is not ours.
+    """
+    # Arrange
+    checkout = next(step for step in publish_job["steps"]
+                    if str(step.get("uses", "")).startswith("actions/checkout"))
+
+    # Act
+    depth = checkout.get("with", {}).get("fetch-depth")
+
+    # Assert
+    assert depth == 0, "actions/checkout defaults to a shallow clone, which setuptools-scm cannot read (#3)"
+
+
+def test_the_version_that_was_built_is_asserted_against_the_tag(publish_job):
+    """Not tag-against-a-file (that number is gone) but tag-against-what-the-build-DERIVED. It catches the
+    things that make the derivation go wrong quietly: a shallow clone, an unclean tree adding a local
+    `+...` segment PyPI would reject, a tag that does not point where the build is standing.
+
+    Read off the built artefact rather than recomputed, so it cannot pass by doing the same wrong thing
+    twice.
+    """
+    # Arrange
+    runs = " ".join(_runs(publish_job))
+
+    # Assert
+    assert "GITHUB_REF_NAME" in runs, "nothing in the publish job looks at the tag at all"
+    assert "dist/" in runs, "the check must read the version off the built wheel, not recompute it"
+
+
+def test_the_documentation_checkout_also_carries_the_history(docs_job):
+    """UNIFORMITY, and it is worth saying that plainly rather than inventing a mechanism.
+
+    No page carries the kernel's version - `simplon.__version__` has exactly one consumer, the pin in
+    `bootstrap.render` - so this job would go green on a shallow clone. It would not be silent, though:
+    the site build installs the kernel with `-e .`, so setuptools-scm runs, warns that the checkout is
+    shallow and derives its no-tag sentinel.
+
+    What is actually held here is that every checkout in this repository takes the same setting: one rule
+    to state, one rule to assert, and no exception whose reasoning a later reader has to reconstruct.
+    """
+    # Arrange
+    checkout = next(step for step in docs_job["steps"]
+                    if str(step.get("uses", "")).startswith("actions/checkout"))
+
+    # Act / Assert
+    assert checkout.get("with", {}).get("fetch-depth") == 0
+
+
 def test_the_project_page_links_the_documentation_website():
     """The address appears in two files that cannot read each other - pyproject.toml, where PyPI reads it,
     and simplon.yaml, where Hugo needs it to write absolute links. Neither is derivable from the other, so

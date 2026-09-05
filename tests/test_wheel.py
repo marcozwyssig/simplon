@@ -18,6 +18,7 @@ The generated-CLI check below goes one step further: it renders a scaffolded pro
 `test:typecheck-python` runs. A product's own sources passing that gate proves nothing about the file
 the kernel hands it - see the regression this guards (generated-typeclean-report.md).
 """
+import re
 import subprocess
 import sys
 import venv
@@ -158,3 +159,81 @@ def test_the_generated_cli_passes_its_own_type_gate(installed_typecheck, tmp_pat
 
     # assert
     assert out.returncode == 0, out.stdout + out.stderr
+
+
+# --- the version, proved against a BUILT and INSTALLED package (#3) ---------------------------------------
+#
+# The version comes from the git tag now, and every other test in this repository reads it out of a source
+# tree that has `.git` sitting right beside it. An installed package has no such thing: the tag has to have
+# been baked in at build time, into `_version.py` and into the distribution metadata. Configuration cannot
+# be trusted to say so - a wrong `version_file` path, a package-data omission, a build that silently fell
+# back - so this builds the wheel, installs it, and asks it.
+
+_VERSION_PROBE = (
+    "import simplon, importlib.metadata as md;"
+    "print(simplon.__version__);"
+    "print(md.version('simplon'));"
+    "import simplon._version as v; print(v.version)"
+)
+
+
+def _nearest_tag() -> str:
+    """The release this checkout descends from, straight from git, or a skip.
+
+    Deliberately NOT `simplon.__version__`: this module BUILDS the package, and setuptools-scm writes
+    `src/simplon/_version.py` into the working tree as it does so. The value the test process imported at
+    collection time can therefore be one commit behind the wheel it is about to judge - a difference that
+    depends on when somebody last reinstalled, which is not a property of the code. `git describe` is the
+    same fact the build itself reads, and it does not go stale.
+    """
+    described = subprocess.run(["git", "describe", "--tags", "--abbrev=0"], cwd=ROOT,
+                               capture_output=True, text=True)
+    if described.returncode != 0:
+        pytest.skip("no tags reachable in this checkout; the wheel's version cannot be joined to one")
+    return described.stdout.strip().lstrip("v")
+
+
+def test_the_installed_package_reports_the_version_the_tag_gives_it(installed):
+    """One number, three ways of asking, and it comes from the tag.
+
+    `simplon.__version__` is what the scaffolder's pin is computed from; `importlib.metadata.version` is
+    what pip resolves against; `_version.py` is the file that had to make it into the wheel for either to
+    work without git. If the three disagree, or if the number is not the tag's, the wheel is mislabelled -
+    and PyPI would take it anyway.
+    """
+    # arrange
+    py = installed / ("python.exe" if sys.platform == "win32" else "python")
+    tag = _nearest_tag()
+
+    # act: run OUTSIDE the repo, so no stray `.git` and no source tree can answer for the installed package
+    out = subprocess.run([str(py), "-c", _VERSION_PROBE], cwd=str(Path(py).parent),
+                         capture_output=True, text=True)
+
+    # assert
+    assert out.returncode == 0, out.stderr
+    dunder, metadata, from_file = out.stdout.split()
+    assert dunder == metadata == from_file, out.stdout
+    assert dunder.startswith(tag), (
+        f"the built wheel says {dunder}, which does not descend from the tag {tag}")
+
+
+def test_a_product_scaffolded_by_the_installed_kernel_pins_an_installable_kernel(installed, tmp_path):
+    """The end of the chain the ticket cares about: whatever version the wheel calls itself - and on any
+    branch that is a `.postN.devM+g...` one - the requirements.txt it writes for somebody else's product
+    must name a version that is on PyPI. A dev pin there is not a cosmetic wart; it is a product that
+    cannot install at all, discovered by its author and not by us."""
+    # arrange
+    exe = installed / ("simplon.exe" if sys.platform == "win32" else "simplon")
+    product = tmp_path / "pinned"
+    tag = _nearest_tag()
+
+    # act
+    out = subprocess.run([str(exe), "init", "demo", "--dir", str(product)], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    text = (product / "orchestrator" / "requirements.txt").read_text(encoding="utf-8")
+    pinned = re.search(r"^simplon==(\S+)", text, re.M).group(1)
+
+    # assert: a plain release, and specifically the last one that was actually cut - identical to the
+    # kernel's own version when it was built at a tag, and the tag behind it otherwise
+    assert re.fullmatch(r"\d+\.\d+\.\d+", pinned), f"scaffolded pin {pinned!r} is not a released version"
+    assert pinned == tag

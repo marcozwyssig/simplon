@@ -73,6 +73,8 @@ import sys
 from importlib.resources import files
 from pathlib import Path
 
+import simplon
+
 # A product name is a lowercase slug: it becomes the shim/manifest filename, the manifest `product:` label,
 # the LAUNCH_PRODUCT diagnostic token and the `<PRODUCT>_ENV` variable stem. The package itself is the FIXED
 # identifier `orchestrator` (as in netctl), so a hyphenated slug never has to be a Python identifier.
@@ -155,7 +157,97 @@ def env_var_name(name: str) -> str:
     return name.upper().replace("-", "_") + "_ENV"
 
 
-# --- file templates (PURE text; @@PRODUCT@@ / @@ENV_VAR@@ are the only substitutions) ----------------------
+# --- reducing this kernel's version to one a scaffolded product may pin -----------------------------------
+#
+# Three peelings and one gate, in that order. The peelings undo exactly what setuptools-scm ADDED to the
+# tag; the gate then asks whether what is left is a version somebody published.
+#
+#   +g1234abc[.d20260905]   the local segment: the node, and a date when the tree was dirty. Never part
+#                           of a published version - PyPI refuses one outright - so it always comes off.
+#   .post1.dev3             the `no-guess-dev` DISTANCE marker: "3 commits past the tag, which was a
+#                           release". Both halves together mean distance; either alone does not, which is
+#                           why they are peeled as one unit and not separately.
+#   what remains            the tag. It is the pin if it names a published version.
+#
+# The gate is PEP 440's normalised public version MINUS a `.dev` component, because a `.dev` version is by
+# definition unfinished and unpublished. Everything else is deliberately let through:
+#
+#   1.0          two components is a legal version and a legal tag. The release workflow triggers on
+#                `v*` and constrains the shape no further, so a parser stricter than the tag namespace is
+#                a trap: `git tag v1.0` would publish a wheel whose `simplon init` fails for every user.
+#   0.1.12.post1 a post-release. Published, installable, and a perfectly ordinary thing to tag.
+#   0.2.0rc1     a pre-release. `pip install simplon==0.2.0rc1` INSTALLS it - an exact `==` is an explicit
+#                request and pre-release exclusion does not apply to one (measured, not assumed). Refusing
+#                it would break `simplon init` for whoever deliberately installed a release candidate,
+#                which is the same defect as refusing `1.0`, arrived at from the other side.
+#
+# WHY NOT CONSTRAIN THE TAG IN THE WORKFLOW INSTEAD. That was the other repair available, and it is a
+# policy - "this project may not have a version shaped like that" - invented to accommodate a parser
+# rather than because anybody wants it. Widening the parser removes the need for the policy, and after it
+# every version that gets through is one `pip install` can actually resolve. There is nothing left for a
+# tag gate to protect.
+#
+# THE ONE SENTINEL. `0.0` is not a shape, it is setuptools-scm's hard-coded stand-in for "found no tag at
+# all" (vcs_versioning/_backends/_git.py, and the same literal in the hg and jj backends). A shallow
+# `actions/checkout` produces exactly that - with a WARNING and not an error - so it is refused by name.
+# It is the only value here rejected for what it means rather than for how it is spelled, and it is a
+# second line: the first is `fetch-depth: 0` on every checkout, asserted in tests/test_version_source.py.
+_LOCAL_SEGMENT_RE = re.compile(r"\+[A-Za-z0-9.]+$")
+_DISTANCE_RE = re.compile(r"\.post\d+\.dev\d+$")
+_PUBLISHED_RE = re.compile(r"^\d+(?:\.\d+)*(?:(?:a|b|rc)\d+)?(?:\.post\d+)?$")
+
+#: setuptools-scm's "no tag found" fallback. See the sentinel note above.
+_NO_TAG_SENTINEL = "0.0"
+
+
+def released_pin(version: str) -> str:
+    """The kernel version a scaffolded product may pin, derived from `version`, or ValueError.
+
+    THE PROBLEM THIS SOLVES (#3). The pin goes into a generated product's `requirements.txt` as
+    `simplon==<x>`, and that file is the first thing its author runs `pip install -r` against. It must
+    therefore name a version that EXISTS on PyPI. Since the kernel's own version now comes from the git
+    tag, a kernel built anywhere but at a tag calls itself something like `0.1.12.post1.dev3+g1234abc` -
+    correct for the kernel, and fatal as a pin: `pip install simplon==0.1.12.post1.dev3+g1234abc` resolves
+    to nothing, and the product arrives broken.
+
+    THE DECISION, and why it is not "pin what we are". A dev build is not published, so no `==` pin can
+    name it truthfully. The closest true statement available is the release the build DESCENDS FROM, and
+    the `no-guess-dev` version scheme was chosen precisely so that this string carries it: the release is
+    the part before `.post`. So a product scaffolded from a developer's checkout pins the newest kernel
+    that actually shipped - older than the one doing the scaffolding, never newer, and always installable.
+
+    THE ALTERNATIVES, and why not. Pinning `0.1.13.dev3+…` writes a broken file. Pinning the default
+    scheme's guessed `0.1.13` writes a file that is broken TODAY and might start working later on a
+    version nobody verified against. Refusing to scaffold at all from an untagged tree would fail the one
+    command every new user runs first, for a reason that is the kernel's business and not theirs.
+
+    WHAT IT ACCEPTS is every published shape, not just `N.N.N` - two components, a post-release and a
+    pre-release all get through, because the release workflow triggers on `v*` and a parser stricter than
+    the tag namespace turns a legal tag into a wheel whose `simplon init` fails for everybody. The block
+    comment above this function has the reasoning and the measurement for each.
+
+    WHAT RAISES is a `.dev` version (unfinished by definition, and never published), anything a changed
+    version scheme produces that is not PEP 440, the `0.0.0.dev0+unknown` a kernel reports when it is
+    neither built nor installed, and setuptools-scm's `0.0` no-tag sentinel. Each means "no released
+    version can be derived from this", and the honest place to say so is here - loudly, in the
+    scaffolder's own process - rather than in somebody else's `pip install` a week later. `main()` turns
+    it into a message and exit code 2, not a traceback.
+    """
+    peeled = _LOCAL_SEGMENT_RE.sub("", (version or "").strip())
+    peeled = _DISTANCE_RE.sub("", peeled)
+    if not _PUBLISHED_RE.match(peeled) or peeled == _NO_TAG_SENTINEL:
+        raise ValueError(
+            f"simplon.bootstrap: cannot derive a released kernel version from {version!r}, so there is "
+            f"no pin a scaffolded product could install; expected a published version ('0.1.12', '1.0', "
+            f"'0.2.0rc1') or a no-guess-dev descendant of one ('0.1.12.post1.dev3+g1234abc'). "
+            f"'0.0.0.dev0+unknown' means this kernel is neither built nor installed - install it "
+            f"(`pip install -e .`) and scaffold again. A version built on '0.0' means setuptools-scm "
+            f"found no tag at all, which is what a shallow `git clone --depth 1` looks like - fetch the "
+            f"history (`git fetch --unshallow --tags`) and build again")
+    return peeled
+
+
+# --- file templates (PURE text; @@PRODUCT@@ / @@ENV_VAR@@ / @@PKG_DIR@@ / @@KERNEL_PIN@@ substitute) ------
 # Kept as literal strings with sentinel placeholders (not str.format) so the embedded shell/python braces
 # stay verbatim and free of escaping. render() substitutes both tokens.
 
@@ -243,7 +335,12 @@ _REQUIREMENTS = """\
 # kernel; nothing is vendored and nothing is included by path. Declaring the
 # `test:typecheck-python` gate? Its mypy is an optional extra, so write
 # `simplon[typecheck]==...` here instead.
-simplon==0.1.12
+#
+# The number below is not typed by anyone: it is the RELEASED version of the
+# kernel that scaffolded this product (simplon.bootstrap.released_pin). When
+# that kernel was itself a development build, this is the release it descended
+# from - the newest simplon on PyPI at the time, and one that installs.
+simplon==@@KERNEL_PIN@@
 
 # --- @@PRODUCT@@-product-only deps ---
 """
@@ -424,7 +521,7 @@ def _templates(name: str, orch_dir: str) -> dict[str, str]:
 
 def render(name: str, *, orch_dir: str = _ORCH_DIR) -> dict[str, str]:
     """PURE: the product skeleton as a {relative POSIX path -> file content} map, with @@PRODUCT@@,
-    @@ENV_VAR@@ and @@PKG_DIR@@ substituted. No I/O, no yaml/pydantic import - so a test can validate the
+    @@ENV_VAR@@, @@PKG_DIR@@ and @@KERNEL_PIN@@ substituted. No I/O, no yaml/pydantic import - so a test can validate the
     rendered manifest through the real loader and assert the exact file set without a filesystem or the
     product's deps.
 
@@ -435,10 +532,15 @@ def render(name: str, *, orch_dir: str = _ORCH_DIR) -> dict[str, str]:
     block = validate_orch_dir(orch_dir)
     env_var = env_var_name(product)
     pkg_dir = pkg_dir_for(block)
+    # Still pure - a module constant read, no I/O - and it raises BEFORE any of the other files are
+    # rendered, so a kernel that cannot name a released version scaffolds nothing at all rather than a
+    # tree with one un-installable file in it.
+    kernel_pin = released_pin(simplon.__version__)
     return {
         rel: (template.replace("@@PRODUCT@@", product)
                       .replace("@@ENV_VAR@@", env_var)
-                      .replace("@@PKG_DIR@@", pkg_dir))
+                      .replace("@@PKG_DIR@@", pkg_dir)
+                      .replace("@@KERNEL_PIN@@", kernel_pin))
         for rel, template in _templates(product, block).items()
     }
 
@@ -500,8 +602,8 @@ def next_steps(name: str, target: Path, *, orch_dir: str = _ORCH_DIR) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     """`simplon init <product> [--dir DIR] [--orch-dir DIR] [--force]`: scaffold a product skeleton and
-    print the next steps. Returns 0 on success, 2 on a bad product name or a clobber conflict (fail loud, no
-    traceback)."""
+    print the next steps. Returns 0 on success, 2 on a bad product name, a clobber conflict, or a kernel
+    whose version yields no pin a product could install (fail loud, no traceback)."""
     # `simplon init <name>` reads like a command; the bare product name as the first argument read like a
     # typo. The old call pattern stays valid, so `python -m simplon.bootstrap <name>` keeps working.
     if argv is None:
@@ -544,7 +646,16 @@ def main(argv: list[str] | None = None) -> int:
     target = Path(args.directory).resolve() if args.directory else (Path.cwd() / product)
     try:
         write(product, target, force=args.force, orch_dir=orch_dir)
-    except FileExistsError as exc:
+    except (FileExistsError, ValueError) as exc:
+        # ValueError as well as FileExistsError, and it is not a formality: `write` -> `render` ->
+        # `released_pin` raises one when this kernel's version cannot be reduced to something a
+        # scaffolded product could install. That is a real condition a user meets - a checkout that is
+        # neither built nor installed, or a shallow clone - and it must arrive the way this function
+        # promises above, as a message and exit code 2. A traceback out of `simplon init`, the first
+        # command any new user types, is the wrong end of the tool to be shown.
+        #
+        # Nothing half-written survives either: `write` calls `render` before its first mkdir, so the
+        # target directory does not exist when this is reached.
         print(str(exc), file=sys.stderr)
         return 2
 
