@@ -53,7 +53,7 @@ groups:
 # work. The command NAME is the coordinate's second half under that form, which is why the two commands
 # are `build reference` and `build site` and the aggregate over them had to be called something else.
 import:
-  delivery: [docs]
+  delivery: [docs, test]
 tasks:
   # `output` is PINNED now (#2, task 3): the Hugo project exists, so where the page belongs is no longer
   # an open question a caller answers on the command line. Pinned with `with:`, the parameter leaves the
@@ -70,6 +70,22 @@ tasks:
   # are the product's data and `docs:site` reads them through the manifest - see src/simplon/tasks/site.py.
   docs:site:
     group: build
+  # The type gate, on the kernel that ships it (#8). Simplon has carried `test:typecheck-python` for other
+  # products since the catalogue had a `test` namespace and had never placed it for itself, so `mypy src`
+  # was something a developer ran by hand or not at all - and for months the answer was 36 findings that
+  # everybody had agreed to read as environment noise. One of them was a real bug.
+  #
+  # Placed here rather than run from ci.yml directly, because a step that exists only in a workflow file
+  # is a second way to do the thing: `./simplon.sh test typecheck-python` has to be the SAME command in CI and on
+  # a developer's machine, or the two drift again and the next divergence is discovered in the pipeline by
+  # whoever has the least context. That is the rule this repository already applies to `test all` and
+  # `build wheel`, and there was never a reason for the type gate to be the exception.
+  #
+  # No `with:` - the defaults are exactly right here: mypy.ini at the product root, mypy run in the host
+  # venv (`orchestrator/requirements.txt` installs `-e .[typecheck]`, so the checker sees the same
+  # installed set the kernel runs against), and the roots stated by the config rather than on the argv.
+  test:typecheck-python:
+    group: test
 
 # The documentation website's data (#2). Five values, every one of them required to BE declared: the
 # kernel defaults none of them, because a default would be simplon's own directory layout imposed on

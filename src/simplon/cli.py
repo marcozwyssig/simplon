@@ -20,7 +20,7 @@ import functools
 import inspect
 import os
 import sys
-from typing import Callable, Mapping, Protocol
+from typing import Callable, Mapping, Protocol, TypedDict, cast
 
 import typer
 
@@ -34,6 +34,44 @@ from simplon.taskgen import _docstring
 # underlying tool (e.g. accept -> pytest). The manifest declares the intent (passthrough_args); this maps
 # it to Typer's context settings - a generic mechanism, product-neutral.
 _PASSTHROUGH_CTX = {"allow_extra_args": True, "ignore_unknown_options": True}
+
+
+class _Introspectable(Protocol):
+    """A callable that carries the two attributes Typer reads a command's surface from.
+
+    `inspect.signature()` honours a `__signature__` attribute on any callable, and Typer builds every
+    option, argument, default and annotation from what `inspect` answers - so for `_bound`'s wrapper that
+    attribute IS the command line, not a decoration on it. Typeshed models neither it nor a writable
+    `__doc__` on `functools.wraps`' `_Wrapped`, so this names the contract the wrapper actually has.
+    """
+
+    __doc__: str | None
+    __signature__: inspect.Signature
+
+    def __call__(self, *args: object, **kwargs: object) -> None: ...
+
+
+class _DeclKwargs(TypedDict, total=False):
+    """The Typer keyword arguments `_declaration` may build, spelled out rather than left as a bag.
+
+    `total=False` is the point: each key is present only when the manifest declared it, which is what
+    "undeclared means untouched" means one function down. A plain `dict[str, object]` cannot be splatted
+    into `typer.Argument`/`typer.Option` at all - their parameters are heterogeneous, so no single value
+    type fits them - and naming the two keys costs less than the `Any` that would otherwise buy silence.
+    """
+    metavar: str
+    help: str
+
+
+class _CommandKwargs(TypedDict, total=False):
+    """The per-registration keyword arguments `assemble` may add to `Typer.command()`.
+
+    Same shape, same reason. `help` is here because a callback shared by several commands cannot carry
+    per-command help in its docstring; `context_settings` because a passthrough command needs Click's
+    two flags. Both are optional and independent, which is exactly what `total=False` says.
+    """
+    context_settings: dict[str, bool]
+    help: str
 
 # Rich help panels group the top-level commands in `--help`. The CI panel is fully generic; the CD panel
 # names the product token so the usage hint reads in the product's own voice (netctl / infractl), built
@@ -120,7 +158,7 @@ def _declaration(name: str, param, presentation) -> object:
     form = signatures.shape(name, required=param.required, presentation=presentation)
     if not form.declared:
         return param.default
-    kwargs: dict[str, object] = {}
+    kwargs: _DeclKwargs = {}
     if getattr(presentation, "metavar", None):
         kwargs["metavar"] = presentation.metavar
     if presentation.help:
@@ -164,13 +202,21 @@ def _bound(fn: Callable[..., object], spec: manifest.CommandSpec,
     def _wrapped(*args: object, **kwargs: object) -> None:
         raise typer.Exit(code=_rc(fn(*args, **{**kwargs, **pinned})))
 
+    # `_Introspectable` rather than a bare assignment, because `__signature__` is a CPython protocol that
+    # the type system does not model: `inspect.signature()` reads it off ANY callable that carries it, and
+    # that is the entire reason this wrapper works - Typer derives the command line from what `inspect`
+    # answers, not from the wrapper's real `*args/**kwargs`. Typeshed types `functools.wraps`' result as
+    # `_Wrapped`, which declares no such attribute, so the assignment below has to be made against a type
+    # that states the protocol instead of against one that merely tolerates it.
+    #
     # `functools.wraps` copied `fn.__doc__` onto `_wrapped` unconditionally, which is the OLD rule (the
     # body's docstring always renders). The chain is now the same one `taskgen._docstring` renders into
     # the generated module: the manifest's resolved `help` (command, then task) wins, the body's
     # docstring is only the last resort - so this must run AFTER `wraps`, overwriting what it copied.
-    _wrapped.__doc__ = _docstring(spec, fn)
-    _wrapped.__signature__ = sig.replace(parameters=new_params)
-    return _wrapped
+    callback = cast(_Introspectable, _wrapped)
+    callback.__doc__ = _docstring(spec, fn)
+    callback.__signature__ = sig.replace(parameters=new_params)
+    return callback
 
 
 def _command_callback(mf: manifest.Manifest, group: str, name: str, spec: manifest.CommandSpec,
@@ -316,7 +362,7 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
                 continue
             spec = mf.spec_for(group, name)
             fn = _command_callback(mf, group, name, spec, step_context)
-            kw = {"context_settings": _PASSTHROUGH_CTX} if spec.passthrough_args else {}
+            kw: _CommandKwargs = {"context_settings": _PASSTHROUGH_CTX} if spec.passthrough_args else {}
             if spec.impl in shared_impls:
                 # A callback several commands share cannot carry per-command help in its docstring, which
                 # is where Typer otherwise reads it from - all of them would render the same blurb. The

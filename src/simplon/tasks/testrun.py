@@ -208,8 +208,41 @@ def config() -> Suites:
     return declared(ctx.manifest_data(), source=str(ctx.manifest_path))
 
 
-def _hook(ref: str, where: str) -> Callable[..., object]:
-    return resolve_ref(ref, f"'{SECTION}.{where}'")
+def _verdict(value: object) -> int:
+    """A product hook's return value as an exit code, coerced at the seam it enters the kernel through.
+
+    THIS IS WHERE #8 WAS HIDING. `_hook` used to hand back the resolved callable untouched, typed
+    `Callable[..., object]`, and every caller then wrote `if rc != 0: return rc`. A hook is an ordinary
+    Python function a product wrote - and an ordinary Python function that just does its work RETURNS
+    NONE. `None != 0` is True, so a precondition that succeeded aborted its gate; the gate then returned
+    `None`, which `simplon.cli._rc` turns into exit 0. The suite never ran and the run reported GREEN.
+    A test gate that skips itself and calls that a pass is the one outcome a gate must never produce,
+    and mypy had been naming it - `Incompatible return value type (got "object", expected "int")` at the
+    three `if rc != 0` sites - for as long as the checker has been pointed at this tree.
+
+    The rule is `simplon.cli._rc`'s, deliberately: a body that returns something other than an rc is a
+    body written when the return value could not matter, not a failure. Only a real int is a verdict.
+    A bool is excluded for the same reason it is there - `return True` means success, and `int(True)`
+    would exit 1. tests/test_tasks_testrun.py asserts the two spellings agree.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return value
+
+
+def _hook(ref: str, where: str) -> Callable[..., int]:
+    """A product hook as a callable that yields an EXIT CODE.
+
+    The coercion sits here rather than at each call site because there are four of them and they must
+    not be able to drift: a hook is a hook whether it is a precondition, a preamble or a gate's own
+    impl.
+    """
+    fn = resolve_ref(ref, f"'{SECTION}.{where}'")
+
+    def call(*args: object, **kwargs: object) -> int:
+        return _verdict(fn(*args, **kwargs))
+
+    return call
 
 
 def _reports_dir(cfg: Suites) -> str:
@@ -356,7 +389,12 @@ def gate(ctx: typer.Context, name: str = "") -> int:
     filtered = bool(extra)
     if filtered:
         _warn_filtered(cfg)
-    return run_gate(cfg.gate(name or ctx.info_name), cfg, extra, filtered=filtered)
+    # `ctx.info_name` is Optional in Click's own types (a context can exist without an invoked command),
+    # so the unpinned fallback has to say what happens when it is absent instead of handing None to a
+    # lookup over strings. An empty level reaches `Suites.gate`, which refuses it by name and lists the
+    # gates that ARE declared - the same loud manifest-typo error an unknown level already gets.
+    level = name or ctx.info_name or ""
+    return run_gate(cfg.gate(level), cfg, extra, filtered=filtered)
 
 
 def report_cmd() -> int:

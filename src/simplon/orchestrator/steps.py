@@ -94,7 +94,16 @@ class Step:
 
     def run(self, emit: Emit = _noop) -> Outcome:
         self.state = StepState.RUNNING
-        outcome = self.stream(emit) if self.stream is not None else self.action()
+        if self.stream is not None:
+            outcome = self.stream(emit)
+        elif self.action is not None:
+            outcome = self.action()
+        else:
+            # `__post_init__` refuses a Step with neither, so this is the invariant restated at the one
+            # place that depends on it. It is not dead code: a Step is mutable, so the invariant holds
+            # only for a Step nobody has reached into since it was built - and writing it out is what
+            # makes `run` total instead of leaving `self.action()` as a call on `Callable | None`.
+            raise ValueError("a Step needs exactly one of action / stream")
         self.output = outcome.output
         self.rc = outcome.rc
         self.state = StepState.OK if outcome.ok else StepState.FAILED

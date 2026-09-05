@@ -16,7 +16,7 @@ from __future__ import annotations
 import difflib
 import inspect
 from pathlib import Path
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
@@ -59,7 +59,8 @@ class _Param(NamedTuple):
     pinned: bool = False          # fixed by `with:`, so it is not a command-line parameter at all
 
 
-def _params(body: object, overrides: dict[str, object], presentation: dict, *, where: str) -> list[_Param]:
+def _params(body: Callable[..., object], overrides: dict[str, object], presentation: dict,
+            *, where: str) -> list[_Param]:
     """The body's payload parameters: which reach the command line, and with what default.
 
     **`with:` PINS** (netctl#1442). A parameter the manifest fixes leaves the wrapper's signature and the
