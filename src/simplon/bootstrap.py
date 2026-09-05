@@ -232,7 +232,7 @@ _REQUIREMENTS = """\
 # kernel; nothing is vendored and nothing is included by path. Declaring the
 # `test:typecheck-python` gate? Its mypy is an optional extra, so write
 # `simplon[typecheck]==...` here instead.
-simplon==0.1.10
+simplon==0.1.11
 
 # --- @@PRODUCT@@-product-only deps ---
 """

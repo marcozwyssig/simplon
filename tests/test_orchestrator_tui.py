@@ -435,3 +435,51 @@ env_groups: [deploy]
     # assert
     assert "skipped: build.prep stopped on a failure" in rendered
     assert "(pending)" not in rendered, "a step that will never run must not still read as pending"
+
+
+# --- copy and save: getting the text OUT of a pane that holds the mouse -----------------------------
+
+def test_c_copies_the_focused_steps_output_to_the_clipboard():
+    """Textual holds the mouse while it runs, so the terminal's own selection does not work and the
+    output is visible and unreachable at once. `c` is the way out that does not involve a file."""
+    async def scenario():
+        app = _StepApp(_pipeline())
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            while any(s.state in (StepState.PENDING, StepState.RUNNING) for s in app.pipeline.steps):
+                await pilot.pause(0.05)
+            copied: list[str] = []
+            app.copy_to_clipboard = copied.append
+            await pilot.press("down", "down")
+            await pilot.press("c")
+            await pilot.pause()
+            return copied, app._details_text(app._cursor_row())
+
+    copied, shown = asyncio.run(scenario())
+    # What is COPIED is what is DISPLAYED - asserted against the pane's own text rather than against a
+    # guess about which row two `down` presses land on.
+    assert copied == [shown]
+    assert shown.startswith("$ ")
+
+
+def test_s_writes_the_focused_steps_output_and_says_where():
+    """The same text, for the case where the clipboard is not reachable - an SSH session whose terminal
+    does not do OSC 52, a run someone wants to attach to a ticket."""
+    async def scenario():
+        app = _StepApp(_pipeline())
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            while any(s.state in (StepState.PENDING, StepState.RUNNING) for s in app.pipeline.steps):
+                await pilot.pause(0.05)
+            saved: list[tuple] = []
+            notes: list[str] = []
+            app._save_details_to = lambda ident, text: (saved.append((ident, text)), "/tmp/x.log")[1]
+            app.notify = lambda message, **kw: notes.append(message)
+            await pilot.press("down", "down")
+            await pilot.press("s")
+            await pilot.pause()
+            return saved, notes
+
+    saved, notes = asyncio.run(scenario())
+    assert len(saved) == 1
+    assert any("/tmp/x.log" in note for note in notes)
