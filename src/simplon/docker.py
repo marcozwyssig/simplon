@@ -162,6 +162,33 @@ def ensure_docker() -> None:
             "-v /var/run/docker.sock:/var/run/docker.sock (plus --group-add its gid)")
 
 
+def user_args() -> list[str]:
+    """``--user uid:gid`` for a container that WRITES into a bind-mounted directory, and an empty list
+    on a host with no uid concept (Windows, where the mount carries no ownership to get wrong).
+
+    THE RULE, LEARNED TWICE. A bind mount hands the container the host's inodes, so whatever uid the
+    image happens to run as is the uid that ends up owning the output. Both directions hurt, and both
+    have been measured rather than assumed:
+
+      - an image running as a NON-ROOT uid that is not the caller's cannot create anything in the
+        mounted directory at all. `frankescobar/allure-docker-service` runs as uid 1000 against a host
+        uid of 5015237, and allure died with `java.nio.file.AccessDeniedException` (#6, fixed in 0.1.7);
+      - an image running as ROOT succeeds and leaves ROOT-OWNED files behind, which the caller then
+        cannot delete. Measured with `hugomods/hugo` (its default user is uid 0): the run wrote
+        `build/website/index.html` as `0:0`, the caller's `rm -rf build` came back `Permission denied`,
+        and even the SOURCE tree kept a root-owned `.hugo_build.lock` - enough to make the next run fail
+        with `failed to acquire a build lock` even when that one passed `--user` correctly.
+
+    Running the container AS THE CALLER is the fix that leaves the mount as it is: the files it writes
+    are the ones the caller can read, wipe and archive afterwards. It lives here rather than beside
+    either caller because a convention restated in two modules is a convention that drifts in one of
+    them - the same reason `tools.bin_dir` exists.
+    """
+    if not hasattr(os, "getuid"):        # Windows: no uid mapping to hand over
+        return []
+    return ["--user", f"{os.getuid()}:{os.getgid()}"]
+
+
 def _socket_path() -> Path | None:
     """The unix socket the docker CLI will talk to: DOCKER_HOST's unix path when set, the default
     socket otherwise, None for a non-unix DOCKER_HOST (tcp/ssh - nothing local to inspect)."""

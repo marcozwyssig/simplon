@@ -257,3 +257,28 @@ def test_bootstrap_selffixes_socket_access_when_daemon_unreachable_with_privileg
     # assert: the service (re)start was attempted and the grant made the daemon reachable
     assert ["sudo", "-n", "systemctl", "enable", "--now", "docker"] in calls
     assert state["granted"] is True
+
+
+# --- --user for a container that writes into a bind mount (#6, and #2's site build) ---------------------
+
+
+def test_user_args_hands_the_container_the_calling_uid_and_gid():
+    # arrange: a bind mount hands the container the host's inodes, so the uid the image runs as is the uid
+    # that owns the output. Measured both ways: an image running as uid 1000 could not create anything in
+    # a mount owned by uid 5015237 (#6, allure), and an image running as root left root-owned files the
+    # caller could not delete (hugomods/hugo, #2)
+    import os
+
+    # act
+    args = docker.user_args()
+
+    # assert
+    assert args == ["--user", f"{os.getuid()}:{os.getgid()}"]
+
+
+def test_user_args_is_empty_where_the_host_has_no_uid_concept(monkeypatch):
+    # arrange: Windows - the mount carries no ownership to get wrong, and `--user` would be nonsense
+    monkeypatch.delattr(docker.os, "getuid", raising=False)
+
+    # act / assert
+    assert docker.user_args() == []

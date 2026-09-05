@@ -20,7 +20,7 @@ import shutil
 from dataclasses import dataclass
 from datetime import datetime
 
-from simplon import log
+from simplon import docker, log
 from simplon.run import run
 
 
@@ -87,19 +87,14 @@ class Render:
 
 
 def _docker_user() -> list[str]:
-    """``--user uid:gid`` for the render container, empty where the host has no uid concept (Windows).
-
-    ``frankescobar/allure-docker-service`` runs as uid 1000. The report dir is bind-mounted from the host
-    and belongs to the CALLING user, so on any host whose uid is not 1000 - most machines that are not the
-    first account on their system, and most CI runners - the container cannot create ``/work/allure-report``
-    and allure dies with ``java.nio.file.AccessDeniedException`` (#6). Running the container as the caller
-    is the fix that keeps the mount as it is: the files it writes are then the ones the caller can read,
-    delete and archive afterwards. The local-CLI branch never had this because it already runs as the
-    caller.
+    """``--user uid:gid`` for the render container - `simplon.docker.user_args`, which is where this body
+    moved when a SECOND containerised step needed the same argument for the same reason (#2's hugo site
+    build). The rule and both measured failures are documented there; the case that put it in this module
+    was `frankescobar/allure-docker-service` running as uid 1000 against a host uid that is not 1000, where
+    allure died with ``java.nio.file.AccessDeniedException`` (#6). The local-CLI branch never had this
+    because it already runs as the caller.
     """
-    if not hasattr(os, "getuid"):        # Windows: no uid mapping to hand over
-        return []
-    return ["--user", f"{os.getuid()}:{os.getgid()}"]
+    return docker.user_args()
 
 
 def render_report(report_dir: str, results: str | None = None, *, prefix: str = "allure") -> Render:
