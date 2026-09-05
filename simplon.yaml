@@ -25,3 +25,15 @@ groups:
     doctor:
       help: "Check the tools and the environment."
       impl: "orchestrator.cli:doctor"
+
+# The command reference the documentation website embeds is GENERATED, so simplon generates its own with
+# the kernel it ships - the same rule that makes it build and test itself here. Placed through `import:`
+# + `tasks:` because this manifest is still the flat old form throughout: that is the old form's way of
+# instantiating a catalogue coordinate, and it needs no group migration to work. The output path is not
+# pinned yet - the Hugo project does not exist in this repo yet (#2, task 3) - so `output` stays the
+# positional argument the task declares, and `./simplon.sh build reference <path>` writes the page.
+import:
+  delivery: [docs]
+tasks:
+  docs:reference:
+    group: build
