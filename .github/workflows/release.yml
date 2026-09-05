@@ -31,3 +31,74 @@ jobs:
       - run: ./simplon.sh test all
       - run: ./simplon.sh build wheel
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  # The documentation website, published to GitHub Pages by the SAME tag that published the wheel.
+  #
+  # THE LINE THIS JOB IS DRAWN ON. Building the site is simplon's - one command, the same one a human
+  # types - and deploying it is the workflow's. Deploying really is CI/CD and nothing else: the two
+  # actions below hand an artefact to the Actions artifact service and ask GitHub to serve it, and
+  # neither of those exists outside an Actions run. Building, on the other hand, must work in both
+  # places, and by the SAME route: `./simplon.sh build docs` here is the command a human types in a
+  # checkout, so there is one truth about how the site comes to be. A workflow that called hugo itself,
+  # or that reproduced the reference-then-site order in two `run:` lines, would be a second way to the
+  # same end - and two ways to one end drift, quietly, until the one nobody runs by hand is the one that
+  # is wrong. tests/test_release_workflow.py holds the shape.
+  #
+  # NO `paths:` FILTER, and none anywhere in this file: a release that touches no documentation still
+  # rebuilds and republishes the site. A filter would look like an optimisation, would pass every release
+  # that happens to touch docs/, and would be found out by the first one that does not - months later, by
+  # somebody who was not here. The test asserts the absence, because an absence is what a reviewer cannot
+  # see.
+  #
+  # `needs: publish` is the point of tagging rather than pushing: the site describes the version it was
+  # cut from, so it goes up only once that version is on PyPI. Between two releases it ages; it never
+  # documents something nobody can install.
+  docs:
+    needs: publish
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write           # deploy the site (and enable Pages the first time)
+      id-token: write        # the same Trusted-Publishing shape as PyPI above: an OIDC token, no secret
+    # Two tags in flight must not race each other onto one site; `cancel-in-progress: false` lets the
+    # older one finish rather than leaving the page half-replaced.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # One-time repository setup, idempotent afterwards: `enablement: true` turns Pages on with the
+      # Actions build type. It is the workflow's business because it is about rights - the same kind of
+      # setup as Trusted Publishing above - not about how the site is made.
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      # THE one build command, and the same one locally. It plans build.reference -> build.site out of
+      # simplon.yaml, so the order the site needs (the reference is WRITTEN into the content tree the
+      # site READS) is stated once, in the manifest, and not restated here. `build site` alone would
+      # publish the previous run's reference; that is why the aggregate is what runs.
+      #
+      # Hugo runs in the pinned image via docker, which ubuntu-latest has. The container is given the
+      # RUNNER's own uid (simplon.docker.user_args), so build/website/ comes out owned by `runner` and
+      # the upload below can read it - measured, see the task report; the image accepts a uid that does
+      # not exist inside it, which is what makes the runner's 1001 no different from a developer's.
+      #
+      # It also runs `hugo mod get` against the pinned theme, which WRITES site/go.mod and site/go.sum.
+      # Both are committed and already agree with the pin, so the write is a no-op here - and there is
+      # deliberately no "working tree clean" gate in this workflow to go red on it the day the pin moves
+      # ahead of the file. Pinning the dependency is what makes the build reproducible; asserting that
+      # the build changed nothing would only assert that somebody had run it locally first.
+      - run: ./simplon.sh build docs
+      # The deployment, and the whole of what the workflow adds. `upload-pages-artifact` tars the built
+      # directory into the artifact `deploy-pages` unpacks; both talk to services that only exist inside
+      # a runner, which is exactly why neither is a simplon task.
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/website
+      - id: deployment
+        uses: actions/deploy-pages@v4

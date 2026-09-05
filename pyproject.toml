@@ -64,6 +64,16 @@ simplon = "simplon.bootstrap:main"
 
 [project.urls]
 Homepage = "https://github.com/marcozwyssig/simplon"
+# The documentation website (#2). PyPI renders these as the project page's sidebar links, which is the
+# whole reason the site is published at a release rather than on every push: somebody who reaches it from
+# the page of the version they just installed reads a page that describes that version.
+#
+# The address appears twice in this repository - here, and as `site.base_url` in simplon.yaml, where Hugo
+# needs it to write absolute links. Neither can be derived from the other (a packaging file and a site
+# build have no way to read each other), so tests/test_release_workflow.py asserts that they AGREE. Two
+# spellings of one address is exactly the shape that rots quietly, and a test is the cheapest place to
+# hold it together.
+Documentation = "https://marcozwyssig.github.io/simplon/"
 
 [tool.setuptools.packages.find]
 where = ["src"]
