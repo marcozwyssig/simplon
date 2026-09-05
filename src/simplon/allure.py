@@ -61,6 +61,41 @@ def merge_results(dst: str, srcs: list[str], *, parent_suite: str = "Unit") -> N
                 shutil.copy(f, os.path.join(dst, base))
 
 
+#: Allure's own convention: a `key=value` file in the RESULTS dir, rendered as the report's Environment
+#: widget. Not a simplon invention - which is exactly why the verdict of a run belongs in it (#30): it is
+#: the one place inside the archive that a later reader already looks at, and it needs no viewer we ship.
+ENVIRONMENT = "environment.properties"
+
+
+def write_environment(results: str, values: dict[str, str]) -> str:
+    """Merge `values` into the results dir's ``environment.properties`` and return its path.
+
+    MERGE rather than overwrite: several gates append into one results dir over a run, and a report that
+    showed only the last gate's environment would be a narrower statement than the run made. Existing keys
+    are replaced by the new value; keys nobody restated survive.
+
+    Values are flattened to one line, because the format has no continuation and a stray newline would
+    silently truncate the file at that point - a value that eats the keys below it is worse than a value
+    that reads a little cramped.
+    """
+    os.makedirs(results, exist_ok=True)
+    path = os.path.join(results, ENVIRONMENT)
+    merged: dict[str, str] = {}
+    if os.path.isfile(path):
+        with open(path, encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                merged[key.strip()] = value.strip()
+    merged.update({key: " ".join(str(value).split()) for key, value in values.items()})
+    with open(path, "w", encoding="utf-8") as fh:
+        for key in sorted(merged):
+            fh.write(f"{key}={merged[key]}\n")
+    return path
+
+
 @dataclass(frozen=True)
 class Render:
     """What one render attempt produced, so a caller can tell the TWO no-archive cases apart (#6).

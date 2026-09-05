@@ -17,6 +17,14 @@ from simplon import context
 from simplon import allure
 from simplon.tasks import testrun
 from simplon.context import ProductContext
+from simplon import verdict as verdict_module
+from simplon.verdict import GateVerdict, RunVerdict, Verdict
+
+
+def _gv(name, rc):
+    """The verdict a stubbed gate hands back: green on 0, a red SUITE (not a red setup) otherwise - the
+    default a chain test wants, because the setup distinction has its own tests below."""
+    return GateVerdict(name, Verdict.PASSED if rc == 0 else Verdict.FAILED, rc)
 
 
 def _data(**overrides):
@@ -188,8 +196,9 @@ def test_gate_runs_the_suite_the_command_pinned_rather_than_its_invocation_name(
     # the callback must resolve the gate from the parameter rather than from ctx.info_name
     _register(monkeypatch, tmp_path, _data())
     seen = {}
-    monkeypatch.setattr(testrun, "run_gate",
-                        lambda gate, cfg, extra, *, filtered: seen.update(gate=gate.name) or 0)
+    monkeypatch.setattr(testrun, "assess_gate",
+                        lambda gate, cfg, extra, *, filtered: seen.update(gate=gate.name)
+                        or GateVerdict(gate.name, Verdict.PASSED))
     ctx = SimpleNamespace(info_name="whatever-this-command-is-called", args=[])
 
     # act: `gate` returns the rc rather than raising `typer.Exit` itself (netctl#1444/#defect2) - the
@@ -207,8 +216,9 @@ def test_gate_falls_back_to_the_invocation_name_when_no_name_is_pinned(monkeypat
     # bound to this one body are told apart by the name each was invoked as
     _register(monkeypatch, tmp_path, _data())
     seen = {}
-    monkeypatch.setattr(testrun, "run_gate",
-                        lambda gate, cfg, extra, *, filtered: seen.update(gate=gate.name) or 0)
+    monkeypatch.setattr(testrun, "assess_gate",
+                        lambda gate, cfg, extra, *, filtered: seen.update(gate=gate.name)
+                        or GateVerdict(gate.name, Verdict.PASSED))
     ctx = SimpleNamespace(info_name="system", args=[])
 
     # act: same rc-return contract as above
@@ -234,8 +244,9 @@ def test_run_gate_clearsTheSharedResults_forTheFirstGateOnly(monkeypatch, tmp_pa
     # act
     testrun.run_gate(cfg.gates[0], cfg, [], filtered=False)
 
-    # assert: the shared dir is fresh and the transient render dir is gone
-    assert os.listdir(results) == []
+    # assert: the shared dir holds nothing of the earlier run - only this run's own verdict (#30) - and
+    # the transient render dir is gone
+    assert os.listdir(results) == [allure.ENVIRONMENT]
     assert not (tmp_path / "test/reports/allure-report").exists()
 
 
@@ -251,7 +262,8 @@ def test_run_gate_appendsIntoTheSharedResults_forALaterGate(monkeypatch, tmp_pat
     testrun.run_gate(cfg.gates[1], cfg, [], filtered=False)
 
     # assert: the appending gate left the earlier gate's results in place
-    assert os.listdir(results) == ["system-result.json"]
+    assert "system-result.json" in os.listdir(results)
+    assert sorted(os.listdir(results)) == sorted([allure.ENVIRONMENT, "system-result.json"])
 
 
 def test_run_gate_runsPytestFromTheSuiteRoot_intoTheSharedResultsAndItsOwnJunitFile(monkeypatch, tmp_path, runner):
@@ -430,7 +442,7 @@ def test_run_gate_quarantinesAFilteredRun_leavingTheSharedArchiveUntouched(monke
     testrun.run_gate(cfg.gates[0], cfg, ["-k", "one"], filtered=True)
 
     # assert: the shared archive survived intact and the run wrote into its own dir instead
-    assert os.listdir(shared) == ["full-run-result.json"]
+    assert os.listdir(shared) == ["full-run-result.json"]  # not even a verdict: this run never touched it
     quarantine = tmp_path / "test/reports/allure-results-filtered"
     assert f"--alluredir={quarantine}" in runner["argv"]
     assert f"--junit-xml={tmp_path / 'test/reports/junit-filtered.xml'}" in runner["argv"]
@@ -447,8 +459,8 @@ def test_run_gate_clearsTheQuarantineDir_soAFilteredRunIsNeverMixedWithTheLastOn
     # act
     testrun.run_gate(cfg.gates[0], cfg, ["-k", "one"], filtered=True)
 
-    # assert: the quarantine dir holds only this run
-    assert os.listdir(quarantine) == []
+    # assert: the quarantine dir holds only this run - its verdict and nothing of the earlier one
+    assert os.listdir(quarantine) == [allure.ENVIRONMENT]
 
 
 # --- accept: the whole chain ------------------------------------------------------------------------------
@@ -457,11 +469,12 @@ def test_run_gate_clearsTheQuarantineDir_soAFilteredRunIsNeverMixedWithTheLastOn
 def _stub_chain(monkeypatch, rcs, report_rc=0):
     """Record the gates accept ran (with the args each received) and inject each one's rc."""
     ran = []
-    monkeypatch.setattr(testrun, "run_gate",
-                        lambda gate, cfg, extra, *, filtered: ran.append((gate.name, extra, filtered))
-                        or rcs.get(gate.name, 0))
+    monkeypatch.setattr(testrun, "assess_gate",
+                        lambda gate, cfg, extra, *, filtered, earlier=():
+                        ran.append((gate.name, extra, filtered)) or _gv(gate.name, rcs.get(gate.name, 0)))
     monkeypatch.setattr(testrun, "report",
-                        lambda cfg=None, *, filtered=False: ran.append(("report", [], filtered)) or report_rc)
+                        lambda cfg=None, *, filtered=False, run=None:
+                        ran.append(("report", [], filtered)) or report_rc)
     return ran
 
 
@@ -599,3 +612,393 @@ def test_accept_isRed_whenTheArchiveRenderFailed_eventhoughEveryGateWasGreen(mon
     # assert: red, and every gate still ran
     assert rc == 1
     assert [name for name, _, _ in ran] == ["system", "acceptance-dataplane", "report"]
+
+
+# --- setup failed versus probe red (#30) ------------------------------------------------------------------
+#
+# A gate can be red for two reasons and the exit code cannot tell them apart. These tests sabotage the
+# SETUP - the same shape of failure that produced the ticket, where a product's provisioning fell over and
+# the archive kept showing last week's `passed` - and pin that the distinction survives into what is
+# WRITTEN, since that is the only place it can survive: the rc stays one bit, on purpose.
+
+
+def test_aSabotagedPreambleIsSetupFailed_andTheSuiteNeverRuns(monkeypatch, tmp_path, runner):
+    # arrange: provisioning falls over, exactly as `provision` did in the case behind the ticket
+    _register(monkeypatch, tmp_path, _data())
+    cfg = testrun.config()
+    runner["rc:product.lab:ready"] = 1
+
+    # act
+    gv = testrun.assess_gate(cfg.gates[0], cfg, [], filtered=False)
+
+    # assert: the verdict says the SETUP broke, names the stage, and pytest was never invoked - the fix
+    # that matters, because the old code dropped the preamble's rc and ran the suite against a lab that
+    # was not there
+    assert gv.verdict is Verdict.SETUP_FAILED
+    assert gv.stage == "preamble"
+    assert runner["argv"] is None
+
+
+def test_aRedSuiteAndABrokenSetupCarryTheSameRc_soTheDistinctionCannotLiveInIt(monkeypatch, tmp_path, runner):
+    # arrange: two runs of the same gate, red for the two different reasons, both rc 1
+    _register(monkeypatch, tmp_path, _data())
+    cfg = testrun.config()
+    runner["rc"] = 1
+    red_suite = testrun.assess_gate(cfg.gates[0], cfg, [], filtered=False)
+    runner["rc"], runner["rc:product.lab:ready"] = 0, 1
+
+    # act
+    broken_setup = testrun.assess_gate(cfg.gates[0], cfg, [], filtered=False)
+
+    # assert: indistinguishable by exit code - which is why the ticket forbids putting it there - and
+    # distinguishable in every written form
+    assert red_suite.rc == broken_setup.rc == 1
+    assert testrun.run_gate(cfg.gates[0], cfg, [], filtered=False) == 1
+    assert red_suite.verdict is Verdict.FAILED and broken_setup.verdict is Verdict.SETUP_FAILED
+    assert "the suite ran" in red_suite.line and "never ran" in broken_setup.line
+
+
+def test_aBrokenSetupWritesSetupFailedIntoTheArchiveItself_notOnlyRed(monkeypatch, tmp_path, runner):
+    # arrange
+    _register(monkeypatch, tmp_path, _data())
+    cfg = testrun.config()
+    runner["rc:product.lab:ready"] = 1
+
+    # act
+    testrun.assess_gate(cfg.gates[0], cfg, [], filtered=False)
+
+    # assert: allure's own Environment widget - the one thing a reader handed only the HTML still sees
+    written = (tmp_path / "test/reports/allure-results" / allure.ENVIRONMENT).read_text(encoding="utf-8")
+    assert "verdict=setup-failed" in written
+    assert "setup failed (preamble, rc 1)" in written
+
+
+def test_aGateWhoseSetupBrokeStampsSetupFailed_ratherThanLeavingLastWeeksPassedStanding(monkeypatch, tmp_path,
+                                                                                        runner):
+    # arrange: the ticket's case end to end - an earlier run's green stamp, then a run that never probed
+    _register(monkeypatch, tmp_path, _data())
+    reports = str(tmp_path / "test/reports")
+    verdict_module.write_stamp(reports, RunVerdict((GateVerdict("system", Verdict.PASSED),)))
+    runner["rc:product.lab:ready"] = 1
+    ctx = SimpleNamespace(info_name="system", args=[])
+
+    # act
+    rc = testrun.gate(ctx, name="system")
+
+    # assert: red on the terminal AND red in the record, and the record says WHY
+    assert rc == 1
+    stamp = verdict_module.read_stamp(reports)
+    assert stamp is not None
+    assert stamp["verdict"] == "setup-failed"
+    assert stamp["gates"][0]["stage"] == "preamble"
+
+
+def test_aSuiteThatReportsItsOwnBrokenSetupIsBelieved_evenThoughTheKernelCannotSeeIt(monkeypatch, tmp_path,
+                                                                                     runner):
+    # arrange: the shape of the case behind the ticket - the lab is built inside a pytest session fixture,
+    # so from out here a broken provision is just a non-zero pytest rc. The suite drops the marker the
+    # kernel offered it in the environment.
+    _register(monkeypatch, tmp_path, _data())
+    cfg = testrun.config()
+    runner["rc"] = 2
+
+    def fake_pytest(argv, **kw):
+        with open(os.environ[testrun.SETUP_MARKER_ENV], "w", encoding="utf-8") as fh:
+            fh.write("provision\n")
+        return SimpleNamespace(rc=runner["rc"])
+
+    monkeypatch.setattr(testrun, "run", fake_pytest)
+
+    # act
+    gv = testrun.assess_gate(cfg.gates[0], cfg, [], filtered=False)
+
+    # assert: the suite's own claim, in the suite's own words, and the rc it really had
+    assert gv.verdict is Verdict.SETUP_FAILED
+    assert gv.stage == "provision" and gv.rc == 2
+
+
+def test_aMarkerLeftByAnEarlierRunCannotBeReadAsThisRunsVerdict(monkeypatch, tmp_path, runner):
+    # arrange: a stale "setup failed" marker is the same defect as a stale "passed", pointing the other way
+    _register(monkeypatch, tmp_path, _data())
+    cfg = testrun.config()
+    reports = tmp_path / "test/reports"
+    reports.mkdir(parents=True)
+    (reports / testrun.SETUP_MARKER).write_text("provision\n", encoding="utf-8")
+
+    # act: this run's suite prepares fine and passes
+    gv = testrun.assess_gate(cfg.gates[0], cfg, [], filtered=False)
+
+    # assert
+    assert gv.verdict is Verdict.PASSED
+
+
+def test_aSuiteThatClaimsABrokenSetupAndStillExitsZeroIsNotGreen(monkeypatch, tmp_path, runner):
+    # arrange: a suite whose setup broke and whose rc says otherwise. Believing the rc there is exactly the
+    # "red run, green record" this exists against, so the claim wins.
+    _register(monkeypatch, tmp_path, _data())
+    cfg = testrun.config()
+
+    def fake_pytest(argv, **kw):
+        open(os.environ[testrun.SETUP_MARKER_ENV], "w", encoding="utf-8").close()
+        return SimpleNamespace(rc=0)
+
+    monkeypatch.setattr(testrun, "run", fake_pytest)
+
+    # act
+    gv = testrun.assess_gate(cfg.gates[0], cfg, [], filtered=False)
+    rc = testrun.run_gate(cfg.gates[0], cfg, [], filtered=False)
+
+    # assert: an empty marker still counts, and gets the generic wording rather than being dropped
+    assert gv.verdict is Verdict.SETUP_FAILED
+    assert gv.stage == "the suite's own setup"
+    # AND the gate is red on the way out. A `setup-failed` record handed back with rc 0 is a red run that
+    # CI reports as a success - the failure class of this ticket with its two halves swapped, and the half
+    # this test's name has always promised to measure.
+    assert gv.rc != 0 and rc != 0
+
+
+def test_theMarkerPathIsHandedToTheSuiteAndRestoredAfterwards(monkeypatch, tmp_path, runner):
+    # arrange: the environment must not be left mutated for whatever runs next in this process
+    _register(monkeypatch, tmp_path, _data())
+    cfg = testrun.config()
+    monkeypatch.delenv(testrun.SETUP_MARKER_ENV, raising=False)
+    seen = {}
+    monkeypatch.setattr(testrun, "run",
+                        lambda argv, **kw: seen.update(path=os.environ[testrun.SETUP_MARKER_ENV])
+                        or SimpleNamespace(rc=0))
+
+    # act
+    testrun.assess_gate(cfg.gates[0], cfg, [], filtered=False)
+
+    # assert
+    assert seen["path"] == str(tmp_path / "test/reports" / testrun.SETUP_MARKER)
+    assert testrun.SETUP_MARKER_ENV not in os.environ
+
+
+def test_aGateThatNeverStartedWritesNothingIntoTheArchive_butStillStampsThatItDidNotRun(monkeypatch,
+                                                                                        tmp_path, runner):
+    # arrange: the precondition refuses, so the last real run's archive must stand untouched - and yet the
+    # attempt must not be silent, which is the half agile-cockpit's conftest could not do
+    _register(monkeypatch, tmp_path, _data())
+    runner["rc:product.health:check"] = 7
+    results = tmp_path / "test/reports/allure-results"
+    results.mkdir(parents=True)
+    (results / "stale-result.json").write_text("{}", encoding="utf-8")
+    ctx = SimpleNamespace(info_name="system", args=[])
+
+    # act
+    rc = testrun.gate(ctx, name="system")
+
+    # assert: the archive is exactly as it was, and the stamp beside it says this attempt never ran
+    assert rc == 7
+    assert os.listdir(results) == ["stale-result.json"]
+    stamp = verdict_module.read_stamp(str(tmp_path / "test/reports"))
+    assert stamp is not None and stamp["verdict"] == "not-run"
+    assert stamp["gates"][0]["stage"] == "precondition"
+
+
+def test_accept_reportsTheWeakestClaimOfTheWholeRun_soOneBrokenSetupIsNotHiddenByARedSuite(monkeypatch,
+                                                                                           tmp_path, runner):
+    # arrange: one gate probed and found something, the other never probed at all
+    _register(monkeypatch, tmp_path, _data())
+    reports = str(tmp_path / "test/reports")
+    monkeypatch.setattr(testrun, "report", lambda cfg=None, *, filtered=False, run=None: 0)
+    verdicts = {"system": GateVerdict("system", Verdict.FAILED, 1),
+                "acceptance-dataplane": GateVerdict("acceptance-dataplane", Verdict.SETUP_FAILED, 1,
+                                                    "preamble")}
+    monkeypatch.setattr(testrun, "assess_gate",
+                        lambda gate, cfg, extra, *, filtered, earlier=(): verdicts[gate.name])
+
+    # act
+    rc = testrun.accept([])
+
+    # assert: one red bit out, and a record that still tells the two gates apart
+    assert rc == 1
+    stamp = verdict_module.read_stamp(reports)
+    assert stamp is not None and stamp["verdict"] == "setup-failed"
+    assert [g["verdict"] for g in stamp["gates"]] == ["failed", "setup-failed", "passed"]
+
+
+def test_accept_stampsThatItNeverStarted_whenTheSectionPreconditionRefuses(monkeypatch, tmp_path, runner):
+    # arrange
+    _register(monkeypatch, tmp_path, _data())
+    runner["rc:product.health:check"] = 7
+    _stub_chain(monkeypatch, {})
+
+    # act
+    rc = testrun.accept([])
+
+    # assert: the fast abort is kept, and it is no longer silent
+    assert rc == 7
+    stamp = verdict_module.read_stamp(str(tmp_path / "test/reports"))
+    assert stamp is not None and stamp["verdict"] == "not-run"
+
+
+def test_report_putsTheRunsVerdictIntoTheArchiveItArchives(monkeypatch, tmp_path, runner):
+    # arrange
+    _register(monkeypatch, tmp_path, _data())
+    cfg = testrun.config()
+    monkeypatch.setattr(testrun.allure, "render_report", lambda *a, **kw: allure.Render(report="r.html",
+                                                                                       tool="allure"))
+    run = RunVerdict((GateVerdict("system", Verdict.SETUP_FAILED, 1, "provision"),))
+
+    # act
+    testrun.report(cfg, run=run)
+
+    # assert
+    written = (tmp_path / "test/reports/allure-results" / allure.ENVIRONMENT).read_text(encoding="utf-8")
+    assert "verdict=setup-failed" in written
+
+
+# --- an exploratory run must not speak for the archive it did not run (#30, review 1) ---------------------
+#
+# The quarantine rule already keeps a `-k` run's RESULTS out of the shared archive. Its VERDICT has to
+# follow, or the two records of one directory contradict each other in silence: a green one-test hunt
+# stamping `passed` over the finding of a red full gate is the worse direction, and it is exactly the
+# "partial run that does not look like one" the quarantine exists for.
+
+
+def _run_gate_as_command(name, args, tmp_path):
+    """Invoke the gate the way the CLI does, so the stamp is written by the code path a user reaches."""
+    return testrun.gate(SimpleNamespace(info_name=name, args=list(args)), name=name)
+
+
+def test_anExploratoryRunStampsIntoItsOwnFile_leavingTheFullGatesRecordAlone(monkeypatch, tmp_path, runner):
+    # arrange: a full, green gate has stamped the canonical record
+    _register(monkeypatch, tmp_path, _data())
+    reports = str(tmp_path / "test/reports")
+    _run_gate_as_command("system", [], tmp_path)
+
+    # act: a one-test hunt that goes red
+    runner["rc"] = 1
+    rc = _run_gate_as_command("system", ["-k", "one_test"], tmp_path)
+
+    # assert: red on the way out, its own record written, and the canonical one untouched
+    assert rc == 1
+    assert verdict_module.read_stamp(reports)["verdict"] == "passed"
+    partial = verdict_module.read_stamp(reports, filtered=True)
+    assert partial["verdict"] == "failed" and partial["filtered"] is True
+    assert partial["line"].startswith("partial run - ")
+
+
+def test_aGreenExploratoryRunCannotStampOverTheFindingOfARedFullGate(monkeypatch, tmp_path, runner):
+    # arrange: the worse direction - a red full gate's finding is the thing that must survive
+    _register(monkeypatch, tmp_path, _data())
+    reports = str(tmp_path / "test/reports")
+    runner["rc"] = 1
+    _run_gate_as_command("system", [], tmp_path)
+
+    # act: a green `-k` run afterwards
+    runner["rc"] = 0
+    _run_gate_as_command("system", ["-k", "the_one_that_passes"], tmp_path)
+
+    # assert: the canonical record still says the full gate was red
+    assert verdict_module.read_stamp(reports)["verdict"] == "failed"
+    assert verdict_module.read_stamp(reports, filtered=True)["verdict"] == "passed"
+
+
+def test_accept_stampsAnExploratoryRunIntoItsOwnFileToo(monkeypatch, tmp_path, runner):
+    # arrange
+    _register(monkeypatch, tmp_path, _data())
+    reports = str(tmp_path / "test/reports")
+    verdict_module.write_stamp(reports, RunVerdict((GateVerdict("system", Verdict.PASSED),)))
+    _stub_chain(monkeypatch, {"system": 1})
+
+    # act
+    testrun.accept(["-k", "one"])
+
+    # assert
+    assert verdict_module.read_stamp(reports)["verdict"] == "passed"
+    assert verdict_module.read_stamp(reports, filtered=True)["verdict"] == "failed"
+
+
+def test_accept_stampsAnExploratoryAbortIntoTheExploratoryFile_notTheCanonicalOne(monkeypatch, tmp_path,
+                                                                                  runner):
+    # arrange: the section precondition refuses a `-k` run - the abort must be quarantined like the run
+    _register(monkeypatch, tmp_path, _data())
+    reports = str(tmp_path / "test/reports")
+    verdict_module.write_stamp(reports, RunVerdict((GateVerdict("system", Verdict.PASSED),)))
+    runner["rc:product.health:check"] = 7
+    _stub_chain(monkeypatch, {})
+
+    # act
+    assert testrun.accept(["-k", "one"]) == 7
+
+    # assert
+    assert verdict_module.read_stamp(reports)["verdict"] == "passed"
+    assert verdict_module.read_stamp(reports, filtered=True)["verdict"] == "not-run"
+
+
+# --- the run's verdict in the archive, not one gate's guess (#30, review 4) -------------------------------
+
+
+def test_aLaterGreenGateCannotOverwriteAnEarlierGatesSetupFailureInTheArchive(monkeypatch, tmp_path, runner):
+    # arrange: gate 1's setup fell over; gate 2 then runs green into the SAME results dir
+    _register(monkeypatch, tmp_path, _data())
+    cfg = testrun.config()
+    broke = GateVerdict("system", Verdict.SETUP_FAILED, 1, "preamble")
+
+    # act
+    testrun.assess_gate(cfg.gates[1], cfg, [], filtered=False, earlier=(broke,))
+
+    # assert: the archive states the RUN's weakest claim, not the last gate's own - the environment write
+    # is a last-wins merge, so a gate stating a run verdict from its own knowledge would defeat the
+    # precedence rule inside the one artefact it protects
+    written = (tmp_path / "test/reports/allure-results" / allure.ENVIRONMENT).read_text(encoding="utf-8")
+    assert "verdict=setup-failed" in written
+    assert "verdict.gate.system=setup failed (preamble, rc 1)" in written
+    assert "verdict.gate.acceptance-dataplane=passed" in written
+
+
+def test_report_leavesTheLastRealRunsArchiveAlone_whenNoGateOfThisRunEverStarted(monkeypatch, tmp_path,
+                                                                                 runner):
+    # arrange: a full run's archive, and a run whose every gate refused before touching anything
+    _register(monkeypatch, tmp_path, _data())
+    cfg = testrun.config()
+    results = tmp_path / "test/reports/allure-results"
+    results.mkdir(parents=True)
+    allure.write_environment(str(results), {"verdict": "passed"})
+    monkeypatch.setattr(testrun.allure, "render_report", lambda *a, **kw: allure.Render())
+
+    # act
+    testrun.report(cfg, run=RunVerdict((GateVerdict("system", Verdict.NOT_RUN, 7, "precondition"),)))
+
+    # assert: untouched - stating this run's verdict there is the stale-verdict defect pointing the
+    # other way
+    assert "verdict=passed" in (results / allure.ENVIRONMENT).read_text(encoding="utf-8")
+
+
+# --- the report step gets its own words (#30, review 3) ---------------------------------------------------
+
+
+def test_theReportStepIsNotDescribedAsASuiteThatRanAndFoundSomething(monkeypatch, tmp_path, runner):
+    # arrange: every gate green, the archive render red (#6)
+    _register(monkeypatch, tmp_path, _data())
+    reports = str(tmp_path / "test/reports")
+    _stub_chain(monkeypatch, {}, report_rc=1)
+
+    # act
+    assert testrun.accept([]) == 1
+
+    # assert: it ran no suite, so it must not borrow the sentence written for one - the stamp would
+    # otherwise carry a false statement of exactly the kind this whole change removes
+    stamp = verdict_module.read_stamp(reports)
+    step = [g for g in stamp["gates"] if g["gate"] == "report"][0]
+    assert step["verdict"] == "failed"
+    assert "the suite ran" not in step["line"]
+    assert "no archive" in step["line"] or "wrote no archive" in step["line"]
+
+
+def test_aRedReportStepThatIsTheWeakestElementDoesNotPutSuiteWordingIntoTheRunSummary(monkeypatch, tmp_path,
+                                                                                      runner):
+    # arrange: gates green, render red - the report step IS then the run's weakest element
+    _register(monkeypatch, tmp_path, _data())
+    _stub_chain(monkeypatch, {}, report_rc=1)
+
+    # act
+    testrun.accept([])
+
+    # assert
+    stamp = verdict_module.read_stamp(str(tmp_path / "test/reports"))
+    assert stamp["line"].startswith("report: failed")
+    assert "the suite ran" not in stamp["line"]

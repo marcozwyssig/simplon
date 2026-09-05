@@ -288,3 +288,47 @@ def test_render_report_does_not_call_a_MISSING_tool_a_failure(tmp_path, monkeypa
     assert not render.ok
     assert not render.failed
     assert render.tool is None
+
+
+# --- the environment the report shows (#30) ---------------------------------------------------------------
+
+
+def test_write_environment_writesTheValuesAsAllurePropertiesInTheResultsDir(tmp_path):
+    # arrange
+    results = str(tmp_path / "allure-results")
+
+    # act
+    path = allure.write_environment(results, {"verdict": "setup-failed", "verdict.gate.system": "broke"})
+
+    # assert: allure's own convention, so the report's Environment widget shows it with no viewer of ours
+    assert os.path.basename(path) == allure.ENVIRONMENT
+    lines = open(path, encoding="utf-8").read().splitlines()
+    assert lines == ["verdict=setup-failed", "verdict.gate.system=broke"]
+
+
+def test_write_environment_mergesIntoWhatIsAlreadyThere_becauseSeveralGatesShareOneResultsDir(tmp_path):
+    # arrange: an earlier gate's environment
+    results = str(tmp_path / "allure-results")
+    allure.write_environment(results, {"verdict.gate.system": "passed", "lab": "gitlab-17"})
+
+    # act: a later gate restates the run's verdict and adds its own line
+    allure.write_environment(results, {"verdict.gate.acceptance": "failed (rc 1)", "verdict": "failed"})
+
+    # assert: the earlier gate's line survives - a report showing only the last gate would be a narrower
+    # statement than the run made
+    written = dict(line.split("=", 1) for line in
+                   open(results + "/" + allure.ENVIRONMENT, encoding="utf-8").read().splitlines())
+    assert written == {"verdict": "failed", "verdict.gate.system": "passed",
+                       "verdict.gate.acceptance": "failed (rc 1)", "lab": "gitlab-17"}
+
+
+def test_write_environment_flattensAMultilineValue_soItCannotEatTheKeysBelowIt(tmp_path):
+    # arrange: the format has no continuation, so a stray newline would truncate the file at that point
+    results = str(tmp_path / "allure-results")
+
+    # act
+    allure.write_environment(results, {"note": "setup failed\nno suite ran", "after": "still here"})
+
+    # assert
+    lines = open(results + "/" + allure.ENVIRONMENT, encoding="utf-8").read().splitlines()
+    assert lines == ["after=still here", "note=setup failed no suite ran"]
