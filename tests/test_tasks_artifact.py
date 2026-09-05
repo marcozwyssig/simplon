@@ -84,3 +84,19 @@ def test_a_source_that_is_not_there_is_named_before_anything_is_pushed(published
         artifact.publish(name="updatesite", tag="1")
 
     assert published == []
+
+
+def test_a_declared_archive_name_reaches_the_publisher(_product, monkeypatch):
+    """The manifest names the file, so a consumer pulling by hand sees what it holds - and a consumer
+    reading the name is not coupled to the publisher's directory layout."""
+    (_product / "demo.yaml").write_text(
+        _MANIFEST.replace("    source: build-out/site",
+                          "    source: build-out/site\n    archive: demo-updatesite"), encoding="utf-8")
+    seen: list = []
+    monkeypatch.setattr(githubpackages, "login", lambda registry, **kw: None)
+    monkeypatch.setattr(githubpackages, "push_directory",
+                        lambda ref, directory, media, **kw: seen.append(kw.get("archive_name")))
+
+    artifact.publish(name="updatesite", tag="1")
+
+    assert seen == ["demo-updatesite"]
