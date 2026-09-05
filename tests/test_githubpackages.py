@@ -273,3 +273,31 @@ def test_fetching_an_artifact_unpacks_the_single_archive_it_pulled(tmp_path, mon
     unpacked = githubpackages.fetch_directory("ghcr.io/o/r:t", tmp_path / "out")
 
     assert (unpacked / "site.xml").read_text() == "<site/>"
+
+
+def test_the_archive_can_be_named_by_the_publisher(tmp_path, calls, monkeypatch):
+    """`build-out/site` publishing as `site.zip` says nothing about what it is. A publisher that knows
+    it is an update site should be able to say so - and the consumer that pulls it by hand then gets a
+    self-describing file rather than one named after somebody else's directory layout."""
+    source = tmp_path / "site"
+    source.mkdir()
+    (source / "site.xml").write_text("<site/>")
+    pushed: list = []
+    monkeypatch.setattr(githubpackages, "push", lambda ref, path, media: pushed.append(Path(path).name))
+
+    githubpackages.push_directory("ghcr.io/o/r:t", source, "application/vnd.x+zip",
+                                  archive_name="cleon-updatesite")
+
+    assert pushed == ["cleon-updatesite.zip"]
+
+
+def test_a_name_that_already_says_zip_is_not_said_twice(tmp_path, calls, monkeypatch):
+    source = tmp_path / "site"
+    source.mkdir()
+    pushed: list = []
+    monkeypatch.setattr(githubpackages, "push", lambda ref, path, media: pushed.append(Path(path).name))
+
+    githubpackages.push_directory("ghcr.io/o/r:t", source, "application/vnd.x+zip",
+                                  archive_name="cleon-updatesite.zip")
+
+    assert pushed == ["cleon-updatesite.zip"]

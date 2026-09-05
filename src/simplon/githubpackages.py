@@ -238,18 +238,22 @@ def newest_tag(registry: str, repository: str) -> str:
 
 
 def push_directory(reference_: str, directory: Path | str, media_type: str,
-                   *, archive_dir: Path | None = None) -> Path:
+                   *, archive_dir: Path | None = None, archive_name: str = "") -> Path:
     """Zip `directory` and push the archive as an OCI artifact; returns the archive that was pushed.
 
-    The archive is named after the directory, beside it by default, because the name is what a consumer
-    sees after pulling: `site.zip` out of `site/` says what it holds, and a temporary name does not.
+    THE NAME IS THE PUBLISHER'S TO CHOOSE, because the name is what a consumer sees after pulling. The
+    default is the directory's own - `site/` becomes `site.zip` - which is honest for a directory whose
+    name says what it holds and useless for one called `build-out/site`, where it says only where the
+    publisher happened to build it. `archive_name` lets the product say what the thing IS; `.zip` is
+    added if it is not already there, so a manifest may spell it either way.
     """
     source = Path(directory)
     if not source.is_dir():
         raise PackageError(f"nothing to publish: {source} is not a directory")
     target_dir = Path(archive_dir) if archive_dir else source.parent
     target_dir.mkdir(parents=True, exist_ok=True)
-    archive = target_dir / f"{source.name}.zip"
+    chosen = archive_name or source.name
+    archive = target_dir / (chosen if chosen.endswith(".zip") else f"{chosen}.zip")
     # Rebuilt every time: the archive IS the directory, and a stale one would publish one version's
     # number over another version's content.
     archive.unlink(missing_ok=True)
