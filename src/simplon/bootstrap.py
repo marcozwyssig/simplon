@@ -97,35 +97,46 @@ def pkg_dir_for(orch_dir: str) -> str:
     return f"{orch_dir}/src/python/orchestrator"
 
 
-def validate_orch_dir(value: str) -> str:
-    """Return the normalised block directory if it is a plain relative path, else raise ValueError.
+def validate_relative_dir(value: str, what: str, hint: str, *, inside: str = "the target directory") -> str:
+    """Return the normalised directory if `value` is a plain relative path, else raise ValueError naming
+    `what` (the caller's word for the value) and `hint` (what a good one looks like).
 
-    Checked here rather than at the write, so a bad value costs nothing: an absolute path or one with a
-    `..` in it would scaffold OUTSIDE the target the user named -- silently, and over whatever happens to
-    live there. Refuse it loudly instead. `\\` is refused rather than translated, because the cmd shim gets
-    its backslashes written for it and a value carrying both separators is a guess about which one was meant.
+    Checked before anything acts on the path, so a bad value costs nothing: an absolute path or one with a
+    `..` in it would land OUTSIDE the directory the caller named - silently, and over whatever happens to
+    live there. Refuse it loudly instead. `\\` is refused rather than translated, because a value carrying
+    both separators is a guess about which one was meant.
+
+    Shared rather than restated: `--orch-dir` scaffolds INTO the path (#4) and the site build's `source`
+    and `output` are read from a manifest and then handed to `shutil.rmtree` (#2), so the second one turns
+    a leading slash into a deleted directory somewhere else entirely. Same rule, same escape, one place.
     """
     trimmed = (value or "").strip()
-    hint = (f"give a plain relative path under the scaffold target, e.g. {_ORCH_DIR!r} (the default) "
-            f"or 'deploy/provision/orchestrator'")
     if not trimmed:
-        raise ValueError(f"orchestrator directory {value!r} is empty; {hint}")
+        raise ValueError(f"{what} {value!r} is empty; {hint}")
     if "\\" in trimmed:
-        raise ValueError(
-            f"orchestrator directory {value!r} is invalid: '/' is the separator here, not '\\' "
-            f"(the Windows shim gets its backslashes written for it); {hint}")
+        raise ValueError(f"{what} {value!r} is invalid: '/' is the separator here, not '\\'; {hint}")
     if trimmed.startswith("/") or _DRIVE_RE.match(trimmed):
         raise ValueError(
-            f"orchestrator directory {value!r} is invalid: it must be relative, so that the scaffold "
-            f"lands under the target directory and nowhere else; {hint}")
+            f"{what} {value!r} is invalid: it must be relative, so that it lands under "
+            f"{inside} and nowhere else; {hint}")
 
     segments = trimmed.rstrip("/").split("/")
     for segment in segments:
         if segment in ("", ".", ".."):
             raise ValueError(
-                f"orchestrator directory {value!r} is invalid: {segment!r} is not a directory name, and a "
-                f"path that climbs or doubles back does not stay relative to the target; {hint}")
+                f"{what} {value!r} is invalid: {segment!r} is not a directory name, and a "
+                f"path that climbs or doubles back does not stay relative to {inside}; {hint}")
     return "/".join(segments)
+
+
+def validate_orch_dir(value: str) -> str:
+    """Return the normalised block directory if it is a plain relative path, else raise ValueError. The
+    rule and its reasoning live in `validate_relative_dir`; this names the value and the good example."""
+    return validate_relative_dir(
+        value, "orchestrator directory",
+        f"give a plain relative path under the scaffold target, e.g. {_ORCH_DIR!r} (the default) "
+        f"or 'deploy/provision/orchestrator'; the Windows shim gets its backslashes written for it",
+        inside="the target directory")
 
 
 def validate_product_name(name: str) -> str:

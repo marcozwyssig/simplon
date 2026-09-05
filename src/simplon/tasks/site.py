@@ -42,12 +42,14 @@ and the home page is checked for afterwards.
 """
 from __future__ import annotations
 
+import re
 import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from simplon import context, docker, log
+from simplon.bootstrap import validate_relative_dir
 from simplon.run import run
 
 #: The manifest section this module owns. A section rather than flat keys: it is five related values, and
@@ -113,23 +115,93 @@ def _str(body: Mapping, key: str, where: str, *, required: bool = False) -> str:
     return value.strip()
 
 
+#: A docker tag: what may follow the ':' in an image reference. Used to reject the EMPTY tag ('hugo:',
+#: 'hugo::'), which reads as pinned to a careless eye and is not.
+_TAG_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,127}\Z")
+#: A content digest ('sha256:<hex>'): the strongest pin there is.
+_DIGEST_RE = re.compile(r"[A-Za-z0-9]+(?:[.+_-][A-Za-z0-9]+)*:[A-Fa-f0-9]{32,}\Z")
+#: A Go module version: a version TAG ('v0.9.6', 'v1.2.3-rc.1') or a commit. Anything else that `hugo mod
+#: get` accepts - 'latest', 'upgrade', a branch name - is a query that resolves differently tomorrow.
+_MODULE_VERSION_RE = re.compile(r"v\d+(?:\.\d+)*(?:[-+][0-9A-Za-z.-]+)?\Z")
+_COMMIT_RE = re.compile(r"[0-9a-f]{7,40}\Z")
+
+
 def _pinned_image(image: str, where: str) -> str:
     """Refuse an image reference that does not name a version. A build that renders something different
     depending on when it ran is not a build, and a documentation site is committed-to prose: a generator
     change rewrites it wholesale. The same refusal `docs.py` makes for the docToolchain tag.
 
-    The tag is looked for in the LAST path segment, so a private registry carrying a port
-    (`registry.example:5000/hugo:0.148.2`) is not mistaken for a tagged image. A digest pin
-    (`...@sha256:...`) passes for free, being the strongest form of the same statement.
+    The registry is split off by docker's OWN rule - a first path component carrying a '.' or a ':', or
+    spelled 'localhost', is a host - so a private registry with a port
+    (`registry.example:5000/hugo:0.148.2`) is not mistaken for a tagged image. That rule also leaves one
+    trap, and it is docker's rather than ours: `registry.example:5000` ALONE has no path component, so
+    docker reads the port as a tag and pulls `registry.example` from docker.io. Refused by name, because
+    the error it would otherwise produce is a pull failure that says nothing about the cause.
     """
-    last = image.rsplit("/", 1)[-1]
-    if ":" not in last:
+    hint = ("pin it as '<image>:<tag>' (e.g. 'hugomods/hugo:exts-0.148.2'), or by digest")
+    name, at, digest = image.partition("@")
+    if at:
+        if not name or not _DIGEST_RE.match(digest):
+            raise ValueError(f"{where}: 'image' carries a broken digest in '{image}'; {hint}")
+        return image
+    parts = image.split("/")
+    registry = len(parts) > 1 and ("." in parts[0] or ":" in parts[0] or parts[0] == "localhost")
+    remainder = "/".join(parts[1:]) if registry else image
+    repo, colon, tag = remainder.rpartition(":")
+    if not colon:
         raise ValueError(f"{where}: 'image' must pin a version ('<image>:<tag>'), got '{image}' "
-                         f"- an untagged image means ':latest', which moves under the build")
-    if last.rsplit(":", 1)[1] == "latest":
+                         f"- an untagged image means ':latest', which moves under the build; {hint}")
+    if not repo or not _TAG_RE.match(tag):
+        raise ValueError(f"{where}: 'image' has no usable tag in '{image}'; {hint}")
+    if not registry and "/" not in remainder and "." in repo:
+        raise ValueError(f"{where}: 'image' looks like a registry rather than an image: '{image}' names "
+                         f"no image on host '{repo}', and docker would read '{tag}' as a TAG on an image "
+                         f"called '{repo}'; {hint}")
+    if tag == "latest":
         raise ValueError(f"{where}: 'image' must pin a version, not the moving tag 'latest' "
                          f"(got '{image}') - a build whose output depends on when it ran is not a build")
     return image
+
+
+def _pinned_theme(theme: str, where: str) -> str:
+    """Refuse a theme module reference that does not name a version - the SAME rule as the image pin, and
+    it has to be the same rule rather than merely claim to be one. Checking only for an '@' lets
+    `@latest`, `@master` and even `@` through, and `hugo mod get <module>@latest` fetches exactly the
+    moving thing the pin exists to exclude: the look of a published page would be set by a release nobody
+    in this repo chose.
+
+    What passes is a version TAG (`v0.9.6`, `v1.2.3-rc.1`) or a commit - the two forms that name one
+    revision for good.
+    """
+    hint = ("pin it as '<module>@<version>', e.g. 'github.com/imfing/hextra@v0.9.6' - a version tag or a "
+            "commit, never a moving query like 'latest', 'upgrade' or a branch name")
+    module, at, version = theme.partition("@")
+    if not at:
+        raise ValueError(f"{where}: 'theme' must pin a version ('<module>@<version>'), got '{theme}' "
+                         f"- an unpinned module fetches whatever is newest; {hint}")
+    if not module:
+        raise ValueError(f"{where}: 'theme' names no module before the '@' in '{theme}'; {hint}")
+    if not version:
+        raise ValueError(f"{where}: 'theme' pins an empty version in '{theme}'; {hint}")
+    if not (_MODULE_VERSION_RE.match(version) or _COMMIT_RE.match(version)):
+        raise ValueError(f"{where}: 'theme' pins '{version}', which is a query rather than a version: "
+                         f"`hugo mod get {theme}` fetches whatever that names on the day it runs; {hint}")
+    return theme
+
+
+def _inside_the_product(value: str, key: str, where: str) -> str:
+    """A manifest path that must stay UNDER the product root, normalised.
+
+    Not pedantry about tidy manifests: `root / value` collapses onto `value` the moment it is absolute, and
+    `output` is then handed to `shutil.rmtree`. `output: /var/tmp/x` would delete `/var/tmp/x`, and `..`
+    escapes just as far; an absolute `source` would simply point outside the mount. The rule is
+    `bootstrap.validate_relative_dir`, the one `--orch-dir` already uses (#4) - the same escape, so the
+    same check, in one place.
+    """
+    return validate_relative_dir(
+        value, f"{where}: '{key}'",
+        f"give a plain relative path under the product root, e.g. 'website' or 'build/website'",
+        inside="the product root")
 
 
 def declared(data: Mapping[str, object], source: str = "manifest") -> Site:
@@ -148,23 +220,17 @@ def declared(data: Mapping[str, object], source: str = "manifest") -> Site:
                          f"- declare the pinned hugo image, where the sources live and where the site "
                          f"is built to")
     where = f"{source}: '{SECTION}'"
+    # The REQUIRED keys first, then their shape: a section missing `image` altogether should say so, not
+    # complain about the optional theme it also got wrong.
+    image = _str(section, "image", where, required=True)
+    src = _str(section, "source", where, required=True)
+    out = _str(section, "output", where, required=True)
     theme = _str(section, "theme", where)
-    if theme and "@" not in theme:
-        # An unpinned module fetches whatever is newest at build time, so the published page's look would
-        # change under a release nobody in this repo chose - the same reason the image must carry a tag.
-        raise ValueError(f"{where}: 'theme' must pin a version ('<module>@<version>', e.g. "
-                         f"'{theme}@v0.9.6') - an unpinned module fetches whatever is newest")
-    return Site(image=_pinned_image(_str(section, "image", where, required=True), where),
-                source=_str(section, "source", where, required=True),
-                output=_str(section, "output", where, required=True),
+    return Site(image=_pinned_image(image, where),
+                source=_inside_the_product(src, "source", where),
+                output=_inside_the_product(out, "output", where),
                 base_url=_str(section, "base_url", where),
-                theme=theme)
-
-
-def config() -> Site:
-    """The registered product's website data."""
-    ctx = context.current()
-    return declared(ctx.manifest_data(), source=str(ctx.manifest_path))
+                theme=_pinned_theme(theme, where) if theme else "")
 
 
 def _hugo(cfg: Site, root: Path, argv: list[str]) -> bool:
@@ -180,6 +246,31 @@ def _hugo(cfg: Site, root: Path, argv: list[str]) -> bool:
     return run(["docker", "run", "--rm", *docker.user_args(),
                 "-v", f"{root}:{MOUNT}", "-w", str(MOUNT / cfg.source),
                 "--entrypoint", "hugo", cfg.image, *argv], capture=False).ok
+
+
+def _wipe(out: Path, cfg: Site) -> bool:
+    """Clear the destination before the build, and say whether it is actually gone.
+
+    A previous run's index.html left in place lets an empty build report a site that this build did not
+    produce - the false green the output check exists to prevent, and the check cannot catch it, because
+    the file it looks for is right there. So the wipe is NOT best-effort: `ignore_errors=True` would leave
+    the tree standing and say nothing, which is the 0.1.7 defect wearing the costume of the fix for it.
+
+    A failure here is a real one and gets the failed verdict. The way it happens is measured, not
+    imagined: a container that ran without `--user` CREATES the output directories itself, root-owned and
+    0755, and unlinking an entry needs write permission on the DIRECTORY that holds it - which the caller
+    does not have. It is not about who owns the files.
+    """
+    try:
+        shutil.rmtree(out)
+    except FileNotFoundError:
+        pass                                  # nothing to clear is the normal first-build case
+    except OSError as exc:
+        log.error(f"cannot clear {cfg.output}/ before the build ({exc}); no site was built rather than a "
+                  f"stale one reported as fresh. a run whose container wrote as root leaves these "
+                  f"directories root-owned, and deleting inside them needs write permission on THEM")
+        return False
+    return True
 
 
 def build_site(cfg: Site, root: Path) -> Build:
@@ -201,16 +292,17 @@ def build_site(cfg: Site, root: Path) -> Build:
             return Build(tool="docker")
 
     out = root / cfg.output
-    # Wipe first: a previous run's index.html left in place would let an empty build report a site that
-    # this build did not produce - the same false green the output check below exists to prevent.
-    shutil.rmtree(out, ignore_errors=True)
+    if not _wipe(out, cfg):
+        return Build(tool="docker")
     argv = ["--destination", str(MOUNT / cfg.output)]
     if cfg.base_url:
         # Only when declared. An empty --baseURL would override the site's own configuration with nothing.
         argv += ["--baseURL", cfg.base_url]
     log.info(f"building the site with hugo in {cfg.image}: {cfg.source}/ -> {cfg.output}/")
     if not _hugo(cfg, root, argv):
-        log.error(f"hugo failed in {cfg.image}; no site was built to {cfg.output}/ (see output above)")
+        log.error(f"hugo failed in {cfg.image}; no site was built to {cfg.output}/ (see output above). "
+                  f"if it could not take its build lock, an earlier run without --user left a root-owned "
+                  f"{cfg.source}/.hugo_build.lock behind, and removing that one file takes a root shell")
         return Build(tool="docker")
     index = out / INDEX
     if not index.is_file():
@@ -231,8 +323,9 @@ def build() -> int:
     no home page, which is the failure shape that stayed invisible for two releases the last time a step
     reported success for nothing.
     """
-    cfg = config()
-    built = build_site(cfg, context.current().root)
+    ctx = context.current()
+    cfg = declared(ctx.manifest_data(), source=str(ctx.manifest_path))
+    built = build_site(cfg, ctx.root)
     if built.failed:
         return 1
     if built.ok:

@@ -388,3 +388,130 @@ def test_a_present_docker_that_produced_nothing_is_failed(monkeypatch, tmp_path)
 
     # assert
     assert (built.ok, built.failed, built.tool) == (False, True, "docker")
+
+
+# --- the wipe is not best-effort (review finding 1) -------------------------------------------------------
+
+
+def test_build_is_red_when_the_output_tree_cannot_be_cleared(monkeypatch, tmp_path, capsys):
+    # arrange: a destination the caller may not delete from - what a container that ran WITHOUT --user
+    # leaves behind, since it creates the directories itself, root-owned and 0755, and unlinking an entry
+    # needs write permission on the DIRECTORY. Plus a hugo that exits 0 and writes nothing. With an
+    # ignore_errors wipe this run reports the PREVIOUS run's index.html as a fresh site: the 0.1.7 defect
+    # wearing the costume of the fix for it
+    _register(monkeypatch, tmp_path, {"image": _IMAGE, "source": "website", "output": "build/website"})
+    out = tmp_path / "build" / "website"
+    out.mkdir(parents=True)
+    (out / "index.html").write_text("the previous run", encoding="utf-8")
+    monkeypatch.setattr(site_task.shutil, "rmtree",
+                        lambda *a, **kw: (_ for _ in ()).throw(PermissionError(13, "Permission denied")))
+    _docker(monkeypatch)
+    seen = _stub_run(monkeypatch, rc=0, seen=[])
+
+    # act
+    rc = site_task.build()
+
+    # assert: red, and hugo was never even asked to build over a tree that is still there
+    assert rc != 0
+    assert seen == []
+    assert "clear" in capsys.readouterr().err
+
+
+def test_a_first_build_with_no_output_tree_yet_is_not_a_failure(monkeypatch, tmp_path):
+    # arrange: nothing to clear is the normal first-build case, not an error
+    _register(monkeypatch, tmp_path, {"image": _IMAGE, "source": "website", "output": "build/website"})
+    _docker(monkeypatch)
+    _stub_run(monkeypatch, rc=0, writes=["index.html"])
+
+    # act / assert
+    assert site_task.build() == 0
+
+
+# --- a manifest path stays under the product root (review finding 2) --------------------------------------
+
+
+@pytest.mark.parametrize("key", ["source", "output"])
+@pytest.mark.parametrize("bad", ["/var/tmp/x", "../sibling", "build/../../escape", "C:/drive/site",
+                                 "build\\website", "build//website", "build/./website", ".", ".."])
+def test_declared_refuses_a_path_that_leaves_the_product_root(key, bad):
+    # arrange: `root / value` collapses onto an absolute value, and `output` is then handed to rmtree -
+    # `output: /var/tmp/x` would DELETE /var/tmp/x. The manifest is the product's, but a typo with a slash
+    # in front of it must not delete a directory outside the project. Same rule as `--orch-dir` (#4)
+    # act / assert
+    with pytest.raises(ValueError, match=key):
+        site_task.declared({"site": {**_SITE, key: bad}})
+
+
+def test_the_refusal_of_an_escaping_path_names_the_value_and_the_rule():
+    # arrange / act
+    with pytest.raises(ValueError) as excinfo:
+        site_task.declared({"site": {**_SITE, "output": "/var/tmp/x"}})
+
+    # assert: actionable without reading the source
+    message = str(excinfo.value)
+    assert "/var/tmp/x" in message
+    assert "relative" in message.lower()
+
+
+def test_declared_normalises_a_trailing_slash_rather_than_refusing_it():
+    # arrange: a trailing slash is a typo, not an escape - it does not deserve a refusal
+    # act
+    cfg = site_task.declared({"site": {**_SITE, "output": "build/website/"}})
+
+    # assert
+    assert cfg.output == "build/website"
+
+
+# --- the theme pin is the same rule as the image pin (review finding 3) -----------------------------------
+
+
+@pytest.mark.parametrize("theme", ["github.com/imfing/hextra@latest",
+                                   "github.com/imfing/hextra@master",
+                                   "github.com/imfing/hextra@main",
+                                   "github.com/imfing/hextra@upgrade",
+                                   "github.com/imfing/hextra@",
+                                   "@",
+                                   "@v0.9.6"])
+def test_declared_refuses_a_theme_whose_version_is_a_moving_query(theme):
+    # arrange: checking only for an '@' lets all of these through, and `hugo mod get x@latest` fetches
+    # exactly the moving thing the pin exists to exclude - so the rule was not the same rule as the image
+    # pin, however loudly the comment said it was
+    # act / assert
+    with pytest.raises(ValueError, match="theme"):
+        site_task.declared({"site": {**_SITE, "theme": theme}})
+
+
+@pytest.mark.parametrize("theme", ["github.com/imfing/hextra@v0.9.6",
+                                   "github.com/imfing/hextra@v1.2.3-rc.1",
+                                   "github.com/imfing/hextra@v2",
+                                   "github.com/imfing/hextra@3c9f2ab"])
+def test_declared_accepts_a_version_tag_or_a_commit(theme):
+    # arrange: the two forms that name one revision for good
+    # act
+    cfg = site_task.declared({"site": {**_SITE, "theme": theme}})
+
+    # assert
+    assert cfg.theme == theme
+
+
+# --- the image pin, at its edges (review, minor) ----------------------------------------------------------
+
+
+@pytest.mark.parametrize("image", ["hugomods/hugo:", "hugomods/hugo::", "registry.example:5000"])
+def test_declared_refuses_an_image_reference_that_only_looks_pinned(image):
+    # arrange: an empty tag reads as pinned to a careless eye; and a registry with a port and nothing
+    # after it has docker read the PORT as a tag and pull that name from docker.io. All three fail later
+    # in docker with a worse message than this one
+    # act / assert
+    with pytest.raises(ValueError, match="image"):
+        site_task.declared({"site": {**_SITE, "image": image}})
+
+
+def test_the_required_keys_are_checked_before_the_optional_theme():
+    # arrange: a section missing `image` altogether should say so, not complain about the theme it also
+    # got wrong
+    section = {"source": "website", "output": "build/website", "theme": "github.com/imfing/hextra"}
+
+    # act / assert
+    with pytest.raises(ValueError, match="image"):
+        site_task.declared({"site": section})
