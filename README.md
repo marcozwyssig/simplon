@@ -79,16 +79,48 @@ verdict is the same on your machine as in the pipeline.
 
 ## Releasing
 
-Tag `vX.Y.Z`. The release workflow runs the tests, builds the wheel and
-publishes to PyPI via Trusted Publishing. Releases are cut from tags only, so
-every version points at a named commit.
+```sh
+./simplon.sh release tag v0.1.13
+```
+
+That is the release. The workflow then runs the tests, builds the wheel and
+publishes to PyPI via Trusted Publishing, and rebuilds this project's website.
+Releases are cut from tags only, so every version points at a named commit.
 
 **The tag IS the version.** There is no number to edit first: `pyproject.toml`
 declares `dynamic = ["version"]` and setuptools-scm derives it from the tag, so
-`git tag v0.1.13` is the whole act of choosing 0.1.13. A tag is unique on the
-remote, which is what makes the number unclaimable twice -- whoever pushes it
-first has it, and the second person is told by `git push` rather than by a
-reviewer.
+`release tag v0.1.13` is the whole act of choosing 0.1.13. A tag is unique on
+the remote, which is what makes the number unclaimable twice -- whoever pushes
+it first has it, and the second person is told by `git push` rather than by a
+reviewer. The command does not pre-empt that: it pushes, and lets the remote
+answer.
+
+Two things the command does that the two hand-typed git commands did not. It
+pushes **that one tag** (`git push origin <tag>`, never `git push --tags`,
+which offers every local tag including whatever someone left behind while
+trying something out). And it refuses to tag a commit `main` does not carry --
+loudly, naming the commit, the branch and `main`'s head -- because the workflow
+publishes whatever the tag points at, so a tag on a feature branch would go to
+PyPI without complaint. There is no flag to switch that off; `git tag && git
+push origin <tag>` still works and is the deliberate way round it.
+
+If the push is refused, the tag stays cut locally and the message says so.
+Re-running the command pushes it again rather than reading "tag already exists"
+as a release that already happened.
+
+**Spell the tag the way the workflow reads it.** `release tag 0.1.14` -- no
+`v` -- cuts the tag, pushes it, verifies origin has it and reports success,
+because all four happened. What does not happen is a release: `tags: ["v*"]`
+never sees it. Nothing fails and nothing warns, which is why the command
+reports only that the tag is on origin and never claims what a workflow will
+do with it. It cannot read your triggers, so it does not pretend to.
+
+**A push to `main` publishes nothing.** Both the PyPI release and the website
+hang off the `v*` tag. A merged documentation fix appears when the next release
+is cut, and not before.
+
+The full story, including what the guard deliberately does not check, is on the
+site: <https://marcozwyssig.github.io/simplon/using/releasing/>.
 
 Between tags the kernel calls itself `0.1.12.post1.dev4+g1234abc`: the release
 it descends from, plus how far. `simplon init` pins the released part

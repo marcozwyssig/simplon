@@ -521,3 +521,116 @@ def test_a_repository_with_no_remote_branch_to_judge_against_is_refused_rather_t
     assert rc == 1
     assert sorted(_git(work, "tag", "-l").stdout.split()) == []
     assert "origin/main" in err
+
+
+# --- what the site says about it (#32 acceptance 4) ---------------------------------------------------
+
+_SITE = Path(__file__).resolve().parents[1] / "site" / "content"
+_README = Path(__file__).resolve().parents[1] / "README.md"
+
+
+def _pages() -> dict[str, str]:
+    """Every page under `site/content/`, plus the README.
+
+    `using/commands.md` is generated and gitignored, so it is present here and absent in a fresh
+    checkout; the glob simply takes what is there, which is why nothing below asserts a page COUNT.
+    """
+    pages = {str(p.relative_to(_SITE)): p.read_text(encoding="utf-8") for p in _SITE.rglob("*.md")}
+    pages["README.md"] = _README.read_text(encoding="utf-8")
+    return pages
+
+
+def test_the_site_carries_the_four_things_a_reader_has_to_be_told_about_a_release():
+    # arrange: the acceptance list of #32, and the page is part of the deliverable rather than a
+    # follow-up - a command whose reasoning lives only in a docstring is a command nobody knows to type
+    page = (_SITE / "using" / "releasing.md").read_text(encoding="utf-8")
+
+    # act / assert: the tag IS the version, and there is no number to edit
+    assert "no version to edit first" in page
+    assert "dynamic" in page and "setuptools-scm" in page
+    # why one tag by name and not every local tag
+    assert "push origin <tag>" in page and "--tags" in page
+    # what the guard checks, and what it deliberately does not
+    assert "ancestor" in page and "does *not* check" in page
+    # and the one that is learned the hard way: a push to main publishes nothing
+    assert 'tags: ["v*"]' in page
+    assert "does **not** publish the package" in page
+
+
+def test_the_page_states_the_price_of_the_kernel_not_adding_the_v():
+    # arrange: the command pushes `0.1.14` happily, and no workflow watching `v*` will ever see it - a
+    # green command and no package. Saying "the kernel does not add the v" is not saying that; the
+    # CONSEQUENCE is the part a reader needs, and claiming it was documented when only the rule was is
+    # how a trap gets shipped with a success message on top.
+    page = (_SITE / "using" / "releasing.md").read_text(encoding="utf-8")
+
+    # act / assert
+    assert "release tag 0.1.14" in page
+    assert "Nothing fails." in page and "no package" in page
+
+
+def test_the_page_covers_the_tag_a_plain_git_pull_brings_down():
+    # arrange: the situation the page's own advice leads into - pull before releasing, and a rival's tag
+    # is suddenly a local tag
+    page = (_SITE / "using" / "releasing.md").read_text(encoding="utf-8")
+
+    # act / assert
+    assert "git pull` fetches tags" in page
+    assert "already claimed by someone else" in page
+
+
+def test_the_page_says_the_escape_hatch_is_reported_by_the_workflow():
+    # arrange: an exception nobody ever hears about is not a loud one
+    page = (_SITE / "using" / "releasing.md").read_text(encoding="utf-8")
+
+    # act / assert
+    assert "no branch filter" in page
+    assert "reports and never blocks" in page
+
+
+def _fenced_lines(text: str):
+    """Every line inside a ``` fence, with its number - the lines a reader COPIES.
+
+    Prose is deliberately not searched. `--tags` has to be sayable: the release page explains the
+    difference between it and `push origin <tag>`, and `building/manifest.md` mentions
+    `git describe --tags`, which is a different flag on a different command. What must never appear is an
+    instruction to run it.
+    """
+    fenced, inside = [], False
+    for number, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith("```"):
+            inside = not inside
+            continue
+        if inside:
+            fenced.append((number, line))
+    return fenced
+
+
+def test_no_code_block_tells_a_reader_to_type_git_push_tags():
+    # arrange: an ABSENCE, which is what a reviewer cannot see. `examples.md` carried exactly such a
+    # line until #32 - `$ git tag v0.1.13 && git push --tags`.
+    #
+    # THE EARLIER VERSION OF THIS TEST ONLY LOOKED AT LINES STARTING WITH `$ `, which made the README
+    # structurally unreachable: it writes its commands in ```sh blocks with no prompt, so the one file
+    # most likely to be copied from was the one file the rule could not see. Fences, not prompts.
+    pages = _pages()
+
+    # act
+    offenders = [f"{name}:{number}: {line.strip()}"
+                 for name, text in pages.items()
+                 for number, line in _fenced_lines(text)
+                 if "git push" in line and "--tags" in line]
+
+    # assert
+    assert offenders == []
+
+
+def test_the_release_page_is_reachable_rather_than_only_present():
+    # arrange: a page nothing links to is a page nobody reads, and Hugo renders an unlinked page just as
+    # happily as a linked one
+    index = (_SITE / "using" / "_index.md").read_text(encoding="utf-8")
+    examples = (_SITE / "using" / "examples.md").read_text(encoding="utf-8")
+
+    # act / assert
+    assert "releasing/" in index
+    assert "releasing/" in examples
