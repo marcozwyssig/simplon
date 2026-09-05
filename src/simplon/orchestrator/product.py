@@ -24,6 +24,7 @@ from typing import Callable
 from simplon.awake import keep_awake
 import sys
 
+from simplon import log, steplog
 from simplon.orchestrator.manifest import Manifest
 from simplon.orchestrator.steps import Pipeline, Step, argv_step, dispatch
 
@@ -156,4 +157,11 @@ def run_command(name: str, manifest: Manifest, ctx: StepFactoryContext, *, group
     # warning lands: above the run, where it is still actionable.
     pipeline.usable_tree()
     with (keep_awake() if spec.keep_awake else contextlib.nullcontext()):
-        return dispatch(pipeline)
+        rc = dispatch(pipeline)
+    # Where the output went, said once per plan. Each step also wrote its own file (simplon.steplog),
+    # which is the only way to read a long step's output back: the TUI that showed it holds the mouse,
+    # so nothing in it can be selected.
+    directory = steplog.log_directory()
+    if directory is not None and directory.is_dir():
+        log.info(f"step logs: {directory}")
+    return rc
