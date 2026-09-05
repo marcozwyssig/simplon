@@ -158,10 +158,25 @@ womit gesetzt wird. Drei Dinge aendern sich konkret:
 
    Da der Task im Katalog steht, ist das Theme **Produktdatum, nicht
    Kernelentscheidung** -- Hextra ist Simplons Wahl, nicht die aller Produkte.
-3. **Der Bau braucht Hugo, nicht Docker.** `docs:render` umgeht eine lokale
-   Installation, indem es containerisiert laeuft; fuer Hugo ist das nicht noetig,
-   aber der CI-Lauf muss die Binaerdatei bekommen. Wie -- Action, Container oder
-   Paketmanager -- entscheidet der Plan.
+3. **Der Bau laeuft in Docker** -- Entscheidung des Eigentuemers, und sie folgt
+   derselben Regel wie `docs:render`: nicht die Entwicklungsmaschine
+   einrichten, sondern das Werkzeug mitbringen.
+
+   Das loest zugleich ein Problem, das die lokale Variante gehabt haette:
+   ein Hextra-Theme als Hugo-Modul braucht **Hugo Extended, Go und Git**
+   zusammen. Lokal sind das drei Installationen mit drei Fehlerbildern; im Bild
+   sind es null. Aus "welches der drei fehlt?" wird "ist Docker da?".
+
+   **Zwei Dinge, die dabei genau so schiefgehen wie bei #6:**
+
+   - **Der Container schreibt in ein eingehaengtes Verzeichnis.** Ohne
+     `--user uid:gid` schreibt er als seine eigene uid, und auf jedem Host,
+     dessen uid nicht zufaellig passt, endet es in `Permission denied` -- exakt
+     der Defekt, den 0.1.7 an `allure.render_report` behoben hat. Er darf sich
+     nicht wiederholen.
+   - **Das Bild wird auf eine Version gepinnt**, nicht auf ein wanderndes Tag.
+     `docs.py` spricht diese Verweigerung bereits aus; sie gilt hier genauso.
+     Ein Bau, der je nach Tag etwas anderes erzeugt, ist kein Bau.
 
 ## Ausserhalb dieser Spec
 
