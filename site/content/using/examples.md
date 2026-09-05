@@ -99,11 +99,18 @@ Simplon's own repository is the honest example here, because it builds itself wi
 $ ./simplon.sh test all
 $ ./simplon.sh test typecheck-python
 $ ./simplon.sh build wheel
-$ git tag v0.1.13 && git push --tags
+$ ./simplon.sh release tag v0.1.13
 ```
 
 Tests first, and not as ceremony: the release workflow runs them again, and a tag whose tests fail is a
 tag you now have to delete from a public remote. Finding out locally costs thirty seconds.
+
+That last line used to be `git tag v0.1.13 && git push --tags`, typed by hand, and it was the only step
+of the loop simplon did not hold. Two things changed with it becoming a command. It pushes **one** tag
+by name rather than every local tag the machine happens to carry, and it refuses to cut a tag on a
+commit `main` does not carry - which nothing stopped anyone from doing, and which would have published a
+feature branch to PyPI under a release number. [Cutting a release](../releasing/) is the whole
+story, including what the guard deliberately does *not* check.
 
 The type gate is on that list for a reason worth stating. It is the kernel's own
 `test:typecheck-python`, placed on the kernel - and until recently it was not, so `mypy` was something you
@@ -126,6 +133,10 @@ The tag is what publishes. The workflow builds the wheel and pushes it to PyPI t
 Publishing, so every published version points at a named commit and there is no path from a dirty
 working tree to a release - a dirty tree would carry a `+local` segment that PyPI refuses outright. If
 you need to know what a release *contains*, the tag is the answer, not the branch.
+
+And *this website* is published by the same tag, which is the part people learn the hard way: merging a
+documentation fix to `main` does not put it on the site. Nothing fails to say so - the page simply stays
+as it was until the next release is cut.
 
 ## 5. Deploy to one environment - and find out you cannot
 

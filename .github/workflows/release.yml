@@ -3,6 +3,30 @@ on:
   push:
     tags: ["v*"]
 
+# THE RELEASE GUARD (#23, built with #32) BLOCKS IN THE COMMAND AND REPORTS HERE. Two different jobs,
+# and the split is the whole design - so read what is NOT true before the part that is.
+#
+# NOT TRUE, and it was written here in an earlier draft: "a guard in this workflow would be bypassed by
+# `git tag && git push`, because that runs no workflow step". Measured, it is the reverse. The trigger
+# above has no branch filter, so a tag pushed by hand from anywhere starts this workflow - every one of
+# the 14 tags in this repository was pushed by hand and every run of this file came from one of them.
+# The bypassable guard is the one in the COMMAND: type the two git commands and it never runs. This one
+# sees every release there is.
+#
+# WHAT IS TRUE. `./simplon.sh release tag` REFUSES a commit `main` does not carry, and that refusal is
+# deliberately escapable - #23 wants a hotfix off `main` to remain possible, and two typed git commands
+# are a better escape hatch than a flag, because a person typing them has decided something. That
+# decision must stay available, so this file must not turn it back into a hard stop.
+#
+# But an exception nobody ever hears about is not a loud exception, it is an unnoticed one - and until
+# this step existed, that is exactly what it was: open AND invisible. So the step below REPORTS. It
+# names the case in the log and in the run summary, fails nothing, and runs before the publish, because
+# the ordering is the point: a tag cannot be taken back, a publication can still be stopped by whoever
+# is watching.
+#
+# One rule, two behaviours, and no second copy of the decision: the command decides what to refuse, this
+# step decides nothing at all.
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -21,6 +45,44 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # Is this tag on main? REPORTS, never blocks - see the head of this file. It runs before the
+      # tests and the publish so that a human watching the run learns it while there is still something
+      # to stop; after `pypa/gh-action-pypi-publish` there would be nothing left to decide.
+      #
+      # It fetches `main` itself rather than trusting the checkout to have left a remote-tracking ref
+      # behind: this workflow is checked out AT A TAG, and what `actions/checkout` leaves under
+      # `refs/remotes/` is its business, not something this step should assume. An unanswerable question
+      # is reported as unanswerable - never as "off main", which would cry wolf on every fetch failure.
+      #
+      # `exit 0` on every path, and there is deliberately no `exit 1` anywhere in it.
+      # tests/test_release_workflow.py holds that, because a reporting step that quietly became a gate
+      # would close the hotfix route #23 asked to keep open, and nobody would notice until a release
+      # they needed was refused.
+      - name: Is this tag on main? (report only)
+        run: |
+          stale=""
+          if ! git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main; then
+            stale=" (origin could not be reached, so this reads a possibly stale ref)"
+          fi
+          if ! git rev-parse --verify --quiet refs/remotes/origin/main >/dev/null; then
+            echo "::warning::origin/main could not be read, so ${GITHUB_REF_NAME} is NOT CLASSIFIED - nothing here says whether it is on main."
+            echo "- **${GITHUB_REF_NAME}**: not classified (\`origin/main\` unreadable)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          main_head="$(git rev-parse --short refs/remotes/origin/main)"
+          if git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+            echo "${GITHUB_REF_NAME} is cut from a commit main carries${stale}."
+            echo "- **${GITHUB_REF_NAME}**: on \`main\` (${GITHUB_SHA}, main at ${main_head})${stale}." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "::warning::${GITHUB_REF_NAME} was cut from ${GITHUB_SHA}, which origin/main (${main_head}) does not carry${stale}. This release is going out anyway - 'release tag' refuses this case, so the tag was pushed by hand. If that was not deliberate, stop the run before the publish step."
+          {
+            echo "- **${GITHUB_REF_NAME}**: OFF \`main\`${stale}."
+            echo "  - tagged commit: \`${GITHUB_SHA}\`"
+            echo "  - \`origin/main\`: \`${main_head}\`"
+            echo "  - \`./simplon.sh release tag\` refuses this, so the tag was pushed by hand. Reported, not blocked - a hotfix off \`main\` is allowed to exist, but not to be invisible."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
       # The release gate: tests, then the type gate, then the wheel, then PyPI. The launcher
       # provisions its own venv and installs this checkout with `-e .[typecheck]`, so no
       # separate install step is needed here (the same redundant step was

@@ -132,7 +132,11 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
     # Dockerfile and the build context, so a command declared in the catalogue's own `build:` group would
     # die on its first line in every product that ships no image.
     assert sorted(cat.namespace("build")) == ["image"]
-    assert sorted(cat.namespace("release")) == ["artifact", "image"]
+    # `release:tag` (#32) is the newest, and the odd one out in its own namespace: `artifact` and `image`
+    # publish what a build produced and both read a manifest section, while `tag` publishes NOTHING - it
+    # cuts the name the release is made under and pushes it, which is what makes the workflows run at
+    # all. It reads no product data, which is why it is also PLACED (the assertion below walks for that).
+    assert sorted(cat.namespace("release")) == ["artifact", "image", "tag"]
 
 
 def test_the_two_image_coordinates_reach_the_generated_reference():
@@ -585,9 +589,17 @@ def test_the_shipped_catalogue_places_the_general_commands_and_nothing_that_need
     assert set(tasks) == {"catalogue", "generate"}
     # `support:install` and `vcs:auth-scopes` are placed for the same reason the git verbs are: both
     # read nothing from a product manifest - one drives the tool gates, the other the gh token.
+    # `release:tag` (#32) joins them on that same test and is the first PHASE command to pass it: the
+    # tag, the repo root and the remote's default branch are all it reads, so unlike its two neighbours
+    # in the `release` namespace it cannot die on its first line in a product that declared nothing.
     assert placed == {"vcs:commit", "vcs:push", "vcs:prune-branches", "vcs:submodules",
                       "vcs:auth-scopes", "support:install",
-                      "tasks:catalogue", "tasks:generate"}
+                      "tasks:catalogue", "tasks:generate", "release:tag"}
+    # And it is placed in the group its own coordinate names. A coordinate that opens with a phase name
+    # belongs to that phase, or the coordinate space and the command tree drift apart about where a
+    # thing lives - `release:tag` under `support`, say, would be typed nowhere near where it is declared.
+    assert set(cat.groups["release"]["commands"]) == {"tag"}
+    assert cat.groups["release"]["commands"]["tag"]["task"] == "release:tag"
 
 
 def test_the_shipped_gate_task_documents_name_while_every_real_instantiation_pins_it():

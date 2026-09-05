@@ -10,8 +10,10 @@
 # Nobody had noticed, because nobody had ever run the kernel the way a consumer does. A tool
 # never used in its own house rots unseen.
 #
-# Exactly the fourteen coordinates netctl references today, no more. A catalogue that offers what nobody
-# imports is speculation, and the design's own rule is the minimum that solves the problem.
+# Only coordinates something actually references, no more. A catalogue that offers what nobody imports is
+# speculation, and the design's own rule is the minimum that solves the problem. (It was exactly the
+# fourteen netctl referenced until the kernel's own loop needed `build:image`, `release:image` and
+# `release:tag` - each added by a ticket that had the case in hand, never in advance.)
 #
 # `help:` here is the fallback wording. A product's own `help:` wins where it declares one, and for a
 # non-shared body the CLI summary comes from the body's DOCSTRING anyway (see simplon.taskgen).
@@ -31,7 +33,18 @@
 groups:
   build:   { help: "Produce the artefacts." }
   test:    { help: "Verify them." }
-  release: { help: "Publish them." }
+  release:
+    help: "Publish them."
+    commands:
+      # PLACED, by the same rule as the git verbs below: it reads nothing from a product manifest. The
+      # tag, the repo root and the remote's own default branch are all it needs, so unlike its two
+      # neighbours (`release:artifact` and `release:image`, which read an `artifacts:`/`images:`
+      # section) it cannot die on its first line in a product that has not declared anything.
+      #
+      # It is a `release` coordinate and it is therefore in the `release` group - a coordinate that
+      # opens with a phase name belongs to that phase, or the coordinate space and the command tree
+      # start disagreeing about where a thing lives.
+      tag: { task: "release:tag" }
   deploy:  { help: "Put them into an environment.", env_first: true }
   monitor: { help: "Watch what is running there.", env_first: true }
   support:
@@ -221,6 +234,18 @@ tasks:
     params:
       name: { help: "the image to publish (normally pinned per command with `with:`)" }
       tag:  { help: "the tag to publish under, for a version only known after a build" }
+  # The release TAG - the one step of the loop that was still two git commands typed by hand (#32), and
+  # the guard #23 asked for, sitting inside it. Placed above rather than left as an unplaced task,
+  # because it is the only `release:` coordinate that reads no product data at all.
+  #
+  # `tag` is the tag exactly as it will exist, not a version the kernel decorates. WHICH tags publish is
+  # the product's own statement - its release workflow's trigger and its setuptools-scm settings - and a
+  # kernel that turned `1.4.0` into `v1.4.0` would be guessing at a convention it cannot read.
+  release:tag:
+    impl: simplon.tasks.release:tag
+    help: "Cut the release tag at HEAD and push it (`git push origin <tag>`, never `--tags`)."
+    params:
+      tag: { help: "the tag to cut, exactly as it will exist (e.g. v1.4.0)", metavar: "TAG" }
 
   # --- tasks: the task machinery, addressable ---------------------------------------------------------
   # `generate` writes the product's committed CLI module; `catalogue` prints this file. Both are kernel
