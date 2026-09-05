@@ -26,9 +26,6 @@ from pathlib import Path
 
 import pytest
 
-import simplon
-from simplon import bootstrap
-
 ROOT = Path(__file__).resolve().parents[1]
 
 PROBE = (
@@ -180,16 +177,33 @@ _VERSION_PROBE = (
 )
 
 
-def test_the_installed_package_reports_the_version_the_source_tree_derives(installed):
-    """One number, three ways of asking, and it is the same number the checkout says.
+def _nearest_tag() -> str:
+    """The release this checkout descends from, straight from git, or a skip.
+
+    Deliberately NOT `simplon.__version__`: this module BUILDS the package, and setuptools-scm writes
+    `src/simplon/_version.py` into the working tree as it does so. The value the test process imported at
+    collection time can therefore be one commit behind the wheel it is about to judge - a difference that
+    depends on when somebody last reinstalled, which is not a property of the code. `git describe` is the
+    same fact the build itself reads, and it does not go stale.
+    """
+    described = subprocess.run(["git", "describe", "--tags", "--abbrev=0"], cwd=ROOT,
+                               capture_output=True, text=True)
+    if described.returncode != 0:
+        pytest.skip("no tags reachable in this checkout; the wheel's version cannot be joined to one")
+    return described.stdout.strip().lstrip("v")
+
+
+def test_the_installed_package_reports_the_version_the_tag_gives_it(installed):
+    """One number, three ways of asking, and it comes from the tag.
 
     `simplon.__version__` is what the scaffolder's pin is computed from; `importlib.metadata.version` is
     what pip resolves against; `_version.py` is the file that had to make it into the wheel for either to
-    work without git. If the three disagree, or if any of them disagrees with the tree the wheel was built
-    from, the wheel is mislabelled - and PyPI would take it anyway.
+    work without git. If the three disagree, or if the number is not the tag's, the wheel is mislabelled -
+    and PyPI would take it anyway.
     """
     # arrange
     py = installed / ("python.exe" if sys.platform == "win32" else "python")
+    tag = _nearest_tag()
 
     # act: run OUTSIDE the repo, so no stray `.git` and no source tree can answer for the installed package
     out = subprocess.run([str(py), "-c", _VERSION_PROBE], cwd=str(Path(py).parent),
@@ -199,8 +213,8 @@ def test_the_installed_package_reports_the_version_the_source_tree_derives(insta
     assert out.returncode == 0, out.stderr
     dunder, metadata, from_file = out.stdout.split()
     assert dunder == metadata == from_file, out.stdout
-    assert dunder == simplon.__version__, (
-        f"the built wheel says {dunder}, the tree it was built from says {simplon.__version__}")
+    assert dunder.startswith(tag), (
+        f"the built wheel says {dunder}, which does not descend from the tag {tag}")
 
 
 def test_a_product_scaffolded_by_the_installed_kernel_pins_an_installable_kernel(installed, tmp_path):
@@ -211,6 +225,7 @@ def test_a_product_scaffolded_by_the_installed_kernel_pins_an_installable_kernel
     # arrange
     exe = installed / ("simplon.exe" if sys.platform == "win32" else "simplon")
     product = tmp_path / "pinned"
+    tag = _nearest_tag()
 
     # act
     out = subprocess.run([str(exe), "init", "demo", "--dir", str(product)], capture_output=True, text=True)
@@ -218,6 +233,7 @@ def test_a_product_scaffolded_by_the_installed_kernel_pins_an_installable_kernel
     text = (product / "orchestrator" / "requirements.txt").read_text(encoding="utf-8")
     pinned = re.search(r"^simplon==(\S+)", text, re.M).group(1)
 
-    # assert: a plain release, and specifically the one this kernel descends from
+    # assert: a plain release, and specifically the last one that was actually cut - identical to the
+    # kernel's own version when it was built at a tag, and the tag behind it otherwise
     assert re.fullmatch(r"\d+\.\d+\.\d+", pinned), f"scaffolded pin {pinned!r} is not a released version"
-    assert pinned == bootstrap.released_pin(simplon.__version__)
+    assert pinned == tag

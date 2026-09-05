@@ -132,27 +132,33 @@ def test_the_installed_version_is_a_version_this_scheme_can_produce():
         f"'0.0.0.dev0+unknown', simplon is neither built nor installed in this environment")
 
 
-def test_the_version_agrees_with_what_git_says_about_this_tree():
+def test_the_version_names_a_tag_that_actually_EXISTS_in_this_repository():
     """THE join, and the point of the whole ticket: the version and the repository's tags are the same
-    fact. `git describe` names the tag this tree descends from; the version must start with it.
+    fact. Whatever this package reports, the release it names is one somebody really cut.
 
-    Skipped rather than failed when the checkout has no tags at all (a shallow CI clone), because that is
-    a property of the clone and not of the code - and .github/workflows/release.yml is where that
-    precondition is actually held, with `fetch-depth: 0`.
+    Deliberately "SOME tag" and not "the NEAREST tag". The version an installed package reports was
+    derived when it was installed, and this repository is installed editable - so between a fresh tag and
+    the next `pip install -e .` the two legitimately differ by a release. That gap is a property of the
+    venv, not of the code, and a test that went red on it would be reporting the wrong thing. The strict
+    join - a version that must be exactly the tag it was built at - belongs to the artefact that is built
+    fresh, and tests/test_wheel.py holds it there.
+
+    Skipped when the checkout has no tags at all (a shallow clone); .github/workflows/release.yml is where
+    that precondition is held, with `fetch-depth: 0`.
     """
     # Arrange
-    described = subprocess.run(["git", "describe", "--tags", "--abbrev=0"], cwd=ROOT,
-                               capture_output=True, text=True)
-    if described.returncode != 0:
-        pytest.skip("no tags reachable in this checkout; nothing to join against")
+    listed = subprocess.run(["git", "tag"], cwd=ROOT, capture_output=True, text=True, check=True)
+    tags = {line.strip().lstrip("v") for line in listed.stdout.splitlines() if line.strip()}
+    if not tags:
+        pytest.skip("no tags in this checkout; nothing to join against")
 
     # Act
-    tag = described.stdout.strip().lstrip("v")
+    release = simplon.__version__.split(".post")[0]
 
     # Assert
-    assert simplon.__version__.startswith(tag), (
-        f"the package says {simplon.__version__!r} but git's nearest tag is {tag!r}; "
-        f"a stale editable install is the usual cause - reinstall with `pip install -e .`")
+    assert release in tags, (
+        f"the package says {simplon.__version__!r}, whose release {release!r} is not a tag of this "
+        f"repository; a version that names no tag was not derived from one")
 
 
 def test_every_workflow_checks_out_the_history_the_version_needs():
