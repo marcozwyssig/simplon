@@ -38,6 +38,8 @@ from textual import work  # noqa: E402
 from textual.app import App, ComposeResult  # noqa: E402
 from textual.containers import Horizontal  # noqa: E402
 from textual.widgets import Footer, Header, RichLog, Tree  # noqa: E402
+
+from simplon import steplog  # noqa: E402
 from textual.widgets.tree import TreeNode  # noqa: E402
 
 
@@ -48,7 +50,13 @@ class _StepApp(App):
     #steps { width: 38%; border-right: solid $primary; }
     #details { width: 1fr; padding: 0 1; }
     """
-    BINDINGS = [("q", "quit", "Quit"), ("up", "cursor_up", "Up"), ("down", "cursor_down", "Down")]
+    # `c` and `s` are not conveniences. A Textual app puts the terminal in raw mode and turns on mouse
+    # reporting so it can handle clicks itself, which switches OFF the terminal's own selection - the
+    # output is on screen and cannot be marked, copied or quoted anywhere. The way out has to come from
+    # inside the app: `c` to the clipboard, `s` to a file for when the clipboard cannot be reached (an
+    # SSH session whose terminal does not speak OSC 52, or a log someone wants to attach to a ticket).
+    BINDINGS = [("q", "quit", "Quit"), ("up", "cursor_up", "Up"), ("down", "cursor_down", "Down"),
+                ("c", "copy_details", "Copy"), ("s", "save_details", "Save")]
 
     def __init__(self, pipeline: Pipeline) -> None:
         super().__init__()
@@ -157,6 +165,47 @@ class _StepApp(App):
     def _cursor_row(self) -> Row | None:
         node = self._tree().cursor_node
         return node.data if node is not None else None
+
+    def _details_text(self, row: Row) -> str:
+        """What the right pane shows for `row`, as plain text - the one source `_show_details`, `c` and
+        `s` all read, so what is copied is what is displayed rather than a second rendering of it."""
+        if row.is_leaf:
+            step = row.step
+            body = step.output.rstrip("\n") if step.output else {
+                StepState.RUNNING: "(running…)",
+                StepState.SKIPPED: f"(skipped: {self._skipped_because.get(id(step), 'a previous step failed')})",
+                StepState.PENDING: "(pending)",
+            }.get(step.state, "")
+            return f"$ {step.command or step.label}\n\n{body}".rstrip("\n")
+        lines = [f"$ {row.label}", ""]
+        for child in row.children:
+            verdict = f"rc {child.rc}" if child.rc is not None else f"({child.state.value})"
+            lines.append(f"{STATE_ICON[child.state]} {child.label}  {verdict}")
+        note = omitted_note(row)
+        if note:
+            lines += ["", note]
+        elif not row.children:
+            lines.append("(no steps)")
+        return "\n".join(lines).rstrip("\n")
+
+    def _save_details_to(self, identity: str, text: str):
+        """Write one pane's text; separated so a test can substitute it and so the path comes back."""
+        return steplog.write(identity, text)
+
+    def action_copy_details(self) -> None:
+        row = self._cursor_row()
+        if row is None:
+            return
+        self.copy_to_clipboard(self._details_text(row))
+        self.notify("copied to the clipboard", timeout=3)
+
+    def action_save_details(self) -> None:
+        row = self._cursor_row()
+        if row is None:
+            return
+        identity = (row.step.command or row.step.label) if row.is_leaf else row.label
+        path = self._save_details_to(identity, self._details_text(row))
+        self.notify(f"saved to {path}" if path else "nowhere to save to (no product context)", timeout=5)
 
     def _show_details(self, row: Row) -> None:
         rlog = self.query_one("#details", RichLog)
