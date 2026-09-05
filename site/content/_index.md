@@ -16,8 +16,10 @@ layout: "hextra-home"
 
 <div class="hx:mb-12">
 {{< hextra/hero-subtitle >}}
-  Simplon assembles a product's build&nbsp;/&nbsp;test&nbsp;/&nbsp;release&nbsp;/&nbsp;deploy&nbsp;/&nbsp;monitor
-  command line out of one YAML file, runs the steps, and knows nothing about the product itself.
+  Simplon is the link between the CI/CD process and the technologies, and it brings structure and
+  reusability. Concretely: it assembles a product's
+  build&nbsp;/&nbsp;test&nbsp;/&nbsp;release&nbsp;/&nbsp;deploy&nbsp;/&nbsp;monitor command line out of
+  one YAML file, runs the steps, and knows nothing about the product itself.
 {{< /hextra/hero-subtitle >}}
 </div>
 
