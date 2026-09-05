@@ -117,7 +117,10 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
     # product's architecture documentation (HTML + PDF, for people working ON the system), hugo builds its
     # product WEBSITE (HTML only, for people working WITH it). Both are mechanism; where the sources live,
     # where the output goes, which theme and which base URL are the product's data, in its manifest.
-    assert sorted(cat.namespace("docs")) == ["render", "site"]
+    # `reference` (#2) is the third, and the only one that renders nothing a human wrote: it reads the
+    # product's own assembled command line and writes it out as Markdown, so the page cannot fall behind
+    # the CLI. Mechanism again - the output PATH is the product's datum and arrives as a parameter.
+    assert sorted(cat.namespace("docs")) == ["reference", "render", "site"]
 
 
 # --- the `import:` + `tasks:` expansion ------------------------------------------------------------------

@@ -1,0 +1,63 @@
+# The Simplon documentation website (#2).
+#
+# Hugo's own configuration - the part that describes the SITE - lives here, in the product tree, because
+# it is the product's business: what the site is called, how it is navigated, which theme dresses it.
+# What the kernel's `docs:site` task contributes is the run: the pinned image, the mount, `--user`, the
+# wipe and the check that a home page came out. The `site:` section of ../simplon.yaml is the seam
+# between the two, and it deliberately repeats two values that also appear here - `baseURL` and the
+# theme module - because the task passes `--baseURL` on the command line and runs `hugo mod get` for the
+# pinned theme before it builds. Hugo's own copies below are what makes `hugo server` in this directory
+# behave like the built site.
+baseURL: "https://marcozwyssig.github.io/simplon/"
+title: "Simplon"
+languageCode: "en-us"
+
+# The theme as a Hugo MODULE (spec: not a submodule, not vendored). The VERSION is not written here: it
+# lives in go.mod, which `hugo mod get github.com/imfing/hextra@vX.Y.Z` writes from the pin in
+# ../simplon.yaml. Two places naming a version is how the two drift, so this one names only the module.
+module:
+  imports:
+    - path: github.com/imfing/hextra
+
+# `enableGitInfo` would put each page's last commit date in the footer. Off: the generated command
+# reference has no commit of its own - it is written during the build - so it would be the one page with
+# a blank date, and a date that is missing on exactly one page reads as a defect rather than as a fact.
+enableGitInfo: false
+enableInlineShortcodes: true
+
+markup:
+  goldmark:
+    renderer:
+      unsafe: true
+  highlight:
+    noClasses: false
+
+menu:
+  main:
+    - name: "Using Simplon"
+      pageRef: "/using"
+      weight: 1
+    - name: "Building on Simplon"
+      pageRef: "/building"
+      weight: 2
+    - name: "Search"
+      weight: 8
+      params:
+        type: "search"
+    - name: "GitHub"
+      weight: 9
+      url: "https://github.com/marcozwyssig/simplon"
+      params:
+        icon: "github"
+
+params:
+  navbar:
+    displayTitle: true
+    displayLogo: false
+  footer:
+    displayCopyright: false
+    displayPoweredBy: true
+  editURL:
+    enable: false
+  theme:
+    default: "system"
