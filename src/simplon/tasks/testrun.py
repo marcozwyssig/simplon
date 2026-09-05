@@ -18,6 +18,12 @@ resolves a command's `impl:`:
     nothing is cleared, because nothing ran);
   - `preamble`     - the idempotent lab preparation a gate needs (converged inventory, provisioned
     services, a settled forwarding plane).
+Both are SETUP, and a setup that falls over is not a red suite: the suite never ran, so the run has learned
+nothing about the product. `simplon.verdict` holds that vocabulary and the reasoning for keeping it out of
+the rc; `assess_gate` below produces it and writes it where a later reader actually looks - the stamp beside
+the report dir and the archive's own Environment widget (#30). A suite that prepares its own lab inside a
+session fixture, out of the kernel's sight, says so through the marker file at `SETUP_MARKER_ENV`.
+
 A gate may also be declared as a bare `impl:` instead of a pytest `suite:`, for a level whose runner is the
 product's own (a browser journey suite, say); the kernel just calls it for its rc and sequences it.
 
@@ -31,18 +37,20 @@ rendered under its own archive prefix. The canonical archive of the last real ga
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Callable
 
 import typer
 
-from simplon import allure, context, log, pyvenv
+from simplon import allure, context, log, pyvenv, verdict
 from simplon.awake import keep_awake
 from simplon.orchestrator.manifest import resolve_ref
 from simplon.run import run
+from simplon.verdict import GateVerdict, RunVerdict, Verdict
 
 # The manifest section this module owns.
 SECTION = "suites"
@@ -55,6 +63,16 @@ RESULTS = "allure-results"
 SCRATCH = "allure-report"
 
 CLEAR, APPEND = "clear", "append"
+
+#: The file a SUITE may drop to say that its own preparation fell over (#30), and the environment variable
+#: that tells it where. The kernel names the two setup stages it sequences itself - `precondition` and
+#: `preamble` - but a product whose lab is built inside a pytest session fixture prepares it where the
+#: kernel cannot see: from out here that failure is just a non-zero pytest rc, indistinguishable from a red
+#: suite. This is the seam for it, and it is deliberately the cheapest one that works: a path in the
+#: environment and a file with a stage name in it. No import of the kernel from inside the suite's own
+#: venv, no protocol, nothing to keep in step across a version bump.
+SETUP_MARKER = "setup-failed"
+SETUP_MARKER_ENV = "SIMPLON_SETUP_FAILED"
 
 
 @dataclass(frozen=True)
@@ -256,20 +274,73 @@ def results_dir(cfg: Suites, *, filtered: bool) -> str:
     return os.path.join(_reports_dir(cfg), cfg.filtered_results if filtered else RESULTS)
 
 
-def run_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool) -> int:
-    """Run ONE gate and return its rc.
+@contextlib.contextmanager
+def _setup_marker(reports: str) -> Iterator[str]:
+    """Offer the suite a place to say its own setup fell over, and read it back afterwards.
+
+    The marker is REMOVED on the way in, so a file left by an earlier run can never be read as this run's
+    verdict - a stale "setup failed" is the same defect as a stale "passed", pointing the other way. The
+    path is exported for the child pytest through `os.environ` and restored afterwards, because
+    `simplon.run.run` takes no environment of its own and widening it for one caller would be a bigger
+    change than the seam is worth; the value is a path this process just computed, not user input.
+    """
+    path = os.path.join(reports, SETUP_MARKER)
+    os.makedirs(reports, exist_ok=True)
+    with contextlib.suppress(OSError):
+        os.unlink(path)
+    previous = os.environ.get(SETUP_MARKER_ENV)
+    os.environ[SETUP_MARKER_ENV] = path
+    try:
+        yield path
+    finally:
+        if previous is None:
+            os.environ.pop(SETUP_MARKER_ENV, None)
+        else:
+            os.environ[SETUP_MARKER_ENV] = previous
+
+
+def _reported_stage(path: str) -> str:
+    """The setup stage the suite named in the marker, or "" when it left none.
+
+    A marker with nothing in it still counts: the suite said the setup fell over, and losing that because
+    it did not also name a stage would trade the whole distinction for a detail. The generic wording is
+    what it gets in that case.
+    """
+    if not os.path.isfile(path):
+        return ""
+    with contextlib.suppress(OSError):
+        with open(path, encoding="utf-8") as fh:
+            first = fh.read().strip().splitlines()
+        if first and first[0].strip():
+            return first[0].strip()
+    return "the suite's own setup"
+
+
+def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool) -> GateVerdict:
+    """Run ONE gate and say not only whether it was red but whether it was red ABOUT anything (#30).
 
     A declared precondition runs FIRST and a non-zero verdict returns immediately, having cleared nothing -
-    the stale results of the last real run must survive a gate that never started. Then, for a pytest gate:
-    the venv, the clear (only where the taxonomy says so), and the run itself with the product's lab
-    preamble inside the same keep-awake window, so a long convergence wait cannot idle-sleep the host.
+    the stale results of the last real run must survive a gate that never started; that is `NOT_RUN`. Then,
+    for a pytest gate: the venv, the clear (only where the taxonomy says so), and the run itself with the
+    product's lab preamble inside the same keep-awake window, so a long convergence wait cannot idle-sleep
+    the host.
+
+    THE PREAMBLE'S OWN VERDICT IS NOW HONOURED, and that is a fix, not a refinement: its rc used to be
+    computed and dropped on the floor, so a lab that failed to converge ran the suite anyway, against a
+    lab that was not there, and whatever the suite then reported was recorded as a statement about the
+    product. `SETUP_FAILED` is that case, and the suite does not run.
+
+    A gate declared as a bare `impl:` stays opaque, deliberately. The kernel calls the product's runner for
+    its rc and nothing else, so it has no honest basis for saying more than passed/failed about it; a
+    product that wants the distinction there owns both halves and can write its own verdict.
     """
     if gate.precondition:
         rc = _hook(gate.precondition, f"gates.{gate.name}.precondition")()
         if rc != 0:
-            return rc
+            return GateVerdict(gate.name, Verdict.NOT_RUN, rc, verdict.PRECONDITION)
     if gate.impl:
-        return _hook(gate.impl, f"gates.{gate.name}.impl")()
+        rc = _hook(gate.impl, f"gates.{gate.name}.impl")()
+        return GateVerdict(gate.name, Verdict.PASSED if rc == 0 else Verdict.FAILED, rc)
 
     log.info(gate.announce or f"{gate.name} gate: {gate.suite} against the running lab")
     suite_dir = str(context.current().root / gate.suite)
@@ -283,17 +354,48 @@ def run_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool) -> in
         shutil.rmtree(os.path.join(reports, SCRATCH), ignore_errors=True)
     os.makedirs(results, exist_ok=True)
     junit = os.path.join(reports, f"{os.path.splitext(gate.junit)[0]}-filtered.xml" if filtered else gate.junit)
-    with keep_awake():
+    with _setup_marker(reports) as marker, keep_awake():
         if gate.preamble:
-            _hook(gate.preamble, f"gates.{gate.name}.preamble")()
+            rc = _hook(gate.preamble, f"gates.{gate.name}.preamble")()
+            if rc != 0:
+                return _written(GateVerdict(gate.name, Verdict.SETUP_FAILED, rc, verdict.PREAMBLE), results)
         # cwd is the level's own python root so its conftest.py loads and the subjects below it collect.
         rc = run(allure.integration_pytest_argv(py, results, junit, extra),
                  capture=False, cwd=suite_dir).rc
+        stage = _reported_stage(marker)
+    if stage:
+        # The suite's own claim wins over its exit code, INCLUDING over a green one. A suite that reports
+        # a broken setup and still exits 0 is a suite whose green means nothing, and believing the rc there
+        # would reinstate exactly the "red run, green record" this exists against.
+        return _written(GateVerdict(gate.name, Verdict.SETUP_FAILED, rc, stage), results)
     log.ok(f"{gate.name} results written to {results}")
-    return rc
+    return _written(GateVerdict(gate.name, Verdict.PASSED if rc == 0 else Verdict.FAILED, rc), results)
 
 
-def report(cfg: Suites | None = None, *, filtered: bool = False) -> int:
+def _written(gv: GateVerdict, results: str) -> GateVerdict:
+    """Put the gate's verdict INSIDE the archive it just wrote, and say it once on the terminal.
+
+    Only for a gate that owns this run's results dir - which is every outcome except `NOT_RUN`, whose
+    whole point is that it touched nothing. Writing there would overwrite the environment of the last real
+    run's archive with the verdict of a run that never started, which is the original defect with the sign
+    flipped.
+    """
+    (log.ok if gv.ok else log.warn)(f"{gv.gate}: {gv.line}")
+    allure.write_environment(results, RunVerdict((gv,)).environment())
+    return gv
+
+
+def run_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool) -> int:
+    """Run ONE gate and return its rc - `assess_gate` for a caller that only wants the exit code.
+
+    The rc stays exactly what it was before #30: zero or not, with no reserved value carrying the reason.
+    That is the point. Everything a later reader needs is in what was WRITTEN, and a caller who wants it in
+    hand calls `assess_gate` instead of decoding the rc.
+    """
+    return assess_gate(gate, cfg, extra, filtered=filtered).rc
+
+
+def report(cfg: Suites | None = None, *, filtered: bool = False, run: RunVerdict | None = None) -> int:
     """Merge the per-module results the product's OTHER gates already wrote into this run's results dir,
     then render the merged single-file archive. Runs NO tests: it archives the verdict of what ran before
     it.
@@ -304,11 +406,18 @@ def report(cfg: Suites | None = None, *, filtered: bool = False) -> int:
     asked to do something it can do and did not, and a run that silently ships no archive is
     indistinguishable from one that shipped a good one - which is precisely how the broken docker render
     survived several releases.
+
+    `run`, when a caller has one, is the verdict of the gates that ran before this step, and it goes into
+    the archive's own Environment widget (#30). That is the half a later reader meets: the stamp beside the
+    report says why a run was red, and this says it INSIDE the report, where somebody who was handed only
+    the HTML file can still see that a gate's setup fell over rather than its suite.
     """
     cfg = cfg or config()
     root = context.current().root
     results = results_dir(cfg, filtered=filtered)
     os.makedirs(results, exist_ok=True)
+    if run is not None:
+        allure.write_environment(results, run.environment())
     if cfg.merge:
         allure.merge_results(results, [str(root / d) for d in cfg.merge], parent_suite=cfg.parent_suite)
         log.ok(f"per-module results merged (parentSuite={cfg.parent_suite})")
@@ -327,21 +436,35 @@ def accept(extra: list[str], cfg: Suites | None = None) -> int:
     reason (#6) - a run whose archive silently failed to render is not a green run - though only when a
     render tool was there to fail; the section-level precondition is the one exception: an unhealthy cluster
     aborts in seconds rather than wasting the whole collection.
+
+    A STAMP IS WRITTEN AFTER EVERY GATE, not once at the end (#30). The stamp always holds everything this
+    invocation knows so far, so a run killed in its third gate still leaves a record of the first two
+    instead of leaving the last complete run's verdict standing as though it were this one's. The
+    section-level abort writes one too: "this run never started" is a thing the record has to be able to
+    say, and it is the one thing the old code could only say by staying silent.
     """
     cfg = cfg or config()
+    reports = _reports_dir(cfg)
     if cfg.precondition:
         rc = _hook(cfg.precondition, "precondition")()
         if rc != 0:
+            verdict.write_stamp(reports, RunVerdict((
+                GateVerdict("accept", Verdict.NOT_RUN, rc, verdict.PRECONDITION),)))
             return rc
     filtered = bool(extra)
     if filtered:
         _warn_filtered(cfg)
     log.info(f"accept: running the lab-based suites ({' + '.join(g.name for g in cfg.gates)} + report)")
-    rcs = {gate.name: run_gate(gate, cfg, extra if gate.args else [], filtered=filtered)
-           for gate in cfg.gates}
-    rcs["report"] = report(cfg, filtered=filtered)
-    if any(rc != 0 for rc in rcs.values()):
-        log.warn("accept is RED (" + ", ".join(f"{name} rc {rc}" for name, rc in rcs.items()) + ")")
+    verdicts: list[GateVerdict] = []
+    for gate in cfg.gates:
+        verdicts.append(assess_gate(gate, cfg, extra if gate.args else [], filtered=filtered))
+        verdict.write_stamp(reports, RunVerdict(tuple(verdicts)))
+    rc = report(cfg, filtered=filtered, run=RunVerdict(tuple(verdicts)))
+    verdicts.append(GateVerdict("report", Verdict.PASSED if rc == 0 else Verdict.FAILED, rc))
+    run = RunVerdict(tuple(verdicts))
+    verdict.write_stamp(reports, run)
+    if not all(gv.ok for gv in verdicts):
+        log.warn("accept is RED (" + ", ".join(f"{gv.gate} {gv.line}" for gv in verdicts) + ")")
         return 1
     return 0
 
@@ -394,7 +517,12 @@ def gate(ctx: typer.Context, name: str = "") -> int:
     # lookup over strings. An empty level reaches `Suites.gate`, which refuses it by name and lists the
     # gates that ARE declared - the same loud manifest-typo error an unknown level already gets.
     level = name or ctx.info_name or ""
-    return run_gate(cfg.gate(level), cfg, extra, filtered=filtered)
+    gv = assess_gate(cfg.gate(level), cfg, extra, filtered=filtered)
+    # One gate invoked on its own is still a run, and it stamps what IT did (#30) - a one-gate record
+    # rather than a merge into the last full run's, because pretending the other gates still hold from an
+    # earlier invocation is the stale-verdict problem again, one level up.
+    verdict.write_stamp(_reports_dir(cfg), RunVerdict((gv,)))
+    return gv.rc
 
 
 def report_cmd() -> int:

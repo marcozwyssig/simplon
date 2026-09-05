@@ -62,6 +62,40 @@ conventional src-layout, while `orchestrator/` has exactly the shape
 `simplon init` writes into every product. If that shape is awkward, Simplon
 feels it first.
 
+## Why a gate is red
+
+A gate can be red for two reasons, and they are not the same statement: the
+**probe is red** (the suite ran and found something) or the **setup failed**
+(the suite never ran, because the preparation fell over first). Both are
+`rc != 0`, and they stay that way -- an exit code is one bit and no reserved
+value is invented for this. The distinction lives in what gets **written**:
+
+* `test/reports/test-verdict.json` -- the stamp of the last invocation, always
+  written, including for a run that never started. A run that leaves no record
+  reads as the last green one, which is the defect this exists against.
+* `environment.properties` in the run's allure results -- the same verdict
+  inside the archive, where somebody handed only the HTML report still sees it.
+
+`simplon.verdict` holds the four outcomes (`passed`, `failed`, `setup-failed`,
+`not-run`) and the reasoning; `simplon.tasks.testrun.assess_gate` produces one
+per gate for a caller that wants it in hand rather than as an rc.
+
+A product whose lab is prepared through the gate's `precondition:` or
+`preamble:` hooks gets this for free. A product that builds its lab **inside a
+pytest session fixture**, where the kernel cannot see it, says so by writing the
+failed stage into the file named by `$SIMPLON_SETUP_FAILED`:
+
+```python
+def pytest_sessionfinish(session, exitstatus):
+    if lab_never_came_up:
+        with open(os.environ["SIMPLON_SETUP_FAILED"], "w") as fh:
+            fh.write("provision\n")
+```
+
+Nothing is imported from the kernel to do that, on purpose: it is a path in the
+environment and a file with a stage name in it, so a suite in its own venv needs
+no version of anything to stay in step with.
+
 ## Developing Simplon
 
 Simplon builds and tests itself with itself:
