@@ -131,12 +131,14 @@ def _pinned_image(image: str, where: str) -> str:
     depending on when it ran is not a build, and a documentation site is committed-to prose: a generator
     change rewrites it wholesale. The same refusal `docs.py` makes for the docToolchain tag.
 
-    The registry is split off by docker's OWN rule - a first path component carrying a '.' or a ':', or
-    spelled 'localhost', is a host - so a private registry with a port
-    (`registry.example:5000/hugo:0.148.2`) is not mistaken for a tagged image. That rule also leaves one
-    trap, and it is docker's rather than ours: `registry.example:5000` ALONE has no path component, so
-    docker reads the port as a tag and pulls `registry.example` from docker.io. Refused by name, because
-    the error it would otherwise produce is a pull failure that says nothing about the cause.
+    The registry is split off by docker's OWN rule, which needs BOTH halves: a first component is a host
+    when it carries a '.' or a ':' AND a '/' follows it, or when it is 'localhost'. That is what keeps a
+    private registry with a port (`registry.example:5000/hugo:0.148.2`) from being read as a tagged image
+    - and, just as important, what keeps `my.image:1.0` from being read as a registry. Without a slash
+    there is no registry, dot or no dot; docker reads such a reference as an image with a tag, and so does
+    this. `registry.example:5000` alone therefore passes as image `registry.example` tag `5000`, which is
+    what docker itself would do with it: nothing here can tell that port from a version without guessing,
+    and guessing costs valid references.
     """
     hint = ("pin it as '<image>:<tag>' (e.g. 'hugomods/hugo:exts-0.148.2'), or by digest")
     name, at, digest = image.partition("@")
@@ -145,6 +147,8 @@ def _pinned_image(image: str, where: str) -> str:
             raise ValueError(f"{where}: 'image' carries a broken digest in '{image}'; {hint}")
         return image
     parts = image.split("/")
+    # A registry needs a '/' after it - `len(parts) > 1` IS that condition, and it is the half that stops
+    # `my.image:1.0` from being mistaken for a host.
     registry = len(parts) > 1 and ("." in parts[0] or ":" in parts[0] or parts[0] == "localhost")
     remainder = "/".join(parts[1:]) if registry else image
     repo, colon, tag = remainder.rpartition(":")
@@ -153,10 +157,6 @@ def _pinned_image(image: str, where: str) -> str:
                          f"- an untagged image means ':latest', which moves under the build; {hint}")
     if not repo or not _TAG_RE.match(tag):
         raise ValueError(f"{where}: 'image' has no usable tag in '{image}'; {hint}")
-    if not registry and "/" not in remainder and "." in repo:
-        raise ValueError(f"{where}: 'image' looks like a registry rather than an image: '{image}' names "
-                         f"no image on host '{repo}', and docker would read '{tag}' as a TAG on an image "
-                         f"called '{repo}'; {hint}")
     if tag == "latest":
         raise ValueError(f"{where}: 'image' must pin a version, not the moving tag 'latest' "
                          f"(got '{image}') - a build whose output depends on when it ran is not a build")

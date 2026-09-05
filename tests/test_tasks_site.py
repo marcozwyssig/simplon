@@ -393,28 +393,36 @@ def test_a_present_docker_that_produced_nothing_is_failed(monkeypatch, tmp_path)
 # --- the wipe is not best-effort (review finding 1) -------------------------------------------------------
 
 
+@pytest.mark.skipif(not hasattr(os, "getuid") or os.getuid() == 0,
+                    reason="the block is a DIRECTORY permission: root ignores it and Windows has no "
+                           "equivalent, so only an unprivileged posix run can reproduce the case")
 def test_build_is_red_when_the_output_tree_cannot_be_cleared(monkeypatch, tmp_path, capsys):
-    # arrange: a destination the caller may not delete from - what a container that ran WITHOUT --user
-    # leaves behind, since it creates the directories itself, root-owned and 0755, and unlinking an entry
-    # needs write permission on the DIRECTORY. Plus a hugo that exits 0 and writes nothing. With an
-    # ignore_errors wipe this run reports the PREVIOUS run's index.html as a fresh site: the 0.1.7 defect
-    # wearing the costume of the fix for it
+    # arrange: the real thing, not a stubbed rmtree - a destination the caller cannot delete FROM, which
+    # is what a container that ran without --user leaves behind (it creates the directories itself,
+    # root-owned and 0755, and unlinking an entry needs write permission on the DIRECTORY that holds it).
+    # 0555 reproduces exactly that block without needing root or docker. Plus a hugo that exits 0 and
+    # writes nothing: with an ignore_errors wipe the tree simply stays, hugo "succeeds", and the check
+    # for index.html finds the PREVIOUS run's home page - rc 0 for a site this build did not produce
     _register(monkeypatch, tmp_path, {"image": _IMAGE, "source": "website", "output": "build/website"})
     out = tmp_path / "build" / "website"
     out.mkdir(parents=True)
     (out / "index.html").write_text("the previous run", encoding="utf-8")
-    monkeypatch.setattr(site_task.shutil, "rmtree",
-                        lambda *a, **kw: (_ for _ in ()).throw(PermissionError(13, "Permission denied")))
+    out.chmod(0o555)
     _docker(monkeypatch)
     seen = _stub_run(monkeypatch, rc=0, seen=[])
 
     # act
-    rc = site_task.build()
+    try:
+        rc = site_task.build()
+    finally:
+        out.chmod(0o755)          # so the temp tree can be cleaned up afterwards
 
-    # assert: red, and hugo was never even asked to build over a tree that is still there
+    # assert: red, hugo was never asked to build over a tree that is still standing, and the stale page
+    # is still there - which is precisely why a green verdict here would have been a lie
     assert rc != 0
     assert seen == []
     assert "clear" in capsys.readouterr().err
+    assert (out / "index.html").read_text(encoding="utf-8") == "the previous run"
 
 
 def test_a_first_build_with_no_output_tree_yet_is_not_a_failure(monkeypatch, tmp_path):
@@ -497,14 +505,27 @@ def test_declared_accepts_a_version_tag_or_a_commit(theme):
 # --- the image pin, at its edges (review, minor) ----------------------------------------------------------
 
 
-@pytest.mark.parametrize("image", ["hugomods/hugo:", "hugomods/hugo::", "registry.example:5000"])
+@pytest.mark.parametrize("image", ["hugomods/hugo:", "hugomods/hugo::"])
 def test_declared_refuses_an_image_reference_that_only_looks_pinned(image):
-    # arrange: an empty tag reads as pinned to a careless eye; and a registry with a port and nothing
-    # after it has docker read the PORT as a tag and pull that name from docker.io. All three fail later
-    # in docker with a worse message than this one
+    # arrange: an empty tag reads as pinned to a careless eye, and fails later in docker with a worse
+    # message than this one
     # act / assert
     with pytest.raises(ValueError, match="image"):
         site_task.declared({"site": {**_SITE, "image": image}})
+
+
+@pytest.mark.parametrize("image", ["my.image:1.0", "hugo.mods:0.148.2", "a.b.c:1.0",
+                                   "registry.example:5000"])
+def test_declared_accepts_a_dotted_name_with_no_slash_because_docker_reads_it_as_image_plus_tag(image):
+    # arrange: a first component is a REGISTRY only when a '/' follows it (or it is 'localhost') - that is
+    # docker's own rule. Without a slash there is no registry, dot or no dot, so all of these are an image
+    # with a tag and refusing them rejects valid input. `registry.example:5000` rides along: docker reads
+    # '5000' as a tag there too, and no rule can tell that from a version without guessing
+    # act
+    cfg = site_task.declared({"site": {**_SITE, "image": image}})
+
+    # assert
+    assert cfg.image == image
 
 
 def test_the_required_keys_are_checked_before_the_optional_theme():
