@@ -257,10 +257,47 @@ def test_released_pin_reduces_a_dev_build_to_the_release_it_descends_from():
     assert bootstrap.released_pin("0.1.12.post1.dev3+g1234abc.d20260905") == "0.1.12"
 
 
+@pytest.mark.parametrize("version, expected", [
+    # THE TAG NAMESPACE IS WIDER THAN `N.N.N`, and the release workflow constrains it no further than
+    # `v*`. A parser stricter than the tags this project can legally carry is not caution - it publishes a
+    # wheel whose `simplon init` fails for every user of it.
+    ("1.0", "1.0"),                             # two components is a legal version and a legal tag
+    ("1.0.0.1", "1.0.0.1"),                     # so is four
+    ("0.1.12.post1", "0.1.12.post1"),           # a post-release: published, installable, ordinary to tag
+    ("0.2.0rc1", "0.2.0rc1"),                   # a pre-release - see the test below for why it is allowed
+    ("1.0.post1.dev4+gabc", "1.0"),             # the distance marker peels off a two-component tag too
+    ("0.2.0rc1.post1.dev4+gabc", "0.2.0rc1"),   # ...and off a pre-release tag
+])
+def test_released_pin_accepts_every_shape_a_legal_tag_can_have(version, expected):
+    # arrange / act / assert
+    assert bootstrap.released_pin(version) == expected
+
+
+def test_released_pin_allows_a_pre_release_because_an_exact_pin_really_does_install_one():
+    """The rejection this test replaces was justified by "`pip install` skips a pre-release without
+    --pre", and that is simply not true of an exact pin: `==` is an explicit request, and pre-release
+    exclusion does not apply to one. Measured with the resolver's own machinery rather than argued.
+
+    So a kernel installed FROM a release candidate scaffolds a product pinned to that release candidate -
+    truthful, installable, and what its user chose. Refusing it would break `simplon init` for exactly the
+    people who volunteered to test a release.
+    """
+    # arrange
+    from packaging.specifiers import SpecifierSet
+
+    # act
+    pin = bootstrap.released_pin("0.2.0rc1")
+
+    # assert
+    assert SpecifierSet(f"=={pin}").contains("0.2.0rc1")
+
+
 @pytest.mark.parametrize("version", [
-    "0.1.13.dev3+g1234abc",   # `guess-next-dev`: names the NEXT version, which nobody has published
-    "0.0.0.dev0+unknown",     # simplon neither built nor installed - there is no true answer to give
-    "0.2.0rc1",               # a pre-release: on PyPI, but `pip install` skips it without --pre
+    "0.1.13.dev3+g1234abc",     # `guess-next-dev`: names the NEXT version, which nobody has published
+    "0.0.0.dev0+unknown",       # simplon neither built nor installed - there is no true answer to give
+    "0.0.post1.dev1+g0f8d428",  # setuptools-scm found NO TAG: what a shallow `clone --depth 1` produces
+    "0.0",                      # the same sentinel, bare
+    "not-a-version",
     "",
 ])
 def test_released_pin_refuses_anything_it_cannot_turn_into_a_released_version(version):
@@ -268,6 +305,32 @@ def test_released_pin_refuses_anything_it_cannot_turn_into_a_released_version(ve
     # requirements.txt is a failure they would meet later and elsewhere
     with pytest.raises(ValueError, match="released"):
         bootstrap.released_pin(version)
+
+
+def test_a_kernel_with_no_derivable_version_fails_the_CLI_loudly_and_leaves_nothing_behind(monkeypatch, tmp_path, capsys):
+    """The condition reaching a USER, through the command they actually type.
+
+    `main` promises "fail loud, no traceback" and returns 2. `released_pin`'s ValueError is raised deep
+    inside `write` -> `render`, so it has to be caught where the promise is made; uncaught, the first
+    command any new user runs answers with a stack trace.
+
+    The other half is that nothing is left behind: `write` renders before its first mkdir, so a refused
+    scaffold does not even create the target directory.
+    """
+    # arrange: a kernel that cannot say what release it descends from - a source tree that was never
+    # built and never installed reports exactly this
+    monkeypatch.setattr(simplon, "__version__", "0.0.0.dev0+unknown")
+    target = tmp_path / "fooctl"
+
+    # act
+    code = bootstrap.main(["init", "fooctl", "--dir", str(target)])
+
+    # assert
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "cannot derive a released kernel version" in err
+    assert "0.0.0.dev0+unknown" in err
+    assert not target.exists(), "a refused scaffold left a directory behind"
 
 
 def test_the_scaffolded_pin_is_a_plain_release_whatever_this_kernel_calls_itself():

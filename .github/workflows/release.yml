@@ -46,6 +46,23 @@ jobs:
       # It runs AFTER the build for that reason, and before the upload: PyPI rejects a local version
       # outright, but by then the tests have run and the failure arrives as a red publish rather than
       # as an answer.
+      #
+      # WHAT THE OLD CHECK CAUGHT AND THIS ONE CANNOT, stated because it is a real loss and not a wash.
+      # A MISTYPED tag - `v0.1.31` for `v0.1.13`. The old step held two independently produced numbers
+      # against each other, so a typo in one was caught by the other; two typos would have had to agree.
+      # There is only one number now, and a single statement cannot be falsified by itself: 0.1.31 is
+      # derived from the tag, matches it, and publishes.
+      #
+      # What still catches a typo is PyPI, and only in one direction. RE-USING a number is refused as a
+      # duplicate. SKIPPING ahead is refused by nobody: 0.1.31 goes up, and the versions between it and
+      # 0.1.13 are burnt.
+      #
+      # That is a DIFFERENT CUT, chosen deliberately, not an equal trade. What it buys is that a number
+      # cannot be claimed twice by two people at once - which happened three times in one day (0.1.4,
+      # 0.1.8, 0.1.9), cost two renumberings, and could not be prevented by looking first, because the
+      # number a stranger had reserved was in a branch nobody else could see. A typo is one person's
+      # slip, visible in the command they are typing; a collision is two people's correct behaviour
+      # producing a wrong result. Trading the second for the first is the trade this ticket is.
       - name: The wheel that was built must be the tag
         run: |
           version="${GITHUB_REF_NAME#v}"
@@ -96,10 +113,16 @@ jobs:
       group: pages
       cancel-in-progress: false
     steps:
-      # The same full history as the publish job, for the same reason (#3): the site build installs and
-      # imports the kernel, which reports its own setuptools-scm version, and a shallow clone would put a
-      # wrong one on the page. This job runs after the wheel is already on PyPI, so nothing downstream
-      # would catch it.
+      # fetch-depth: 0 here for UNIFORMITY, and that is the whole reason - no page carries the kernel's
+      # version, and this job would go green on a shallow clone. What it would not do is stay quiet: the
+      # site build installs the kernel with `-e .`, so setuptools-scm runs, and on a shallow clone it
+      # prints "is shallow and may cause errors" and derives its 0.0 no-tag sentinel. A warning in a green
+      # job is noise nobody chases.
+      #
+      # The larger reason is the rule itself. Every checkout in this repository takes the same setting, so
+      # there is one rule to state and tests/test_version_source.py can assert it over the whole workflows
+      # directory. An exception here would need a reader to know why, and the day the site DOES report a
+      # version, nobody would remember to come back.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0

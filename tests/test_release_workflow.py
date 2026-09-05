@@ -314,9 +314,16 @@ def test_the_version_that_was_built_is_asserted_against_the_tag(publish_job):
 
 
 def test_the_documentation_checkout_also_carries_the_history(docs_job):
-    """The site build imports the kernel, which reports its own version onto the page. The same shallow
-    clone that would mis-version a wheel would mis-label the website, and this job runs after the wheel is
-    already on PyPI - so it is the half nobody would think to look at."""
+    """UNIFORMITY, and it is worth saying that plainly rather than inventing a mechanism.
+
+    No page carries the kernel's version - `simplon.__version__` has exactly one consumer, the pin in
+    `bootstrap.render` - so this job would go green on a shallow clone. It would not be silent, though:
+    the site build installs the kernel with `-e .`, so setuptools-scm runs, warns that the checkout is
+    shallow and derives its no-tag sentinel.
+
+    What is actually held here is that every checkout in this repository takes the same setting: one rule
+    to state, one rule to assert, and no exception whose reasoning a later reader has to reconstruct.
+    """
     # Arrange
     checkout = next(step for step in docs_job["steps"]
                     if str(step.get("uses", "")).startswith("actions/checkout"))

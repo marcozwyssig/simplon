@@ -165,23 +165,31 @@ def test_every_workflow_checks_out_the_history_the_version_needs():
     """The precondition, held over EVERY workflow rather than the one that publishes.
 
     actions/checkout defaults to `fetch-depth: 1`, and a clone that shallow carries no tags. setuptools-scm
-    then has nothing to derive from: the kernel calls itself something `released_pin` refuses, and a suite
-    that passes in every developer's checkout goes red only in CI - or, on the release path, produces a
-    wheel labelled with a version nobody chose and PyPI accepts without complaint.
+    then falls back to its `0.0` no-tag sentinel: the kernel calls itself something `released_pin` refuses,
+    and a suite that passes in every developer's checkout goes red only in CI - or, on the release path,
+    produces a wheel labelled with a version nobody chose and PyPI accepts without complaint.
 
-    Asserted across the directory because the failure is invisible in a diff: a new workflow gets the
-    default, and the default is wrong here.
+    Asserted across the DIRECTORY because the failure is invisible in a diff: a new workflow gets the
+    default, and the default is wrong here. `*.y*ml` because GitHub reads `.yaml` exactly as it reads
+    `.yml`, and a test that only globbed one of them would be the same blind spot one file extension over.
+
+    THE LIMIT, stated rather than left for somebody to discover: this reads the steps a workflow spells out
+    itself. A checkout inside a composite action, or inside a reusable workflow this one calls with
+    `uses:` at the job level, is invisible here - there is no file in this repository to read it out of.
+    Neither exists today, and adding one means carrying the same setting across that boundary by hand.
     """
     # Arrange
-    files = sorted(WORKFLOWS.glob("*.yml"))
+    files = sorted(WORKFLOWS.glob("*.y*ml"))
     assert files, WORKFLOWS
 
     # Act
     shallow = []
     for path in files:
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-        for job_name, job in doc["jobs"].items():
-            for step in job["steps"]:
+        for job_name, job in doc.get("jobs", {}).items():
+            # A job that IS a `uses:` reusable-workflow call has no `steps` of its own. Skipped rather
+            # than crashed on, and named in the docstring above as the boundary this test cannot see past.
+            for step in job.get("steps", []):
                 if str(step.get("uses", "")).startswith("actions/checkout"):
                     if step.get("with", {}).get("fetch-depth") != 0:
                         shallow.append(f"{path.name}:{job_name}")
