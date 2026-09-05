@@ -35,6 +35,23 @@ subdirectory instead of at the repo root, so pass `--dir .` whenever the repo
 is already the product. After that the generated `myctl.sh` carries itself, and
 a later `simplon init` refreshes it.
 
+The orchestrator block -- the directory holding `.venv`, `requirements.txt` and
+`src/python/` -- lands in `orchestrator/` by default. A product whose own
+structure reserves the repo root passes `--orch-dir`:
+
+    simplon init myctl --dir . --orch-dir deploy/provision/orchestrator
+
+The value has to be a plain relative path under the target; an absolute one, or
+one containing `..`, is refused rather than scaffolded somewhere unexpected. It
+moves the whole block together -- both launchers' `LAUNCH_ORCH_DIR` and every
+path derived from it -- so nothing needs a hand-edit afterwards. Pass the same
+flag on a later refresh: `--force` overwrites the launchers, so an edit made by
+hand does not survive one.
+
+The Python package stays `orchestrator` wherever the block sits: it is an
+identifier resolved on `PYTHONPATH`, which the launcher points at
+`$LAUNCH_ORCH_DIR/src/python`.
+
 ## Layout
 
 `src/simplon/` is the kernel: the import package, the thing that gets

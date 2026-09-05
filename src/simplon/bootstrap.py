@@ -7,7 +7,7 @@ minimal, valid product skeleton and prints the next steps, after which the new p
 
 Run it standalone (with `simplon` installed, e.g. `pip install simplon`)::
 
-    simplon init <product> [--dir DIR] [--force]
+    simplon init <product> [--dir DIR] [--orch-dir DIR] [--force]
 
 `python -m simplon.bootstrap <product> ...` keeps working for anyone who has it in muscle memory, but
 the console script is the entry point the README documents.
@@ -19,9 +19,9 @@ It renders, mirroring the shape netctl's own `netctl.yaml` + `netctl.sh` use but
     <product>.cmd                                    the same entry point for Windows (cmd.exe)
     <product>.yaml                                   the starter manifest (groups tree/env_groups/
                                                      environments the Pydantic loader accepts)
-    orchestrator/requirements.txt                    the host-venv deps: the kernel pinned by version
+    <orch-dir>/requirements.txt                      the host-venv deps: the kernel pinned by version
                                                      (`simplon==...`) + product-only pins
-    orchestrator/src/python/orchestrator/
+    <orch-dir>/src/python/orchestrator/
         __init__.py                                  the product package
         __main__.py                                  `python -m orchestrator` entry
         cli.py                                       composition root: root Typer app + assemble
@@ -29,6 +29,11 @@ It renders, mirroring the shape netctl's own `netctl.yaml` + `netctl.sh` use but
         paths.py                                     the ProductContext wiring (simplon.context); repo root
                                                      found by walking up to the manifest marker, not a depth
         environments.py                              the EnvironmentProvider (its three product values)
+
+`<orch-dir>` is `orchestrator` unless `--orch-dir` says otherwise (#4). It is the block LAUNCH_ORCH_DIR
+points at, and both shims derive their venv, their requirements file and PYTHONPATH from that one variable,
+so the whole block moves together. The package name stays `orchestrator` under any layout - it is an
+identifier on PYTHONPATH, not a location.
 
 The generated manifest VALIDATES through `simplon.orchestrator.manifest.load`; the generated `paths.py`
 registers a `ProductContext` exactly as netctl's adapter does, so the new product has a working,
@@ -73,12 +78,54 @@ from pathlib import Path
 # identifier `orchestrator` (as in netctl), so a hyphenated slug never has to be a Python identifier.
 _PRODUCT_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
-# The generated product package is always `orchestrator` (LAUNCH_MODULE), mirroring netctl. Relative to the
-# scaffolded root, its source lives here; the block dir `orchestrator/` is LAUNCH_ORCH_DIR (holds .venv +
-# requirements.txt). `paths.py` locates the repo root by walking up to the manifest marker (netctl#737), so
-# this layout can move without a hand-edit.
-_PKG_DIR = "orchestrator/src/python/orchestrator"
+# The generated product package is always `orchestrator` (LAUNCH_MODULE), mirroring netctl. The BLOCK DIR
+# below it is LAUNCH_ORCH_DIR: it holds `.venv`, `requirements.txt` and `src/python/`, and it is the part
+# that MOVES (#4). Two of the three consumers keep it at `deploy/provision/orchestrator` because their own
+# structure rule reserves the repo root, so the location is a parameter with `orchestrator` as the default,
+# not a decree. The package NAME does not move with it: it is an identifier resolved on PYTHONPATH, which
+# the shim points at `$LAUNCH_ORCH_DIR/src/python` wherever that is. `paths.py` finds the repo root by
+# walking up to the manifest marker (netctl#737), so a deeper block dir needs no hand-edit either.
 _ORCH_DIR = "orchestrator"
+
+# The Windows drive prefix (`C:`, `c:/...`): absolute, and neither the leading-slash nor the `..` check
+# would catch it on its own.
+_DRIVE_RE = re.compile(r"^[A-Za-z]:")
+
+
+def pkg_dir_for(orch_dir: str) -> str:
+    """The generated package's directory, relative to the scaffold target, for a given block dir."""
+    return f"{orch_dir}/src/python/orchestrator"
+
+
+def validate_orch_dir(value: str) -> str:
+    """Return the normalised block directory if it is a plain relative path, else raise ValueError.
+
+    Checked here rather than at the write, so a bad value costs nothing: an absolute path or one with a
+    `..` in it would scaffold OUTSIDE the target the user named -- silently, and over whatever happens to
+    live there. Refuse it loudly instead. `\\` is refused rather than translated, because the cmd shim gets
+    its backslashes written for it and a value carrying both separators is a guess about which one was meant.
+    """
+    trimmed = (value or "").strip()
+    hint = (f"give a plain relative path under the scaffold target, e.g. {_ORCH_DIR!r} (the default) "
+            f"or 'deploy/provision/orchestrator'")
+    if not trimmed:
+        raise ValueError(f"orchestrator directory {value!r} is empty; {hint}")
+    if "\\" in trimmed:
+        raise ValueError(
+            f"orchestrator directory {value!r} is invalid: '/' is the separator here, not '\\' "
+            f"(the Windows shim gets its backslashes written for it); {hint}")
+    if trimmed.startswith("/") or _DRIVE_RE.match(trimmed):
+        raise ValueError(
+            f"orchestrator directory {value!r} is invalid: it must be relative, so that the scaffold "
+            f"lands under the target directory and nowhere else; {hint}")
+
+    segments = trimmed.rstrip("/").split("/")
+    for segment in segments:
+        if segment in ("", ".", ".."):
+            raise ValueError(
+                f"orchestrator directory {value!r} is invalid: {segment!r} is not a directory name, and a "
+                f"path that climbs or doubles back does not stay relative to the target; {hint}")
+    return "/".join(segments)
 
 
 def validate_product_name(name: str) -> str:
@@ -156,17 +203,26 @@ environments:
 """
 
 
-def _render_launcher(name: str, template: str) -> str:
-    """Read a launcher template from package data and fill in the product name.
+def _render_launcher(name: str, template: str, orch_dir: str) -> str:
+    """Read a launcher template from package data and fill in the product name + the block dir.
 
     Package data rather than a string constant: the launchers are read by
     humans debugging a broken checkout, and a .sh file in the tree beats a
     triple-quoted blob in a Python module.
+
+    The block dir goes in twice under two spellings, because cmd.exe wants
+    backslashes: a nested `deploy/provision/orchestrator` carried over verbatim
+    is the kind of path that half-works until it meets a tool that does not
+    normalise it. Only `LAUNCH_ORCH_DIR` is substituted -- the venv, the
+    requirements file and PYTHONPATH DERIVE from that variable inside the
+    template, which is what keeps a half-parametrised shim from being possible.
     """
     # files("simplon") and then joinpath -- not files("simplon.templates"):
     # the templates directory is not a package and has no __init__.py.
     raw = files("simplon").joinpath("templates", template).read_text(encoding="utf-8")
-    return raw.replace("{{ product }}", name)
+    return (raw.replace("{{ product }}", name)
+               .replace("{{ orch_dir_win }}", orch_dir.replace("/", "\\"))
+               .replace("{{ orch_dir }}", orch_dir))
 
 
 _REQUIREMENTS = """\
@@ -176,7 +232,7 @@ _REQUIREMENTS = """\
 # kernel; nothing is vendored and nothing is included by path. Declaring the
 # `test:typecheck-python` gate? Its mypy is an optional extra, so write
 # `simplon[typecheck]==...` here instead.
-simplon==0.1.8
+simplon==0.1.9
 
 # --- @@PRODUCT@@-product-only deps ---
 """
@@ -241,7 +297,7 @@ _ALIASES: dict[str, str] = {}
 
 def build() -> int:
     """Build the product artefacts (placeholder). Replace with your real build pipeline."""
-    log.info("@@PRODUCT@@: build (placeholder) - wire me up in orchestrator/src/python/orchestrator/cli.py")
+    log.info("@@PRODUCT@@: build (placeholder) - wire me up in @@PKG_DIR@@/cli.py")
     # The generated wrapper's exit code IS this return value (cli.py.j2's `_rc` reads it), not a
     # raise - a framework-free body reports success by what it returns.
     return 0
@@ -339,30 +395,40 @@ ENV_VAR = "@@ENV_VAR@@"
 PROVIDER = Provider(ENV_VAR, shim="./@@PRODUCT@@.sh", valid_backends=(LOCAL,))
 '''
 
-def _templates(name: str) -> dict[str, str]:
+def _templates(name: str, orch_dir: str) -> dict[str, str]:
     """The (relative POSIX path -> template) map for a product, BEFORE placeholder substitution."""
+    pkg_dir = pkg_dir_for(orch_dir)
     return {
-        f"{name}.sh": _render_launcher(name, "launch.sh.j2"),
-        f"{name}.cmd": _render_launcher(name, "launch.cmd.j2"),
+        f"{name}.sh": _render_launcher(name, "launch.sh.j2", orch_dir),
+        f"{name}.cmd": _render_launcher(name, "launch.cmd.j2", orch_dir),
         f"{name}.yaml": _MANIFEST,
-        f"{_ORCH_DIR}/requirements.txt": _REQUIREMENTS,
-        f"{_PKG_DIR}/__init__.py": _INIT,
-        f"{_PKG_DIR}/__main__.py": _MAIN,
-        f"{_PKG_DIR}/cli.py": _CLI,
-        f"{_PKG_DIR}/paths.py": _PATHS,
-        f"{_PKG_DIR}/environments.py": _ENVIRONMENTS,
+        f"{orch_dir}/requirements.txt": _REQUIREMENTS,
+        f"{pkg_dir}/__init__.py": _INIT,
+        f"{pkg_dir}/__main__.py": _MAIN,
+        f"{pkg_dir}/cli.py": _CLI,
+        f"{pkg_dir}/paths.py": _PATHS,
+        f"{pkg_dir}/environments.py": _ENVIRONMENTS,
     }
 
 
-def render(name: str) -> dict[str, str]:
-    """PURE: the product skeleton as a {relative POSIX path -> file content} map, with @@PRODUCT@@ and
-    @@ENV_VAR@@ substituted. No I/O, no yaml/pydantic import - so a test can validate the rendered manifest
-    through the real loader and assert the exact file set without a filesystem or the product's deps."""
+def render(name: str, *, orch_dir: str = _ORCH_DIR) -> dict[str, str]:
+    """PURE: the product skeleton as a {relative POSIX path -> file content} map, with @@PRODUCT@@,
+    @@ENV_VAR@@ and @@PKG_DIR@@ substituted. No I/O, no yaml/pydantic import - so a test can validate the
+    rendered manifest through the real loader and assert the exact file set without a filesystem or the
+    product's deps.
+
+    `orch_dir` moves the whole block: the requirements file, the package source, both shims' LAUNCH_ORCH_DIR
+    and the one place the generated cli.py tells the reader which file to edit. Defaults to `orchestrator`,
+    and that default renders byte-for-byte what it always did."""
     product = validate_product_name(name)
+    block = validate_orch_dir(orch_dir)
     env_var = env_var_name(product)
+    pkg_dir = pkg_dir_for(block)
     return {
-        rel: template.replace("@@PRODUCT@@", product).replace("@@ENV_VAR@@", env_var)
-        for rel, template in _templates(product).items()
+        rel: (template.replace("@@PRODUCT@@", product)
+                      .replace("@@ENV_VAR@@", env_var)
+                      .replace("@@PKG_DIR@@", pkg_dir))
+        for rel, template in _templates(product, block).items()
     }
 
 
@@ -376,13 +442,15 @@ def shim_relpath(name: str) -> str:
     return f"{validate_product_name(name)}.sh"
 
 
-def write(name: str, target: Path, *, force: bool = False) -> list[Path]:
+def write(name: str, target: Path, *, force: bool = False, orch_dir: str = _ORCH_DIR) -> list[Path]:
     """Render the skeleton and write it under ``target``, returning the written paths (sorted). Creates parent
     dirs; sets the shim executable (0o755). Refuses to overwrite an existing file unless ``force`` - a fresh
     scaffold must never silently clobber a hand-edited manifest or shim - raising FileExistsError listing the
     conflicts."""
     product = validate_product_name(name)
-    files = render(product)
+    # render() validates `orch_dir`, and it does so before any directory is created: a refused path must
+    # leave no half-scaffold behind.
+    files = render(product, orch_dir=orch_dir)
     shim = shim_relpath(product)
 
     existing = sorted(rel for rel in files if (target / rel).exists())
@@ -401,10 +469,11 @@ def write(name: str, target: Path, *, force: bool = False) -> list[Path]:
     return sorted(written)
 
 
-def next_steps(name: str, target: Path) -> str:
+def next_steps(name: str, target: Path, *, orch_dir: str = _ORCH_DIR) -> str:
     """The post-scaffold guidance printed after a successful write: nothing to vendor, just run the CLI -
     the launcher provisions its own venv and installs the pinned kernel from PyPI on first run."""
     product = validate_product_name(name)
+    pkg_dir = pkg_dir_for(validate_orch_dir(orch_dir))
     return "\n".join([
         f"Scaffolded '{product}' under {target}",
         "",
@@ -414,13 +483,13 @@ def next_steps(name: str, target: Path) -> str:
         f"  3. fill in {product}.yaml with your real groups and commands",
         f"  4. run the CLI:  ./{product}.sh help",
         f"  5. grow it: add groups + commands in {product}.yaml and impl callables in",
-        f"       {_PKG_DIR}/cli.py",
+        f"       {pkg_dir}/cli.py",
     ])
 
 
 def main(argv: list[str] | None = None) -> int:
-    """`simplon init <product> [--dir DIR] [--force]`: scaffold a product skeleton and print the next
-    steps. Returns 0 on success, 2 on a bad product name or a clobber conflict (fail loud, no
+    """`simplon init <product> [--dir DIR] [--orch-dir DIR] [--force]`: scaffold a product skeleton and
+    print the next steps. Returns 0 on success, 2 on a bad product name or a clobber conflict (fail loud, no
     traceback)."""
     # `simplon init <name>` reads like a command; the bare product name as the first argument read like a
     # typo. The old call pattern stays valid, so `python -m simplon.bootstrap <name>` keeps working.
@@ -431,7 +500,8 @@ def main(argv: list[str] | None = None) -> int:
     elif not argv:
         # A bare `simplon` must name the one thing it can do. argparse alone would only complain about a
         # missing `product`, which tells a first-time user nothing about the subcommand they omitted.
-        print("simplon: nothing to do. The one command is `simplon init <product> [--dir DIR] [--force]`; "
+        print("simplon: nothing to do. The one command is `simplon init <product> [--dir DIR] "
+              "[--orch-dir DIR] [--force]`; "
               "use `simplon init --help` for the options.", file=sys.stderr)
         return 2
 
@@ -443,24 +513,31 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("product", help="the product slug (lowercase; letters, digits, hyphens), e.g. 'fooctl'")
     parser.add_argument("--dir", dest="directory", default=None,
                         help="target directory (default: ./<product>); use '.' to scaffold in place")
+    parser.add_argument("--orch-dir", dest="orch_dir", default=_ORCH_DIR,
+                        help=("where the orchestrator block goes, relative to the target: it holds .venv, "
+                              "requirements.txt and src/python/ (default: %(default)s). A product whose "
+                              "structure reserves the repo root passes e.g. 'deploy/provision/orchestrator'. "
+                              "Pass it again on a later re-run: --force overwrites the shim, so hand-editing "
+                              "the generated one does not survive."))
     parser.add_argument("--force", action="store_true",
                         help="overwrite existing files instead of refusing")
     args = parser.parse_args(argv)
 
     try:
         product = validate_product_name(args.product)
+        orch_dir = validate_orch_dir(args.orch_dir)
     except ValueError as exc:
         print(f"simplon init: {exc}", file=sys.stderr)
         return 2
 
     target = Path(args.directory).resolve() if args.directory else (Path.cwd() / product)
     try:
-        write(product, target, force=args.force)
+        write(product, target, force=args.force, orch_dir=orch_dir)
     except FileExistsError as exc:
         print(str(exc), file=sys.stderr)
         return 2
 
-    print(next_steps(product, target))
+    print(next_steps(product, target, orch_dir=orch_dir))
     return 0
 
 
