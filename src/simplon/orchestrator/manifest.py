@@ -28,7 +28,8 @@ from __future__ import annotations
 import re
 
 import importlib
-from typing import Callable, NamedTuple
+from collections.abc import Iterable, Mapping
+from typing import Callable, NamedTuple, Protocol, cast
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -391,7 +392,15 @@ class _CommandSpecModel(BaseModel):
     @field_validator("depends_on", mode="before")
     @classmethod
     def _str_tuple(cls, value: object) -> tuple[str, ...]:
-        return tuple(str(dep) for dep in (value or ()))
+        # A before-validator's input is raw YAML, so the shape has to be TESTED rather than assumed. The
+        # test says out loud what the old bare comprehension only implied - and what a manifest that
+        # writes `depends_on: 3` used to get was `TypeError: 'int' object is not iterable` from inside
+        # pydantic, which names neither the key nor the file.
+        if not value:
+            return ()
+        if not isinstance(value, Iterable):
+            raise ValueError("'depends_on' must be a list of command names")
+        return tuple(str(dep) for dep in value)
 
     @field_validator("passthrough_args", "stop_on_failure", "keep_awake", "hidden", mode="before")
     @classmethod
@@ -437,15 +446,32 @@ class _ManifestModel(BaseModel):
         # group name -> {command name -> spec body}, str-coerced. A null/absent member map becomes an empty
         # group; a null spec body becomes an empty mapping so the sub-model defaults apply (then the
         # missing-impl rule below names it). Ordered: dict insertion order is the member order.
-        return {str(group): {str(name): (spec or {}) for name, spec in (members or {}).items()}
-                for group, members in (value or {}).items()}
+        #
+        # Both levels are CHECKED, for the same reason `_str_tuple` above checks its own: this is raw YAML,
+        # and a scalar where a mapping belongs used to surface as an AttributeError on `.items()` with no
+        # mention of which group was malformed.
+        if not value:
+            return {}
+        if not isinstance(value, Mapping):
+            raise ValueError("'groups' must be a mapping of group name -> commands")
+        out: dict[str, dict[str, object]] = {}
+        for group, members in value.items():
+            if members and not isinstance(members, Mapping):
+                raise ValueError(f"group '{group}' must be a mapping of command name -> spec")
+            out[str(group)] = {str(name): (spec or {})
+                               for name, spec in (members or {}).items()}
+        return out
 
     taxonomy: dict[str, dict] = {}
 
     @field_validator("env_groups", mode="before")
     @classmethod
     def _coerce_env_groups(cls, value: object) -> tuple[str, ...]:
-        return tuple(str(group) for group in (value or ()))
+        if not value:
+            return ()
+        if not isinstance(value, Iterable):
+            raise ValueError("'env_groups' must be a list of group names")
+        return tuple(str(group) for group in value)
 
     @model_validator(mode="after")
     def _validate_taxonomy(self) -> "_ManifestModel":
@@ -821,6 +847,17 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
                     generate=generate)
 
 
+class _Catalogue(Protocol):
+    """The one method `_expand_imports` calls on a catalogue.
+
+    Everything else this module reads off a catalogue it reads with `getattr` and a default, deliberately,
+    so any object carrying the right attributes can be one. `namespace()` is the exception - it is called
+    outright - and this states that contract instead of leaving it to a runtime AttributeError.
+    """
+
+    def namespace(self, name: str) -> dict: ...
+
+
 def _expand_imports(data: dict, catalogue: object) -> dict:
     """Fold a manifest's `import:` + `tasks:` sections into `groups:`.
 
@@ -857,7 +894,12 @@ def _expand_imports(data: dict, catalogue: object) -> dict:
         if source != "delivery":
             raise ValueError(f"unknown import source '{source}' - the only catalogue is 'delivery'")
         for namespace in namespaces or ():
-            for name, spec in catalogue.namespace(namespace).items():
+            # `cast`, not a check: the guard at the top of this function already refused an `import:`
+            # with no catalogue, which is exactly the condition under which this loop body runs. It pairs
+            # two facts in one `and`, so the checker can follow the guard but not its consequence here.
+            # A Protocol rather than `Any` because `namespace()` is the one part of the catalogue this
+            # module calls instead of `getattr`-ing, and naming it is what keeps the duck typing honest.
+            for name, spec in cast(_Catalogue, catalogue).namespace(namespace).items():
                 available[f"{namespace}:{name}"] = spec
 
     expanded = {group: dict(members) for group, members in (data.get("groups") or {}).items()}

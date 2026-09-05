@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import inspect
 import keyword
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 # Parameter names a body uses for the CLI context (a `typer.Context`). Recognised BY NAME rather than
 # by position: the kernel's own command bodies do not all take one (simplon.tasks.vcs:push takes
@@ -57,13 +57,13 @@ _COMPOSITES = {
 }
 
 
-def takes_context(body: object) -> bool:
+def takes_context(body: Callable[..., object]) -> bool:
     """True iff the body's first parameter is named like a CLI context."""
     params = list(inspect.signature(body).parameters.values())
     return bool(params) and params[0].name in CONTEXT_NAMES
 
 
-def bindable(body: object) -> list[Parameter]:
+def bindable(body: Callable[..., object]) -> list[Parameter]:
     """The body's payload parameters: everything except a leading context and any *args / **kwargs.
 
     *args is dropped deliberately. Neither Click nor Typer binds a variadic to a parameter, so a variadic

@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import sys
 
-from .steps import (STATE_ICON, Pipeline, Row, StepState, abort_after, build_rows, omitted_note,
-                    overall_rc, run_headless)
+from .steps import (STATE_ICON, Emit, Pipeline, Row, StepState, abort_after, build_rows,
+                    omitted_note, overall_rc, run_headless)
 
 
 def run_pipeline(pipeline: Pipeline) -> int:
@@ -169,8 +169,12 @@ class _StepApp(App):
     def _details_text(self, row: Row) -> str:
         """What the right pane shows for `row`, as plain text - the one source `_show_details`, `c` and
         `s` all read, so what is copied is what is displayed rather than a second rendering of it."""
-        if row.is_leaf:
-            step = row.step
+        # `step is not None` rather than `row.is_leaf`, and the two are the SAME test - `is_leaf` is
+        # defined as exactly this. Only one of the two spellings narrows `Row.step` from `Step | None` to
+        # `Step`, though, and every line below this reaches into the step, so the leaf test is written
+        # where it does that work instead of leaving eleven unchecked attribute reads behind a property.
+        step = row.step
+        if step is not None:
             body = step.output.rstrip("\n") if step.output else {
                 StepState.RUNNING: "(running…)",
                 StepState.SKIPPED: f"(skipped: {self._skipped_because.get(id(step), 'a previous step failed')})",
@@ -203,15 +207,16 @@ class _StepApp(App):
         row = self._cursor_row()
         if row is None:
             return
-        identity = (row.step.command or row.step.label) if row.is_leaf else row.label
+        step = row.step
+        identity = (step.command or step.label) if step is not None else row.label
         path = self._save_details_to(identity, self._details_text(row))
         self.notify(f"saved to {path}" if path else "nowhere to save to (no product context)", timeout=5)
 
     def _show_details(self, row: Row) -> None:
         rlog = self.query_one("#details", RichLog)
         rlog.clear()
-        if row.is_leaf:
-            step = row.step
+        step = row.step
+        if step is not None:
             rlog.write(f"$ {step.command or step.label}\n")
             if step.output:
                 rlog.write(step.output.rstrip("\n"))
@@ -257,6 +262,19 @@ class _StepApp(App):
         if chain and self._cursor_row() is chain[-1]:
             self.query_one("#details", RichLog).write(line)
 
+    def _emitter(self, i: int) -> Emit:
+        """Step `i`'s live-line callback.
+
+        A method rather than the `lambda line, i=i:` it replaces. The default-argument trick was there to
+        bind the loop variable per iteration, which a parameter does anyway - and it cost the checker the
+        lambda's type entirely, so nothing verified that what `Step.run` is handed matches `Emit`. Now it
+        does, and the capture is a call frame instead of a mutable default.
+        """
+        def emit(line: str) -> None:
+            self.call_from_thread(self._on_line, i, line)
+
+        return emit
+
     def _maybe_refresh_details(self, i: int) -> None:
         cursor = self._cursor_row()
         if cursor is not None and cursor in self._chain_rows.get(i, ()):
@@ -283,7 +301,7 @@ class _StepApp(App):
             self.call_from_thread(self._refresh_row, i)             # -> RUNNING shown
             self.call_from_thread(self._begin_details, i)
             # stream lines live into the details pane (only rendered when this step is highlighted)
-            outcome = step.run(lambda line, i=i: self.call_from_thread(self._on_line, i, line))
+            outcome = step.run(self._emitter(i))
             self.call_from_thread(self._refresh_row, i)             # -> OK/FAILED
             self.call_from_thread(self._maybe_refresh_details, i)
             if not outcome.ok:

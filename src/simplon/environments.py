@@ -36,8 +36,11 @@ def parse_data(data: Mapping[str, object], valid_backends: Iterable[str]) -> Reg
     descriptor fails loudly here, not deep in a deployment."""
     valid = tuple(valid_backends)
     envs: dict[str, Environment] = {}
-    for name, spec in (data.get("environments") or {}).items():
-        spec = spec or {}
+    declared = data.get("environments") or {}
+    if not isinstance(declared, Mapping):
+        raise ValueError("'environments' must be a mapping of environment name -> descriptor")
+    for name, spec in declared.items():
+        spec = spec if isinstance(spec, Mapping) else {}
         backend = str(spec.get("backend", "")).strip()
         if backend not in valid:
             allowed = " or ".join(f"'{b}'" for b in valid)
