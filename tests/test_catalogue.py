@@ -9,6 +9,7 @@ typo that offers nothing, an override matching no import, a coordinate with no n
 AAA throughout, including the negative cases.
 """
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -107,7 +108,10 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
     # assert
     # `release` joined them with `release:artifact` (publishing a directory as an OCI artifact): the
     # mechanics are the same in every product, only the registry, package, directory and media type differ.
-    assert cat.namespaces() == ["docs", "release", "support", "tasks", "test", "vcs"]
+    # `build` is the newest namespace (#31): `build:image` produces a product's container image and
+    # `release:image` publishes it, so the two halves of "this product ships a container" sit in the two
+    # groups the five verbs put them in rather than in one command with a flag.
+    assert cat.namespaces() == ["build", "docs", "release", "support", "tasks", "test", "vcs"]
     assert sorted(cat.namespace("vcs")) == ["auth-scopes", "commit", "prune-branches", "push",
                                             "submodules"]
     # `support:install` provisions the host tooling the kernel cannot work without (oras), and
@@ -123,6 +127,31 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
     # product's own assembled command line and writes it out as Markdown, so the page cannot fall behind
     # the CLI. Mechanism again - the output PATH is the product's datum and arrives as a parameter.
     assert sorted(cat.namespace("docs")) == ["reference", "render", "site"]
+    # The container image, #31's whole subject. Neither half is PLACED (the assertion below walks the
+    # tree and would catch it): both read an `images:` section naming the registry, the repository, the
+    # Dockerfile and the build context, so a command declared in the catalogue's own `build:` group would
+    # die on its first line in every product that ships no image.
+    assert sorted(cat.namespace("build")) == ["image"]
+    assert sorted(cat.namespace("release")) == ["artifact", "image"]
+
+
+def test_the_two_image_coordinates_reach_the_generated_reference():
+    # arrange: #31 acceptance 1's second half. The reference is an OUTPUT, and a coordinate no product
+    # places reaches it through the closing "platform tasks this product has not placed" section - so the
+    # proof is the kernel's OWN manifest read against the kernel's own catalogue, not a fixture
+    from simplon.tasks import cliref
+
+    root = Path(__file__).resolve().parents[1]
+    cat = catalogue.load()
+    mf = manifest.load((root / "simplon.yaml").read_text(encoding="utf-8"), catalogue=cat)
+
+    # act
+    offered = dict(cliref.unplaced(mf, cat))
+
+    # assert
+    assert "build:image" in offered and "release:image" in offered
+    assert "VERSION" in offered["build:image"]
+    assert "verify" in offered["release:image"]
 
 
 # --- the `import:` + `tasks:` expansion ------------------------------------------------------------------

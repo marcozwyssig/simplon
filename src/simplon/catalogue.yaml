@@ -184,6 +184,23 @@ tasks:
       output: { help: "where the Markdown page goes, relative to the product root" }
       title:  { help: "the page title in the front matter (default: '<product> command reference')" }
 
+  # --- build: what a product produces ------------------------------------------------------------------
+  # The container image, and a TASK rather than a placed command for the same reason `release:artifact`
+  # is one: it needs an `images:` section naming the registry, the repository, the Dockerfile and the
+  # build context, so a command declared under `build:` above would die on its first line in a product
+  # that ships no image. A product declares the command the day it has a Dockerfile, and pins WHICH
+  # image with `with: { name: ... }`.
+  #
+  # `build:image` and `release:image` are TWO tasks along the five verbs, not one with a flag: build
+  # produces, release publishes, and a product that builds an image only to run a smoke test against it
+  # must not be one typo away from pushing it.
+  build:image:
+    impl: simplon.tasks.image:build
+    help: "Build the product's container image from its declared Dockerfile, with VERSION/REVISION."
+    params:
+      name: { help: "the image to build (normally pinned per command with `with:`)" }
+      tag:  { help: "the tag to build under, for a version only known after a build" }
+
   # --- release: what a product hands over --------------------------------------------------------------
   # A TASK, not a placed command: it needs an `artifacts:` section naming the registry, the package, the
   # directory and the media type, so a command declared here would die on its first line in a product
@@ -194,6 +211,15 @@ tasks:
     help: "Publish a declared directory to a registry as an OCI artifact."
     params:
       name: { help: "the artifact to publish (normally pinned per command with `with:`)" }
+      tag:  { help: "the tag to publish under, for a version only known after a build" }
+  # The image's other half: log in, push, and READ BACK that the registry has the tag. That last step is
+  # the reason this is a kernel task at all - a push nobody verifies is the same defect as a report
+  # nobody reads, and this project has shipped it twice (see src/simplon/tasks/image.py).
+  release:image:
+    impl: simplon.tasks.image:release
+    help: "Push the product's container image and verify the tag is in the registry."
+    params:
+      name: { help: "the image to publish (normally pinned per command with `with:`)" }
       tag:  { help: "the tag to publish under, for a version only known after a build" }
 
   # --- tasks: the task machinery, addressable ---------------------------------------------------------

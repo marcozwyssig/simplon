@@ -196,7 +196,28 @@ If a long pipeline keeps getting interrupted by the host going to sleep, that is
 the aggregate. It is declared there rather than on each leaf so the inhibitor also spans the *gaps*
 between steps, which is where an idle timer actually fires.
 
-## 7. Publish the documentation
+## 7. Ship a container image
+
+Two commands along two of the five verbs, and they stay two:
+
+```text
+$ ./myctl.sh build image           # docker build, with VERSION and REVISION derived from git
+$ ./myctl.sh release image         # docker login, docker push, and then ASK THE REGISTRY
+```
+
+Both read one entry of the manifest's [`images:` section](../../building/manifest/#images---the-container-image).
+A product that builds an image only to run a smoke test against it is then never one typo away from
+publishing it; a product that wants both in one step declares an aggregate over them, which is where an
+ordering belongs.
+
+The last step of `release image` is the one worth knowing about. It does not trust `docker push`'s exit
+code: it asks the registry whether the tag is really there, and goes red when the answer is no or when
+the question could not be asked. It asks through `oras` rather than a docker client on purpose - a
+docker client can answer from a local cache, and a check that can answer from your own machine is not a
+check. Unlike the documentation build, a missing Docker here is a **failure**, not a hint - the image is
+the whole point of the run.
+
+## 8. Publish the documentation
 
 Three documentation commands, three different outputs, and choosing wrongly wastes an afternoon:
 

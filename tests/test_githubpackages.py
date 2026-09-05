@@ -95,6 +95,67 @@ def test_the_advice_names_the_command_that_grants_the_scopes():
     assert "read:packages,write:packages" in advice
 
 
+@pytest.mark.parametrize("registry,expected", [
+    ("ghcr.io/owner", True), ("ghcr.io", True), ("GHCR.IO/Owner", True),
+    ("registry.example.com/team", False), ("ghcr.io.evil.example/owner", False),
+    ("localhost:5000", False), ("docker.io/library", False)])
+def test_only_githubs_own_registry_may_receive_a_github_token(registry, expected):
+    """`registry:` is a manifest key, so this is the check between a product's YAML and a credential
+    leaving for a host nobody vetted. `ghcr.io.evil.example` is in the table on purpose: a prefix match
+    would send the token there."""
+    assert githubpackages.is_github_packages(registry) is expected
+
+
+# --- logging in, for both clients -------------------------------------------------------------------
+
+def test_the_docker_login_feeds_the_token_over_stdin_and_never_over_argv(monkeypatch, calls):
+    """argv is world-readable in /proc, which is why neither client ever gets the token as an element."""
+    monkeypatch.setenv("GITHUB_TOKEN", "s3cret")
+
+    githubpackages.docker_login("ghcr.io/owner")
+
+    argv, kwargs = calls[0]
+    assert argv[:2] == ["docker", "login"] and argv[2] == "ghcr.io"
+    assert "s3cret" not in argv
+    assert kwargs["input_text"] == "s3cret"
+
+
+def test_the_docker_login_never_reaches_for_oras(monkeypatch, calls):
+    """The two clients keep SEPARATE credential stores: an `oras login` does not write what `docker push`
+    reads, measured against a local registry:2 with htpasswd (`no basic auth credentials`). So this path
+    must not depend on a tool it does not use - a host that publishes only images need not have oras."""
+    monkeypatch.setenv("GITHUB_TOKEN", "s3cret")
+    monkeypatch.setattr(githubpackages, "require_oras",
+                        lambda: pytest.fail("docker_login must not require oras"))
+
+    githubpackages.docker_login("ghcr.io/owner")
+
+    assert calls[0][0][0] == "docker"
+
+
+def test_a_rejected_docker_login_names_the_command_that_grants_the_scopes(monkeypatch):
+    """A 401 from GHCR reads as a credential problem and is usually a SCOPE problem; the message has to
+    carry the fix, because this is where a first local publish stops."""
+    monkeypatch.setenv("GITHUB_TOKEN", "s3cret")
+    monkeypatch.setattr(run, "run", lambda argv, **kw: _Result(rc=1, err="401 Unauthorized"))
+
+    with pytest.raises(githubpackages.PackageError) as failure:
+        githubpackages.docker_login("ghcr.io/owner")
+
+    assert "docker login to ghcr.io failed" in str(failure.value)
+    assert "gh auth refresh" in str(failure.value)
+
+
+def test_the_oras_login_message_is_unchanged_by_the_shared_body(monkeypatch, calls):
+    """The two logins share one body now; the artifact side's wording is a contract with its own callers
+    and must not have moved under it."""
+    monkeypatch.setenv("GITHUB_TOKEN", "s3cret")
+    monkeypatch.setattr(run, "run", lambda argv, **kw: _Result(rc=1, err="denied"))
+
+    with pytest.raises(githubpackages.PackageError, match="oras login to ghcr.io failed"):
+        githubpackages.login("ghcr.io/owner")
+
+
 # --- pushing ----------------------------------------------------------------------------------------
 
 def test_a_push_runs_from_the_files_own_directory(tmp_path, calls):
