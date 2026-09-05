@@ -1,0 +1,246 @@
+---
+title: "The manifest"
+weight: 1
+---
+
+One YAML file per product. It declares what commands exist, what they run, what they are called and
+which of them take an environment - and the CLI is assembled from it, so there is no second place where
+any of that is also true.
+
+## The command tree
+
+Groups are slots in the CI/CD loop; commands are the members of a group. The kernel's catalogue owns
+which groups exist - `build`, `test`, `release`, `deploy`, `monitor`, `support` - and a product fills
+them:
+
+```yaml
+product: myctl
+
+groups:
+  build:
+    commands:
+      wheel: { task: "pkg:wheel", help: "Build the wheel." }
+  support:
+    groups:
+      git:
+        commands:
+          commit: { task: "vcs:commit" }
+```
+
+A group node has exactly four keys: `help`, `env_first`, `groups` and `commands`. Members live under
+`commands:` rather than directly on the node, and that is not tidiness - without it `help:` would be a
+group attribute in one place and a command called "help" in another.
+
+**The platform owns the group shape.** A product may *add* commands and sub-groups to a group it
+inherits. It may not rewrite that group's `help:` or its `env_first:`. Both are statements about what
+the group *is*, and `env_first` in particular is load-bearing: a product quietly turning it off would
+ungate every command underneath it. The group lock is not a check layered over the merge - it is the
+merge. There is one tree, so there is no second way to bring a group into existence.
+
+**A group you name is a promise.** Declare a group in your own tree and leave it without a single
+command anywhere in its subtree, and the manifest fails to load, naming the group. A group only the
+*catalogue* offers, that your tree never mentions, is simply dropped from the assembled CLI - see [the
+rule](../rules/#a-group-with-no-commands-does-not-appear) and the defect that forced it.
+
+## `task:` and the colon
+
+Every command is an **instance** of a task. The task is the template - it carries the body; the command
+is the placement - it carries the name, the group, and the values pinned for this particular instance.
+
+```yaml
+tasks:
+  wheel:
+    impl: "orchestrator.cli:build_wheel"
+    help: "Build the wheel."
+
+groups:
+  build:
+    commands:
+      wheel: { task: "wheel" }
+```
+
+A command never writes `impl:` itself. Try it and the loader says so: *"declare the body once under
+`tasks:` and point this command at it with `task:`."*
+
+**The colon is what tells the two apart.**
+
+| `task:` value | Where the body comes from |
+|---|---|
+| `wheel` — no colon | a task **this manifest** declares under its own `tasks:` |
+| `docs:render` — a colon | a **catalogue coordinate**: the body lives in the kernel |
+
+One resolution rule, two sources, and the two name spaces cannot intersect - so nothing shadows anything
+and there is no precedence to remember. A bare name is yours; a coordinate is the platform's.
+
+A coordinate is deliberately not a module path. `docs:render` is a name in the catalogue's coordinate
+space, and the body it points at can move inside the kernel without breaking a single product manifest.
+That indirection is the whole reason the catalogue exists.
+
+### What a task may declare, and what only a command may
+
+A task takes four keys: `impl`, `help`, `passthrough_args`, `params`. Anything else is rejected rather
+than ignored.
+
+`hidden`, `keep_awake`, `stop_on_failure`, `depends_on` and `with` belong to the **command**. A template
+that pinned a value, hid itself, or planned other commands would not be a template - it would be one
+particular use of itself, and the second product to want it would have to fork it.
+
+## Pinning values with `with:`
+
+The same body, placed twice, with different data:
+
+```yaml
+groups:
+  test:
+    commands:
+      unit:   { task: "test:gate", with: { name: "unit" },   help: "Run the unit suite." }
+      system: { task: "test:gate", with: { name: "system" }, help: "Run the system suite." }
+```
+
+A pinned parameter is **absent from the command line**. It is not an option with a default that you
+could still override - it is removed from the generated signature and supplied at call time, because the
+manifest decided it. `myctl test unit --name system` is not a command, and that is the point.
+
+`params:` is the other half, and it is strictly about **presentation**: help text, the short flag, the
+metavar, the order the declarations render in. The signature - name, type, default - is read off the
+body. Declaring the type in YAML as well would state it twice and let the two drift, which is the exact
+failure `impl:` already has.
+
+```yaml
+prune-branches:
+  task: "vcs:prune-branches"
+  params:
+    dry_run: { help: "preview only", short: "-n" }
+    remote:  { help: "also delete merged branches on origin" }
+```
+
+## Refining a platform command, and replacing one
+
+A command the catalogue already places can be refined: change its `help:`, add `params:`, pin a `with:`.
+Point it at a *different* `task:`, and the loader stops:
+
+> command 'support install' redeclares `task:` from 'support:install' to 'host:colima' - two different
+> bodies placed under one name [...] If the product's body must deliberately replace the platform's
+> here, add `override: true`.
+
+That refusal has [its own rule and its own defect](../rules/#a-name-collision-breaks-loudly). `override:
+true` is the explicit yes; and an overriding node stands alone rather than merging with the base's
+`help:` and `params:`, because those describe the body that no longer runs.
+
+## Aggregates: `depends_on`
+
+A command with no body, only a plan:
+
+```yaml
+all:
+  help: "Build then deploy, end to end."
+  depends_on: [build, up]
+  stop_on_failure: false
+```
+
+`impl` and `depends_on` are mutually exclusive. A command is either a leaf with a body or an aggregate
+that plans other commands - never both. The reason is mechanical: plan steps execute as subprocesses, so
+an impl-bearing command that also carried dependencies would re-expand them in the child and break the
+run-each-once guarantee.
+
+The plan is a post-order depth-first walk over `depends_on`, deduplicated by name, so a command reached
+along several paths appears exactly once. **List order is execution order** among siblings, and that is
+how one step is made to run before another:
+
+```yaml
+docs:
+  help: "Write the command reference, then build the website from it."
+  depends_on: [reference, site]
+```
+
+Every `depends_on` entry must name a known, unambiguous command, and the graph must be acyclic. Both are
+checked at load, not at run: a dependency naming a command that does not exist is a manifest error, and
+it should not wait until the eleventh minute of a pipeline to say so.
+
+`hidden: true` keeps a command out of every `--help` listing while leaving it fully invocable - which is
+what a plan step named in a `depends_on` needs, since it must be a real command but need not clutter a
+menu meant for a human.
+
+## Environments
+
+```yaml
+env_groups: [deploy, monitor]
+
+default: dev
+environments:
+  dev:  { backend: local,    description: "Local development environment." }
+  prod: { backend: exoscale, description: "Production." }
+```
+
+`env_groups` names the groups whose commands take a target environment as the outer token
+(`myctl prod deploy up`). Everything else refuses one. See [Environments](../environments/) for what the
+dispatch does with it.
+
+## Product data sections
+
+Beyond the command tree, a manifest carries the **data** its tasks read. This is the seam that makes a
+catalogue task a promise to three products instead of a convenience for one: the mechanism is the
+kernel's, the values are the product's, and the section is where they meet.
+
+```yaml
+site:
+  image: "hugomods/hugo:exts-0.148.2"
+  source: "site"
+  output: "build/website"
+  base_url: "https://example.github.io/myctl/"
+  theme: "github.com/imfing/hextra@v0.12.3"
+```
+
+Every value is **required to be declared** rather than defaulted. A kernel that assumed `site/` and
+`public/` would work for the product that happens to use those names and silently build nothing for the
+next one; a kernel that named the image would be choosing a documentation generator on every product's
+behalf. A missing section fails at load, naming the key, instead of as a container run against a
+directory that is not there.
+
+Two of those values are refused unless they pin a version. `image: "hugomods/hugo"` means `:latest`,
+which moves under the build; `theme: "...@latest"` fetches whatever is newest on the day it runs. A
+build whose output depends on when it ran is not a build, and a documentation site is committed-to
+prose - a generator change rewrites it wholesale. `source` and `output` must be plain relative paths
+under the product root, for a blunter reason: `output` is handed to a recursive delete, and
+`output: /var/tmp/x` would delete `/var/tmp/x`.
+
+{{< callout type="warning" >}}
+**`docs:site` writes into your working tree, on purpose.** A theme declared as a Hugo module means the
+build runs `hugo mod get <module>@<version>` before it builds, and that rewrites `go.mod` and refreshes
+`go.sum` in the site directory. It is idempotent when the manifest pin and `go.mod` already agree - the
+normal state - but the first build after you move the pin leaves a real diff.
+
+A publishing job that asserts "working tree clean" after building the site will fail on it. That is the
+mechanism working, not a fault: the manifest is the single place the theme version is declared, and
+`hugo mod get` is what makes `go.mod` agree with it. Commit `go.mod` and `go.sum`; do not gate on a
+clean tree after a site build.
+{{< /callout >}}
+
+Other sections work the same way: `suites:` is the test-level taxonomy a product's own test tree
+defines, `environments:` the deployment matrix, `nexus:` and `claude:` the data their respective tasks
+read. A task that needs a section it does not find fails on its first line, which is why such tasks stay
+*tasks* in the catalogue rather than being placed as commands for everybody.
+
+## The older flat form
+
+You will meet a second spelling, in manifests that predate the tree:
+
+```yaml
+import:
+  delivery: [docs]
+
+tasks:
+  docs:reference:
+    group: build
+    with: { output: "site/content/using/commands.md" }
+```
+
+Here `import:` makes a namespace's coordinates *available*, and a `tasks:` entry keyed by a coordinate
+is what actually *places* one - in the group its namespace names, unless `group:` says otherwise. The
+command's name is the coordinate's second half, so `docs:reference` becomes `myctl build reference`.
+
+`import:` alone places nothing. A manifest that imports and never references warns rather than failing,
+because that is a manifest that forgot a step, not a corrupt one.
+
+Both forms produce the same command line. The new one is where the model is going; the old one is why a
+product can migrate one group at a time instead of in a single all-or-nothing change.
