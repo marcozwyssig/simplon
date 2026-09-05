@@ -225,6 +225,13 @@ release tag in the label, check out with `fetch-depth: 0`.
 
 `release:image` asks the **registry** whether the tag arrived before it reports success. A push whose
 result nobody reads is the same defect as a report nobody reads, and this project has shipped that twice.
+The question goes through `oras` - the tool the kernel provisions anyway - and not through a docker
+client, because `docker manifest inspect` answers out of `~/.docker/manifests/` and will confirm a tag
+that only ever existed on your machine.
+
+If `registry:` does not name `ghcr.io`, no GitHub token is minted for it. The push then uses whatever
+credential your own `docker login <host>` stored, and a rejection says so instead of pointing at
+`gh auth refresh`, which would mean nothing on someone else's registry.
 
 Other sections work the same way: `suites:` is the test-level taxonomy a product's own test tree
 defines, `environments:` the deployment matrix, `nexus:` and `claude:` the data their respective tasks

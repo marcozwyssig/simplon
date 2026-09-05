@@ -95,6 +95,17 @@ def test_the_advice_names_the_command_that_grants_the_scopes():
     assert "read:packages,write:packages" in advice
 
 
+@pytest.mark.parametrize("registry,expected", [
+    ("ghcr.io/owner", True), ("ghcr.io", True), ("GHCR.IO/Owner", True),
+    ("registry.example.com/team", False), ("ghcr.io.evil.example/owner", False),
+    ("localhost:5000", False), ("docker.io/library", False)])
+def test_only_githubs_own_registry_may_receive_a_github_token(registry, expected):
+    """`registry:` is a manifest key, so this is the check between a product's YAML and a credential
+    leaving for a host nobody vetted. `ghcr.io.evil.example` is in the table on purpose: a prefix match
+    would send the token there."""
+    assert githubpackages.is_github_packages(registry) is expected
+
+
 # --- logging in, for both clients -------------------------------------------------------------------
 
 def test_the_docker_login_feeds_the_token_over_stdin_and_never_over_argv(monkeypatch, calls):

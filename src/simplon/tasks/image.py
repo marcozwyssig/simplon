@@ -52,21 +52,50 @@ still exits 0 on an empty content tree - `tasks/site.py` wipes its destination a
 for exactly that reason. A `docker push` whose result nobody reads is the same defect wearing a registry
 for a costume, so `release:image` asks the REGISTRY whether the tag is there before it says OK.
 
-The registry, not the daemon: `docker image inspect` would answer yes for the image that never left the
-machine, which is the failure being guarded against. Two commands can ask a remote, and the choice
-between them was measured against a local `registry:2`:
+THE REGISTRY, AND NOTHING THAT KEEPS A COPY. The read-back is worth exactly as much as its inability to
+answer from local state, and that is a harder requirement than it looks. Three clients were measured
+against a local `registry:2`, and two of them fail it:
 
-  - `docker buildx imagetools inspect <ref>` - rc 0 with the digest when the tag is there, rc 1 with
-    "not found" when it is not, over plain HTTP and over HTTPS alike. Preferred;
-  - `docker manifest inspect <ref>` - the fallback, because buildx is a PLUGIN and the static CLI that
-    `simplon.docker` can bootstrap onto a bare runner does not carry it. It is still marked experimental,
-    and against a plain-HTTP registry it reports `no such manifest` for a tag that IS there unless
-    `--insecure` is passed - the same words it uses for genuine absence, so it cannot be the first choice.
+  - `docker image inspect` - answers about the daemon, so it says yes for the image that never left the
+    machine. The failure being guarded against, obviously excluded;
+  - `docker manifest inspect` - reads `~/.docker/manifests/` FIRST and answers out of it. Measured:
+    after `docker manifest create localhost:5555/probe:cached ...`, `docker manifest inspect` returned
+    rc 0 for `:cached` while the registry's own tag list held only `t1`. FALSE GREEN, and not a curiosity
+    - hand-rolled multi-arch publishing is `docker manifest create` + `docker manifest push`, so a failed
+    push leaves precisely that entry behind for the next release to read as proof. It also reports `no
+    such manifest` for a tag that IS there when the registry speaks plain HTTP and `--insecure` is not
+    passed, in the same words it uses for real absence. Wrong in both directions, excluded;
+  - `docker buildx imagetools inspect` - correct in every case measured, including the cached one. But it
+    is a PLUGIN: the static CLI `simplon.docker` can bootstrap onto a bare runner does not carry it, so on
+    the very host the bootstrap exists for there would have to be a fallback - and a rarely-walked
+    fallback with different semantics from the main path is exactly how the false green above got in.
 
-A probe that fails goes RED without trying to tell "the tag is not there" apart from "the registry could
-not be asked", and the message names both readings. Parsing the client's wording to separate them would
-be reading formatted text for a decision (the mistake `tasks/cliref.py` is written to avoid), and the two
-readings do not differ in what they mean here anyway: an unverified push is not a publish.
+So the probe is `oras manifest fetch --descriptor <ref>`, and it is the ONLY probe. oras talks to the
+registry over HTTP(S) and keeps no local manifest store at all, so it cannot answer from a cache the way
+`docker manifest inspect` does; it needs no daemon and no plugin; and it is the one tool this kernel
+PROVIDES rather than hopes for (`simplon.oras.ensure_oras`, `support:install`), so there is no host where
+the check is merely optimistic. Measured: rc 0 for a tag that is there, rc 1 with `not found` for one
+that is not, and rc 1 for the very `:cached` entry `docker manifest inspect` called present.
+
+One probe rather than a chain, deliberately. A fallback means the answer depends on which host asked,
+and "the answer depends on the host" is the whole shape of this defect.
+
+Credentials for the probe come from the push's own login: measured, oras 1.3.4 reads `~/.docker/config.json`,
+so a `docker login` is enough and no second authentication step exists to drift.
+
+A probe that cannot answer goes RED, and the message names both readings ("not stored" / "could not be
+asked"). Parsing the client's wording to separate them would be reading formatted text for a decision -
+the mistake `tasks/cliref.py` is written to avoid - and here the two readings mean the same thing anyway:
+an unverified push is not a publish.
+
+WHAT THIS DOES NOT REUSE, AND WHY IT IS NOT AN OVERSIGHT. `simplon.images` already holds `image_ref`,
+`registry_prefix` and `require_registry`, and this module uses none of them. They are the netctl-extracted
+shape, where a registry arrives from an `IMAGE_REGISTRY` environment variable that may be unset and the
+refusal is a `log.die` at the point of use. Here the registry is a REQUIRED manifest key, so the same
+refusal has to happen at declaration time and as a `ValueError` like every other manifest fault in this
+file - a `log.die` inside `declared()` would exit the process out of a validator. `require_registry` is
+cited above for the failure it records, which is the argument for making the key required; the code path
+is genuinely a different one.
 """
 from __future__ import annotations
 
@@ -210,20 +239,44 @@ def resolve_tag(cfg: Image, tag: str) -> str:
 
 
 def provenance(root: Path) -> dict[str, str]:
-    """VERSION and REVISION derived from the PRODUCT's git checkout, or an empty mapping with a warning
-    when there is no checkout to ask.
+    """VERSION and REVISION derived from the PRODUCT's OWN git checkout, or an empty mapping with a
+    warning when there is no such checkout to ask.
 
-    Empty rather than a placeholder: see the module head. Both values come from one repository - `git -C
-    <root>` - so a kernel installed from PyPI describes the product it is building and never itself.
+    Empty rather than a placeholder: see the module head.
+
+    THE ROOT HAS TO BE THE REPOSITORY'S OWN, and checking that is the whole reason this is not two
+    `git -C` calls. `git -C <dir>` CLIMBS: run in a directory with no `.git` of its own it answers out of
+    the nearest enclosing repository, with rc 0 and no hint that it did. Measured - a product tree
+    created inside this kernel's checkout returned `VERSION=v0.2.0-1-ga24eaf2` and simplon's own HEAD,
+    which is the exact mislabelling the head above promises not to do, arriving through the back door.
+    `rev-parse --show-toplevel` is the question that catches it, and both sides are resolved because a
+    checkout reached through a symlink is still that checkout.
+
+    A product that genuinely lives in a subdirectory of a larger repository is refused too, and gets a
+    warning naming the repository that was found. That is the honest reading: from here a monorepo member
+    and a stray directory inside somebody else's checkout look identical, so the kernel declines to guess
+    and the product states its own values in `build_args:`, which already win over anything derived.
     """
     if shutil.which("git") is None:
         log.warn("git is not on PATH, so the image is built without VERSION/REVISION build arguments; "
                  "the Dockerfile's own ARG defaults apply")
         return {}
+    toplevel = run(["git", "-C", str(root), "rev-parse", "--show-toplevel"])
+    if not toplevel.ok:
+        log.warn(f"{root} is not a git checkout, so the image is built without VERSION/REVISION build "
+                 f"arguments; the Dockerfile's own ARG defaults apply")
+        return {}
+    found = Path(toplevel.out.strip())
+    if found.resolve() != Path(root).resolve():
+        log.warn(f"{root} has no git checkout of its own - the nearest one is {found}, and stamping ITS "
+                 f"version onto this image would label the product with somebody else's. Built without "
+                 f"VERSION/REVISION; declare them in the image's `build_args:` if that repository is "
+                 f"in fact this product's")
+        return {}
     described = run(["git", "-C", str(root), "describe", "--tags", "--always", "--dirty"])
     revision = run(["git", "-C", str(root), "rev-parse", "HEAD"])
     if not (described.ok and revision.ok):
-        log.warn(f"{root} is not a git checkout with a commit, so the image is built without "
+        log.warn(f"{root} is a git checkout with no commit yet, so the image is built without "
                  f"VERSION/REVISION build arguments; the Dockerfile's own ARG defaults apply")
         return {}
     return {VERSION_ARG: described.out.strip(), REVISION_ARG: revision.out.strip()}
@@ -259,7 +312,10 @@ def build_image(cfg: Image, tag: str, root: Path) -> int:
     argv = ["docker", "build", "--file", str(root / cfg.dockerfile), "--tag", ref]
     for key in sorted(args):
         argv += ["--build-arg", f"{key}={args[key]}"]
-    argv.append(str(root / cfg.context) if cfg.context != "." else str(root))
+    # `root / "."` IS `root` - pathlib drops the segment - so the '.' the manifest may carry needs no
+    # branch here, and a branch that can never take its second arm is a claim about the code that is
+    # false.
+    argv.append(str(root / cfg.context))
     log.info(f"building {ref} from {cfg.dockerfile} "
              f"({', '.join(f'{k}={args[k]}' for k in sorted(args)) or 'no build arguments'})")
     return stream(argv, cwd=str(root))
@@ -268,13 +324,17 @@ def build_image(cfg: Image, tag: str, root: Path) -> int:
 def published(ref: str) -> bool:
     """Whether the REGISTRY serves `ref` - the read-back that makes a push a publish.
 
-    Which client asks is decided here rather than configured, and the reasoning (buildx first, `docker
-    manifest inspect` as the fallback for a host that has only the plain client) is in the module head
-    together with the measurements behind it.
+    One client, and it is deliberately not a docker one: the module head carries the measurements,
+    including the `docker manifest inspect` answer that came back rc 0 for a tag no registry held. oras
+    keeps no manifest store, so it has nothing local to answer from; it authenticates off the same
+    `~/.docker/config.json` the push's own login wrote.
+
+    `require_oras` PROVIDES the tool rather than demanding it, and raises `PackageError` when even that
+    could not - which the caller turns into a red release, because a push nobody could verify is not a
+    publish.
     """
-    if run(["docker", "buildx", "version"]).ok:
-        return run(["docker", "buildx", "imagetools", "inspect", ref]).ok
-    return run(["docker", "manifest", "inspect", ref]).ok
+    githubpackages.require_oras()
+    return run(["oras", "manifest", "fetch", "--descriptor", ref]).ok
 
 
 def present_locally(ref: str) -> bool:
@@ -331,23 +391,52 @@ def release(name: str = "", tag: str = "") -> int:
                   f"(`build:image`, with the same --tag)")
         return 1
 
+    # The read-back's tool is provisioned BEFORE anything is pushed. A host that cannot get oras must
+    # learn it here, not after an image is in a registry with no way to confirm that it is.
     try:
-        githubpackages.docker_login(cfg.registry)
+        githubpackages.require_oras()
     except githubpackages.PackageError as failure:
-        # Caught rather than allowed to propagate: this message is the fix (it names `gh auth refresh`
-        # and the two scopes), and a traceback would bury it under a stack from a wrapper the reader did
-        # not write. Acceptance 4's second half - a missing scope names the command that sets it.
-        log.error(str(failure))
+        log.error(f"the push would not be verifiable, so it was not attempted: {failure}")
         return 1
+
+    host = githubpackages.registry_host(cfg.registry)
+    if githubpackages.is_github_packages(cfg.registry):
+        try:
+            githubpackages.docker_login(cfg.registry)
+        except githubpackages.PackageError as failure:
+            # Caught rather than allowed to propagate: this message is the fix (it names `gh auth
+            # refresh` and the two scopes), and a traceback would bury it under a stack from a wrapper
+            # the reader did not write. Acceptance 4's second half - a missing scope names the command
+            # that sets it.
+            log.error(str(failure))
+            return 1
+    else:
+        # A GITHUB token goes to GITHUB and nowhere else. `registry:` is a manifest key, so a product
+        # writing `registry: registry.example.com/team` would otherwise have this task mint a GitHub PAT
+        # and hand it to a third party - and then answer the 401 with `gh auth refresh`, advice that
+        # means nothing there. The module this credential comes from exists because a token leaked once;
+        # sending it to whatever host a YAML file names is the same mistake with more steps.
+        log.info(f"{host} is not GitHub Packages, so no GitHub token is minted for it - the push uses "
+                 f"the credential `docker login {host}` has already stored")
 
     log.info(f"pushing {ref}")
     rc = stream(["docker", "push", ref], cwd=str(root))
     if rc != 0:
-        log.error(f"docker push {ref} failed (rc={rc}; see output above)\n"
-                  + githubpackages.scope_advice())
+        # The scope advice is a HINT, tied to a host and a condition, not a diagnosis appended to every
+        # failure. A push fails on a full disk and a dead network too, and a message that says the same
+        # thing whatever happened says nothing at all.
+        advice = ("\nif the registry refused it rather than the network, the usual cause on GHCR is a "
+                  "token without the package scopes:\n" + githubpackages.scope_advice()
+                  if githubpackages.is_github_packages(cfg.registry) else "")
+        log.error(f"docker push {ref} failed (rc={rc}; see output above){advice}")
         return rc
 
-    if not published(ref):
+    try:
+        there = published(ref)
+    except githubpackages.PackageError as failure:
+        log.error(f"{ref} was pushed, but the publish could not be verified: {failure}")
+        return 1
+    if not there:
         log.error(f"docker push exited 0 but {ref} is not in the registry. either the tag was not "
                   f"stored or the registry could not be asked - both mean the publish is unproven, and "
                   f"an unproven publish is what this check exists to stop being reported as done")

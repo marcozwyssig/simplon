@@ -212,8 +212,10 @@ ordering belongs.
 
 The last step of `release image` is the one worth knowing about. It does not trust `docker push`'s exit
 code: it asks the registry whether the tag is really there, and goes red when the answer is no or when
-the question could not be asked. Unlike the documentation build, a missing Docker here is a **failure**,
-not a hint - the image is the whole point of the run.
+the question could not be asked. It asks through `oras` rather than a docker client on purpose - a
+docker client can answer from a local cache, and a check that can answer from your own machine is not a
+check. Unlike the documentation build, a missing Docker here is a **failure**, not a hint - the image is
+the whole point of the run.
 
 ## 8. Publish the documentation
 

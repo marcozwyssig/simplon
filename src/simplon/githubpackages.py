@@ -20,8 +20,11 @@ at the token. Every failure here says the command that fixes it.
 WHAT ELSE READS THAT TOKEN. `simplon.tasks.image` publishes CONTAINER images, which are the shape this
 module deliberately does not push - but they go to the same registry with the same credential, so the
 docker client's login lives here too (`docker_login`) rather than growing a second token story beside
-this one. The two clients keep separate credential stores, which is the only reason there are two
-logins at all.
+this one. `docker_login`'s own docstring says why there are two logins rather than one, and it is not
+the store: measured, the two clients share `~/.docker/config.json`.
+
+WHERE THE TOKEN MAY GO. To GitHub, and to nowhere else - `is_github_packages` is the check, and every
+caller that reads a registry out of a product manifest owes it.
 """
 from __future__ import annotations
 
@@ -92,6 +95,19 @@ def registry_host(registry: str) -> str:
     return registry.split("/")[0]
 
 
+def is_github_packages(registry: str) -> bool:
+    """Whether `registry` is GitHub's own, and therefore the only kind of host this module's credential
+    may be sent to. Pure.
+
+    Asked because `registry:` is a MANIFEST KEY. Without this, a product writing
+    `registry: registry.example.com/team` would have a GitHub PAT minted and handed to a third party, and
+    the resulting 401 answered with `gh auth refresh` - advice that means nothing there. This module's
+    own head records a token that leaked into a repository's history; posting one to whatever host a YAML
+    file happens to name is the same mistake by a longer route.
+    """
+    return registry_host(registry).lower() == "ghcr.io"
+
+
 def _login(command: Sequence[str], registry: str, username: str) -> None:
     """Hand `command` (`oras login`, `docker login`, ...) this module's credential and check the rc.
 
@@ -124,17 +140,28 @@ def login(registry: str, *, username: str = "") -> None:
 def docker_login(registry: str, *, username: str = "") -> None:
     """Log in to the registry that `registry` names, for the DOCKER client.
 
-    WHY A SECOND LOGIN AND NOT A SECOND MODULE. A container image is not an OCI artifact in this
-    module's sense (the head above says why oras is used at all), and `oras login` does not write the
-    credential `docker push` reads: the two keep separate stores, so an image push after an oras login
-    fails with `no basic auth credentials` - measured against a local `registry:2` with htpasswd. What
-    the two DO share is everything this module exists for: where the token comes from, that it never
-    touches argv, and that a rejection names `gh auth refresh -h github.com -s read:packages,
-    write:packages` rather than leaving the caller with a bare 401. So the credential story stays in one
-    file and only the command differs.
+    WHY A SECOND LOGIN, STATED FROM A MEASUREMENT RATHER THAN FROM THE OBVIOUS GUESS. The obvious guess
+    is that the two clients keep separate credential stores. They do not: oras 1.3.4 writes into
+    `~/.docker/config.json`, and a `docker push` after nothing but an `oras login` succeeds - measured
+    against a local `registry:2` with htpasswd, where the same push without any login answers `no basic
+    auth credentials`. So `login()` would in fact have worked, and this exists for two other reasons.
 
-    The caller gates docker's presence (`simplon.docker.ensure_docker`); this reports what the client
-    said, it does not decide whether the host should have had one.
+    First, THE CLIENT THAT PUBLISHES IS THE CLIENT THAT AUTHENTICATES. `docker push` is what puts the
+    image in the registry, and a release step whose only credential line said "oras login to ghcr.io
+    failed" would name a tool the operator never asked for and cannot see in the command they ran.
+
+    Second, the shared file is oras's DEFAULT, which is oras's business and not a promise to this kernel:
+    it is a property of a pinned version and of a host with no credential helper configured, and an image
+    publish that silently depended on it would break with a 401 naming the wrong tool the day either
+    changes.
+
+    What the two DO share is everything this module exists for - where the token comes from, that it
+    never touches argv, and that a rejection names `gh auth refresh -h github.com -s read:packages,
+    write:packages` - which is why they share a body and only the executable differs.
+
+    The caller gates docker's presence (`simplon.docker.ensure_docker`) and checks that the registry is
+    GitHub's (`is_github_packages`) before handing a GitHub token to it; this reports what the client
+    said, it decides neither.
     """
     _login(["docker", "login"], registry, username)
 

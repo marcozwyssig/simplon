@@ -92,9 +92,16 @@ class _Cli:
         return [call for call in self.calls if tuple(call[:len(prefix)]) == prefix]
 
 
+@pytest.fixture(autouse=True)
+def _oras_is_there(monkeypatch):
+    """The oras gate, neutralised. It PROVIDES the tool (network, or a package manager), which no unit
+    test may do; the two tests about its absence patch it back deliberately."""
+    monkeypatch.setattr(githubpackages, "require_oras", lambda: None)
+
+
 @pytest.fixture
 def cli(monkeypatch):
-    """The docker CLI, stubbed for both seams the module uses."""
+    """The command line, stubbed for both seams the module uses."""
     fake = _Cli()
     monkeypatch.setattr(image, "run", fake.run)
     monkeypatch.setattr(image, "stream", fake.stream)
@@ -308,6 +315,40 @@ def test_an_uncommitted_change_is_visible_in_the_derived_version(tmp_path):
     assert derived["VERSION"].endswith("-dirty")
 
 
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is the thing being measured")
+def test_a_tree_inside_someone_elses_checkout_stamps_nothing(tmp_path, capsys):
+    """`git -C <dir>` CLIMBS: in a directory with no `.git` of its own it answers out of the nearest
+    enclosing repository, rc 0 and no hint. Measured on this kernel - a product tree created inside
+    simplon's checkout returned simplon's own describe and HEAD, which is exactly the mislabelling the
+    module promises not to do."""
+    # arrange
+    outer = _checkout(tmp_path / "outer")
+    inner = outer / "products" / "inner"
+    inner.mkdir(parents=True)
+
+    # act
+    derived = image.provenance(inner)
+
+    # assert
+    assert derived == {}
+    warning = capsys.readouterr().out
+    assert "no git checkout of its own" in warning and str(outer) in warning
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is the thing being measured")
+def test_a_checkout_reached_through_a_symlink_is_still_that_checkout(tmp_path):
+    # arrange: the toplevel comparison must not turn a symlinked path into a foreign repository
+    root = _checkout(tmp_path / "product")
+    link = tmp_path / "link"
+    link.symlink_to(root)
+
+    # act
+    derived = image.provenance(link)
+
+    # assert
+    assert derived["VERSION"] == "v1.2.3"
+
+
 def test_a_tree_that_is_not_a_checkout_yields_no_arguments_rather_than_a_placeholder(tmp_path):
     """An exported tarball has no git. Passing VERSION=unknown would override the Dockerfile's own
     `ARG VERSION=dev` - a considered product default - with a kernel placeholder, and the image would
@@ -450,9 +491,10 @@ def test_a_release_logs_in_pushes_and_then_asks_the_registry(cli, logins):
     assert rc == 0
     assert logins == ["ghcr.io/owner"]
     assert cli.argv_starting("docker", "push")[0] == ["docker", "push", "ghcr.io/owner/demo-app:1.0"]
-    # and the question went to the REGISTRY, not to the local daemon - the daemon would answer yes for
-    # the image that never left the machine, which is the failure being guarded against
-    assert cli.argv_starting("docker", "buildx", "imagetools", "inspect")
+    # and the question went to the REGISTRY through a client with no local store to answer from - the
+    # daemon would say yes for the image that never left the machine, and `docker manifest inspect` says
+    # yes for a tag that only exists in ~/.docker/manifests/
+    assert cli.argv_starting("oras", "manifest", "fetch")
 
 
 def test_a_push_that_exits_zero_without_the_tag_reaching_the_registry_is_red(monkeypatch, logins,
@@ -461,7 +503,7 @@ def test_a_push_that_exits_zero_without_the_tag_reaching_the_registry_is_red(mon
     measured for real against a local registry:2 whose tag directory was removed under it, and the probe
     answered `not found`."""
     # arrange
-    fake = _Cli(verdict={("docker", "buildx", "imagetools", "inspect"): 1})
+    fake = _Cli(verdict={("oras", "manifest", "fetch"): 1})
     monkeypatch.setattr(image, "run", fake.run)
     monkeypatch.setattr(image, "stream", fake.stream)
 
@@ -494,7 +536,7 @@ def test_a_failed_login_stops_the_release_and_names_the_command_that_grants_the_
     assert "gh auth refresh" in err and "write:packages" in err
 
 
-def test_a_failing_push_hands_back_dockers_rc_and_still_names_the_scopes(monkeypatch, logins, capsys):
+def test_a_failing_push_hands_back_dockers_own_rc_and_asks_the_registry_nothing(monkeypatch, logins):
     # arrange: `no basic auth credentials` is what an unauthenticated push against a registry with
     # htpasswd answers with, rc 1 - measured
     fake = _Cli(verdict={("docker", "push"): 1})
@@ -504,9 +546,9 @@ def test_a_failing_push_hands_back_dockers_rc_and_still_names_the_scopes(monkeyp
     # act
     rc = image.release(name="app", tag="1.0")
 
-    # assert
+    # assert: and nothing is read back, because a push that failed has nothing to confirm
     assert rc == 1
-    assert "gh auth refresh" in capsys.readouterr().err
+    assert fake.argv_starting("oras", "manifest", "fetch") == []
 
 
 def test_a_release_without_a_locally_built_image_says_to_build_first(monkeypatch, logins, capsys):
@@ -522,6 +564,62 @@ def test_a_release_without_a_locally_built_image_says_to_build_first(monkeypatch
     assert rc == 1
     assert logins == [] and fake.argv_starting("docker", "push") == []
     assert "build:image" in capsys.readouterr().err
+
+
+def test_a_registry_that_is_not_github_gets_no_github_token(cli, monkeypatch, capsys, _product):
+    """`registry:` is a MANIFEST KEY. Without this check a product writing `registry: registry.example.com`
+    would have a GitHub PAT minted and handed to a third party - and the 401 answered with
+    `gh auth refresh`, advice that means nothing there. The module the credential comes from exists
+    because a token leaked once."""
+    # arrange
+    (_product / "demo.yaml").write_text(_MANIFEST.replace("registry: ghcr.io/owner",
+                                                          "registry: registry.example.com/team"),
+                                        encoding="utf-8")
+    monkeypatch.setattr(githubpackages, "docker_login",
+                        lambda registry, **kw: pytest.fail("a GitHub token must not leave GitHub"))
+
+    # act
+    rc = image.release(name="app", tag="1.0")
+
+    # assert: the push still happens, on whatever credential the operator already stored
+    assert rc == 0
+    assert cli.argv_starting("docker", "push")[0][-1] == "registry.example.com/team/demo-app:1.0"
+    assert "no GitHub token is minted" in capsys.readouterr().out
+
+
+def test_a_failing_push_to_a_registry_that_is_not_github_says_nothing_about_gh(monkeypatch, capsys,
+                                                                               _product):
+    # arrange
+    (_product / "demo.yaml").write_text(_MANIFEST.replace("registry: ghcr.io/owner",
+                                                          "registry: registry.example.com/team"),
+                                        encoding="utf-8")
+    fake = _Cli(verdict={("docker", "push"): 1})
+    monkeypatch.setattr(image, "run", fake.run)
+    monkeypatch.setattr(image, "stream", fake.stream)
+
+    # act
+    rc = image.release(name="app", tag="1.0")
+
+    # assert
+    assert rc == 1
+    assert "gh auth refresh" not in capsys.readouterr().err
+
+
+def test_the_scope_advice_on_a_failed_push_is_offered_as_a_condition_not_a_diagnosis(monkeypatch,
+                                                                                     logins, capsys):
+    # arrange: a push fails on a full disk and a dead network too, and a message that says the same thing
+    # whatever happened says nothing at all
+    fake = _Cli(verdict={("docker", "push"): 1})
+    monkeypatch.setattr(image, "run", fake.run)
+    monkeypatch.setattr(image, "stream", fake.stream)
+
+    # act
+    image.release(name="app", tag="1.0")
+
+    # assert
+    err = capsys.readouterr().err
+    assert "if the registry refused it rather than the network" in err
+    assert "gh auth refresh" in err
 
 
 def test_a_release_builds_nothing_of_its_own(cli, logins):
@@ -548,10 +646,10 @@ def test_a_missing_docker_kills_the_release_too(monkeypatch, capsys):
 
 # --- the registry probe -------------------------------------------------------------------------------
 
-def test_the_probe_prefers_buildx_because_it_reads_a_plain_http_registry_correctly(monkeypatch):
-    """Measured against a local registry:2 over HTTP: `docker manifest inspect` answers `no such
-    manifest` for a tag that IS there unless `--insecure` is passed, in the same words it uses for real
-    absence. `docker buildx imagetools inspect` needs no flag and is right both ways."""
+def test_the_probe_asks_oras_and_never_a_docker_client(monkeypatch):
+    """The read-back is worth exactly its inability to answer from local state. `docker image inspect`
+    answers about the daemon; `docker manifest inspect` answers out of `~/.docker/manifests/` - measured,
+    it returned rc 0 for a `:cached` tag the registry did not have. oras keeps no such store."""
     # arrange
     fake = _Cli()
     monkeypatch.setattr(image, "run", fake.run)
@@ -561,33 +659,50 @@ def test_the_probe_prefers_buildx_because_it_reads_a_plain_http_registry_correct
 
     # assert
     assert present is True
-    assert fake.argv_starting("docker", "buildx", "imagetools", "inspect")
-    assert fake.argv_starting("docker", "manifest", "inspect") == []
-
-
-def test_without_buildx_the_plain_client_is_asked_instead(monkeypatch):
-    # arrange: buildx is a PLUGIN, and the static CLI simplon.docker can bootstrap onto a bare runner
-    # does not carry it - a host with only the client still has to be able to verify a push
-    fake = _Cli(verdict={("docker", "buildx", "version"): 1})
-    monkeypatch.setattr(image, "run", fake.run)
-
-    # act
-    present = image.published("ghcr.io/owner/demo-app:1.0")
-
-    # assert
-    assert present is True
-    assert fake.argv_starting("docker", "manifest", "inspect")
+    assert fake.calls == [["oras", "manifest", "fetch", "--descriptor", "localhost:5000/probe:t1"]]
+    assert [call for call in fake.calls if call[0] == "docker"] == []
 
 
 def test_a_probe_that_cannot_answer_is_not_a_publish(monkeypatch):
     # arrange: no attempt to tell "the tag is missing" from "the registry could not be asked" - reading
     # the client's wording for that decision is parsing formatted text, and both readings mean the same
     # thing here
-    fake = _Cli(verdict={("docker", "buildx", "imagetools", "inspect"): 1})
+    fake = _Cli(verdict={("oras", "manifest", "fetch"): 1})
     monkeypatch.setattr(image, "run", fake.run)
 
     # act / assert
     assert image.published("ghcr.io/owner/demo-app:1.0") is False
+
+
+def test_the_probe_provides_oras_rather_than_assuming_it(monkeypatch):
+    # arrange: the gate INSTALLS oras where it can; a host where even that failed must not have the
+    # missing binary surface as a FileNotFoundError out of subprocess
+    fake = _Cli()
+    monkeypatch.setattr(image, "run", fake.run)
+    monkeypatch.setattr(githubpackages, "require_oras",
+                        lambda: (_ for _ in ()).throw(githubpackages.PackageError("no oras")))
+
+    # act / assert
+    with pytest.raises(githubpackages.PackageError):
+        image.published("ghcr.io/owner/demo-app:1.0")
+    assert fake.calls == []
+
+
+def test_a_release_provisions_the_probes_tool_before_it_pushes_anything(cli, logins, monkeypatch,
+                                                                        capsys):
+    """An image in a registry that nobody can confirm is the worst of both: the push happened and the
+    verdict is unavailable. So the gate runs first, and a host that cannot get oras never pushes."""
+    # arrange
+    monkeypatch.setattr(githubpackages, "require_oras",
+                        lambda: (_ for _ in ()).throw(githubpackages.PackageError("no oras")))
+
+    # act
+    rc = image.release(name="app", tag="1.0")
+
+    # assert
+    assert rc == 1
+    assert cli.argv_starting("docker", "push") == [] and logins == []
+    assert "not attempted" in capsys.readouterr().err
 
 
 def test_the_reference_is_joined_the_way_release_artifact_joins_its_own():
