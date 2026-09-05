@@ -1,6 +1,6 @@
 ---
 title: "Writing a task"
-weight: 2
+weight: 3
 ---
 
 A task body is a plain Python function. Not a subclass, not a decorated callable, not an object with a
