@@ -7,7 +7,12 @@
 # relative path in a requirements file resolves against the CWD pip is run
 # from, and simplon.sh cds to the repo root before it installs, so this
 # always resolves to the checkout that is being built and tested.
--e .
+# `[typecheck]` (#8): the type gate's mypy is an OPTIONAL extra of the kernel, so a product that never
+# declares `test typecheck-python` inherits no constraint on which checker it may install. Simplon declares it
+# (simplon.yaml), so simplon asks for it here - which is the same three-step adoption every other product
+# performs, performed on the kernel itself. It also puts mypy in the host venv the gate runs in, so the
+# checker reads the SAME installed set the kernel runs against rather than whatever is on PATH.
+-e .[typecheck]
 
 # `build` and `pytest` are dev tools the three commands below shell out to
 # (build_wheel, test_all, doctor); a product depending on the published

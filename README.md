@@ -66,9 +66,16 @@ feels it first.
 
 Simplon builds and tests itself with itself:
 
-    pip install -e .
+    pip install -e ".[typecheck]"
     ./simplon.sh test all
+    ./simplon.sh test typecheck-python
     ./simplon.sh build wheel
+
+Those three are exactly what CI runs, in that order. The type gate is the
+kernel's own `test:typecheck-python`, placed on itself: what it covers and what
+it excuses is stated in `mypy.ini`, and it pins the language level to the
+`requires-python` floor rather than to whichever interpreter you have, so its
+verdict is the same on your machine as in the pipeline.
 
 ## Releasing
 

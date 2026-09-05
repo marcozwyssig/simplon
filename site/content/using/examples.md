@@ -97,12 +97,20 @@ Simplon's own repository is the honest example here, because it builds itself wi
 
 ```text
 $ ./simplon.sh test all
+$ ./simplon.sh test typecheck-python
 $ ./simplon.sh build wheel
 $ git tag v0.1.13 && git push --tags
 ```
 
 Tests first, and not as ceremony: the release workflow runs them again, and a tag whose tests fail is a
 tag you now have to delete from a public remote. Finding out locally costs thirty seconds.
+
+The type gate is on that list for a reason worth stating. It is the kernel's own
+`test:typecheck-python`, placed on the kernel - and until recently it was not, so `mypy` was something you
+ran by hand or not at all. What that cost was a real bug hiding among findings everybody had agreed to
+read as noise from a local Python version. It was not the Python version; the pipeline was simply never
+asked. The gate pins the language level to the `requires-python` floor, so it answers the same on your
+machine as in CI, which is the property that makes running it locally worth anything.
 
 **Notice what is not in that list: editing a version number.** There is nowhere to edit one.
 `pyproject.toml` declares its version `dynamic` and setuptools-scm reads it off the tag, so typing
