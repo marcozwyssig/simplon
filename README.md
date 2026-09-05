@@ -75,3 +75,15 @@ Simplon builds and tests itself with itself:
 Tag `vX.Y.Z`. The release workflow runs the tests, builds the wheel and
 publishes to PyPI via Trusted Publishing. Releases are cut from tags only, so
 every version points at a named commit.
+
+**The tag IS the version.** There is no number to edit first: `pyproject.toml`
+declares `dynamic = ["version"]` and setuptools-scm derives it from the tag, so
+`git tag v0.1.13` is the whole act of choosing 0.1.13. A tag is unique on the
+remote, which is what makes the number unclaimable twice -- whoever pushes it
+first has it, and the second person is told by `git push` rather than by a
+reviewer.
+
+Between tags the kernel calls itself `0.1.12.post1.dev4+g1234abc`: the release
+it descends from, plus how far. `simplon init` pins the released part
+(`simplon==0.1.12`) into a scaffolded product's `requirements.txt`, because a
+pin has to name something PyPI actually has.
