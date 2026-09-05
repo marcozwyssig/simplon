@@ -105,7 +105,9 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
     cat = catalogue.load()
 
     # assert
-    assert cat.namespaces() == ["docs", "support", "tasks", "test", "vcs"]
+    # `release` joined them with `release:artifact` (publishing a directory as an OCI artifact): the
+    # mechanics are the same in every product, only the registry, package, directory and media type differ.
+    assert cat.namespaces() == ["docs", "release", "support", "tasks", "test", "vcs"]
     assert sorted(cat.namespace("vcs")) == ["auth-scopes", "commit", "prune-branches", "push",
                                             "submodules"]
     # `support:install` provisions the host tooling the kernel cannot work without (oras), and

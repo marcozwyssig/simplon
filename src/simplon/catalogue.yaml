@@ -184,6 +184,18 @@ tasks:
       output: { help: "where the Markdown page goes, relative to the product root" }
       title:  { help: "the page title in the front matter (default: '<product> command reference')" }
 
+  # --- release: what a product hands over --------------------------------------------------------------
+  # A TASK, not a placed command: it needs an `artifacts:` section naming the registry, the package, the
+  # directory and the media type, so a command declared here would die on its first line in a product
+  # that publishes nothing. A product declares the command the day it has something to publish, and pins
+  # WHICH artefact with `with: { name: ... }`.
+  release:artifact:
+    impl: simplon.tasks.artifact:publish
+    help: "Publish a declared directory to a registry as an OCI artifact."
+    params:
+      name: { help: "the artifact to publish (normally pinned per command with `with:`)" }
+      tag:  { help: "the tag to publish under, for a version only known after a build" }
+
   # --- tasks: the task machinery, addressable ---------------------------------------------------------
   # `generate` writes the product's committed CLI module; `catalogue` prints this file. Both are kernel
   # mechanisms: what is product-specific reaches them through simplon.context and a manifest-pinned
