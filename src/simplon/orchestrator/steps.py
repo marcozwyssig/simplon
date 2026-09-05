@@ -15,6 +15,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Callable
 
 from simplon import log
+from simplon import steplog
 from simplon.run import run_stream
 
 if TYPE_CHECKING:   # type-only: the step model is the LOWEST layer and must not import the manifest
@@ -447,7 +448,14 @@ def argv_step(label: str, argv: list[str], command: str | None = None) -> Step:
     """A STREAMING Step that runs an arbitrary command and feeds its output live into the details pane.
     The build pipeline uses it to render each image build (a docker build/run) as its own step.
     `command` is the step's exact-command identity for the section header; it defaults to the real argv
-    (shlex-joined), so a native docker/argv step displays the command it actually runs."""
+    (shlex-joined), so a native docker/argv step displays the command it actually runs.
+
+    THE OUTPUT IS ALSO WRITTEN TO A FILE (simplon.steplog), on every run and whatever the rc: the TUI
+    that shows these lines is a Textual app, and Textual holds the mouse, so what is on screen cannot be
+    selected or copied out of it. Writing on success only would hand back a log for every run except
+    the interesting one."""
+    identity = command if command is not None else shlex.join(argv)
+
     def stream(emit: Emit) -> Outcome:
         lines: list[str] = []
 
@@ -456,8 +464,10 @@ def argv_step(label: str, argv: list[str], command: str | None = None) -> Step:
             emit(line)
 
         rc = run_stream(argv, on_line)
-        return Outcome(rc=rc, output="\n".join(lines))
-    return Step(label=label, stream=stream, command=command if command is not None else shlex.join(argv))
+        output = "\n".join(lines)
+        steplog.write(identity, output)
+        return Outcome(rc=rc, output=output)
+    return Step(label=label, stream=stream, command=identity)
 
 
 def _print_captured(output: str) -> None:
