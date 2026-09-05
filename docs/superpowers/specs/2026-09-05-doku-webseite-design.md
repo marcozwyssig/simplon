@@ -8,11 +8,27 @@ Eine Webseite, die erklaert, warum man Simplon braucht, wie man startet, was
 die Befehle tun, und wie man ein Produkt darauf aufsetzt. Veroeffentlicht ueber
 GitHub Pages, verlinkt von der PyPI-Projektseite.
 
-## Was schon da ist
+## Das Werkzeug: Hugo, nicht docToolchain
 
-`simplon.tasks.docs:render` rendert AsciiDoc ueber docToolchain in Docker und
-erzeugt HTML und PDF. Der Kernel baut seine Doku also **mit sich selbst** --
-dieselbe Regel wie beim Build.
+Entscheidung des Eigentuemers: die Seite entsteht mit **Hugo**, damit sie wie
+eine professionelle Seite aussieht, und die Inhalte werden in **Markdown**
+geschrieben.
+
+Das ersetzt nicht `simplon.tasks.docs:render`. Der bleibt, wofuer er gebaut
+wurde: die AsciiDoc-Architekturdokumentation eines Produkts ueber docToolchain
+(netctl#1280). Eine Architekturdoku und eine Produktwebseite sind zwei
+verschiedene Dinge mit zwei verschiedenen Lesern; sie durch dasselbe Werkzeug zu
+zwingen, weil es schon da ist, waere die falsche Sparsamkeit.
+
+**Der Kernel baut seine Doku trotzdem mit sich selbst.** Der Hugo-Lauf gehoert
+hinter einen Simplon-Task, nicht in ein Skript daneben -- sonst waere Simplons
+eigene Webseite das einzige, was Simplon nicht baut. Ob dieser Task im Katalog
+landet (und damit jedem Produkt zur Verfuegung steht) oder produkteigen bleibt,
+ist eine offene Frage: **kein anderes Produkt hat bisher danach gefragt**, und
+eine Faehigkeit auf Vorrat in den Kernel zu legen ist genau das, was der
+Katalogkommentar verbietet. Die Spec entscheidet sie bewusst nicht; der Plan
+soll mit der produkteigenen Fassung anfangen und den Weg in den Katalog offen
+lassen.
 
 ## Vier Entscheidungen des Eigentuemers
 
@@ -76,7 +92,8 @@ Beim Tag, nicht bei jedem Push. Die veroeffentlichte Doku beschreibt damit immer
 eine Version, die es auf PyPI gibt. Zwischen zwei Releases altert sie -- aber sie
 luegt nie ueber etwas, das noch niemand installieren kann.
 
-Nur HTML. Der PDF-Zweig von `docs:render` bleibt ungenutzt; ein zweites
+Nur HTML. Hugo erzeugt ohnehin kein PDF; die frueher erwogene Kopplung an den
+PDF-Zweig von `docs:render` entfaellt mit dem Werkzeugwechsel. Ein zweites
 Artefakt will gepflegt und geprueft werden, und niemand hat danach gefragt.
 
 ## Abnahme
@@ -90,6 +107,23 @@ Artefakt will gepflegt und geprueft werden, und niemand hat danach gefragt.
    verlinkt sie.
 4. Ein Release ohne Doku-Aenderung baut die Seite trotzdem neu -- die
    Veroeffentlichung haengt am Tag, nicht an einer geaenderten Datei.
+
+## Was der Werkzeugwechsel an den Anforderungen aendert
+
+Die tragende Unterscheidung (erzeugt gegen geschrieben) bleibt unberuehrt --
+sie ist eine Aussage darueber, welche Information woher kommt, nicht darueber,
+womit gesetzt wird. Drei Dinge aendern sich konkret:
+
+1. **Das Format ist Markdown**, nicht AsciiDoc. Die erzeugte Befehlsreferenz
+   muss also Markdown ausgeben, das Hugo einliest -- nicht AsciiDoc.
+2. **Ein Theme wird gebraucht.** Das ist der Grund fuer den Wechsel und keine
+   Nebensache: eine Seite, die nach Rohtext aussieht, wird nicht gelesen. Die
+   Wahl gehoert in den Plan, samt der Frage, ob sie als Submodul, als
+   Hugo-Modul oder vendored hereinkommt -- die drei Wege altern verschieden.
+3. **Der Bau braucht Hugo, nicht Docker.** `docs:render` umgeht eine lokale
+   Installation, indem es containerisiert laeuft; fuer Hugo ist das nicht noetig,
+   aber der CI-Lauf muss die Binaerdatei bekommen. Wie -- Action, Container oder
+   Paketmanager -- entscheidet der Plan.
 
 ## Ausserhalb dieser Spec
 
