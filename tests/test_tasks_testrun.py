@@ -361,6 +361,22 @@ def test_theHookVerdictRuleIsTheSameOneTheCliAppliesToACommandBody():
         assert testrun._verdict(value) == simplon_cli._rc(value), value
 
 
+def test_aHookThatReturnsTrueMeansSuccess_becauseIntTrueWouldExitOne():
+    # ABSOLUTE, not relative. The test above is a COUPLING test: it catches either rule drifting away from
+    # the other, and stays green when both drift together - which is exactly what happens when somebody
+    # "simplifies" both to `int(value)`. `return True` from a body that means success would then exit 1,
+    # the trap both docstrings spend a paragraph on, and no test would have noticed.
+    from simplon import cli as simplon_cli
+
+    assert testrun._verdict(True) == 0
+    assert simplon_cli._rc(True) == 0
+    assert testrun._verdict(False) == 0
+    assert simplon_cli._rc(False) == 0
+    # and the neighbouring cases the rule is drawn against, so the boundary is stated and not implied
+    assert testrun._verdict(1) == 1
+    assert testrun._verdict(None) == 0
+
+
 def test_run_gate_stillPropagatesARealNonZeroVerdict(monkeypatch, tmp_path, runner):
     # the coercion must not swallow the case the abort exists for
     _register(monkeypatch, tmp_path, _data())

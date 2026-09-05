@@ -21,14 +21,27 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # The release gate: tests first, then the wheel, then PyPI. The launcher
-      # provisions its own venv and installs this checkout with `-e .`, so no
+      # The release gate: tests, then the type gate, then the wheel, then PyPI. The launcher
+      # provisions its own venv and installs this checkout with `-e .[typecheck]`, so no
       # separate install step is needed here (the same redundant step was
       # dropped from ci.yml for the same reason). The wheel check in tests/
       # installs the built package and loads its catalogue from
       # site-packages -- it is the only one that catches a path escape
       # before it ships.
+      #
+      # THE TYPE GATE IS HERE, and not only in ci.yml, because this is the path that reaches consumers
+      # (#8). `ci.yml` triggers on `push`, which includes tags, so in practice a tagged commit is checked
+      # by it today - but that is a PARALLEL workflow with no dependency on this one, not a gate on this
+      # one. Narrow the `ci` trigger some day and the release path loses the check without anybody's diff
+      # showing it. Repeating a step is the cheap half of that trade; the expensive half is publishing a
+      # wheel nothing typechecked.
+      #
+      # That would have been si#8 committed a second time, one level up: a pipeline that is green because
+      # a question is not asked. tests/test_type_gate.py holds it as a RULE over the whole workflows
+      # directory - any job that runs `test all` runs the gate - so a future workflow inherits it instead
+      # of being remembered.
       - run: ./simplon.sh test all
+      - run: ./simplon.sh test typecheck-python
       - run: ./simplon.sh build wheel
       # WHAT REPLACED "the tag must name the version being published" (#3).
       #
