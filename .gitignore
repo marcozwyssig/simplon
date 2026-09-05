@@ -7,3 +7,20 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+
+# The documentation website (#2): the SOURCES belong here, the generated half does not.
+#
+# The site is built into build/website/, which the build/ rule above already covers - it is a build
+# output like any other, and `clean` should take it with the rest.
+#
+# The command reference is generated INTO the content tree by `docs:site`'s sibling `docs:reference`,
+# because Hugo only renders what lives under content/. It is an output that happens to sit among
+# sources, so it is named here explicitly rather than left to a directory rule.
+site/content/using/commands.md
+
+# Hugo's own working files inside the site directory. `resources/` is its asset cache and `public/` the
+# destination it uses when nothing passes --destination (a bare `hugo` run in site/, which is what
+# somebody debugging the theme will type first).
+site/resources/
+site/public/
+site/.hugo_build.lock

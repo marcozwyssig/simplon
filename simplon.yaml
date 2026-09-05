@@ -17,6 +17,26 @@ groups:
     wheel:
       help: "Build the wheel."
       impl: "orchestrator.cli:build_wheel"
+    # The documentation website, as ONE command, and an impl-less AGGREGATE rather than a leaf (#2, task
+    # 3). `reference` writes site/content/using/commands.md by reading the assembled CLI; `site` runs Hugo
+    # over site/ and publishes into build/website/. The first WRITES a page the second READS, so the order
+    # is not a preference - run them the other way round and the published site carries the previous run's
+    # reference, or, the very first time, none at all.
+    #
+    # `depends_on` is where that ordering is stated, because the manifest is the only place it can be
+    # STATED rather than merely happen. A script beside the manifest that called the two in order would be
+    # a second declaration of the same fact, invisible to `plan_for`, and the kernel's own rule against two
+    # sources for one thing is what the generated reference exists to enforce in the first place. Siblings
+    # execute in list order, so [reference, site] IS the edge.
+    #
+    # It has to be an aggregate: `impl` and `depends_on` are mutually exclusive, so neither leaf could
+    # carry the dependency itself. `stop_on_failure` stays at its default (false), deliberately: if the
+    # reference step fails, the Hugo run is still worth attempting and its own verdict is still worth
+    # seeing - the site simply renders without that one page - and the aggregate takes the worst rc
+    # either way, so nothing is hidden by letting the second step run.
+    docs:
+      help: "Write the command reference, then build the website from it."
+      depends_on: [reference, site]
   test:
     all:
       help: "Run every test."
@@ -27,13 +47,51 @@ groups:
       impl: "orchestrator.cli:doctor"
 
 # The command reference the documentation website embeds is GENERATED, so simplon generates its own with
-# the kernel it ships - the same rule that makes it build and test itself here. Placed through `import:`
-# + `tasks:` because this manifest is still the flat old form throughout: that is the old form's way of
-# instantiating a catalogue coordinate, and it needs no group migration to work. The output path is not
-# pinned yet - the Hugo project does not exist in this repo yet (#2, task 3) - so `output` stays the
-# positional argument the task declares, and `./simplon.sh build reference <path>` writes the page.
+# the kernel it ships - the same rule that makes it build and test itself here. Both documentation tasks
+# are placed through `import:` + `tasks:` because this manifest is still the flat old form throughout:
+# that is the old form's way of instantiating a catalogue coordinate, and it needs no group migration to
+# work. The command NAME is the coordinate's second half under that form, which is why the two commands
+# are `build reference` and `build site` and the aggregate over them had to be called something else.
 import:
   delivery: [docs]
 tasks:
+  # `output` is PINNED now (#2, task 3): the Hugo project exists, so where the page belongs is no longer
+  # an open question a caller answers on the command line. Pinned with `with:`, the parameter leaves the
+  # command line entirely - `./simplon.sh build reference` takes no arguments - which is what makes the
+  # aggregate above possible at all, since a planned step is spawned without arguments. The path points
+  # INTO site/content/, because Hugo only renders what is under its content directory; the generated page
+  # is gitignored there, since only the sources belong in the repo.
   docs:reference:
     group: build
+    with:
+      output: site/content/using/commands.md
+      title: "Command reference"
+  # The Hugo run itself. Its five values live in the `site:` section below rather than here, because they
+  # are the product's data and `docs:site` reads them through the manifest - see src/simplon/tasks/site.py.
+  docs:site:
+    group: build
+
+# The documentation website's data (#2). Five values, every one of them required to BE declared: the
+# kernel defaults none of them, because a default would be simplon's own directory layout imposed on
+# every other product that places this task.
+#
+# `image` and `theme` must PIN a version and are refused otherwise - not `:latest`, not `@latest`, not a
+# branch. A build whose output depends on the day it ran is not a build, and a documentation site is
+# committed-to prose: a generator change rewrites it wholesale.
+#
+# `source` and `output` must be plain relative paths under the product root. That is not tidiness about
+# manifests: `output` is handed to shutil.rmtree before every build, so an absolute one would delete a
+# directory somewhere else entirely.
+#
+# THE KNOWN POINT, and the publishing job (task 4) has to know it: `theme` here is the single place the
+# theme version is declared, and the task makes site/go.mod agree with it by running
+# `hugo mod get <module>@<version>` before every build. That WRITES site/go.mod and refreshes
+# site/go.sum in this working tree. It is idempotent while the pin and go.mod already agree - the normal
+# state, and both files are committed - but the first build after the pin moves leaves a real diff. A CI
+# gate asserting "working tree clean" after a site build would go red on the mechanism working correctly.
+site:
+  image: "hugomods/hugo:exts-0.148.2"
+  source: "site"
+  output: "build/website"
+  base_url: "https://marcozwyssig.github.io/simplon/"
+  theme: "github.com/imfing/hextra@v0.12.3"
