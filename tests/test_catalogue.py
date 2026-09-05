@@ -112,8 +112,12 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
     # `vcs:auth-scopes` the gh token's package scopes - the two halves of "this machine can publish".
     assert "install" in cat.namespace("support")
     # `docs` is the newest (netctl#1280): the render is a kernel mechanism, its pinned image tag is the
-    # product's data, so the coordinate lives here and the version stays in the product manifest.
-    assert sorted(cat.namespace("docs")) == ["render"]
+    # product's data, so the coordinate lives here and the version stays in the product manifest. `site`
+    # (#2) is the second SHAPE of that same capability, not a second category: docToolchain renders a
+    # product's architecture documentation (HTML + PDF, for people working ON the system), hugo builds its
+    # product WEBSITE (HTML only, for people working WITH it). Both are mechanism; where the sources live,
+    # where the output goes, which theme and which base URL are the product's data, in its manifest.
+    assert sorted(cat.namespace("docs")) == ["render", "site"]
 
 
 # --- the `import:` + `tasks:` expansion ------------------------------------------------------------------
