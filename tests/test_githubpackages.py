@@ -4,6 +4,8 @@ Arrange / Act / Assert throughout, one action per test. The subprocess seam is s
 mocked at the library boundary: what is under test is what this module DECIDES - which argv, which
 message - not whether oras works.
 """
+from pathlib import Path
+
 import pytest
 
 from simplon import githubpackages, run
@@ -159,3 +161,54 @@ def test_a_gate_failure_reaches_the_caller_as_a_package_error(monkeypatch):
 
     with pytest.raises(githubpackages.PackageError, match="no way to get one"):
         githubpackages.require_oras()
+
+
+# --- a DIRECTORY as an artifact, and the way back ---------------------------------------------------
+
+def test_the_newest_tag_is_the_last_one_the_registry_lists(calls):
+    """`oras repo tags` lists oldest first. Products were each writing `| tail -1` in a shell, which is
+    a rule about someone else's tool living in three places."""
+    assert githubpackages.newest_tag("ghcr.io/owner", "repo") == "v2"
+
+
+def test_a_package_with_no_tags_says_so_rather_than_returning_nothing(monkeypatch):
+    monkeypatch.setattr(githubpackages, "tags", lambda registry, repository: [])
+
+    with pytest.raises(githubpackages.PackageError, match="no tags"):
+        githubpackages.newest_tag("ghcr.io/owner", "repo")
+
+
+def test_publishing_a_directory_packs_it_and_pushes_the_archive(tmp_path, calls, monkeypatch):
+    """githubpackages could publish a FILE. Everything that wants to publish a p2 repository, a site or
+    a folder of jars had to zip it first, which is the same six lines in every product."""
+    source = tmp_path / "site"
+    (source / "features").mkdir(parents=True)
+    (source / "site.xml").write_text("<site/>")
+    pushed: list = []
+    monkeypatch.setattr(githubpackages, "push",
+                        lambda ref, path, media: pushed.append((ref, path, media)))
+
+    archive = githubpackages.push_directory("ghcr.io/o/r:t", source, "application/vnd.x+zip")
+
+    assert archive.name == "site.zip" and archive.is_file()
+    assert pushed == [("ghcr.io/o/r:t", str(archive), "application/vnd.x+zip")]
+
+
+def test_publishing_a_directory_that_is_not_there_names_it(tmp_path, calls):
+    with pytest.raises(githubpackages.PackageError, match="nothing to publish"):
+        githubpackages.push_directory("ghcr.io/o/r:t", tmp_path / "absent", "application/vnd.x+zip")
+
+
+def test_fetching_an_artifact_unpacks_the_single_archive_it_pulled(tmp_path, monkeypatch):
+    """The consuming half: a product that publishes a directory wants it back as a directory, and the
+    step in between - 'which of the pulled files is the archive' - is not a product's question."""
+    import zipfile
+    def fake_pull(ref, destination):
+        z = Path(destination) / "thing.zip"
+        with zipfile.ZipFile(z, "w") as archive:
+            archive.writestr("site.xml", "<site/>")
+    monkeypatch.setattr(githubpackages, "pull", fake_pull)
+
+    unpacked = githubpackages.fetch_directory("ghcr.io/o/r:t", tmp_path / "out")
+
+    assert (unpacked / "site.xml").read_text() == "<site/>"
