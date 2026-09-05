@@ -1,6 +1,6 @@
 ---
 title: "The manifest"
-weight: 1
+weight: 2
 ---
 
 One YAML file per product. It declares what commands exist, what they run, what they are called and
@@ -40,12 +40,14 @@ merge. There is one tree, so there is no second way to bring a group into existe
 **A group you name is a promise.** Declare a group in your own tree and leave it without a single
 command anywhere in its subtree, and the manifest fails to load, naming the group. A group only the
 *catalogue* offers, that your tree never mentions, is simply dropped from the assembled CLI - see [the
-rule](../rules/#a-group-with-no-commands-does-not-appear) and the defect that forced it.
+rule](../rules/#a-group-with-no-commands-does-not-appear) and why both halves are needed.
 
-## `task:` and the colon
+## `task:`, and what the command adds
 
-Every command is an **instance** of a task. The task is the template - it carries the body; the command
-is the placement - it carries the name, the group, and the values pinned for this particular instance.
+Every command is an **instance** of a task: the task carries the body, the command carries the name, the
+group and the values pinned for this placement. That model, its five refusals and the two name spaces the
+colon tells apart are [a chapter of their own](../task-and-command/); what follows is only what the
+*manifest file* looks like once you have it.
 
 ```yaml
 tasks:
@@ -59,31 +61,8 @@ groups:
       wheel: { task: "wheel" }
 ```
 
-A command never writes `impl:` itself. Try it and the loader says so: *"declare the body once under
-`tasks:` and point this command at it with `task:`."*
-
-**The colon is what tells the two apart.**
-
-| `task:` value | Where the body comes from |
-|---|---|
-| `wheel` — no colon | a task **this manifest** declares under its own `tasks:` |
-| `docs:render` — a colon | a **catalogue coordinate**: the body lives in the kernel |
-
-One resolution rule, two sources, and the two name spaces cannot intersect - so nothing shadows anything
-and there is no precedence to remember. A bare name is yours; a coordinate is the platform's.
-
-A coordinate is deliberately not a module path. `docs:render` is a name in the catalogue's coordinate
-space, and the body it points at can move inside the kernel without breaking a single product manifest.
-That indirection is the whole reason the catalogue exists.
-
-### What a task may declare, and what only a command may
-
-A task takes four keys: `impl`, `help`, `passthrough_args`, `params`. Anything else is rejected rather
-than ignored.
-
-`hidden`, `keep_awake`, `stop_on_failure`, `depends_on` and `with` belong to the **command**. A template
-that pinned a value, hid itself, or planned other commands would not be a template - it would be one
-particular use of itself, and the second product to want it would have to fork it.
+A command never writes `impl:` itself. A bare `task:` value names a task this manifest declares; one with
+a colon names a catalogue coordinate, whose body lives in the kernel.
 
 ## Pinning values with `with:`
 
@@ -97,14 +76,13 @@ groups:
       system: { task: "test:gate", with: { name: "system" }, help: "Run the system suite." }
 ```
 
-A pinned parameter is **absent from the command line**. It is not an option with a default that you
-could still override - it is removed from the generated signature and supplied at call time, because the
-manifest decided it. `myctl test unit --name system` is not a command, and that is the point.
+A pinned parameter is removed from the generated signature and supplied at call time, so it is absent
+from the command line entirely: `myctl test unit --name system` is not a command.
 
 `params:` is the other half, and it is strictly about **presentation**: help text, the short flag, the
 metavar, the order the declarations render in. The signature - name, type, default - is read off the
 body. Declaring the type in YAML as well would state it twice and let the two drift, which is the exact
-failure `impl:` already has.
+failure `impl:` on a command already has.
 
 ```yaml
 prune-branches:
@@ -116,16 +94,11 @@ prune-branches:
 
 ## Refining a platform command, and replacing one
 
-A command the catalogue already places can be refined: change its `help:`, add `params:`, pin a `with:`.
-Point it at a *different* `task:`, and the loader stops:
-
-> command 'support install' redeclares `task:` from 'support:install' to 'host:colima' - two different
-> bodies placed under one name [...] If the product's body must deliberately replace the platform's
-> here, add `override: true`.
-
-That refusal has [its own rule and its own defect](../rules/#a-name-collision-breaks-loudly). `override:
-true` is the explicit yes; and an overriding node stands alone rather than merging with the base's
-`help:` and `params:`, because those describe the body that no longer runs.
+A command the catalogue already places can be refined in the product's own tree: change its `help:`, add
+`params:`, pin a `with:`. Point it at a *different* `task:` and the loader stops, naming both bodies by
+their real `module:function` and offering `override: true` as the explicit yes. That refusal has [its own
+rule](../rules/#a-name-collision-breaks-loudly), and the merge behaviour behind it is in [Task and
+command](../task-and-command/#refinement-and-deliberate-replacement).
 
 ## Aggregates: `depends_on`
 

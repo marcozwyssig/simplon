@@ -1,6 +1,6 @@
 ---
 title: "Writing a task"
-weight: 2
+weight: 3
 ---
 
 A task body is a plain Python function. Not a subclass, not a decorated callable, not an object with a
@@ -93,9 +93,10 @@ Return an `int`. Do not call `sys.exit`, and do not raise `typer.Exit` from a bo
 wrapper coerces the return value into the process exit code, and a body that exits by itself cannot be
 called by another body or asserted on by a test.
 
-There is history here. Five kernel bodies once raised `typer.Exit` and were annotated `-> None`, which
-made every generated wrapper's `_rc(<call>)` draw a type error at the call site. They now return the int
-their delegates already produced.
+A body that raises instead of returning is also a body annotated `-> None`, and that annotation is what
+the generated wrapper's `_rc(<call>)` then draws a type error against: the wrapper is asking for an exit
+code and the signature says there is not one. If a type checker is pointed at your tree, that is where it
+tells you - at the call site, not in the body that looks fine on its own.
 
 ## Running things
 
@@ -128,7 +129,8 @@ log.die("this cannot continue")    # stderr, then SystemExit
 The `warn` / `error` line is the one that matters, and it is not a matter of tone. `warn` goes to stdout
 and is for the merely notable; `error` goes to stderr and means something failed. Anyone measuring a run
 by its exit code - which is every CI system - learns nothing from a warning. There is [a rule about
-exactly this](../rules/#a-missing-tool-is-not-a-failed-tool), and it cost two releases to learn.
+exactly this](../rules/#a-missing-tool-is-not-a-failed-tool), and a warning is what a step reaches for
+when it has not decided whether it failed.
 
 ## Report the outcome, do not raise it
 
