@@ -301,6 +301,76 @@ def test_run_gate_abortsWithoutClearingAnything_whenThePreconditionIsRed(monkeyp
     assert os.listdir(results) == ["stale-result.json"]
 
 
+# --- what a hook's return value means (#8) ---------------------------------------------------------------
+#
+# These four exist because mypy had been reporting this file's `if rc != 0` sites for months
+# (`Incompatible return value type (got "object", expected "int")`) inside a set of findings everybody had
+# agreed to read as environment noise. They were not noise. A hook is an ordinary Python function a product
+# wrote, and an ordinary Python function that just does its work returns None - which was neither 0 nor a
+# verdict, and aborted the gate it had just declared healthy.
+
+
+def test_aPreconditionThatReturnsNothingIsNotAFailure_soTheSuiteStillRuns(monkeypatch, tmp_path, runner):
+    # arrange: a healthy precondition written the ordinary way - it does its work and returns nothing
+    _register(monkeypatch, tmp_path, _data())
+    cfg = testrun.config()
+    monkeypatch.setattr(testrun, "resolve_ref",
+                        lambda ref, where: (lambda: runner["hooks"].append(ref)))
+
+    # act
+    rc = testrun.run_gate(cfg.gates[0], cfg, [], filtered=False)
+
+    # assert: the gate ran its suite and reported the suite's verdict, not the hook's missing one
+    assert rc == 0
+    assert runner["argv"] is not None
+
+
+def test_aPreconditionThatReturnsSomethingOtherThanAnRcIsNotAFailure(monkeypatch, tmp_path, runner):
+    # arrange: a hook whose return value is a result object, written when the value could not matter
+    _register(monkeypatch, tmp_path, _data())
+    cfg = testrun.config()
+    monkeypatch.setattr(testrun, "resolve_ref",
+                        lambda ref, where: (lambda: SimpleNamespace(healthy=True)))
+
+    rc = testrun.run_gate(cfg.gates[0], cfg, [], filtered=False)
+
+    assert rc == 0
+    assert runner["argv"] is not None
+
+
+def test_aGateDeclaredAsAnImplThatReturnsNothingReportsGreen_ratherThanNone(monkeypatch, tmp_path, runner):
+    # arrange: the product's own runner for a level, returning nothing
+    data = _data()
+    data["suites"]["gates"].append({"name": "acceptance-ui", "impl": "product.tooling:ui"})
+    _register(monkeypatch, tmp_path, data)
+    cfg = testrun.config()
+    monkeypatch.setattr(testrun, "resolve_ref", lambda ref, where: (lambda: None))
+
+    rc = testrun.run_gate(cfg.gate("acceptance-ui"), cfg, [], filtered=False)
+
+    # an rc of None would reach `any(rc != 0 ...)` in `accept` as a RED verdict and reach the process as 0
+    assert rc == 0
+
+
+def test_theHookVerdictRuleIsTheSameOneTheCliAppliesToACommandBody():
+    # The two spellings are deliberate (a task must not import the binding layer), so this holds them
+    # together: whatever `simplon.cli._rc` calls an exit code, a hook's verdict calls the same thing.
+    from simplon import cli as simplon_cli
+
+    for value in (0, 1, 7, -1, None, True, False, "ok", 1.5, SimpleNamespace()):
+        assert testrun._verdict(value) == simplon_cli._rc(value), value
+
+
+def test_run_gate_stillPropagatesARealNonZeroVerdict(monkeypatch, tmp_path, runner):
+    # the coercion must not swallow the case the abort exists for
+    _register(monkeypatch, tmp_path, _data())
+    cfg = testrun.config()
+    runner["rc:product.health:check"] = 7
+
+    assert testrun.run_gate(cfg.gates[0], cfg, [], filtered=False) == 7
+    assert runner["argv"] is None
+
+
 def test_run_gate_callsTheProductsOwnRunner_forAGateDeclaredAsAnImpl(monkeypatch, tmp_path, runner):
     # arrange: a level whose runner is the product's (a browser journey suite, say)
     data = _data()
