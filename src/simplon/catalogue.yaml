@@ -155,6 +155,21 @@ tasks:
   docs:render:
     impl: simplon.tasks.docs:render
     help: "Render the project docs via docToolchain (generateHTML + generatePDF) in Docker."
+  # The second SHAPE of the same capability, not a second category (#2): `render` produces a product's
+  # architecture documentation (AsciiDoc, HTML *and* PDF, for people working ON the system), `site`
+  # produces its product website (Markdown through Hugo, HTML only, for people working WITH it). A
+  # product may declare both; netctl, which has the first, would get the second beside it.
+  # In Docker, like `render` and for the same reason (netctl#1280): bring the tool rather than provision
+  # the development machine. It also collapses the tool question - a Hugo module theme needs Hugo
+  # Extended, Go AND Git together, which is three installations locally and none in an image.
+  # A TASK for the same reason as `render`: it needs a Hugo project in the checkout and a `site:` section
+  # naming the pinned image, where the sources are, where the output goes, which theme and which base URL
+  # - so a command placed here would die on its first line in a product that has neither. Those five are
+  # the product's data, the container invocation is the mechanism, and that split is why this belongs to
+  # the kernel at all.
+  docs:site:
+    impl: simplon.tasks.site:build
+    help: "Build the product's documentation website with Hugo, in Docker (HTML only)."
 
   # --- tasks: the task machinery, addressable ---------------------------------------------------------
   # `generate` writes the product's committed CLI module; `catalogue` prints this file. Both are kernel
