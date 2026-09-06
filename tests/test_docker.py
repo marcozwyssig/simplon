@@ -63,13 +63,13 @@ def test_gate_die_hint_is_product_branded_from_the_context(monkeypatch, tmp_path
     # arrange: a DIFFERENT product registers its context; the install hint must brand to IT, proving the
     # gate reads context.current().name instead of a hardcoded netctl (the netctl#649 extraction seam)
     monkeypatch.setattr(context, "_current",
-                        context.ProductContext("infractl", tmp_path, tmp_path / "infractl.yaml"))
+                        context.ProductContext("asbundle", tmp_path, tmp_path / "asbundle.yaml"))
     monkeypatch.setattr(docker.shutil, "which", lambda tool: None)
     monkeypatch.delenv(docker.DOCKER_BOOTSTRAP_ENV, raising=False)
     monkeypatch.setattr(docker.log, "die", _boom)
 
     # act / assert: the hint derives the product's shim name from the context
-    with pytest.raises(SystemExit, match=r"\./infractl\.sh install"):
+    with pytest.raises(SystemExit, match=r"\./asbundle\.sh install"):
         docker.ensure_docker()
 
 

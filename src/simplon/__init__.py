@@ -1,6 +1,7 @@
 """simplon - a delivery orchestrator for any software component that follows a CI/CD flow: it
 assembles a component's CLI from one manifest and runs the steps, as a framework of tasks that a
-component adopts and extends. The *ctl product family (netctl, infractl) is its first user.
+component adopts and extends. It grew up inside netctl, which is still its largest consumer; who else
+installs it is measured and written down in `simplon.surface`.
 
 A product installs `simplon` (PyPI) and pins it in its own requirements: the kernel arrives as an
 ordinary dependency, nothing is vendored and no source path is prepended. NOTE: the import package is

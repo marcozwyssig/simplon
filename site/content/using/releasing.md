@@ -231,6 +231,36 @@ it ages rather than describing something nobody can install yet.
 So: documentation changes go out with the next release, and if a documentation fix is urgent, the way
 to ship it is to cut a release.
 
+## A **minor** has a second question
+
+Everything above is the same for `v1.4.1` and for `v1.5.0`. One thing is not.
+
+A module that moves out of a published package leaves a **tombstone** at the old path — it still
+imports, and it says on use where the thing went. That is a promise with a date in it: *removed at the
+next minor*. The date is the only part nothing checks, and a transition period that nobody is reminded
+of does not end by decision. It ends by being forgotten — one release at a time, each of which looks
+like the cheap choice on its own.
+
+So before you type a version whose **minor** changes, read `simplon.surface`:
+
+* `MOVED` — the old paths that are still standing, and where each one now lives.
+* `MOVED_CONSUMERS` — who still imports them, measured down to the repository, file and line, so the
+  cost of ending the period is a number rather than a worry.
+* `MOVED_DUE_AFTER` — the release they were promised to survive.
+
+The kernel's own test suite goes red once a version past that pair is built, and `release.yml` runs the
+suite *after* the tag and *before* the upload — so a minor that still carries tombstones costs a tag
+number and publishes nothing. That is the backstop, not the plan: it fires at the last possible moment,
+because the version cannot know what you are about to type. This heading is the first one.
+
+{{< callout type="info" >}}
+Re-measure `MOVED_CONSUMERS` before you delete anything. "Nobody uses it any more" is a claim about
+other people's repositories, and the point of removing a tombstone is that the next import fails loudly
+— which is the wrong way to find out you were wrong. And delete the *promise* with the module: the
+migration table on [What you may import](../../building/surface/) describes something that no longer
+exists the moment the files go.
+{{< /callout >}}
+
 ## The whole sequence
 
 ```text

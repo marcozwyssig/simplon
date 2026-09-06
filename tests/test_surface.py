@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+import simplon
 from simplon import surface
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "simplon"
@@ -267,6 +268,166 @@ def test_the_innards_under_tasks_are_exactly_the_modules_no_coordinate_names():
     assert innards == {"allure", "gitops"}, (
         f"the innards of simplon/tasks/ are now {sorted(innards)}; the website names allure and "
         f"gitops, and one of the two has to change")
+
+
+# --- the tombstones have a deadline, and something has to notice it (#50) --------------------------
+
+
+def _release_number() -> tuple[int, int]:
+    """The (major, minor) of the version this checkout would publish as.
+
+    Read off `simplon.__version__`, which setuptools-scm derives from the tag. Between releases it is
+    `0.4.0.postN.devM` under `no-guess-dev`, so the pair below does not move until the next tag exists -
+    which is exactly what makes it usable as a due date rather than as a nuisance on every commit.
+
+    An unparseable version answers (0, 0) rather than raising. The fallback in `simplon/__init__.py` is
+    `0.0.0.dev0+unknown`, reached when the package is neither built nor installed; a checkout in that
+    state knows nothing about releases, and inventing a due date from it would fail a suite for a reason
+    that has nothing to do with tombstones.
+    """
+    found = re.match(r"(\d+)\.(\d+)", simplon.__version__)
+    return (int(found.group(1)), int(found.group(2))) if found else (0, 0)
+
+
+def test_every_tombstone_records_who_still_uses_the_old_path():
+    """The promise had a deadline and no owner (#50), and the missing half was never the date - it was
+    who pays for it. A tombstone with no record beside it is a removal nobody can cost, so the next
+    minor arrives, nobody knows whether it is safe, and the safe move is always to wait one more.
+
+    An EMPTY tuple is an answer here, and a valuable one: `allure` and `vcs` have no consumer at all.
+    What this forbids is a fifth tombstone appearing with nothing said about it.
+    """
+    # act
+    unrecorded = set(surface.MOVED) - set(surface.MOVED_CONSUMERS)
+    phantom = set(surface.MOVED_CONSUMERS) - set(surface.MOVED)
+
+    # assert
+    assert not unrecorded, (
+        f"{sorted(unrecorded)} is a tombstone with no entry in surface.MOVED_CONSUMERS - say who "
+        f"still imports the old path, measured, or say that nobody does with an empty tuple")
+    assert not phantom, (
+        f"surface.MOVED_CONSUMERS records {sorted(phantom)}, which is not a tombstone any more")
+
+
+@pytest.mark.parametrize("old", sorted(surface.MOVED_CONSUMERS))
+def test_a_recorded_consumer_line_names_a_repository_a_file_and_a_line(old):
+    """"netctl uses it" is the shape of statement this whole pair of tickets exists to stop. What makes
+    the record actionable - and what makes ending the transition a morning's work rather than a
+    project - is that each entry is one line somebody can open."""
+    for entry in surface.MOVED_CONSUMERS[old]:
+        repository, _, location = entry.partition(" ")
+        assert repository in surface.CONSUMERS, (
+            f"{entry!r} names {repository!r}, which is not a measured consumer of this kernel")
+        assert re.search(r"\.py:\d+$", location.strip()), (
+            f"{entry!r} does not end in a file and a line number, so nobody can open it")
+
+
+def test_the_tombstones_are_gone_by_the_release_they_were_promised_for():
+    """THE THING THAT NOTICES, and the reason #50 was a ticket rather than a note.
+
+    Every tombstone says it is removed at the next minor. Nothing enforced that, and a transition
+    period nobody is reminded of does not end by decision - it ends by being forgotten into permanence,
+    one release at a time, each of which looks like the cheap choice on its own.
+
+    This is the last moment rather than the best one, and the difference is worth knowing before
+    relying on it. `no-guess-dev` keeps the version at `0.4.0.postN` until a `v0.5.0` tag exists, so
+    this cannot warn the person who is ABOUT to cut the minor - the release page does that. What it can
+    do is stop the publish: `release.yml` runs `test all` after the tag and before the upload, so a
+    minor that still carries tombstones costs a tag number and ships nothing. Loud, and recoverable.
+
+    Seen red by moving `MOVED_DUE_AFTER` back a minor: it named all four modules and both files.
+    """
+    # arrange
+    due = _release_number() > surface.MOVED_DUE_AFTER
+
+    # assert
+    assert not (due and surface.MOVED), (
+        f"this is {simplon.__version__}, past {'.'.join(map(str, surface.MOVED_DUE_AFTER))}, and the "
+        f"tombstones {sorted(surface.MOVED)} are still here - they were promised to go at this "
+        f"release. Removing them is: delete src/simplon/{{{','.join(sorted(surface.MOVED))}}}.py, "
+        f"empty surface.MOVED and surface.MOVED_CONSUMERS, and drop the migration table and the "
+        f"deadline sentence from site/content/building/surface.md. Re-measure MOVED_CONSUMERS first - "
+        f"the record says {sum(len(v) for v in surface.MOVED_CONSUMERS.values())} import lines are "
+        f"still out there.")
+
+
+def test_the_release_page_sends_a_minor_release_to_the_record():
+    """The FIRST moment, the one the version cannot reach: somebody about to type a minor. A deadline
+    that is only enforced by a red publish is enforced too late to be kind, so the page a releaser
+    reads has to carry it - and pointing at the record beats copying it, because a copy of a list of
+    six import lines is a second source with a shelf life."""
+    # arrange
+    page = (Path(__file__).resolve().parents[1] / "site" / "content" / "using"
+            / "releasing.md").read_text(encoding="utf-8")
+
+    # assert: the record by name, not a retyped copy of what is in it
+    for named in ("simplon.surface", "MOVED_CONSUMERS", "MOVED_DUE_AFTER"):
+        assert named in page, (
+            f"the release page does not name {named}, so a minor release is sent nowhere and the "
+            f"only thing that notices the tombstone deadline is a failed publish")
+
+
+# --- the consumers a module head is allowed to name (#51) -------------------------------------------
+
+
+#: Everything a reader of this kernel could mistake for a statement about who uses it: the package, the
+#: front page and the site. Tests are NOT in here - a fixture may need a product name that is nobody.
+def _prose_files() -> list[Path]:
+    root = Path(__file__).resolve().parents[1]
+    return [p for p in [*SRC.rglob("*.py"), root / "README.md", *(root / "site").rglob("*.md")]
+            if p.resolve() != (SRC / "surface.py").resolve()]
+
+
+def test_no_kernel_prose_names_a_repository_measured_not_to_use_the_kernel():
+    """THE ASSERTION #51 EXISTS FOR, and the whole of what can be held without a network.
+
+    Five module heads named `infractl` as a consumer of this kernel. It installs no part of it - zero
+    occurrences of the string in the whole repository - and that was not harmless prose: in #37 the
+    claim decided where `allure` lived, and in #47 an `infractl.yaml` stood in the zero-violations bar
+    for an expression rule, as a manifest this kernel never sees.
+
+    What a test can do about that offline is the smaller half, and it is worth stating which half.
+    It CANNOT re-measure another repository - that would hang on the network and on access rights, and
+    a green run would then mean "GitHub answered" as often as "the claim holds". It CAN hold the
+    kernel's own prose to the last measurement that WAS taken, which is exactly the step that was
+    missing: the name went into five heads and nothing ever compared it with anything.
+
+    `surface.py` itself is exempt, because it is where the measurement is written down; every other
+    file has to point there rather than keep a copy.
+    """
+    # arrange
+    offenders: dict[str, list[str]] = {}
+
+    # act
+    for name in surface.NOT_CONSUMERS:
+        hits = [str(p) for p in _prose_files() if name in p.read_text(encoding="utf-8")]
+        if hits:
+            offenders[name] = hits
+
+    # assert
+    assert not offenders, (
+        f"{offenders} name a repository that does not install this kernel; "
+        f"surface.NOT_CONSUMERS says how that was measured, and a head that needs the fact "
+        f"points there instead of repeating the name")
+
+
+def test_the_two_consumer_lists_do_not_overlap():
+    """A repository is measured to use the kernel or measured not to. Both at once is not a finding,
+    it is two measurements that were never compared - which is the defect one level up."""
+    # act
+    both = set(surface.CONSUMERS) & set(surface.NOT_CONSUMERS)
+
+    # assert
+    assert not both, f"{sorted(both)} is in surface.CONSUMERS and in surface.NOT_CONSUMERS"
+
+
+def test_every_measured_non_consumer_says_how_that_was_measured():
+    """A bare name would be the same unchecked assertion in a new place. The value beside it is the
+    measurement - what was looked at, and when - so the next reader can tell a fact from a memory."""
+    for name, reason in surface.NOT_CONSUMERS.items():
+        assert "measured" in reason.lower(), f"{name}: {reason!r} does not say how it was measured"
+        assert re.search(r"\b20\d\d-\d\d-\d\d\b", reason), (
+            f"{name}: {reason!r} carries no date, so nobody can tell how old the measurement is")
 
 
 # --- the website says the same thing --------------------------------------------------------------

@@ -33,7 +33,8 @@ simplon/tasks/gitops.py   that body's innards — no promise at all
 ### What `simplon/tasks/` is, stated carefully
 
 The obvious phrasing — *"a product may not import a task body"* — is **false**, and it is worth being
-exact about, because five consumers import one today and the kernel is what taught them to:
+exact about, because four of the five products that install the kernel import one today — sixteen
+import sites, measured — and the kernel is what taught them to:
 
 * a hand-written composition root imports a body to call or wrap it (`from simplon.tasks import image`
   in agile-cockpit, `from simplon.tasks import artifact` in cleon);
@@ -74,10 +75,14 @@ surface.MOVED       # old path -> new home
 That is deliberate. Everywhere it can, this repository derives a fact rather than restating it — the
 command reference is read off the assembled app, the version comes off the tag. This one **cannot** be
 derived, and it is worth saying why, because it looks like it can: you can measure who imports what
-today, but a promise is about tomorrow. `simplon.compose` has no consumer in any repository right now
-and is a library all the same — it was written as one, it names no product, and the next product to
-deploy a compose stack is meant to find it. `simplon.catalogue` has no consumer either and is
-machinery. The import graph cannot tell those two apart, because the difference is an intention.
+today, but a promise is about tomorrow. `simplon.verdict` has no consumer in any repository right now
+and is a library all the same — it was written as one, it names no product, and the next product to read
+a suite's outcome is meant to find it. `simplon.catalogue` has no consumer either and is machinery. The
+import graph cannot tell those two apart, because the difference is an intention.
+
+The example used to be `simplon.compose`, and it has since acquired a consumer — which is the argument
+rather than a dent in it. A module classified by who imports it today would have changed sides that day
+without anybody deciding anything.
 
 So the intention is written down once, in `simplon/surface.py`, and `tests/test_surface.py` holds it to
 the tree: every top-level name — module **and** subpackage — has to appear in exactly one of the sets,
@@ -122,6 +127,17 @@ target's own star-import surface, so the names and the notice both arrive.
 
 The tombstones come out at the next **minor** release. Until then a product gets a working run with a
 message in it rather than a stack trace, and knows where to point the line.
+
+That deadline is tracked rather than remembered. `simplon.surface` carries three things beside the
+table below: `MOVED_CONSUMERS`, which names every line in every repository that still imports an old
+path — measured, down to the file and the line number — `MOVED_DUE_AFTER`, the release the promise
+names, and a test that turns red once a version past it is built. The measurement is what makes ending
+the period cheap: **six import lines in three repositories**, and two of the four tombstones
+(`simplon.allure`, `simplon.vcs`) have no consumer at all and could go today.
+
+If one of those lines is yours, the fix is the right-hand column of the table below, and you have until
+the next minor to type it. [Cutting a release](../../using/releasing/) says what the person on the
+other end owes you before the paths disappear.
 
 ### What moved
 

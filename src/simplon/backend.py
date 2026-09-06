@@ -11,8 +11,13 @@ INSTANCE. Adding or extending a backend is then a new class, never a new `if`.
 This mirrors the kernel's other product seams (`ProductContext`, the `EnvironmentProvider` Protocol): the
 Protocol lives here, the concrete implementations live in the PRODUCT (netctl's `LocalBackend` for
 containerlab, its `ExoscaleBackend` skeleton, ...). The coupling flows product -> kernel, never the reverse:
-this module names no backend and no product, so a second consumer (infractl) registers its own backends
-against the same seam ("gleiche Maschine, anderer Katalog").
+this module names no backend and no product, so a second consumer would register its own backends against
+the same seam without editing anything here ("gleiche Maschine, anderer Katalog").
+
+There is no second one today: measured across every repository that installs the kernel (#51), netctl's
+`orchestrator.backends` is the only consumer. That does not weaken the seam - what makes it one is that
+nothing in this file names a product - but it is what the file may claim. See `simplon.surface` for who
+consumes the kernel and how that was measured.
 """
 from __future__ import annotations
 
