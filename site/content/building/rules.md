@@ -18,6 +18,88 @@ the seventh is sitting in your own tree.
 
 ---
 
+## What a rule costs, and how many there are
+
+Before the six, the thing they are all a means to.
+
+Simplon exists to give a delivery pipeline **clear structure**, **extensibility** and **reusability**.
+Those three are the point; every rule below is a means, and a means that costs more flexibility than it
+buys is a bad one. The risk is not any single rule - each one arrives with a measured cause and looks
+obviously right on its own. The risk is the **sum**, because nobody ever measures a sum.
+
+So it is measured here, and the measurement is the reason this section exists.
+
+### Not every refusal costs anything
+
+Three kinds, and lumping them together is what makes a count frightening for no reason.
+
+1. **Diagnosis.** The manifest is broken, inert, or says something that renders nowhere, and the refusal
+   says where. It takes nothing away - without it the failure would be silent, which is the defect this
+   kernel spends most of its time hunting. *Example:* a coordinate the catalogue does not carry.
+2. **Self-binding.** The kernel subjects itself to a rule it imposes. Costs a product nothing.
+   *Example:* the placement rule below checks over the **merged** tree, so the catalogue's own placements
+   are ruled on beside the product's.
+3. **Expression rule.** A product may no longer say something it could have said - the refused manifest
+   would have produced a working product, just a different one. **Only this kind costs flexibility.**
+   *Example:* a phase name in a coordinate *is* the placement, so `build:image` cannot sit under
+   `release`.
+
+The question that sorts a refusal is therefore not how strict it feels but: *would the refused manifest
+have produced a working product?* If no, it is diagnosis. If yes, it is an expression rule and it owes
+an argument.
+
+### The count
+
+| kind | today | what it costs a product |
+| --- | --- | --- |
+| diagnosis | 39 | nothing - the declaration had no working meaning |
+| expression rule | 16 | something it could otherwise have said |
+| **all load-time refusals** | **55** | |
+
+These are the refusals a **product manifest** can trip while loading. Refusals that happen later - a task
+whose tool is missing, an image without a pin - are a different population with a different cost, and are
+not counted here.
+
+{{< callout type="info" >}}
+**None of these three numbers is typed.** They are computed from the two load-path modules'
+syntax trees and compared with this table by `tests/test_refusal_census.py`, which is also what makes a
+new refusal impossible to add quietly: an unclassified one has no census entry, and the suite goes red
+naming it until somebody says which kind it is. A number typed onto a page is wrong on the first day
+nobody checks it, and this repository has proved that twice.
+{{< /callout >}}
+
+### How far the sixteen reach
+
+Self-binding is not a third bucket of refusals; it is how far an expression rule reaches. Split that way,
+the sixteen are:
+
+| reach | count | meaning |
+| --- | --- | --- |
+| the kernel is held to it too | 9 | the check runs over the merged tree, so the catalogue's own declarations are ruled on beside the product's |
+| a statement about the platform/product seam | 6 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
+| the kernel exempts itself | 1 | `check_every_task_is_used` is scoped to the product on purpose |
+
+That last row is worth naming rather than leaving in a docstring. The kernel's `tasks:` is an **offer** -
+it deliberately declares more than its own `groups:` places, because a task needing product data must not
+become a baseline command that dies on its first line. The reasoning is sound. What had never been
+written down is the *size* of the exemption, and a self-exemption nobody has measured is exactly the kind
+of thing this section exists to surface, so the test measures it and fails if it ever reaches zero.
+
+### Before you add the seventeenth
+
+An expression rule has to answer three questions before it is built - in the ticket, not afterwards.
+
+- **Does it forbid something a product might legitimately want?** If so, which product, and what does it
+  do instead? The bar is *zero violations across the existing manifests*, measured rather than assumed.
+- **Is it diagnosis or expression rule?** Diagnosis needs no such justification. Most refusals are
+  diagnosis, which is why the total is much less alarming than it looks.
+- **Would deleting be cheaper than guarding?** A second source you do not have cannot drift, and it needs
+  no rule to watch it.
+
+The census, the three questions and the reasoning behind them are [#48](https://github.com/marcozwyssig/simplon/issues/48).
+
+---
+
 ## A missing tool is not a failed tool
 
 > Ein Werkzeug, das fehlt, ist nicht dasselbe wie ein Werkzeug, das gescheitert ist.

@@ -16,9 +16,18 @@ not why (#49), or a tree with no durations (#52), is not a small omission —
 it is the tool declining to say what it already knows.
 
 **Guard against rule creep.** Rules are easy to add, each one looks justified
-on its own, and nobody ever measures the sum. As of 2026-09-06 the kernel
-carries **61 load-time refusals**, 23 of them in `treeform.py` alone. Every
-one had a measured cause; the total was never weighed. See #48.
+on its own, and nobody ever measures the sum. Every refusal had a measured
+cause; the total was never weighed. It is weighed now — see #48.
+
+**Do not restate the count here.** si#48 found that the `grep`-level number
+this paragraph used to carry (61) was the wrong population: six of those
+raises run at plan or run time, or only re-raise. The live count, split by
+kind, is computed from the two load-path modules' syntax trees by
+`tests/test_refusal_census.py` and published on `building/rules.md`. A new
+refusal with no census entry turns that suite red until somebody says which
+kind it is, which is the point — a number typed into a document instead is
+wrong on the first day nobody checks it, and this repository has proved that
+twice.
 
 ## Three kinds of refusal — only one costs flexibility
 
