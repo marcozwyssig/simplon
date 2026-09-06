@@ -1,5 +1,5 @@
 """Unit tests for simplon.tasks.vcs (netctl#1280, epic #1274 slice S6): the framework-free skin
-around simplon.vcs. Nothing here shells out to git - every simplon.vcs function is monkeypatched, so
+around simplon.tasks.gitops. Nothing here shells out to git - every simplon.tasks.gitops function is monkeypatched, so
 the suite proves the wiring (ROOT resolution, parameter survival, return-code propagation) without
 touching a real repository.
 
@@ -33,8 +33,8 @@ def _registered_context(monkeypatch, tmp_path):
 def test_commit_configures_vcs_with_root_from_the_registered_context(monkeypatch, _registered_context):
     # arrange
     seen = {}
-    monkeypatch.setattr(vcs_cmd.vcs, "configure", lambda root: seen.setdefault("root", root))
-    monkeypatch.setattr(vcs_cmd.vcs, "commit", lambda message: 0)
+    monkeypatch.setattr(vcs_cmd.gitops, "configure", lambda root: seen.setdefault("root", root))
+    monkeypatch.setattr(vcs_cmd.gitops, "commit", lambda message: 0)
 
     # act
     vcs_cmd.commit(["a", "message"])
@@ -46,8 +46,8 @@ def test_commit_configures_vcs_with_root_from_the_registered_context(monkeypatch
 def test_push_configures_vcs_with_root_from_the_registered_context(monkeypatch, _registered_context):
     # arrange
     seen = {}
-    monkeypatch.setattr(vcs_cmd.vcs, "configure", lambda root: seen.setdefault("root", root))
-    monkeypatch.setattr(vcs_cmd.vcs, "push", lambda: 0)
+    monkeypatch.setattr(vcs_cmd.gitops, "configure", lambda root: seen.setdefault("root", root))
+    monkeypatch.setattr(vcs_cmd.gitops, "push", lambda: 0)
 
     # act
     vcs_cmd.push()
@@ -58,8 +58,8 @@ def test_push_configures_vcs_with_root_from_the_registered_context(monkeypatch, 
 def test_prune_branches_configures_vcs_with_root_from_the_registered_context(monkeypatch, _registered_context):
     # arrange
     seen = {}
-    monkeypatch.setattr(vcs_cmd.vcs, "configure", lambda root: seen.setdefault("root", root))
-    monkeypatch.setattr(vcs_cmd.vcs, "prune_branches", lambda dry, remote, unmerged: 0)
+    monkeypatch.setattr(vcs_cmd.gitops, "configure", lambda root: seen.setdefault("root", root))
+    monkeypatch.setattr(vcs_cmd.gitops, "prune_branches", lambda dry, remote, unmerged: 0)
 
     # act
     vcs_cmd.prune_branches()
@@ -70,8 +70,8 @@ def test_prune_branches_configures_vcs_with_root_from_the_registered_context(mon
 def test_submodules_configures_vcs_with_root_from_the_registered_context(monkeypatch, _registered_context):
     # arrange
     seen = {}
-    monkeypatch.setattr(vcs_cmd.vcs, "configure", lambda root: seen.setdefault("root", root))
-    monkeypatch.setattr(vcs_cmd.vcs, "init_submodule", lambda: 0)
+    monkeypatch.setattr(vcs_cmd.gitops, "configure", lambda root: seen.setdefault("root", root))
+    monkeypatch.setattr(vcs_cmd.gitops, "init_submodule", lambda: 0)
 
     # act
     vcs_cmd.submodules()
@@ -84,14 +84,14 @@ def test_submodules_configures_vcs_with_root_from_the_registered_context(monkeyp
 
 def test_commit_joins_the_argument_words_and_propagates_the_exit_code(monkeypatch, _registered_context):
     # arrange
-    monkeypatch.setattr(vcs_cmd.vcs, "configure", lambda root: None)
+    monkeypatch.setattr(vcs_cmd.gitops, "configure", lambda root: None)
     seen = {}
 
     def fake_commit(message):
         seen["message"] = message
         return 1
 
-    monkeypatch.setattr(vcs_cmd.vcs, "commit", fake_commit)
+    monkeypatch.setattr(vcs_cmd.gitops, "commit", fake_commit)
 
     # act
     rc = vcs_cmd.commit(["fix", "the", "thing"])
@@ -103,14 +103,14 @@ def test_commit_joins_the_argument_words_and_propagates_the_exit_code(monkeypatc
 
 def test_commit_with_no_words_joins_to_an_empty_message(monkeypatch, _registered_context):
     # arrange
-    monkeypatch.setattr(vcs_cmd.vcs, "configure", lambda root: None)
+    monkeypatch.setattr(vcs_cmd.gitops, "configure", lambda root: None)
     seen = {}
 
     def fake_commit(message):
         seen["message"] = message
         return 0
 
-    monkeypatch.setattr(vcs_cmd.vcs, "commit", fake_commit)
+    monkeypatch.setattr(vcs_cmd.gitops, "commit", fake_commit)
 
     # act
     vcs_cmd.commit(None)
@@ -121,14 +121,14 @@ def test_commit_with_no_words_joins_to_an_empty_message(monkeypatch, _registered
 
 def test_prune_branches_forwards_its_flags_to_vcs_prune_branches(monkeypatch, _registered_context):
     # arrange
-    monkeypatch.setattr(vcs_cmd.vcs, "configure", lambda root: None)
+    monkeypatch.setattr(vcs_cmd.gitops, "configure", lambda root: None)
     calls = {}
 
     def fake_prune(*, dry, remote, unmerged):
         calls.update(dry=dry, remote=remote, unmerged=unmerged)
         return 0
 
-    monkeypatch.setattr(vcs_cmd.vcs, "prune_branches", fake_prune)
+    monkeypatch.setattr(vcs_cmd.gitops, "prune_branches", fake_prune)
 
     # act
     vcs_cmd.prune_branches(dry_run=True, remote=True, unmerged=True)
@@ -198,8 +198,8 @@ def test_the_refresh_asks_for_the_package_scopes_the_registry_needs(monkeypatch)
     asked = []
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.setattr(vcs_cmd.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(vcs_cmd.vcs, "gh_scopes", lambda: ("gist", "repo"))
-    monkeypatch.setattr(vcs_cmd.vcs, "refresh_scopes", lambda scopes: asked.append(tuple(scopes)) or 0)
+    monkeypatch.setattr(vcs_cmd.gitops, "gh_scopes", lambda: ("gist", "repo"))
+    monkeypatch.setattr(vcs_cmd.gitops, "refresh_scopes", lambda scopes: asked.append(tuple(scopes)) or 0)
 
     # act
     rc = vcs_cmd.auth_scopes()
@@ -213,9 +213,9 @@ def test_nothing_is_refreshed_when_the_token_already_carries_the_scopes(monkeypa
     # arrange
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.setattr(vcs_cmd.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(vcs_cmd.vcs, "gh_scopes",
+    monkeypatch.setattr(vcs_cmd.gitops, "gh_scopes",
                         lambda: ("repo", "read:packages", "write:packages"))
-    monkeypatch.setattr(vcs_cmd.vcs, "refresh_scopes", _must_not_run)
+    monkeypatch.setattr(vcs_cmd.gitops, "refresh_scopes", _must_not_run)
 
     # act / assert: idempotent, so it can be run before every publish without a browser opening
     assert vcs_cmd.auth_scopes() == 0
@@ -225,7 +225,7 @@ def test_an_environment_token_is_named_instead_of_refreshing_a_token_nobody_read
     # arrange: GITHUB_TOKEN wins in githubpackages.token(), so a refreshed gh token would never be used
     monkeypatch.setenv("GITHUB_TOKEN", "from-the-environment")
     monkeypatch.setattr(vcs_cmd.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(vcs_cmd.vcs, "refresh_scopes", _must_not_run)
+    monkeypatch.setattr(vcs_cmd.gitops, "refresh_scopes", _must_not_run)
 
     # act / assert: says so and does nothing, rather than appearing to fix something
     assert vcs_cmd.auth_scopes() == 0
@@ -235,7 +235,7 @@ def test_without_a_terminal_it_does_not_start_a_browser_flow_nobody_can_answer(m
     # arrange: `gh auth refresh` is a device flow - in CI it would hang until the job times out
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.setattr(vcs_cmd.sys.stdin, "isatty", lambda: False)
-    monkeypatch.setattr(vcs_cmd.vcs, "refresh_scopes", _must_not_run)
+    monkeypatch.setattr(vcs_cmd.gitops, "refresh_scopes", _must_not_run)
 
     # act / assert
     assert vcs_cmd.auth_scopes() == 0

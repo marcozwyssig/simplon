@@ -88,7 +88,7 @@ asked"). Parsing the client's wording to separate them would be reading formatte
 the mistake `tasks/cliref.py` is written to avoid - and here the two readings mean the same thing anyway:
 an unverified push is not a publish.
 
-WHAT THIS DOES NOT REUSE, AND WHY IT IS NOT AN OVERSIGHT. `simplon.images` already holds `image_ref`,
+WHAT THIS DOES NOT REUSE, AND WHY IT IS NOT AN OVERSIGHT. `simplon.imagenames` already holds `image_ref`,
 `registry_prefix` and `require_registry`, and this module uses none of them. They are the netctl-extracted
 shape, where a registry arrives from an `IMAGE_REGISTRY` environment variable that may be unset and the
 refusal is a `log.die` at the point of use. Here the registry is a REQUIRED manifest key, so the same
@@ -188,7 +188,7 @@ def declared(data: Mapping[str, object], name: str, source: str = "manifest") ->
     and a kernel that assumed `Dockerfile` at the root would build the wrong thing - or nothing - for the
     next product. `registry` is required even for a purely local build, deliberately: the reference a
     build tags is the reference a release pushes, and an unqualified one is what docker resolves against
-    Docker Hub (`simplon.images.require_registry` records that failure in full). Building under one name
+    Docker Hub (`simplon.imagenames.require_registry` records that failure in full). Building under one name
     and publishing under another is how an image gets pushed somewhere nobody meant.
     """
     section = data.get(SECTION)

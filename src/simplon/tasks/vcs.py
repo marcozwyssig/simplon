@@ -7,7 +7,7 @@ option declarations that used to live here as `typer.Option`/`typer.Argument` de
 anything, not only from a Click parser, and the decorator lives only in generated code.
 
 The mechanism - git/gh subprocess wrappers and the pure `prune_verdict` decision - already lives in
-`simplon.vcs`; this module is the thin layer that points it at the calling product's repo root. ROOT
+`simplon.tasks.gitops`; this module is the thin layer that points it at the calling product's repo root. ROOT
 comes from `simplon.context.current().root`, never from a product import: this module knows no product
 name and no product layout. The one exception is `submodules`, which carries a conventional default
 path - a convention, not a claim about what any particular product vendors there.
@@ -17,24 +17,25 @@ from __future__ import annotations
 import os
 import sys
 
-from simplon import context, githubpackages, log, vcs
+from simplon import context, githubpackages, log
+from simplon.tasks import gitops
 
 
 def _configure() -> None:
-    """Point the simplon.vcs wrappers at the calling product's repo root."""
-    vcs.configure(context.current().root)
+    """Point the simplon.tasks.gitops wrappers at the calling product's repo root."""
+    gitops.configure(context.current().root)
 
 
 def commit(message: list[str] | None = None) -> int:
     """git add -A + git commit -m."""
     _configure()
-    return vcs.commit(" ".join(message or []))
+    return gitops.commit(" ".join(message or []))
 
 
 def push() -> int:
     """git pull --rebase then push (current branch)."""
     _configure()
-    return vcs.push()
+    return gitops.push()
 
 
 def prune_branches(dry_run: bool = False, remote: bool = False, unmerged: bool = False) -> int:
@@ -47,7 +48,7 @@ def prune_branches(dry_run: bool = False, remote: bool = False, unmerged: bool =
     and each prints its tip sha, so a change of mind is a `git branch <name> <sha>` away. main, the
     current branch and any worktree's branch stay protected regardless."""
     _configure()
-    return vcs.prune_branches(dry=dry_run, remote=remote, unmerged=unmerged)
+    return gitops.prune_branches(dry=dry_run, remote=remote, unmerged=unmerged)
 
 
 def submodules() -> int:
@@ -56,7 +57,7 @@ def submodules() -> int:
     A product that vendors nothing at that path simply has no use for this command; the kernel itself
     is a PyPI dependency and is never what gets initialised here."""
     _configure()
-    return vcs.init_submodule()
+    return gitops.init_submodule()
 
 
 def auth_scopes() -> int:
@@ -83,8 +84,8 @@ def auth_scopes() -> int:
         log.info("no terminal: `gh auth refresh` is an interactive device flow. In CI the workflow "
                  "token already carries its package scopes - nothing to do.")
         return 0
-    missing = [s for s in githubpackages.PACKAGE_SCOPES if s not in vcs.gh_scopes()]
+    missing = [s for s in githubpackages.PACKAGE_SCOPES if s not in gitops.gh_scopes()]
     if not missing:
         log.ok(f"the gh token already carries {', '.join(githubpackages.PACKAGE_SCOPES)}")
         return 0
-    return vcs.refresh_scopes(githubpackages.PACKAGE_SCOPES)
+    return gitops.refresh_scopes(githubpackages.PACKAGE_SCOPES)

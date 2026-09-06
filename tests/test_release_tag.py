@@ -25,16 +25,16 @@ from pathlib import Path
 
 import pytest
 
-from simplon import context, vcs
+from simplon import context
 from simplon.context import ProductContext
-from simplon.tasks import release
+from simplon.tasks import gitops, release
 
 
 # --- the pure decision -------------------------------------------------------------------------------
 
 def test_the_verdict_cuts_a_tag_that_does_not_exist_yet():
     # arrange / act
-    action, reason = vcs.tag_verdict(carried_by_main=True, local_tag_at="", head="abc1234")
+    action, reason = gitops.tag_verdict(carried_by_main=True, local_tag_at="", head="abc1234")
 
     # assert
     assert (action, reason) == ("cut", "")
@@ -42,7 +42,7 @@ def test_the_verdict_cuts_a_tag_that_does_not_exist_yet():
 
 def test_the_verdict_refuses_a_commit_the_default_branch_does_not_carry():
     # arrange / act: #23's whole question, and the answer is a refusal rather than a warning
-    action, reason = vcs.tag_verdict(carried_by_main=False, local_tag_at="", head="abc1234")
+    action, reason = gitops.tag_verdict(carried_by_main=False, local_tag_at="", head="abc1234")
 
     # assert
     assert (action, reason) == ("refuse", "off-main")
@@ -50,7 +50,7 @@ def test_the_verdict_refuses_a_commit_the_default_branch_does_not_carry():
 
 def test_the_verdict_resumes_a_tag_already_cut_at_head():
     # arrange / act: the state a rejected push leaves behind - neither "nothing to do" nor "done"
-    action, reason = vcs.tag_verdict(carried_by_main=True, local_tag_at="abc1234", head="abc1234")
+    action, reason = gitops.tag_verdict(carried_by_main=True, local_tag_at="abc1234", head="abc1234")
 
     # assert
     assert (action, reason) == ("resume", "unpushed")
@@ -58,7 +58,7 @@ def test_the_verdict_resumes_a_tag_already_cut_at_head():
 
 def test_the_verdict_refuses_a_tag_that_already_names_another_commit_here():
     # arrange / act
-    action, reason = vcs.tag_verdict(carried_by_main=True, local_tag_at="0000111", head="abc1234")
+    action, reason = gitops.tag_verdict(carried_by_main=True, local_tag_at="0000111", head="abc1234")
 
     # assert
     assert (action, reason) == ("refuse", "moved")
@@ -67,7 +67,7 @@ def test_the_verdict_refuses_a_tag_that_already_names_another_commit_here():
 def test_the_guard_outranks_a_tag_that_is_already_cut():
     # arrange / act: a tag cut on a feature branch by an earlier run is still a tag on a feature branch,
     # so the resume must not be the answer that reaches the remote
-    action, reason = vcs.tag_verdict(carried_by_main=False, local_tag_at="abc1234", head="abc1234")
+    action, reason = gitops.tag_verdict(carried_by_main=False, local_tag_at="abc1234", head="abc1234")
 
     # assert
     assert (action, reason) == ("refuse", "off-main")

@@ -29,7 +29,7 @@ holds the rule and both measured failures; the one that applies here is the root
 `.hugo_build.lock` - enough that the next run failed with `failed to acquire a build lock` even when that
 one passed `--user` correctly. It is the same defect #6 found from the other side, and it must not repeat.
 
-A MISSING TOOL IS NOT A FAILED TOOL (the rule 0.1.7 learned in `simplon.allure`). No docker on the host is
+A MISSING TOOL IS NOT A FAILED TOOL (the rule 0.1.7 learned in `simplon.tasks.allure`). No docker on the host is
 a hint and rc 0 - not every machine that runs the loop is the one that publishes the site, and a tool that
 was never there cannot be the reason a run goes red. This is why the module does NOT call
 `docker.ensure_docker()`, which DIES: that gate is right for a step whose output is the point, and wrong

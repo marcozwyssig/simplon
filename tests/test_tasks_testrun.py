@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from simplon import context
-from simplon import allure
+from simplon.tasks import allure
 from simplon.tasks import testrun
 from simplon.context import ProductContext
 from simplon import verdict as verdict_module

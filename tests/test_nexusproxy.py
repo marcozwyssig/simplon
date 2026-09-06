@@ -26,12 +26,12 @@ from pathlib import Path
 
 import pytest
 
-from simplon import nexus
+from simplon import nexusproxy
 
 # The product DATA a manifest supplies, as one fixture value the pure decisions are asked with. `democtl`
 # rather than `netctl` on purpose (see the module docstring), and the two maven2 repositories are kept
 # because the format-scoped cleanup policy has to collapse them onto one.
-CFG = nexus.NexusConfig(
+CFG = nexusproxy.NexusConfig(
     cli="democtl",
     container="democtl-nexus",
     volume="sonatype_nexus-data",
@@ -43,9 +43,9 @@ CFG = nexus.NexusConfig(
     content_probe_path="/repository/maven-public/org/apiguardian/apiguardian-api/1.1.2/"
                        "apiguardian-api-1.1.2.pom",
     proxy_repositories=(
-        nexus.ProxyRepository("maven-central", "maven2", "maven"),
-        nexus.ProxyRepository("gradle-plugins-proxy", "maven2", "maven"),
-        nexus.ProxyRepository("npm-proxy", "npm", "npm"),
+        nexusproxy.ProxyRepository("maven-central", "maven2", "maven"),
+        nexusproxy.ProxyRepository("gradle-plugins-proxy", "maven2", "maven"),
+        nexusproxy.ProxyRepository("npm-proxy", "npm", "npm"),
     ),
 )
 
@@ -72,7 +72,7 @@ _MANIFEST = {
 
 def test_declared_reads_the_product_data_from_the_manifest_section():
     # arrange / act
-    cfg = nexus.declared(_MANIFEST, Path("/repo"))
+    cfg = nexusproxy.declared(_MANIFEST, Path("/repo"))
 
     # assert: nothing is derived from a product import, and the two file keys are resolved under the root
     assert (cfg.cli, cfg.container, cfg.base_url_env) == ("democtl", "democtl-nexus", "DEMOCTL_NEXUS_URL")
@@ -85,7 +85,7 @@ def test_declared_labels_its_errors_with_the_source_the_caller_names():
     # arrange: `config` passes the manifest path, so the message points at a file on a multi-product host
     # act / assert
     with pytest.raises(ValueError, match="/tmp/other.yaml: the 'nexus' section is missing"):
-        nexus.declared({}, Path("/repo"), source="/tmp/other.yaml")
+        nexusproxy.declared({}, Path("/repo"), source="/tmp/other.yaml")
 
 
 def test_declared_refuses_a_section_that_declares_no_proxy_repository():
@@ -94,7 +94,7 @@ def test_declared_refuses_a_section_that_declares_no_proxy_repository():
 
     # act / assert
     with pytest.raises(ValueError, match="declares none"):
-        nexus.declared(data, Path("/repo"))
+        nexusproxy.declared(data, Path("/repo"))
 
 
 def test_declared_refuses_a_repository_that_names_no_api_segment():
@@ -105,17 +105,17 @@ def test_declared_refuses_a_repository_that_names_no_api_segment():
 
     # act / assert
     with pytest.raises(ValueError, match="'name', 'format' and 'api'"):
-        nexus.declared(data, Path("/repo"))
+        nexusproxy.declared(data, Path("/repo"))
 
 
 def test_declared_refuses_a_rest_listing_as_the_content_probe():
     # arrange: THE structural guard against reintroducing "a listing means it works". A listing answers 200
     # on a virgin instance that serves nothing at all, so it may never decide `serving`
-    data = {"nexus": dict(_MANIFEST["nexus"], content_probe_path=nexus.REPOSITORIES_API_PATH)}
+    data = {"nexus": dict(_MANIFEST["nexus"], content_probe_path=nexusproxy.REPOSITORIES_API_PATH)}
 
     # act / assert
     with pytest.raises(ValueError, match="must be a CONTENT path"):
-        nexus.declared(data, Path("/repo"))
+        nexusproxy.declared(data, Path("/repo"))
 
 
 # --- api_base (where status/repos talk) --------------------------------------------------------------
@@ -126,7 +126,7 @@ def test_api_base_defaults_to_localhost_on_the_published_port():
     env = {}
 
     # act / assert
-    assert nexus.api_base(CFG, env) == "http://localhost:8181"
+    assert nexusproxy.api_base(CFG, env) == "http://localhost:8181"
 
 
 def test_api_base_follows_an_overridden_published_port():
@@ -134,24 +134,24 @@ def test_api_base_follows_an_overridden_published_port():
     env = {"NEXUS_HTTP_PORT": "9181"}
 
     # act / assert
-    assert nexus.api_base(CFG, env) == "http://localhost:9181"
+    assert nexusproxy.api_base(CFG, env) == "http://localhost:9181"
 
 
 def test_api_base_prefers_an_explicit_nexus_url_over_the_client_base():
     # arrange: both set. NEXUS_URL is what the shipped create-repositories.sh already reads, so it wins
-    env = {"NEXUS_URL": "http://admin.lan:8181/", CFG.base_url_env: "http://nexus.lan:8181"}
+    env = {"NEXUS_URL": "http://admin.lan:8181/", CFG.base_url_env: "http://nexusproxy.lan:8181"}
 
     # act / assert: and the trailing slash is normalised away so no probe URL carries a `//`
-    assert nexus.api_base(CFG, env) == "http://admin.lan:8181"
+    assert nexusproxy.api_base(CFG, env) == "http://admin.lan:8181"
 
 
 def test_api_base_falls_back_to_the_client_side_base_url():
     # arrange: only the build-side knob set - it names the same instance, so guessing localhost instead
     # would probe the wrong machine
-    env = {CFG.base_url_env: "http://nexus.lan:8181"}
+    env = {CFG.base_url_env: "http://nexusproxy.lan:8181"}
 
     # act / assert
-    assert nexus.api_base(CFG, env) == "http://nexus.lan:8181"
+    assert nexusproxy.api_base(CFG, env) == "http://nexusproxy.lan:8181"
 
 
 # --- parse_container_state --------------------------------------------------------------------------
@@ -161,7 +161,7 @@ def test_parse_container_state_reads_the_state_and_health_pair():
     text = "running|healthy\n"
 
     # act
-    verdict = nexus.parse_container_state(text)
+    verdict = nexusproxy.parse_container_state(text)
 
     # assert
     assert (verdict.present, verdict.state, verdict.health) == (True, "running", "healthy")
@@ -174,7 +174,7 @@ def test_parse_container_state_treats_empty_output_as_an_absent_container():
     text = ""
 
     # act
-    verdict = nexus.parse_container_state(text)
+    verdict = nexusproxy.parse_container_state(text)
 
     # assert
     assert verdict.present is False
@@ -186,7 +186,7 @@ def test_parse_container_state_reports_a_stopped_container_as_not_running():
     text = "exited|none"
 
     # act
-    verdict = nexus.parse_container_state(text)
+    verdict = nexusproxy.parse_container_state(text)
 
     # assert: present, but not running - the two are different facts and both are reported
     assert verdict.present is True
@@ -198,7 +198,7 @@ def test_parse_container_state_defaults_a_missing_health_field_to_none():
     text = "running|"
 
     # act / assert: "none", never an empty string that reads as a missing line in the report
-    assert nexus.parse_container_state(text).health == "none"
+    assert nexusproxy.parse_container_state(text).health == "none"
 
 
 # --- service_verdict (the failure mode people actually hit) ------------------------------------------
@@ -224,7 +224,7 @@ def test_the_serving_probe_is_a_content_fetch_and_not_a_repository_listing():
     # URL the BUILD resolves through is a PRODUCT assertion - only the product knows which repository its
     # gradle/npm/pip wiring points at - so it is a test in the product repo, next to that wiring
     assert path.startswith("/repository/")
-    assert nexus.REPOSITORIES_API_PATH not in path
+    assert nexusproxy.REPOSITORIES_API_PATH not in path
 
 
 def test_service_verdict_calls_only_a_real_anonymous_content_fetch_serving():
@@ -233,7 +233,7 @@ def test_service_verdict_calls_only_a_real_anonymous_content_fetch_serving():
     code, body = 200, "<project>...</project>"
 
     # act
-    verdict = nexus.service_verdict(CFG, code, body)
+    verdict = nexusproxy.service_verdict(CFG, code, body)
 
     # assert
     assert (verdict.serving, verdict.eula_accepted, verdict.anonymous_read) == (True, True, True)
@@ -248,7 +248,7 @@ def test_service_verdict_names_the_unaccepted_eula_behind_a_403():
             "REST API before proceeding.")
 
     # act
-    verdict = nexus.service_verdict(CFG, code, body)
+    verdict = nexusproxy.service_verdict(CFG, code, body)
 
     # assert: a hard NO on the EULA. anonymous read is proven ON, because reaching the EULA gate at all
     # means the request got PAST the auth check (measured: with anonymous read off the same call gives 401)
@@ -261,7 +261,7 @@ def test_service_verdict_names_the_unaccepted_eula_behind_a_403():
 def test_service_verdict_says_a_listing_still_answers_200_in_the_eula_state():
     # arrange: the trap is worth stating in the operator-facing reason, not only in a comment - a reader who
     # checks the listing by hand will see 200 and conclude the opposite
-    verdict = nexus.service_verdict(CFG, 403, "You must accept the End User License Agreement (EULA)")
+    verdict = nexusproxy.service_verdict(CFG, 403, "You must accept the End User License Agreement (EULA)")
 
     # act / assert
     assert "LISTING still answers 200" in verdict.reason
@@ -272,7 +272,7 @@ def test_service_verdict_reports_a_403_without_an_eula_hint_as_unknown():
     code, body = 403, "Access denied"
 
     # act
-    verdict = nexus.service_verdict(CFG, code, body)
+    verdict = nexusproxy.service_verdict(CFG, code, body)
 
     # assert
     assert verdict.serving is False
@@ -284,7 +284,7 @@ def test_service_verdict_flags_disabled_anonymous_read_behind_a_401():
     code = 401
 
     # act
-    verdict = nexus.service_verdict(CFG, code, "")
+    verdict = nexusproxy.service_verdict(CFG, code, "")
 
     # assert
     assert verdict.serving is False
@@ -295,7 +295,7 @@ def test_service_verdict_does_not_claim_the_eula_is_accepted_behind_a_401():
     # arrange: THE regression this pins. The two gates are ORDERED - an unauthenticated caller is rejected
     # BEFORE the EULA is consulted (measured: a virgin instance with anonymous read off answers 401 on the
     # content path, and only 403+EULA once anonymous read is on), so a 401 says NOTHING about the EULA
-    verdict = nexus.service_verdict(CFG, 401, "")
+    verdict = nexusproxy.service_verdict(CFG, 401, "")
 
     # assert
     assert verdict.eula_accepted is None
@@ -306,7 +306,7 @@ def test_service_verdict_reports_a_404_as_past_both_gates_but_not_serving():
     # arrange: measured live - the same pom answered 404 through `maven-central` while the `maven-public`
     # group served it. A cold cache whose remote did not supply it is the negative-cache trap, and it is
     # NOT a healthy proxy
-    verdict = nexus.service_verdict(CFG, 404, "")
+    verdict = nexusproxy.service_verdict(CFG, 404, "")
 
     # assert: both prerequisites are past (the call got through them), but nothing is served
     assert verdict.serving is False
@@ -317,7 +317,7 @@ def test_service_verdict_reports_a_404_as_past_both_gates_but_not_serving():
 def test_service_verdict_does_not_guess_which_of_the_two_404_causes_it_is():
     # arrange: a missing artefact and a missing repository both answer 404 (measured: 1429 vs 1344 byte
     # bodies, same status), so naming one would be a fabricated diagnosis
-    verdict = nexus.service_verdict(CFG, 404, "")
+    verdict = nexusproxy.service_verdict(CFG, 404, "")
 
     # act / assert: both are named as possibilities, neither is claimed
     assert "cache is cold" in verdict.reason
@@ -330,7 +330,7 @@ def test_service_verdict_reports_no_http_answer_as_not_up():
     code = None
 
     # act
-    verdict = nexus.service_verdict(CFG, code, "")
+    verdict = nexusproxy.service_verdict(CFG, code, "")
 
     # assert: nothing is claimed about either prerequisite - the answer does not say
     assert verdict.serving is False
@@ -343,7 +343,7 @@ def test_service_verdict_does_not_guess_a_cause_for_an_unexpected_status():
     code = 502
 
     # act
-    verdict = nexus.service_verdict(CFG, code, "")
+    verdict = nexusproxy.service_verdict(CFG, code, "")
 
     # assert
     assert verdict.serving is False
@@ -357,7 +357,7 @@ def test_repository_names_reads_the_listing():
     body = '[{"name":"npm-proxy","format":"npm"},{"name":"pypi-proxy","format":"pypi"}]'
 
     # act / assert
-    assert nexus.repository_names(body) == ("npm-proxy", "pypi-proxy")
+    assert nexusproxy.repository_names(body) == ("npm-proxy", "pypi-proxy")
 
 
 def test_repository_names_degrades_to_empty_on_a_body_it_cannot_parse():
@@ -365,7 +365,7 @@ def test_repository_names_degrades_to_empty_on_a_body_it_cannot_parse():
     body = "<html>502 Bad Gateway</html>"
 
     # act / assert
-    assert nexus.repository_names(body) == ()
+    assert nexusproxy.repository_names(body) == ()
 
 
 def test_repository_names_ignores_entries_without_a_name():
@@ -373,7 +373,7 @@ def test_repository_names_ignores_entries_without_a_name():
     body = '[{"format":"npm"}, "npm-proxy", {"name":"pypi-proxy"}]'
 
     # act / assert
-    assert nexus.repository_names(body) == ("pypi-proxy",)
+    assert nexusproxy.repository_names(body) == ("pypi-proxy",)
 
 
 # --- status_lines / status_rc (what the command may claim) -------------------------------------------
@@ -381,38 +381,38 @@ def test_repository_names_ignores_entries_without_a_name():
 def test_status_rc_fails_a_green_container_that_does_not_actually_serve():
     # arrange: THE case this command exists for - the container runs and its healthcheck is green, but the
     # EULA is unaccepted so every repository answers 403
-    container = nexus.ContainerVerdict(present=True, state="running", health="healthy")
-    service = nexus.service_verdict(CFG, 403, "accept the End User License Agreement (EULA)")
+    container = nexusproxy.ContainerVerdict(present=True, state="running", health="healthy")
+    service = nexusproxy.service_verdict(CFG, 403, "accept the End User License Agreement (EULA)")
 
     # act / assert: non-zero, because "healthy" is not "usable"
-    assert nexus.status_rc(container, service) == 1
+    assert nexusproxy.status_rc(container, service) == 1
 
 
 def test_status_rc_is_zero_only_when_the_container_runs_and_an_anonymous_read_succeeds():
     # arrange: fully provisioned
-    container = nexus.ContainerVerdict(present=True, state="running", health="healthy")
-    service = nexus.service_verdict(CFG, 200, "<project>...</project>")
+    container = nexusproxy.ContainerVerdict(present=True, state="running", health="healthy")
+    service = nexusproxy.service_verdict(CFG, 200, "<project>...</project>")
 
     # act / assert
-    assert nexus.status_rc(container, service) == 0
+    assert nexusproxy.status_rc(container, service) == 0
 
 
 def test_status_rc_fails_when_the_container_is_absent():
     # arrange: nothing started yet, but something else answers on the port (a stale tunnel, another host)
-    container = nexus.ContainerVerdict(present=False, state="", health="none")
-    service = nexus.service_verdict(CFG, 200, "<project>...</project>")
+    container = nexusproxy.ContainerVerdict(present=False, state="", health="none")
+    service = nexusproxy.service_verdict(CFG, 200, "<project>...</project>")
 
     # act / assert: a serving URL that is not THIS service is not a pass
-    assert nexus.status_rc(container, service) == 1
+    assert nexusproxy.status_rc(container, service) == 1
 
 
 def test_status_lines_point_at_the_bring_up_command_when_the_container_is_absent():
     # arrange: a first run before `nexus up`
-    container = nexus.ContainerVerdict(present=False, state="", health="none")
-    service = nexus.service_verdict(CFG, None, "")
+    container = nexusproxy.ContainerVerdict(present=False, state="", health="none")
+    service = nexusproxy.service_verdict(CFG, None, "")
 
     # act
-    lines = nexus.status_lines(CFG, container, service, "http://localhost:8181")
+    lines = nexusproxy.status_lines(CFG, container, service, "http://localhost:8181")
 
     # assert
     assert any("absent" in line and "nexus up" in line for line in lines)
@@ -422,11 +422,11 @@ def test_status_lines_report_both_prerequisites_from_the_eula_answer():
     # arrange: the EULA 403 on the CONTENT path. It reports both facts, and both are measured: the EULA is a
     # hard NO, and anonymous read is a YES because the request reached the EULA gate at all (with anonymous
     # read off the same call is rejected earlier, with 401)
-    container = nexus.ContainerVerdict(present=True, state="running", health="healthy")
-    service = nexus.service_verdict(CFG, 403, "accept the End User License Agreement (EULA)")
+    container = nexusproxy.ContainerVerdict(present=True, state="running", health="healthy")
+    service = nexusproxy.service_verdict(CFG, 403, "accept the End User License Agreement (EULA)")
 
     # act
-    lines = nexus.status_lines(CFG, container, service, "http://localhost:8181")
+    lines = nexusproxy.status_lines(CFG, container, service, "http://localhost:8181")
 
     # assert
     assert any(line.startswith("eula accepted: NO") for line in lines)
@@ -436,11 +436,11 @@ def test_status_lines_report_both_prerequisites_from_the_eula_answer():
 def test_status_lines_report_an_unknown_prerequisite_as_unknown():
     # arrange: a 403 that is NOT the EULA one says nothing about either prerequisite, and reporting those
     # Nones as "no" would be a fabricated diagnosis
-    container = nexus.ContainerVerdict(present=True, state="running", health="healthy")
-    service = nexus.service_verdict(CFG, 403, "Access denied")
+    container = nexusproxy.ContainerVerdict(present=True, state="running", health="healthy")
+    service = nexusproxy.service_verdict(CFG, 403, "Access denied")
 
     # act
-    lines = nexus.status_lines(CFG, container, service, "http://localhost:8181")
+    lines = nexusproxy.status_lines(CFG, container, service, "http://localhost:8181")
 
     # assert
     assert any(line.startswith("eula accepted: unknown") for line in lines)
@@ -451,11 +451,11 @@ def test_status_lines_never_claim_a_listed_repository_serves():
     # arrange: repositories exist, but presence is NOT proof - a proxy answers 404 while its upstream
     # rate-limits, and Nexus remembers that 404 for 24 h by default. Observed exactly that on maven-public
     # during the 2026-08-04 429 window, on a repository that serves correctly now
-    container = nexus.ContainerVerdict(present=True, state="running", health="healthy")
-    service = nexus.service_verdict(CFG, 200, "<project>...</project>")
+    container = nexusproxy.ContainerVerdict(present=True, state="running", health="healthy")
+    service = nexusproxy.service_verdict(CFG, 200, "<project>...</project>")
 
     # act
-    lines = nexus.status_lines(CFG, container, service, "http://localhost:8181",
+    lines = nexusproxy.status_lines(CFG, container, service, "http://localhost:8181",
                                ("maven-public", "npm-proxy"))
 
     # assert: the repositories are reported as PRESENT, with the caveat, and nothing is called working
@@ -467,11 +467,11 @@ def test_status_lines_never_claim_a_listed_repository_serves():
 
 def test_status_lines_omit_the_repository_caveat_when_nothing_is_listed():
     # arrange: no listing available (the 401/403 paths) - a caveat about an empty list is noise
-    container = nexus.ContainerVerdict(present=True, state="running", health="healthy")
-    service = nexus.service_verdict(CFG, 401, "")
+    container = nexusproxy.ContainerVerdict(present=True, state="running", health="healthy")
+    service = nexusproxy.service_verdict(CFG, 401, "")
 
     # act
-    lines = nexus.status_lines(CFG, container, service, "http://localhost:8181")
+    lines = nexusproxy.status_lines(CFG, container, service, "http://localhost:8181")
 
     # assert
     assert not any("repositories present" in line for line in lines)
@@ -481,10 +481,10 @@ def test_status_lines_omit_the_repository_caveat_when_nothing_is_listed():
 
 def test_parse_curl_answer_splits_the_tagged_status_code_from_the_body():
     # arrange: what `curl -o - -w '\n<marker>%{http_code}'` writes - the body, then the tagged code
-    text = f'[{{"name":"npm-proxy"}}]\n{nexus.CURL_CODE_MARKER}200'
+    text = f'[{{"name":"npm-proxy"}}]\n{nexusproxy.CURL_CODE_MARKER}200'
 
     # act
-    code, body = nexus.parse_curl_answer(text)
+    code, body = nexusproxy.parse_curl_answer(text)
 
     # assert: the body survives intact, which is the whole reason this probe is not `-o /dev/null`
     assert code == 200
@@ -494,10 +494,10 @@ def test_parse_curl_answer_splits_the_tagged_status_code_from_the_body():
 def test_parse_curl_answer_keeps_an_error_body_that_ends_in_digits():
     # arrange: THE reason the code is tagged and not read off the last line - an error body can end in
     # digits itself, and a positional parse would report the body's own number as the status
-    text = f"upstream said 429\n{nexus.CURL_CODE_MARKER}403"
+    text = f"upstream said 429\n{nexusproxy.CURL_CODE_MARKER}403"
 
     # act
-    code, body = nexus.parse_curl_answer(text)
+    code, body = nexusproxy.parse_curl_answer(text)
 
     # assert
     assert code == 403
@@ -506,10 +506,10 @@ def test_parse_curl_answer_keeps_an_error_body_that_ends_in_digits():
 
 def test_parse_curl_answer_maps_curls_zero_code_to_no_answer():
     # arrange: curl writes 000 when it never got an answer (DNS failure, connection refused)
-    text = f"\n{nexus.CURL_CODE_MARKER}000"
+    text = f"\n{nexusproxy.CURL_CODE_MARKER}000"
 
     # act
-    code, _ = nexus.parse_curl_answer(text)
+    code, _ = nexusproxy.parse_curl_answer(text)
 
     # assert: the same "no answer at all" the host probe reports, never a status code of 0
     assert code is None
@@ -521,7 +521,7 @@ def test_parse_curl_answer_treats_output_without_the_marker_as_no_answer():
     text = "docker: Cannot connect to the Docker daemon"
 
     # act / assert
-    assert nexus.parse_curl_answer(text) == (None, "")
+    assert nexusproxy.parse_curl_answer(text) == (None, "")
 
 
 # --- #996 effective_answer / reachability_lines ------------------------------------------------------
@@ -532,7 +532,7 @@ def test_effective_answer_classifies_the_build_containers_answer_when_the_shell_
     build = (403, "You must accept the End User License Agreement (EULA)")
 
     # act
-    code, body = nexus.effective_answer(host, build)
+    code, body = nexusproxy.effective_answer(host, build)
 
     # assert: the diagnosis comes from the vantage point that ANSWERED, so the EULA body is not lost
     assert code == 403
@@ -545,7 +545,7 @@ def test_effective_answer_falls_back_to_the_shell_when_no_container_answered():
     build = (None, "")
 
     # act / assert
-    assert nexus.effective_answer(host, build) == (200, "[]")
+    assert nexusproxy.effective_answer(host, build) == (200, "[]")
 
 
 def test_reachability_lines_report_each_vantage_point_on_its_own_line():
@@ -553,17 +553,17 @@ def test_reachability_lines_report_each_vantage_point_on_its_own_line():
     host_code, build_code = None, 200
 
     # act
-    lines = nexus.reachability_lines(CFG, host_code, build_code, "http://172.17.0.1:8181")
+    lines = nexusproxy.reachability_lines(CFG, host_code, build_code, "http://172.17.0.1:8181")
 
     # assert: two separate honest statements, never one merged verdict
-    assert f"reachable from {nexus.HOST_VANTAGE}: no (no answer)" in lines
-    assert f"reachable from {nexus.BUILD_VANTAGE}: yes (HTTP 200)" in lines
+    assert f"reachable from {nexusproxy.HOST_VANTAGE}: no (no answer)" in lines
+    assert f"reachable from {nexusproxy.BUILD_VANTAGE}: yes (HTTP 200)" in lines
 
 
 def test_reachability_lines_say_the_builds_are_fine_when_only_the_shell_cannot_reach_it():
     # arrange: exactly the #996 complaint - `status` claimed a dead proxy while every build resolved
     # through it, because only the shell was asked
-    lines = nexus.reachability_lines(CFG, None, 200, "http://172.17.0.1:8181")
+    lines = nexusproxy.reachability_lines(CFG, None, 200, "http://172.17.0.1:8181")
 
     # act
     report = "\n".join(lines)
@@ -571,13 +571,13 @@ def test_reachability_lines_say_the_builds_are_fine_when_only_the_shell_cannot_r
     # assert: it says the builds are fine, and it keeps the NEXUS_URL override hint
     assert "the BUILDS resolve through the proxy fine" in report
     assert "this is not a fault" in report
-    assert nexus.NEXUS_URL_ENV_VAR in report
+    assert nexusproxy.NEXUS_URL_ENV_VAR in report
 
 
 def test_reachability_lines_flag_the_opposite_disagreement_as_broken_builds():
     # arrange: the inverse, and it is NOT harmless - the shell reaches a `localhost` base that a container
     # resolves to itself, so every build silently resolves against the origins
-    lines = nexus.reachability_lines(CFG, 200, None, "http://localhost:8181")
+    lines = nexusproxy.reachability_lines(CFG, 200, None, "http://localhost:8181")
 
     # act
     report = "\n".join(lines)
@@ -589,7 +589,7 @@ def test_reachability_lines_flag_the_opposite_disagreement_as_broken_builds():
 
 def test_reachability_lines_add_no_note_when_both_vantage_points_agree():
     # arrange: both reach it - there is no disagreement to explain, and a note would be noise
-    lines = nexus.reachability_lines(CFG, 200, 200, "http://172.17.0.1:8181")
+    lines = nexusproxy.reachability_lines(CFG, 200, 200, "http://172.17.0.1:8181")
 
     # act / assert
     assert len(lines) == 2
@@ -599,20 +599,20 @@ def test_reachability_lines_add_no_note_when_both_vantage_points_agree():
 def test_status_rc_fails_when_a_build_container_cannot_reach_a_proxy_the_shell_can():
     # arrange: green container, the shell gets a serving 200, but no build container reaches it - the
     # builds are broken and it looks perfect from here, which is the case a single verdict hides
-    container = nexus.ContainerVerdict(present=True, state="running", health="healthy")
-    service = nexus.service_verdict(CFG, 200, "<project>...</project>")
+    container = nexusproxy.ContainerVerdict(present=True, state="running", health="healthy")
+    service = nexusproxy.service_verdict(CFG, 200, "<project>...</project>")
 
     # act / assert
-    assert nexus.status_rc(container, service, build_reachable=False) == 1
+    assert nexusproxy.status_rc(container, service, build_reachable=False) == 1
 
 
 def test_status_rc_does_not_fail_on_an_unasked_build_vantage():
     # arrange: the default - an UNKNOWN build vantage must not invent a failure
-    container = nexus.ContainerVerdict(present=True, state="running", health="healthy")
-    service = nexus.service_verdict(CFG, 200, "<project>...</project>")
+    container = nexusproxy.ContainerVerdict(present=True, state="running", health="healthy")
+    service = nexusproxy.service_verdict(CFG, 200, "<project>...</project>")
 
     # act / assert
-    assert nexus.status_rc(container, service) == 0
+    assert nexusproxy.status_rc(container, service) == 0
 
 
 # --- #994 blob store --------------------------------------------------------------------------------
@@ -623,7 +623,7 @@ def test_parse_blob_stores_reads_the_size_the_blob_count_and_the_free_space():
             '"totalSizeInBytes":85060857,"availableSpaceInBytes":33630093312}]')
 
     # act
-    stores = nexus.parse_blob_stores(body)
+    stores = nexusproxy.parse_blob_stores(body)
 
     # assert
     assert len(stores) == 1
@@ -637,23 +637,23 @@ def test_parse_blob_stores_degrades_to_empty_on_a_body_it_cannot_parse():
     body = '{"message":"access denied"}'
 
     # act / assert: not a list -> no blob store, no exception
-    assert nexus.parse_blob_stores(body) == ()
+    assert nexusproxy.parse_blob_stores(body) == ()
 
 
 def test_format_bytes_uses_binary_units_so_it_matches_df_and_docker():
     # arrange / act / assert: the same base the numbers a reader compares this against use
-    assert nexus.format_bytes(85060857) == "81.1 MiB"
-    assert nexus.format_bytes(33630093312) == "31.3 GiB"
-    assert nexus.format_bytes(512) == "512 B"
+    assert nexusproxy.format_bytes(85060857) == "81.1 MiB"
+    assert nexusproxy.format_bytes(33630093312) == "31.3 GiB"
+    assert nexusproxy.format_bytes(512) == "512 B"
 
 
 def test_blob_store_lines_report_the_size_and_the_free_space_under_it():
     # arrange: a real reading
-    store = nexus.BlobStore(name="default", blob_count=481, total_bytes=85060857,
+    store = nexusproxy.BlobStore(name="default", blob_count=481, total_bytes=85060857,
                             available_bytes=33630093312)
 
     # act
-    report = "\n".join(nexus.blob_store_lines(CFG, 200, (store,)))
+    report = "\n".join(nexusproxy.blob_store_lines(CFG, 200, (store,)))
 
     # assert: the size AND the filesystem headroom, because the failure #994 is about is a full disk
     assert "blob store default: 81.1 MiB in 481 blobs" in report
@@ -663,11 +663,11 @@ def test_blob_store_lines_report_the_size_and_the_free_space_under_it():
 def test_blob_store_lines_never_suggest_removing_the_volume():
     # arrange: THE negative case of #994 - the wrong reaction to a large number here is a volume rm, which
     # throws the whole cache away and sends every build back to the rate-limited origins
-    store = nexus.BlobStore(name="default", blob_count=481, total_bytes=85060857,
+    store = nexusproxy.BlobStore(name="default", blob_count=481, total_bytes=85060857,
                             available_bytes=33630093312)
 
     # act
-    report = "\n".join(nexus.blob_store_lines(CFG, 200, (store,)))
+    report = "\n".join(nexusproxy.blob_store_lines(CFG, 200, (store,)))
 
     # assert: it names the disk guard and clean as deliberately leaving it, and points at the reclaim
     assert "never with a volume rm" in report
@@ -677,20 +677,20 @@ def test_blob_store_lines_never_suggest_removing_the_volume():
 
 def test_blob_store_lines_report_a_missing_credential_as_not_measured():
     # arrange: no admin password available at all (the generated file is gone, the env var unset)
-    lines = nexus.blob_store_lines(CFG, None, credentials=False)
+    lines = nexusproxy.blob_store_lines(CFG, None, credentials=False)
 
     # act
     report = "\n".join(lines)
 
     # assert: NOT REPORTED with the reason - never a fabricated 0 B for the one thing this measures
     assert "not reported" in report
-    assert nexus.ADMIN_PASSWORD_ENV_VAR in report
+    assert nexusproxy.ADMIN_PASSWORD_ENV_VAR in report
     assert "0 B" not in report
 
 
 def test_blob_store_lines_report_a_refused_credential_as_not_measured():
     # arrange: the endpoint is admin-only even with anonymous read on (measured: anonymous gets 403)
-    report = "\n".join(nexus.blob_store_lines(CFG, 403))
+    report = "\n".join(nexusproxy.blob_store_lines(CFG, 403))
 
     # act / assert
     assert "not reported" in report
@@ -699,7 +699,7 @@ def test_blob_store_lines_report_a_refused_credential_as_not_measured():
 
 def test_blob_store_lines_do_not_claim_a_reading_from_an_empty_listing():
     # arrange: a 200 that carried no blob store at all - reporting "0 B" would be a measurement nobody made
-    report = "\n".join(nexus.blob_store_lines(CFG, 200, ()))
+    report = "\n".join(nexusproxy.blob_store_lines(CFG, 200, ()))
 
     # act / assert
     assert "not reported" in report
@@ -709,7 +709,7 @@ def test_blob_store_lines_do_not_claim_a_reading_from_an_empty_listing():
 
 def test_volume_guard_note_warns_about_the_volume_the_guard_must_not_prune():
     # arrange: the disk is below the bar and a Nexus volume exists
-    note = nexus.volume_guard_note(CFG, free_pct=9, min_free_pct=15, volume_present=True)
+    note = nexusproxy.volume_guard_note(CFG, free_pct=9, min_free_pct=15, volume_present=True)
 
     # assert: it says the guard does NOT prune it, why, and what to do instead
     assert note is not None
@@ -721,19 +721,19 @@ def test_volume_guard_note_warns_about_the_volume_the_guard_must_not_prune():
 def test_volume_guard_note_is_silent_when_the_disk_is_not_actually_low():
     # arrange: plenty of room - a standing warning on every `up` would just be noise
     # act / assert
-    assert nexus.volume_guard_note(CFG, free_pct=40, min_free_pct=15, volume_present=True) is None
+    assert nexusproxy.volume_guard_note(CFG, free_pct=40, min_free_pct=15, volume_present=True) is None
 
 
 def test_volume_guard_note_is_silent_on_a_host_that_has_no_nexus():
     # arrange: low disk, but no such volume - warning about a volume that does not exist is fabrication
     # act / assert
-    assert nexus.volume_guard_note(CFG, free_pct=3, min_free_pct=15, volume_present=False) is None
+    assert nexusproxy.volume_guard_note(CFG, free_pct=3, min_free_pct=15, volume_present=False) is None
 
 
 def test_volume_guard_note_is_silent_when_the_free_space_is_unknown():
     # arrange: an unparseable df line - no verdict, so no warning
     # act / assert
-    assert nexus.volume_guard_note(CFG, free_pct=None, min_free_pct=15, volume_present=True) is None
+    assert nexusproxy.volume_guard_note(CFG, free_pct=None, min_free_pct=15, volume_present=True) is None
 
 
 # --- #994 cleanup policies --------------------------------------------------------------------------
@@ -743,38 +743,38 @@ def test_cleanup_days_defaults_to_the_shipped_retention_window():
     env = {}
 
     # act / assert
-    assert nexus.cleanup_days(env) == nexus.DEFAULT_CLEANUP_DAYS
+    assert nexusproxy.cleanup_days(env) == nexusproxy.DEFAULT_CLEANUP_DAYS
 
 
 def test_cleanup_days_follows_an_explicit_override():
     # arrange: an operator widening the window on a host with plenty of disk
-    env = {nexus.CLEANUP_DAYS_ENV_VAR: "90"}
+    env = {nexusproxy.CLEANUP_DAYS_ENV_VAR: "90"}
 
     # act / assert
-    assert nexus.cleanup_days(env) == 90
+    assert nexusproxy.cleanup_days(env) == 90
 
 
 def test_cleanup_days_refuses_a_zero_window_and_falls_back_to_the_default():
     # arrange: 0 days would delete artefacts the moment they stop being downloaded, i.e. exactly the
     # self-inflicted re-download this feature exists to avoid
-    env = {nexus.CLEANUP_DAYS_ENV_VAR: "0"}
+    env = {nexusproxy.CLEANUP_DAYS_ENV_VAR: "0"}
 
     # act / assert
-    assert nexus.cleanup_days(env) == nexus.DEFAULT_CLEANUP_DAYS
+    assert nexusproxy.cleanup_days(env) == nexusproxy.DEFAULT_CLEANUP_DAYS
 
 
 def test_cleanup_days_ignores_a_non_numeric_override():
     # arrange: a typo must not become a criterion
-    env = {nexus.CLEANUP_DAYS_ENV_VAR: "thirty"}
+    env = {nexusproxy.CLEANUP_DAYS_ENV_VAR: "thirty"}
 
     # act / assert
-    assert nexus.cleanup_days(env) == nexus.DEFAULT_CLEANUP_DAYS
+    assert nexusproxy.cleanup_days(env) == nexusproxy.DEFAULT_CLEANUP_DAYS
 
 
 def test_policy_name_is_stable_across_retention_changes():
     # arrange / act: the days live in the criteria, not in the name, so a re-run with a different window
     # UPDATES one policy instead of leaving a trail of them attached to the same repository
-    name = nexus.policy_name(CFG, "maven2")
+    name = nexusproxy.policy_name(CFG, "maven2")
 
     # assert
     assert name == "democtl-maven2-lastdownload"
@@ -784,7 +784,7 @@ def test_policy_name_is_stable_across_retention_changes():
 def test_cleanup_formats_collapses_the_two_maven_repositories_onto_one_policy():
     # arrange / act: a cleanup policy is FORMAT-scoped, and maven-central + gradle-plugins-proxy are both
     # maven2, so creating one policy per repository would create a duplicate
-    formats = nexus.cleanup_formats(CFG)
+    formats = nexusproxy.cleanup_formats(CFG)
 
     # assert: distinct, and every configured repository's format is covered
     assert len(formats) == len(set(formats))
@@ -793,7 +793,7 @@ def test_cleanup_formats_collapses_the_two_maven_repositories_onto_one_policy():
 
 def test_policy_body_carries_the_last_downloaded_criterion_in_days_and_nothing_else():
     # arrange / act
-    body = json.loads(nexus.policy_body(CFG, "npm", 45))
+    body = json.loads(nexusproxy.policy_body(CFG, "npm", 45))
 
     # assert: exactly one criterion is set; the others stay null so the policy says one thing
     assert (body["format"], body["criteriaLastDownloaded"]) == ("npm", 45)
@@ -804,7 +804,7 @@ def test_policy_body_carries_the_last_downloaded_criterion_in_days_and_nothing_e
 def test_policy_verdict_treats_an_existing_policy_as_an_update_not_an_error():
     # arrange: the measured pair - POST answers 400 "Name is already used", PUT on the name answers 200
     # and really does change the criteria (verified 30 -> 45 days, read back)
-    ok, outcome = nexus.policy_verdict(post_code=400, put_code=200)
+    ok, outcome = nexusproxy.policy_verdict(post_code=400, put_code=200)
 
     # assert
     assert ok is True
@@ -814,7 +814,7 @@ def test_policy_verdict_treats_an_existing_policy_as_an_update_not_an_error():
 def test_policy_verdict_reports_a_failed_update_of_an_existing_policy_as_a_failure():
     # arrange: the name is taken but the update was refused, so the retention window is NOT what was asked
     # for - reporting "exists" as success would hide that
-    ok, outcome = nexus.policy_verdict(post_code=400, put_code=403)
+    ok, outcome = nexusproxy.policy_verdict(post_code=400, put_code=403)
 
     # assert
     assert ok is False
@@ -823,7 +823,7 @@ def test_policy_verdict_reports_a_failed_update_of_an_existing_policy_as_a_failu
 
 def test_policy_verdict_reports_no_answer_as_a_failure():
     # arrange: the API did not answer at all
-    ok, outcome = nexus.policy_verdict(post_code=None)
+    ok, outcome = nexusproxy.policy_verdict(post_code=None)
 
     # assert
     assert ok is False
@@ -836,7 +836,7 @@ def test_cleanup_patch_adds_the_policy_to_a_repository_that_has_none():
                  '"negativeCache":{"enabled":true,"timeToLive":1},"format":"npm","type":"proxy"}')
 
     # act
-    patched, outcome = nexus.cleanup_patch(repo_body, "democtl-npm-lastdownload")
+    patched, outcome = nexusproxy.cleanup_patch(repo_body, "democtl-npm-lastdownload")
 
     # assert: the policy is attached and NOTHING else in the configuration changed - a re-render of the
     # canonical body would silently undo an operator's raised negativeCache TTL
@@ -852,7 +852,7 @@ def test_cleanup_patch_keeps_a_policy_someone_else_attached():
     repo_body = '{"name":"npm-proxy","cleanup":{"policyNames":["ops-own-policy"]}}'
 
     # act
-    patched, outcome = nexus.cleanup_patch(repo_body, "democtl-npm-lastdownload")
+    patched, outcome = nexusproxy.cleanup_patch(repo_body, "democtl-npm-lastdownload")
 
     # assert: a UNION, in order
     assert outcome == "attach"
@@ -864,7 +864,7 @@ def test_cleanup_patch_is_a_no_op_when_the_policy_is_already_attached():
     repo_body = '{"name":"npm-proxy","cleanup":{"policyNames":["democtl-npm-lastdownload"]}}'
 
     # act
-    patched, outcome = nexus.cleanup_patch(repo_body, "democtl-npm-lastdownload")
+    patched, outcome = nexusproxy.cleanup_patch(repo_body, "democtl-npm-lastdownload")
 
     # assert
     assert patched is None
@@ -877,7 +877,7 @@ def test_cleanup_patch_refuses_to_put_back_a_body_it_could_not_read():
     repo_body = "<html>502 Bad Gateway</html>"
 
     # act
-    patched, outcome = nexus.cleanup_patch(repo_body, "democtl-npm-lastdownload")
+    patched, outcome = nexusproxy.cleanup_patch(repo_body, "democtl-npm-lastdownload")
 
     # assert
     assert patched is None
@@ -887,7 +887,7 @@ def test_cleanup_patch_refuses_to_put_back_a_body_it_could_not_read():
 def test_curl_stdin_config_keeps_the_credential_out_of_argv():
     # arrange / act: the credential travels as a `curl -K -` config on STDIN, the mechanism
     # create-repositories.sh established, because argv is visible in `ps` and lands in shell history
-    config = nexus.curl_stdin_config("s3cret")
+    config = nexusproxy.curl_stdin_config("s3cret")
 
     # assert
     assert config == 'user = "admin:s3cret"\n'
@@ -896,7 +896,7 @@ def test_curl_stdin_config_keeps_the_credential_out_of_argv():
 def test_curl_stdin_config_escapes_a_body_containing_quotes_and_backslashes():
     # arrange: a JSON body is nothing but quotes, and curl's config syntax needs both escaped. Verified
     # against the live instance with exactly these two characters in the payload (HTTP 200, intact)
-    config = nexus.curl_stdin_config("pw", '{"notes":"a \\" quote"}')
+    config = nexusproxy.curl_stdin_config("pw", '{"notes":"a \\" quote"}')
 
     # act / assert: every quote and backslash of the payload is escaped for the config parser
     assert 'data = "{\\"notes\\":\\"a \\\\\\" quote\\"}"' in config
@@ -906,7 +906,7 @@ def test_curl_stdin_config_escapes_a_body_containing_quotes_and_backslashes():
 def test_curl_stdin_config_escapes_a_password_containing_a_quote():
     # arrange: an operator-set NEXUS_ADMIN_PASSWORD may contain anything; an unescaped quote would end the
     # config value early and send a TRUNCATED password
-    config = nexus.curl_stdin_config('we"ird')
+    config = nexusproxy.curl_stdin_config('we"ird')
 
     # act / assert
     assert config == 'user = "admin:we\\"ird"\n'
@@ -918,22 +918,22 @@ def test_dry_run_line_reports_how_many_components_would_be_deleted():
     body = '{"repository":"npm-proxy","status":"COMPLETED","componentCount":17,"dryRun":true}'
 
     # act
-    line = nexus.dry_run_line("npm-proxy", 200, body)
+    line = nexusproxy.dry_run_line("npm-proxy", 200, body)
 
     # assert: a count, and named as what the shipped task WOULD do, never as something already done
     assert "17 component(s) would be deleted" in line
-    assert nexus.CLEANUP_TASK_NAME in line
+    assert nexusproxy.CLEANUP_TASK_NAME in line
 
 
 def test_dry_run_line_reports_an_absent_repository_as_nothing_to_evaluate():
     # arrange: a partially provisioned instance answers 404 for a repository `nexus repos` never created
     # act / assert: not an error - this command must work before every repository exists
-    assert "absent" in nexus.dry_run_line("nodejs-proxy", 404, "")
+    assert "absent" in nexusproxy.dry_run_line("nodejs-proxy", 404, "")
 
 
 def test_dry_run_line_does_not_invent_a_count_from_an_answer_without_one():
     # arrange: a 200 whose body is not the execution status (a proxy in front, a version change)
-    line = nexus.dry_run_line("npm-proxy", 200, "<html>ok</html>")
+    line = nexusproxy.dry_run_line("npm-proxy", 200, "<html>ok</html>")
 
     # act / assert
     assert "no componentCount" in line
@@ -944,7 +944,7 @@ def test_dry_run_line_does_not_invent_a_count_from_an_answer_without_one():
 
 def test_member_listing_names_every_member():
     # arrange / act: the bare `netctl nexus` call lists its members; no default action shadows the group
-    listing = "\n".join(nexus.member_listing(CFG))
+    listing = "\n".join(nexusproxy.member_listing(CFG))
 
     # assert
     for member in ("up", "down", "status", "repos", "cleanup"):
@@ -953,7 +953,7 @@ def test_member_listing_names_every_member():
 
 def test_unknown_member_fails_loudly_with_the_member_list():
     # arrange / act: a typo must never silently fall back to a default member
-    message = nexus.unknown_member_message("statuss")
+    message = nexusproxy.unknown_member_message("statuss")
 
     # assert
     assert "statuss" in message

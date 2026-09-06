@@ -1,65 +1,23 @@
-"""Container-image build/publish naming primitives for the *ctl orchestrators (netctl#730, extracted from
-netctl's orchestrator tooling).
+"""Tombstone: this module now lives at `simplon.imagenames` (#37).
 
-Two pure string derivations the packaging/publish commands share: the image version TAG (from an
-``IMAGE_VERSION`` override, else the Gradle ``version = "..."``, else a fallback) and the fully-qualified
-registry repo string ``[registry/]namespace/name``. No docker, no I/O - product-agnostic, so a product's
-package/publish commands read them the same way.
+Two things were wrong at once. The name collided with `simplon.tasks.image`, the container-image task
+body - the #31 review tripped over exactly that pair - and the two are unrelated: the task body does
+not import this module and never did. What is here is five pure string derivations that build an image
+reference - `hub_repo`, `image_ref`, `image_version`, `registry_prefix`, `require_registry`, all five in
+use - so `imagenames` says what it is and no longer reads like the task.
+
+It still imports and every name still resolves - the attribute is fetched from the new module and a
+`FutureWarning` says where it went. That is deliberate: a product on the old path gets a working run
+with a message in it rather than a stack trace, and has until the next minor release to change the
+line, at which point this file goes.
 """
 from __future__ import annotations
 
-import re
+from typing import Any
 
-from simplon import log
-
-
-def image_version(build_gradle_text: str, env_override: str | None = None) -> str:
-    """The image tag: ``env_override`` if set (an explicit ``IMAGE_VERSION``), else the ``version = "..."``
-    from a Gradle build script, else the ``0.1.0`` fallback."""
-    if env_override:
-        return env_override
-    m = re.search(r'^\s*version = "(.*)".*', build_gradle_text, re.MULTILINE)
-    return m.group(1) if m else "0.1.0"
+from simplon import surface
 
 
-def hub_repo(name: str, namespace: str, registry: str = "") -> str:
-    """The fully-qualified repo string ``[registry/]namespace/name`` (a plain Docker Hub form when
-    ``registry`` is empty, else a prefixed non-Hub registry like ghcr.io)."""
-    prefix = f"{registry}/" if registry else ""
-    return f"{prefix}{namespace}/{name}"
-
-
-
-def registry_prefix(value: str | None) -> str:
-    """A registry as it prefixes an image name: trimmed, without a trailing slash, empty when unset.
-
-    Reads straight off an ``IMAGE_REGISTRY`` variable, where "unset", "empty", "whitespace" and "a stray
-    trailing slash" all have to come out meaning the same thing."""
-    return (value or "").strip().rstrip("/")
-
-
-def image_ref(name: str, tag: str, registry: str | None = "") -> str:
-    """The fully-qualified image reference ``[registry/]name:tag``.
-
-    The tagging half of the same derivation ``hub_repo`` starts: that one builds the repo string for a
-    product keeping its namespace as a separate field, this one stamps the tag on and accepts a
-    ``registry`` that already carries the namespace (``ghcr.io/acme``) - the form an ``IMAGE_REGISTRY``
-    variable normally has. Without a registry the reference is unqualified, which is right for a local
-    build and wrong for a push (see ``require_registry``)."""
-    prefix = registry_prefix(registry)
-    return f"{prefix}/{name}:{tag}" if prefix else f"{name}:{tag}"
-
-
-def require_registry(value: str | None, *, var: str = "IMAGE_REGISTRY",
-                     example: str = "ghcr.io/<namespace>") -> str:
-    """The registry prefix for a PUSH, or die naming the variable that is missing.
-
-    Building an unqualified ``name:tag`` locally is normal; pushing one is not. Docker resolves an
-    unqualified name against Docker Hub, so an unset variable does not fail the push - it publishes to
-    somewhere else entirely, under a name that may not even be yours. Refusing is the only safe reading,
-    and the variable's name is the caller's so the message names the one it actually reads."""
-    prefix = registry_prefix(value)
-    if not prefix:
-        log.die(f"publishing needs {var} (e.g. {example}); refusing to push an unqualified image name, "
-                f"which docker would resolve against Docker Hub")
-    return prefix
+def __getattr__(name: str) -> Any:
+    """Serve every name from the new home, announcing the move on use."""
+    return surface.moved_attr(__name__, "simplon.imagenames", name)

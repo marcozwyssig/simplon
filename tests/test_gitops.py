@@ -1,18 +1,18 @@
-"""Unit tests for vcs.prune_verdict - the squash-aware keep/delete decision behind prune-branches.
-No git, no subprocess; AAA throughout. Moved here from netctl - the vcs wrappers are platform's now."""
-from simplon import vcs
+"""Unit tests for gitops.prune_verdict - the squash-aware keep/delete decision behind prune-branches.
+No git, no subprocess; AAA throughout. Moved here from netctl - the git wrappers are platform's now."""
+from simplon.tasks import gitops
 
 
 def test_main_or_current_branch_is_skipped():
     # arrange / act / assert: main and the current branch are never touched
-    assert vcs.prune_verdict(is_main_or_current=True, in_worktree=False,
+    assert gitops.prune_verdict(is_main_or_current=True, in_worktree=False,
                              is_ancestor=True, in_merged_prs=True) == ("skip", "")
 
 
 def test_worktree_branch_is_kept_even_if_merged():
     # arrange: a branch checked out in a worktree but also an ancestor of main
     # act
-    action, reason = vcs.prune_verdict(is_main_or_current=False, in_worktree=True,
+    action, reason = gitops.prune_verdict(is_main_or_current=False, in_worktree=True,
                                        is_ancestor=True, in_merged_prs=True)
 
     # assert: worktree wins over the merged signals (git would refuse to delete it anyway)
@@ -22,7 +22,7 @@ def test_worktree_branch_is_kept_even_if_merged():
 
 def test_ancestor_of_main_is_deleted():
     # arrange / act: a normally-merged (ancestor) branch
-    action, reason = vcs.prune_verdict(is_main_or_current=False, in_worktree=False,
+    action, reason = gitops.prune_verdict(is_main_or_current=False, in_worktree=False,
                                        is_ancestor=True, in_merged_prs=False)
 
     # assert
@@ -32,7 +32,7 @@ def test_ancestor_of_main_is_deleted():
 
 def test_squash_merged_branch_is_deleted_via_pr_name():
     # arrange: NOT an ancestor (squash merge rewrites history) but its PR is merged
-    action, reason = vcs.prune_verdict(is_main_or_current=False, in_worktree=False,
+    action, reason = gitops.prune_verdict(is_main_or_current=False, in_worktree=False,
                                        is_ancestor=False, in_merged_prs=True)
 
     # assert: the gh PR-name signal catches the squash case
@@ -42,7 +42,7 @@ def test_squash_merged_branch_is_deleted_via_pr_name():
 
 def test_unmerged_branch_is_kept():
     # arrange / act: real work in progress
-    action, reason = vcs.prune_verdict(is_main_or_current=False, in_worktree=False,
+    action, reason = gitops.prune_verdict(is_main_or_current=False, in_worktree=False,
                                        is_ancestor=False, in_merged_prs=False)
 
     # assert: kept, never silently lost
@@ -52,7 +52,7 @@ def test_unmerged_branch_is_kept():
 
 def test_ancestor_takes_precedence_over_pr_merged():
     # arrange: both signals true -> the ancestor reason wins (it is checked first)
-    action, reason = vcs.prune_verdict(is_main_or_current=False, in_worktree=False,
+    action, reason = gitops.prune_verdict(is_main_or_current=False, in_worktree=False,
                                        is_ancestor=True, in_merged_prs=True)
 
     # assert
@@ -64,9 +64,9 @@ def test_ancestor_takes_precedence_over_pr_merged():
 
 def test_the_unmerged_bucket_is_deleted_only_when_explicitly_asked_for():
     # arrange / act: the same branch, both ways round
-    kept = vcs.prune_verdict(is_main_or_current=False, in_worktree=False,
+    kept = gitops.prune_verdict(is_main_or_current=False, in_worktree=False,
                              is_ancestor=False, in_merged_prs=False)
-    pruned = vcs.prune_verdict(is_main_or_current=False, in_worktree=False,
+    pruned = gitops.prune_verdict(is_main_or_current=False, in_worktree=False,
                                is_ancestor=False, in_merged_prs=False, prune_unmerged=True)
 
     # assert: the default is unchanged - this flag may never become the quiet default
@@ -76,7 +76,7 @@ def test_the_unmerged_bucket_is_deleted_only_when_explicitly_asked_for():
 
 def test_main_and_the_current_branch_are_protected_even_with_the_flag():
     # arrange / act: the flag is about the LAST bucket, not about weakening the guards above it
-    action, reason = vcs.prune_verdict(is_main_or_current=True, in_worktree=False,
+    action, reason = gitops.prune_verdict(is_main_or_current=True, in_worktree=False,
                                        is_ancestor=False, in_merged_prs=False, prune_unmerged=True)
 
     # assert
@@ -87,7 +87,7 @@ def test_main_and_the_current_branch_are_protected_even_with_the_flag():
 def test_a_worktree_branch_is_protected_even_with_the_flag():
     # arrange / act: git refuses to delete it anyway, so turning this into a delete would only produce a
     # failure the caller has to interpret
-    action, reason = vcs.prune_verdict(is_main_or_current=False, in_worktree=True,
+    action, reason = gitops.prune_verdict(is_main_or_current=False, in_worktree=True,
                                        is_ancestor=False, in_merged_prs=False, prune_unmerged=True)
 
     # assert
@@ -98,9 +98,9 @@ def test_a_worktree_branch_is_protected_even_with_the_flag():
 def test_a_provably_merged_branch_keeps_its_own_reason_under_the_flag():
     # arrange / act: the flag must not relabel branches the command could already explain, because the
     # reason is what tells the operator which deletions were risk-free
-    ancestor = vcs.prune_verdict(is_main_or_current=False, in_worktree=False,
+    ancestor = gitops.prune_verdict(is_main_or_current=False, in_worktree=False,
                                  is_ancestor=True, in_merged_prs=False, prune_unmerged=True)
-    pr = vcs.prune_verdict(is_main_or_current=False, in_worktree=False,
+    pr = gitops.prune_verdict(is_main_or_current=False, in_worktree=False,
                            is_ancestor=False, in_merged_prs=True, prune_unmerged=True)
 
     # assert
@@ -117,13 +117,13 @@ class _FakeResult:
 
 def test_init_submodule_runs_git_submodule_update_init_at_the_configured_root(monkeypatch, tmp_path):
     # arrange
-    vcs.configure(tmp_path)
+    gitops.configure(tmp_path)
     calls = []
-    monkeypatch.setattr(vcs, "run", lambda args, capture=True: calls.append(args) or _FakeResult(True))
-    monkeypatch.setattr(vcs.shutil, "which", lambda tool: "/usr/bin/git")
+    monkeypatch.setattr(gitops, "run", lambda args, capture=True: calls.append(args) or _FakeResult(True))
+    monkeypatch.setattr(gitops.shutil, "which", lambda tool: "/usr/bin/git")
 
     # act
-    rc = vcs.init_submodule()
+    rc = gitops.init_submodule()
 
     # assert
     assert rc == 0
@@ -132,13 +132,13 @@ def test_init_submodule_runs_git_submodule_update_init_at_the_configured_root(mo
 
 def test_init_submodule_honours_a_custom_path(monkeypatch, tmp_path):
     # arrange
-    vcs.configure(tmp_path)
+    gitops.configure(tmp_path)
     calls = []
-    monkeypatch.setattr(vcs, "run", lambda args, capture=True: calls.append(args) or _FakeResult(True))
-    monkeypatch.setattr(vcs.shutil, "which", lambda tool: "/usr/bin/git")
+    monkeypatch.setattr(gitops, "run", lambda args, capture=True: calls.append(args) or _FakeResult(True))
+    monkeypatch.setattr(gitops.shutil, "which", lambda tool: "/usr/bin/git")
 
     # act
-    vcs.init_submodule("lib/other")
+    gitops.init_submodule("lib/other")
 
     # assert
     assert calls == [["git", "-C", str(tmp_path), "submodule", "update", "--init", "lib/other"]]
@@ -146,12 +146,12 @@ def test_init_submodule_honours_a_custom_path(monkeypatch, tmp_path):
 
 def test_init_submodule_returns_1_when_git_fails(monkeypatch, tmp_path):
     # arrange
-    vcs.configure(tmp_path)
-    monkeypatch.setattr(vcs, "run", lambda args, capture=True: _FakeResult(False))
-    monkeypatch.setattr(vcs.shutil, "which", lambda tool: "/usr/bin/git")
+    gitops.configure(tmp_path)
+    monkeypatch.setattr(gitops, "run", lambda args, capture=True: _FakeResult(False))
+    monkeypatch.setattr(gitops.shutil, "which", lambda tool: "/usr/bin/git")
 
     # act
-    rc = vcs.init_submodule()
+    rc = gitops.init_submodule()
 
     # assert
     assert rc == 1
@@ -165,24 +165,24 @@ def test_the_reported_scopes_are_read_off_the_status_line():
               "  - Token: gho_************\n"
               "  - Token scopes: 'gist', 'read:org', 'repo', 'workflow'\n")
 
-    scopes = vcs.parse_scopes(status)
+    scopes = gitops.parse_scopes(status)
 
     assert scopes == ("gist", "read:org", "repo", "workflow")
 
 
 def test_a_status_without_a_scope_line_reports_no_scopes():
     # `gh auth status` prints this shape when nobody is logged in - an empty tuple, never a crash.
-    scopes = vcs.parse_scopes("You are not logged into any GitHub hosts.\n")
+    scopes = gitops.parse_scopes("You are not logged into any GitHub hosts.\n")
 
     assert scopes == ()
 
 
 def test_the_refresh_asks_for_exactly_the_scopes_it_was_given(monkeypatch):
     argv_seen = []
-    monkeypatch.setattr(vcs.shutil, "which", lambda tool: "/usr/bin/gh")
-    monkeypatch.setattr(vcs, "run", lambda argv, **kw: argv_seen.append(argv) or _FakeResult(True))
+    monkeypatch.setattr(gitops.shutil, "which", lambda tool: "/usr/bin/gh")
+    monkeypatch.setattr(gitops, "run", lambda argv, **kw: argv_seen.append(argv) or _FakeResult(True))
 
-    vcs.refresh_scopes(("read:packages", "write:packages"))
+    gitops.refresh_scopes(("read:packages", "write:packages"))
 
     assert argv_seen == [["gh", "auth", "refresh", "-h", "github.com",
                           "-s", "read:packages,write:packages"]]
