@@ -33,18 +33,22 @@
 groups:
   build:   { help: "Produce the artefacts." }
   test:    { help: "Verify them." }
-  release:
-    help: "Publish them."
-    commands:
-      # PLACED, by the same rule as the git verbs below: it reads nothing from a product manifest. The
-      # tag, the repo root and the remote's own default branch are all it needs, so unlike its two
-      # neighbours (`release:artifact` and `release:image`, which read an `artifacts:`/`images:`
-      # section) it cannot die on its first line in a product that has not declared anything.
-      #
-      # It is a `release` coordinate and it is therefore in the `release` group - a coordinate that
-      # opens with a phase name belongs to that phase, or the coordinate space and the command tree
-      # start disagreeing about where a thing lives.
-      tag: { task: "release:tag" }
+  # `release` holds no placed command, and that is a decision rather than an omission (#39).
+  #
+  # THE PLACEMENT RULE. Placing a command hands it to every product that writes its manifest in the tree
+  # form, and there is no way to decline one - `merge_trees` unions both trees and a product cannot
+  # subtract. So the bar is not "harmless in most products" but USEFUL IN EVERY ONE. The commands that
+  # pass it are below: they touch the machine or the repository, they read nothing from a manifest, and a
+  # product that never runs them is no worse off for having them.
+  #
+  # `release:tag` does not pass it, and it is the first task where the difference bit. It PUBLISHES: it
+  # cuts a tag and pushes it, so a misfire is public and cannot be taken back, and a product with no
+  # tag-triggered workflow has nothing waiting for that tag. Offering it costs a product one manifest
+  # line; placing it costs every product a command it never asked for, pointed at its own origin.
+  #
+  # It remains a task, and simplon declares it in its own manifest - which is the shape every product
+  # that releases by tag should use.
+  release: { help: "Publish them." }
   deploy:  { help: "Put them into an environment.", env_first: true }
   monitor: { help: "Watch what is running there.", env_first: true }
   support:

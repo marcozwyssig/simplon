@@ -215,6 +215,33 @@ One more shape is refused for the same reason: refining a task-backed command in
 reverse. Moving a command between the two is a different command wearing the same name, and it is asked
 to have its own.
 
+## Offered, or placed
+
+A catalogue task can reach a product two ways, and the difference decides who chooses.
+
+**Offered** is the default. The task exists at its coordinate, and a product that wants it declares a
+command pointing at it. Most tasks are here: `docs:site`, `release:artifact`, `test:gate` and the rest
+all need a section in the product's manifest, so a command placed for everyone would die on its first
+line in a product that declared nothing.
+
+**Placed** means the kernel writes the command into its own tree, and every product using the tree form
+gets it. There is no way to decline one: the two trees are unioned, and a product cannot subtract.
+
+That absence of a veto is what sets the bar. A placed command has to be **useful in every product**, not
+merely harmless in most:
+
+- it reads nothing from a product manifest, so it cannot fail for lack of declaration;
+- it acts on the machine or the repository, which every product has;
+- and a product that never runs it is no worse off for having it.
+
+`support install`, the `support git` verbs and `support tasks` pass all three. `release:tag` does not,
+and it is the case that fixed the rule: it **publishes** — it cuts a tag and pushes it, so a misfire is
+public and cannot be taken back, and a product with no tag-triggered workflow has nothing waiting for
+that tag. Offering it costs a product one line in its manifest. Placing it would cost every product a
+command it never asked for, pointed at its own origin.
+
+Simplon releases by tag, so simplon declares it — which is exactly the shape a product should copy.
+
 ## How to read a manifest with this in hand
 
 Three questions, in this order, will tell you what any entry is:

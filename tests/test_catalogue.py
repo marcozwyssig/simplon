@@ -589,17 +589,25 @@ def test_the_shipped_catalogue_places_the_general_commands_and_nothing_that_need
     assert set(tasks) == {"catalogue", "generate"}
     # `support:install` and `vcs:auth-scopes` are placed for the same reason the git verbs are: both
     # read nothing from a product manifest - one drives the tool gates, the other the gh token.
-    # `release:tag` (#32) joins them on that same test and is the first PHASE command to pass it: the
+    # `release:tag` is NOT here, and that is the placement rule doing its work (#39). Placing a command
+    # gives it to every product that adopts the manifest's tree form, and it cannot be declined - so what
+    # is placed has to be useful in EVERY product, not merely harmless in most. `release:tag` publishes:
+    # it cuts a tag and pushes it, the damage of a misfire is public and irreversible, and a product with
+    # no tag-triggered workflow has nothing waiting for it. It stays OFFERED; a product that releases by
+    # tag declares it in one line, which is what simplon itself does.
+    #
+    # The old rationale, kept because it is still true of the ones that remain: the first PHASE command to
     # tag, the repo root and the remote's default branch are all it reads, so unlike its two neighbours
     # in the `release` namespace it cannot die on its first line in a product that declared nothing.
     assert placed == {"vcs:commit", "vcs:push", "vcs:prune-branches", "vcs:submodules",
                       "vcs:auth-scopes", "support:install",
-                      "tasks:catalogue", "tasks:generate", "release:tag"}
-    # And it is placed in the group its own coordinate names. A coordinate that opens with a phase name
-    # belongs to that phase, or the coordinate space and the command tree drift apart about where a
-    # thing lives - `release:tag` under `support`, say, would be typed nowhere near where it is declared.
-    assert set(cat.groups["release"]["commands"]) == {"tag"}
-    assert cat.groups["release"]["commands"]["tag"]["task"] == "release:tag"
+                      "tasks:catalogue", "tasks:generate"}
+    # `release` is DECLARED and holds nothing. The group exists so a product can place its own release
+    # commands into it - the rule that a coordinate opening with a phase name belongs to that phase is
+    # unchanged - but the kernel places none of its own there (#39): a command that publishes has to be
+    # asked for, not handed out.
+    assert "commands" not in cat.groups["release"]
+    assert cat.groups["release"]["help"]
 
 
 def test_the_shipped_gate_task_documents_name_while_every_real_instantiation_pins_it():
