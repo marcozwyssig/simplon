@@ -9,6 +9,8 @@ absent. AAA throughout.
 from __future__ import annotations
 
 from simplon.orchestrator.manifest import load as manifest_load
+import time
+
 from simplon.orchestrator.steps import (
     Outcome,
     Pipeline,
@@ -16,6 +18,7 @@ from simplon.orchestrator.steps import (
     Step,
     StepState,
     build_rows,
+    format_duration,
     omitted_note,
     render_tree,
     run_headless,
@@ -69,6 +72,46 @@ def _planned_pipeline() -> Pipeline:
     steps = [_command_step(leaf.path) for leaf in tree.leaves()]
     return Pipeline(name="bringup", steps=steps, stop_on_failure=False, tree=tree,
                     root_path=tree.path)
+
+
+_STOPPING_MANIFEST = """
+tasks:
+  install: { impl: "demo.impls:install", help: "Install host prereqs." }
+  compile: { impl: "demo.impls:compile", help: "Compile the artefacts." }
+
+groups:
+  build:
+    commands:
+      install: { task: "install" }
+      compile: { task: "compile" }
+      prep:
+        help: "Install + compile."
+        depends_on: ["install", "compile"]
+        stop_on_failure: true
+env_groups: [build]
+"""
+
+
+def _stop_on_failure_pipeline() -> Pipeline:
+    """A plan whose first leaf FAILS and whose subtree stops on it, so the second leaf never runs - the
+    shape that produces a `⊘` row and therefore the shape #52's guarantee is about."""
+    tree = manifest_load(_STOPPING_MANIFEST).plan_tree_for("prep")
+    steps = [_command_step(leaf.path, rc=1 if leaf.name == "install" else 0)
+             for leaf in tree.leaves()]
+    return Pipeline(name="prep", steps=steps, stop_on_failure=True, tree=tree, root_path=tree.path)
+
+
+def _sleeping_step(command: str, seconds: float) -> Step:
+    """A step that really takes a measurable moment, so a span and a sum are distinguishable."""
+    def action() -> Outcome:
+        time.sleep(seconds)
+        return Outcome(rc=0, output="")
+    return Step(label=command, action=action, command=command)
+
+
+def _walk(row: Row) -> list[Row]:
+    """Every row of the display tree, root first."""
+    return [row] + [descendant for child in row.children for descendant in _walk(child)]
 
 
 def _aggregate(*states: StepState) -> Row:
@@ -429,3 +472,138 @@ def test_run_headless_labels_the_tree_block_so_a_ci_log_is_not_two_vocabularies(
     assert "./netctl.sh support doctor" in printed, "the per-step header keeps the exact command"
     assert "the same steps, as the TUI draws them:" in printed
     assert printed.index("the same steps") < printed.index("✓ support.doctor")
+
+
+# --------------------------------------------------------------------- #52: what a run cost
+
+
+def test_a_step_that_ran_carries_its_duration():
+    # arrange
+    step = _step("build.site")
+    # act
+    step.run()
+    # assert
+    assert step.duration is not None and step.duration >= 0
+
+
+def test_a_step_that_never_ran_carries_no_duration():
+    """The one #52 exists to guarantee: `0.0s` on a step nobody started would be a number that cannot
+    tell 'nothing to do' from 'done and fast'."""
+    # arrange
+    step = _step("build.site")
+    # act / assert: PENDING out of the box, and SKIPPED is set without ever entering run()
+    assert step.duration is None
+    step.state = StepState.SKIPPED
+    assert step.duration is None
+
+
+def test_a_skipped_row_carries_no_duration_while_its_siblings_do():
+    """Seen red: a run in which `prep` stops on a failure, so `build.compile` never starts. Its row must
+    be bare - not `0.0s`."""
+    # arrange
+    pipeline = _stop_on_failure_pipeline()
+    run_headless(pipeline, verbose=False)
+    rows = build_rows(pipeline)
+    by_label = {row.label: row for row in _walk(rows)}
+    # assert
+    assert by_label["build.compile"].state == StepState.SKIPPED
+    assert by_label["build.compile"].duration is None, "a step that never ran must carry no duration"
+    assert by_label["build.install"].duration is not None
+
+
+def test_a_pending_aggregate_carries_no_duration_either():
+    # arrange: nothing has run
+    rows = build_rows(_planned_pipeline())
+    # act / assert
+    assert rows.state == StepState.PENDING
+    assert rows.duration is None
+
+
+def test_an_aggregate_reports_its_own_span_and_not_the_sum_of_its_children():
+    """#52's open question, decided in favour of the SPAN: it is what the operator waited through, and it
+    contains the gaps between the children that a sum silently drops."""
+    # arrange: two leaves that each take a measurable moment, with a gap between them
+    slow = Pipeline("prep", [_sleeping_step("build.install", 0.02),
+                             _sleeping_step("build.compile", 0.02)])
+    run_headless(slow, verbose=False)
+    rows = build_rows(slow)
+    # act
+    span = rows.duration
+    total = sum(child.duration or 0.0 for child in rows.children)
+    # assert: the span covers the children AND what happened between them
+    assert span is not None
+    assert span > total, "the span must contain what happened BETWEEN the children, the sum does not"
+
+
+def test_an_aggregate_whose_every_leaf_was_skipped_carries_no_duration():
+    """A SUM over no contributing child would be `0.0` - the exact claim this ticket forbids, one level
+    up. A span over no observation has no value at all."""
+    # arrange
+    pipeline = _stop_on_failure_pipeline()
+    for step in pipeline.steps:
+        step.state = StepState.SKIPPED
+    # act
+    rows = build_rows(pipeline)
+    # assert
+    assert rows.state == StepState.SKIPPED
+    assert rows.duration is None
+
+
+def test_an_aggregate_reports_nothing_while_a_leaf_under_it_can_still_change_the_answer():
+    # arrange: first leaf done, second not started
+    pipeline = _planned_pipeline()
+    pipeline.steps[0].run()
+    rows = build_rows(pipeline)
+    # act / assert: the finished leaf has its own number, the unfinished aggregate has none
+    prep = rows.children[0]
+    assert prep.children[0].duration is not None
+    assert prep.duration is None and rows.duration is None
+
+
+def test_the_duration_is_a_column_so_a_green_run_gains_no_line():
+    """#52's acceptance 3 and #49's acceptance 3 are the same sentence: the normal case must not pay."""
+    # arrange
+    pipeline = _planned_pipeline()
+    before = len(render_tree(build_rows(pipeline)))
+    # act
+    run_headless(pipeline, verbose=False)
+    after = render_tree(build_rows(pipeline))
+    # assert: same number of rows, and every ran row now carries a number on its own line
+    assert len(after) == before
+    assert all("s" in line.split("  ")[-1] for line in after)
+
+
+def test_a_skipped_row_ends_where_its_name_ends():
+    # arrange
+    pipeline = _stop_on_failure_pipeline()
+    run_headless(pipeline, verbose=False)
+    # act
+    lines = render_tree(build_rows(pipeline))
+    # assert: no padding, no trailing blank, nothing at all in the column
+    skipped = [line for line in lines if "⊘" in line]
+    assert skipped == ["  ⊘ build.compile"]
+    assert skipped[0] == skipped[0].rstrip(), "no padding either - the column is simply absent"
+
+
+def test_the_duration_column_is_aligned_so_the_numbers_can_be_scanned():
+    # arrange
+    pipeline = _planned_pipeline()
+    run_headless(pipeline, verbose=False)
+    # act
+    lines = render_tree(build_rows(pipeline))
+    # assert: every duration starts at the same offset
+    starts = {len(line) - len(line.rsplit(" ", 1)[-1]) for line in lines}
+    assert len(starts) == 1, lines
+
+
+def test_format_duration_never_prints_a_literal_zero():
+    """The column's contract is that an absent number means 'did not run'. `0.0s` would be the one
+    string a reader could mistake for that, so a measured-but-instant step says `<0.1s` instead."""
+    assert format_duration(0.0) == "<0.1s"
+    assert format_duration(0.0004) == "<0.1s"
+
+
+def test_format_duration_reads_as_seconds_below_a_minute_and_as_minutes_above_one():
+    assert format_duration(2.44) == "2.4s"
+    assert format_duration(46.0) == "46.0s"
+    assert format_duration(964.0) == "16m04s"

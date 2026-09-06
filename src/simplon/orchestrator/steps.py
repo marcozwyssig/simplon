@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Callable
@@ -84,9 +85,36 @@ class Step:
     action: Callable[[], Outcome] | None = None
     stream: Callable[[Emit], Outcome] | None = None
     command: str = ""
+    # The command's own one-line summary from the manifest, where the step was built for a planned
+    # command; "" for a hand-built probe, whose prose `label` already is its description. Shown when a
+    # step is ENTERED and nowhere else (#49): the manifest makes `help` mandatory on every command and it
+    # was reaching no runner at all, so a reader saw `build.reference` and had to look the name up. Not
+    # in the retraced tree - one help text per row would turn a column into a paragraph, and the tree's
+    # job is the shape, not the prose.
+    help: str = ""
     state: StepState = StepState.PENDING
     output: str = ""
     rc: int | None = None
+    # When this step was entered and when it was left, on the MONOTONIC clock (#52). Wall time, because
+    # wall time is what an operator waits through and what the tools themselves report - `collected
+    # modules in 31966 ms`. CPU time would be more precise and useless for this question: a step that
+    # spends 32 of its 46 seconds downloading a theme module (#52's evidence, on a cold module cache -
+    # the same fetch takes 1.6s warm) costs those 32 seconds of an operator's day either way.
+    #
+    # Both stay None until `run` sets them, and NOTHING else sets them. That is the whole guarantee #52
+    # asks for: a step that was SKIPPED or is still PENDING never called `run`, so it has no duration -
+    # not `0.0s`, which would claim it finished instantly and is exactly the value this repo hunts, one
+    # that cannot tell "nothing to do" from "done and fast".
+    started_at: float | None = None
+    ended_at: float | None = None
+
+    @property
+    def duration(self) -> float | None:
+        """Seconds from entering this step to leaving it, or None for a step that did not FINISH one -
+        never run, still running, or ended by a raise."""
+        if self.started_at is None or self.ended_at is None:
+            return None
+        return self.ended_at - self.started_at
 
     def __post_init__(self) -> None:
         if (self.action is None) == (self.stream is None):
@@ -94,6 +122,7 @@ class Step:
 
     def run(self, emit: Emit = _noop) -> Outcome:
         self.state = StepState.RUNNING
+        self.started_at = time.perf_counter()
         if self.stream is not None:
             outcome = self.stream(emit)
         elif self.action is not None:
@@ -104,6 +133,9 @@ class Step:
             # only for a Step nobody has reached into since it was built - and writing it out is what
             # makes `run` total instead of leaving `self.action()` as a call on `Callable | None`.
             raise ValueError("a Step needs exactly one of action / stream")
+        # After the action and before the verdict fields: a step that raised leaves `ended_at` unset and
+        # therefore carries no duration, which is the truth - it never finished one.
+        self.ended_at = time.perf_counter()
         self.output = outcome.output
         self.rc = outcome.rc
         self.state = StepState.OK if outcome.ok else StepState.FAILED
@@ -199,6 +231,63 @@ class Row:
     def rc(self) -> int | None:
         """The row's own exit code, or None for an aggregate and for a leaf that has not finished."""
         return self.step.rc if self.step is not None else None
+
+    @property
+    def finished(self) -> bool:
+        """True when nothing under this row can still change: every leaf below it has run or been
+        skipped. The test a SPAN needs - an aggregate's own start and end are only both known once
+        everything inside it is over (#52). A childless aggregate is vacuously finished and has no times,
+        so it reports no duration either."""
+        if self.step is not None:
+            return self.step.state in (StepState.OK, StepState.FAILED, StepState.SKIPPED)
+        return all(child.finished for child in self.children)
+
+    @property
+    def started_at(self) -> float | None:
+        """When work under this row began, or None when none of it did."""
+        if self.step is not None:
+            return self.step.started_at
+        starts = [start for start in (child.started_at for child in self.children) if start is not None]
+        return min(starts) if starts else None
+
+    @property
+    def ended_at(self) -> float | None:
+        """When the last work under this row ended, or None when none of it ran."""
+        if self.step is not None:
+            return self.step.ended_at
+        ends = [end for end in (child.ended_at for child in self.children) if end is not None]
+        return max(ends) if ends else None
+
+    @property
+    def duration(self) -> float | None:
+        """How long this row took, or None - and None is an ANSWER here, not a gap (#52).
+
+        A leaf's duration is its own step's. An aggregate's is its SPAN: from the moment its first child
+        started to the moment its last one ended. #52 left the choice open between the span and the SUM of
+        the children, and the span wins for three reasons:
+
+        - It is what the operator waited through. The sum is always <= the span, and the difference is
+          the gaps BETWEEN the children - a re-entered shim, a venv check, a process spawn per step. A
+          number that is smaller than the truth is the misleading direction for a cost figure, and #27
+          (46 seconds of doc build on a cold module cache, 32 of them fetching a theme module) is
+          precisely a cost somebody had to go looking for.
+        - It keeps ONE meaning in one column. A leaf's number is already a span; a sum beside it would be
+          a different quantity wearing the same units, and "what does this value mean on the far side of
+          the seam" is the question this repo keeps losing to.
+        - It cannot invent a zero. A sum over no contributing child is `0.0`, which would put `0.0s` on
+          an aggregate whose every leaf was skipped - the exact claim this ticket forbids. A span over no
+          observations has no value at all, and says so.
+
+        None, never `0.0s`, for anything that did not run or is not over yet: a step that was SKIPPED or
+        is still PENDING never entered `Step.run`, so it has no start; and an aggregate reports nothing
+        while a leaf under it can still change the answer.
+        """
+        if self.step is not None:
+            return self.step.duration      # a leaf has ONE duration and the Step owns it
+        if not self.finished:
+            return None
+        start, end = self.started_at, self.ended_at
+        return end - start if start is not None and end is not None else None
 
     @property
     def state(self) -> StepState:
@@ -439,21 +528,95 @@ def omitted_note(row: Row) -> str:
             + ", ".join(row.omitted))
 
 
+# How many TRAILING lines of a failed step's output the summary shows. The last ones, because a tool
+# prints its diagnosis immediately before it exits - `Found 3 errors`, the traceback's final frame, the
+# compiler's summary. "Meist" is not a rule, which is why the tail is never shown ALONE: #49 settles that
+# question as BOTH or NEITHER - the lines AND the path to the whole file, or an explicit sentence saying
+# the reason is not known here. A truncated cause on its own is worse than a path, because it reads as
+# the whole answer.
+FAILURE_TAIL_LINES = 10
+
+
+def failure_report(pipeline: Pipeline, tail: int = FAILURE_TAIL_LINES) -> list[str]:
+    """Why each FAILED step failed, as text lines - empty for a run with no failure (#49).
+
+    The gap this closes: a red run said HOW MANY steps failed and the tree said WHICH, while the reason
+    sat in `build/logs/<step>.log` and the run named the DIRECTORY. With three files a reader finds it;
+    with twenty steps the reader searches for something the run knew exactly. Nothing here is new
+    information - it is the output the step already captured and the file it was already written to.
+
+    Three shapes, and the difference between them is the point:
+
+    - output AND a log file: the last `tail` lines, then the path to the rest. When lines were dropped,
+      the count of them is said, so nothing pretends to be the whole.
+    - output but no log file: a hand-built `action` step keeps its text in the Outcome and writes
+      nothing; the lines are all there is, and the report says so rather than naming a path to nothing.
+    - no output at all: the report says the run does not know the reason. An empty block under a failed
+      step would read as "nothing was wrong", which is this repo's recurring defect wearing a summary.
+
+    Pure: it returns lines and prints none of them, so both runners can place it where their own output
+    wants it and a test can read it without a terminal.
+    """
+    lines: list[str] = []
+    for step in pipeline.steps:
+        if step.state != StepState.FAILED:
+            continue
+        identity = step.command or step.label
+        lines.append(f"why {identity} failed (rc {step.rc}):")
+        body = step.output.rstrip("\n").splitlines()
+        if len(body) > tail:
+            lines.append(f"  ... {len(body) - tail} earlier line(s) not shown")
+        lines += [f"  {text}" for text in body[-tail:]]
+        if not body:
+            lines.append("  this step printed nothing, so the run does not know why it failed")
+        path = steplog.existing_log(identity)
+        if path is not None:
+            lines.append(f"  full output: {path}")
+        elif body:
+            lines.append("  full output: not written to a file - the lines above are all of it")
+    return lines
+
+
+def format_duration(seconds: float) -> str:
+    """One row's duration as the narrow text a column can hold (#52): `<0.1s` for the immeasurably
+    quick, `2.4s` under a minute, `16m04s` over it. Pure, and the ONE spelling both runners use, so a CI
+    log and a TTY read alike.
+
+    `0.0s` is never printed, and that is the point rather than a rounding preference. This column's whole
+    contract is that a step which did NOT run carries nothing; a literal zero on a step that did run in
+    300 microseconds would be the one string a reader could mistake for that absence. `<0.1s` says
+    "measured, and too fast to matter", which is a different sentence from an empty column."""
+    if seconds < 0.05:
+        return "<0.1s"
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, rest = divmod(int(round(seconds)), 60)
+    return f"{minutes}m{rest:02d}s"
+
+
 def render_tree(root: Row, indent: str = "  ") -> list[str]:
     """The display tree as text lines, one per row, indented by depth - what `run_headless` prints so a CI
-    log shows the structure the TUI draws."""
-    lines: list[str] = []
+    log shows the structure the TUI draws.
+
+    Since #52 a row that RAN carries its duration in a right-hand column, padded to one width so the
+    numbers line up and can be scanned. A COLUMN and not a paragraph: the run gains no line, green or red.
+    A row that did not run carries nothing there, and no trailing blank either - `⊘ deploy.up` ends where
+    the name ends, because the absence is the statement."""
+    rows: list[tuple[str, str]] = []
 
     def walk(row: Row, depth: int) -> None:
-        lines.append(f"{indent * depth}{STATE_ICON[row.state]} {row.label}")
+        duration = row.duration
+        rows.append((f"{indent * depth}{STATE_ICON[row.state]} {row.label}",
+                     format_duration(duration) if duration is not None else ""))
         for child in row.children:
             walk(child, depth + 1)
 
     walk(root, 0)
-    return lines
+    width = max((len(text) for text, shown in rows if shown), default=0)
+    return [f"{text:<{width}}  {shown}" if shown else text for text, shown in rows]
 
 
-def argv_step(label: str, argv: list[str], command: str | None = None) -> Step:
+def argv_step(label: str, argv: list[str], command: str | None = None, help: str = "") -> Step:
     """A STREAMING Step that runs an arbitrary command and feeds its output live into the details pane.
     The build pipeline uses it to render each image build (a docker build/run) as its own step.
     `command` is the step's exact-command identity for the section header; it defaults to the real argv
@@ -476,7 +639,7 @@ def argv_step(label: str, argv: list[str], command: str | None = None) -> Step:
         output = "\n".join(lines)
         steplog.write(identity, output)
         return Outcome(rc=rc, output=output)
-    return Step(label=label, stream=stream, command=identity)
+    return Step(label=label, stream=stream, command=identity, help=help)
 
 
 def _print_captured(output: str) -> None:
@@ -504,7 +667,11 @@ def run_headless(pipeline: Pipeline, verbose: bool | None = None) -> int:
     After the last step it prints the SAME tree the TUI draws (netctl#1276), indented, with each row's
     final icon - so a CI log and a TTY show one structure in one vocabulary. It goes at the END rather than
     up front on purpose: the tree's value is the aggregate verdicts, which only exist once the leaves have
-    run, and the plan itself is already implied by the per-step lines above it."""
+    run, and the plan itself is already implied by the per-step lines above it.
+
+    A RED run then adds `failure_report` between that tree and the verdict line (#49): the tree says which
+    steps failed, the report says why each of them did, and the count stays last. A green run adds
+    nothing - the normal case must not pay for the exceptional one, which is #49's own acceptance."""
     show_passing = _verbose_env() if verbose is None else verbose
     failures = 0
     skipped = 0
@@ -520,7 +687,10 @@ def run_headless(pipeline: Pipeline, verbose: bool | None = None) -> int:
             skipped += 1
             log.warn(f"{title} - skipped ({aborted[index]})")
             continue
-        log.info(title)
+        # The help text rides on the ENTRY line, not on a line of its own and not in the retraced tree
+        # (#49): a green run keeps exactly the lines it had, one of them wider. `build.reference` alone
+        # made a reader look the command up in the manifest to learn what it was about to do.
+        log.info(f"{title} - {step.help}" if step.help else title)
         outcome = step.run(lambda line: print(f"  {line}", flush=True))
         if step.stream is None and outcome.output and (not outcome.ok or show_passing):
             _print_captured(outcome.output)
@@ -540,6 +710,11 @@ def run_headless(pipeline: Pipeline, verbose: bool | None = None) -> int:
     for line in render_tree(build_rows(pipeline)):
         print(line, flush=True)
     if failures:
+        # The reasons go BETWEEN the tree and the verdict: the tree says which steps failed, this says
+        # why each of them did, and the count stays the last line so the verdict is where it has always
+        # been. A green run reaches none of this (#49).
+        for line in failure_report(pipeline):
+            print(line, flush=True)
         tail = f", {skipped} skipped" if skipped else ""
         log.warn(f"{pipeline.name}: {failures}/{len(pipeline.steps)} step(s) failed{tail}")
         return 1
