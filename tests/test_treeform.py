@@ -6,6 +6,7 @@ is a rule nobody has seen work.
 import textwrap
 
 import pytest
+import yaml
 
 from simplon import catalogue as catalogue_mod
 from simplon.orchestrator import manifest
@@ -391,29 +392,26 @@ def test_a_non_mapping_with_block_is_rejected():
         treeform.resolve(flat, tasks, {})
 
 
-def test_a_block_with_both_forms_is_partitioned_by_top_level_key():
-    # arrange: the shape a migrating product has for exactly as long as the migration takes
+def test_a_block_with_both_forms_names_only_the_flat_group():
+    # arrange: the shape a half-migrated product had for exactly as long as the migration took. Naming
+    # only the flat half is the whole point - the message has to say WHICH group to rewrite, not that
+    # the file is wrong somewhere.
     groups = {"build": {"commands": {"web-image": {"task": "img"}}},
               "test":  {"unit-java": {"impl": "orchestrator.cli:unit_java", "help": "h."}}}
 
     # act
-    new, old = treeform.partition(groups)
+    flat = treeform.old_form_groups(groups)
 
     # assert
-    assert set(new) == {"build"}
-    assert set(old) == {"test"}
+    assert set(flat) == {"test"}
 
 
-def test_a_wholly_old_form_block_partitions_to_nothing_new():
+def test_a_wholly_flat_block_is_flat_throughout():
     # arrange
     groups = {"test": {"unit-java": {"impl": "a:b", "help": "h."}}}
 
-    # act
-    new, old = treeform.partition(groups)
-
-    # assert
-    assert new == {} and set(old) == {"test"}
-    assert treeform.is_new_form(groups) is False
+    # act / assert
+    assert set(treeform.old_form_groups(groups)) == {"test"}
 
 
 def test_a_mixed_manifest_loads_both_halves(tmp_path):
@@ -429,12 +427,15 @@ def test_a_mixed_manifest_loads_both_halves(tmp_path):
         product: demo
         tasks:
           img: { impl: "demo.tooling:image", help: "Build an image." }
+          unit-java: { impl: "demo.cli:unit_java", help: "Run the Java unit gate." }
+
         groups:
           build:
             commands:
-              web-image: { task: img, with: { key: web }, help: "Build the web image." }
+              web-image: { task: "img", with: { key: "web" }, help: "Build the web image." }
           test:
-            unit-java: { impl: "demo.cli:unit_java", help: "Run the Java unit gate." }
+            commands:
+              unit-java: { task: "unit-java" }
     """)
 
     # act
@@ -492,12 +493,15 @@ def test_a_catalogue_group_the_product_fills_old_form_still_renders_even_though_
         product: demo
         tasks:
           img: { impl: "demo.tooling:image", help: "Build an image." }
+          unit-java: { impl: "demo.cli:unit_java", help: "Run the Java unit gate." }
+
         groups:
           build:
             commands:
-              web-image: { task: img, help: "Build the web image." }
+              web-image: { task: "img", help: "Build the web image." }
           test:
-            unit-java: { impl: "demo.cli:unit_java", help: "Run the Java unit gate." }
+            commands:
+              unit-java: { task: "unit-java" }
     """)
 
     # act
@@ -507,11 +511,11 @@ def test_a_catalogue_group_the_product_fills_old_form_still_renders_even_though_
     assert mf.groups["test"] == ("unit-java",)
 
 
-def test_a_group_the_platform_places_a_command_in_while_the_product_keeps_it_old_form_is_rejected():
-    # arrange: `merge` seeds its output from EVERY catalogue group, not only the ones this manifest
-    # migrated, so `resolved` can carry a platform-placed command for a group ("test") the product has
-    # NOT touched at all - meanwhile the product's own `groups:` still declares "test" the old way, with
-    # its own members. A silent `{**resolved, **old_form}` would let one side vanish with no error.
+def test_a_product_adding_to_a_group_the_platform_already_placed_a_command_in_keeps_both():
+    # arrange: `merge` seeds its output from EVERY catalogue group, so `test` arrives already carrying
+    # the platform's own `unit-py` - and this product adds `unit-java` beside it. Neither side may
+    # vanish: with the flat form gone there is no second declaration of a group that could shadow the
+    # first, and this pins the union rather than a winner.
     catalogue = catalogue_mod.loads(textwrap.dedent("""
         tasks:
           test:unit-py: { impl: "simplon.tasks.x:y", help: "run the python gate." }
@@ -523,17 +527,22 @@ def test_a_group_the_platform_places_a_command_in_while_the_product_keeps_it_old
         product: demo
         tasks:
           img: { impl: "demo.tooling:image", help: "Build an image." }
+          unit-java: { impl: "demo.cli:unit_java", help: "Run the Java unit gate." }
+
         groups:
           build:
             commands:
-              web-image: { task: img, help: "Build the web image." }
+              web-image: { task: "img", help: "Build the web image." }
           test:
-            unit-java: { impl: "demo.cli:unit_java", help: "Run the Java unit gate." }
+            commands:
+              unit-java: { task: "unit-java" }
     """)
 
-    # act / assert
-    with pytest.raises(ValueError, match="placed by the platform's command tree AND still declared"):
-        manifest.load(text, catalogue=catalogue)
+    # act
+    mf = manifest.load(text, catalogue=catalogue)
+
+    # assert
+    assert set(mf.groups["test"]) == {"unit-py", "unit-java"}
 
 
 # --- one command name, one or two bodies (netctl's silent oras-vs-Colima `support install`) ---------------
@@ -648,38 +657,43 @@ def test_a_task_declaring_an_unknown_key_is_rejected():
         treeform.check_task("lab-image", {"impl": "a:b", "help": "h.", "helo": "typo"})
 
 
-def test_a_block_whose_nodes_carry_node_keys_is_new_form():
+def test_a_node_carrying_node_keys_is_not_the_flat_form():
     # arrange
-    new = {"build": {"help": "Produce.", "commands": {"web-image": {"task": "img"}}}}
+    tree = {"build": {"help": "Produce.", "commands": {"web-image": {"task": "img"}}}}
 
     # act / assert
-    assert treeform.is_new_form(new) is True
+    assert treeform.old_form_groups(tree) == {}
 
 
-def test_the_old_group_to_member_block_is_not_new_form():
-    # arrange: the shape netctl.yaml carries today
-    old = {"build": {"web-image": {"impl": "orchestrator.cli:web_image_cmd", "help": "h."}}}
+def test_a_group_to_member_block_is_the_flat_form():
+    # arrange: the shape every product carried before the tree
+    flat = {"build": {"web-image": {"impl": "orchestrator.cli:web_image_cmd", "help": "h."}}}
 
     # act / assert
-    assert treeform.is_new_form(old) is False
+    assert set(treeform.old_form_groups(flat)) == {"build"}
 
 
-def test_an_empty_block_is_not_new_form():
-    # arrange / act / assert: no nodes means nothing to detect, and the old path is the safe default
-    assert treeform.is_new_form({}) is False
+def test_an_empty_block_is_not_the_flat_form():
+    # arrange / act / assert: no nodes means nothing to name, and a group declared with nothing in it is
+    # `merge`'s error to report, by name - not this one's
+    assert treeform.old_form_groups({}) == {}
+    assert treeform.old_form_groups({"build": {}}) == {}
 
 
-def test_an_import_section_in_a_new_form_manifest_is_rejected():
-    # arrange: `import:` is the OLD form's way of making coordinates available. Left in a new-form
-    # manifest it would be quietly ignored, which is how a product ends up believing it imported
-    # something. Loud beats ignored.
-    with pytest.raises(ValueError, match="`import:` has no meaning"):
-        treeform.check_no_stale_import({"import": {"delivery": ["vcs"]}})
+def test_an_import_section_is_rejected():
+    # arrange: `import:` is the OLD form's way of making coordinates available. Left in a manifest it
+    # would be quietly ignored, which is how a product ends up believing it imported something. Loud
+    # beats ignored.
+    with pytest.raises(ValueError, match="`import:` has nothing left to do"):
+        treeform.check_no_old_form({"import": {"delivery": ["vcs"]}})
 
 
-def test_a_new_form_manifest_without_an_import_section_passes_the_check():
+def test_a_tree_form_manifest_passes_the_flat_form_check():
     # arrange / act / assert: no exception
-    treeform.check_no_stale_import({"product": "demo", "groups": {}})
+    treeform.check_no_old_form({"product": "demo", "groups": {}})
+    treeform.check_no_old_form({"product": "demo",
+                                "tasks": {"img": {"impl": "a:b", "help": "h."}},
+                                "groups": {"build": {"commands": {"img": {"task": "img"}}}}})
 
 
 def test_a_product_task_no_command_instantiates_is_rejected():
@@ -699,3 +713,176 @@ def test_every_instantiated_product_task_passes_the_check():
 
     # act / assert: no exception
     treeform.check_every_task_is_used(flat, tasks)
+
+
+# --- the flat form is gone, and the refusal shows the way out (si#33) ----------------------------------
+#
+# Acceptance 4/5 of si#33: a manifest still written the old way must fail with a message that shows the
+# REWRITE, not merely "no longer supported". Whoever has such a product has to be able to convert it
+# without guessing at a shape nobody can read out of the code any more.
+#
+# The manifest below is not an illustration. It is simplon's OWN `simplon.yaml` as it stood at 0.3.0 -
+# flat groups, `import:`, and coordinate-keyed `tasks:` entries all three - which is what makes these
+# tests a measurement rather than a restatement of the renderer.
+
+_REAL_OLD_MANIFEST = """
+product: simplon
+default: dev
+
+groups:
+  build:
+    wheel:
+      help: "Build the wheel."
+      impl: "orchestrator.cli:build_wheel"
+    docs:
+      help: "Write the command reference, then build the website from it."
+      depends_on: [reference, site]
+  test:
+    all:
+      help: "Run every test."
+      impl: "orchestrator.cli:test_all"
+  support:
+    doctor:
+      help: "Check the tools and the environment."
+      impl: "orchestrator.cli:doctor"
+
+import:
+  delivery: [docs, test, release]
+tasks:
+  docs:reference:
+    group: build
+    with:
+      output: site/content/using/commands.md
+      title: "Command reference"
+  docs:site:
+    group: build
+  test:typecheck-python:
+    group: test
+  release:tag:
+    group: release
+
+site:
+  image: "hugomods/hugo:exts-0.148.2"
+  source: "site"
+  output: "build/website"
+  base_url: "https://marcozwyssig.github.io/simplon/"
+  theme: "github.com/imfing/hextra@v0.12.3"
+"""
+
+
+def _rewritten(text: str) -> str:
+    """`text` with its `tasks:`/`groups:`/`import:` sections replaced by the rewrite the refusal prints.
+
+    Exactly the edit the message asks a human to make: keep everything else, paste the block over those
+    sections. Done here through the parsed document so the test is doing the pasting rather than
+    re-implementing the renderer.
+    """
+    data = yaml.safe_load(text)
+    rest = {key: value for key, value in data.items() if key not in ("tasks", "groups", "import")}
+    return yaml.safe_dump(rest, sort_keys=False) + "\n" + treeform.rewrite_of_old_form(data)
+
+
+def test_a_real_old_manifest_is_refused_and_the_message_names_every_flat_section():
+    # arrange: all three flat shapes at once, which is the realistic case - a product that wrote `impl:`
+    # on a command also placed its catalogue tasks the old way. Reporting one per load would be three
+    # guessing games instead of none.
+    # act
+    with pytest.raises(ValueError) as exc:
+        manifest.load(_REAL_OLD_MANIFEST, catalogue=catalogue_mod.load())
+
+    # assert
+    message = str(exc.value)
+    assert "no longer loads" in message
+    assert "'build'" in message and "'test'" in message and "'support'" in message
+    assert "keyed by a platform coordinate" in message
+    assert "`import:`" in message
+
+
+def test_the_refusal_shows_the_rewrite_and_not_only_that_the_form_is_gone():
+    # arrange / act
+    with pytest.raises(ValueError) as exc:
+        manifest.load(_REAL_OLD_MANIFEST, catalogue=catalogue_mod.load())
+    message = str(exc.value)
+
+    # assert: the product's OWN names, in the shape they have to take - the body moved under `tasks:`,
+    # the command pointing at it, and the catalogue coordinate named rather than copied
+    assert 'wheel: { impl: "orchestrator.cli:build_wheel", help: "Build the wheel." }' in message
+    assert 'wheel: { task: "wheel" }' in message
+    assert 'site: { task: "docs:site" }' in message
+    # the aggregate was never a body, so it crosses unchanged
+    assert 'depends_on: ["reference", "site"]' in message
+
+
+def test_the_rewrite_the_refusal_prints_is_itself_a_manifest_that_loads():
+    """The whole claim, measured: a message that shows a rewrite nobody can load is a message that
+    reads well and helps nobody. Pasting the block over the sections it names has to produce a manifest
+    that assembles the SAME CLI - which is also what proves the rewrite lost nothing on the way."""
+    # arrange
+    rewritten = _rewritten(_REAL_OLD_MANIFEST)
+
+    # act
+    mf = manifest.load(rewritten, catalogue=catalogue_mod.load())
+
+    # assert: every command the old manifest declared, in the group it declared it in
+    assert set(mf.groups["build"]) == {"wheel", "docs", "reference", "site"}
+    assert set(mf.groups["test"]) == {"all", "typecheck-python"}
+    assert mf.groups["support"][-1] == "doctor"
+    assert mf.groups["release"] == ("tag",)
+    # the bodies survived the move from the command to the task
+    assert mf.spec_for("build", "wheel").impl == "orchestrator.cli:build_wheel"
+    assert mf.spec_for("build", "site").impl == "simplon.tasks.site:build"
+    assert mf.spec_for("build", "docs").depends_on == ("reference", "site")
+    # and so did the pinned values, which is where a rewrite would most easily lose something
+    assert mf.spec_for("build", "reference").with_["output"] == "site/content/using/commands.md"
+
+
+def test_two_commands_sharing_one_body_become_one_task_with_two_placements():
+    # arrange: the flat form spelled a shared body twice, so a rewrite that copied it would carry the
+    # duplication into the shape whose entire point is that a body is written down once
+    data = {"groups": {"test": {
+        "unit":   {"impl": "demo.gates:gate", "help": "Run a suite."},
+        "system": {"impl": "demo.gates:gate", "help": "Run a suite."},
+    }}}
+
+    # act
+    rewrite = treeform.rewrite_of_old_form(data)
+
+    # assert: ONE task, two commands pointing at it
+    assert rewrite.count('impl: "demo.gates:gate"') == 1
+    assert 'unit: { task: "unit" }' in rewrite
+    assert 'system: { task: "unit" }' in rewrite
+
+
+def test_a_command_name_already_taken_by_a_different_body_is_qualified_rather_than_shadowed():
+    # arrange: `build build` and `deploy build` are two different bodies under one command name, which
+    # is legal in a tree and impossible in one flat `tasks:` block - so the rewrite has to rename one,
+    # or it prints a block that does not load
+    data = {"groups": {
+        "build":  {"build": {"impl": "demo.cli:build", "help": "Build."}},
+        "deploy": {"build": {"impl": "demo.cli:rebuild", "help": "Rebuild in place."}},
+    }}
+
+    # act
+    rewrite = treeform.rewrite_of_old_form(data)
+
+    # assert: both bodies survive under distinct task names, and both commands keep the name they had
+    assert 'build: { impl: "demo.cli:build", help: "Build." }' in rewrite
+    assert 'deploy-build: { impl: "demo.cli:rebuild", help: "Rebuild in place." }' in rewrite
+    assert 'build: { task: "build" }' in rewrite
+    assert 'build: { task: "deploy-build" }' in rewrite
+
+
+def test_a_manifest_part_way_through_the_migration_gets_a_rewrite_of_the_whole_block():
+    # arrange: one group converted, one not. A rewrite of only the flat half is a block that SILENTLY
+    # DROPS the converted one the moment it is pasted over `groups:`.
+    data = {"tasks": {"img": {"impl": "demo.tooling:image", "help": "Build an image."}},
+            "groups": {"build": {"commands": {"web-image": {"task": "img"}}},
+                       "test":  {"unit": {"impl": "demo.cli:unit", "help": "Run the unit gate."}}}}
+
+    # act
+    rewrite = treeform.rewrite_of_old_form(data)
+
+    # assert: the already-converted group and its task come through untouched, beside the converted one
+    assert 'img: { impl: "demo.tooling:image", help: "Build an image." }' in rewrite
+    assert 'web-image: { task: "img" }' in rewrite
+    assert 'unit: { task: "unit" }' in rewrite

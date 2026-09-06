@@ -25,16 +25,16 @@ ValidationError as a plain ValueError so a raw ValidationError never escapes.
 """
 from __future__ import annotations
 
+import dataclasses
 import re
 
 import importlib
 from collections.abc import Iterable, Mapping
-from typing import Callable, NamedTuple, Protocol, cast
+from typing import Callable, NamedTuple
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from simplon import log
 from simplon.clitaxonomy import CommandTaxonomy, TaxonomyNode, merge_trees
 from simplon.orchestrator.model import treeform
 
@@ -704,11 +704,15 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
       - `hidden` (netctl#1277) is rejected on a group-default group's NAMESAKE member, because that member
         never reaches the registration `simplon.cli.assemble` would apply it to.
 
-    `catalogue` (netctl#1437) supplies the platform's coordinate space so an `import:` + `tasks:` pair can
-    be expanded into `groups:` BEFORE validation - which is the point of expanding there rather than
-    afterwards: every rule above then applies to an imported command exactly as it does to a declared one.
-    With no catalogue the behaviour is exactly today's, which is what lets a product adopt the mechanism
-    one command at a time.
+    `catalogue` (netctl#1437) supplies the platform's coordinate space AND its command tree: the product's
+    `groups:` is merged onto the catalogue's before validation, and every command's `task:` is resolved
+    into an `impl:` there - which is the point of doing it before rather than after, since every rule above
+    then applies to a platform-placed command exactly as it does to a declared one. With no catalogue a
+    manifest is simply its own whole tree, which is what lets this loader be exercised without one.
+
+    The FLAT form - `impl:` written straight onto a command, `import:`, a coordinate-keyed `tasks:` entry -
+    is gone (netctl#1469 plan 3, si#33). A manifest still written that way is refused before anything else
+    runs, with its own sections rewritten in the message (`treeform.check_no_old_form`).
     Unknown top-level keys stay ignored (backward compatible), with ONE exception: a leftover `composites:`
     key is rejected loudly (the concept was removed in netctl#898; declare an impl-less aggregate command
     with `depends_on` instead) - silently dropping it would turn a still-declared pipeline into dead data.
@@ -718,81 +722,63 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     spec tree (group -> command -> spec).
     """
     data = yaml.safe_load(text) or {}
-    lowered_taxonomy: dict[str, dict] = {}
-    new_form, old_form = treeform.partition(data.get("groups") or {})
-    if new_form:
-        # The new form (netctl#1469) is a FRONT END: merge the product's tree onto the platform's,
-        # resolve each command's `task:`, and hand the rest of this function exactly the two structures
-        # it already consumes - a taxonomy mapping and a flat group -> members mapping. Nothing below
-        # this seam knows the difference, which is what makes each migration step provable as a
-        # zero-diff on the product's CLI-surface golden.
-        #
-        # Partitioned PER TOP-LEVEL GROUP rather than per manifest (plan 2), so a product migrates one
-        # group at a time. An old-form group keeps its members verbatim below - it has not migrated yet,
-        # and the whole point of partitioning is that the two halves do not interfere.
-        # Passed through for no reason but a collision message: `_merge_commands` needs both `impl:` to
-        # tell a human which two bodies a `task:` clash actually names, and `data.get("tasks")` here is
-        # the same raw dict `tasks_block` reads a few lines down - reading it early costs nothing since
-        # it is already fully parsed.
-        merged = treeform.merge(getattr(catalogue, "groups", {}) or {}, new_form,
-                                product_tasks=data.get("tasks") or {},
-                                catalogue_tasks=getattr(catalogue, "tasks", {}) or {})
-        lowered_taxonomy, flat = treeform.lower(merged)
-        # `merged` deliberately keeps every group the CATALOGUE offers, touched or not (see `merge`'s own
-        # docstring) - `lowered_taxonomy` above needs the full tree so the "which groups exist" check
-        # below still recognises a group this manifest fills the OLD way (`old_form`), which `merge` never
-        # sees. `flat` is the OUTPUT surface instead: a path with no command ANYWHERE in its subtree
-        # (`paths_with_commands`) that this manifest's OWN tree never named (`declared_paths`) is a
-        # platform group nobody took, dropped here rather than assembled as a sub-app with nothing in it.
-        # A bare ancestor that holds no DIRECT command while a child does (`support` above `support.git`)
-        # is not this case - `paths_with_commands` looks at the whole subtree, not the one path, so the
-        # parent survives for its child to hang from. The "declares no commands" load error above already
-        # catches the other case (a path the manifest DOES name, left empty), so nothing empty and
-        # self-declared ever reaches this filter.
-        keep = treeform.declared_paths(new_form) | treeform.paths_with_commands(flat)
-        flat = {path: members for path, members in flat.items() if path in keep}
-        treeform.check_no_stale_import(data)
-        tasks_block = data.get("tasks")
-        if tasks_block is not None and not isinstance(tasks_block, dict):
-            raise ValueError(
-                f"`tasks:` is not a mapping: found {type(tasks_block).__name__} instead. It maps each "
-                f"task's bare name to its declaration - check the indentation under this key")
-        # A coordinate-keyed entry here is not a second way to place a platform task: it is the shape
-        # the old two-block form left behind by a migration that added `groups:` and never removed the
-        # matching `import:` placement from `tasks:`. Filtering it out would make it vanish rather than
-        # fail - unresolved, unreported, and invisible to `check_every_task_is_used` below, which only
-        # ever sees the filtered map.
-        for name in (tasks_block or {}):
-            if ":" in str(name):
-                raise ValueError(
-                    f"task '{name}' names a platform coordinate. A manifest's own tasks are bare names; "
-                    f"to place a platform task, declare a command with `task: \"{name}\"` under "
-                    f"`groups:`")
-        product_tasks = dict(tasks_block or {})
-        treeform.check_every_task_is_used(flat, product_tasks)
-        resolved = treeform.resolve(flat, product_tasks, getattr(catalogue, "tasks", {}) or {})
-        # `resolved` and `old_form` are NOT disjoint in general, despite `partition` splitting THIS
-        # manifest's `groups:` block by key: `treeform.merge` seeds its output with EVERY top-level key
-        # of the platform's own `catalogue.groups`, not only the ones `new_form` named, so `resolved`
-        # always carries every platform group - most of them empty until a product places a command
-        # there. An EMPTY overlap is the normal, safe state during a migration: the platform group has
-        # no command of its own yet, so `old_form` winning it in the merge below drops nothing. A
-        # NON-EMPTY overlap means a command is placed on BOTH sides of one group name - the platform (or
-        # an already-migrated sibling) under the new form, this manifest still under the old - and the
-        # dict merge would silently pick one side and drop the other's commands with no error anywhere.
-        # That case is rejected rather than merged.
-        collisions = {group: members for group, members in resolved.items()
-                     if members and group in old_form}
-        if collisions:
-            group, members = sorted(collisions.items())[0]
-            raise ValueError(
-                f"group '{group}' is placed by the platform's command tree AND still declared old-form "
-                f"in this manifest. New-form commands: {sorted(members)}; old-form commands: "
-                f"{sorted(old_form[group])}. Migrate '{group}' to the new form (add `commands:`/`task:` "
-                f"under it) before its old-form entry can be removed")
-        data = {**data, "groups": {**resolved, **old_form}, "tasks": {}}
-    else:
-        data = _expand_imports(data, catalogue)
+    # The flat form is gone (netctl#1469 plan 3, si#33) and a manifest still written in it is refused
+    # HERE, first, with its own sections rewritten in the message - before any of the checks below can
+    # report a symptom of it instead. `impl:` on a command would otherwise surface as `treeform.resolve`'s
+    # "declare the body once under `tasks:`" one command at a time, which is true and useless: it names
+    # the rule, not the file's way out of it.
+    treeform.check_no_old_form(data)
+    tree = data.get("groups") or {}
+    if not isinstance(tree, dict):
+        raise ValueError(
+            f"`groups:` is not a mapping: found {type(tree).__name__} instead. It maps each group name "
+            f"to its node (help, env_first, groups, commands) - check the indentation under this key")
+    tasks_block = data.get("tasks")
+    if tasks_block is not None and not isinstance(tasks_block, dict):
+        raise ValueError(
+            f"`tasks:` is not a mapping: found {type(tasks_block).__name__} instead. It maps each "
+            f"task's bare name to its declaration - check the indentation under this key")
+    product_tasks = dict(tasks_block or {})
+    # The command tree (netctl#1469) is a FRONT END: merge the product's tree onto the platform's,
+    # resolve each command's `task:`, and hand the rest of this function exactly the two structures it
+    # already consumes - a taxonomy mapping and a flat group -> members mapping. Nothing below this seam
+    # knows the difference, which is what made every migration step provable as a zero-diff on the
+    # product's CLI-surface golden while both forms still existed.
+    #
+    # `product_tasks`/`catalogue_tasks` are passed through for no reason but a collision message:
+    # `_merge_commands` needs both `impl:` to tell a human which two bodies a `task:` clash actually
+    # names.
+    #
+    # `locked` is the group lock, and it belongs to the CATALOGUE's own tree: a catalogue that declares
+    # `groups:` says which groups exist, and a manifest may not invent another. One that declares none
+    # says nothing about groups at all - and an unconditional lock against an empty kernel tree would
+    # reject every group any manifest could possibly declare, which is a rule about nothing enforced over
+    # everything. The kernel's own catalogue declares all six, so every real product is locked.
+    # `taxonomy:` is `groups:`'s predecessor (netctl#1444, superseded by netctl#1469) and a catalogue
+    # carries one or the other, never both. The two spell a node the same way - help, env_first, nested
+    # groups - so the older one is simply a tree with no commands placed in it, and reading it here is
+    # what keeps a catalogue that has not moved yet owning the shape AND the existence of its groups.
+    catalogue_groups = (getattr(catalogue, "groups", {}) or {}) or (getattr(catalogue, "taxonomy", {}) or {})
+    merged = treeform.merge(catalogue_groups, tree,
+                            product_tasks=product_tasks,
+                            catalogue_tasks=getattr(catalogue, "tasks", {}) or {},
+                            locked=bool(catalogue_groups))
+    lowered_taxonomy, flat = treeform.lower(merged)
+    # `merged` deliberately keeps every group the CATALOGUE offers, touched or not (see `merge`'s own
+    # docstring), because `lowered_taxonomy` is what the "which groups exist" check below reads. `flat`
+    # is the OUTPUT surface instead: a path with no command ANYWHERE in its subtree
+    # (`paths_with_commands`) that this manifest's OWN tree never named (`declared_paths`) is a platform
+    # group nobody took, dropped here rather than assembled as a sub-app with nothing in it. A bare
+    # ancestor that holds no DIRECT command while a child does (`support` above `support.git`) is not
+    # this case - `paths_with_commands` looks at the whole subtree, not the one path, so the parent
+    # survives for its child to hang from. The "declares no commands" load error in `merge` already
+    # catches the other case (a path the manifest DOES name, left empty), so nothing empty and
+    # self-declared ever reaches this filter.
+    keep = treeform.declared_paths(tree) | treeform.paths_with_commands(flat)
+    flat = {path: members for path, members in flat.items() if path in keep}
+    treeform.check_every_task_is_used(flat, product_tasks)
+    resolved = treeform.resolve(flat, product_tasks, getattr(catalogue, "tasks", {}) or {})
+    data = {**data, "groups": resolved, "tasks": {}}
     try:
         model = _ManifestModel.model_validate(data)
     except ValidationError as exc:
@@ -816,14 +802,11 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     if unknown:
         raise ValueError(f"generate names group(s) the manifest does not declare: {', '.join(unknown)}")
     generate = frozenset(model.generate)
-    # THREE sources of the shape, in falling precedence. A new-form manifest has already produced the
-    # merged tree - the platform's groups with the product's refinements folded in. An old-form one
-    # reads the catalogue's `taxonomy:` if it still has one, and otherwise the lowered shape of the
-    # catalogue's `groups:` - which is what keeps netctl#1462's group lock alive for a product that has
-    # not migrated yet. The last branch goes away in Plan 3 with the old form itself.
-    catalogue_taxonomy = (lowered_taxonomy
-                          or (getattr(catalogue, "taxonomy", {}) or {})
-                          or treeform.lower(getattr(catalogue, "groups", {}) or {})[0])
+    # The merged tree's own shape - the platform's groups with the product's refinements folded in - is
+    # the taxonomy, and with the flat form gone there is no second source for it. The catalogue's
+    # `taxonomy:` remains as the fallback for the one case `lower` cannot produce a shape for: a manifest
+    # that declares no groups at all.
+    catalogue_taxonomy = lowered_taxonomy or (getattr(catalogue, "taxonomy", {}) or {})
     if catalogue_taxonomy:
         _enforce_the_catalogue_owns_the_groups(groups, model.taxonomy, catalogue_taxonomy)
     shaped = merge_trees(_catalogue_tree(catalogue_taxonomy, groups),
@@ -831,6 +814,15 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     tree = {**shaped,
             **_flat_tree(groups, env_groups,
                          frozenset(catalogue_taxonomy) | frozenset(model.taxonomy))}
+    # `env_groups:` is the flat, top-level way of saying what a group node says with `env_first: true`,
+    # and it has to keep meaning something now that every manifest is a tree: a node built from the
+    # taxonomy carries the flag the NODE declared, so without this the key would validate, list a real
+    # group, and gate nothing - the silent no-op this loader rejects everywhere else. It only ever gates
+    # ON: a group the platform declares env-first stays env-first whatever a product omits here, which is
+    # the same rule `merge` enforces on `env_first:` itself.
+    tree = {name: (dataclasses.replace(node, env_first=True)
+                   if name in env_groups and not node.env_first else node)
+            for name, node in tree.items()}
     # Every DOTTED `groups:` key must name a node the `taxonomy:` block actually declares. Without this,
     # an unmatched path was dropped from the tree while `groups`/`commands` kept it: the commands stayed
     # registered and runnable but were invisible to the taxonomy, so they were never env-gated and never
@@ -845,103 +837,6 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
         _validate_param_bindings(commands)
     return Manifest(groups=groups, env_groups=env_groups, commands=commands, tree=tree,
                     generate=generate)
-
-
-class _Catalogue(Protocol):
-    """The one method `_expand_imports` calls on a catalogue.
-
-    Everything else this module reads off a catalogue it reads with `getattr` and a default, deliberately,
-    so any object carrying the right attributes can be one. `namespace()` is the exception - it is called
-    outright - and this states that contract instead of leaving it to a runtime AttributeError.
-    """
-
-    def namespace(self, name: str) -> dict: ...
-
-
-def _expand_imports(data: dict, catalogue: object) -> dict:
-    """Fold a manifest's `import:` + `tasks:` sections into `groups:`.
-
-    `tasks:` carries two kinds of entry, told apart by the presence of `impl:`, deliberately in ONE
-    section rather than two that could drift:
-
-      - WITH `impl:` - a DEFINITION, the product's own body. Its key is the command name.
-      - WITHOUT     - an OVERRIDE of an imported coordinate. Its key IS the coordinate, and if no import
-                      offers it that is a typo, loud here rather than a silently missing command.
-
-    A command lands in the group its coordinate's namespace names unless `group:` says otherwise, so a
-    product places a task without restating anything else about it.
-
-    `import:` only ever MAKES a coordinate available; a `tasks:` entry keyed by that coordinate is what
-    actually PLACES it (the `else` branch below). A manifest that declares the former and never writes
-    the latter loads clean and places nothing - the flat form has no other mechanism that would notice,
-    since `treeform.merge` (which places a whole platform group automatically) never runs for it. That is
-    caught below, once every entry has had its chance to consume an import, rather than as a hard error:
-    a stray `import:` is a manifest that forgot a step, not a corrupt one.
-    """
-    imports, tasks = data.get("import") or {}, data.get("tasks") or {}
-    if not imports and not tasks:
-        return data
-    if catalogue is None and (imports or any(not (spec or {}).get("impl") for spec in tasks.values())):
-        # Both halves matter. Without the first, an `import:` with no catalogue reached
-        # `catalogue.namespace(...)` on None and died as an AttributeError deep in the expansion rather
-        # than as the manifest error it is; without the second, an override would resolve against an
-        # empty map and be reported as a typo when the real fault is a caller that passed no catalogue.
-        raise ValueError("manifest declares `import:` or imported tasks, but load() was given no "
-                         "catalogue - pass catalogue=simplon.catalogue.load()")
-
-    available: dict[str, dict] = {}
-    for source, namespaces in imports.items():
-        if source != "delivery":
-            raise ValueError(f"unknown import source '{source}' - the only catalogue is 'delivery'")
-        for namespace in namespaces or ():
-            # `cast`, not a check: the guard at the top of this function already refused an `import:`
-            # with no catalogue, which is exactly the condition under which this loop body runs. It pairs
-            # two facts in one `and`, so the checker can follow the guard but not its consequence here.
-            # A Protocol rather than `Any` because `namespace()` is the one part of the catalogue this
-            # module calls instead of `getattr`-ing, and naming it is what keeps the duck typing honest.
-            for name, spec in cast(_Catalogue, catalogue).namespace(namespace).items():
-                available[f"{namespace}:{name}"] = spec
-
-    expanded = {group: dict(members) for group, members in (data.get("groups") or {}).items()}
-    used: set[str] = set()
-    for key, spec in tasks.items():
-        spec = dict(spec or {})
-        group = spec.pop("group", None)
-        if spec.get("impl"):
-            if ":" in str(key):
-                raise ValueError(f"task '{key}' declares an impl, so its key is a command NAME, not a "
-                                 f"coordinate - a coordinate is what the CATALOGUE assigns")
-            name = str(key)
-        else:
-            if key not in available:
-                raise ValueError(
-                    f"task '{key}' declares no impl, so it overrides an imported coordinate - and none "
-                    f"is imported under that name" +
-                    (f" (imported: {', '.join(sorted(available))})" if available else ""))
-            namespace, name = str(key).split(":", 1)
-            spec = {**available[key], **spec}
-            group = group or namespace
-            used.add(str(key))
-        if not group:
-            raise ValueError(f"task '{key}' names no group")
-        if name in expanded.get(group, {}):
-            # Silently replacing it would contradict every other rule here, and it is the likeliest
-            # mistake of the whole migration: a product adopting `import:` one command at a time keeps
-            # its own `groups:` declaration next to the new one, and the local body - the one still
-            # being maintained - is the half that disappears.
-            raise ValueError(
-                f"task '{key}' lands on '{group} {name}', which the `groups:` block already declares - "
-                f"a command has one declaration; remove the `groups:` entry once the import owns it")
-        expanded.setdefault(group, {})[name] = spec
-    if available and not used:
-        # `available` non-empty means `import:` named at least one namespace; `used` empty means not one
-        # of its coordinates was ever referenced by a `tasks:` override. The likely cause, not just the
-        # symptom: a `commands:` block is the NEW form's placement mechanism, and this manifest is old
-        # form throughout, so the merge that would place a catalogue group never runs for it.
-        log.warn(
-            "import: declared, but the manifest is entirely flat form, so the catalogue tree is never "
-            "merged - a group must declare commands: for its coordinates to be placed")
-    return {**data, "groups": expanded}
 
 
 def _catalogue_tree(declared: dict[str, dict],
