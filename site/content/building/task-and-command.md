@@ -242,6 +242,74 @@ command it never asked for, pointed at its own origin.
 
 Simplon releases by tag, so simplon declares it — which is exactly the shape a product should copy.
 
+## Phase or family: which half of a coordinate is a placement
+
+"Offered, or placed" above decides whether the kernel hands a command to everybody. This is the question
+underneath it, and it applies to every coordinate whether the kernel placed it or a product did: **where
+may this one go?**
+
+> A coordinate that starts with a **phase** name belongs in exactly that phase.
+> Any other namespace is a **family**, and the product places it where it likes.
+
+The phases are the platform's own top-level groups - `build`, `test`, `release`, `deploy`, `monitor` and
+`support`. So `build:image` is under `build`, in every product, always; `docs:site` is a documentation
+task and says nothing at all about when it runs.
+
+### Why two axes, and why this is what keeps them two
+
+The namespace says the **family**; the group says the **placement**. They are two questions because
+products genuinely answer them differently:
+
+```yaml
+# one product builds its site as part of the build
+build:
+  commands:
+    site: { task: "docs:site" }
+
+# another publishes it, and files the very same task there
+release:
+  commands:
+    site: { task: "docs:site" }
+```
+
+Both are right, and no rule should have to pick. That is exactly what the two alternatives on the table
+would have cost. Making every coordinate thematic (`image:build`, `pytest:gate`) would have renamed every
+product manifest to say something they already said. Making every coordinate a phase would have deleted
+the second axis outright - and would have broken on `vcs:commit` first, because committing belongs to no
+single phase.
+
+What the rule removes is neither axis. It is the **third state**: a namespace that reads like a phase and
+is placed somewhere else. That case is the only one where a reader cannot tell which axis a name is on -
+and, before this rule, nothing stopped it from appearing.
+
+### What it costs today: nothing
+
+Measured over both manifests that exist before the rule was written - simplon's own and agile-cockpit's -
+**zero** placements violate it. The rule does not rename anything; it writes down what both files already
+do, and turns a habit into something the loader holds.
+
+### The refusal
+
+Placing a phase-named coordinate anywhere but its phase is a load error. It names both coordinates - the
+one in the tree and the one in the catalogue - the group that is allowed, and the two ways out:
+
+> command 'test image' places the coordinate 'build:image', whose namespace 'build' is a phase. A
+> coordinate that starts with a phase name says where the task belongs, so 'build:image' belongs under
+> `groups: build:` and nowhere else - this places it under 'test'. Move the command to `groups: build:
+> commands: image:`, or - if this body really is a family each product places where it likes - give it a
+> namespace in the platform catalogue that is not a phase, the way `docs:site` can sit under `build` in
+> one product and under `release` in another. The phases are: build, deploy, monitor, release, support,
+> test.
+
+Two details of the scope are worth stating, because both are deliberate:
+
+- **Only the first segment of the path is the phase.** `support git commit` is in `support`, so a
+  coordinate filed one shelf deeper inside its own phase is placed correctly - the rule is about which
+  phase a task runs in, not which shelf it sits on inside one.
+- **A bare `task:` name is outside the rule.** A name without a colon is a task this manifest declares
+  itself; there is no namespace to read, and where a product files its own body is its own business.
+
+
 ## How to read a manifest with this in hand
 
 Three questions, in this order, will tell you what any entry is:

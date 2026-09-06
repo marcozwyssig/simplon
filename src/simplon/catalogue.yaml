@@ -97,6 +97,24 @@ groups:
             params:
               check: { help: "report drift and write nothing" }
 
+# PHASE OR FAMILY (si#34). The namespace half of a coordinate answers one of two questions, and which
+# one it answers is decided by whether it is a PHASE - one of the six group names above.
+#
+#   `build:image`, `test:gate`, `release:tag`, `support:install` name a phase, and so they name a
+#   PLACEMENT: a product may only place them under that group. `treeform.check_coordinate_placement`
+#   rejects `build:image` under `test`, naming both coordinates and the group that is allowed.
+#
+#   `vcs:`, `docs:`, `tasks:` name none, and so they name a FAMILY - what the task IS, said without
+#   saying when it runs. `docs:site` sits under `build` in simplon and could sit under `release` in
+#   another product; `vcs:commit` belongs to no single phase at all, which is why the "every coordinate
+#   is a phase" alternative was rejected rather than adopted.
+#
+# So CHOOSING A NAMESPACE for a new task is choosing between those two, and it is not a matter of taste:
+# name the phase only when the task belongs to that phase in every product that will ever have it, and
+# name a family whenever the placement is the product's call. Getting it wrong is not silent - either the
+# loader refuses a placement that was in fact legitimate, or a task that really does belong to one phase
+# is free to wander. Neither is a rename anyone wants to do twice.
+
 tasks:
 
   # --- vcs: the version-control verbs -----------------------------------------------------------------
