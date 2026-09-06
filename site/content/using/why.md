@@ -134,6 +134,142 @@ on the next version bump, and **there is no second copy to forget.** The test fo
 in the kernel at all is written down in [Writing a task](../../building/tasks/) - can it be written
 without naming this product's directories, images or services?
 
+## The same five verbs over very different work
+
+The vocabulary is fixed and the technologies are not. What makes that trade worth making is not visible
+from either half on its own - it becomes visible when you ask what *kind of work* the tasks are.
+
+Delivering a component is not one activity. Version control, testing, documentation, packaging, the
+machine everything runs on: these are separate kinds of work, done with separate tools, frequently by
+separate people, and no one of those toolchains has anything to say to the others. `pytest` knows
+nothing about Hugo. `oras` knows nothing about `mypy`. A vocabulary that described them *technically*
+would have to be six vocabularies, and nobody would be able to read across them.
+
+The catalogue is where this can be checked rather than taken on trust. Every coordinate in it, grouped
+by the kind of work instead of by the phase it runs in:
+
+| the work | what the bodies shell out to | coordinates |
+|---|---|---|
+| version control | `git`, `gh` | `vcs:commit`, `vcs:push`, `vcs:prune-branches`, `vcs:submodules`, `vcs:auth-scopes`, `release:tag` |
+| testing | pytest, mypy, Allure | `test:gate`, `test:accept`, `test:report`, `test:typecheck-python` |
+| documentation | Hugo, docToolchain, the assembled command line itself | `docs:site`, `docs:render`, `docs:reference` |
+| packaging and publishing | `docker`, `oras` | `build:image`, `release:image`, `release:artifact` |
+| the machine and its services | `oras`, `docker compose`, `claude` - and nothing at all for `support:environments`, which only reads the manifest | `support:install`, `support:nexus`, `support:claude-plugins`, `support:environments` |
+| the manifest itself | nothing external | `tasks:generate`, `tasks:catalogue` |
+
+Six kinds of work, and the middle column barely intersects. Every one of them is reached through
+`build`, `test`, `release`, `deploy`, `monitor`, `support` and nothing else. That is the claim the fixed
+verb list is worth making - not that five verbs are elegant, but that they are the only thing six
+unrelated toolchains can all be addressed by at once. Take the list apart per team and you have not
+gained expressiveness; you have lost the one word that meant the same thing in all six places.
+
+The two ways of grouping cut the same coordinates differently, and the difference is the point rather
+than an untidiness. `release:tag` is version-control work that happens in the release phase;
+`docs:site` is documentation work that simplon files under `build` and another product could file under
+`release`. Which half of a coordinate decides which is the placement-or-family rule, in [The five
+phases](../../building/phases/#what-the-catalogue-offers-today).
+
+One word does double duty across the two, and it is worth naming rather than leaving for a reader to
+trip over: **`test` is a phase, and testing is a kind of work.** They are not the same thing said
+twice - `docs:reference` is documentation work that runs in the `build` phase, and a product that
+renders its site as part of shipping puts documentation work in `release`. Where this page says
+*phase* it means one of the six groups; where it says *kind of work* it means a row of the table
+above.
+
+{{< callout type="info" >}}
+**A word this page does not use.** The goal this section comes from calls these *disciplines*. That
+word is already spoken for here: [Writing a task](../../building/tasks/) uses "discipline" for
+self-restraint - *the discipline that keeps the catalogue honest* - and so does the kernel's own source,
+throughout. Two meanings of one word across one site is worse than a plainer word, so this page says
+**kinds of work**, and "discipline" keeps meaning rigour.
+{{< /callout >}}
+
+The row that is *not* in the table is worth naming too. **Running things** - putting a component into an
+environment and watching it there - is a kind of work like the others, and the catalogue carries nothing
+for it at all. Not because it is not real work, but because its tools belong to the shared environment
+rather than to the product, and who should own them is still open. Those are the two empty ribs, in
+[The five phases](../../building/phases/#the-two-empty-ribs).
+
+## Why the technology travels in a container
+
+A task body shells out to a tool, which raises the question the section above walked past: *where does
+the tool come from?* There are two answers, and the kernel does not give the same one everywhere.
+
+The first is to provision the machine - install Hugo, install docToolchain, write the versions down
+somewhere, and hope the next machine gets the same ones. The second is to **bring the tool with the
+task**: name an image, run the tool inside it, and let the build depend on that image instead of on
+whatever happens to be installed where it runs. The second is what the two documentation renders do,
+and it is what those two catalogue entries mean when they say *in Docker*:
+
+> Build the product's documentation website with Hugo, in Docker (HTML only).
+
+> Render the project docs via docToolchain (generateHTML + generatePDF) in Docker.
+
+**It collapses the tool question into one question.** Hextra, the theme this site is built with, is a
+Hugo *module*, and building a Hugo module needs Hugo Extended, Go and Git together - three installations
+on a developer's machine, three ways to be the wrong version, three unrelated error messages to learn to
+recognise. In an image it is none of them. "Which of the three is missing, and in which version?"
+becomes "is docker there?", and that second question has an answer a script can act on.
+
+**Which is why the image reference is refused at load unless it names a version.** A container that
+brings whatever a moving tag points at today has relocated the problem rather than solved it - the
+machine no longer decides what the build uses, but the calendar does:
+
+> simplon.yaml: 'site': 'image' must pin a version ('<image>:<tag>'), got 'hugomods/hugo' - an untagged
+> image means ':latest', which moves under the build; pin it as '<image>:<tag>' (e.g.
+> 'hugomods/hugo:exts-0.148.2'), or by digest
+
+The theme module is refused on the same grounds - `@latest`, `@master` and a bare branch name are
+all queries that resolve differently tomorrow. Both declarations, and the rest of the `site:`
+section, are in [The manifest](../../building/manifest/#product-data-sections).
+
+### What it costs
+
+A page that only listed the upside would be recommending something it had not used.
+
+- **The pin fixes the version, not the availability.** `docs:site` runs `hugo mod get <module>@<version>`
+  before *every* build, and there is no host-side module cache for it to answer from, so the call ends
+  at `git ls-remote`. A build with no network is therefore impossible today, even when nothing has moved
+  since the last one - which is reproducible without being repeatable, and those are not the same
+  property. Open as [simplon#27](https://github.com/marcozwyssig/simplon/issues/27).
+- **A green build proves less about the output than it looks like.** Hugo emits a Mermaid block into the
+  HTML whether or not the Mermaid parses, because the diagram is drawn in the reader's browser and not
+  during the build. Measured: a one-character error in the source gives exit code 0, a full page count,
+  and the broken text verbatim in the published page. Open as
+  [simplon#45](https://github.com/marcozwyssig/simplon/issues/45).
+- **A container that writes into your tree writes as somebody.** The uid the image happens to run as is
+  the uid that ends up owning the output, and both directions of getting that wrong have been measured
+  here. The rule and both measurements are in [A container that writes into a mount runs as
+  `--user`](../../building/rules/#a-container-that-writes-into-a-mount-runs-as---user).
+- **A container that is not there is not the same as one that failed - and which of the two a task
+  chooses is the task's decision, not the container's.** For `docs:site`, no docker on the host is a
+  hint and a zero exit code, because the machine that runs the loop is not always the one that
+  publishes the page; docker present and no site produced is red. `docs:render` decides the other
+  way and dies on a missing docker, so the two renders quoted above are a pair in how they get their
+  tool and not in what they do when it is absent. The distinction is a rule of its own: [A missing
+  tool is not a failed tool](../../building/rules/#a-missing-tool-is-not-a-failed-tool).
+
+### Where a container is the wrong answer
+
+Not every tool belongs in one, and the catalogue says so out loud. The type gate's entry ends the other
+way round:
+
+> Type-check the product's Python sources with mypy, in the host venv (no Docker, no lab).
+
+The reason is in what that tool has to see. mypy resolves the product's *installed* dependencies, and
+without them every third-party import degrades into a blanket exception and the gate stops meaning
+anything - so the interpreter it runs under has to be the one the product actually ships against. An
+image would bring a Python of its own, which is precisely the wrong Python. The rule that comes out of
+the pair: bring the tool in a container when the tool has no opinion about the product's installed set,
+and use the product's own environment when it does.
+
+Two more shapes are worth not confusing with either. `build:image` and `release:image` use docker
+because the artefact *is* a container image - docker is the subject there, not the delivery vehicle -
+and their verdict on a missing docker is the opposite of the site build's: they call the gate that
+dies, because producing the image is the only thing they were asked to do. And `test:report` prefers a
+local `allure` on the PATH, falls back to an image when there is none, and degrades to a hint when
+there is neither: a container is one answer to "where does the tool come from", not the only one.
+
 ## Why not just write the five verbs yourself
 
 Almost every component does write them itself, and almost every one writes them a little differently.

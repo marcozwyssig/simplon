@@ -129,7 +129,8 @@ _COMMIT_RE = re.compile(r"[0-9a-f]{7,40}\Z")
 def _pinned_image(image: str, where: str) -> str:
     """Refuse an image reference that does not name a version. A build that renders something different
     depending on when it ran is not a build, and a documentation site is committed-to prose: a generator
-    change rewrites it wholesale. The same refusal `docs.py` makes for the docToolchain tag.
+    change rewrites it wholesale. `docs.py` makes only the WEAKER half of the same demand for the
+    docToolchain tag: it requires one to be declared, and does not refuse a moving one.
 
     The registry is split off by docker's OWN rule, which needs BOTH halves: a first component is a host
     when it carries a '.' or a ':' AND a '/' follows it, or when it is 'localhost'. That is what keeps a
