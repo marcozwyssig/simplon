@@ -6,7 +6,7 @@ cascade:
 ---
 
 This half is for the person who builds a product on the kernel: the two words the whole model rests on,
-the five phases every product's commands hang off, the manifest's shape, how a task's body is written
+the five phases of the loop and the group beside them, the manifest's shape, how a task's body is written
 and where it lives, how a product declares its test levels, how environments are declared and gated, and
 the rules the kernel is designed by.
 

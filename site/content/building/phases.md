@@ -101,7 +101,9 @@ one flag is the whole of the difference, and it runs in both directions:
 
 ```text
 myctl prod deploy up        # the environment comes first, before the group
-myctl build wheel           # and here it is refused outright
+myctl deploy up             # refused: this group needs an environment
+myctl build wheel           # no environment, and none accepted
+myctl dev build wheel       # refused outright: this group takes no environment
 ```
 
 The two env-first phases are the two that act **on** something rather than producing something. A
