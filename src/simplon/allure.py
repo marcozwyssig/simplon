@@ -57,6 +57,28 @@ def merge_results(dst: str, srcs: list[str], *, parent_suite: str = "Unit") -> N
                     labels.append({"name": "parentSuite", "value": parent_suite})
                 with open(os.path.join(dst, base), "w", encoding="utf-8") as fh:
                     json.dump(r, fh)
+            elif base == ENVIRONMENT:
+                # MERGED, never copied. This file carries the run's verdict (#30) - the one line a
+                # reader handed only the HTML can still see - and `shutil.copy` REPLACED it, so the
+                # products that merge something into their report were exactly the ones that lost it.
+                #
+                # The DESTINATION wins a key both sides declare, for two reasons that hold separately.
+                # The verdict is what the kernel itself is answerable for, and a merged directory
+                # restating it is describing its own run. And a merged directory usually lives OUTSIDE
+                # the results dir, so a `results: clear` never touches it and it SURVIVES a run: after a
+                # run of only the unit gate, that directory still holds last week's system stamp. Source
+                # wins would write those stale lines over the fresh ones - the same defect this function
+                # is being fixed for, one level down.
+                #
+                # A dropped key is said out loud rather than vanishing. A conflict rule without a message
+                # is a quieter version of the same problem.
+                incoming = read_environment(f)
+                existing = read_environment(os.path.join(dst, base))
+                clashes = sorted(k for k in incoming if k in existing and incoming[k] != existing[k])
+                if clashes:
+                    log.warn(f"{src}: {ENVIRONMENT} restates {', '.join(clashes)}; keeping this run's "
+                             f"values and dropping the merged directory's")
+                write_environment(dst, {**incoming, **existing})
             else:
                 shutil.copy(f, os.path.join(dst, base))
 
@@ -65,6 +87,22 @@ def merge_results(dst: str, srcs: list[str], *, parent_suite: str = "Unit") -> N
 #: widget. Not a simplon invention - which is exactly why the verdict of a run belongs in it (#30): it is
 #: the one place inside the archive that a later reader already looks at, and it needs no viewer we ship.
 ENVIRONMENT = "environment.properties"
+
+
+def read_environment(path: str) -> dict[str, str]:
+    """The `key=value` pairs in one properties file, or an empty map when there is none. Pure enough to
+    reuse: `write_environment` merges into the destination's, `merge_results` reads a source's."""
+    values: dict[str, str] = {}
+    if not os.path.isfile(path):
+        return values
+    with open(path, encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            values[key.strip()] = value.strip()
+    return values
 
 
 def write_environment(results: str, values: dict[str, str]) -> str:
@@ -80,15 +118,7 @@ def write_environment(results: str, values: dict[str, str]) -> str:
     """
     os.makedirs(results, exist_ok=True)
     path = os.path.join(results, ENVIRONMENT)
-    merged: dict[str, str] = {}
-    if os.path.isfile(path):
-        with open(path, encoding="utf-8") as fh:
-            for raw in fh:
-                line = raw.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, _, value = line.partition("=")
-                merged[key.strip()] = value.strip()
+    merged = read_environment(path)
     merged.update({key: " ".join(str(value).split()) for key, value in values.items()})
     with open(path, "w", encoding="utf-8") as fh:
         for key in sorted(merged):
