@@ -374,8 +374,9 @@ def test_no_section_writes_a_description_beside_a_coordinate():
     to be red is a description coming back.
 
     The sections used to print a sentence beside each coordinate, and nothing compared those sentences
-    with the `help:` they were paraphrases of. By the time anybody measured, thirteen of the twenty-two
-    had stopped saying what the catalogue says. The fix is not a rule about how a paraphrase may be
+    with the `help:` they were paraphrases of. By the time anybody measured, several had stopped saying
+    what the catalogue says - how many depends on how strictly one reads, which is why no count stands
+    here either (see the module docstring). The fix is not a rule about how a paraphrase may be
     worded - that would fence in every future sentence on this page to catch a copy nobody needs - but
     the removal of the copy: the coordinate is a bare list item, its sentence lives once, in the
     generated command reference.
