@@ -64,16 +64,19 @@ def _version(data: dict) -> str:
     changes cost a product nothing - they take an exemption away from the kernel. This one does not: a
     product may no longer write `doctoolchain_version: latest`, and that is the only kind of refusal
     that spends flexibility. The bar is the one #34 cleared, zero violations across the manifests that
-    exist, and it was MEASURED against all three rather than argued from the kernel's own:
+    exist - and RE-MEASURED in #51, because the first measurement counted three manifests and one of
+    them belonged to a repository that does not install this kernel at all (`simplon.surface`, which
+    names it). There are six:
 
-      * `simplon.yaml` declares no `doctoolchain_version` and places no `docs:` command - never reached;
       * `netctl.yaml` declares `doctoolchain_version: v3.5.0` and places `docs:render` - passes;
-      * `infractl.yaml` declares neither - never reached.
+      * `simplon.yaml`, `agile-cockpit.yaml`, `asbundle.yaml`, `biz-cockpit.yaml` and `cleon.yaml`
+        place no `docs:render`, so none of them reaches this gate at all.
 
     So nothing that exists is refused, and what a product wanting the newest docToolchain does instead
     is what netctl already does: write the version it means and bump it. (Read from the repositories,
     not from memory - the first version of this reasoning checked simplon alone, which is the one
-    manifest that cannot reach the gate at all.)
+    manifest that cannot reach the gate at all, and the second one checked a repository that is not a
+    consumer. `simplon.surface.CONSUMERS` is the list that says which repositories these are.)
     """
     version = str(data.get(VERSION_KEY, "")).strip()
     if not version:

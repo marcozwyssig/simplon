@@ -5,8 +5,9 @@ planned leaf through the product's own step factory - typically a streaming `./<
 subprocess - and dispatches the resulting Pipeline through the shared runner, optionally holding the host
 awake for the duration (the `keep_awake` spec flag, netctl#1238). Multi-command pipelines
 (bringup, test.all, build, ...) are thereby DATA in the product's manifest (impl-less aggregates carrying
-`depends_on`) instead of hand-written product Python, so a second product (infractl) gets the same
-runner and its own aggregates for free.
+`depends_on`) instead of hand-written product Python, so the next product gets the same runner and its own
+aggregates for free. Every product in `simplon.surface.CONSUMERS` already does, and so does the kernel's
+own orchestrator - measured (#51), not assumed.
 
 This module is PURE of any product import: the ONLY product-specific thing is the injected `step_factory`
 on the `StepFactoryContext`. That name is deliberately DISTINCT from `simplon.context.ProductContext`

@@ -4,9 +4,10 @@ binfmt_misc emulation capability. Product-agnostic MECHANISM extracted from netc
 
 Every function is a pure text/argv transform with NO product knowledge, so the consuming product wires
 them to its own host I/O (its Host / run seam) and keeps only its own module list + guard policy -
-"gleiche Maschine, anderer Katalog". These are exactly the host primitives an IaaS/PaaS control plane
-(infractl) needs as much as a network one (netctl): load a kernel module, decide whether an apt package
-is really installable, tell whether a binfmt_misc handler can run under a container.
+"gleiche Maschine, anderer Katalog". What they do is host work rather than network work - load a kernel
+module, decide whether an apt package is really installable, tell whether a binfmt_misc handler can run
+under a container - so any product that provisions a Linux host has use for them. One does today,
+measured (#51): netctl's `orchestrator.modules`.
 
 The headline is the netctl#95 `modprobe -a` bug: `modprobe wireguard mpls_router mpls_iptunnel` (no
 `-a`) treats only the FIRST token as a module and the rest as its PARAMETERS, so it loads one module,

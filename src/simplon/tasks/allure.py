@@ -9,10 +9,10 @@ the report. No product knowledge, which is why it is a module of its own rather 
 runner.
 
 IT MOVED HERE FROM THE TOP LEVEL (#37), and the reason is the head above. It used to sit beside `cli.py`
-and `context.py` on the strength of the claim that "both netctl and infractl reuse them" - and neither
-does - and infractl could not, because it does not install simplon at all. Measured across the five
-repositories that DO (the kernel's own orchestrator, agile-cockpit, netctl, asbundle, cleon), the sole
-importer is `simplon.tasks.testrun`, in this same directory. Product-agnostic is not the same as imported by a product: the first is a property of the
+and `context.py` on the strength of the claim that two named products reused it - and neither did, and one
+of the two does not install this kernel at all. Measured across every repository that DOES
+(`simplon.surface.CONSUMERS` plus this one's own orchestrator), the sole importer is
+`simplon.tasks.testrun`, in this same directory. Product-agnostic is not the same as imported by a product: the first is a property of the
 code, the second is a promise about a path, and only the second decides where a module belongs. `simplon`
 keeps a tombstone at the old path that says where this went; see `simplon.surface`.
 

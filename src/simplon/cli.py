@@ -4,8 +4,10 @@ The framework-free engine (simplon.orchestrator.manifest + simplon.clitaxonomy +
 stays Typer-free on purpose - it parses, validates and decides, but binds to no CLI framework. THIS is the
 one delivery module that imports Typer: it turns a validated Manifest into a Typer app (`assemble`) and
 runs the env-first dispatch (`main`). Both are product-AGNOSTIC - the product name, its environments and
-its command aliases all flow IN as parameters, never hardcoded here - so a second consumer (infractl)
-inherits the CLI assembly for free ("gleiche Maschine, anderer Katalog").
+its command aliases all flow IN as parameters, never hardcoded here - so a product inherits the CLI
+assembly for free ("gleiche Maschine, anderer Katalog"). Measured rather than hoped for (#51): every
+product in `simplon.surface.CONSUMERS` assembles its CLI here, each from its own `orchestrator/cli.py`,
+and so does the kernel's own orchestrator.
 
 Product responsibilities that stay OUTSIDE this module:
   - creating the ROOT Typer app (its help blurb is the product's voice) and registering any product-only
@@ -74,8 +76,8 @@ class _CommandKwargs(TypedDict, total=False):
     help: str
 
 # Rich help panels group the top-level commands in `--help`. The CI panel is fully generic; the CD panel
-# names the product token so the usage hint reads in the product's own voice (netctl / infractl), built
-# from the product name passed into `assemble` rather than hardcoded here.
+# names the product token so the usage hint reads in the product's own voice, built from the product name
+# passed into `assemble` rather than hardcoded here.
 _CI_PANEL = "CI / agnostic (no env)"
 
 
@@ -84,8 +86,8 @@ def _cd_panel(product: str) -> str:
 
 
 class EnvironmentProvider(Protocol):
-    """The environments seam `main` needs from the product (netctl's `orchestrator.environments`, or
-    infractl's equivalent). Structural: any module/object exposing these members satisfies it, so nothing
+    """The environments seam `main` needs from the product - `orchestrator/environments.py` in every
+    consumer measured (#51). Structural: any module/object exposing these members satisfies it, so nothing
     named is imported here - the coupling flows product -> kernel, never the reverse.
 
     ``ENV_VAR`` is the process env var the active environment rides in; ``LOCAL`` is the backend name a CD
@@ -152,8 +154,9 @@ def _declaration(name: str, param, presentation) -> object:
     arguments, silently turning `<product> commit some words` into `--message TEXT`.
 
     Undeclared means UNTOUCHED: the body's own default is returned as-is. That is what keeps a product
-    whose bodies still carry `typer.Option(...)` defaults (infractl, biz-cockpit) assembling exactly as
-    before - their defaults ARE those objects, and they pass through here unchanged.
+    whose bodies still carry `typer.Option(...)` defaults assembling exactly as before - their defaults
+    ARE those objects, and they pass through here unchanged. Two do today, measured (#51): biz-cockpit
+    (three such parameters) and netctl (two).
     """
     form = signatures.shape(name, required=param.required, presentation=presentation)
     if not form.declared:

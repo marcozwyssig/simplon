@@ -269,6 +269,69 @@ def test_the_innards_under_tasks_are_exactly_the_modules_no_coordinate_names():
         f"gitops, and one of the two has to change")
 
 
+# --- the consumers a module head is allowed to name (#51) -------------------------------------------
+
+
+#: Everything a reader of this kernel could mistake for a statement about who uses it: the package, the
+#: front page and the site. Tests are NOT in here - a fixture may need a product name that is nobody.
+def _prose_files() -> list[Path]:
+    root = Path(__file__).resolve().parents[1]
+    return [p for p in [*SRC.rglob("*.py"), root / "README.md", *(root / "site").rglob("*.md")]
+            if p.resolve() != (SRC / "surface.py").resolve()]
+
+
+def test_no_kernel_prose_names_a_repository_measured_not_to_use_the_kernel():
+    """THE ASSERTION #51 EXISTS FOR, and the whole of what can be held without a network.
+
+    Five module heads named `infractl` as a consumer of this kernel. It installs no part of it - zero
+    occurrences of the string in the whole repository - and that was not harmless prose: in #37 the
+    claim decided where `allure` lived, and in #47 an `infractl.yaml` stood in the zero-violations bar
+    for an expression rule, as a manifest this kernel never sees.
+
+    What a test can do about that offline is the smaller half, and it is worth stating which half.
+    It CANNOT re-measure another repository - that would hang on the network and on access rights, and
+    a green run would then mean "GitHub answered" as often as "the claim holds". It CAN hold the
+    kernel's own prose to the last measurement that WAS taken, which is exactly the step that was
+    missing: the name went into five heads and nothing ever compared it with anything.
+
+    `surface.py` itself is exempt, because it is where the measurement is written down; every other
+    file has to point there rather than keep a copy.
+    """
+    # arrange
+    offenders: dict[str, list[str]] = {}
+
+    # act
+    for name in surface.NOT_CONSUMERS:
+        hits = [str(p) for p in _prose_files() if name in p.read_text(encoding="utf-8")]
+        if hits:
+            offenders[name] = hits
+
+    # assert
+    assert not offenders, (
+        f"{offenders} name a repository that does not install this kernel; "
+        f"surface.NOT_CONSUMERS says how that was measured, and a head that needs the fact "
+        f"points there instead of repeating the name")
+
+
+def test_the_two_consumer_lists_do_not_overlap():
+    """A repository is measured to use the kernel or measured not to. Both at once is not a finding,
+    it is two measurements that were never compared - which is the defect one level up."""
+    # act
+    both = set(surface.CONSUMERS) & set(surface.NOT_CONSUMERS)
+
+    # assert
+    assert not both, f"{sorted(both)} is in surface.CONSUMERS and in surface.NOT_CONSUMERS"
+
+
+def test_every_measured_non_consumer_says_how_that_was_measured():
+    """A bare name would be the same unchecked assertion in a new place. The value beside it is the
+    measurement - what was looked at, and when - so the next reader can tell a fact from a memory."""
+    for name, reason in surface.NOT_CONSUMERS.items():
+        assert "measured" in reason.lower(), f"{name}: {reason!r} does not say how it was measured"
+        assert re.search(r"\b20\d\d-\d\d-\d\d\b", reason), (
+            f"{name}: {reason!r} carries no date, so nobody can tell how old the measurement is")
+
+
 # --- the website says the same thing --------------------------------------------------------------
 
 

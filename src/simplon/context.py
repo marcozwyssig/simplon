@@ -1,8 +1,10 @@
 """ProductContext - how a product hands its ROOT + manifest to the delivery kernel (netctl#592 Train B).
 
 The kernel must never hardcode a product name or a product's on-disk layout: "gleiche Maschine, anderer
-Katalog". A product's paths adapter (netctl's `orchestrator.paths`, infractl's equivalent) DERIVES its
-repo root and manifest path, builds ONE ProductContext, and registers it via `set_current()` at import.
+Katalog". A product's paths adapter - `orchestrator/paths.py` in every consumer measured (#51) - DERIVES
+its repo root and manifest path, builds ONE ProductContext and registers it at import. Normally through
+`bootstrap()` below, which is the walk plus the `set_current()` in one line; netctl still spells the two
+out by hand, which is the older shape and does the same thing.
 Kernel code that needs the product root or its manifest reads it back through `current()`, so it stays
 product-agnostic - the coupling flows product -> kernel via this seam, never the reverse.
 

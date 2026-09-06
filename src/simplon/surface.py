@@ -4,8 +4,9 @@ THE PROBLEM THIS SOLVES. The kernel has two public surfaces, not one. The first 
 a product writes `<namespace>:<name>` in its manifest and never names a module path - `catalogue.yaml`
 says so in its own head, which is what lets a body move inside the kernel without breaking anybody. The
 second surface is ordinary Python: a product imports `simplon.log`, `simplon.run`, `simplon.host` and
-calls them from its own task bodies. That surface is real, it is used by five repositories today, and
-until this module existed **nothing said which modules belonged to it**. Every module sat at the top
+calls them from its own task bodies. That surface is real - the products in `CONSUMERS` below use it, and
+so does this repository's own orchestrator - and until this module existed **nothing said which modules
+belonged to it**. Every module sat at the top
 level side by side - the ones a product may rely on, the ones the kernel merely happens to share
 between its own task bodies, and the ones that are pure internal machinery.
 
@@ -16,9 +17,9 @@ before: read every consumer and guess.
 WHY A DECLARATION AND NOT A DERIVATION. Everywhere else this repository can derive a fact, it does -
 the command reference is read off the assembled app, the version comes off the tag. This one cannot be
 derived, and the reason is worth stating because it looks derivable: you can measure who imports what
-today, but a promise is about tomorrow. `simplon.compose` has no consumer in any repository right now
-and is still a library - it was written as one, it names no product, and the next product to deploy a
-compose stack is meant to find it. `simplon.catalogue` has no consumer either and is machinery. The
+today, but a promise is about tomorrow. `simplon.verdict` has no consumer in any repository right now
+and is still a library - it was written as one, it names no product, and the next product to read a
+suite's outcome is meant to find it. `simplon.catalogue` has no consumer either and is machinery. The
 import graph cannot tell those two apart, because the difference is an intention. So the intention is
 written down, once, here - and `tests/test_surface.py` holds it to the tree: every top-level module has
 to appear in exactly one of the three sets below, so a module cannot be added without somebody deciding
@@ -44,8 +45,8 @@ import of theirs is affected - but calling it "no rule at all" would be two post
 
 WHAT `simplon/tasks/` IS, STATED CAREFULLY, because the obvious phrasing is false. A task body is
 NORMALLY reached by coordinate: a product writes `<namespace>:<name>` and the kernel resolves the
-`impl:`. But "a product may not import a task body" is not true and never was - five consumers do it
-today, and the kernel is the one that taught them:
+`impl:`. But "a product may not import a task body" is not true and never was - four of the five products
+do it today, across sixteen import sites, and the kernel is the one that taught them:
 
   - a hand-written composition root imports a body to call or wrap it (`from simplon.tasks import
     image` in agile-cockpit, `from simplon.tasks import artifact` in cleon);
@@ -57,6 +58,24 @@ module some catalogue coordinate points its `impl:` at is reachable, by coordina
 where a composition root has reason to. A module in there that NO coordinate names is innards -
 `allure` and `gitops` today - and nothing outside the directory imports either. That split is
 derivable from `catalogue.yaml` rather than declared, so `test_surface.py` derives it.
+
+NAMING A CONSUMER IN A MODULE HEAD (#51), decided once here so it is not decided again per module. A
+module head may say WHY a module is product-agnostic without naming anybody: that is a property of the
+code in front of you, and it stands on its own. It may name a consumer only where the name is the
+reason - "two products reuse this gate unchanged" is an argument, "a second one could" is not - and
+then the name has to be one of `CONSUMERS` below, because that is the list that was measured.
+
+An ANTICIPATED consumer gets no name. "A second consumer" says exactly as much as "(infractl)" and
+cannot become false. The name was not decoration: five module heads named infractl, a repository that
+does not install this kernel at all, and in #37 that claim decided where a module lived. `allure.py`
+stayed at the top level because its head said netctl and infractl reused it; neither did, and once
+that was measured the module moved. The same defect put infractl.yaml into #47's zero-violations bar,
+where it stood for a manifest this kernel never sees.
+
+So: the truth about a consumer lives in another repository, the copy lives in a comment, and nothing
+compares them - #46's second-source problem at a new place. The cheap half of the fix is not to keep
+the copy: heads point HERE instead of reciting a list. What is left here is one datum with the date it
+was taken on, and `test_surface.py` holds the kernel's own prose to it.
 """
 from __future__ import annotations
 
@@ -64,10 +83,35 @@ import warnings
 from importlib import import_module
 from typing import Any
 
+#: The products that install this kernel and import it as ordinary Python. MEASURED, and the method
+#: matters because the previous list was not: on 2026-09-06 (#51) every repository this account can read
+#: was fetched and searched for `from simplon ...` / `import simplon ...`, rather than for the phrase
+#: "simplon", which is what the earlier count did and why it missed one. The kernel's own
+#: `orchestrator/` is a consumer too and is deliberately NOT in this tuple - it is in this repository, so
+#: no measurement of another repository can go stale about it.
+#:
+#: This is a snapshot and it ages. What it is good for is not proving who consumes the kernel tomorrow,
+#: but keeping the kernel's prose from inventing somebody today; that much a test can hold without a
+#: network (`test_surface.py`).
+CONSUMERS = ("agile-cockpit", "asbundle", "biz-cockpit", "cleon", "netctl")
+
+#: Repositories in the same family that do NOT install this kernel, with the measurement that says so.
+#: They are here because naming one as a consumer is the defect #51 exists for, and this is what lets a
+#: test catch it: no kernel source, README or site page outside THIS module may name one of these. That
+#: is an assurance with no network in it, and it is deliberately the smaller half of the problem - it
+#: cannot tell whether the measurement above is still current, only that the prose does not contradict
+#: the last one taken. The larger half stays care rather than assurance: a test that asks four other
+#: repositories what they import would hang on the network and on access rights.
+NOT_CONSUMERS = {
+    "infractl": "measured 2026-09-06 (#51) over the GitHub API: zero occurrences of `simplon` in the "
+                "whole repository - it still hangs on the old `lib/platform` submodule, not on the "
+                "PyPI kernel. Five kernel module heads named it as a consumer anyway.",
+}
+
 #: Modules a product may import. Promised: a rename or a signature change here is a breaking change and
-#: gets a tombstone in `MOVED` plus a release note. Measured consumers today are simplon's own
-#: orchestrator, agile-cockpit, netctl, asbundle and cleon; the ones with no consumer yet are library by
-#: intent - each says so in its own head and names no product.
+#: gets a tombstone in `MOVED` plus a release note. Who the consumers are is `CONSUMERS` above, measured
+#: rather than recited here; the modules with no consumer yet are library by INTENT - each says so in its
+#: own head and names no product.
 LIBRARY = frozenset({
     "awake", "backend", "clablifecycle", "clabrender", "cli", "compose", "context", "credentials",
     "degraded", "disk", "docker", "environments", "githubpackages", "healthgate", "host", "imagenames",

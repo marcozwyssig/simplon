@@ -11,8 +11,9 @@ product's `install` command, which provisions the full engine on a real host. A 
 the flag for its self-hosted runner, where the socket-mount shape is intended.
 
 Product-agnostic: the repo root and the product name (for the install hint) come from the registered
-`simplon.context`, so both netctl and infractl reuse this gate unchanged - "gleiche Maschine, anderer
-Katalog".
+`simplon.context`, so a product reuses this gate unchanged - "gleiche Maschine, anderer Katalog". Two do
+today, and the pair is measured rather than assumed (#51): netctl (`orchestrator.lab`,
+`orchestrator.tooling`) and asbundle (`orchestrator.container`).
 """
 from __future__ import annotations
 

@@ -2,7 +2,7 @@
 
 Nothing outside `simplon/tasks/` imported it: the only consumer is `simplon.tasks.testrun`, so the
 allure report mechanics are the innards of one task body and now sit beside it. Its own head used to
-claim netctl and infractl reused it; neither does, which is how the placement went unnoticed.
+claim two named products reused it; neither did, which is how the placement went unnoticed.
 
 It still imports and every name still resolves - the attribute is fetched from the new module and a
 `FutureWarning` says where it went. That is deliberate: a product on the old path gets a working run
