@@ -35,14 +35,25 @@ def _docker(monkeypatch, present=True):
                         lambda name: "/usr/bin/docker" if present and name == "docker" else None)
 
 
-def _stub_run(monkeypatch, rc=0, seen=None, writes=None):
+def _stub_run(monkeypatch, rc=0, seen=None, writes=None, mermaid_rc=0, mermaid_writes=True):
     """A docker that records its argv, returns `rc`, and optionally writes `writes` (relative to the
     destination hugo was handed) - the way a real run either does or does not produce a site. The
     container path is mapped back to the host through the mount the argv itself carries, so a wrong
-    mount or a wrong destination shows up as a build that produced nothing."""
+    mount or a wrong destination shows up as a build that produced nothing.
+
+    The MERMAID render is the same fake with its own verdict, told apart by the image in the argv:
+    `mermaid_rc` is what mmdc exits with, and `mermaid_writes` says whether an SVG appears - the two are
+    separate because a tool that exits 0 and writes nothing is a case this module treats as a failure
+    everywhere else."""
     def fake(argv, **kwargs):
         if seen is not None:
             seen.append((argv, kwargs))
+        if site_task.MERMAID_IMAGE in argv:
+            if mermaid_rc == 0 and mermaid_writes:
+                host, container = argv[argv.index("-v") + 1].split(":", 1)
+                out = site_task.Path(host) / os.path.relpath(argv[argv.index("-o") + 1], container)
+                out.write_text("<svg/>", encoding="utf-8")
+            return Result(rc=mermaid_rc, out="", err="")
         if writes and "--destination" in argv:
             host, container = argv[argv.index("-v") + 1].split(":", 1)
             out = site_task.Path(host) / os.path.relpath(argv[argv.index("--destination") + 1], container)
@@ -52,6 +63,32 @@ def _stub_run(monkeypatch, rc=0, seen=None, writes=None):
         return Result(rc=rc, out="", err="")
     monkeypatch.setattr(site_task, "run", fake)
     return seen
+
+
+#: The diagram si#45 measured, and the two single-character edits that make it invisible in a browser
+#: while `build docs` stays rc 0 and the suite stays green.
+_GOOD_DIAGRAM = """flowchart LR
+  build["build"]
+  test["test"]
+  build -- "artefacts" --> test
+  support["support"] -. "a host" .-> build
+"""
+_BROKEN_KEYWORD = _GOOD_DIAGRAM.replace("flowchart LR", "flowchrt LR")
+_BROKEN_ARROW = _GOOD_DIAGRAM.replace(".-> build", ".->> build")
+
+
+def _page(source, name, diagram=None):
+    """A Markdown page under the site source, with a mermaid block when one is given. Returns the line
+    the fence lands on, so a test asserts the number a reader is actually told."""
+    body = "---\ntitle: \"x\"\n---\n\nsome prose\n"
+    line = None
+    if diagram is not None:
+        line = len(body.splitlines()) + 1
+        body += "```mermaid\n" + diagram + "```\n"
+    page = source / name
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text(body, encoding="utf-8")
+    return line
 
 
 # --- what the manifest says, and what it must say -------------------------------------------------------
@@ -536,3 +573,207 @@ def test_the_required_keys_are_checked_before_the_optional_theme():
     # act / assert
     with pytest.raises(ValueError, match="image"):
         site_task.declared({"site": section})
+
+
+# --- the diagram render gate (si#45) ----------------------------------------------------------------
+
+
+def test_the_block_scanner_finds_the_fence_and_the_line_a_reader_has_to_open():
+    # arrange: a page with prose before the diagram, so the line number is a real one rather than 1
+    text = "---\ntitle: \"x\"\n---\n\nprose\n\n```mermaid\nflowchart LR\n  a --> b\n```\n\nmore prose\n"
+
+    # act
+    found = site_task.diagrams_in(text, site_task.Path("site/content/x.md"))
+
+    # assert: one block, the fence's own line, and the body without the fences
+    assert len(found) == 1
+    assert found[0].line == 7
+    assert found[0].body == "flowchart LR\n  a --> b"
+    assert text.splitlines()[found[0].line - 1] == "```mermaid"
+
+
+def test_the_block_scanner_closes_each_block_at_its_own_fence():
+    # arrange: two blocks with prose between them. A regex that ends at the first ``` it finds would
+    # check the GAP between them and report two green diagrams having rendered neither
+    text = "```mermaid\nflowchart LR\n  a --> b\n```\n\nprose\n\n```mermaid\nflowchart TD\n  c --> d\n```\n"
+
+    # act
+    found = site_task.diagrams_in(text, site_task.Path("x.md"))
+
+    # assert
+    assert [d.line for d in found] == [1, 8]
+    assert [d.body.splitlines()[0] for d in found] == ["flowchart LR", "flowchart TD"]
+
+
+def test_the_scanner_ignores_a_fence_that_is_not_mermaid():
+    # arrange: the phases chapter carries a ```text block beside its diagram
+    text = "```text\nmyctl build wheel\n```\n\n```mermaid\nflowchart LR\n  a --> b\n```\n"
+
+    # act
+    found = site_task.diagrams_in(text, site_task.Path("x.md"))
+
+    # assert
+    assert len(found) == 1
+    assert found[0].body.startswith("flowchart")
+
+
+def test_the_sweep_skips_the_directories_hugo_owns_rather_than_the_author(tmp_path):
+    # arrange: a diagram somebody else shipped - in the module cache, the asset cache or a previous
+    # destination - is not this build's to fail on
+    source = tmp_path / "site"
+    _page(source, "content/mine.md", _GOOD_DIAGRAM)
+    for owned in ("resources", "public", "_vendor", "node_modules", ".git"):
+        _page(source, f"{owned}/theirs.md", _BROKEN_KEYWORD)
+
+    # act
+    found = site_task.diagrams_under(source)
+
+    # assert
+    assert [d.page.name for d in found] == ["mine.md"]
+
+
+def test_a_build_whose_diagram_does_not_render_is_red_and_names_the_page_and_the_line(monkeypatch,
+                                                                                     tmp_path, capsys):
+    # arrange: `flowchart` -> `flowchrt`, one of the two single-character errors si#45 measured. Hugo
+    # emits the block whatever it says, so rc 0 and a full page count prove nothing about the picture
+    _register(monkeypatch, tmp_path, {"image": _IMAGE, "source": "website", "output": "build/website"})
+    line = _page(tmp_path / "website", "content/building/phases.md", _BROKEN_KEYWORD)
+    _docker(monkeypatch)
+    _stub_run(monkeypatch, rc=0, writes=["index.html"], mermaid_rc=1)
+
+    # act
+    rc = site_task.build()
+
+    # assert: red, and the message names the file and the line an author opens
+    err = capsys.readouterr().err
+    assert rc != 0
+    assert f"content/building/phases.md:{line}" in err
+
+
+def test_the_other_single_character_error_is_red_too(monkeypatch, tmp_path, capsys):
+    # arrange: `.->` -> `.->>`. A different failure inside mermaid (a parse error rather than an
+    # unknown diagram type) and the same consequence: nothing is drawn
+    _register(monkeypatch, tmp_path, {"image": _IMAGE, "source": "website", "output": "build/website"})
+    _page(tmp_path / "website", "content/x.md", _BROKEN_ARROW)
+    _docker(monkeypatch)
+    _stub_run(monkeypatch, rc=0, writes=["index.html"], mermaid_rc=1)
+
+    # act / assert
+    assert site_task.build() != 0
+    assert "content/x.md" in capsys.readouterr().err
+
+
+def test_a_mermaid_that_exits_zero_and_writes_no_svg_is_red_as_well(monkeypatch, tmp_path, capsys):
+    # arrange: the shape `allure.render_report` reported as success for two releases, one level down -
+    # a tool that was there, said nothing and produced nothing
+    _register(monkeypatch, tmp_path, {"image": _IMAGE, "source": "website", "output": "build/website"})
+    _page(tmp_path / "website", "content/x.md", _GOOD_DIAGRAM)
+    _docker(monkeypatch)
+    _stub_run(monkeypatch, rc=0, writes=["index.html"], mermaid_rc=0, mermaid_writes=False)
+
+    # act / assert
+    assert site_task.build() != 0
+    assert "does not render" in capsys.readouterr().err
+
+
+def test_a_build_whose_diagram_renders_is_green_and_says_how_many(monkeypatch, tmp_path, capsys):
+    # arrange
+    _register(monkeypatch, tmp_path, {"image": _IMAGE, "source": "website", "output": "build/website"})
+    _page(tmp_path / "website", "content/a.md", _GOOD_DIAGRAM)
+    _page(tmp_path / "website", "content/b.md", _GOOD_DIAGRAM)
+    _docker(monkeypatch)
+    _stub_run(monkeypatch, rc=0, writes=["index.html"])
+
+    # act
+    rc = site_task.build()
+
+    # assert: green, and the count is printed - "2 rendered" is a different statement from "none found"
+    out = capsys.readouterr()
+    assert rc == 0
+    assert "2 mermaid diagram(s) render" in out.out
+    assert out.err == ""
+
+
+def test_a_build_with_no_diagram_at_all_is_green_and_says_there_was_nothing_to_check(monkeypatch,
+                                                                                    tmp_path, capsys):
+    # arrange: ACCEPTANCE 2, and the harder half of si#45. Building the cure for "nothing to do is not
+    # the same as failed" and then leaving the empty case to be inferred from silence would have
+    # reproduced the very defect - so the build says which of the two green it is
+    _register(monkeypatch, tmp_path, {"image": _IMAGE, "source": "website", "output": "build/website"})
+    _page(tmp_path / "website", "content/prose-only.md")
+    _docker(monkeypatch)
+    seen = _stub_run(monkeypatch, rc=0, seen=[], writes=["index.html"])
+
+    # act
+    rc = site_task.build()
+
+    # assert: green, said out loud, and NOT claiming that anything was checked
+    out = capsys.readouterr()
+    assert rc == 0
+    assert "no mermaid diagram" in out.out
+    assert "nothing to render-check" in out.out
+    assert "diagram(s) render" not in out.out
+    assert out.err == ""
+
+    # assert: and the second image was never pulled, because there was nothing to render
+    assert not any(site_task.MERMAID_IMAGE in argv for argv, _ in seen)
+
+
+def test_the_three_states_of_the_gate_are_distinguishable_by_the_caller(monkeypatch, tmp_path):
+    # arrange: None = the gate never ran, 0 = it ran and found nothing, n = it rendered n. A caller
+    # handed only a boolean could not tell the first two apart, which is the whole complaint
+    _register(monkeypatch, tmp_path, {"image": _IMAGE, "source": "website", "output": "build/website"})
+    cfg = site_task.declared({"site": {"image": _IMAGE, "source": "website", "output": "build/website"}})
+
+    # act / assert: no docker at all - nothing ran
+    _docker(monkeypatch, present=False)
+    _stub_run(monkeypatch)
+    assert site_task.build_site(cfg, tmp_path).diagrams is None
+
+    # act / assert: docker, a site, and no diagram in it
+    _page(tmp_path / "website", "content/prose-only.md")
+    _docker(monkeypatch)
+    _stub_run(monkeypatch, rc=0, writes=["index.html"])
+    assert site_task.build_site(cfg, tmp_path).diagrams == 0
+
+    # act / assert: docker, a site, and a diagram that renders
+    _page(tmp_path / "website", "content/with.md", _GOOD_DIAGRAM)
+    _stub_run(monkeypatch, rc=0, writes=["index.html"])
+    built = site_task.build_site(cfg, tmp_path)
+    assert (built.diagrams, built.broken, built.ok) == (1, (), True)
+
+
+def test_the_render_runs_as_the_caller_in_the_pinned_image_on_its_own_mount(monkeypatch, tmp_path):
+    # arrange: the container writes the SVG into a mounted directory, so `--user` for the reason
+    # docker.user_args documents; its OWN mount, because a render must not be able to write into the
+    # tree it is checking; and no --entrypoint, because THIS image's entrypoint carries the puppeteer
+    # config without which mmdc cannot find chromium at all (measured: `Could not find Chrome`, rc 1,
+    # for a diagram that is perfectly fine)
+    _register(monkeypatch, tmp_path, {"image": _IMAGE, "source": "website", "output": "build/website"})
+    _page(tmp_path / "website", "content/x.md", _GOOD_DIAGRAM)
+    _docker(monkeypatch)
+    seen = _stub_run(monkeypatch, rc=0, seen=[], writes=["index.html"])
+
+    # act
+    site_task.build()
+
+    # assert
+    argv = next(argv for argv, _ in seen if site_task.MERMAID_IMAGE in argv)
+    assert argv[argv.index("--user") + 1] == f"{os.getuid()}:{os.getgid()}"
+    assert argv.index("--user") < argv.index(site_task.MERMAID_IMAGE)
+    assert "--entrypoint" not in argv
+    assert argv[argv.index("-v") + 1].split(":")[0] != str(tmp_path)
+    assert argv[argv.index("-i") + 1].startswith(str(site_task.MERMAID_MOUNT))
+
+
+def test_the_gate_runs_after_the_site_is_built_and_not_instead_of_it(monkeypatch, tmp_path):
+    # arrange: a hugo that fails must not also be reported as a diagram problem - the first failure is
+    # the one worth reading, and rendering diagrams for a site that does not exist tells nobody anything
+    _register(monkeypatch, tmp_path, {"image": _IMAGE, "source": "website", "output": "build/website"})
+    _page(tmp_path / "website", "content/x.md", _BROKEN_KEYWORD)
+    _docker(monkeypatch)
+    seen = _stub_run(monkeypatch, rc=1, seen=[])
+
+    # act / assert
+    assert site_task.build() != 0
+    assert not any(site_task.MERMAID_IMAGE in argv for argv, _ in seen)

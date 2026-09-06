@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -63,6 +64,31 @@ MOUNT = PurePosixPath("/project")
 #: The one file whose absence means "no site". Hugo's home page, at the publish root - the file a static
 #: host serves for the site's own URL, so a destination without it is not a website whatever else is in it.
 INDEX = "index.html"
+
+#: The renderer the diagram gate checks with, PINNED by `docker.pinned_image` at import (si#47) - the
+#: same demand this module makes of the hugo image a product declares.
+#:
+#: The KERNEL's choice rather than the manifest's, which is the opposite of the rule for the hugo image
+#: one line up, and deliberately: the hugo image decides what the site LOOKS LIKE, so it is the
+#: product's; this one only decides whether a diagram parses, and a product asked to declare a checker
+#: it never invokes is a required manifest line bought with nothing. si#45 wanted a gate, not a new
+#: section.
+#:
+#: 11.17.0 is what ':latest' resolved to when the pin was written (both tags,
+#: sha256:a6fb0574dded4086888b5e38476899c9aff8963196f689f11a0f8fceee588ce1). WHAT THE PIN COSTS, stated
+#: rather than hidden: this is a mermaid version, and the theme renders the page with a mermaid of its
+#: own in the reader's browser. The two agreeing is the normal case and not a guarantee, so the gate is
+#: a check that the source PARSES, not a promise that it draws identically in every browser.
+MERMAID_IMAGE = docker.pinned_image("minlag/mermaid-cli:11.17.0", "simplon.tasks.site")
+
+#: Where the diagram scratch is mounted inside the mermaid container. Its own mount rather than the
+#: product root: a render must not be able to write into the tree it is checking.
+MERMAID_MOUNT = PurePosixPath("/data")
+
+#: Directories under a product's site source that belong to HUGO rather than to whoever writes the
+#: pages: its asset cache, its default destination, a vendored module tree, npm's. Markdown found in
+#: them is somebody else's, and a diagram somebody else shipped is not this build's to fail on.
+_NOT_THE_AUTHORS = {"resources", "public", "_vendor", "node_modules"}
 
 
 @dataclass(frozen=True)
@@ -88,20 +114,28 @@ class Build:
     out - the case that must be visible - as against a host with no docker at all, which stays a hint.
     There is deliberately no third field naming WHICH tool was missing: in a container there is only one
     to miss, which is the whole point of building this way.
+
+    ``diagrams`` and ``broken`` carry the render gate's verdict (si#45), and ``diagrams`` has THREE
+    states on purpose, because a check that cannot tell them apart is the defect this repository keeps
+    finding: None means the gate never ran (no docker, or the build failed before it), 0 means it ran
+    and there was no diagram to rule on, and a number means it rendered that many. "Nothing to check" is
+    therefore a thing the caller can SAY rather than something it infers from silence.
     """
 
     index: Path | None = None
     tool: str | None = None
+    diagrams: int | None = None
+    broken: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
-        """A site was built."""
-        return self.index is not None
+        """A site was built AND every diagram in it renders."""
+        return self.index is not None and not self.broken
 
     @property
     def failed(self) -> bool:
-        """The toolchain WAS available and produced no site."""
-        return self.tool is not None and self.index is None
+        """The toolchain WAS available and produced no site worth publishing."""
+        return self.tool is not None and not self.ok
 
 
 def _str(body: Mapping, key: str, where: str, *, required: bool = False) -> str:
@@ -234,6 +268,127 @@ def _wipe(out: Path, cfg: Site) -> bool:
     return True
 
 
+@dataclass(frozen=True)
+class Diagram:
+    """One mermaid block, with the page and the line a reader has to open to fix it. ``line`` is the
+    fence's own line, 1-based - mermaid's parser reports a line INSIDE the block, so the two together
+    name the character."""
+
+    page: Path
+    line: int
+    body: str
+
+    def where(self, root: Path) -> str:
+        """`<page>:<line>`, relative to the product root, which is how an editor is told where to go."""
+        try:
+            page = self.page.relative_to(root)
+        except ValueError:                     # a page outside the root cannot be named relative to it
+            page = self.page
+        return f"{page}:{self.line}"
+
+
+def diagrams_in(text: str, page: Path) -> list[Diagram]:
+    """The mermaid blocks in one Markdown page.
+
+    Read line by line rather than with one regex over the file, because the closing fence has to be the
+    one that matches: a regex is easy to write in a way that ends the block at the first ``` it finds,
+    which for a page with two blocks silently checks the gap between them instead of the diagrams.
+    """
+    found: list[Diagram] = []
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        opening = lines[index].strip()
+        if opening.startswith("```") and opening[3:].strip().lower() == "mermaid":
+            fence = index
+            body: list[str] = []
+            index += 1
+            while index < len(lines) and lines[index].strip() != "```":
+                body.append(lines[index])
+                index += 1
+            found.append(Diagram(page=page, line=fence + 1, body="\n".join(body)))
+        index += 1
+    return found
+
+
+def diagrams_under(source: Path, skip: set[str] | None = None) -> list[Diagram]:
+    """Every mermaid block under a site's source tree, in a stable order.
+
+    The SOURCE rather than the built HTML, and the choice costs something either way. Hugo escapes the
+    block into `<pre class="mermaid">`, so the output carries the same characters and would be just as
+    checkable - but it carries no line number and no file an author edits, and the acceptance this
+    exists for asks which page and which line. What the source misses in exchange is a diagram that
+    reaches a page by some other route (a shortcode, a data file); the count is reported for exactly
+    that reason, so a reader can see what the gate ruled on rather than assume it saw everything.
+    """
+    skipped = _NOT_THE_AUTHORS if skip is None else skip
+    found: list[Diagram] = []
+    for page in sorted(source.rglob("*.md")):
+        parts = page.relative_to(source).parts[:-1]
+        if any(part in skipped or part.startswith(".") for part in parts):
+            continue
+        found += diagrams_in(page.read_text(encoding="utf-8"), page)
+    return found
+
+
+def _renders(diagram: Diagram, scratch: Path) -> bool:
+    """Render one block in the pinned mermaid image and say whether an SVG came out.
+
+    NO `--entrypoint`, which is the opposite of `_hugo` one function up and was measured rather than
+    reasoned: this image's entrypoint is `mmdc -p /puppeteer-config.json`, and that config is the only
+    thing that tells puppeteer where chromium is and to drop its sandbox. Overriding it the way `_hugo`
+    overrides hugo's replaces every verdict with `Could not find Chrome` - which is rc 1 for a diagram
+    that is perfectly fine, a gate that is red on everything and therefore says nothing.
+
+    `--user` for the reason `docker.user_args` documents: the container writes the SVG into a mounted
+    directory. And the check is rc AND the file, because an exit code that reported nothing as success
+    is what `allure.render_report` did for two releases.
+    """
+    src = scratch / "diagram.mmd"
+    out = scratch / "diagram.svg"
+    out.unlink(missing_ok=True)
+    src.write_text(diagram.body, encoding="utf-8")
+    ok = run(["docker", "run", "--rm", *docker.user_args(),
+              "-v", f"{scratch}:{MERMAID_MOUNT}", MERMAID_IMAGE,
+              "-i", str(MERMAID_MOUNT / src.name), "-o", str(MERMAID_MOUNT / out.name)],
+             capture=False).ok
+    return ok and out.is_file()
+
+
+def render_diagrams(cfg: Site, root: Path) -> tuple[int, tuple[str, ...]]:
+    """Render every mermaid block under the site source and report `(how many, which ones failed)`.
+
+    WHY THIS IS IN THE BUILD AND NOT IN pytest (si#45). Hugo emits the block whether or not it parses,
+    because mermaid draws in the reader's browser and not during the build - measured: a page whose
+    diagram was replaced by obvious nonsense built with rc 0, the full page count, and the nonsense
+    verbatim in the HTML. So a green build proved nothing about the picture, and two single-character
+    errors (`flowchart` -> `flowchrt`, `.->` -> `.->>`) made the diagram invisible with the build and
+    the suite both green.
+
+    A pytest over `build/website/` would have been the wrong home for the fix and for a reason worth
+    keeping: without docker it would be red or skipped - the result that cannot tell "nothing to do"
+    from "failed" - and green for as long as any old build was lying around. HERE docker is a
+    precondition rather than a coincidence, so the gate is red or green and never skipped.
+
+    THE SECOND IMAGE IS ONLY PULLED WHEN THERE IS SOMETHING TO RENDER. It is cheaper, and it is also the
+    honest split: no diagram is not the same statement as "checked, and fine", so the caller is handed
+    the count and says which of the two happened.
+    """
+    found = diagrams_under(root / cfg.source)
+    if not found:
+        return 0, ()
+    log.info(f"checking {len(found)} mermaid diagram(s) with {MERMAID_IMAGE}")
+    broken = []
+    scratch = Path(tempfile.mkdtemp(prefix="simplon-mermaid-"))
+    try:
+        for diagram in found:
+            if not _renders(diagram, scratch):
+                broken.append(diagram.where(root))
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)   # our own temp dir; nothing of the product's is in it
+    return len(found), tuple(broken)
+
+
 def build_site(cfg: Site, root: Path) -> Build:
     """Build the declared Hugo site under `root` and say what came of it. Never raises: the caller decides
     how red a build that did not happen gets, which is the whole point of the missing/failed split."""
@@ -271,7 +426,13 @@ def build_site(cfg: Site, root: Path) -> Build:
                   f"contentDir and that {cfg.source}/ holds content - a build that produces nothing is "
                   f"not a green build")
         return Build(tool="docker")
-    return Build(index=index, tool="docker")
+    checked, broken = render_diagrams(cfg, root)
+    for where in broken:
+        log.error(f"the mermaid block at {where} does not render (see the parser's own message above), "
+                  f"so that diagram is invisible in the browser. hugo emits the block whatever it says: "
+                  f"it is drawn in the reader's browser, not during this build, which is why a green "
+                  f"hugo is no statement about the picture")
+    return Build(index=index, tool="docker", diagrams=checked, broken=broken)
 
 
 def build() -> int:
@@ -291,4 +452,11 @@ def build() -> int:
         return 1
     if built.ok:
         log.ok(f"site built -> {cfg.output}/")
+        # SAID, not left to be inferred. A build with no diagram in it is green, and green here means
+        # "there was nothing to render-check" rather than "every diagram renders" - the two are
+        # different statements and a reader who cannot tell them apart has been told the stronger one.
+        if built.diagrams:
+            log.ok(f"{built.diagrams} mermaid diagram(s) render")
+        else:
+            log.ok(f"no mermaid diagram under {cfg.source}/ - nothing to render-check")
     return 0

@@ -232,11 +232,16 @@ A page that only listed the upside would be recommending something it had not us
   at `git ls-remote`. A build with no network is therefore impossible today, even when nothing has moved
   since the last one - which is reproducible without being repeatable, and those are not the same
   property. Open as [simplon#27](https://github.com/marcozwyssig/simplon/issues/27).
-- **A green build proves less about the output than it looks like.** Hugo emits a Mermaid block into the
-  HTML whether or not the Mermaid parses, because the diagram is drawn in the reader's browser and not
-  during the build. Measured: a one-character error in the source gives exit code 0, a full page count,
-  and the broken text verbatim in the published page. Open as
-  [simplon#45](https://github.com/marcozwyssig/simplon/issues/45).
+- **A green Hugo proves nothing about the pictures, so the build checks them separately.** Hugo emits a
+  Mermaid block into the HTML whether or not the Mermaid parses, because the diagram is drawn in the
+  reader's browser and not during the build. Measured: a one-character error in the source gives exit
+  code 0, a full page count, and the broken text verbatim in the published page. `docs:site` therefore
+  renders every Mermaid block in the site source with a pinned `mermaid-cli` after Hugo has run, and is
+  red with the page and the line when one of them does not draw. Two costs come with that: a second
+  image is pulled on any build that has a diagram in it, and the version it checks with is not
+  necessarily the version the reader's browser draws with - the gate says the source parses, not that
+  it looks the same everywhere. A build with no diagram at all is green and *says* there was nothing to
+  check, because "nothing to do" and "checked, and fine" are different statements.
 - **A container that writes into your tree writes as somebody.** The uid the image happens to run as is
   the uid that ends up owning the output, and both directions of getting that wrong have been measured
   here. The rule and both measurements are in [A container that writes into a mount runs as

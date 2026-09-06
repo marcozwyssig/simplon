@@ -91,9 +91,12 @@ KINDS_HEADER = "| the work |"
 #: The phrase the site uses instead of "discipline", and the sentence that says why.
 CHOSEN_TERM = "kinds of work"
 
-#: The two costs the ticket refused to let the page leave out.
-COST_ISSUES = ("https://github.com/marcozwyssig/simplon/issues/27",
-               "https://github.com/marcozwyssig/simplon/issues/45")
+#: The open costs the ticket refused to let the page leave out. si#45 was one of them and is no longer
+#: open: `docs:site` now renders every Mermaid block and is red when one does not draw, so the bullet
+#: stayed in the cost list - a second image and a version the reader's browser need not share are real
+#: costs - and the ticket link went, because a page that keeps pointing at a closed issue is the second
+#: source this repository keeps deleting.
+COST_ISSUES = ("https://github.com/marcozwyssig/simplon/issues/27",)
 
 #: A catalogue coordinate as the page writes one: `docs:site`.
 _COORD = re.compile(r"`([a-z][a-z0-9-]*:[a-z][a-z0-9-]*)`")
