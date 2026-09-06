@@ -28,6 +28,27 @@ STAMP="$VENV/.deps-stamp"
 PY="$VENV/bin/python"
 PIP="$VENV/bin/pip"
 
+# WHERE THE ORCHESTRATOR IS EXPECTED, checked before anything is provisioned. LAUNCH_ORCH_DIR is a
+# PARAMETER (#4), so pointing it at nothing is an ordinary mistake and not a hypothetical: a
+# half-finished move, a partial checkout, a value edited by hand. Measured with this check removed
+# (#24): with the directory gone, `python3 -m venv` CREATES it and pip then complains about a missing
+# requirements file -- the launcher manufactures the very directory it was supposed to find; with the
+# sources gone, python answers "No module named orchestrator" and names no path at all. Both are
+# failures that decline to say what they already know, and this file knows exactly where it looked.
+# So it says so, names every path it needed, and touches nothing on the way out.
+for _needed in "$LAUNCH_ORCH_DIR" "$REQ" "$LAUNCH_ORCH_DIR/src/python/$LAUNCH_MODULE"; do
+    [ -e "$_needed" ] || {
+        printf '%s: no orchestrator here.\n' "$LAUNCH_PRODUCT" >&2
+        printf '%s:   LAUNCH_ORCH_DIR = %s\n' "$LAUNCH_PRODUCT" "$LAUNCH_ORCH_DIR" >&2
+        printf '%s:   missing         = %s\n' "$LAUNCH_PRODUCT" "$_needed" >&2
+        printf '%s: the block holds requirements.txt and src/python/%s. If it moved, point\n' \
+            "$LAUNCH_PRODUCT" "$LAUNCH_MODULE" >&2
+        printf '%s: LAUNCH_ORCH_DIR (above, in this file) at it, or write it again with\n' "$LAUNCH_PRODUCT" >&2
+        printf '%s:   simplon init %s --dir . --orch-dir <dir> --force\n' "$LAUNCH_PRODUCT" "$LAUNCH_PRODUCT" >&2
+        exit 1
+    }
+done
+
 command -v python3 >/dev/null 2>&1 || {
     printf '%s: python3 is required (the orchestrator is host-Python)\n' "$LAUNCH_PRODUCT" >&2
     exit 1
