@@ -128,6 +128,17 @@ target's own star-import surface, so the names and the notice both arrive.
 The tombstones come out at the next **minor** release. Until then a product gets a working run with a
 message in it rather than a stack trace, and knows where to point the line.
 
+That deadline is tracked rather than remembered. `simplon.surface` carries three things beside the
+table below: `MOVED_CONSUMERS`, which names every line in every repository that still imports an old
+path — measured, down to the file and the line number — `MOVED_DUE_AFTER`, the release the promise
+names, and a test that turns red once a version past it is built. The measurement is what makes ending
+the period cheap: **six import lines in three repositories**, and two of the four tombstones
+(`simplon.allure`, `simplon.vcs`) have no consumer at all and could go today.
+
+If one of those lines is yours, the fix is the right-hand column of the table below, and you have until
+the next minor to type it. [Cutting a release](../../using/releasing/) says what the person on the
+other end owes you before the paths disappear.
+
 ### What moved
 
 | Old path | Now | Why |

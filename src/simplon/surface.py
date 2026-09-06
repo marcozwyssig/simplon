@@ -76,6 +76,29 @@ So: the truth about a consumer lives in another repository, the copy lives in a 
 compares them - #46's second-source problem at a new place. The cheap half of the fix is not to keep
 the copy: heads point HERE instead of reciting a list. What is left here is one datum with the date it
 was taken on, and `test_surface.py` holds the kernel's own prose to it.
+
+THE TOMBSTONES HAVE A DEADLINE, AND THIS IS WHERE IT IS TRACKED (#50). `MOVED` promises that the four
+old paths are removed at the next minor. That promise was written in five places - `moved_message`
+below, the four tombstone modules' own heads - and quoted on the website, and for a while it was
+written in none of them WHO would notice when it came due. That is how a transition period turns into
+a permanent one: not by a decision, but because at the next minor nobody thought of it, and then it
+lasts one more, and one more.
+
+So three things live together below, and they are meant to be read as one entry:
+
+  - `MOVED`             - what was promised.
+  - `MOVED_CONSUMERS`   - who still uses the old path, MEASURED, down to the line. Six lines in three
+                          repositories, which is what makes ending the period cheap: it is a morning's
+                          work for three product owners, not a migration.
+  - `MOVED_DUE_AFTER`   - the release the promise names. `test_surface.py` turns red the moment a
+                          version past it is built, and says exactly what has to go.
+
+WHAT REMOVING THEM ACTUALLY IS, because deleting the four files is the smaller half and leaves a
+promise with no object behind it: delete `simplon/{allure,images,nexus,vcs}.py`, empty `MOVED` and
+`MOVED_CONSUMERS`, drop the migration table and the deadline sentence from
+`site/content/building/surface.md`, and re-measure `MOVED_CONSUMERS` FIRST - the acceptance is that no
+consumer still imports an old path, measured on the day, not remembered from this one. After that an
+old import fails with `ModuleNotFoundError`, which is loud enough.
 """
 from __future__ import annotations
 
@@ -158,6 +181,43 @@ MOVED = {
     "nexus": "simplon.nexusproxy",
     "vcs": "simplon.tasks.gitops",
 }
+
+#: Who still imports each old path, and from which line. MEASURED on 2026-09-06 (#50): the tarball of
+#: every repository this account can read was fetched and every `from simplon ...` / `import simplon ...`
+#: line was read. Not a phrase search - `from simplon import compose, images, log, ports, waits` is one
+#: of these lines and no search for "simplon.images" finds it, which is why the first count of this said
+#: five lines in two repositories and biz-cockpit was not among them.
+#:
+#: An EMPTY tuple is a finding, not a gap: `allure` and `vcs` have no consumer at all and could come out
+#: today without anybody changing a line.
+MOVED_CONSUMERS: dict[str, tuple[str, ...]] = {
+    "allure": (),
+    "images": (
+        "asbundle    deploy/provision/orchestrator/src/python/orchestrator/container.py:21",
+        "asbundle    deploy/provision/orchestrator/src/python/orchestrator/release.py:14",
+        "biz-cockpit deploy/provision/orchestrator/src/python/orchestrator/cli.py:28",
+        "netctl      deploy/provision/orchestrator/src/python/orchestrator/tooling.py:32",
+    ),
+    "nexus": (
+        "netctl      deploy/provision/orchestrator/src/python/orchestrator/guard.py:55",
+        "netctl      deploy/provision/orchestrator/test/unit/python/orchestrator/"
+        "test_nexus_manifest.py:20",
+    ),
+    "vcs": (),
+}
+
+#: The last release the tombstones are promised to survive: 0.4.0, the one that introduces them. "The
+#: next minor" is what the warning says, and a moving phrase cannot be checked - this is the same
+#: sentence as a pair of numbers, so a test can read it.
+#:
+#: WHEN IT FIRES, stated exactly, because the timing is the whole value and it is not the timing anybody
+#: would assume. setuptools-scm is on `no-guess-dev`, so every commit after v0.4.0 calls itself
+#: `0.4.0.postN.devM` - the minor does not move until a `v0.5.0` tag exists. The test therefore goes red
+#: on the RELEASE RUN of the next minor, not before: `.github/workflows/release.yml` runs `test all`
+#: after the tag and before the publish, so the tag is cut and nothing is published. That is the LAST
+#: moment, deliberately, and it is loud; the FIRST moment is `site/content/using/releasing.md`, which
+#: tells whoever is about to type a minor to look here.
+MOVED_DUE_AFTER = (0, 4)
 
 
 def moved_message(old: str, new: str) -> str:
