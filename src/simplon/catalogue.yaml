@@ -263,8 +263,12 @@ tasks:
       name: { help: "the image to publish (normally pinned per command with `with:`)" }
       tag:  { help: "the tag to publish under, for a version only known after a build" }
   # The release TAG - the one step of the loop that was still two git commands typed by hand (#32), and
-  # the guard #23 asked for, sitting inside it. Placed above rather than left as an unplaced task,
-  # because it is the only `release:` coordinate that reads no product data at all.
+  # the guard #23 asked for, sitting inside it.
+  #
+  # OFFERED, not placed, since #39. It reads no product data, which is what made placing it look right -
+  # but the bar is what a command DOES, not what it needs: this one publishes, a misfire is a public tag
+  # that cannot be taken back, and a product with no tag-triggered workflow has nothing waiting for it.
+  # A product that releases by tag declares it in one line; simplon does exactly that.
   #
   # `tag` is the tag exactly as it will exist, not a version the kernel decorates. WHICH tags publish is
   # the product's own statement - its release workflow's trigger and its setuptools-scm settings - and a
