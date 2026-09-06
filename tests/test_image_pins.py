@@ -20,11 +20,19 @@ exempting itself. Here the same move has two halves, and they only work together
     of the above got in.
 
 WHAT THE SWEEP CANNOT SEE, said plainly rather than implied. It reads one shape: a list LITERAL that has
-`"docker", "run"` in it. `simplon.nexus` builds its probe argv by appending to a list and puts the
-product's own `nexus: probe_image` in that position - product data rather than a kernel choice, and
-deliberately not gated: si#47 takes an exception away from the kernel, it does not add a demand to a
-product. A future module that assembles its argv the same way would also be invisible here, and the
-paired count assertions below are what make that a visible gap rather than a green sweep over nothing.
+`"docker", "run"` in it. Two seams in the kernel do not have that shape, and both were looked at rather
+than assumed away:
+
+  * `simplon.nexus._curl_argv` appends to a list instead of writing one, and puts the product's own
+    `nexus: probe_image` in the image position. Product data rather than a kernel choice, and
+    deliberately not gated: si#47 takes an exception away from the KERNEL, it does not add a demand to
+    a product - and netctl, the one manifest that declares the key, already pins it (`gradle:jdk25`).
+  * `simplon.host.Host.docker(*args)` routes a docker call through `colima ssh` on macOS, so any image
+    would arrive as a caller's argument. Measured: every caller in the kernel today passes `ps`, `rm`,
+    `network` or `logs` - not one runs a container, so no image crosses that seam at all.
+
+A future module that assembles its argv either way would also be invisible here. The paired count
+assertions below are what keep that a visible gap rather than a green sweep over nothing.
 
 AAA throughout.
 """

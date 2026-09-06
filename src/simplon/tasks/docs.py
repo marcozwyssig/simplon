@@ -59,11 +59,28 @@ def _version(data: dict) -> str:
     exception. `simplon.docker.pinned_image` is now the one gate, and it is handed the COMPLETE
     reference, because that is the string docker resolves - a tag is only pinned in the context of the
     repository it tags.
+
+    AND THIS ONE IS AN EXPRESSION RULE, not a self-binding, so it owes the bar. si#47's other three
+    changes cost a product nothing - they take an exemption away from the kernel. This one does not: a
+    product may no longer write `doctoolchain_version: latest`, and that is the only kind of refusal
+    that spends flexibility. The bar is the one #34 cleared, zero violations across the manifests that
+    exist, and it was MEASURED against all three rather than argued from the kernel's own:
+
+      * `simplon.yaml` declares no `doctoolchain_version` and places no `docs:` command - never reached;
+      * `netctl.yaml` declares `doctoolchain_version: v3.5.0` and places `docs:render` - passes;
+      * `infractl.yaml` declares neither - never reached.
+
+    So nothing that exists is refused, and what a product wanting the newest docToolchain does instead
+    is what netctl already does: write the version it means and bump it. (Read from the repositories,
+    not from memory - the first version of this reasoning checked simplon alone, which is the one
+    manifest that cannot reach the gate at all.)
     """
     version = str(data.get(VERSION_KEY, "")).strip()
     if not version:
         raise ValueError(f"manifest: '{VERSION_KEY}' is missing or empty - pin the docToolchain image tag")
-    docker.pinned_image(f"{IMAGE_REPOSITORY}:{version}", f"manifest: '{VERSION_KEY}'")
+    docker.pinned_image(f"{IMAGE_REPOSITORY}:{version}", f"manifest: '{VERSION_KEY}'",
+                        hint=f"write the version you mean, e.g. \"{VERSION_KEY}: v3.5.0\" - this key "
+                             f"holds a TAG, not a whole image reference")
     return version
 
 

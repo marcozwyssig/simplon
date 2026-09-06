@@ -170,7 +170,7 @@ _TAG_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,127}\Z")
 _DIGEST_RE = re.compile(r"[A-Za-z0-9]+(?:[.+_-][A-Za-z0-9]+)*:[A-Fa-f0-9]{32,}\Z")
 
 
-def pinned_image(image: str, where: str) -> str:
+def pinned_image(image: str, where: str, *, hint: str = "") -> str:
     """Refuse an image reference that does not name a version, and hand back the reference when it does.
 
     THE RULE. A build that renders something different depending on when it ran is not a build. An
@@ -197,8 +197,13 @@ def pinned_image(image: str, where: str) -> str:
     this. `registry.example:5000` alone therefore passes as image `registry.example` tag `5000`, which is
     what docker itself would do with it: nothing here can tell that port from a version without guessing,
     and guessing costs valid references.
+
+    `hint` is the caller's, because the caller knows what the reader has to EDIT. A manifest key that
+    holds a whole reference wants the default; one that holds a bare tag - `doctoolchain_version` - does
+    not, and telling its author to write 'hugomods/hugo:exts-0.148.2' into it would be a message that
+    sends them the wrong way with total confidence.
     """
-    hint = ("pin it as '<image>:<tag>' (e.g. 'hugomods/hugo:exts-0.148.2'), or by digest")
+    hint = hint or "pin it as '<image>:<tag>' (e.g. 'hugomods/hugo:exts-0.148.2'), or by digest"
     name, at, digest = image.partition("@")
     if at:
         if not name or not _DIGEST_RE.match(digest):
@@ -217,7 +222,8 @@ def pinned_image(image: str, where: str) -> str:
         raise ValueError(f"{where}: 'image' has no usable tag in '{image}'; {hint}")
     if tag == "latest":
         raise ValueError(f"{where}: 'image' must pin a version, not the moving tag 'latest' "
-                         f"(got '{image}') - a build whose output depends on when it ran is not a build")
+                         f"(got '{image}') - a build whose output depends on when it ran is not a "
+                         f"build; {hint}")
     return image
 
 

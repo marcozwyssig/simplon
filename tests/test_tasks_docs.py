@@ -111,11 +111,19 @@ def test_render_refuses_the_moving_tag_by_the_same_gate_the_site_build_uses(monk
     assert docs_cmd.VERSION_KEY in message
     assert "latest" in message
 
+    # assert: and the hint sends the author to the right edit. This key holds a TAG, so the default
+    # hint - "pin it as '<image>:<tag>', e.g. 'hugomods/hugo:exts-0.148.2'" - would be a message that
+    # is confidently wrong about the one line the reader is about to change
+    assert "hugomods" not in message
+    assert f"{docs_cmd.VERSION_KEY}: v3.5.0" in message
+
 
 @pytest.mark.parametrize("version", ["v3.5.0", "3.5.0", "5.3.2-boneyard"])
 def test_render_accepts_a_tag_that_names_one_version(monkeypatch, tmp_path, version):
     # arrange: the gate must not cost a valid pin. The refusal is about tags that MOVE, and the tags
-    # docToolchain actually publishes - a leading 'v' or not, a suffixed build - have to keep working
+    # docToolchain actually publishes - a leading 'v' or not, a suffixed build - have to keep working.
+    # 'v3.5.0' is not an example: it is the value netctl's manifest declares today, and this refusal is
+    # an EXPRESSION rule, so the one manifest it can actually reach has to keep loading
     _register(monkeypatch, tmp_path, {"doctoolchain_version": version})
     seen = []
     _stub_run(monkeypatch, rc=0, seen=seen)
