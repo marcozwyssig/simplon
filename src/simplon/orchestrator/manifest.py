@@ -777,6 +777,14 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     keep = treeform.declared_paths(tree) | treeform.paths_with_commands(flat)
     flat = {path: members for path, members in flat.items() if path in keep}
     treeform.check_every_task_is_used(flat, product_tasks)
+    # Phase or family (si#34): a coordinate whose namespace names one of the platform's top-level groups
+    # is a PLACEMENT (`build:image` is under `build`, always); any other namespace is a FAMILY, and the
+    # product places it where it likes (`docs:site` under `build` here, under `release` elsewhere). The
+    # phase set is the CATALOGUE's own top-level groups rather than a constant, so a loader running
+    # without one has no phases and every namespace is a family - which is the only reading that makes
+    # sense with no platform to own a loop. Runs BEFORE `resolve`, because `resolve` consumes the
+    # `task:` this rule is about and hands back an `impl:` the coordinate is no longer visible in.
+    treeform.check_coordinate_placement(flat, frozenset(catalogue_groups))
     resolved = treeform.resolve(flat, product_tasks, getattr(catalogue, "tasks", {}) or {})
     data = {**data, "groups": resolved, "tasks": {}}
     try:

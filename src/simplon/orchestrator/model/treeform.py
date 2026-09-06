@@ -697,3 +697,70 @@ def check_every_task_is_used(flat: dict, product_tasks: dict) -> None:
             + (f" (also: {', '.join(orphans[1:])})" if len(orphans) > 1 else "")
             + ". A template nobody uses is a dead declaration: add a command for it under `groups:`, or "
               "delete it")
+
+
+# --- phase or family: what a coordinate's namespace says about its placement (si#34) -------------------
+
+
+def check_coordinate_placement(flat: dict, phases: frozenset[str]) -> int:
+    """Reject a coordinate that names a phase and is placed in a different one.
+
+    THE RULE. A catalogue coordinate is `<namespace>:<name>`, and the namespace answers one of two
+    questions depending on what it is:
+
+      - it names a PHASE - a top-level group of the platform's tree (`build`, `test`, `release`,
+        `deploy`, `monitor`, `support`) - and then it is a placement: `build:image` belongs under
+        `build`, in every product, always;
+      - it names anything else, and then it is a FAMILY - what kind of task this is, said without
+        saying where it goes. `docs:site` is a documentation task; one product places it under `build`
+        and another under `release`, and both are right.
+
+    Coordinate and phase are deliberately TWO AXES (netctl#1437), and this rule is what keeps them two
+    without letting either become unpredictable. It costs the second axis nothing: a family namespace is
+    still placed wherever the product wants it. What it removes is the third state - a namespace that
+    reads like a phase and is not one - because that is the only case where a reader cannot tell which
+    axis a name is on.
+
+    Neighbour to the PLACEMENT HURDLE (si#39, `catalogue.yaml`'s `groups:` block), and the two must not
+    be confused: that one decides whether the kernel places a command at all ("useful in every product,
+    not merely harmless in most"), this one decides, once something IS placed, WHERE it may go. One
+    guards the kernel's own tree, the other guards every product's.
+
+    `phases` is the platform's top-level group names, and it is a parameter rather than a constant
+    because "which names are phases" is the CATALOGUE's statement. A caller with no catalogue hands in
+    an empty set and every namespace is a family, which is right: with no platform there are no phases.
+
+    Only the FIRST path segment is compared. A phase's sub-groups are still that phase - `support:install`
+    under `support.git` would be oddly filed and is not a rule violation, because the rule is about which
+    phase a task runs in, not about the shelf it sits on inside one.
+
+    RETURNS how many phase-named placements it ruled on, and that return value is the point of the
+    function being written this way. A manifest whose coordinates are all families passes this check
+    without the rule ever applying to anything, and a manifest with twenty phase-named placements passes
+    it too - both simply return. Only one of those two greens is evidence that the rule holds, so the
+    count is handed back rather than discarded, and a test asserting the rule over a real manifest can
+    say how much it actually weighed.
+    """
+    ruled = 0
+    for group_path, members in (flat or {}).items():
+        phase = str(group_path).split(".", 1)[0]
+        for name, spec in (members or {}).items():
+            ref = (spec or {}).get("task")
+            if ref is None or ":" not in str(ref):
+                continue
+            namespace = str(ref).split(":", 1)[0]
+            if namespace not in phases:
+                continue
+            if namespace == phase:
+                ruled += 1
+                continue
+            raise ValueError(
+                f"command '{group_path} {name}' places the coordinate '{ref}', whose namespace "
+                f"'{namespace}' is a phase. A coordinate that starts with a phase name says where the "
+                f"task belongs, so '{ref}' belongs under `groups: {namespace}:` and nowhere else - this "
+                f"places it under '{phase}'. Move the command to `groups: {namespace}: commands: "
+                f"{name}:`, or - if this body really is a family each product places where it likes - "
+                f"give it a namespace in the platform catalogue that is not a phase, the way `docs:site` "
+                f"can sit under `build` in one product and under `release` in another. The phases are: "
+                f"{', '.join(sorted(phases))}")
+    return ruled
