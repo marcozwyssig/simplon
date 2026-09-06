@@ -154,7 +154,7 @@ by the kind of work instead of by the phase it runs in:
 | testing | pytest, mypy, Allure | `test:gate`, `test:accept`, `test:report`, `test:typecheck-python` |
 | documentation | Hugo, docToolchain, the assembled command line itself | `docs:site`, `docs:render`, `docs:reference` |
 | packaging and publishing | `docker`, `oras` | `build:image`, `release:image`, `release:artifact` |
-| the machine and its services | `oras`, `docker compose`, the `claude` CLI | `support:install`, `support:nexus`, `support:claude-plugins`, `support:environments` |
+| the machine and its services | `oras`, `docker compose`, `claude` - and nothing at all for `support:environments`, which only reads the manifest | `support:install`, `support:nexus`, `support:claude-plugins`, `support:environments` |
 | the manifest itself | nothing external | `tasks:generate`, `tasks:catalogue` |
 
 Six kinds of work, and the middle column barely intersects. Every one of them is reached through
@@ -168,6 +168,13 @@ than an untidiness. `release:tag` is version-control work that happens in the re
 `docs:site` is documentation work that simplon files under `build` and another product could file under
 `release`. Which half of a coordinate decides which is the placement-or-family rule, in [The five
 phases](../../building/phases/#what-the-catalogue-offers-today).
+
+One word does double duty across the two, and it is worth naming rather than leaving for a reader to
+trip over: **`test` is a phase, and testing is a kind of work.** They are not the same thing said
+twice - `docs:reference` is documentation work that runs in the `build` phase, and a product that
+renders its site as part of shipping puts documentation work in `release`. Where this page says
+*phase* it means one of the six groups; where it says *kind of work* it means a row of the table
+above.
 
 {{< callout type="info" >}}
 **A word this page does not use.** The goal this section comes from calls these *disciplines*. That
@@ -234,9 +241,13 @@ A page that only listed the upside would be recommending something it had not us
   the uid that ends up owning the output, and both directions of getting that wrong have been measured
   here. The rule and both measurements are in [A container that writes into a mount runs as
   `--user`](../../building/rules/#a-container-that-writes-into-a-mount-runs-as---user).
-- **A container that is not there is not the same as one that failed.** No docker on the host is a hint
-  and a zero exit code; docker present and no site produced is red. That distinction is a rule of its
-  own: [A missing tool is not a failed tool](../../building/rules/#a-missing-tool-is-not-a-failed-tool).
+- **A container that is not there is not the same as one that failed - and which of the two a task
+  chooses is the task's decision, not the container's.** For `docs:site`, no docker on the host is a
+  hint and a zero exit code, because the machine that runs the loop is not always the one that
+  publishes the page; docker present and no site produced is red. `docs:render` decides the other
+  way and dies on a missing docker, so the two renders quoted above are a pair in how they get their
+  tool and not in what they do when it is absent. The distinction is a rule of its own: [A missing
+  tool is not a failed tool](../../building/rules/#a-missing-tool-is-not-a-failed-tool).
 
 ### Where a container is the wrong answer
 

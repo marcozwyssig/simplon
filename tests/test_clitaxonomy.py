@@ -52,7 +52,7 @@ def test_is_flat_command_group_only_for_same_named_single_member():
 
 def _tax_with_group_default() -> CommandTaxonomy:
     """`build` is a MULTI-member group that ALSO contains a `build` member (the #592 D4 shape): a
-    discipline that gained sibling commands but keeps its bare group-token default action."""
+    group that gained sibling commands but keeps its bare group-token default action."""
     return CommandTaxonomy(
         groups={"build": ("build", "diff", "docs"), "package": ("package",), "test": ("unit", "lint")},
         env_groups=frozenset(),

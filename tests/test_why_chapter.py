@@ -23,7 +23,26 @@ WHAT WOULD MAKE EACH ONE RED, since an assurance nobody can break is not one:
     over the catalogue's own `help:` wording;
   * `simplon.tasks.image` dropping its docker gate, or `simplon.tasks.site` gaining one -> the AST check;
   * si#27 or si#45 quietly dropped from the cost list -> the link assertion;
-  * "discipline" reused on the site for a kind of work -> the terminology assertion.
+  * "discipline" reused for a kind of work, on the site OR in the kernel -> the two terminology
+    assertions. The second one exists because the first round of si#29 shipped a callout claiming
+    something about `src/` that only `site/content/` was holding up, and the claim was false.
+
+WHAT IS NOT COVERED, stated here rather than left to be discovered:
+
+  * WHICH KIND OF WORK A COORDINATE IS FILED UNDER is editorial. The union is held against the
+    catalogue, so nothing can be omitted or filed twice - but `test:report` moved into the
+    "documentation" row would stay green. Judging that mechanically would mean deciding what a body IS,
+    and the catalogue does not say.
+  * THE MIDDLE COLUMN - the tools each row names - is editorial for the same reason, with one twist that
+    makes it worse rather than better: the column names the TOOL and the kernel's argv names the
+    LAUNCHER. `hugo` never appears in an argv anywhere; it runs as
+    `docker run ... --entrypoint hugo`, so a check over invoked binaries would contradict a column that
+    is right. The two ABSOLUTE claims in it are held -
+    `test_the_bodies_the_page_says_reach_no_external_tool_really_do_not` - and the rest is prose.
+  * THE COLLOCATION RULE over `src/` reads word neighbourhoods, not meaning. It catches the shape both
+    real violations had ("a discipline gains sibling commands") and the shape a reintroduction would
+    have; a sentence using the word for a kind of work while naming no command, group or namespace
+    would pass.
 
 AAA throughout.
 """
@@ -43,6 +62,24 @@ TASKS_CHAPTER = ROOT / "site" / "content" / "building" / "tasks.md"
 
 #: The site as a whole, because a terminology rule that only looked at one page would not be one.
 CONTENT = ROOT / "site" / "content"
+
+#: The two Python trees the callout makes a claim ABOUT ("and so does the kernel's own source,
+#: throughout"). A rule that stopped at `site/content/` would leave that half of the sentence held up by
+#: nothing - which is how the first round of si#29 shipped a callout that was wrong about two docstrings.
+CODE = (ROOT / "src", ROOT / "tests")
+
+#: The vocabulary that gives the OTHER sense away. "discipline" next to any of these is the owner's
+#: meaning - a kind of work with its own commands - not rigour, and that is the collision the callout
+#: promises does not exist in the kernel. Both real violations found in review said "sibling commands".
+#:
+#: The six group NAMES are deliberately not in this list as bare words: `test`, `build`, `support` and
+#: `release` are ordinary English too, and "these tests pin the discipline itself" is not a violation.
+#: They are matched below in the form the kernel uses when it means the group - backticked, or as the
+#: namespace half of a coordinate.
+GROUP_WORDS = ("command", "subcommand", "group", "namespace", "verb")
+
+#: A group named the way the kernel names one when it means the group: `build`, or `build:image`.
+GROUP_TOKEN = re.compile(r"`(?:build|test|release|deploy|monitor|support)(?::[a-z-]+)?`")
 
 #: The two headings si#29 added.
 KINDS_HEADING = "## The same five verbs over very different work"
@@ -278,6 +315,13 @@ def test_the_two_ways_of_grouping_are_genuinely_different_groupings():
     assert [work for work, spans in namespaces_per_row.items() if len(spans) > 1]
     assert [ns for ns, spans in rows_per_namespace.items() if len(spans) > 1]
 
+    # assert: and the one word that is BOTH a phase and a kind of work is named as such. Review found
+    # the first round claiming this was said when the section never said it - `test` is a group in the
+    # catalogue and 'testing' is a row here, and a reader who is not told trips over it exactly once.
+    assert "test" in catalogue_mod.load().groups
+    assert [work for work in table if "testing" in work]
+    assert "`test` is a phase, and testing is a kind of work" in "\n".join(_section(KINDS_HEADING))
+
 
 def test_the_kind_of_work_with_no_catalogue_task_is_still_the_empty_one():
     """The section names running things as the kind of work the catalogue carries nothing for, and links
@@ -291,6 +335,41 @@ def test_the_kind_of_work_with_no_catalogue_task_is_still_the_empty_one():
     # assert
     assert running == set()
     assert "../../building/phases/#the-two-empty-ribs" in "\n".join(_section(KINDS_HEADING))
+
+
+def test_the_bodies_the_page_says_reach_no_external_tool_really_do_not():
+    """The middle column is mostly editorial (see the file head), but two of its claims are absolute and
+    therefore checkable: `tasks:generate`/`tasks:catalogue` shell out to nothing, and neither does
+    `support:environments` - which review found missing from that row's tool list, where it had been
+    filed under `oras`/`docker compose`/`claude` and reaches none of them.
+
+    A negative claim is the kind most worth holding, because nothing about a passing suite would ever
+    contradict it on its own.
+    """
+    # arrange: the bodies behind the three coordinates the page says reach nothing
+    modules = ("simplon.tasks.tasks", "simplon.tasks.env")
+
+    # act
+    shelling = {}
+    for module in modules:
+        path = ROOT / "src" / (module.replace(".", "/") + ".py")
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        shelling[module] = sorted({
+            (node.func.id if isinstance(node.func, ast.Name) else node.func.attr)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and ((isinstance(node.func, ast.Name) and node.func.id in ("run", "stream"))
+                 or (isinstance(node.func, ast.Attribute) and node.func.attr in ("run", "stream")))})
+
+    # assert
+    assert len(shelling) == len(modules)
+    for module, calls in shelling.items():
+        assert not calls, f"{module} now shells out ({calls}) - the page says it reaches nothing external"
+
+    # assert: and the page still says so, in both places it says it
+    section = "\n".join(_section(KINDS_HEADING))
+    assert "nothing external" in section
+    assert "nothing at all for `support:environments`" in section
 
 
 # --- the terminology, across the whole site ------------------------------------------------------------
@@ -334,6 +413,50 @@ def test_the_word_discipline_keeps_exactly_one_meaning_on_the_site():
 
     # assert: the term it uses instead is really the one it uses
     assert CHOSEN_TERM in "\n".join(_section(KINDS_HEADING))
+
+
+def test_the_kernel_source_keeps_the_meaning_the_callout_claims_for_it():
+    """The half of the callout that `site/content/` cannot hold up: *"and so does the kernel's own
+    source, throughout"*.
+
+    The first round of si#29 asserted that over the site only, and the sentence was false - two
+    docstrings in `simplon.clitaxonomy` said "when a discipline gains sibling commands", which is the
+    owner's sense (a kind of work with its own commands), not rigour. Both are reworded; this is what
+    stops the next one from landing unnoticed.
+
+    WHAT IT CATCHES, and what it does not. It is a COLLOCATION rule, not a reading of meaning: the word
+    beside the command vocabulary is the shape both violations had and the shape a reintroduction would
+    have. A sentence that used the word for a kind of work without naming a command or a group would
+    pass, and nothing here pretends otherwise - see the file head.
+    """
+    # arrange: the page still makes the claim this rule exists to hold up. Without it the kernel would
+    # be held to a sentence nobody says any more, which is a rule outliving its reason.
+    block = "\n".join(_text().split("\n")[n] for n in sorted(_demarcation_block(_text().split("\n"))))
+    assert "the kernel's own source" in block
+
+    sources = [path for tree in CODE for path in sorted(tree.rglob("*.py"))
+               if path.name != "test_why_chapter.py"]     # this file is ABOUT the word
+    assert len(sources) > 50, "the kernel trees were not read at all"
+
+    # act
+    offenders = []
+    ruled = 0
+    for path in sources:
+        for number, line in enumerate(path.read_text(encoding="utf-8").split("\n"), start=1):
+            if "disciplin" not in line.lower():
+                continue
+            ruled += 1
+            said = line.lower()
+            if (any(re.search(rf"\b{word}s?\b", said) for word in GROUP_WORDS)
+                    or GROUP_TOKEN.search(said)):
+                offenders.append(f"{path.relative_to(ROOT)}:{number}: {line.strip()}")
+
+    # assert: the word is still there to be ruled on - a tree that had lost it would make this vacuous
+    assert ruled > 0, "no occurrence of 'discipline' in the kernel at all - the callout claims one"
+
+    # assert
+    assert not offenders, ("'discipline' is used beside the command vocabulary, which is the owner's "
+                           "sense and not the rigour one the callout claims:\n  " + "\n  ".join(offenders))
 
 
 # --- the container section, against the code it describes ----------------------------------------------
@@ -385,21 +508,38 @@ def test_the_page_quotes_the_task_that_deliberately_stays_out_of_a_container():
     assert outside["test:typecheck-python"] in quoted
 
 
-def test_the_opposite_verdicts_on_a_missing_docker_really_are_opposite():
-    """The section claims the image tasks die where the site build only hints. Both modules DISCUSS the
-    gate in prose, so the claim is checked against the parsed source rather than against the text."""
+def test_which_tasks_die_on_a_missing_docker_and_which_only_hint():
+    """The section makes two claims about the missing/failed split, and the first round of si#29 got the
+    second one wrong by omission: it introduced `docs:site` and `docs:render` as a pair, quoted both, and
+    then stated the hint verdict without saying that `docs:render` does not share it.
+
+    EVERY module that could carry the gate is ruled on here rather than only the two the prose is about,
+    because the defect was a task left OUT of the sentence, not a task described wrongly in it. Parsed
+    rather than grepped: all three modules DISCUSS `ensure_docker` in their docstrings, and a substring
+    search would answer yes for every one of them.
+    """
+    # arrange
+    dies = ("simplon.tasks.image", "simplon.tasks.docs")
+    hints = ("simplon.tasks.site",)
+
     # act
-    image_gates = _calls_ensure_docker("simplon.tasks.image")
-    site_gates = _calls_ensure_docker("simplon.tasks.site")
+    gates = {module: _calls_ensure_docker(module) for module in sorted(dies + hints)}
 
-    # assert: the page still makes the claim - otherwise this would be a test of the kernel that
-    # survived the paragraph it exists to hold honest
-    named = set(_COORD.findall("\n".join(_section(CONTAINER_HEADING))))
-    assert {"build:image", "release:image"} <= named
+    # assert: the verdicts are what the page says they are
+    for module in dies:
+        assert gates[module], f"{module} no longer dies on a missing docker - the page says it does"
+    for module in hints:
+        assert not gates[module], f"{module} now dies on a missing docker - the page says it hints"
+    assert len(gates) == 3
 
-    # assert
-    assert image_gates, "simplon.tasks.image no longer dies on a missing docker - the page says it does"
-    assert not site_gates, "simplon.tasks.site now dies on a missing docker - the page says it hints"
+    # assert: and the page still makes both claims - otherwise this would be a test of the kernel that
+    # outlived the paragraphs it exists to hold honest
+    section = "\n".join(_section(CONTAINER_HEADING))
+    assert {"build:image", "release:image"} <= set(_COORD.findall(section))
+    costs = section[section.index("### What it costs"):]
+    assert "`docs:render`" in costs, ("the cost list states the hint verdict without saying that "
+                                      "docs:render does not share it - the omission review found")
+    assert "`docs:site`" in costs
 
 
 def test_the_two_known_costs_are_linked_rather_than_left_out():

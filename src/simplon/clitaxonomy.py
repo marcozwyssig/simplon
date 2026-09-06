@@ -167,7 +167,7 @@ class CommandTaxonomy:
         member's pipeline, `<product> build diff` runs the `diff` sibling, and `<product> build --help`
         lists the siblings. It is the multi-member counterpart of is_flat_command_group (a single-member
         same-named group that collapses to ONE flat top-level command); the two are mutually exclusive.
-        This preserves the bare group-token muscle memory when a discipline gains sibling commands."""
+        This preserves the bare group-token muscle memory when a group gains sibling commands."""
         node = self.resolve_path(group)
         if node is None:
             return False
