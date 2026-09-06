@@ -2,6 +2,7 @@
 per-module result merge). Moved here from netctl's testrun (netctl#730); no allure, no wall clock; AAA."""
 import json
 import os
+import pathlib
 import re
 from datetime import datetime
 from types import SimpleNamespace
@@ -332,3 +333,55 @@ def test_write_environment_flattensAMultilineValue_soItCannotEatTheKeysBelowIt(t
     # assert
     lines = open(results + "/" + allure.ENVIRONMENT, encoding="utf-8").read().splitlines()
     assert lines == ["after=still here", "note=setup failed no suite ran"]
+
+
+# --- merging must not delete the verdict it finds (#38) ----------------------------------------------
+
+def _props(path):
+    return dict(line.split("=", 1) for line in
+                pathlib.Path(path).read_text(encoding="utf-8").splitlines() if "=" in line)
+
+
+def test_merging_keeps_the_environment_the_destination_already_had(tmp_path):
+    """#30 put the verdict INSIDE the report, where a reader handed only the HTML can still see why a run
+    was red. `merge_results` copied every non-result file through, so a merged directory carrying its own
+    environment.properties REPLACED it - and the products that lost the verdict were the ones that care
+    enough about their report to merge something into it."""
+    dst, src = tmp_path / "results", tmp_path / "system-stamp"
+    dst.mkdir(); src.mkdir()
+    allure.write_environment(str(dst), {"verdict": "passed", "verdict.gate.unit": "passed"})
+    (src / allure.ENVIRONMENT).write_text("Systemtests.ergebnis=bestanden\n", encoding="utf-8")
+
+    allure.merge_results(str(dst), [str(src)])
+
+    merged = _props(dst / allure.ENVIRONMENT)
+    assert merged["verdict"] == "passed"                      # survived
+    assert merged["Systemtests.ergebnis"] == "bestanden"      # arrived
+
+
+def test_the_destination_wins_a_key_both_sides_declare(tmp_path):
+    """The verdict is the one line the kernel itself is answerable for. A merged directory restating it
+    is describing its own run, not this one."""
+    dst, src = tmp_path / "results", tmp_path / "stamp"
+    dst.mkdir(); src.mkdir()
+    allure.write_environment(str(dst), {"verdict": "failed"})
+    (src / allure.ENVIRONMENT).write_text("verdict=passed\n", encoding="utf-8")
+
+    allure.merge_results(str(dst), [str(src)])
+
+    assert _props(dst / allure.ENVIRONMENT)["verdict"] == "failed"
+
+
+def test_a_key_dropped_in_a_conflict_is_said_out_loud(tmp_path, capsys):
+    """Today the alphabetically last source wins and the other's lines vanish without a word. A silent
+    loss in a report is the shape of defect this whole issue is about."""
+    dst, src = tmp_path / "results", tmp_path / "stamp"
+    dst.mkdir(); src.mkdir()
+    allure.write_environment(str(dst), {"verdict": "failed"})
+    (src / allure.ENVIRONMENT).write_text("verdict=passed\n", encoding="utf-8")
+
+    allure.merge_results(str(dst), [str(src)])
+
+    # stdout, not stderr: this kernel matches bash, where only `die` writes to stderr and a warning is
+    # ordinary output. Asserting the wrong stream is how a test claims a message is missing that is there.
+    assert "verdict" in capsys.readouterr().out
