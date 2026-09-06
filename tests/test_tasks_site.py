@@ -24,6 +24,11 @@ _SITE = {"image": _IMAGE, "source": "website", "output": "build/website",
 
 def _register(monkeypatch, tmp_path, section=None):
     data = {"site": dict(_SITE if section is None else section)} if section != {} else {}
+    # The site source EXISTS, the way it does in any product hugo could build from. A test tree without
+    # it would exercise the "looked where there is nothing" path by accident, which is a real refusal
+    # of its own and has its own test.
+    if data:
+        (tmp_path / data["site"].get("source", "website")).mkdir(parents=True, exist_ok=True)
     ctx = ProductContext("sample", tmp_path, tmp_path / "sample.yaml")
     monkeypatch.setattr(context, "_current", ctx)
     monkeypatch.setattr(ProductContext, "manifest_data", lambda self: data)
@@ -777,3 +782,92 @@ def test_the_gate_runs_after_the_site_is_built_and_not_instead_of_it(monkeypatch
     # act / assert
     assert site_task.build() != 0
     assert not any(site_task.MERMAID_IMAGE in argv for argv, _ in seen)
+
+
+# --- the gate's own "nothing to do" is not allowed to be ambiguous either (si#45, review) -----------
+
+
+def test_a_source_directory_that_is_not_there_is_red_rather_than_nothing_to_check(monkeypatch,
+                                                                                  tmp_path, capsys):
+    # arrange: the abhilfe against "nothing to do is not failed" had the defect one level up - a source
+    # that does not exist walked no page, found no diagram and reported the green that means "checked,
+    # and there was nothing". The build is otherwise perfect: hugo exits 0 and writes a home page
+    _register(monkeypatch, tmp_path, {"image": _IMAGE, "source": "website", "output": "build/website"})
+    (tmp_path / "website").rmdir()
+    _docker(monkeypatch)
+    _stub_run(monkeypatch, rc=0, writes=["index.html"])
+
+    # act
+    rc = site_task.build()
+
+    # act / assert: red, and the message says which of the two answers it is refusing to give
+    out = capsys.readouterr()
+    assert rc != 0
+    assert "not a directory" in out.err
+    assert "nothing to render-check" not in out.out
+
+
+def test_the_scanner_refuses_to_walk_a_directory_that_is_not_there(tmp_path):
+    # arrange: the guard sits at the seam, so a caller other than build_site cannot get the ambiguous
+    # answer either
+    # act / assert
+    with pytest.raises(NotADirectoryError):
+        site_task.diagrams_under(tmp_path / "never-existed")
+
+
+def test_a_build_that_never_ran_the_gate_is_not_ok(monkeypatch, tmp_path):
+    # arrange: `diagrams=None` means "no verdict". A Build with a home page and no verdict must not be
+    # ok, or `build()` prints one of its two greens over a gate that never ran - the same value meaning
+    # different things on the two sides of a seam
+    page = tmp_path / "index.html"
+
+    # act / assert
+    assert site_task.Build(index=page, tool="docker").ok is False
+    assert site_task.Build(index=page, tool="docker").failed is True
+    assert site_task.Build(index=page, tool="docker", diagrams=0).ok is True
+
+
+# --- the fence scanner, at the shapes that made it lie (si#45, review) ------------------------------
+
+
+def test_a_mermaid_example_inside_a_markdown_block_is_not_a_diagram():
+    # arrange: a page that DOCUMENTS mermaid syntax. Reading the inner fence as a real diagram makes the
+    # build red for a picture nobody drew - a false red is worse than the false green it replaced
+    text = ("````markdown\n"
+            "```mermaid\n"
+            "flowchrt LR\n"
+            "```\n"
+            "````\n")
+
+    # act
+    found = site_task.diagrams_in(text, site_task.Path("x.md"))
+
+    # assert
+    assert found == []
+
+
+def test_a_tilde_fence_and_an_attribute_list_are_still_diagrams():
+    # arrange: both are ordinary Markdown, and a scanner that only knows ```mermaid on its own would
+    # pass a broken diagram straight through - the false green the gate exists to end
+    text = ("~~~mermaid\nflowchart LR\n  a --> b\n~~~\n"
+            "\n"
+            "```mermaid {class=\"big\"}\nflowchart TD\n  c --> d\n```\n")
+
+    # act
+    found = site_task.diagrams_in(text, site_task.Path("x.md"))
+
+    # assert
+    assert [d.line for d in found] == [1, 6]
+    assert [d.body.splitlines()[0] for d in found] == ["flowchart LR", "flowchart TD"]
+
+
+def test_a_longer_fence_is_closed_by_a_longer_fence_and_not_by_a_shorter_one():
+    # arrange: CommonMark's rule, and the reason the scanner walks every block rather than only its own
+    text = "````mermaid\nflowchart LR\n```\n  a --> b\n````\n"
+
+    # act
+    found = site_task.diagrams_in(text, site_task.Path("x.md"))
+
+    # assert: one block, and the three-backtick line is part of it rather than its end
+    assert len(found) == 1
+    assert found[0].body == "flowchart LR\n```\n  a --> b"

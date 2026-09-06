@@ -129,8 +129,14 @@ class Build:
 
     @property
     def ok(self) -> bool:
-        """A site was built AND every diagram in it renders."""
-        return self.index is not None and not self.broken
+        """A site was built, the diagram gate RAN, and every diagram in it renders.
+
+        `diagrams is not None` is load-bearing rather than belt-and-braces: without it a Build carrying
+        a home page and no verdict at all would be ok, and the caller would print one of the two greens
+        over a gate that never ran. The ambiguous value is excluded at the seam instead of being read
+        for its truthiness on the other side of it.
+        """
+        return self.index is not None and self.diagrams is not None and not self.broken
 
     @property
     def failed(self) -> bool:
@@ -287,26 +293,49 @@ class Diagram:
         return f"{page}:{self.line}"
 
 
+#: A fenced block's opening: three or more backticks or tildes, then the info string. Both characters
+#: and the LENGTH matter, because that is what decides which fence closes which block.
+_FENCE = re.compile(r"^(?P<fence>`{3,}|~{3,})\s*(?P<info>.*)$")
+
+
 def diagrams_in(text: str, page: Path) -> list[Diagram]:
     """The mermaid blocks in one Markdown page.
 
-    Read line by line rather than with one regex over the file, because the closing fence has to be the
-    one that matches: a regex is easy to write in a way that ends the block at the first ``` it finds,
-    which for a page with two blocks silently checks the gap between them instead of the diagrams.
+    EVERY fenced block is walked, not only the mermaid ones, and that is the whole design. A scanner
+    that looks for its own opening and then for the next ``` gets three things wrong, and the third is
+    the one that bites: it misses a `~~~mermaid` fence, it misses an info string with attributes
+    (```` ```mermaid {class=x} ````), and it reads a ```mermaid EXAMPLE inside a ````markdown block as a
+    real diagram - so the first page that documents mermaid syntax goes red for a diagram nobody drew.
+    Consuming each block by its own closing fence - same character, at least as long, which is
+    CommonMark's rule - makes all three fall out at once, because an outer block swallows its contents
+    whether or not they look like fences.
+
+    The line reported is the fence's own, 1-based. mermaid's parser reports a line INSIDE the block, so
+    the two together name the character.
     """
     found: list[Diagram] = []
     lines = text.splitlines()
     index = 0
     while index < len(lines):
-        opening = lines[index].strip()
-        if opening.startswith("```") and opening[3:].strip().lower() == "mermaid":
-            fence = index
-            body: list[str] = []
+        opened = _FENCE.match(lines[index].strip())
+        if opened is None:
             index += 1
-            while index < len(lines) and lines[index].strip() != "```":
-                body.append(lines[index])
-                index += 1
-            found.append(Diagram(page=page, line=fence + 1, body="\n".join(body)))
+            continue
+        fence, info = opened.group("fence"), opened.group("info").strip()
+        # The info string's FIRST word names the language; anything after it is attributes.
+        mermaid = info.split(" ")[0].split("{")[0].strip().lower() == "mermaid"
+        start, body = index, []
+        index += 1
+        while index < len(lines):
+            closing = _FENCE.match(lines[index].strip())
+            if (closing is not None and not closing.group("info")
+                    and closing.group("fence")[0] == fence[0]
+                    and len(closing.group("fence")) >= len(fence)):
+                break
+            body.append(lines[index])
+            index += 1
+        if mermaid:
+            found.append(Diagram(page=page, line=start + 1, body="\n".join(body)))
         index += 1
     return found
 
@@ -321,6 +350,10 @@ def diagrams_under(source: Path, skip: set[str] | None = None) -> list[Diagram]:
     reaches a page by some other route (a shortcode, a data file); the count is reported for exactly
     that reason, so a reader can see what the gate ruled on rather than assume it saw everything.
     """
+    if not source.is_dir():
+        # "No diagram" and "looked where there is nothing" are two answers, and returning the first for
+        # the second is the defect this whole gate exists against - one level up from the one it catches.
+        raise NotADirectoryError(f"{source} is not a directory, so no page could be read for diagrams")
     skipped = _NOT_THE_AUTHORS if skip is None else skip
     found: list[Diagram] = []
     for page in sorted(source.rglob("*.md")):
@@ -426,7 +459,15 @@ def build_site(cfg: Site, root: Path) -> Build:
                   f"contentDir and that {cfg.source}/ holds content - a build that produces nothing is "
                   f"not a green build")
         return Build(tool="docker")
-    checked, broken = render_diagrams(cfg, root)
+    try:
+        checked, broken = render_diagrams(cfg, root)
+    except NotADirectoryError as exc:
+        # The gate did NOT run, and saying "nothing to check" here would be the very confusion it was
+        # built against. `diagrams` stays None for that reason, and the build is red.
+        log.error(f"hugo reported a site, but {cfg.source}/ is not a directory, so no page could be read "
+                  f"for diagrams ({exc}). 'no diagram' and 'looked where there is nothing' are different "
+                  f"answers and this build will not give the first for the second")
+        return Build(index=index, tool="docker", broken=(f"{cfg.source}/ could not be read",))
     for where in broken:
         log.error(f"the mermaid block at {where} does not render (see the parser's own message above), "
                   f"so that diagram is invisible in the browser. hugo emits the block whatever it says: "
@@ -455,8 +496,10 @@ def build() -> int:
         # SAID, not left to be inferred. A build with no diagram in it is green, and green here means
         # "there was nothing to render-check" rather than "every diagram renders" - the two are
         # different statements and a reader who cannot tell them apart has been told the stronger one.
-        if built.diagrams:
-            log.ok(f"{built.diagrams} mermaid diagram(s) render")
-        else:
+        # `== 0` rather than a truthiness test: 0 and None are both falsey and mean opposite things
+        # here, and `Build.ok` is what guarantees None never reaches this branch at all.
+        if built.diagrams == 0:
             log.ok(f"no mermaid diagram under {cfg.source}/ - nothing to render-check")
+        else:
+            log.ok(f"{built.diagrams} mermaid diagram(s) render")
     return 0
