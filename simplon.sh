@@ -19,7 +19,7 @@ cd "$ROOT"
 
 LAUNCH_PRODUCT=simplon
 LAUNCH_ROOT="$ROOT"
-LAUNCH_ORCH_DIR="$ROOT/orchestrator"
+LAUNCH_ORCH_DIR="$ROOT/deploy/orchestrator"
 LAUNCH_MODULE=orchestrator
 
 VENV="$LAUNCH_ORCH_DIR/.venv"

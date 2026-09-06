@@ -12,6 +12,11 @@ hardcoded one, because it fails at run time on a fresh host instead of at genera
 The Python PACKAGE stays `orchestrator` (LAUNCH_MODULE) under every layout: it is an identifier on
 PYTHONPATH, not a location. Only the block dir that holds `.venv`, `requirements.txt` and
 `src/python/` moves.
+
+si#24 added the third consumer of this parameter, and it is the kernel itself: simplon's own block sits
+under `deploy/orchestrator` now, so the flag is no longer something the kernel offers and declines to
+use. Its own placement is held in `test_own_orch_block.py`; what belongs HERE is the depth, which is why
+the two subprocess tests at the foot of this module run at five levels as well as six.
 """
 import os
 import subprocess
@@ -39,6 +44,17 @@ def _run_generated(pkg_src, argv, *, code=None):
 # delivery mechanics live under `deploy/`. Nested on purpose - a one-segment dir would let a
 # separator bug through, and the cmd shim needs backslashes.
 NESTED = "deploy/provision/orchestrator"
+
+# The kernel's OWN block dir (si#24). It is here, beside biz-cockpit's, because the depth is the thing
+# under test and this one is a third value: `orchestrator` is four levels above the package, `deploy/
+# orchestrator` five, `deploy/provision/orchestrator` six. The marker walk carries all three; a fixed
+# parent depth carries exactly one, and si#24 found a `parents[4]` in the kernel's own cli.py that had
+# been correct only at the default.
+OWN = "deploy/orchestrator"
+
+#: Every relocated block dir the subprocess evidence at the foot of this module is taken at. Two values,
+#: two depths (five and six), because the walk is what is being trusted and one depth cannot show that.
+RELOCATED = [OWN, NESTED]
 
 # The tail every package path ends in, whatever the block dir is. Under a chosen dir, EVERY occurrence
 # of it must be prefixed by that dir -- an occurrence prefixed by anything else is a path the parameter
@@ -244,14 +260,19 @@ def test_init_refuses_a_bad_orch_dir_with_a_message_and_no_traceback(tmp_path, c
 
 # --- and it actually runs from down there ------------------------------------------------------------
 
-def test_the_nested_scaffold_assembles_and_finds_its_repo_root(tmp_path):
+@pytest.mark.parametrize("orch_dir", RELOCATED)
+def test_a_relocated_scaffold_assembles_and_finds_its_repo_root(tmp_path, orch_dir):
     """Textual checks cannot show this: the generated `paths.py` derives the repo ROOT by walking up from
     its own file to the manifest marker. At the default depth that is four levels; under
-    `deploy/provision/orchestrator` it is six. A fixed parent depth would have passed every assertion
-    above and then resolved the root two directories too low, at import, on the consumer's machine.
+    `deploy/orchestrator` five and under `deploy/provision/orchestrator` six. A fixed parent depth would
+    have passed every assertion above and then resolved the root one or two directories too low, at
+    import, on the consumer's machine.
+
+    Both relocated depths are run, and the second one is not decoration: si#24 moved the KERNEL's own
+    block to `deploy/orchestrator`, and the evidence si#4 took at six levels says nothing about five.
     """
-    # arrange: a real nested scaffold on disk
-    bootstrap.write("democtl", tmp_path, orch_dir=NESTED)
+    # arrange: a real relocated scaffold on disk
+    bootstrap.write("democtl", tmp_path, orch_dir=orch_dir)
 
     # act: import the generated package the way its own shim does - kernel + the nested src/python on
     # PYTHONPATH, in a SUBPROCESS so the import-time set_current() does not leak into this one
@@ -260,7 +281,7 @@ def test_the_nested_scaffold_assembles_and_finds_its_repo_root(tmp_path):
         "print('ROOT=%s' % paths.ROOT)\n"
         "print('MANIFEST=%s' % paths.MANIFEST)\n"
     )
-    res = _run_generated(tmp_path / NESTED / "src" / "python", [], code=probe)
+    res = _run_generated(tmp_path / orch_dir / "src" / "python", [], code=probe)
 
     # assert: the root is the scaffold target itself, not a directory inside the block
     assert res.returncode == 0, res.stderr
@@ -268,9 +289,10 @@ def test_the_nested_scaffold_assembles_and_finds_its_repo_root(tmp_path):
     assert f"MANIFEST={tmp_path / 'democtl.yaml'}" in res.stdout, res.stdout
 
 
-def test_the_nested_scaffold_runs_its_aggregate_through_the_shared_runner(tmp_path):
+@pytest.mark.parametrize("orch_dir", RELOCATED)
+def test_a_relocated_scaffold_runs_its_aggregate_through_the_shared_runner(tmp_path, orch_dir):
     # arrange
-    bootstrap.write("democtl", tmp_path, orch_dir=NESTED)
+    bootstrap.write("democtl", tmp_path, orch_dir=orch_dir)
     probe = (
         "from simplon.orchestrator import product\n"
         "seen = {}\n"
@@ -283,12 +305,12 @@ def test_the_nested_scaffold_runs_its_aggregate_through_the_shared_runner(tmp_pa
         "result = CliRunner().invoke(cli.app, ['all'])\n"
         "assert result.exit_code == 0, result.output\n"
         "assert seen['commands'] == ['build.build', 'deploy.up'], seen\n"
-        "print('NESTED_AGGREGATE_REACHABLE')\n"
+        "print('RELOCATED_AGGREGATE_REACHABLE')\n"
     )
 
     # act
-    res = _run_generated(tmp_path / NESTED / "src" / "python", [], code=probe)
+    res = _run_generated(tmp_path / orch_dir / "src" / "python", [], code=probe)
 
     # assert: a product whose block dir moved still gets a working, manifest-driven CLI
     assert res.returncode == 0, res.stderr
-    assert "NESTED_AGGREGATE_REACHABLE" in res.stdout
+    assert "RELOCATED_AGGREGATE_REACHABLE" in res.stdout

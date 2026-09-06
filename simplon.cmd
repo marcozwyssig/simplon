@@ -12,7 +12,7 @@ rem python-without-pip directory on any platform.
 set "LAUNCH_PRODUCT=simplon"
 set "LAUNCH_ROOT=%~dp0"
 if "%LAUNCH_ROOT:~-1%"=="\" set "LAUNCH_ROOT=%LAUNCH_ROOT:~0,-1%"
-set "LAUNCH_ORCH_DIR=%LAUNCH_ROOT%\orchestrator"
+set "LAUNCH_ORCH_DIR=%LAUNCH_ROOT%\deploy\orchestrator"
 set "LAUNCH_MODULE=orchestrator"
 
 set "VENV=%LAUNCH_ORCH_DIR%\.venv"
