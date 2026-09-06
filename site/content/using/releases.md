@@ -25,10 +25,11 @@ they stand, measured through the API rather than assumed:
 | biz-cockpit | still on the flat manifest form |
 | netctl | `support install` redeclares a `task:` without `override: true`; `monitor accept` places `test:accept`, and a phase-named coordinate belongs in its phase |
 
-*(A sixth manifest, infractl's, is also on the flat form and is deliberately
-not listed: infractl does not install simplon at all — it still hangs off the
-old `lib/platform` submodule. Counting it here would repeat the very mistake
-0.4.0 fixed in five module heads, which named it as a consumer it never was.)*
+*(A sixth manifest is on the flat form too and is deliberately not listed:
+its product does not install this kernel at all, so no version of it can stop
+that manifest loading. Counting it here would repeat the mistake 0.4.0 fixed in
+five module heads, which named a consumer that never was one — see
+[Surface](../../building/surface/) for how that is measured now.)*
 
 Every one of those refusals prints the fix, and for the flat form it prints the
 whole rewritten manifest. But the work is real, so plan it before the bump
