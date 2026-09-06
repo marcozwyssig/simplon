@@ -1,11 +1,19 @@
 # Simplon — working agreements
 
-## The three quality goals
+## The four quality goals
 
 Simplon exists to give a delivery pipeline **clear structure**,
-**extensibility** and **reusability**. Those three are the point. Everything
-else — every rule, every refusal, every check — is a means, and a means that
-costs more flexibility than it buys is a bad one.
+**extensibility** and **reusability**, and to be **usable** while it does it.
+Those four are the point. Everything else — every rule, every refusal, every
+check — is a means, and a means that costs more flexibility than it buys is a
+bad one.
+
+**Usable** is the newest of the four and the easiest to lose, because nothing
+fails when it is missing. Three questions a run should answer without being
+asked: *which phase are we in*, *what is happening in it*, and *what went
+wrong*. Measured against those, a run that reports how many steps failed but
+not why (#49), or a tree with no durations (#52), is not a small omission —
+it is the tool declining to say what it already knows.
 
 **Guard against rule creep.** Rules are easy to add, each one looks justified
 on its own, and nobody ever measures the sum. As of 2026-09-06 the kernel
