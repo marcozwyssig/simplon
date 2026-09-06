@@ -256,10 +256,10 @@ nothing at all about when it runs.
 
 {{< callout type="info" >}}
 **Six groups, five phases.** The platform declares six top-level groups, and they are not six of the same
-thing. `build`, `test`, `release`, `deploy` and `monitor` are the **phases of the delivery loop** - that
-is the five [Getting started](../../using/getting-started/) counts, and the five the scaffold seeds.
-`support` is not a sixth: it is the group that **supports** those five, which is why it sits beside them
-rather than among them.
+thing. `build`, `test`, `release`, `deploy` and `monitor` are the **phases of the delivery loop**, and they
+have [a chapter of their own](../phases/): what each means, what flows between them, and what the
+catalogue carries for each today. `support` is not a sixth: it is the group that **supports** those
+five, which is why it sits beside them rather than among them.
 
 The rule above is deliberately stated over **groups** rather than phases, and it has to be: `support:install`
 is a real placed coordinate, and a rule that only knew about phases would be the one rule leaving it

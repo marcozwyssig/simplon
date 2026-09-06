@@ -1,6 +1,6 @@
 ---
 title: "Environments"
-weight: 5
+weight: 6
 ---
 
 Some commands are meaningless without a target, and some are meaningless with one. Simplon makes that a
