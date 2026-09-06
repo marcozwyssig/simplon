@@ -686,7 +686,11 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     caught here and not deep in the CLI:
       - `groups` maps each declared group to its ordered command tree (group -> command -> spec, the ONE
         membership + spec source);
-      - every `env_groups` entry is a declared group;
+      - every `env_groups` entry is a declared group, and AGREES with the merged node's `env_first:`
+        (si#43): the key states a group's SHAPE, so where the platform owns that shape the entry may
+        restate it and may not contradict it - the same refusal `env_first:` written onto that group
+        already gets. Where no platform owns the group it still gates it on, which is what the key is
+        for;
       - every command spec declares a non-empty `help`, plus either a well-formed "module:function" `impl`
         (a leaf) or a non-empty `depends_on` (an impl-less aggregate, #895) - never both;
       - every `depends_on` entry (#895) names a known, UNAMBIGUOUS command, and the dependency graph is
@@ -828,9 +832,15 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     # `env_groups:` is the flat, top-level way of saying what a group node says with `env_first: true`,
     # and it has to keep meaning something now that every manifest is a tree: a node built from the
     # taxonomy carries the flag the NODE declared, so without this the key would validate, list a real
-    # group, and gate nothing - the silent no-op this loader rejects everywhere else. It only ever gates
-    # ON: a group the platform declares env-first stays env-first whatever a product omits here, which is
-    # the same rule `merge` enforces on `env_first:` itself.
+    # group, and gate nothing - the silent no-op this loader rejects everywhere else.
+    #
+    # It is CHECKED against the merged node before it is applied (si#43), and that order is the whole
+    # point: applying it first made the key a way around the rule `merge` enforces on `env_first:`, so a
+    # product could turn a platform group env-first from the top level of the file after being refused
+    # the same statement inside the group node. What survives the check is an entry naming a group no
+    # platform owns - the manifest's own group, which is the case the key was written for - so this
+    # replacement now only ever fires there.
+    treeform.check_env_groups(merged, model.env_groups, frozenset(catalogue_groups))
     tree = {name: (dataclasses.replace(node, env_first=True)
                    if name in env_groups and not node.env_first else node)
             for name, node in tree.items()}

@@ -147,9 +147,11 @@ environments:
 
 A group's env gate is normally the **catalogue's** statement, not yours: `deploy` and `monitor` carry
 `env_first: true` on their nodes there, so every product gates them the same way and no manifest has to
-say it twice. `env_groups:` is the flat spelling, and it still means something for a **top-level group
-the catalogue's tree does not already gate** - it only ever switches the gate on, never off. Everything
-not gated refuses the token. See [Environments](../environments/) for what the dispatch does with it.
+say it twice. `env_groups:` is the flat spelling of the same statement, and it is held to the same rule:
+listing a group the catalogue already gates is a harmless restatement, listing one the catalogue
+declares **not** env-first is refused exactly as `env_first: true` on that group's node is. It is the
+manifest's own statement only for a **top-level group no catalogue owns**. Everything not gated refuses
+the token. See [Environments](../environments/) for what the dispatch does with it.
 
 ## Product data sections
 

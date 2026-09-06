@@ -31,9 +31,14 @@ env_groups: [deploy, monitor]
 ```
 
 `deploy` and `monitor` are declared `env_first: true` in the kernel's own catalogue, so a product
-inherits the gate and the two lines above are a restatement rather than a requirement. Write
-`env_groups:` when a top-level group of your own needs the gate and the catalogue's tree does not
-already give it one; it switches the gate on and never off.
+inherits the gate and the two lines above are a restatement rather than a requirement.
+
+What the key may never do is **contradict** the catalogue. An entry naming a group the catalogue
+declares not env-first is refused, with the same reason - and the same way out - that `env_first: true`
+written onto that group's node already gets: a product adds commands and sub-groups to a platform group,
+it never changes the group's shape. Write `env_groups:` for a top-level group **no catalogue owns**,
+which is a manifest loaded without one; there it is that manifest's own statement about its own group
+and switches the gate on.
 
 Commands in those groups take the environment as the **outer** token, before the group:
 

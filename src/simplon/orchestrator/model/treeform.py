@@ -17,6 +17,7 @@ Pure functions over plain dicts: no pydantic, no I/O, no import of any body.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 
 # A group node's own keys. Everything else under a node would be ambiguous, which is why members live
 # under `commands:` rather than directly on the node: otherwise `help:` would be a group attribute in one
@@ -114,6 +115,20 @@ def paths_with_commands(flat: dict) -> frozenset[str]:
                             if other == path or other.startswith(f"{path}.")))
 
 
+def shape_is_the_platforms(path: str, key: str) -> str:
+    """The refusal a product gets for restating the SHAPE of a group the platform declares.
+
+    One string with two callers, and that is the point (si#43). `merge` raises it for `env_first:` (or
+    `help:`) written onto a platform group; `check_env_groups` raises it for `env_groups:`, which says
+    `env_first: true` about a group from the top level of the same file. Two spellings of one statement
+    have to be refused for one reason and point at one way out, or the second spelling reads as a
+    separate rule with its own exceptions - which is exactly how it became a back door.
+    """
+    return (f"group '{path}' declares `{key}:`, which the platform's node already sets. A product may "
+            f"add commands and sub-groups to a platform group, never change its shape - change it in "
+            f"the platform's `groups:` instead, once, for everybody")
+
+
 def merge(kernel: dict, product: dict, _path: tuple[str, ...] = (),
          *, product_tasks: dict | None = None, catalogue_tasks: dict | None = None,
          locked: bool = True) -> dict:
@@ -190,11 +205,7 @@ def merge(kernel: dict, product: dict, _path: tuple[str, ...] = (),
             elif own:
                 merged[key] = value
             else:
-                raise ValueError(
-                    f"group '{'.'.join(path)}' declares `{key}:`, which the platform's node already "
-                    f"sets. A product may add commands and sub-groups to a platform group, never "
-                    f"change its shape - change it in the platform's `groups:` instead, once, for "
-                    f"everybody")
+                raise ValueError(shape_is_the_platforms(".".join(path), key))
         if _is_empty(merged):
             raise ValueError(
                 f"group '{'.'.join(path)}' declares no commands. A group this manifest names is a "
@@ -781,4 +792,62 @@ def check_coordinate_placement(flat: dict, platform_groups: frozenset[str]) -> i
                 f"can sit under `build` in one product and under `release` in another. The names that "
                 f"carry a placement are the platform's groups: {', '.join(sorted(platform_groups))} - "
                 f"the phases of the delivery loop, plus the group that supports them")
+    return ruled
+
+
+# --- env_groups: the flat spelling of a group's env-first shape, and who owns it (si#43) --------------
+
+
+def check_env_groups(merged: dict, env_groups: Iterable[str], platform_groups: frozenset[str]) -> int:
+    """Reject an `env_groups:` entry that contradicts the merged node's `env_first:`.
+
+    THE RULE is `merge`'s, and this function only reaches the one spelling `merge` never sees.
+    `env_first: true` written onto a group the catalogue declares is refused there - not because it
+    switches the gate the wrong way, but because a product may not STATE a platform group's shape at all.
+    `env_groups: [<that group>]` says the same thing from the top level of the same file, so it lands on
+    the same refusal, from `shape_is_the_platforms`.
+
+    NOT "it only switches on, never off". That reading was the one this check replaces, and it does not
+    survive contact with `merge`: `merge` allows no switching in either direction. `env_first: true` on a
+    group the catalogue already calls env-first is refused just as flatly as `false` on one. There is no
+    asymmetry to mirror.
+
+    So the entry is measured against the MERGED node rather than allowed to overrule it:
+
+      - the merged node is already env-first: the entry AGREES with the platform. Harmless, probably
+        redundant, accepted - and counted, because agreement is the case a reader has to be able to tell
+        apart from the entry having done something;
+      - the merged node is not env-first and the platform owns the group: the entry CONTRADICTS the
+        platform, and that is the refusal;
+      - the merged node is not env-first and no platform owns the group: nothing has been contradicted.
+        The group is the manifest's own - a loader running without a catalogue - and `env_groups:` is
+        its own statement about it, which is the case the key was written for. `load` gates it on.
+
+    `platform_groups` is the catalogue's own top-level group names, a parameter for the same reason
+    `check_coordinate_placement`'s is: "which groups have a shape somebody else owns" is the CATALOGUE's
+    statement, and a caller with no catalogue hands in an empty set and owns every group it declares.
+
+    Only TOP-LEVEL entries reach here; the model's rule 2 rejects a dotted one before this runs, so a
+    nested node's `env_first:` is never spoken about from this key.
+
+    RETURNS how many entries it ruled on - entries measured against a group the platform owns - because a
+    manifest with no `env_groups:` at all returns 0 exactly as a manifest whose every entry was checked
+    against a platform node that agreed, and only the second is evidence that the rule ran. The count
+    has to come from here rather than be recomputed by a caller, for the reason si#34's does: a test that
+    counted the entries itself would count them while a check that ruled on none stayed green.
+    """
+    ruled = 0
+    for group in env_groups or ():
+        node = (merged or {}).get(str(group)) or {}
+        if bool(node.get("env_first", False)):
+            ruled += 1
+            continue
+        if str(group) not in platform_groups:
+            continue
+        ruled += 1
+        raise ValueError(
+            shape_is_the_platforms(str(group), "env_groups")
+            + f". `env_groups: [{group}]` says `env_first: true` about '{group}', and the platform's "
+              f"node says `env_first: false` - drop the entry, or turn the group env-first in the "
+              f"platform's `groups:`, once, for every product that has it")
     return ruled
