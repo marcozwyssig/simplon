@@ -290,7 +290,7 @@ coordinate; an `import:` section makes catalogue coordinates available. Rewrite 
 
 Paste that block over the sections it names and the manifest loads. The rewrite covers the whole of
 `tasks:` and `groups:`, including any group you had already converted, so a half-migrated manifest does
-not lose its converted half when you paste. Three things to know about what it does:
+not lose its converted half when you paste. Four things to know about what it does:
 
 - **An aggregate crosses unchanged.** A command with `depends_on:` and no `impl:` was never a body, so
   there is nothing to move.
@@ -298,11 +298,14 @@ not lose its converted half when you paste. Three things to know about what it d
   template with two placements - which is the point of the form.
 - **A name collision is qualified, not shadowed.** `build build` and `deploy build` are two different
   bodies under one command name; the rewrite renames the second task.
+- **A name the catalogue places carries `override: true`.** `support install` is your body under a name
+  the platform already uses, so the merge demands you say you mean it - and the rewrite says it for you.
 
-One case needs a hand: a command whose name the *catalogue* also places - `support install`,
-`release tag` - is printed without the `override: true` the merge demands, and pasting it in fails
-with *"redeclares `task:`"*. That refusal names the fix, so the block is a starting point there rather
-than a finished manifest.
+So what it prints loads, as printed, in one round. What no rewrite can fix is an old manifest that says
+something the tree form does not allow at all - a group the platform's tree does not declare, a
+coordinate placed outside the group its namespace names, a name that is an aggregate for you and a
+task-backed command in the catalogue. Those are refusals of your manifest rather than of the block, and
+each names its own way out.
 
 What you lose is the `import:` section, and you lose nothing with it: the catalogue's own commands
 arrive by merging its tree, and any other coordinate is named directly by the command that wants it.

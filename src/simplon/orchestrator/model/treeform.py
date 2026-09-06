@@ -540,7 +540,33 @@ def _node_at(tree: dict, path: tuple[str, ...]) -> dict:
     return node
 
 
-def rewrite_of_old_form(data: dict) -> str:
+def placed_commands(tree: dict, _path: tuple[str, ...] = ()) -> dict[tuple[str, ...], dict[str, str]]:
+    """Every command a tree PLACES, as `group path -> {command name -> its task ref}`.
+
+    The platform's answer to "which names are already taken, and by which body". `rewrite_of_old_form`
+    reads it to decide where a product's own body needs `override: true`, and it is the whole of what
+    that decision needs: the merge only demands the key when the two `task:` refs DIFFER, so the ref has
+    to come along beside the name.
+
+    The path is a tuple of segments rather than a dotted string because both callers already hold one -
+    a flat `support.git` key split on the dot, and this walk's own recursion - and joining it here only
+    to split it again is where the two spellings of a nested group get to disagree.
+    """
+    out: dict[tuple[str, ...], dict[str, str]] = {}
+    for name, node in (tree or {}).items():
+        if not isinstance(node, dict):
+            continue
+        path = _path + (str(name),)
+        commands = {str(command): str((spec or {}).get("task", ""))
+                    for command, spec in (node.get("commands") or {}).items()
+                    if isinstance(spec, dict)}
+        if commands:
+            out[path] = commands
+        out.update(placed_commands(node.get("groups") or {}, path))
+    return out
+
+
+def rewrite_of_old_form(data: dict, catalogue_groups: dict | None = None) -> str:
     """This manifest's `tasks:` and `groups:` sections, rewritten as the command tree - YAML, ready to
     paste over both.
 
@@ -556,17 +582,53 @@ def rewrite_of_old_form(data: dict) -> str:
 
     Two bodies that are byte-identical share ONE task, which is the point of the form: `test:gate`
     placed at four levels was four copies of one `impl:` in the flat form and is one template with four
-    pins here. A name already taken by a different body is qualified with its group.
+    pins here. A name already taken by a different body is qualified with its group, and a name the
+    CATALOGUE places is printed with the `override: true` the merge demands - so what is printed LOADS,
+    rather than merely illustrating the shape (si#42; the promise was withdrawn in si#33 because it was
+    not true, and it is made again here because it now is).
 
-    WHAT THE REWRITE DOES NOT KNOW, and it is a real limit rather than a caveat: this function has no
-    catalogue. A command whose name the CATALOGUE also places - `support install`, `release tag` - is
-    printed without the `override: true` the merge then demands, and pasting it in fails with
-    "redeclares `task:`". That second refusal names the fix exactly, so the reader is not stranded; but
-    the printed block is a starting point in that case, not a finished manifest. Do not promise more.
+    What no rewrite can make loadable is a manifest that says something the tree form does not allow at
+    all: a group the platform's tree does not declare, a coordinate placed outside the group its
+    namespace names (si#34), a name that is an aggregate here and a task-backed command in the
+    catalogue. Those are refusals of the old MANIFEST rather than gaps in this renderer - each names its
+    own way out, and none of them is a second round on the same problem.
+
+    `catalogue_groups` is the platform's own tree, and it is what makes the printed block a finished
+    manifest rather than an illustration (si#42). A command whose name the CATALOGUE also places -
+    `support install`, in the catalogue since 0.1.7, is the commonest - is a DIFFERENT body under a name
+    the platform already uses, so the merge demands `override: true` on it. Without the catalogue this
+    function could not know which names those are, printed the placement without the key, and the paste
+    failed with "redeclares `task:`" - a block that loads in three cases of four and asks for a second
+    round in the fourth, on exactly the names most manifests have. The key is added only where the
+    catalogue places the SAME name with a DIFFERENT `task:`: a placement naming the platform's own body
+    is a refinement, and an `override: true` there would claim a replacement that is not happening.
+
+    With no catalogue there is nothing to override, which is the case that lets this renderer be read and
+    tested on its own.
     """
     all_groups = data.get("groups") or {}
     groups = old_form_groups(all_groups)
     tasks = old_form_tasks(data.get("tasks") or {})
+    placed = placed_commands(catalogue_groups or {})
+
+    def override_if_replacing(path: tuple[str, ...], command: object, placement: dict) -> dict:
+        """`placement` with `override: true` inserted next to its `task:`, where the catalogue places
+        this name in this group with a different body - and untouched everywhere else.
+
+        Next to `task:` rather than appended, because that is where the merge's own refusal tells a
+        reader to write it, and a rewrite that printed the same fix in a different place would be a
+        second spelling of one instruction.
+        """
+        theirs = placed.get(path, {}).get(str(command))
+        ours = placement.get("task")
+        if not theirs or ours is None or str(ours) == theirs:
+            return placement
+        out: dict = {}
+        for key, value in placement.items():
+            out[key] = value
+            if key == "task":
+                out["override"] = True
+        return out
     declared = {str(name): dict(spec or {}) for name, spec in (data.get("tasks") or {}).items()
                 if str(name) not in tasks}
     tree: dict = {}
@@ -605,7 +667,9 @@ def rewrite_of_old_form(data: dict) -> str:
                 continue
             body = {key: spec[key] for key in _TASK_SIDE_KEYS if key in spec}
             rest = {key: value for key, value in spec.items() if key not in _TASK_SIDE_KEYS}
-            node["commands"][str(command)] = {"task": task_name_for(str(command), group, body), **rest}
+            node["commands"][str(command)] = override_if_replacing(
+                tuple(group.split(".")), command,
+                {"task": task_name_for(str(command), group, body), **rest})
 
     for coordinate, spec in tasks.items():
         spec = dict(spec or {})
@@ -629,7 +693,8 @@ def rewrite_of_old_form(data: dict) -> str:
             body = {key: spec[key] for key in _TASK_SIDE_KEYS if key in spec}
             rest = {key: value for key, value in spec.items() if key not in _TASK_SIDE_KEYS}
             placement = {"task": task_name_for(name, group, body), **rest}
-        _node_at(tree, tuple(group.split(".")))["commands"][name] = placement
+        path = tuple(group.split("."))
+        _node_at(tree, path)["commands"][name] = override_if_replacing(path, name, placement)
 
     lines: list[str] = []
     if declared:
@@ -643,7 +708,7 @@ def rewrite_of_old_form(data: dict) -> str:
     return "\n".join(lines)
 
 
-def check_no_old_form(data: dict) -> None:
+def check_no_old_form(data: dict, catalogue_groups: dict | None = None) -> None:
     """Reject a manifest still written in the flat form, showing what it becomes.
 
     The four things that say "flat" are checked together rather than one per load, because they are one
@@ -676,7 +741,7 @@ def check_no_old_form(data: dict) -> None:
     if stale_import:
         found.append("an `import:` section makes catalogue coordinates available")
 
-    rewrite = rewrite_of_old_form(data)
+    rewrite = rewrite_of_old_form(data, catalogue_groups)
     notes = ["a command is an INSTANCE of a task: the body is declared once under `tasks:` and the "
              "command points at it with `task:`",
              "a catalogue task keeps its body in the kernel - the command names the coordinate "

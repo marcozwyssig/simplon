@@ -716,7 +716,9 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
 
     The FLAT form - `impl:` written straight onto a command, `import:`, a coordinate-keyed `tasks:` entry -
     is gone (netctl#1469 plan 3, si#33). A manifest still written that way is refused before anything else
-    runs, with its own sections rewritten in the message (`treeform.check_no_old_form`).
+    runs, with its own sections rewritten in the message (`treeform.check_no_old_form`) - and that
+    rewrite is given the CATALOGUE, so a command whose name the catalogue also places is printed with
+    the `override: true` the merge then demands and the printed block loads as printed (si#42).
     Unknown top-level keys stay ignored (backward compatible), with ONE exception: a leftover `composites:`
     key is rejected loudly (the concept was removed in netctl#898; declare an impl-less aggregate command
     with `depends_on` instead) - silently dropping it would turn a still-declared pipeline into dead data.
@@ -731,7 +733,15 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     # report a symptom of it instead. `impl:` on a command would otherwise surface as `treeform.resolve`'s
     # "declare the body once under `tasks:`" one command at a time, which is true and useless: it names
     # the rule, not the file's way out of it.
-    treeform.check_no_old_form(data)
+    # The catalogue's own tree, read HERE rather than further down: `check_no_old_form` needs it too, so
+    # that the rewrite it prints carries `override: true` on the names the catalogue itself places
+    # (si#42). `taxonomy:` is `groups:`'s predecessor (netctl#1444, superseded by netctl#1469) and a
+    # catalogue carries one or the other, never both. The two spell a node the same way - help,
+    # env_first, nested groups - so the older one is simply a tree with no commands placed in it, and
+    # reading it here is what keeps a catalogue that has not moved yet owning the shape AND the
+    # existence of its groups.
+    catalogue_groups = (getattr(catalogue, "groups", {}) or {}) or (getattr(catalogue, "taxonomy", {}) or {})
+    treeform.check_no_old_form(data, catalogue_groups)
     tree = data.get("groups") or {}
     if not isinstance(tree, dict):
         raise ValueError(
@@ -758,11 +768,6 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     # says nothing about groups at all - and an unconditional lock against an empty kernel tree would
     # reject every group any manifest could possibly declare, which is a rule about nothing enforced over
     # everything. The kernel's own catalogue declares all six, so every real product is locked.
-    # `taxonomy:` is `groups:`'s predecessor (netctl#1444, superseded by netctl#1469) and a catalogue
-    # carries one or the other, never both. The two spell a node the same way - help, env_first, nested
-    # groups - so the older one is simply a tree with no commands placed in it, and reading it here is
-    # what keeps a catalogue that has not moved yet owning the shape AND the existence of its groups.
-    catalogue_groups = (getattr(catalogue, "groups", {}) or {}) or (getattr(catalogue, "taxonomy", {}) or {})
     merged = treeform.merge(catalogue_groups, tree,
                             product_tasks=product_tasks,
                             catalogue_tasks=getattr(catalogue, "tasks", {}) or {},
