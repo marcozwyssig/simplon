@@ -7,13 +7,18 @@ import pytest
 from simplon import context, environments
 from simplon.environments import Provider
 
-_MANIFEST = """\
-product: sample
+_MANIFEST = """product: sample
+tasks:
+  test: { impl: "sample.cli:test", help: "Run the suite." }
+  up: { impl: "sample.cli:up", help: "Bring it up." }
+
 groups:
   test:
-    test: { impl: "sample.cli:test", help: "Run the suite." }
+    commands:
+      test: { task: "test" }
   deploy:
-    up: { impl: "sample.cli:up", help: "Bring it up." }
+    commands:
+      up: { task: "up" }
 env_groups: [deploy]
 default: prod
 environments:
@@ -22,11 +27,14 @@ environments:
   prod: { backend: local, description: "Live." }
 """
 
-_NO_ENVIRONMENTS = """\
-product: sample
+_NO_ENVIRONMENTS = """product: sample
+tasks:
+  lint: { impl: "sample.cli:lint", help: "Lint it." }
+
 groups:
   code:
-    lint: { impl: "sample.cli:lint", help: "Lint it." }
+    commands:
+      lint: { task: "lint" }
 env_groups: []
 """
 

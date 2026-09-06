@@ -16,10 +16,19 @@ import pytest
 from simplon import context
 from simplon.tasks import tasks
 
+# `stamp` rather than any of the catalogue's own git verbs: the catalogue PLACES commit/push/... under
+# `support.git`, so reusing one of those names here would be a second body under a placed name - which
+# `treeform.merge` refuses by design, and which has nothing to do with what these tests are about.
 _MANIFEST = """
+tasks:
+  stamp: { impl: "simplon.test_impls:nullary", help: "Stamp the tree." }
+
 groups:
-  support.git:
-    push: { impl: "simplon.test_impls:nullary", help: "Push." }
+  support:
+    groups:
+      git:
+        commands:
+          stamp: { task: "stamp" }
 generate: [support.git]
 env_groups: []
 """
@@ -193,23 +202,24 @@ def test_catalogue_marks_a_namespace_the_platform_places_with_no_task_ref_anywhe
 
 def test_catalogue_marks_a_namespace_reached_via_a_raw_impl_naming_a_kernel_module(
         tmp_path, monkeypatch, capsys):
-    # arrange: `test` mid-migration (netctl#1469 plan 2, task 3) - `build` has converted to a command
-    # tree, `test` has not, and `report` inlines the kernel's module path directly as `impl:` rather than
-    # naming `task: "test:report"` (a group converts as a whole, so this is the accepted exception while
-    # the group stays old-form). There is no `task:` coordinate anywhere for `report` - `test` is reached
-    # only because the ASSEMBLED command still resolves to the same impl the catalogue's `test:report`
-    # coordinate names.
+    # arrange: a product task that inlines the kernel's module path as its own `impl:` rather than
+    # naming `task: "test:report"`. There is no coordinate anywhere for `report` - `test` is reached only
+    # because the ASSEMBLED command resolves to the same impl the catalogue's `test:report` coordinate
+    # names, which is the case that keeps this listing honest about what a product actually runs.
     manifest_path = tmp_path / "sample.yaml"
     manifest_path.write_text(textwrap.dedent("""
         tasks:
           local-task: { impl: "demo.tooling:noop", help: "Do nothing." }
+          report: { impl: "simplon.tasks.testrun:report_cmd", help: "Merge results." }
+
         groups:
           build:
             commands:
-              noop: { task: local-task, help: "Do nothing." }
+              noop: { task: "local-task", help: "Do nothing." }
           test:
-            report: { impl: "simplon.tasks.testrun:report_cmd", help: "Merge results." }
-        generate: [build]
+            commands:
+              report: { task: "report" }
+        generate: [test]
         env_groups: []
     """), encoding="utf-8")
     monkeypatch.setattr(context, "_current", context.ProductContext(
@@ -225,20 +235,21 @@ def test_catalogue_marks_a_namespace_reached_via_a_raw_impl_naming_a_kernel_modu
     assert "docs (reached)" not in out
 
 
-def test_catalogue_marks_a_namespace_placed_via_the_old_import_mechanism(tmp_path, monkeypatch, capsys):
-    # arrange: the pre-#1469 mechanism, still live for as long as a migration takes - `import:` makes a
-    # namespace's coordinates available, and a bare `tasks:` entry keyed by the coordinate PLACES one
-    # (`_expand_imports`). Wholly old-form (no `groups:` node uses tree keys), so the platform's own
-    # command-tree merge never runs and cannot be the reason `vcs` shows up here.
+def test_catalogue_marks_a_namespace_a_command_names_a_coordinate_from(tmp_path, monkeypatch, capsys):
+    # arrange: the one remaining way in - a command names a coordinate with `task: "vcs:push"`. It is
+    # marked because the coordinate is actually PLACED, not merely offered.
     manifest_path = tmp_path / "sample.yaml"
     manifest_path.write_text(textwrap.dedent("""
-        import:
-          delivery: [vcs]
         tasks:
-          vcs:push: { group: support }
+          frr-image: { impl: "simplon.test_impls:nullary", help: "Build the FRR image." }
+
         groups:
           build:
-            frr-image: { impl: "simplon.test_impls:nullary", help: "Build the FRR image." }
+            commands:
+              frr-image: { task: "frr-image" }
+          support:
+            commands:
+              push: { task: "vcs:push" }
         generate: [build]
         env_groups: []
     """), encoding="utf-8")
@@ -248,23 +259,28 @@ def test_catalogue_marks_a_namespace_placed_via_the_old_import_mechanism(tmp_pat
     # act
     rc = tasks.catalogue()
 
-    # assert: reached because the import was actually PLACED, not merely declared - and none of the
-    # command-tree-only namespaces leak in, because no group here is a command tree
+    # assert: `vcs` is reached because a command names one of its coordinates. `docs` is what pins the
+    # behaviour down - the kernel declares `docs:render`/`docs:site` and places no command for either, so
+    # a fix that marked everything the catalogue offers would light it up too.
     out = capsys.readouterr().out
     assert rc == 0
     assert "vcs (reached)" in out
-    assert "tasks (reached)" not in out
-    assert "test (reached)" not in out
-    assert "support (reached)" not in out
+    assert "docs (reached)" not in out
 
 
-def test_catalogue_marks_nothing_for_a_product_that_reaches_no_coordinate(product, capsys):
-    # arrange: naming no coordinate is a legitimate state - netctl's own manifest is in it - so the
-    # listing is still printed rather than failing on a missing section. Negative case: a namespace
-    # nothing reaches must stay unmarked, otherwise a fix that marked every namespace would pass too.
+def test_catalogue_leaves_a_namespace_nothing_reaches_unmarked(product, capsys):
+    # arrange: this manifest names not one coordinate - its single command runs a body of its own. What
+    # it still reaches is what the CATALOGUE places into every product by merging its own tree (`vcs`,
+    # `tasks`, `support`, `release`), and that is the point of the loop being the platform's. So the
+    # honest negative is a namespace the catalogue offers and places nothing from: `docs` declares
+    # `docs:render`/`docs:site` as tasks only, and `test` likewise. A fix that marked every namespace
+    # would light both up.
     # act
     rc = tasks.catalogue()
 
     # assert
+    out = capsys.readouterr().out
     assert rc == 0
-    assert "(reached)" not in capsys.readouterr().out
+    assert "docs (reached)" not in out
+    assert "test (reached)" not in out
+    assert "vcs (reached)" in out

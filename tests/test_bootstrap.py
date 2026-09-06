@@ -13,8 +13,20 @@ import pytest
 
 import simplon
 from simplon import bootstrap
+from simplon import catalogue as catalogue_mod
 from simplon import environments as env_mod
 from simplon.orchestrator import manifest
+
+
+def _load_scaffold(name: str = "fooctl"):
+    """The scaffolded manifest, through the loader a real product goes through.
+
+    WITH the catalogue, always: the scaffold hangs its commands off the platform's CI/CD loop and places
+    two of the catalogue's own (`release tag`, `support install`), so a load without one is not a
+    stricter test - it is a different product. `simplon.context.manifest()` passes the catalogue on every
+    real call, and this mirrors it.
+    """
+    return manifest.load(bootstrap.manifest_yaml(name), catalogue=catalogue_mod.load())
 
 
 def _kernel_src() -> Path:
@@ -57,43 +69,53 @@ def test_render_produces_the_expected_minimal_file_set():
 
 def test_generated_manifest_validates_through_the_delivery_loader():
     # arrange
-    text = bootstrap.manifest_yaml("fooctl")
-
     # act: the SAME loader the product CLI assembles from
-    mf = manifest.load(text)
+    mf = _load_scaffold()
 
-    # assert: the starter taxonomy - an agnostic group, and an env-first CD group whose `all` member is the
-    # impl-less aggregate over build -> up
-    assert mf.groups == {"build": ("build",), "deploy": ("up", "down", "all")}
-    assert mf.env_groups == frozenset({"deploy"})
-    assert set(mf.commands) == {"build", "deploy"}
+    # assert: ALL FIVE phases of the loop plus support, each holding at least one command (si#33) - the
+    # corset a newcomer is meant to see on day one, not two ribs of it. `support git`/`support tasks`
+    # come from the catalogue with no line in the scaffold at all.
+    assert set(mf.commands) >= {"build", "test", "release", "deploy", "monitor", "support"}
+    assert mf.groups["build"] == ("build",)
+    assert mf.groups["test"] == ("check",)
+    assert mf.groups["release"] == ("tag",)
+    assert mf.groups["monitor"] == ("status",)
     assert set(mf.commands["deploy"]) == {"up", "down", "all"}
     assert mf.spec_for("deploy", "all").depends_on == ("build", "up")
 
 
 def test_generated_manifest_impls_reference_the_scaffolded_orchestrator_package():
     # arrange / act
-    mf = manifest.load(bootstrap.manifest_yaml("fooctl"))
+    mf = _load_scaffold()
 
     # assert: each leaf impl is a resolvable "module:function" into the generated package (the wiring
-    # contract); `all` is the impl-less aggregate the kernel binds itself
+    # contract), resolved from the `tasks:` block the command instantiates rather than written on the
+    # command; `all` is the impl-less aggregate the kernel binds itself, and `release tag` is the
+    # catalogue's own body, which is why its impl points into the KERNEL and not into the product
     assert mf.spec_for("build", "build").impl == "orchestrator.cli:build"
+    assert mf.spec_for("test", "check").impl == "orchestrator.cli:check"
     assert mf.spec_for("deploy", "up").impl == "orchestrator.cli:up"
     assert mf.spec_for("deploy", "down").impl == "orchestrator.cli:down"
+    assert mf.spec_for("monitor", "status").impl == "orchestrator.cli:status"
     assert mf.spec_for("deploy", "all").impl == ""
+    assert mf.spec_for("release", "tag").impl == "simplon.tasks.release:tag"
 
 
 def test_generated_manifest_taxonomy_matches_the_assembly_semantics():
     # arrange
-    mf = manifest.load(bootstrap.manifest_yaml("fooctl"))
+    mf = _load_scaffold()
 
     # act
     tax = mf.taxonomy()
 
-    # assert: `build` collapses to one flat command, `deploy` is the env-first sub-app (what assemble reads)
+    # assert: `build` collapses to one flat command, and the env gate is the CATALOGUE's statement about
+    # each group rather than a second list in the scaffold - `deploy` and `monitor` are env-first, the
+    # other four refuse an env prefix
     assert tax.is_flat_command_group("build") is True
     assert tax.group_requires_env("deploy") is True
-    assert tax.group_requires_env("build") is False
+    assert tax.group_requires_env("monitor") is True
+    for agnostic in ("build", "test", "release", "support"):
+        assert tax.group_requires_env(agnostic) is False
 
 
 def test_generated_env_matrix_parses_with_the_local_backend():
@@ -347,7 +369,7 @@ def test_the_scaffolded_pin_is_a_plain_release_whatever_this_kernel_calls_itself
 
 def test_scaffolded_manifest_declares_no_dead_aggregate():
     # arrange
-    mf = manifest.load(bootstrap.manifest_yaml("fooctl"))
+    mf = _load_scaffold()
     aggregates = {name: spec for members in mf.commands.values()
                   for name, spec in members.items() if spec.depends_on}
 

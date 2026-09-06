@@ -50,9 +50,10 @@ class ProductContext:
         """The parsed + validated command manifest the CLI engine assembles the product's CLI from
         (delegates to ``simplon.orchestrator.manifest.load``).
 
-        The kernel's task CATALOGUE is passed in, which is what lets a product write `import:` and name a
-        coordinate (`vcs:commit`) instead of a module path (netctl#1437, adopted #1444). A product that
-        imports nothing is unaffected: the loader only consults the catalogue where a coordinate appears.
+        The kernel's task CATALOGUE is passed in, and it is not optional in practice: it carries both the
+        coordinate space a command names instead of a module path (`task: "vcs:commit"`, netctl#1437) and
+        the command TREE every product's groups hang off (netctl#1469). Without it a product would declare
+        its own loop and reach no platform body at all.
 
         Imported lazily so this module keeps no import-time dependency on the catalogue, which itself
         imports the manifest models.

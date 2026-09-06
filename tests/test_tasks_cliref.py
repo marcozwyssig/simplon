@@ -222,10 +222,15 @@ def test_a_group_that_runs_without_a_subcommand_is_documented_as_a_command_too(i
     # arrange: a multi-member group whose name is one of its members runs that member on the bare token
     text = """
 product: sample
+tasks:
+  build: { impl: "cliref_impls:wheel", help: "Run the build pipeline." }
+  docs: { impl: "cliref_impls:site", help: "Render the docs." }
+
 groups:
   build:
-    build: { impl: "cliref_impls:wheel", help: "Run the build pipeline." }
-    docs:  { impl: "cliref_impls:site",  help: "Render the docs." }
+    commands:
+      build: { task: "build" }
+      docs: { task: "docs" }
 """
     root, mf = _built(manifest_text=text, catalogue_text="tasks: {}\n")
 
@@ -254,11 +259,17 @@ def test_the_env_first_distinction_comes_from_the_taxonomy_and_not_from_a_help_p
 
 _FLAT = """
 product: sample
+tasks:
+  package: { impl: "cliref_impls:wheel", help: "Package the artefacts." }
+  wheel: { impl: "cliref_impls:up", help: "Build the wheel." }
+
 groups:
   package:
-    package: { impl: "cliref_impls:wheel", help: "Package the artefacts." }
+    commands:
+      package: { task: "package" }
   build:
-    wheel: { impl: "cliref_impls:up", help: "Build the wheel." }
+    commands:
+      wheel: { task: "wheel" }
 env_groups: [package]
 """
 
@@ -564,8 +575,9 @@ def test_the_unplaced_section_claims_no_more_than_the_catalogue_supports(impls):
     # so "most of them" overstates the cost exactly as "not a port" understated it
     assert "Most of them" not in section and "most of them" not in section
     assert "Some of them" in section
-    # and it says what the list IS, since a flat-form manifest must import a namespace before placing
-    assert "not what this manifest imports" in section
+    # and it says what the list IS: the platform's whole offer, which is a wider set than what this
+    # product has taken from it
+    assert "what the PLATFORM offers" in section
 
 
 def test_the_page_lists_the_platform_tasks_this_product_has_not_placed(impls):

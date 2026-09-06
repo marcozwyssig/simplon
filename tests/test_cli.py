@@ -36,18 +36,31 @@ def _impls_module():
 
 _MANIFEST = """
 product: demo
+tasks:
+  fmt: { impl: "demo_impls:fmt", help: "Format the sources." }
+  lint: { impl: "demo_impls:lint", help: "Lint the sources." }
+  build: { impl: "demo_impls:build", help: "Build the artefacts." }
+  unit: { impl: "demo_impls:unit", help: "Unit gate.", passthrough_args: true }
+  all: { impl: "demo_impls:test_all", help: "Every test stage." }
+  up: { impl: "demo_impls:up", help: "Deploy up." }
+  deploy-all: { impl: "demo_impls:deploy_all", help: "Full bring-up." }
+
 groups:
   code:
-    fmt:  { impl: "demo_impls:fmt",  help: "Format the sources." }
-    lint: { impl: "demo_impls:lint", help: "Lint the sources." }
+    commands:
+      fmt: { task: "fmt" }
+      lint: { task: "lint" }
   build:
-    build: { impl: "demo_impls:build", help: "Build the artefacts." }
+    commands:
+      build: { task: "build" }
   test:
-    unit: { impl: "demo_impls:unit",     help: "Unit gate.", passthrough_args: true }
-    all:  { impl: "demo_impls:test_all", help: "Every test stage." }
+    commands:
+      unit: { task: "unit" }
+      all: { task: "all" }
   deploy:
-    up:  { impl: "demo_impls:up",         help: "Deploy up." }
-    all: { impl: "demo_impls:deploy_all", help: "Full bring-up." }
+    commands:
+      up: { task: "up" }
+      all: { task: "deploy-all" }
 env_groups: [deploy]
 """
 
@@ -158,13 +171,21 @@ def test_the_assembled_app_compiles_to_a_click_tree_with_the_expected_top_level_
 
 _GD_MANIFEST = """
 product: demo
+tasks:
+  build: { impl: "gd_impls:build", help: "Build the images." }
+  diff: { impl: "gd_impls:diff", help: "Show the schema diff." }
+  docs: { impl: "gd_impls:docs", help: "Render the docs." }
+  package: { impl: "gd_impls:package", help: "Package the images." }
+
 groups:
   build:
-    build: { impl: "gd_impls:build", help: "Build the images." }
-    diff:  { impl: "gd_impls:diff",  help: "Show the schema diff." }
-    docs:  { impl: "gd_impls:docs",  help: "Render the docs." }
+    commands:
+      build: { task: "build" }
+      diff: { task: "diff" }
+      docs: { task: "docs" }
   package:
-    package: { impl: "gd_impls:package", help: "Package the images." }
+    commands:
+      package: { task: "package" }
 env_groups: []
 """
 
@@ -264,12 +285,19 @@ def test_a_group_default_namesake_is_neither_a_subcommand_nor_a_separate_flat_co
 
 _HIDDEN_MANIFEST = """
 product: demo
+tasks:
+  fmt: { impl: "hidden_impls:fmt", help: "Format the sources." }
+  lint: { impl: "hidden_impls:lint", help: "Lint the sources." }
+  package: { impl: "hidden_impls:package", help: "Package the artefacts." }
+
 groups:
   code:
-    fmt:  { impl: "hidden_impls:fmt",  help: "Format the sources." }
-    lint: { impl: "hidden_impls:lint", help: "Lint the sources.", hidden: true }
+    commands:
+      fmt: { task: "fmt" }
+      lint: { task: "lint", hidden: true }
   package:
-    package: { impl: "hidden_impls:package", help: "Package the artefacts.", hidden: true }
+    commands:
+      package: { task: "package", hidden: true }
 env_groups: []
 """
 
@@ -359,14 +387,22 @@ def test_a_hidden_single_member_flat_group_hides_its_one_and_only_registration(h
 
 _AGG_MANIFEST = """
 product: demo
+tasks:
+  install: { impl: "agg_impls:install", help: "Install host prereqs." }
+  build: { impl: "agg_impls:build", help: "Build the artefacts." }
+  up: { impl: "agg_impls:up", help: "Deploy up." }
+  seed: { impl: "agg_impls:seed", help: "Seed." }
+
 groups:
   build:
-    install: { impl: "agg_impls:install", help: "Install host prereqs." }
-    build:   { impl: "agg_impls:build",   help: "Build the artefacts." }
+    commands:
+      install: { task: "install" }
+      build: { task: "build" }
   deploy:
-    up:      { impl: "agg_impls:up",   help: "Deploy up." }
-    seed:    { impl: "agg_impls:seed", help: "Seed." }
-    bringup: { help: "Full bring-up.", depends_on: [build, up, seed] }
+    commands:
+      up: { task: "up" }
+      seed: { task: "seed" }
+      bringup: { help: "Full bring-up.", depends_on: ["build", "up", "seed"] }
 env_groups: [deploy]
 """
 
@@ -499,11 +535,19 @@ def test_bound_falls_back_to_the_bodys_docstring_when_the_command_declares_none(
 
 _SHARED_MANIFEST = """
 product: demo
+tasks:
+  system:
+    impl: "demo_impls:unit"
+    help: "SYSTEM gate: the system suite against the running lab."
+  smoke: { impl: "demo_impls:unit", help: "SMOKE gate: the fastest reachability check." }
+  lint: { impl: "demo_impls:lint", help: "Lint the sources." }
+
 groups:
   test:
-    system: { impl: "demo_impls:unit", help: "SYSTEM gate: the system suite against the running lab." }
-    smoke:  { impl: "demo_impls:unit", help: "SMOKE gate: the fastest reachability check." }
-    lint:   { impl: "demo_impls:lint", help: "Lint the sources." }
+    commands:
+      system: { task: "system" }
+      smoke: { task: "smoke" }
+      lint: { task: "lint" }
 env_groups: []
 """
 
@@ -558,12 +602,19 @@ def test_assemble_leaves_an_unshared_impls_help_to_its_docstring(shared_impl_app
 # --- assemble(skip=...): the hybrid while the migration runs (netctl#1444) ----------------------------
 
 _HYBRID = """
+tasks:
+  unit: { impl: "simplon.test_impls:nullary", help: "One gate." }
+  report: { impl: "simplon.test_impls:no_context", help: "Merge the results." }
+  commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
+
 groups:
   test:
-    unit:   { impl: "simplon.test_impls:nullary", help: "One gate." }
-    report: { impl: "simplon.test_impls:no_context", help: "Merge the results." }
+    commands:
+      unit: { task: "unit" }
+      report: { task: "report" }
   git:
-    commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
+    commands:
+      commit: { task: "commit" }
 env_groups: []
 """
 
@@ -622,11 +673,17 @@ def test_skipping_nothing_is_the_default_and_assembles_everything():
 
 _RC_MANIFEST = """
 product: demo
+tasks:
+  ok: { impl: "rc_impls:ok", help: "Succeed." }
+  fail: { impl: "rc_impls:fail", help: "Fail with 3." }
+  chatty: { impl: "rc_impls:chatty", help: "Return something that is not an exit code." }
+
 groups:
   code:
-    ok:    { impl: "rc_impls:ok",     help: "Succeed." }
-    fail:  { impl: "rc_impls:fail",   help: "Fail with 3." }
-    chatty: { impl: "rc_impls:chatty", help: "Return something that is not an exit code." }
+    commands:
+      ok: { task: "ok" }
+      fail: { task: "fail" }
+      chatty: { task: "chatty" }
 env_groups: []
 """
 
@@ -682,18 +739,18 @@ def test_a_body_returning_something_that_is_not_an_exit_code_is_ignored_rather_t
 
 _PRESENTED_MANIFEST = """
 product: demo
+tasks:
+  commit:
+    impl: "pres_impls:commit"
+    help: "Commit."
+    params: { message: { help: "commit message", argument: true }, dry_run: { help: "preview only", short: "-n" } }
+  pin: { impl: "pres_impls:pin", help: "Pin a site." }
+
 groups:
   code:
-    commit:
-      impl: "pres_impls:commit"
-      help: "Commit."
-      params:
-        message: { help: "commit message", argument: true }
-        dry_run: { help: "preview only", short: "-n" }
-    pin:
-      impl: "pres_impls:pin"
-      help: "Pin a site."
-      with: { site: "be" }
+    commands:
+      commit: { task: "commit" }
+      pin: { task: "pin", with: { site: "be" } }
 env_groups: []
 """
 
@@ -762,16 +819,18 @@ def test_a_with_key_naming_no_parameter_of_the_impl_is_rejected():
 
 _NESTED_MANIFEST = """
 product: demo
-taxonomy:
-  support:
-    help: "Host upkeep."
-    groups:
-      git: { help: "Version control." }
+tasks:
+  doctor: { impl: "demo_impls:lint", help: "Check the host." }
+  push: { impl: "demo_impls:up", help: "Push." }
+
 groups:
   support:
-    doctor: { impl: "demo_impls:lint", help: "Check the host." }
-  support.git:
-    push: { impl: "demo_impls:up", help: "Push." }
+    commands:
+      doctor: { task: "doctor" }
+    groups:
+      git:
+        commands:
+          push: { task: "push" }
 env_groups: []
 """
 

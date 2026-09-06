@@ -1,18 +1,22 @@
-"""The new-form command tree (netctl#1469), lowered to the flat form the manifest model validates.
+"""The command tree (netctl#1469), lowered to the structures the manifest model validates.
 
 A task is a template; a command is an instance of one; a group is a slot in the CI/CD tree the platform
 owns. This module is the whole of that model's front end: it merges a product's tree onto the kernel's,
 resolves each command's `task:` into the `impl:` the rest of the loader already understands, and emits
 exactly the two structures `_ManifestModel` accepts - a `taxonomy:` mapping and a flat `group path ->
-members` mapping.
+members` mapping. ("Flat" there is the loader's internal member map, not the deleted flat manifest form
+the last section of this module is about.)
 
 Lowering rather than replacing is deliberate. `CommandSpec`, `Manifest`, the six validation rules,
-`taskgen` and `simplon.cli.assemble` all keep working on shapes they already consume, which is what
-lets every migration step be proved by a zero-diff on the product's CLI-surface golden.
+`taskgen` and `simplon.cli.assemble` all keep working on shapes they already consume, which is what let
+every step of the migration off the old form be proved by a zero-diff on the product's CLI-surface
+golden.
 
 Pure functions over plain dicts: no pydantic, no I/O, no import of any body.
 """
 from __future__ import annotations
+
+import re
 
 # A group node's own keys. Everything else under a node would be ambiguous, which is why members live
 # under `commands:` rather than directly on the node: otherwise `help:` would be a group attribute in one
@@ -111,13 +115,21 @@ def paths_with_commands(flat: dict) -> frozenset[str]:
 
 
 def merge(kernel: dict, product: dict, _path: tuple[str, ...] = (),
-         *, product_tasks: dict | None = None, catalogue_tasks: dict | None = None) -> dict:
+         *, product_tasks: dict | None = None, catalogue_tasks: dict | None = None,
+         locked: bool = True) -> dict:
     """The product's tree merged onto the kernel's.
 
     `product_tasks`/`catalogue_tasks` are the RAW `tasks:` maps (product's own, and the catalogue's),
     threaded through for no reason but a better error message: `_merge_commands` needs them to name the
     two `impl:` a `task:` collision hides behind one command name, and this is the only path from
     `load()` down to it. Neither is otherwise this function's concern - it merges trees, not bodies.
+
+    `locked` is the group lock, and it is the CATALOGUE's - which is why it is a parameter rather than
+    an unconditional rule. "The platform owns which groups exist" is a statement about a platform, and a
+    caller that hands in no catalogue at all has none: with `kernel` empty, an unconditional lock would
+    make every possible tree illegal and the form unusable outside a product. `load()` therefore ties it
+    to the catalogue it was given, which in every product is one (`simplon.context` always passes it);
+    unlocked, a group the kernel does not declare is simply the manifest's own.
 
     Three outcomes, and the first is the group lock: a PATH the kernel does not declare is an error, a
     command NAME it does not declare is an addition, and a name it does declare is a refinement. The lock
@@ -149,6 +161,12 @@ def merge(kernel: dict, product: dict, _path: tuple[str, ...] = (),
                 f"group node's value must be a mapping with its own keys (help, env_first, groups, "
                 f"commands) - check the indentation under this entry")
         node = dict(node or {})
+        own = name not in out and not locked
+        if own:
+            # Unlocked (no platform tree to own it): this group exists because THIS manifest declares it,
+            # so its shape - `help:`, `env_first:` - is the manifest's to state. The refusal below is
+            # about REDECLARING a shape the platform already set, and here there is no platform.
+            out[name] = {}
         if name not in out:
             raise ValueError(
                 f"groups entry '{'.'.join(path)}' names a group the platform's tree does not declare. "
@@ -162,12 +180,15 @@ def merge(kernel: dict, product: dict, _path: tuple[str, ...] = (),
         for key, value in node.items():
             if key == "groups":
                 merged["groups"] = merge(base.get("groups") or {}, value, path,
-                                         product_tasks=product_tasks, catalogue_tasks=catalogue_tasks)
+                                         product_tasks=product_tasks, catalogue_tasks=catalogue_tasks,
+                                         locked=locked)
             elif key == "commands":
                 merged["commands"] = _merge_commands(base.get("commands") or {}, value,
                                                      ".".join(path),
                                                      product_tasks=product_tasks or {},
                                                      catalogue_tasks=catalogue_tasks or {})
+            elif own:
+                merged[key] = value
             else:
                 raise ValueError(
                     f"group '{'.'.join(path)}' declares `{key}:`, which the platform's node already "
@@ -386,41 +407,278 @@ def _resolve_one(spec: dict, where: str, product_tasks: dict, catalogue_tasks: d
     return out
 
 
-def partition(groups: dict) -> tuple[dict, dict]:
-    """A `groups:` block split into its new-form nodes and its old-form ones, by TOP-LEVEL key.
+# --- the old flat form: gone, and rewritten for whoever still has one ----------------------------------
+#
+# The flat form wrote a body straight onto a command (`groups: build: wheel: { impl: ... }`) and placed a
+# catalogue task through `import:` + a coordinate-keyed `tasks:` entry. Both are deleted (netctl#1469
+# plan 3, si#33). What is NOT deleted is the way out: a manifest still written that way is rejected with
+# the REWRITE spelled out in its own names, because "no longer supported" leaves the one person who has
+# to act guessing at the shape nobody can see any more.
 
-    Per node rather than per block, so a product migrates one group at a time and the CLI-surface
-    golden proves each step (netctl#1469 plan 2). A node that declares any of the four node keys is a
-    tree node; a node whose keys are all command names is an old-form group.
+# What of a flat command's spec belongs to the TASK (the body and how it presents itself) rather than to
+# the command that instantiates it. Everything else - `with`, `hidden`, `depends_on`, `keep_awake`,
+# `stop_on_failure` - is the placement's, and stays on the command. Mirrors INHERITED/TASK_KEYS above,
+# narrowed to the keys the flat form could actually carry on a command.
+_TASK_SIDE_KEYS = ("impl", "help", "passthrough_args", "params")
 
-    Temporary by construction: plan 3 deletes the old form, and this function goes with it.
+# How wide a rendered mapping may be before the rewrite breaks it across lines. The rewrite is read in a
+# terminal, inside an error message that already carries prose - a 200-column flow mapping there is a
+# rewrite nobody can check against their own file.
+_FLOW_WIDTH = 92
+
+
+def _is_old_form_node(node: object) -> bool:
+    """Whether a top-level `groups:` entry is a flat-form group: a mapping of command names, with not one
+    of the four node keys among them.
+
+    A node with a node key is a tree node, even a wrong one - `_check_node_keys` reports that far better
+    than this can. An EMPTY mapping is not the flat form either: it declares a group and nothing in it,
+    which `merge` already refuses by name.
     """
-    new: dict = {}
-    old: dict = {}
-    for name, node in (groups or {}).items():
-        target = new if isinstance(node, dict) and any(key in node for key in NODE_KEYS) else old
-        target[str(name)] = node
-    return new, old
+    return isinstance(node, dict) and bool(node) and not any(key in node for key in NODE_KEYS)
 
 
-def is_new_form(groups: dict) -> bool:
-    """Whether any top-level group is a command tree. Kept for callers that only need the question."""
-    return bool(partition(groups)[0])
+def old_form_groups(groups: dict) -> dict:
+    """The flat-form entries of a `groups:` block, keyed as they are written."""
+    if not isinstance(groups, dict):
+        return {}
+    return {str(name): node for name, node in groups.items() if _is_old_form_node(node)}
 
 
-def check_no_stale_import(data: dict) -> None:
-    """Reject an `import:` section in a new-form manifest (netctl#1469).
+def old_form_tasks(tasks: dict) -> dict:
+    """The flat-form entries of a `tasks:` block: one keyed by a catalogue COORDINATE (the old way of
+    placing a platform task), or one carrying `group:` (the old way of saying where its command goes).
 
-    `import:` made catalogue coordinates AVAILABLE so a product could place them. The platform now
-    places the general ones itself and a command names any other coordinate directly, so the section has
-    no meaning - and a section with no meaning that loads without complaint is how a product comes to
-    believe it imported something.
+    A bare-named entry with an `impl:` and no `group:` is the CURRENT form and is not returned here - it
+    is the template a command instantiates with `task:`.
     """
-    if data.get("import"):
-        raise ValueError(
-            "`import:` has no meaning in a manifest that declares a command tree: the platform places "
-            "the general commands itself, and a command names any other task directly with "
-            "`task: \"<namespace>:<name>\"`. Delete the section")
+    if not isinstance(tasks, dict):
+        return {}
+    return {str(name): (spec or {}) for name, spec in tasks.items()
+            if ":" in str(name) or (isinstance(spec, dict) and "group" in spec)}
+
+
+# A key YAML reads as a plain scalar. A coordinate's colon is excluded deliberately: `docs:reference:`
+# unquoted is a nested mapping, not a key.
+_PLAIN_KEY_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
+
+
+def _quote(value: object) -> str:
+    """One scalar, as YAML the reader can paste back into a manifest."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return "null"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_quote(item) for item in value) + "]"
+    if isinstance(value, dict):
+        return "{ " + ", ".join(f"{_key(key)}: {_quote(item)}" for key, item in value.items()) + " }"
+    text = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{text}"'
+
+
+def _key(name: object) -> str:
+    """A mapping key, quoted only where YAML needs it (a coordinate's colon does, a hyphen does not)."""
+    text = str(name)
+    return text if _PLAIN_KEY_RE.match(text) and ":" not in text else f'"{text}"'
+
+
+def _render_mapping(name: object, body: dict, indent: str) -> list[str]:
+    """`name: { ... }` on one line where it fits, and a block mapping where it does not."""
+    if not body:
+        # A placement that says nothing but "yes, here": the command name IS already the whole of it, so
+        # `{}` is the terse and correct spelling rather than an omission.
+        return [f"{indent}{_key(name)}: {{}}"]
+    flow = f"{indent}{_key(name)}: {{ " + ", ".join(
+        f"{_key(key)}: {_quote(value)}" for key, value in body.items()) + " }"
+    if len(flow) <= _FLOW_WIDTH:
+        return [flow]
+    lines = [f"{indent}{_key(name)}:"]
+    for key, value in body.items():
+        lines.append(f"{indent}  {_key(key)}: {_quote(value)}")
+    return lines
+
+
+def _render_tree(tree: dict, indent: str) -> list[str]:
+    """The nested `groups:`/`commands:` shape, rendered depth-first in declaration order."""
+    lines: list[str] = []
+    for name, node in tree.items():
+        lines.append(f"{indent}{_key(name)}:")
+        for key in NODE_KEYS:
+            if key not in ("groups", "commands") and key in node:
+                lines.append(f"{indent}  {_key(key)}: {_quote(node[key])}")
+        if node.get("commands"):
+            lines.append(f"{indent}  commands:")
+            for command, spec in node["commands"].items():
+                lines.extend(_render_mapping(command, spec, indent + "    "))
+        if node.get("groups"):
+            lines.append(f"{indent}  groups:")
+            lines.extend(_render_tree(node["groups"], indent + "    "))
+    return lines
+
+
+def _node_at(tree: dict, path: tuple[str, ...]) -> dict:
+    """The node at a dotted group path, creating each level - so a flat `support.git` key becomes the
+    nested `support: groups: git:` the tree form spells it as."""
+    node: dict = {"commands": {}, "groups": tree}
+    for segment in path:
+        children = node["groups"]
+        node = children.setdefault(segment, {"commands": {}, "groups": {}})
+    return node
+
+
+def rewrite_of_old_form(data: dict) -> str:
+    """This manifest's `tasks:` and `groups:` sections, rewritten as the command tree - YAML, ready to
+    paste over both.
+
+    This is the whole of what the refusal below has to offer, so it is a function of its own and pure:
+    a test can assert on the rewritten text without going near a load error, and the renderer can be
+    read on its own terms. A key it does not recognise on a command travels across untouched, because
+    such a key is far likelier to be the product's own than to be dead.
+
+    BOTH sections in full, not only the flat parts, and that is the whole usability of it: a manifest
+    part-way through the migration has some groups in each form, and a rewrite of only the flat half
+    would be a block that silently DROPS the migrated one when pasted over. What is already a tree comes
+    through unchanged.
+
+    Two bodies that are byte-identical share ONE task, which is the point of the form: `test:gate`
+    placed at four levels was four copies of one `impl:` in the flat form and is one template with four
+    pins here. A name already taken by a different body is qualified with its group.
+
+    WHAT THE REWRITE DOES NOT KNOW, and it is a real limit rather than a caveat: this function has no
+    catalogue. A command whose name the CATALOGUE also places - `support install`, `release tag` - is
+    printed without the `override: true` the merge then demands, and pasting it in fails with
+    "redeclares `task:`". That second refusal names the fix exactly, so the reader is not stranded; but
+    the printed block is a starting point in that case, not a finished manifest. Do not promise more.
+    """
+    all_groups = data.get("groups") or {}
+    groups = old_form_groups(all_groups)
+    tasks = old_form_tasks(data.get("tasks") or {})
+    declared = {str(name): dict(spec or {}) for name, spec in (data.get("tasks") or {}).items()
+                if str(name) not in tasks}
+    tree: dict = {}
+
+    def carry(node: dict) -> dict:
+        """A node that is ALREADY a tree, copied into the renderer's own shape."""
+        out = {key: node[key] for key in NODE_KEYS if key in node and key not in ("groups", "commands")}
+        out["commands"] = {str(name): dict(spec or {})
+                           for name, spec in (node.get("commands") or {}).items()}
+        out["groups"] = {str(name): carry(dict(child or {}))
+                         for name, child in (node.get("groups") or {}).items()}
+        return out
+
+    for name, node in all_groups.items():
+        if not _is_old_form_node(node):
+            tree[str(name)] = carry(dict(node or {}))
+
+    def task_name_for(preferred: str, group: str, spec: dict) -> str:
+        for name, existing in declared.items():
+            if existing == spec:
+                return name
+        name = preferred if preferred not in declared else f"{group.replace('.', '-')}-{preferred}"
+        suffix = 2
+        while name in declared:
+            name, suffix = f"{preferred}-{suffix}", suffix + 1
+        declared[name] = spec
+        return name
+
+    for group, members in groups.items():
+        node = _node_at(tree, tuple(group.split(".")))
+        for command, spec in (members or {}).items():
+            spec = dict(spec or {})
+            if not spec.get("impl"):
+                # An aggregate was never a body: `depends_on:` and the rest travel unchanged.
+                node["commands"][str(command)] = spec
+                continue
+            body = {key: spec[key] for key in _TASK_SIDE_KEYS if key in spec}
+            rest = {key: value for key, value in spec.items() if key not in _TASK_SIDE_KEYS}
+            node["commands"][str(command)] = {"task": task_name_for(str(command), group, body), **rest}
+
+    for coordinate, spec in tasks.items():
+        spec = dict(spec or {})
+        group = str(spec.pop("group", "") or (str(coordinate).split(":", 1)[0]))
+        if ":" in str(coordinate) and not spec.get("impl"):
+            # The body stays in the kernel: the command names the coordinate and nothing is copied here.
+            name = str(coordinate).split(":", 1)[1]
+            placement = {"task": str(coordinate), **spec}
+        elif ":" in str(coordinate):
+            # A coordinate key carrying its own `impl:` was never a placement of the platform's body - it
+            # was the product's own body under a name that looks like the platform's. It becomes an
+            # ordinary task, named after the half of the coordinate that was ever a command name.
+            name = str(coordinate).split(":", 1)[1]
+            body = {key: spec[key] for key in _TASK_SIDE_KEYS if key in spec}
+            rest = {key: value for key, value in spec.items() if key not in _TASK_SIDE_KEYS}
+            placement = {"task": task_name_for(name, group, body), **rest}
+        else:
+            # A bare name with an `impl:` was already a template - only its PLACEMENT moves out of the
+            # `tasks:` block and into the tree.
+            name = str(coordinate)
+            body = {key: spec[key] for key in _TASK_SIDE_KEYS if key in spec}
+            rest = {key: value for key, value in spec.items() if key not in _TASK_SIDE_KEYS}
+            placement = {"task": task_name_for(name, group, body), **rest}
+        _node_at(tree, tuple(group.split(".")))["commands"][name] = placement
+
+    lines: list[str] = []
+    if declared:
+        lines.append("tasks:")
+        for name, body in declared.items():
+            lines.extend(_render_mapping(name, body, "  "))
+        lines.append("")
+    if tree:
+        lines.append("groups:")
+        lines.extend(_render_tree(tree, "  "))
+    return "\n".join(lines)
+
+
+def check_no_old_form(data: dict) -> None:
+    """Reject a manifest still written in the flat form, showing what it becomes.
+
+    The four things that say "flat" are checked together rather than one per load, because they are one
+    manifest's one migration: a product that wrote `impl:` on a command almost always also placed its
+    catalogue tasks through `import:`, and being told about the second only after fixing the first is
+    two guessing games instead of none.
+
+    The message carries the rewrite of THIS manifest's own sections (`rewrite_of_old_form`), not an
+    example of the shape. That is the entire difference between a removal somebody can act on and one
+    they have to reverse-engineer - and it is why the flat form's renderer outlived the flat form.
+    """
+    groups = old_form_groups(data.get("groups") or {})
+    tasks = old_form_tasks(data.get("tasks") or {})
+    stale_import = bool(data.get("import"))
+    if not groups and not tasks and not stale_import:
+        return
+
+    found = []
+    if groups:
+        found.append(f"group(s) {', '.join(repr(name) for name in groups)} name commands directly, with "
+                     f"`impl:` on them")
+    coordinate_keyed = [name for name in tasks if ":" in name]
+    if coordinate_keyed:
+        found.append(f"task(s) {', '.join(repr(name) for name in coordinate_keyed)} are keyed by a "
+                     f"platform coordinate")
+    placing = [name for name in tasks if ":" not in name]
+    if placing:
+        found.append(f"task(s) {', '.join(repr(name) for name in placing)} place their own command with "
+                     f"`group:`")
+    if stale_import:
+        found.append("an `import:` section makes catalogue coordinates available")
+
+    rewrite = rewrite_of_old_form(data)
+    notes = ["a command is an INSTANCE of a task: the body is declared once under `tasks:` and the "
+             "command points at it with `task:`",
+             "a catalogue task keeps its body in the kernel - the command names the coordinate "
+             "(`task: \"<namespace>:<name>\"`) and copies nothing",
+             "the catalogue's own commands arrive by merging its tree, so `import:` has nothing left to "
+             "do - delete the section"]
+    if not stale_import:
+        notes = notes[:2]
+    body = "\n".join(f"    {line}" if line else "" for line in rewrite.splitlines())
+    raise ValueError(
+        "this manifest is written in the flat command form, which this kernel no longer loads: "
+        + "; ".join(found) + ". Rewrite those sections as:\n\n" + body + "\n\n"
+        + "\n".join(f"  - {note}" for note in notes))
 
 
 def check_every_task_is_used(flat: dict, product_tasks: dict) -> None:

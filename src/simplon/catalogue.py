@@ -60,7 +60,7 @@ class Catalogue(NamedTuple):
 
     def namespace(self, name: str) -> dict[str, dict]:
         """Every task in one namespace, keyed by its bare name. A namespace the catalogue does not have
-        is a ValueError rather than an empty map: an `import:` typo would otherwise offer nothing at all
+        is a ValueError rather than an empty map: a namespace typo would otherwise offer nothing at all
         and read, at the point of use, as if the platform simply had no such tasks."""
         if not self._has(name):
             raise ValueError(f"the catalogue has no namespace '{name}' "

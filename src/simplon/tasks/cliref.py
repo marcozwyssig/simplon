@@ -437,8 +437,7 @@ def render(found: Sequence[Entry], *, product: str, title: str,
         out += ["", UNPLACED_HEADING, "",
                 "These are coordinates the delivery kernel's catalogue offers that no command of this "
                 "product instantiates, so they are in no group above and cannot be typed here. The list "
-                "is what the PLATFORM offers - not what this manifest imports, which for a flat-form "
-                "manifest is a separate declaration.", "",
+                "is what the PLATFORM offers, which is a wider set than what this product places.", "",
                 "Adopting one is not always just a command declaration. Some of them read product data "
                 "of their own - a manifest section, a configuration file, a running environment - and "
                 "placed without it they would fail on their first line; others need nothing but the "

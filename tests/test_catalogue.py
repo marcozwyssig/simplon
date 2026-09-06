@@ -158,7 +158,14 @@ def test_the_two_image_coordinates_reach_the_generated_reference():
     assert "verify" in offered["release:image"]
 
 
-# --- the `import:` + `tasks:` expansion ------------------------------------------------------------------
+# --- placing a catalogue coordinate ---------------------------------------------------------------------
+#
+# `import:` + a coordinate-keyed `tasks:` entry was how a product reached the catalogue while manifests
+# were flat. Both are gone with the flat form (si#33): a command names a coordinate directly with
+# `task: "<namespace>:<name>"` and the merge does the rest, so the tests below are about the ONE
+# remaining way in. What was tested about `import:` itself went with it; what was tested about the RULES
+# (an unknown coordinate is loud, an override keeps the catalogue's body, a command has one declaration)
+# is here, restated against the mechanism that survived.
 
 def _loaded(text):
     return manifest.load(text, catalogue=catalogue.loads(_CATALOGUE))
@@ -167,11 +174,11 @@ def _loaded(text):
 def test_an_imported_task_lands_in_the_group_its_namespace_names():
     # arrange: a product places a task without restating anything else about it
     text = """
-import:
-  delivery: [vcs]
-tasks:
-  vcs:commit: {}
-  vcs:push: {}
+groups:
+  vcs:
+    commands:
+      commit: { task: "vcs:commit" }
+      push: { task: "vcs:push" }
 env_groups: []
 """
 
@@ -186,10 +193,10 @@ env_groups: []
 def test_an_imported_task_can_be_placed_into_a_group_of_the_products_choosing():
     # arrange: netctl wants the vcs verbs under `git`
     text = """
-import:
-  delivery: [vcs]
-tasks:
-  vcs:commit: { group: git }
+groups:
+  git:
+    commands:
+      commit: { task: "vcs:commit" }
 env_groups: []
 """
 
@@ -200,10 +207,10 @@ env_groups: []
 def test_an_override_wins_over_the_catalogues_own_declaration():
     # arrange: an entry without `impl:` defines nothing and overrides what the catalogue declared
     text = """
-import:
-  delivery: [test]
-tasks:
-  test:gate: { help: "SYSTEM gate.", group: test }
+groups:
+  test:
+    commands:
+      gate: { task: "test:gate", help: "SYSTEM gate." }
 env_groups: []
 """
 
@@ -220,10 +227,10 @@ def test_an_override_that_resolves_to_no_imported_coordinate_is_rejected():
     # arrange: a silent no-op here is exactly the failure `impl:` already has - a command that quietly
     # is not there
     text = """
-import:
-  delivery: [vcs]
-tasks:
-  vcs:comit: { group: git }
+groups:
+  git:
+    commands:
+      comit: { task: "vcs:comit" }
 env_groups: []
 """
 
@@ -232,19 +239,19 @@ env_groups: []
         _loaded(text)
 
 
-def test_a_task_from_a_namespace_that_was_not_imported_is_rejected():
-    # arrange: importing is what makes a coordinate available; resolving one anyway would make `import:`
-    # decoration rather than a declaration
+def test_a_coordinate_from_a_namespace_the_catalogue_does_not_carry_is_rejected():
+    # arrange: the catalogue IS the coordinate space, so a name it never declared is a typo - and a typo
+    # that loads clean is a command that quietly is not there
     text = """
-import:
-  delivery: [vcs]
-tasks:
-  test:gate: { group: test }
+groups:
+  build:
+    commands:
+      site: { task: "docs:site" }
 env_groups: []
 """
 
     # act / assert
-    with pytest.raises(ValueError, match="test:gate"):
+    with pytest.raises(ValueError, match="docs:site"):
         _loaded(text)
 
 
@@ -252,10 +259,12 @@ def test_a_products_own_definition_needs_no_catalogue_and_keeps_its_key_as_the_c
     # arrange
     text = """
 tasks:
-  disk-guard:
-    impl: "simplon.test_impls:nullary"
-    help: "Guard the disk."
-    group: support
+  disk-guard: { impl: "simplon.test_impls:nullary", help: "Guard the disk." }
+
+groups:
+  support:
+    commands:
+      disk-guard: { task: "disk-guard" }
 env_groups: []
 """
 
@@ -287,10 +296,10 @@ def test_imported_tasks_are_validated_by_every_rule_a_declared_command_is():
     # arrange: expansion happens BEFORE validation, which is the point of expanding there - an imported
     # command with no help is as broken as a declared one with no help
     text = """
-import:
-  delivery: [vcs]
-tasks:
-  vcs:commit: { help: "", group: git }
+groups:
+  git:
+    commands:
+      commit: { task: "vcs:commit", help: "" }
 env_groups: []
 """
 
@@ -299,49 +308,16 @@ env_groups: []
         _loaded(text)
 
 
-def test_an_unknown_import_source_is_rejected():
-    # arrange: `delivery` is the only catalogue there is
-    text = """
-import:
-  platform: [vcs]
-tasks:
-  vcs:commit: { group: git }
-env_groups: []
-"""
-
-    # act / assert
-    with pytest.raises(ValueError, match="platform"):
-        _loaded(text)
-
-
-def test_an_import_with_no_referencing_tasks_entry_warns_and_places_nothing(capsys):
-    # arrange: defect 2 - `import:` only makes coordinates AVAILABLE; nothing ever REFERENCES one here
-    # (no `tasks:` override, and the flat form has no other mechanism that would place it), so the CLI
-    # loads clean and nothing appears. The warning has to name the cause, not just "nothing happened".
-    text = """
-import:
-  delivery: [vcs]
-env_groups: []
-groups:
-  support:
-    doctor: { impl: "simplon.test_impls:nullary", help: "Doctor." }
-"""
-
-    # act
-    mf = _loaded(text)
-    printed = capsys.readouterr().out
-
-    # assert: no vcs command was placed, and the warning names the actual cause
-    assert mf.groups == {"support": ("doctor",)}
-    assert "import:" in printed and "entirely flat form" in printed and "commands:" in printed
-
-
 def test_a_manifest_with_neither_section_is_untouched_by_the_expansion():
     # arrange: this is what lets a product adopt the mechanism one command at a time
     text = """
+tasks:
+  commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
+
 groups:
   git:
-    commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
+    commands:
+      commit: { task: "commit" }
 env_groups: []
 """
 
@@ -349,55 +325,60 @@ env_groups: []
     assert manifest.load(text).groups == {"git": ("commit",)}
 
 
-def test_an_import_without_a_catalogue_is_a_manifest_error_not_an_attribute_error():
+def test_naming_a_coordinate_without_a_catalogue_is_a_manifest_error_not_an_attribute_error():
     # arrange: the expansion used to reach `catalogue.namespace(...)` on None and die deep inside itself,
-    # which reads as a broken loader rather than as the caller mistake it is
+    # which reads as a broken loader rather than as the caller mistake it is. The colon is what says
+    # "the platform's", so with no platform passed in there is nothing that could answer.
     text = """
-import:
-  delivery: [vcs]
 groups:
-  git:
-    commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
+  support:
+    groups:
+      git:
+        commands:
+          commit: { task: "vcs:commit" }
 env_groups: []
 """
 
     # act / assert
-    with pytest.raises(ValueError, match="catalogue"):
+    with pytest.raises(ValueError, match="platform catalogue"):
         manifest.load(text)
 
 
-def test_an_imported_task_landing_on_an_existing_groups_entry_is_rejected():
-    # arrange: the likeliest mistake of the whole migration. A product adopting `import:` one command at
-    # a time keeps its own `groups:` declaration next to the new one - and the LOCAL body, the one still
-    # being maintained, is the half that used to disappear without a word.
+def test_a_products_own_body_left_behind_by_a_coordinate_placement_is_reported_not_dropped():
+    # arrange: the likeliest mistake of the whole migration. A product moving a command onto a catalogue
+    # coordinate keeps its own task declaration next to the new placement - and the LOCAL body, the one
+    # still being maintained, is the half that used to disappear without a word. It is now a load error
+    # naming the orphaned task.
     text = """
-import:
-  delivery: [vcs]
+tasks:
+  commit: { impl: "simplon.test_impls:nullary", help: "The product's own commit." }
+
 groups:
   git:
-    commit: { impl: "simplon.test_impls:nullary", help: "The product's own commit." }
-tasks:
-  vcs:commit: { group: git }
+    commands:
+      commit: { task: "vcs:commit" }
 env_groups: []
 """
 
     # act / assert
     with pytest.raises(ValueError) as exc:
         _loaded(text)
-    assert "git commit" in str(exc.value)
+    assert "task 'commit' is declared and no command instantiates it" in str(exc.value)
 
 
 def test_a_products_own_definition_landing_on_an_existing_groups_entry_is_rejected():
     # arrange: same rule for a definition - a command has ONE declaration
     text = """
-groups:
-  support:
-    disk-guard: { impl: "simplon.test_impls:nullary", help: "Guard the disk." }
 tasks:
-  disk-guard:
+  disk-guard: { impl: "simplon.test_impls:nullary", help: "Guard the disk." }
+  support-disk-guard:
     impl: "simplon.test_impls:no_context"
     help: "Guard it differently."
-    group: support
+
+groups:
+  support:
+    commands:
+      disk-guard: { task: "support-disk-guard" }
 env_groups: []
 """
 
@@ -426,9 +407,13 @@ def test_a_product_contributes_members_to_a_group_the_catalogue_shapes():
     # group's MEMBERS; it is not a second declaration of the group, and treating it as one made "the
     # platform owns the tree" unimplementable.
     text = """
+tasks:
+  compile: { impl: "simplon.test_impls:nullary", help: "Compile." }
+
 groups:
   build:
-    compile: { impl: "simplon.test_impls:nullary", help: "Compile." }
+    commands:
+      compile: { task: "compile" }
 env_groups: []
 """
 
@@ -447,10 +432,14 @@ def test_a_product_may_not_shape_the_tree_at_all_once_the_catalogue_does():
     # This case used to be allowed as a "contradiction" only when the two files named the SAME group.
     text = """
 taxonomy:
-  build: { help: "The product's own build." }
+  build: { help: "The product's own idea of build." }
+tasks:
+  compile: { impl: "simplon.test_impls:nullary", help: "Compile." }
+
 groups:
   build:
-    compile: { impl: "simplon.test_impls:nullary", help: "Compile." }
+    commands:
+      compile: { task: "compile" }
 env_groups: []
 """
 
@@ -463,9 +452,13 @@ def test_env_gating_comes_with_the_shape_so_the_product_need_not_restate_it():
     # arrange: env-first is part of a group's shape, so a product contributing members to `deploy` must
     # not have to list it in `env_groups:` as well - that would be the shape stated twice, in two files.
     text = """
+tasks:
+  up: { impl: "simplon.test_impls:nullary", help: "Bring it up." }
+
 groups:
   deploy:
-    up: { impl: "simplon.test_impls:nullary", help: "Bring it up." }
+    commands:
+      up: { task: "up" }
 env_groups: []
 """
 
@@ -484,9 +477,13 @@ def test_a_group_the_catalogue_does_not_declare_is_rejected():
     # runs the SAME loop under the SAME group names, so the general tasks sit in the same place
     # everywhere. A product that can put `lint` next to `test` has the drift back.
     text = """
+tasks:
+  thing: { impl: "simplon.test_impls:nullary", help: "Do the thing." }
+
 groups:
   bespoke:
-    thing: { impl: "simplon.test_impls:nullary", help: "Do the thing." }
+    commands:
+      thing: { task: "thing" }
 env_groups: []
 """
 
@@ -503,9 +500,15 @@ def test_a_product_adds_a_task_the_catalogue_never_heard_of_to_a_platform_group(
     # command exists in no catalogue at all - it is netctl's `wireguard-guard` case, a product-specific
     # body in a platform group.
     text = """
+tasks:
+  something-only-this-product-has:
+    impl: "simplon.test_impls:nullary"
+    help: "Very specific."
+
 groups:
   build:
-    something-only-this-product-has: { impl: "simplon.test_impls:nullary", help: "Very specific." }
+    commands:
+      something-only-this-product-has: { task: "something-only-this-product-has" }
 env_groups: []
 """
 
@@ -521,9 +524,15 @@ def test_a_nested_group_the_catalogue_declares_is_reachable_by_its_dotted_path()
     # built, and has always been validated against the tree separately. Asserted here so a future
     # tightening of the lock cannot quietly take `support.git` with it.
     text = """
+tasks:
+  push: { impl: "simplon.test_impls:nullary", help: "Push." }
+
 groups:
-  support.git:
-    push: { impl: "simplon.test_impls:nullary", help: "Push." }
+  support:
+    groups:
+      git:
+        commands:
+          push: { task: "push" }
 env_groups: []
 """
 
@@ -543,9 +552,13 @@ tasks:
   vcs:push: { impl: "simplon.test_impls:nullary", help: "Push." }
 """
     text = """
+tasks:
+  thing: { impl: "simplon.test_impls:nullary", help: "Do the thing." }
+
 groups:
   bespoke:
-    thing: { impl: "simplon.test_impls:nullary", help: "Do the thing." }
+    commands:
+      thing: { task: "thing" }
 env_groups: []
 """
 
@@ -702,9 +715,13 @@ def test_an_old_form_product_still_cannot_invent_a_group_after_the_tree_moved():
     """))
     old_form = textwrap.dedent("""
         product: demo
+        tasks:
+          yeehaw: { impl: "demo.cli:yeehaw", help: "ride." }
+
         groups:
           wildwest:
-            yeehaw: { impl: "demo.cli:yeehaw", help: "ride." }
+            commands:
+              yeehaw: { task: "yeehaw" }
     """)
 
     # act / assert

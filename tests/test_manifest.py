@@ -17,15 +17,25 @@ from simplon.orchestrator import manifest
 
 _OK = """
 product: demo
+tasks:
+  fmt: { impl: "demo.impls:fmt", help: "Format the sources." }
+  lint: { impl: "demo.impls:lint", help: "Lint the sources." }
+  build: { impl: "demo.impls:build", help: "Build the artefacts." }
+  up: { impl: "demo.impls:up", help: "Deploy up.", passthrough_args: true }
+  down: { impl: "demo.impls:down", help: "Tear down." }
+
 groups:
   code:
-    fmt:  { impl: "demo.impls:fmt",  help: "Format the sources." }
-    lint: { impl: "demo.impls:lint", help: "Lint the sources." }
+    commands:
+      fmt: { task: "fmt" }
+      lint: { task: "lint" }
   build:
-    build: { impl: "demo.impls:build", help: "Build the artefacts." }
+    commands:
+      build: { task: "build" }
   deploy:
-    up:   { impl: "demo.impls:up",   help: "Deploy up.", passthrough_args: true }
-    down: { impl: "demo.impls:down", help: "Tear down." }
+    commands:
+      up: { task: "up" }
+      down: { task: "down" }
 env_groups: [deploy]
 """
 
@@ -77,8 +87,16 @@ def test_load_rejects_a_manifest_with_no_groups():
 
 def test_load_rejects_an_env_group_that_is_not_a_declared_group():
     # arrange: env_groups names a group that does not exist
-    text = ("groups:\n  code:\n    fmt: { impl: 'm:f', help: 'x' }\n"
-            "env_groups: [deploy]\n")
+    text = ("""
+tasks:
+  fmt: { impl: "m:f", help: "x" }
+
+groups:
+  code:
+    commands:
+      fmt: { task: "fmt" }
+env_groups: [deploy]
+""")
 
     # act / assert
     with pytest.raises(ValueError, match="env_groups entry 'deploy'"):
@@ -88,13 +106,21 @@ def test_load_rejects_an_env_group_that_is_not_a_declared_group():
 # A name owned by two groups, each nesting its OWN spec - the #519 shape (netctl: `test all` runs every test
 # stage, `deploy all` stays the full e2e bring-up). Nesting resolves the collision; no dotted keys.
 _DUPLICATE_OK = """
+tasks:
+  unit: { impl: "demo.impls:unit", help: "Unit gate." }
+  all: { impl: "demo.impls:test_all", help: "Run every test stage." }
+  up: { impl: "demo.impls:up", help: "Deploy up." }
+  deploy-all: { impl: "demo.impls:deploy_all", help: "Full e2e bring-up." }
+
 groups:
   test:
-    unit: { impl: "demo.impls:unit",     help: "Unit gate." }
-    all:  { impl: "demo.impls:test_all", help: "Run every test stage." }
+    commands:
+      unit: { task: "unit" }
+      all: { task: "all" }
   deploy:
-    up:  { impl: "demo.impls:up",         help: "Deploy up." }
-    all: { impl: "demo.impls:deploy_all", help: "Full e2e bring-up." }
+    commands:
+      up: { task: "up" }
+      all: { task: "deploy-all" }
 env_groups: [deploy]
 """
 
@@ -131,16 +157,34 @@ def test_path_by_name_returns_the_dotted_path_for_a_unique_owner_only():
 
 def test_load_rejects_a_group_member_with_an_empty_spec():
     # arrange: `lint` is a member of code but carries no impl/help (an empty spec body)
-    text = ("groups:\n  code:\n    fmt:  { impl: 'm:f', help: 'x' }\n    lint: {}\n")
+    text = ("""
+tasks:
+  fmt: { impl: "m:f", help: "x" }
 
-    # act / assert: an empty spec fails loudly, naming the owning group + command
-    with pytest.raises(ValueError, match="command 'code.lint': missing impl"):
+groups:
+  code:
+    commands:
+      fmt: { task: "fmt" }
+      lint: {}
+""")
+
+    # act / assert: an empty spec fails loudly, naming the owning group + command. A command is an
+    # instance of a task, so "empty" now means it names neither one nor a plan.
+    with pytest.raises(ValueError, match="command 'code lint' declares neither `task:` nor `depends_on:`"):
         manifest.load(text)
 
 
 def test_load_rejects_a_command_with_a_missing_help():
     # arrange: fmt has an impl but no help
-    text = "groups:\n  code:\n    fmt: { impl: 'm:f' }\n"
+    text = """
+tasks:
+  fmt: { impl: "m:f" }
+
+groups:
+  code:
+    commands:
+      fmt: { task: "fmt" }
+"""
 
     # act / assert
     with pytest.raises(ValueError, match="missing help"):
@@ -150,7 +194,7 @@ def test_load_rejects_a_command_with_a_missing_help():
 @pytest.mark.parametrize("bad_impl", ["nocolon", ":func", "module:", "a:b:c"])
 def test_load_rejects_a_malformed_impl_reference(bad_impl):
     # arrange: an impl that is not a clean "module:function"
-    text = f"groups:\n  code:\n    fmt: {{ impl: '{bad_impl}', help: 'x' }}\n"
+    text = f"tasks:\n  fmt: {{ impl: '{bad_impl}', help: 'x' }}\ngroups:\n  code:\n    commands:\n      fmt: {{ task: fmt }}\n"
 
     # act / assert
     with pytest.raises(ValueError, match="module:function"):
@@ -218,16 +262,30 @@ def test_load_ignores_other_unknown_top_level_keys():
 # the same stop_on_failure, which loader rule 6 (netctl#1319) requires of two aggregates in ONE plan.
 _DEPS = """
 product: demo
+tasks:
+  install: { impl: "demo.impls:install", help: "Install host prereqs." }
+  build: { impl: "demo.impls:build", help: "Build the artefacts." }
+  up: { impl: "demo.impls:up", help: "Deploy up." }
+  seed: { impl: "demo.impls:seed", help: "Seed." }
+
 groups:
   build:
-    install: { impl: "demo.impls:install", help: "Install host prereqs." }
-    build:   { impl: "demo.impls:build",   help: "Build the artefacts." }
-    prep:    { help: "Install + build.", depends_on: [install, build] }
+    commands:
+      install: { task: "install" }
+      build: { task: "build" }
+      prep: { help: "Install + build.", depends_on: ["install", "build"] }
   deploy:
-    up:      { impl: "demo.impls:up",   help: "Deploy up." }
-    seed:    { impl: "demo.impls:seed", help: "Seed." }
-    stage:   { help: "Prep + deploy up.", depends_on: [prep, up], stop_on_failure: true }
-    bringup: { help: "Full bring-up.", depends_on: [stage, prep, seed], stop_on_failure: true }
+    commands:
+      up: { task: "up" }
+      seed: { task: "seed" }
+      stage:
+        help: "Prep + deploy up."
+        depends_on: ["prep", "up"]
+        stop_on_failure: true
+      bringup:
+        help: "Full bring-up."
+        depends_on: ["stage", "prep", "seed"]
+        stop_on_failure: true
 env_groups: [deploy]
 """
 
@@ -285,13 +343,19 @@ def test_plan_for_rejects_an_unknown_command_name():
 def test_plan_for_disambiguates_an_ambiguous_root_via_the_group_keyword():
     # arrange: `all` is owned by test AND deploy (the #519 shape), so the bare name cannot resolve
     text = """
+tasks:
+  unit: { impl: "demo.impls:unit", help: "Unit gate." }
+  up: { impl: "demo.impls:up", help: "Deploy up." }
+
 groups:
   test:
-    unit: { impl: "demo.impls:unit", help: "Unit gate." }
-    all:  { help: "Every test stage.", depends_on: [unit] }
+    commands:
+      unit: { task: "unit" }
+      all: { help: "Every test stage.", depends_on: ["unit"] }
   deploy:
-    up:  { impl: "demo.impls:up", help: "Deploy up." }
-    all: { help: "Full bring-up.", depends_on: [up] }
+    commands:
+      up: { task: "up" }
+      all: { help: "Full bring-up.", depends_on: ["up"] }
 env_groups: [deploy]
 """
     mf = manifest.load(text)
@@ -305,7 +369,7 @@ env_groups: [deploy]
 
 def test_load_rejects_a_dependency_naming_an_unknown_command():
     # arrange: prep depends on a command that is not in the manifest
-    text = _DEPS.replace("depends_on: [install, build]", "depends_on: [nope, build]")
+    text = _DEPS.replace('depends_on: ["install", "build"]', 'depends_on: ["nope", "build"]')
 
     # act / assert: the error names the owning command and the bad dependency
     with pytest.raises(ValueError, match="command 'build.prep': dependency 'nope' is not a command"):
@@ -315,12 +379,18 @@ def test_load_rejects_a_dependency_naming_an_unknown_command():
 def test_load_rejects_a_dependency_naming_an_ambiguous_command():
     # arrange: `all` is owned by two groups, so no bare dependency can name it
     text = """
+tasks:
+  all: { impl: "demo.impls:test_all", help: "Every test stage." }
+  deploy-all: { impl: "demo.impls:deploy_all", help: "Full bring-up." }
+
 groups:
   test:
-    all: { impl: "demo.impls:test_all", help: "Every test stage." }
+    commands:
+      all: { task: "all" }
   deploy:
-    all:   { impl: "demo.impls:deploy_all", help: "Full bring-up." }
-    combo: { help: "Aggregate over an ambiguous name.", depends_on: [all] }
+    commands:
+      all: { task: "deploy-all" }
+      combo: { help: "Aggregate over an ambiguous name.", depends_on: ["all"] }
 """
 
     # act / assert
@@ -333,8 +403,9 @@ def test_load_rejects_a_dependency_cycle_naming_its_path():
     text = """
 groups:
   code:
-    a: { help: "A.", depends_on: [b] }
-    b: { help: "B.", depends_on: [a] }
+    commands:
+      a: { help: "A.", depends_on: ["b"] }
+      b: { help: "B.", depends_on: ["a"] }
 """
 
     # act / assert: the 3-colour DFS reports the cycle path
@@ -342,30 +413,53 @@ groups:
         manifest.load(text)
 
 
-def test_load_rejects_a_command_declaring_both_impl_and_depends_on():
-    # arrange: the v1 lock - a command is a leaf-with-impl XOR an impl-less aggregate
-    text = ("groups:\n  code:\n    fmt: { impl: 'm:f', help: 'x' }\n"
-            "    fix: { impl: 'm:g', help: 'y', depends_on: [fmt] }\n")
+def test_load_rejects_a_command_that_both_instantiates_a_task_and_plans_others():
+    # arrange: the v1 lock, in the tree form's words - a command is an instance of a task XOR a plan over
+    # other commands
+    text = ("""
+tasks:
+  fmt: { impl: "m:f", help: "x" }
+  fix: { impl: "m:g", help: "y" }
+
+groups:
+  code:
+    commands:
+      fmt: { task: "fmt" }
+      fix: { task: "fix", depends_on: ["fmt"] }
+""")
 
     # act / assert
-    with pytest.raises(ValueError, match="command 'code.fix': impl and depends_on are mutually exclusive"):
+    with pytest.raises(ValueError, match="command 'code fix' declares both `task:` and `depends_on:`"):
         manifest.load(text)
 
 
-def test_load_still_rejects_a_command_with_neither_impl_nor_depends_on():
-    # arrange: an empty spec is neither a leaf nor an aggregate
-    text = "groups:\n  code:\n    fmt: { help: 'x' }\n"
+def test_load_still_rejects_a_command_with_neither_a_task_nor_depends_on():
+    # arrange: a command that names no body and plans nothing is neither a leaf nor an aggregate
+    text = """
+groups:
+  code:
+    commands:
+      fmt: { help: "x" }
+"""
 
-    # act / assert: the pre-#895 missing-impl message is unchanged
-    with pytest.raises(ValueError, match="command 'code.fmt': missing impl"):
+    # act / assert: it is refused by name, and the message says which of the two it has to pick
+    with pytest.raises(ValueError, match="command 'code fmt' declares neither `task:` nor `depends_on:`"):
         manifest.load(text)
 
 
 def test_load_rejects_an_aggregate_declaring_passthrough_args():
     # arrange: a passthrough command forwards trailing args to ONE tool; an aggregate's plan runs each
     # leaf as its own subprocess, so there is no single forwarding target (#896)
-    text = ("groups:\n  code:\n    fmt: { impl: 'm:f', help: 'x' }\n"
-            "    fix: { help: 'y', depends_on: [fmt], passthrough_args: true }\n")
+    text = ("""
+tasks:
+  fmt: { impl: "m:f", help: "x" }
+
+groups:
+  code:
+    commands:
+      fmt: { task: "fmt" }
+      fix: { help: "y", depends_on: ["fmt"], passthrough_args: true }
+""")
 
     # act / assert
     with pytest.raises(ValueError, match="command 'code.fix': passthrough_args cannot combine with depends_on"):
@@ -375,8 +469,16 @@ def test_load_rejects_an_aggregate_declaring_passthrough_args():
 def test_load_reads_keep_awake_defaulting_to_false():
     # arrange: an aggregate whose plan runs for many minutes declares that the host must not idle-sleep
     # while it runs (netctl#1238); everything else defaults to False
-    text = ("groups:\n  build:\n    jar: { impl: 'm:f', help: 'x' }\n"
-            "    images: { help: 'y', depends_on: [jar], keep_awake: true }\n")
+    text = ("""
+tasks:
+  jar: { impl: "m:f", help: "x" }
+
+groups:
+  build:
+    commands:
+      jar: { task: "jar" }
+      images: { help: "y", depends_on: ["jar"], keep_awake: true }
+""")
 
     # act
     mf = manifest.load(text)
@@ -389,7 +491,15 @@ def test_load_reads_keep_awake_defaulting_to_false():
 def test_load_rejects_keep_awake_on_a_leaf():
     # arrange: `run_command` is the flag's only consumer and it only ever runs an AGGREGATE's plan - the
     # CLI binds a leaf straight to its impl - so on a leaf the flag would do nothing at all (netctl#1238)
-    text = "groups:\n  build:\n    jar: { impl: 'm:f', help: 'x', keep_awake: true }\n"
+    text = """
+tasks:
+  jar: { impl: "m:f", help: "x" }
+
+groups:
+  build:
+    commands:
+      jar: { task: "jar", keep_awake: true }
+"""
 
     # act / assert: a flag that does nothing where it is written fails loudly instead
     with pytest.raises(ValueError, match="command 'build.jar': keep_awake applies to an aggregate's plan"):
@@ -400,7 +510,15 @@ def test_load_rejects_stop_on_failure_on_a_leaf():
     # arrange: the flag scopes to the SUBTREE of the command that declares it (netctl#1317), and a leaf's
     # subtree is the leaf - by the time it has failed there is nothing below it left to skip. Someone
     # writing it on a preflight guard expecting the bring-up to stop would get a clean load and no effect.
-    text = "groups:\n  build:\n    jar: { impl: 'm:f', help: 'x', stop_on_failure: true }\n"
+    text = """
+tasks:
+  jar: { impl: "m:f", help: "x" }
+
+groups:
+  build:
+    commands:
+      jar: { task: "jar", stop_on_failure: true }
+"""
 
     # act / assert: a flag that does nothing where it is written fails loudly instead, exactly as
     # keep_awake and hidden already do
@@ -411,8 +529,16 @@ def test_load_rejects_stop_on_failure_on_a_leaf():
 
 def test_load_allows_stop_on_failure_on_an_aggregate():
     # arrange: the negative half - the rejection must not swallow the case the flag exists for
-    text = ("groups:\n  build:\n    jar:    { impl: 'm:f', help: 'x' }\n"
-            "    images: { help: 'y', depends_on: [jar], stop_on_failure: true }\n")
+    text = ("""
+tasks:
+  jar: { impl: "m:f", help: "x" }
+
+groups:
+  build:
+    commands:
+      jar: { task: "jar" }
+      images: { help: "y", depends_on: ["jar"], stop_on_failure: true }
+""")
 
     # act
     mf = manifest.load(text)
@@ -427,27 +553,51 @@ def test_load_allows_stop_on_failure_on_an_aggregate():
 # reaches first, so the other's stop_on_failure never fires for its OWN dependency. The two fixtures
 # differ only in the order that decides that race, because the verdict must not depend on it.
 _IN_PLAN_GUARD_SECOND = """
+tasks:
+  shared: { impl: "demo:shared", help: "The contested dependency." }
+  other: { impl: "demo:other", help: "What the guard protects." }
+  later: { impl: "demo:later", help: "A step after the guard." }
+
 groups:
   gate:
-    shared:  { impl: "demo:shared", help: "The contested dependency." }
-    other:   { impl: "demo:other",  help: "What the guard protects." }
-    later:   { impl: "demo:later",  help: "A step after the guard." }
-    first:   { help: "Reaches shared first.", depends_on: [shared] }
-    guarded: { help: "Wants to stop.", depends_on: [shared, other], stop_on_failure: true }
+    commands:
+      shared: { task: "shared" }
+      other: { task: "other" }
+      later: { task: "later" }
+      first: { help: "Reaches shared first.", depends_on: ["shared"] }
+      guarded:
+        help: "Wants to stop."
+        depends_on: ["shared", "other"]
+        stop_on_failure: true
   run:
-    root: { help: "The plan that reaches both.", depends_on: [first, guarded, later] }
+    commands:
+      root:
+        help: "The plan that reaches both."
+        depends_on: ["first", "guarded", "later"]
 """
 
 _IN_PLAN_GUARD_FIRST = """
+tasks:
+  shared: { impl: "demo:shared", help: "The contested dependency." }
+  other: { impl: "demo:other", help: "What the guard protects." }
+  later: { impl: "demo:later", help: "A step after the guard." }
+
 groups:
   gate:
-    shared:  { impl: "demo:shared", help: "The contested dependency." }
-    other:   { impl: "demo:other",  help: "What the guard protects." }
-    later:   { impl: "demo:later",  help: "A step after the guard." }
-    guarded: { help: "Wants to stop.", depends_on: [shared, other], stop_on_failure: true }
-    first:   { help: "Reaches shared second.", depends_on: [shared] }
+    commands:
+      shared: { task: "shared" }
+      other: { task: "other" }
+      later: { task: "later" }
+      guarded:
+        help: "Wants to stop."
+        depends_on: ["shared", "other"]
+        stop_on_failure: true
+      first: { help: "Reaches shared second.", depends_on: ["shared"] }
   run:
-    root: { help: "The plan that reaches both.", depends_on: [guarded, first, later] }
+    commands:
+      root:
+        help: "The plan that reaches both."
+        depends_on: ["guarded", "first", "later"]
 """
 
 
@@ -469,14 +619,27 @@ def test_load_accepts_disagreeing_aggregates_that_live_in_different_plans():
     # never appear in one plan. A manifest-wide rule would reject five such commands in netctl today; that
     # their failure policy over the same command differs is exactly right and must keep loading.
     text = """
+tasks:
+  up: { impl: "demo:up", help: "Bring the lab up." }
+  seed: { impl: "demo:seed", help: "Seed the lab." }
+  unit: { impl: "demo:unit", help: "Unit tests." }
+
 groups:
   deploy:
-    up:      { impl: "demo:up",   help: "Bring the lab up." }
-    seed:    { impl: "demo:seed", help: "Seed the lab." }
-    bringup: { help: "Cold-host bring-up.", depends_on: [up, seed], stop_on_failure: true }
+    commands:
+      up: { task: "up" }
+      seed: { task: "seed" }
+      bringup:
+        help: "Cold-host bring-up."
+        depends_on: ["up", "seed"]
+        stop_on_failure: true
   test:
-    unit: { impl: "demo:unit", help: "Unit tests." }
-    all:  { help: "The complete e2e.", depends_on: [up, seed, unit], stop_on_failure: false }
+    commands:
+      unit: { task: "unit" }
+      all:
+        help: "The complete e2e."
+        depends_on: ["up", "seed", "unit"]
+        stop_on_failure: false
 """
 
     # act
@@ -494,12 +657,19 @@ def test_load_accepts_in_plan_aggregates_agreeing_on_stop_on_failure():
     # `jar` from inside one plan, and both stop on failure. Whoever catches the failure catches it with the
     # same policy, so the relocation is harmless and the rule must not touch it.
     text = """
+tasks:
+  jar: { impl: "demo:jar", help: "The shared artefact." }
+
 groups:
   build:
-    jar:       { impl: "demo:jar", help: "The shared artefact." }
-    aot:       { help: "AOT image.", depends_on: [jar], stop_on_failure: true }
-    web-image: { help: "Web image.", depends_on: [jar], stop_on_failure: true }
-    images:    { help: "Every image.", depends_on: [aot, web-image], stop_on_failure: true }
+    commands:
+      jar: { task: "jar" }
+      aot: { help: "AOT image.", depends_on: ["jar"], stop_on_failure: true }
+      web-image: { help: "Web image.", depends_on: ["jar"], stop_on_failure: true }
+      images:
+        help: "Every image."
+        depends_on: ["aot", "web-image"]
+        stop_on_failure: true
 """
 
     # act
@@ -513,14 +683,19 @@ groups:
 # Two entry points reach both declarers, so the message has to CHOOSE which plan it names. `zulu` is
 # declared first, so insertion order cannot pass for the alphabetical tie-break.
 _TWO_PLANS_COLLIDE = """
+tasks:
+  shared: { impl: "demo:shared", help: "The contested dependency." }
+
 groups:
   gate:
-    shared:  { impl: "demo:shared", help: "The contested dependency." }
-    first:   { help: "Reaches shared first.", depends_on: [shared] }
-    guarded: { help: "Wants to stop.", depends_on: [shared], stop_on_failure: true }
+    commands:
+      shared: { task: "shared" }
+      first: { help: "Reaches shared first.", depends_on: ["shared"] }
+      guarded: { help: "Wants to stop.", depends_on: ["shared"], stop_on_failure: true }
   run:
-    zulu:  { help: "One plan over both.", depends_on: [first, guarded] }
-    alpha: { help: "Another plan over both.", depends_on: [first, guarded] }
+    commands:
+      zulu: { help: "One plan over both.", depends_on: ["first", "guarded"] }
+      alpha: { help: "Another plan over both.", depends_on: ["first", "guarded"] }
 """
 
 
@@ -565,8 +740,17 @@ def test_the_in_plan_disagreement_message_names_both_aggregates_the_dependency_a
 def test_load_reads_hidden_defaulting_to_false():
     # arrange: a plan step named by a depends_on entry (loader rule 4) must be a real command, but need
     # not clutter --help (netctl#1277); everything else defaults to False
-    text = ("groups:\n  build:\n    jar:  { impl: 'm:f', help: 'x' }\n"
-            "    step: { impl: 'm:g', help: 'y', hidden: true }\n")
+    text = ("""
+tasks:
+  jar: { impl: "m:f", help: "x" }
+  step: { impl: "m:g", help: "y" }
+
+groups:
+  build:
+    commands:
+      jar: { task: "jar" }
+      step: { task: "step", hidden: true }
+""")
 
     # act
     mf = manifest.load(text)
@@ -580,8 +764,17 @@ def test_load_rejects_hidden_on_a_group_default_namesake():
     # arrange: `build` is the group-default namesake of the multi-member `build` group (#592 D4) - it is
     # bound as the sub-app's default callback, never a listed subcommand or a separate flat command, so
     # `hidden` there would do nothing (the same reasoning that rejects keep_awake on a leaf)
-    text = ("groups:\n  build:\n    build: { impl: 'm:f', help: 'x', hidden: true }\n"
-            "    diff:  { impl: 'm:g', help: 'y' }\n")
+    text = ("""
+tasks:
+  build: { impl: "m:f", help: "x" }
+  diff: { impl: "m:g", help: "y" }
+
+groups:
+  build:
+    commands:
+      build: { task: "build", hidden: true }
+      diff: { task: "diff" }
+""")
 
     # act / assert: a flag that does nothing where it is written fails loudly instead
     with pytest.raises(ValueError, match="command 'build.build': hidden has no effect on a group-default "
@@ -592,8 +785,17 @@ def test_load_rejects_hidden_on_a_group_default_namesake():
 def test_load_allows_hidden_on_a_group_default_sibling():
     # arrange: only the NAMESAKE is rejected; a sibling in the same group-default group is an ordinary
     # grouped command, so hidden is meaningful there
-    text = ("groups:\n  build:\n    build: { impl: 'm:f', help: 'x' }\n"
-            "    diff:  { impl: 'm:g', help: 'y', hidden: true }\n")
+    text = ("""
+tasks:
+  build: { impl: "m:f", help: "x" }
+  diff: { impl: "m:g", help: "y" }
+
+groups:
+  build:
+    commands:
+      build: { task: "build" }
+      diff: { task: "diff", hidden: true }
+""")
 
     # act
     mf = manifest.load(text)
@@ -605,7 +807,15 @@ def test_load_allows_hidden_on_a_group_default_sibling():
 def test_load_allows_hidden_on_a_single_member_flat_group():
     # arrange: `package` collapses to ONE visible flat top-level command (is_flat_command_group) - hidden
     # there is meaningful too, it hides that one and only registration
-    text = "groups:\n  package:\n    package: { impl: 'm:f', help: 'x', hidden: true }\n"
+    text = """
+tasks:
+  package: { impl: "m:f", help: "x" }
+
+groups:
+  package:
+    commands:
+      package: { task: "package", hidden: true }
+"""
 
     # act
     mf = manifest.load(text)
@@ -616,8 +826,16 @@ def test_load_allows_hidden_on_a_single_member_flat_group():
 
 def test_load_rejects_an_aggregate_with_a_missing_help():
     # arrange: an impl-less aggregate still owes its help line
-    text = ("groups:\n  code:\n    fmt: { impl: 'm:f', help: 'x' }\n"
-            "    fix: { depends_on: [fmt] }\n")
+    text = ("""
+tasks:
+  fmt: { impl: "m:f", help: "x" }
+
+groups:
+  code:
+    commands:
+      fmt: { task: "fmt" }
+      fix: { depends_on: ["fmt"] }
+""")
 
     # act / assert
     with pytest.raises(ValueError, match="command 'code.fix': missing help"):
@@ -631,12 +849,16 @@ def test_load_rejects_an_aggregate_with_a_missing_help():
 # the TUI depend on: display and execution can never disagree if they come from one traversal.
 
 _SHARED = """
+tasks:
+  a: { impl: "demo.impls:a", help: "A leaf." }
+
 groups:
   build:
-    a:   { impl: "demo.impls:a", help: "A leaf." }
-    x:   { help: "X.", depends_on: [a] }
-    y:   { help: "Y.", depends_on: [a] }
-    top: { help: "Top.", depends_on: [x, y] }
+    commands:
+      a: { task: "a" }
+      x: { help: "X.", depends_on: ["a"] }
+      y: { help: "Y.", depends_on: ["a"] }
+      top: { help: "Top.", depends_on: ["x", "y"] }
 """
 
 
@@ -735,13 +957,19 @@ def test_plan_tree_for_carries_the_dotted_group_command_path_on_every_node():
 def test_plan_tree_for_disambiguates_an_ambiguous_root_via_the_group_keyword():
     # arrange: `all` is owned by test AND deploy (the #519 shape), so path_by_name cannot decide
     text = """
+tasks:
+  unit: { impl: "demo.impls:unit", help: "Unit gate." }
+  up: { impl: "demo.impls:up", help: "Deploy up." }
+
 groups:
   test:
-    unit: { impl: "demo.impls:unit", help: "Unit gate." }
-    all:  { help: "Every test stage.", depends_on: [unit] }
+    commands:
+      unit: { task: "unit" }
+      all: { help: "Every test stage.", depends_on: ["unit"] }
   deploy:
-    up:  { impl: "demo.impls:up", help: "Deploy up." }
-    all: { help: "Full bring-up.", depends_on: [up] }
+    commands:
+      up: { task: "up" }
+      all: { help: "Full bring-up.", depends_on: ["up"] }
 env_groups: [deploy]
 """
     mf = manifest.load(text)
@@ -775,11 +1003,17 @@ def test_plan_tree_for_rejects_an_unknown_command_name():
 def test_a_manifest_without_a_taxonomy_key_yields_the_flat_groups_as_a_depth_one_tree():
     # arrange: netctl's shape throughout netctl#1431 - no taxonomy block at all
     text = """
+tasks:
+  build: { impl: "m:f", help: "Build it." }
+  up: { impl: "m:g", help: "Bring it up." }
+
 groups:
   build:
-    build: { impl: "m:f", help: "Build it." }
+    commands:
+      build: { task: "build" }
   deploy:
-    up: { impl: "m:g", help: "Bring it up." }
+    commands:
+      up: { task: "up" }
 env_groups: [deploy]
 """
 
@@ -799,16 +1033,18 @@ def test_a_group_can_hold_both_its_own_members_and_a_nested_child():
     # used to raise "declared in BOTH the catalogue and the product manifest" - reported against a
     # catalogue that was not involved, with both halves coming from the same file.
     text = """
-taxonomy:
-  support:
-    help: "Host and tooling upkeep."
-    groups:
-      git: { help: "Version control verbs." }
+tasks:
+  doctor: { impl: "simplon.test_impls:nullary", help: "Check the host." }
+  commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
+
 groups:
   support:
-    doctor: { impl: "simplon.test_impls:nullary", help: "Check the host." }
-  support.git:
-    commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
+    commands:
+      doctor: { task: "doctor" }
+    groups:
+      git:
+        commands:
+          commit: { task: "commit" }
 env_groups: []
 """
 
@@ -825,14 +1061,15 @@ env_groups: []
 def test_a_nested_taxonomy_block_places_a_group_beneath_another():
     # arrange: what a catalogue will declare, exercised here through the product manifest
     text = """
-taxonomy:
-  support:
-    help: "Host and tooling upkeep."
-    groups:
-      git: { help: "Version control verbs." }
+tasks:
+  commit: { impl: "m:f", help: "Commit." }
+
 groups:
-  support.git:
-    commit: { impl: "m:f", help: "Commit." }
+  support:
+    groups:
+      git:
+        commands:
+          commit: { task: "commit" }
 """
 
     # act
@@ -850,11 +1087,13 @@ def test_a_group_named_in_the_taxonomy_block_keeps_its_own_members_from_groups()
     # guarded, on merge_trees itself, where a catalogue tree really is one of the inputs
     # (test_clitaxonomy.py) - the loader merges no catalogue tree, so it could never produce that case.
     text = """
-taxonomy:
-  build: { help: "Produce the artefacts." }
+tasks:
+  build: { impl: "simplon.test_impls:nullary", help: "Build it." }
+
 groups:
   build:
-    build: { impl: "simplon.test_impls:nullary", help: "Build it." }
+    commands:
+      build: { task: "build" }
 env_groups: []
 """
 
@@ -871,14 +1110,15 @@ def test_an_env_groups_entry_naming_a_nested_group_is_rejected():
     # Accepting the dotted spelling here loaded cleanly and made the env-gate a silent no-op for that
     # group - a CD command that must be backend-gated instead reached the "ok" verdict.
     text = """
-taxonomy:
-  support:
-    help: "Host and tooling upkeep."
-    groups:
-      git: { help: "Version control verbs." }
+tasks:
+  commit: { impl: "m:f", help: "Commit." }
+
 groups:
-  support.git:
-    commit: { impl: "m:f", help: "Commit." }
+  support:
+    groups:
+      git:
+        commands:
+          commit: { task: "commit" }
 env_groups: [support.git]
 """
 
@@ -887,35 +1127,51 @@ env_groups: [support.git]
         manifest.load(text)
 
 
-def test_a_nested_group_of_commands_without_a_taxonomy_node_is_rejected():
-    # arrange: `support.git` names members of a node the taxonomy block never declares. Dropping it
-    # silently left the commands registered and runnable but absent from the taxonomy, so they were
-    # never env-gated and never counted towards ambiguity.
+def test_a_nested_group_is_declared_by_the_very_tree_that_places_its_commands():
+    """The tree form closed the hole the loader's dotted-path check was written for.
+
+    The flat form let `groups:` carry a DOTTED key (`support.git`) whose taxonomy node nobody declared:
+    the commands stayed registered and runnable while the tree never knew them, so they were never
+    env-gated and never counted towards ambiguity. A nested group now exists only by being written
+    inside its parent, which is the same statement that puts it in the taxonomy - one declaration, so
+    there is no second one to forget. The loader's check survives as a guard; this pins the shape that
+    makes it unreachable from a manifest.
+    """
+    # arrange
     text = """
-taxonomy:
-  support: { help: "Host and tooling upkeep." }
+tasks:
+  commit: { impl: "m:f", help: "Commit." }
+
 groups:
-  support.git:
-    commit: { impl: "m:f", help: "Commit." }
+  support:
+    groups:
+      git:
+        commands:
+          commit: { task: "commit" }
 """
 
-    # act / assert
-    with pytest.raises(ValueError, match="support.git"):
-        manifest.load(text)
+    # act
+    m = manifest.load(text)
+
+    # assert: the members are registered under the dotted path AND the taxonomy resolves that path
+    assert m.groups["support.git"] == ("commit",)
+    assert m.taxonomy().resolve_path("support.git") is not None
 
 
-def test_a_nested_group_declared_env_first_in_the_taxonomy_block_gates_its_members():
-    # arrange: the SUPPORTED way to make a nested group env-first
+def test_a_group_declared_env_first_on_its_node_gates_every_member_of_its_subtree():
+    # arrange: the SUPPORTED way to make a subtree env-first - `env_first:` on the node that roots it,
+    # declared once and never restated on a child
     text = """
-taxonomy:
+tasks:
+  reset: { impl: "m:f", help: "Reset it." }
+
+groups:
   deploy:
-    help: "Put it somewhere."
     env_first: true
     groups:
-      rescue: { help: "Recover a broken environment." }
-groups:
-  deploy.rescue:
-    reset: { impl: "m:f", help: "Reset it." }
+      rescue:
+        commands:
+          reset: { task: "reset" }
 """
 
     # act
@@ -931,9 +1187,13 @@ groups:
 def test_a_command_can_bind_defaults_with_the_with_key():
     # arrange
     text = """
+tasks:
+  build: { impl: "simplon.test_impls:seed", help: "Build it." }
+
 groups:
   build:
-    build: { impl: "simplon.test_impls:seed", help: "Build it.", with: { sites: zh } }
+    commands:
+      build: { task: "build", with: { sites: "zh" } }
 """
 
     # act
@@ -946,9 +1206,13 @@ groups:
 def test_a_command_without_a_with_key_binds_nothing():
     # arrange
     text = """
+tasks:
+  build: { impl: "simplon.test_impls:seed", help: "Build it." }
+
 groups:
   build:
-    build: { impl: "simplon.test_impls:seed", help: "Build it." }
+    commands:
+      build: { task: "build" }
 """
 
     # act / assert: an absent block is an empty mapping, never None - callers must not branch
@@ -958,9 +1222,13 @@ groups:
 def test_a_with_key_that_is_not_a_parameter_of_the_impl_is_rejected():
     # arrange: a typo must fail at LOAD, not become a silently ignored override
     text = """
+tasks:
+  build: { impl: "simplon.test_impls:seed", help: "Build it." }
+
 groups:
   build:
-    build: { impl: "simplon.test_impls:seed", help: "Build it.", with: { site: zh } }
+    commands:
+      build: { task: "build", with: { site: "zh" } }
 """
 
     # act / assert: the message names the bad key AND the parameters that exist
@@ -971,9 +1239,13 @@ groups:
 def test_a_with_key_on_an_unimportable_impl_is_rejected():
     # arrange
     text = """
+tasks:
+  build: { impl: "simplon.nope:missing", help: "Build it." }
+
 groups:
   build:
-    build: { impl: "simplon.nope:missing", help: "Build it.", with: { sites: zh } }
+    commands:
+      build: { task: "build", with: { sites: "zh" } }
 """
 
     # act / assert
@@ -984,20 +1256,24 @@ groups:
 # --- `params:` - presentation, never signature (netctl#1437) ------------------------------------------
 
 _PRUNER = """
+tasks:
+  prune-branches:
+    impl: "simplon.test_impls:pruner"
+    help: "Delete merged branches."
+    params:
+%s
+
 groups:
   git:
-    prune-branches:
-      impl: "simplon.test_impls:pruner"
-      help: "Delete merged branches."
-      params:
-%s
+    commands:
+      prune-branches: { task: "prune-branches" }
 env_groups: []
 """
 
 
 def test_a_params_block_carries_help_and_a_short_flag():
     # arrange
-    text = _PRUNER % '        dry_run: { help: "preview only", short: "-n" }'
+    text = _PRUNER % '      dry_run: { help: "preview only", short: "-n" }'
 
     # act
     spec = manifest.load(text).spec_for("git", "prune-branches")
@@ -1011,7 +1287,7 @@ def test_a_params_block_carries_a_metavar():
     # arrange: presentation like the other two - the placeholder Click prints in the usage line, which
     # exists nowhere in the signature. It moved here out of a `typer.Argument(..., metavar=...)` body
     # declaration in netctl#1444.
-    text = _PRUNER % '        dry_run: { metavar: "[yes|no]" }'
+    text = _PRUNER % '      dry_run: { metavar: "[yes|no]" }'
 
     # act
     spec = manifest.load(text).spec_for("git", "prune-branches")
@@ -1023,7 +1299,7 @@ def test_a_params_block_carries_a_metavar():
 def test_short_first_without_a_short_flag_is_rejected():
     # arrange: ordering nothing is not a harmless no-op - it reads to its author as if the decls had been
     # reordered, while the rendered help silently disagrees with the manifest
-    text = _PRUNER % '        dry_run: { help: "preview only", short_first: true }'
+    text = _PRUNER % '      dry_run: { help: "preview only", short_first: true }'
 
     # act / assert
     with pytest.raises(ValueError, match="short"):
@@ -1032,7 +1308,7 @@ def test_short_first_without_a_short_flag_is_rejected():
 
 def test_a_params_block_carries_the_decl_order():
     # arrange: Click renders the decls in DECLARATION order and netctl's surface uses both
-    text = _PRUNER % '        dry_run: { short: "-n", short_first: true }'
+    text = _PRUNER % '      dry_run: { short: "-n", short_first: true }'
 
     # act
     spec = manifest.load(text).spec_for("git", "prune-branches")
@@ -1044,9 +1320,13 @@ def test_a_params_block_carries_the_decl_order():
 def test_a_command_without_a_params_block_has_an_empty_one():
     # arrange: the generator asks every command, so absence must be an empty map rather than None
     text = """
+tasks:
+  push: { impl: "simplon.test_impls:nullary", help: "Push." }
+
 groups:
   git:
-    push: { impl: "simplon.test_impls:nullary", help: "Push." }
+    commands:
+      push: { task: "push" }
 env_groups: []
 """
 
@@ -1057,7 +1337,7 @@ env_groups: []
 def test_a_params_key_naming_no_parameter_of_the_body_is_rejected():
     # arrange: the same failure mode an unknown `with:` key has - a typo that would otherwise render a
     # wrapper silently missing the help its author wrote, with nothing anywhere saying so.
-    text = _PRUNER % '        dryrun: { help: "preview only" }'
+    text = _PRUNER % '      dryrun: { help: "preview only" }'
 
     # act / assert
     with pytest.raises(ValueError, match="dryrun"):
@@ -1068,14 +1348,16 @@ def test_the_same_walk_of_the_signature_validates_with_and_params():
     # arrange: both maps wrong at once - one message must name both, or the second typo survives the
     # fix of the first and comes back as a new failure.
     text = """
+tasks:
+  prune-branches:
+    impl: "simplon.test_impls:pruner"
+    help: "Delete merged branches."
+    params: { remot: { help: "typo" } }
+
 groups:
   git:
-    prune-branches:
-      impl: "simplon.test_impls:pruner"
-      help: "Delete merged branches."
-      with: { drirun: true }
-      params:
-        remot: { help: "typo" }
+    commands:
+      prune-branches: { task: "prune-branches", with: { drirun: true } }
 env_groups: []
 """
 
@@ -1089,7 +1371,7 @@ env_groups: []
 def test_a_short_flag_that_is_not_a_single_dashed_letter_is_rejected(bad):
     # arrange: Click accepts more than this and renders some of it unrecognisably; `--dry-run` in the
     # SHORT slot would silently duplicate the long decl the generator derives from the parameter name.
-    text = _PRUNER % f'        dry_run: {{ short: "{bad}" }}'
+    text = _PRUNER % f'      dry_run: {{ short: "{bad}" }}'
 
     # act / assert
     with pytest.raises(ValueError, match="short"):
@@ -1101,7 +1383,7 @@ def test_a_params_block_rejects_any_key_that_would_restate_the_signature(key):
     # arrange: a `type:`, `default:` or `required:` here would restate the signature, which the design
     # keeps introspected on purpose. Ignoring the key - what every other spec model does - would read to
     # its author as if it had been honoured.
-    text = _PRUNER % f'        dry_run: {{ {key}: true }}'
+    text = _PRUNER % f'      dry_run: {{ {key}: true }}'
 
     # act / assert
     with pytest.raises(ValueError, match=key):
@@ -1112,9 +1394,13 @@ def test_generate_names_every_unknown_group_rather_than_only_the_first():
     # arrange: every neighbouring check in the loader joins and reports all offenders; this one used to
     # name `sorted(unknown)[0]`, so fixing one typo revealed the next as a fresh failure
     text = """
+tasks:
+  unit: { impl: "simplon.test_impls:nullary", help: "One gate." }
+
 groups:
   test:
-    unit: { impl: "simplon.test_impls:nullary", help: "One gate." }
+    commands:
+      unit: { task: "unit" }
 generate: [tset, biuld]
 env_groups: []
 """
@@ -1152,18 +1438,19 @@ def test_a_new_form_manifest_and_its_old_form_twin_load_identically():
     """)
     old_form = textwrap.dedent("""
         product: demo
-        taxonomy:
-          build: { help: "Produce the artefacts." }
-          support:
-            help: "Host tooling."
-            groups:
-              git: { help: "VCS helpers." }
+        tasks:
+          frr-image: { impl: "demo.tooling:lab_image", help: "Build the FRR image." }
+          push: { impl: "simplon.tasks.vcs:push", help: "push it." }
+
         groups:
+          support:
+            groups:
+              git:
+                commands:
+                  push: { task: "push" }
           build:
-            frr-image: { impl: "demo.tooling:lab_image", with: { key: frr }, help: "Build the FRR image." }
-          support: {}
-          support.git:
-            push: { impl: simplon.tasks.vcs:push, help: "push it." }
+            commands:
+              frr-image: { task: "frr-image", with: { key: "frr" } }
     """)
 
     # act
@@ -1202,7 +1489,7 @@ def test_a_coordinate_keyed_entry_under_a_new_form_tasks_block_is_rejected():
     """)
 
     # act / assert
-    with pytest.raises(ValueError, match="names a platform coordinate"):
+    with pytest.raises(ValueError, match="keyed by a platform coordinate"):
         manifest.load(text, catalogue=catalogue)
 
 
