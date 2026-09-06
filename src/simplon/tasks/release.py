@@ -28,7 +28,7 @@ and this module's job is to say what that rejection left behind.
 
 WHICH IS THE STATE THAT HAD NO NAME. A rejected push leaves the tag cut locally and unpublished: not
 "nothing happened", not "released". Left unsaid, the next run reads `git tag` failing with "already
-exists" as proof that the release went out. `vcs.tag_verdict` names it `("resume", "unpushed")`, and
+exists" as proof that the release went out. `gitops.tag_verdict` names it `("resume", "unpushed")`, and
 every failure path below says in as many words whether the tag is still there and how to get rid of it.
 
 `git push origin <tag>`, never `git push --tags`. `--tags` offers EVERY local tag to the remote,
@@ -37,7 +37,8 @@ offers both. Today's tag list makes it harmless and the flag makes it structural
 """
 from __future__ import annotations
 
-from simplon import context, log, vcs
+from simplon import context, log
+from simplon.tasks import gitops
 
 
 def tag(tag: str) -> int:
@@ -49,8 +50,8 @@ def tag(tag: str) -> int:
     convention it cannot see, and would guess wrong for the first product that spells it differently.
     The only shape check is `git check-ref-format` - git's own rule, not one of ours.
     """
-    vcs.require_git()
-    vcs.configure(context.current().root)
+    gitops.require_git()
+    gitops.configure(context.current().root)
     product = context.current().name
     name = tag.strip()
 
@@ -58,24 +59,24 @@ def tag(tag: str) -> int:
         log.error("no tag given. The tag IS the version, so this command needs the one you are "
                   f"choosing: `./{product}.sh release tag v1.4.0`")
         return 1
-    if not vcs.valid_tag_name(name):
+    if not gitops.valid_tag_name(name):
         log.error(f"'{name}' is not a valid git tag name - `git check-ref-format` refuses it, so "
                   f"nothing was cut. Spaces, `..`, a trailing `.lock` and a leading `-` are the usual "
                   f"causes")
         return 1
 
-    head = vcs.head_commit()
+    head = gitops.head_commit()
     if not head:
-        log.error(f"nothing to tag: {vcs.ROOT} has no commit at HEAD (is it a git checkout?)")
+        log.error(f"nothing to tag: {gitops.ROOT} has no commit at HEAD (is it a git checkout?)")
         return 1
 
-    branch = vcs.default_branch()
-    if not vcs.fetch_branches():
+    branch = gitops.default_branch()
+    if not gitops.fetch_branches():
         # Survivable, and stated rather than swallowed. A stale origin/<branch> can only make the guard
         # refuse a commit the branch really does carry; it cannot let an off-branch commit through.
         log.warn(f"could not fetch from origin, so origin/{branch} may be out of date. The guard below "
                  f"reads what is here; a stale ref can only make it refuse too much, never too little")
-    if not vcs.ref_exists(f"origin/{branch}"):
+    if not gitops.ref_exists(f"origin/{branch}"):
         # Without this, `merge-base --is-ancestor` against a ref that does not exist answers "no" and
         # the refusal below would diagnose a feature branch in a repository that simply has no remote.
         log.error(f"there is no origin/{branch} here, so the question '{branch} carries this commit' "
@@ -84,15 +85,15 @@ def tag(tag: str) -> int:
                   f"(`git remote set-head origin -a`)")
         return 1
 
-    action, reason = vcs.tag_verdict(carried_by_main=vcs.carried_by(head, f"origin/{branch}"),
-                                     local_tag_at=vcs.tag_commit(name),
-                                     head=head)
+    action, reason = gitops.tag_verdict(carried_by_main=gitops.carried_by(head, f"origin/{branch}"),
+                                        local_tag_at=gitops.tag_commit(name),
+                                        head=head)
 
     if reason == "off-main":
         log.error(f"{name} was NOT cut: origin/{branch} does not carry this commit.")
-        log.error(f"    the commit      {vcs.describe(head)}")
-        log.error(f"    on branch       {vcs.current_branch()}")
-        log.error(f"    origin/{branch}".ljust(20) + vcs.describe(f"origin/{branch}"))
+        log.error(f"    the commit      {gitops.describe(head)}")
+        log.error(f"    on branch       {gitops.current_branch()}")
+        log.error(f"    origin/{branch}".ljust(20) + gitops.describe(f"origin/{branch}"))
         log.error("a release is built from the TAG, so the workflow would check this commit out and "
                   "publish it under a release number - a branch on PyPI, and a website describing it.")
         log.error(f"the way out is to merge it first and tag what {branch} then carries:")
@@ -117,12 +118,12 @@ def tag(tag: str) -> int:
         # and the remote is asked only to say WHICH situation produced it - after which the advice is
         # either "take the next number" or "decide between two of your own commits", and those are
         # opposite actions.
-        here = vcs.tag_commit(name)
-        theirs = vcs.remote_tag_commit(name)
+        here = gitops.tag_commit(name)
+        theirs = gitops.remote_tag_commit(name)
         log.error(f"{name} already exists here and names a different commit, so nothing was cut or "
                   f"pushed:")
-        log.error(f"    {name} is at   {vcs.describe(here)}")
-        log.error(f"    HEAD is at     {vcs.describe(head)}")
+        log.error(f"    {name} is at   {gitops.describe(here)}")
+        log.error(f"    HEAD is at     {gitops.describe(head)}")
         if theirs is None:
             log.error("origin could not be asked, so whether this tag is yours or a copy of someone "
                       "else's cannot be told apart from here - and the two need opposite fixes. Get "
@@ -136,7 +137,7 @@ def tag(tag: str) -> int:
             log.error(f"  (`git tag -d {name}` would only delete your copy of their tag. The next "
                       f"fetch brings it back, and origin still has it either way.)")
         elif theirs:
-            log.error(f"origin carries {name} at {vcs.describe(theirs)} - a third commit again, so the "
+            log.error(f"origin carries {name} at {gitops.describe(theirs)} - a third commit again, so the "
                       f"copy here is stale as well as misplaced. Refresh it before deciding anything:")
             log.error(f"      git fetch --force origin refs/tags/{name}:refs/tags/{name}")
         else:
@@ -147,14 +148,14 @@ def tag(tag: str) -> int:
             log.error(f"    to replace it:  git tag -d {name}, then run this command again")
         return 1
 
-    log.info(f"{vcs.describe(head)} is carried by origin/{branch}")
+    log.info(f"{gitops.describe(head)} is carried by origin/{branch}")
 
     cut_here = action == "cut"
     if cut_here:
-        if not vcs.create_tag(name):
+        if not gitops.create_tag(name):
             log.error(f"git tag {name} failed, so nothing was cut and nothing was pushed")
             return 1
-        log.info(f"cut {name} -> {vcs.describe(head)}")
+        log.info(f"cut {name} -> {gitops.describe(head)}")
     else:
         # Deliberately NOT "left by a run whose push did not land". That is the interesting case, but it
         # is not the only one reaching here: re-running the command after a SUCCESSFUL release lands on
@@ -166,7 +167,7 @@ def tag(tag: str) -> int:
                  f"did not land, this is that push; if it did, origin simply reports it up to date.")
 
     log.info(f"git push origin {name}  (this one tag; `--tags` would offer every local tag)")
-    pushed = vcs.push_tag(name)
+    pushed = gitops.push_tag(name)
     for stream in (pushed.out, pushed.err):
         if stream.strip():
             print(stream.rstrip(), flush=True)
@@ -184,7 +185,7 @@ def tag(tag: str) -> int:
         # check acceptance 3 forbids: the claim was already staked and already lost. `None` (origin
         # unreachable) is not "free" - it is "cannot say", and it falls through to the generic message
         # rather than promising anything.
-        taken = bool(vcs.remote_tag_commit(name))
+        taken = bool(gitops.remote_tag_commit(name))
         provenance = "cut by this run" if cut_here else "already here before this run"
         if taken:
             log.error(f"origin refused {name}: it already carries that tag. Someone claimed the number "
@@ -204,7 +205,7 @@ def tag(tag: str) -> int:
     # The read-back, for the reason `release:image` states about its own push: a push nobody verifies is
     # the same defect as a report nobody reads, and this project has shipped that twice. `ls-remote`
     # asks the REMOTE and keeps no local store, so it cannot answer out of a cache.
-    there = vcs.remote_tag_commit(name)
+    there = gitops.remote_tag_commit(name)
     if there is None:
         log.error(f"git push exited 0, but origin could not be asked whether it really has {name}. "
                   f"The tag is still here locally, and an unverified push is exactly what this "
@@ -226,7 +227,7 @@ def tag(tag: str) -> int:
     # organised against, dressed up as a success line.
     #
     # So: the fact, and then the honest shape of the unknown.
-    log.ok(f"origin carries {name} -> {vcs.describe(head)}")
+    log.ok(f"origin carries {name} -> {gitops.describe(head)}")
     log.info("what happens next belongs to your release workflow, not to this command: it pushed the "
              "tag and confirmed origin has it, and that is all it knows. If nothing is watching for a "
              "tag of this shape, nothing further happens - and nothing says so.")

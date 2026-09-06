@@ -23,7 +23,7 @@ WHAT THE SWEEP CANNOT SEE, said plainly rather than implied. It reads one shape:
 `"docker", "run"` in it. Two seams in the kernel do not have that shape, and both were looked at rather
 than assumed away:
 
-  * `simplon.nexus._curl_argv` appends to a list instead of writing one, and puts the product's own
+  * `simplon.nexusproxy._curl_argv` appends to a list instead of writing one, and puts the product's own
     `nexus: probe_image` in the image position. Product data rather than a kernel choice, and
     deliberately not gated: si#47 takes an exception away from the KERNEL, it does not add a demand to
     a product - and netctl, the one manifest that declares the key, already pins it (`gradle:jdk25`).
@@ -44,7 +44,8 @@ from pathlib import Path
 import pytest
 
 import simplon
-from simplon import allure, docker, labhost
+from simplon import docker, labhost
+from simplon.tasks import allure
 
 from conftest import ROOT
 
@@ -109,7 +110,7 @@ def test_the_images_the_kernel_names_itself_are_pinned():
     validated at import as well, which is what makes an unpinned one unimportable; this says so where a
     reader looks for the rule, and names them so the pair cannot silently become one."""
     # arrange / act
-    chosen = {"simplon.allure.IMAGE": allure.IMAGE, "simplon.labhost.BINFMT_IMAGE": labhost.BINFMT_IMAGE}
+    chosen = {"simplon.tasks.allure.IMAGE": allure.IMAGE, "simplon.labhost.BINFMT_IMAGE": labhost.BINFMT_IMAGE}
 
     # assert: each passes the gate unchanged, and there really were images to rule on
     for where, image in chosen.items():

@@ -162,7 +162,7 @@ def test_each_required_key_is_named_when_it_is_the_one_that_is_missing(missing):
 
 def test_a_registry_is_required_even_for_a_purely_local_build():
     """An unqualified name is what docker resolves against Docker Hub, so a build tagged without a
-    registry and a release pushing it are two different images (simplon.images.require_registry records
+    registry and a release pushing it are two different images (simplon.imagenames.require_registry records
     that failure in full). The build has to tag what the release will push."""
     # arrange
     body = {"repository": "demo-app", "dockerfile": "Dockerfile", "context": "."}

@@ -1,6 +1,6 @@
 ---
 title: "Test levels"
-weight: 5
+weight: 6
 ---
 
 A gate is a command that instantiates a task - the [same model as everywhere

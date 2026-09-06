@@ -31,6 +31,10 @@ it be written without naming this product's directories, images or services?** I
 would have named them belongs in a manifest section, and the body belongs in the kernel. If no, it is
 the product's.
 
+Once a body is in the kernel, the next question is what it may lean on: not every module in the
+package is yours to import, and not every module you may import is where you would guess. [What you may
+import](../surface/) draws that line and says what happens when a module moves.
+
 There is a corollary, and it is the discipline that keeps the catalogue honest: a catalogue task is a
 promise to three products, not a convenience for one. A body that reaches for a directory it merely
 happens to know about has imposed one product's layout on everybody, and it will be the second product

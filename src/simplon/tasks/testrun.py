@@ -4,7 +4,7 @@ orchestrator.testrun).
 Creating a per-suite venv, running pytest into a shared allure results dir, merging the already-written
 per-module results and rendering the single-file archive is MECHANISM: it needs to know nothing about the
 product whose suites it runs. The kernel already owned the two primitives it is built on (`simplon.pyvenv`,
-`simplon.allure`), so this finishes a seam that was half-built.
+`simplon.tasks.allure`), so this finishes a seam that was half-built.
 
 WHAT THE PRODUCT CONTRIBUTES IS DATA, in its manifest's `suites` section, read RAW through
 `ProductContext.manifest_data()` the way every other product-owned section is. That section is the test-level
@@ -46,7 +46,8 @@ from typing import Callable
 
 import typer
 
-from simplon import allure, context, log, pyvenv, verdict
+from simplon import context, log, pyvenv, verdict
+from simplon.tasks import allure
 from simplon.awake import keep_awake
 from simplon.orchestrator.manifest import resolve_ref
 from simplon.run import run

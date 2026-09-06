@@ -1,8 +1,8 @@
 """The `nexus` group's command body (netctl#1405): the manifest points its `impl:` straight at this.
 
-Same shape as `simplon.tasks.vcs`: the MECHANISM lives in `simplon.nexus`, and this module exists
+Same shape as `simplon.tasks.vcs`: the MECHANISM lives in `simplon.nexusproxy`, and this module exists
 because a manifest-resolved impl must be a real callable whose signature the CLI is derived from - a bare
-`nexus_cmd = simplon.nexus.dispatch` alias would silently drop the member argument.
+`nexus_cmd = simplon.nexusproxy.dispatch` alias would silently drop the member argument.
 
 FRAMEWORK-FREE since netctl#1444: the body takes plain parameters and RETURNS an exit code. What used to
 sit in its signature - the `typer.Argument`, its metavar and its help - is declared in the product
@@ -16,7 +16,7 @@ product import, so nothing here knows which product it is serving.
 """
 from __future__ import annotations
 
-from simplon import nexus
+from simplon import nexusproxy
 
 
 def nexus_cmd(member: str | None = None) -> int:
@@ -40,4 +40,4 @@ def nexus_cmd(member: str | None = None) -> int:
     Standalone by design: `nexus` belongs in NO composite. A build must not hard-depend on the proxy, the
     service is long-lived rather than per-build, and the EULA is an operator action no pipeline may click
     through. See delivery/nexus.py."""
-    return nexus.dispatch(member)
+    return nexusproxy.dispatch(member)

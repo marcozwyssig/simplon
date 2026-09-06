@@ -1,6 +1,6 @@
 ---
 title: "The rules"
-weight: 7
+weight: 8
 ---
 
 Everything else on this site can be derived. The command reference is read off the assembled
