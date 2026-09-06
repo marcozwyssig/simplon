@@ -42,7 +42,7 @@ from conftest import ROOT
 
 MANIFEST = ROOT / "simplon.yaml"
 WORKFLOWS = ROOT / ".github" / "workflows"
-REQUIREMENTS = ROOT / "orchestrator" / "requirements.txt"
+REQUIREMENTS = ROOT / "deploy" / "orchestrator" / "requirements.txt"
 CONFIG = ROOT / "mypy.ini"
 
 #: The catalogue coordinate the kernel carries, and the command that instantiates it in this manifest's
@@ -155,7 +155,7 @@ def test_theConfigurationExistsAndCoversTheTreesThisRepositoryShips() -> None:
 
     assert config.has_section("mypy")
     covered = [root.strip() for root in config["mypy"]["files"].split(",")]
-    assert covered == ["src", "orchestrator/src/python/orchestrator"]
+    assert covered == ["src", "deploy/orchestrator/src/python/orchestrator"]
 
 
 def test_theGateChecksTheFloorTheWheelPromises_notWhicheverPythonIsAtHand() -> None:

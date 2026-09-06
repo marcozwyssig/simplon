@@ -85,7 +85,7 @@ groups:
       # be the exception.
       #
       # No `with:` - the defaults are exactly right here: mypy.ini at the product root, mypy run in the
-      # host venv (`orchestrator/requirements.txt` installs `-e .[typecheck]`, so the checker sees the
+      # host venv (`deploy/orchestrator/requirements.txt` installs `-e .[typecheck]`, so the checker sees
       # same installed set the kernel runs against), and the roots stated by the config rather than on the
       # argv.
       typecheck-python: { task: "test:typecheck-python" }

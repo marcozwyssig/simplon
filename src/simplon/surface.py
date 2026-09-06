@@ -110,8 +110,8 @@ from typing import Any
 #: matters because the previous list was not: on 2026-09-06 (#51) every repository this account can read
 #: was fetched and searched for `from simplon ...` / `import simplon ...`, rather than for the phrase
 #: "simplon", which is what the earlier count did and why it missed one. The kernel's own
-#: `orchestrator/` is a consumer too and is deliberately NOT in this tuple - it is in this repository, so
-#: no measurement of another repository can go stale about it.
+#: `deploy/orchestrator/` is a consumer too and is deliberately NOT in this tuple - it is in this
+#: repository, so no measurement of another repository can go stale about it.
 #:
 #: This is a snapshot and it ages. What it is good for is not proving who consumes the kernel tomorrow,
 #: but keeping the kernel's prose from inventing somebody today; that much a test can hold without a

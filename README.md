@@ -56,12 +56,18 @@ identifier resolved on `PYTHONPATH`, which the launcher points at
 ## Layout
 
 `src/simplon/` is the kernel: the import package, the thing that gets
-published. `orchestrator/` is Simplon's own product surface -- its manifest,
-its commands -- because Simplon is a product of itself and builds and tests
-itself with itself. The two layouts differ on purpose: the kernel uses the
-conventional src-layout, while `orchestrator/` has exactly the shape
+published. `deploy/orchestrator/` is Simplon's own product surface -- its
+manifest, its commands -- because Simplon is a product of itself and builds and
+tests itself with itself. The two layouts differ on purpose: the kernel uses
+the conventional src-layout, while the orchestrator block has exactly the shape
 `simplon init` writes into every product. If that shape is awkward, Simplon
 feels it first.
+
+It sits under `deploy/` rather than at the repo root, and that is the same
+`--orch-dir` any other product passes: Simplon scaffolded its own launchers
+with it. The default is still `orchestrator/` -- what moved is Simplon's tree,
+not the default it hands out. A kernel that offers a parameter and then keeps
+the one placement it made configurable is not using what it ships.
 
 ## Why a gate is red
 

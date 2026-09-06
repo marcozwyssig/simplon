@@ -12,7 +12,7 @@ rem python-without-pip directory on any platform.
 set "LAUNCH_PRODUCT=simplon"
 set "LAUNCH_ROOT=%~dp0"
 if "%LAUNCH_ROOT:~-1%"=="\" set "LAUNCH_ROOT=%LAUNCH_ROOT:~0,-1%"
-set "LAUNCH_ORCH_DIR=%LAUNCH_ROOT%\orchestrator"
+set "LAUNCH_ORCH_DIR=%LAUNCH_ROOT%\deploy\orchestrator"
 set "LAUNCH_MODULE=orchestrator"
 
 set "VENV=%LAUNCH_ORCH_DIR%\.venv"
@@ -20,6 +20,25 @@ set "REQ=%LAUNCH_ORCH_DIR%\requirements.txt"
 set "STAMP=%VENV%\.deps-stamp"
 set "VPY=%VENV%\Scripts\python.exe"
 set "VPIP=%VENV%\Scripts\pip.exe"
+
+rem WHERE THE ORCHESTRATOR IS EXPECTED - the same three paths simplon.sh checks, before anything
+rem is provisioned, and for the same measured reason (#24): without it a missing block is either
+rem manufactured by `python -m venv` or reported as "No module named orchestrator" with no path in the
+rem message. The three `set` lines are separate statements, so the value is already there when the
+rem block below is parsed - no delayed expansion needed.
+set "ORCH_MISSING="
+if not exist "%LAUNCH_ORCH_DIR%\" set "ORCH_MISSING=%LAUNCH_ORCH_DIR%"
+if not defined ORCH_MISSING if not exist "%REQ%" set "ORCH_MISSING=%REQ%"
+if not defined ORCH_MISSING if not exist "%LAUNCH_ORCH_DIR%\src\python\%LAUNCH_MODULE%\" set "ORCH_MISSING=%LAUNCH_ORCH_DIR%\src\python\%LAUNCH_MODULE%"
+if defined ORCH_MISSING (
+    >&2 echo simplon: no orchestrator here.
+    >&2 echo simplon:   LAUNCH_ORCH_DIR = %LAUNCH_ORCH_DIR%
+    >&2 echo simplon:   missing         = %ORCH_MISSING%
+    >&2 echo simplon: the block holds requirements.txt and src\python\%LAUNCH_MODULE%. If it moved,
+    >&2 echo simplon: point LAUNCH_ORCH_DIR ^(above, in this file^) at it, or write it again with
+    >&2 echo simplon:   simplon init simplon --dir . --orch-dir ^<dir^> --force
+    exit /b 1
+)
 
 where python >nul 2>&1
 if errorlevel 1 (
