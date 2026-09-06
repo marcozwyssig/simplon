@@ -97,22 +97,28 @@ groups:
             params:
               check: { help: "report drift and write nothing" }
 
-# PHASE OR FAMILY (si#34). The namespace half of a coordinate answers one of two questions, and which
-# one it answers is decided by whether it is a PHASE - one of the six group names above.
+# PLACEMENT OR FAMILY (si#34). The namespace half of a coordinate answers one of two questions, and which
+# one it answers is decided by whether it is one of the six GROUP NAMES declared above.
 #
-#   `build:image`, `test:gate`, `release:tag`, `support:install` name a phase, and so they name a
+#   `build:image`, `test:gate`, `release:tag`, `support:install` name a group, and so they name a
 #   PLACEMENT: a product may only place them under that group. `treeform.check_coordinate_placement`
-#   rejects `build:image` under `test`, naming both coordinates and the group that is allowed.
+#   rejects `build:image` under `test`, naming both coordinates and the group that is allowed. It reads
+#   the MERGED tree, so the placements THIS file makes are held to the rule too.
 #
 #   `vcs:`, `docs:`, `tasks:` name none, and so they name a FAMILY - what the task IS, said without
 #   saying when it runs. `docs:site` sits under `build` in simplon and could sit under `release` in
 #   another product; `vcs:commit` belongs to no single phase at all, which is why the "every coordinate
 #   is a phase" alternative was rejected rather than adopted.
 #
+# GROUPS, not phases, and the distinction is the owner's: five of the six above are the phases of the
+# delivery loop, and `support` is the group that supports those five rather than a sixth of them. The
+# rule is stated over all six because `support:install` would otherwise be the one placed coordinate
+# nothing governed - not because `support` has been promoted.
+#
 # So CHOOSING A NAMESPACE for a new task is choosing between those two, and it is not a matter of taste:
-# name the phase only when the task belongs to that phase in every product that will ever have it, and
+# name a group only when the task belongs to that group in every product that will ever have it, and
 # name a family whenever the placement is the product's call. Getting it wrong is not silent - either the
-# loader refuses a placement that was in fact legitimate, or a task that really does belong to one phase
+# loader refuses a placement that was in fact legitimate, or a task that really does belong to one group
 # is free to wander. Neither is a rename anyone wants to do twice.
 
 tasks:
