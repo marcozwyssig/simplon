@@ -27,20 +27,31 @@ Do not lump these together. Before adding a refusal, say which kind it is.
 1. **Diagnosis.** A manifest is broken and the message says where. Costs
    nothing — without it the failure would be silent. *Example:* a coordinate
    the catalogue does not carry.
-2. **Self-binding.** The kernel subjects itself to a rule it imposes. Costs a
-   product nothing. *Examples:* #34 checks over the **merged** tree and so
-   holds the catalogue's own placements; #47 removes the kernel's exemption
-   from the image pin.
-3. **Expression rule.** A product may no longer say something it could have
-   said. **Only this kind costs flexibility.** *Examples:* #34 (a phase name
-   in a coordinate is the placement), #43 (`env_groups` may not contradict the
-   platform), #33 (one manifest form instead of two).
+2. **Expression rule.** A product may no longer say something it could have
+   said, and the manifest it wrote would have produced a working product —
+   merely a different one. **Only this kind costs flexibility.** *Examples:*
+   #33 (one manifest form instead of two), #34 (a phase name in a coordinate
+   is the placement), #43 (`env_groups` may not contradict the platform).
+
+**Self-binding is not a third kind — it is an expression rule's reach.** The
+first draft of this file listed it separately and put #34 under both, which is
+how the mistake showed. Ask instead how far a rule reaches: does it hold the
+kernel's own catalogue too (#34 checks over the *merged* tree, so it does), or
+does it exempt the kernel from what it asks of a product? Measured in #48: of
+sixteen expression rules, nine bind the kernel with the product, six sit
+exactly on the platform/product seam, and **one exempts the kernel** —
+`check_every_task_is_used`, which would reject fourteen of the kernel's own
+twenty-two catalogue tasks. An exemption is not automatically wrong. An
+unexamined one is.
 
 ## Before building an expression rule, answer these
 
 - **Does it forbid something a product might legitimately want?** If so,
-  which product, and what does it do instead? #34 could show *zero violations
-  across both existing manifests* — that is the bar.
+  which product, and what does it do instead? #34 showed *zero violations
+  across both manifests on this machine* — and #48 later measured all **six**
+  real manifests through the GitHub API and found one violation the smaller
+  population had hidden. The bar is every manifest you can reach, and you can
+  reach them all without a checkout; #37 and #47 had already shown how.
 - **Is it diagnosis or expression rule?** Diagnosis needs no such
   justification.
 - **Would deleting be cheaper than guarding?** A second source you do not
