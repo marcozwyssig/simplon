@@ -50,7 +50,7 @@ does it exempt the kernel from what it asks of a product? Measured in #48: of
 sixteen expression rules, nine bind the kernel with the product, six sit
 exactly on the platform/product seam, and **one exempts the kernel** —
 `check_every_task_is_used`, which would reject fourteen of the kernel's own
-twenty-two catalogue tasks. An exemption is not automatically wrong. An
+twenty-three catalogue tasks. An exemption is not automatically wrong. An
 unexamined one is.
 
 ## Before building an expression rule, answer these

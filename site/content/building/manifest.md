@@ -237,6 +237,76 @@ If `registry:` does not name `ghcr.io`, no GitHub token is minted for it. The pu
 credential your own `docker login <host>` stored, and a rejection says so instead of pointing at
 `gh auth refresh`, which would mean nothing on someone else's registry.
 
+### `workflows:` - the CI files, generated from this same manifest
+
+The manifest has always been meant to have **two outputs**. It assembles the command line, and - with
+`support:workflows` - it writes the GitHub workflows that call it.
+
+```yaml
+workflows:
+  ci:
+    note: |
+      Every push and every pull request, and it is the SAME command a developer types.
+    on: [push, pull_request]
+    jobs:
+      self-build:
+        runs-on: ubuntu-latest
+        python: "3.12"
+        steps:
+          - command: test all
+          - command: build wheel
+```
+
+The line that matters is `command: test all`. It is not a string that happens to look like a command -
+it is **resolved against the command tree above** before anything is written, and what lands in the file
+is `./myctl.sh test all`. Rename that command and generation fails, loudly, in the same commit. Today,
+in a hand-written workflow, a renamed command leaves a `run:` line calling something that is gone, and
+the first anybody hears of it is a red runner.
+
+Everything the kernel cannot know stays yours and is carried through untouched: the trigger, the runner
+image, `permissions:`, `environment:`, `needs:`, `concurrency:`, a timeout, an `if:`. **Whether a tag
+publishes is your statement**, so a workflow that declares no `on:` is refused rather than given a
+default. A step the kernel has no business modelling - `pypa/gh-action-pypi-publish`, an upload, a shell
+script that reports something - is written out verbatim beside the resolved ones.
+
+Two things are the kernel's, and both are settings you should not have to remember. The checkout is
+emitted with `fetch-depth: 0`, because a shallow clone makes setuptools-scm derive a version that is
+merely *wrong* rather than failing; and `python:` becomes a `setup-python` step, or nothing at all if
+you declare none.
+
+**Your comments survive.** `note:` may sit on the workflow, on a job or on a step, and is written out as
+a comment in that position. That is a requirement rather than a nicety - a real workflow carries measured
+values and the reasoning for absences, and a generator that dropped them would make the file worse than
+the one it replaced.
+
+{{< callout type="warning" >}}
+**`on:` is a boolean in YAML 1.1.** `yaml.safe_load("on: [push]")` gives you a mapping keyed by `True`,
+not by `"on"`. Write the trigger the natural way here - the loader reads both spellings - but if you ever
+parse a workflow yourself, look under `True`, or you will search a section you never had and read the
+miss as an answer.
+{{< /callout >}}
+
+#### `--check`, and the file nobody owns
+
+`myctl support workflows --check` reports drift and **returns 1**, so one command is both a pre-commit
+hook and a CI step. It also returns 1 for a file in `.github/workflows/` that **no entry names**. That
+second case is the reason the section exists: a workflow nothing generates and nothing declares looks,
+from the directory, exactly like one somebody maintains - and it keeps running long after it stopped
+meaning anything.
+
+There are two ways to answer it, and the second is a real answer rather than an escape hatch:
+
+```yaml
+workflows:
+  release:
+    handwritten: >-
+      two-thirds prose and two multi-line shell scripts; declaring it would move that work
+      rather than remove it
+```
+
+A declined workflow is never written to, and it is **named with its reason on every run** - because
+"this one is hand-written" is easy to keep believing after it has stopped being true.
+
 Other sections work the same way: `suites:` is the test-level taxonomy a product's own test tree
 defines, `environments:` the deployment matrix, `nexus:` and `claude:` the data their respective tasks
 read. A task that needs a section it does not find fails on its first line, which is why such tasks stay

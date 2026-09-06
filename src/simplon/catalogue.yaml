@@ -188,6 +188,24 @@ tasks:
   support:environments:
     impl: simplon.tasks.env:environments
     help: "List the named environments and the backend each targets, marking the active one."
+  # The manifest's SECOND output (si#40). `simplon.orchestrator.manifest` has promised since it was
+  # written that "the same manifest assembles the runtime CLI now and, in Phase 2, the CI workflows";
+  # this is that phase, and it is the same shape as `tasks:generate` for the same reason - the files are
+  # committed, so the manifest and the file can disagree, and `--check` is what notices.
+  #
+  # A `support:` NAMESPACE, so si#34 makes it a PLACEMENT: it may only be placed under `support`, in
+  # every product. That is the right axis for it - regenerating CI files is tooling for whoever develops
+  # the product, not a stage of the delivery loop - and `treeform.check_coordinate_placement` holds it.
+  #
+  # OFFERED, NOT PLACED, and by the same test si#39 applied to `release:tag`: the placement bar is
+  # "useful in EVERY product", and this one reads a `workflows:` section. Placed, it would be a command
+  # that refuses on its first line in every product that has not declared one. A product declares it the
+  # day it has workflows to generate; simplon does exactly that.
+  support:workflows:
+    impl: simplon.tasks.workflows:generate
+    help: "Regenerate the product's GitHub workflows from its manifest (--check reports drift and writes nothing)."
+    params:
+      check: { help: "report drift and write nothing" }
 
   # --- docs: the documentation render ------------------------------------------------------------------
   # Placed as a TASK, not as a command in the `build` group above: it needs the product's pinned image tag

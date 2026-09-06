@@ -43,7 +43,7 @@ acceptance can still mean here: a coordinate in a section is a bare list item an
 description put back beside one - the ticket's own
 `| build:image | Builds a wheel and uploads it to PyPI. |` included - makes this suite red. The
 sentences themselves live in the generated command reference, which carries the catalogue's own `help:`
-for all twenty-two and is rebuilt from it every time.
+for every coordinate there is, and is rebuilt from it every time.
 
 Nothing here counts the page against itself: every expectation is computed from `catalogue.load()`, and
 the page is the thing being checked.
@@ -446,7 +446,7 @@ def test_every_catalogue_coordinate_appears_somewhere_on_the_page():
 
     # assert
     assert listed == set(cat.tasks)
-    assert len(listed) == 22, "the count moved - update the page, then this number"
+    assert len(listed) == 23, "the count moved - update the page, then this number"
 
 
 # --- the two empty ribs --------------------------------------------------------------------------------
