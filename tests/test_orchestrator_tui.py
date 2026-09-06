@@ -141,8 +141,9 @@ def test_the_left_pane_is_the_plan_tree_fully_expanded_with_dotted_paths():
     # act
     rows = asyncio.run(_drive())
 
-    # assert: the aggregates survive as rows and every row is a dotted path
-    assert [row.split(" ", 1)[1] for row in rows] == [
+    # assert: the aggregates survive as rows and every row is a dotted path (the #52 duration column is
+    # a separate concern, pinned in its own tests, so it is trimmed off here)
+    assert [row.split(" ", 1)[1].split("  ")[0] for row in rows] == [
         "deploy.bringup", "build.prep", "build.install", "build.compile", "deploy.up"]
 
 
@@ -286,7 +287,7 @@ def test_a_row_whose_text_did_not_change_is_not_written_again(monkeypatch):
     for node_writes in writes.values():
         assert all(new != previous for previous, new in zip(node_writes, node_writes[1:])), node_writes
     root_writes = [w for w in writes.values() if any("deploy.bringup" in text for text in w)]
-    assert root_writes == [["▶ deploy.bringup", "✓ deploy.bringup"]], root_writes
+    assert root_writes == [["▶ deploy.bringup", "✓ deploy.bringup  <0.1s"]], root_writes
 
 
 def test_every_row_including_the_derived_ones_repaints_to_ok_when_the_run_finished():
@@ -345,7 +346,7 @@ env_groups: [deploy]
     rows, rendered = asyncio.run(_drive())
 
     # assert: the single row reached OK, and its output is in the pane rather than a stale "(running…)"
-    assert rows == ["✓ deploy.seed"], rows
+    assert rows == ["✓ deploy.seed  <0.1s"], rows
     assert "seeding site zh" in rendered
     assert "(running" not in rendered and "(pending)" not in rendered
 
@@ -371,7 +372,7 @@ def test_the_flat_fallback_still_gives_every_step_a_working_row():
     rows, rendered = asyncio.run(_drive())
 
     # assert: root plus both steps, each painted with its real outcome, and the failure auto-focused
-    assert rows == ["✗ deploy.bringup", "✓ install", "✗ compile"], rows
+    assert rows == ["✗ deploy.bringup  <0.1s", "✓ install  <0.1s", "✗ compile  <0.1s"], rows
     assert "compile blew up" in rendered
 
 
@@ -417,9 +418,12 @@ env_groups: [deploy]
     # act
     rows = asyncio.run(_drive())
 
-    # assert: prep's remaining leaf is skipped, prep's SIBLING still ran, and every row paints its verdict
-    assert rows == ["✗ deploy.bringup", "✗ build.prep", "✗ build.install", "⊘ build.compile",
-                    "✓ deploy.up"]
+    # assert: prep's remaining leaf is skipped, prep's SIBLING still ran, and every row paints its
+    # verdict - AND the skipped row carries no duration while every row that ran does (#52). `⊘
+    # build.compile` bare is the assertion, not an omission: `0.0s` there would claim it finished
+    # instantly instead of never starting.
+    assert rows == ["✗ deploy.bringup  <0.1s", "✗ build.prep  <0.1s", "✗ build.install  <0.1s",
+                    "⊘ build.compile", "✓ deploy.up  <0.1s"]
     assert [step.state for step in pipeline.steps] == [
         StepState.FAILED, StepState.SKIPPED, StepState.OK]
 

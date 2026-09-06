@@ -15,7 +15,7 @@ from __future__ import annotations
 import sys
 
 from .steps import (STATE_ICON, Emit, Pipeline, Row, Step, StepState, abort_after, build_rows,
-                    failure_report, omitted_note, overall_rc, run_headless)
+                    failure_report, format_duration, omitted_note, overall_rc, run_headless)
 
 
 def run_pipeline(pipeline: Pipeline) -> int:
@@ -106,8 +106,14 @@ class _StepApp(App):
         anything the manifest planned, the prose label for the internal probes of a hand-built pipeline.
         Never the argv: `command` is the exact-command identity and belongs to the RIGHT pane's section
         header (netctl#897). Rendering it here turned the step list into a wall of `docker run --rm -v ...`
-        where the operator wanted to read `package.web-jar`."""
-        return f"{STATE_ICON[row.state]} {row.label}"
+        where the operator wanted to read `package.web-jar`.
+
+        Since #52 a row that RAN also carries its duration - one column, appended, so the pane gains no
+        line. A row that did NOT run carries none: `⊘ deploy.up` stays bare, because `0.0s` there would
+        claim the step finished instantly instead of never starting."""
+        duration = row.duration
+        shown = f"  {format_duration(duration)}" if duration is not None else ""
+        return f"{STATE_ICON[row.state]} {row.label}{shown}"
 
     def _mount_tree(self) -> None:
         """Mount the display tree, fully expanded, and record the row chain of EVERY step, the root's own
