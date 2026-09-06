@@ -15,14 +15,21 @@ from simplon.orchestrator.steps import Outcome, Pipeline, Step, StepState  # noq
 from simplon.orchestrator.tui import _StepApp  # noqa: E402
 
 _NESTED_MANIFEST = """
+tasks:
+  install: { impl: "demo.impls:install", help: "Install host prereqs." }
+  compile: { impl: "demo.impls:compile", help: "Compile the artefacts." }
+  up: { impl: "demo.impls:up", help: "Deploy up." }
+
 groups:
   build:
-    install: { impl: "demo.impls:install", help: "Install host prereqs." }
-    compile: { impl: "demo.impls:compile", help: "Compile the artefacts." }
-    prep:    { help: "Install + compile.", depends_on: [install, compile] }
+    commands:
+      install: { task: "install" }
+      compile: { task: "compile" }
+      prep: { help: "Install + compile.", depends_on: ["install", "compile"] }
   deploy:
-    up:      { impl: "demo.impls:up", help: "Deploy up." }
-    bringup: { help: "Full bring-up.", depends_on: [prep, up] }
+    commands:
+      up: { task: "up" }
+      bringup: { help: "Full bring-up.", depends_on: ["prep", "up"] }
 env_groups: [deploy]
 """
 
@@ -167,13 +174,18 @@ def test_the_root_row_explains_a_dependency_that_dedup_left_without_a_row():
     tree. The rule is right; the silence is not."""
     # arrange: bringup declares `build`, whose only dependency `prep` is planned before it
     manifest = """
+tasks:
+  install: { impl: "demo.impls:install", help: "Install host prereqs." }
+
 groups:
   build:
-    install: { impl: "demo.impls:install", help: "Install host prereqs." }
-    prep:    { help: "Install.", depends_on: [install] }
-    build:   { help: "The full build.", depends_on: [prep] }
+    commands:
+      install: { task: "install" }
+      prep: { help: "Install.", depends_on: ["install"] }
+      build: { help: "The full build.", depends_on: ["prep"] }
   deploy:
-    bringup: { help: "Full bring-up.", depends_on: [prep, build] }
+    commands:
+      bringup: { help: "Full bring-up.", depends_on: ["prep", "build"] }
 env_groups: [deploy]
 """
     tree = manifest_load(manifest).plan_tree_for("bringup")
@@ -307,9 +319,13 @@ def test_a_pipeline_whose_root_IS_its_only_step_still_paints_and_streams():
     without going through an aggregate."""
     # arrange
     manifest = """
+tasks:
+  seed: { impl: "demo.impls:seed", help: "Seed the lab." }
+
 groups:
   deploy:
-    seed: { impl: "demo.impls:seed", help: "Seed the lab." }
+    commands:
+      seed: { task: "seed" }
 env_groups: [deploy]
 """
     tree = manifest_load(manifest).plan_tree_for("seed")
@@ -365,14 +381,24 @@ def test_the_tui_runner_skips_the_aborted_subtree_and_keeps_running_its_siblings
     single `stopped` latch and could therefore only express "stop the whole run"."""
     # arrange: `prep` stops on failure, the bring-up around it does not, and prep's first leaf dies
     manifest = """
+tasks:
+  install: { impl: "demo.impls:install", help: "Install host prereqs." }
+  compile: { impl: "demo.impls:compile", help: "Compile the artefacts." }
+  up: { impl: "demo.impls:up", help: "Deploy up." }
+
 groups:
   build:
-    install: { impl: "demo.impls:install", help: "Install host prereqs." }
-    compile: { impl: "demo.impls:compile", help: "Compile the artefacts." }
-    prep:    { help: "Install + compile.", depends_on: [install, compile], stop_on_failure: true }
+    commands:
+      install: { task: "install" }
+      compile: { task: "compile" }
+      prep:
+        help: "Install + compile."
+        depends_on: ["install", "compile"]
+        stop_on_failure: true
   deploy:
-    up:      { impl: "demo.impls:up", help: "Deploy up." }
-    bringup: { help: "Full bring-up.", depends_on: [prep, up] }
+    commands:
+      up: { task: "up" }
+      bringup: { help: "Full bring-up.", depends_on: ["prep", "up"] }
 env_groups: [deploy]
 """
     tree = manifest_load(manifest).plan_tree_for("bringup")
@@ -404,14 +430,24 @@ def test_the_details_pane_tells_a_skipped_step_which_subtree_stopped_it():
     who most needs to know - never learned which subtree decided."""
     # arrange: prep stops on failure, its first leaf dies, and the cursor lands on the skipped row
     manifest = """
+tasks:
+  install: { impl: "demo.impls:install", help: "Install host prereqs." }
+  compile: { impl: "demo.impls:compile", help: "Compile the artefacts." }
+  up: { impl: "demo.impls:up", help: "Deploy up." }
+
 groups:
   build:
-    install: { impl: "demo.impls:install", help: "Install host prereqs." }
-    compile: { impl: "demo.impls:compile", help: "Compile the artefacts." }
-    prep:    { help: "Install + compile.", depends_on: [install, compile], stop_on_failure: true }
+    commands:
+      install: { task: "install" }
+      compile: { task: "compile" }
+      prep:
+        help: "Install + compile."
+        depends_on: ["install", "compile"]
+        stop_on_failure: true
   deploy:
-    up:      { impl: "demo.impls:up", help: "Deploy up." }
-    bringup: { help: "Full bring-up.", depends_on: [prep, up] }
+    commands:
+      up: { task: "up" }
+      bringup: { help: "Full bring-up.", depends_on: ["prep", "up"] }
 env_groups: [deploy]
 """
     tree = manifest_load(manifest).plan_tree_for("bringup")

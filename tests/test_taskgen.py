@@ -19,9 +19,13 @@ from simplon import taskgen
 from simplon.orchestrator import manifest
 
 _MANIFEST = """
+tasks:
+  seed: { impl: "simplon.test_impls:seed", help: "Seed the lab." }
+
 groups:
   lab:
-    seed: { impl: "simplon.test_impls:seed", help: "Seed the lab.", with: { sites: zh } }
+    commands:
+      seed: { task: "seed", with: { sites: "zh" } }
 """
 
 
@@ -125,9 +129,13 @@ def test_the_rendered_module_imports_and_assembles_a_real_click_tree(tmp_path):
 def test_a_command_name_with_a_dash_becomes_a_legal_identifier(tmp_path):
     # arrange: `disk-guard` is not a Python name, but the TASK must keep the dashed name
     m = _load("""
+tasks:
+  disk-guard: { impl: "simplon.test_impls:seed", help: "Guard the disk." }
+
 groups:
   support:
-    disk-guard: { impl: "simplon.test_impls:seed", help: "Guard the disk." }
+    commands:
+      disk-guard: { task: "disk-guard" }
 """)
 
     # act
@@ -142,9 +150,13 @@ def test_a_variadic_body_renders_a_command_with_no_declared_parameters():
     # arrange: neither Click nor Typer binds *args to a parameter. Such a command is `passthrough_args`
     # and its raw tail reaches the body through `ctx.args`, which the per-command context settings allow.
     m = _load("""
+tasks:
+  gradle: { impl: "simplon.test_impls:gradle", help: "Run gradle.", passthrough_args: true }
+
 groups:
   build:
-    gradle: { impl: "simplon.test_impls:gradle", help: "Run gradle.", passthrough_args: true }
+    commands:
+      gradle: { task: "gradle" }
 """)
 
     # act
@@ -158,9 +170,13 @@ groups:
 def test_a_command_whose_impl_cannot_be_imported_fails_at_render():
     # arrange: a typo must fail HERE, not forty minutes into a deploy
     m = _load("""
+tasks:
+  seed: { impl: "simplon.nope:missing", help: "Seed the lab." }
+
 groups:
   lab:
-    seed: { impl: "simplon.nope:missing", help: "Seed the lab." }
+    commands:
+      seed: { task: "seed" }
 """)
 
     # act / assert
@@ -174,10 +190,14 @@ def test_an_impl_less_aggregate_is_rendered_and_dispatches_through_the_product()
     # through its dependency plan, which only the product can dispatch, so the wrapper calls the hook
     # `register(aggregate=...)` binds.
     m = _load("""
+tasks:
+  seed: { impl: "simplon.test_impls:seed", help: "Seed the lab." }
+
 groups:
   build:
-    build: { depends_on: [seed], help: "Build it." }
-    seed:  { impl: "simplon.test_impls:seed", help: "Seed the lab." }
+    commands:
+      build: { depends_on: ["seed"], help: "Build it." }
+      seed: { task: "seed" }
 """)
 
     # act
@@ -205,7 +225,7 @@ def test_check_returns_a_diff_when_the_manifest_moved_on(tmp_path):
     # arrange: the file was generated from an OLDER manifest
     target = tmp_path / "_generated.py"
     taskgen.write(_load(), target, source="demo.yaml", product="sample")
-    moved = _load(_MANIFEST.replace("sites: zh", "sites: be"))
+    moved = _load(_MANIFEST.replace('sites: "zh"', 'sites: "be"'))
 
     # act
     diff = taskgen.check(moved, target, source="demo.yaml", product="sample")
@@ -260,11 +280,15 @@ def test_a_help_text_containing_triple_quotes_cannot_escape_the_docstring(tmp_pa
     # arrange: interpolating help into \"\"\"...\"\"\" let a manifest close the docstring and have the rest
     # of its text EXECUTED on import - arbitrary code execution from manifest content alone
     m = _load('''
+tasks:
+  seed:
+    impl: "simplon.test_impls:seed"
+    help: "Seed it.\\"\\"\\"\\nimport os\\nBREACH = os.getcwd()\\nx = \\"\\"\\""
+
 groups:
   lab:
-    seed:
-      impl: "simplon.test_impls:seed"
-      help: "Seed it.\\"\\"\\"\\nimport os\\nBREACH = os.getcwd()\\nx = \\"\\"\\""
+    commands:
+      seed: { task: "seed" }
 ''')
 
     # act
@@ -281,9 +305,13 @@ groups:
 def test_a_command_name_containing_a_quote_cannot_escape_the_task_decorator():
     # arrange
     m = _load('''
+tasks:
+  seed: { impl: "simplon.test_impls:seed", help: "Seed it." }
+
 groups:
   lab:
-    'se"ed': { impl: "simplon.test_impls:seed", help: "Seed it." }
+    commands:
+      'se"ed': { task: "seed" }
 ''')
 
     # act / assert: rejected as an illegal identifier rather than rendered into broken source
@@ -294,9 +322,13 @@ groups:
 def test_a_command_named_after_a_python_keyword_is_rejected():
     # arrange: `def import(c):` does not parse
     m = _load('''
+tasks:
+  import: { impl: "simplon.test_impls:seed", help: "Import it." }
+
 groups:
   lab:
-    import: { impl: "simplon.test_impls:seed", help: "Import it." }
+    commands:
+      import: { task: "import" }
 ''')
 
     # act / assert
@@ -309,9 +341,13 @@ def test_a_with_value_yaml_typed_into_a_datetime_is_rejected():
     # import the generated module does not have, so the file failed only when imported - while the drift
     # gate stayed green, because the broken text rendered identically every time.
     m = _load('''
+tasks:
+  seed: { impl: "simplon.test_impls:seed", help: "Seed it." }
+
 groups:
   lab:
-    seed: { impl: "simplon.test_impls:seed", help: "Seed it.", with: { sites: 2026-01-01 } }
+    commands:
+      seed: { task: "seed", with: { sites: 2026-01-01 } }
 ''')
 
     # act / assert
@@ -323,9 +359,13 @@ def test_a_required_parameter_stays_required(tmp_path):
     # arrange: rendering it as =None turned a mandatory argument optional and moved the failure out of
     # the CLI parser into whatever the body does with None
     m = _load('''
+tasks:
+  pin: { impl: "simplon.test_impls:needs_site", help: "Pin a site." }
+
 groups:
   lab:
-    pin: { impl: "simplon.test_impls:needs_site", help: "Pin a site." }
+    commands:
+      pin: { task: "pin" }
 ''')
 
     # act
@@ -340,9 +380,13 @@ def test_a_body_without_a_context_parameter_is_not_handed_one(tmp_path):
     # arrange: simplon.tasks.vcs:commit takes its payload FIRST and no Context at all. Dropping
     # parameter 0 by position discarded the payload and passed a Context object in its place.
     m = _load('''
+tasks:
+  commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
+
 groups:
   git:
-    commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
+    commands:
+      commit: { task: "commit" }
 ''')
 
     # act
@@ -356,9 +400,13 @@ groups:
 def test_a_body_with_no_parameters_at_all_is_called_with_none(tmp_path):
     # arrange: simplon.tasks.vcs:push takes nothing; `push(c)` raised TypeError at call time
     m = _load('''
+tasks:
+  push: { impl: "simplon.test_impls:nullary", help: "Push." }
+
 groups:
   git:
-    push: { impl: "simplon.test_impls:nullary", help: "Push." }
+    commands:
+      push: { task: "push" }
 ''')
 
     # act
@@ -374,9 +422,13 @@ def test_binding_the_context_parameter_by_name_is_rejected():
     # accepted it - and the generator then discarded it silently. Binding it is the likeliest real typo
     # of all, so the fixture names the body's ACTUAL context parameter rather than a name it lacks.
     text = '''
+tasks:
+  seed: { impl: "simplon.test_impls:seed", help: "Seed it." }
+
 groups:
   lab:
-    seed: { impl: "simplon.test_impls:seed", help: "Seed it.", with: { ctx: nonsense } }
+    commands:
+      seed: { task: "seed", with: { ctx: "nonsense" } }
 '''
 
     # act / assert
@@ -389,13 +441,16 @@ groups:
 def test_a_param_declaring_a_short_flag_renders_an_explicit_typer_option():
     # arrange
     m = _load("""
+tasks:
+  prune-branches:
+    impl: "simplon.test_impls:pruner"
+    help: "Delete merged branches."
+    params: { dry_run: { help: "preview only", short: "-n" } }
+
 groups:
   git:
-    prune-branches:
-      impl: "simplon.test_impls:pruner"
-      help: "Delete merged branches."
-      params:
-        dry_run: { help: "preview only", short: "-n" }
+    commands:
+      prune-branches: { task: "prune-branches" }
 """)
 
     # act
@@ -409,14 +464,15 @@ def test_a_nested_group_is_named_by_its_own_segment_and_addressed_by_its_path():
     # arrange: `support.git` is not a string anyone can type. The blurb names the node ("git commands.")
     # and any usage hint spells the PATH with spaces (netctl#1444, plan 5).
     m = _load("""
-taxonomy:
-  support:
-    help: "Host and tooling upkeep."
-    groups:
-      git: { help: "Version control verbs." }
+tasks:
+  push: { impl: "simplon.test_impls:nullary", help: "Push." }
+
 groups:
-  support.git:
-    push: { impl: "simplon.test_impls:nullary", help: "Push." }
+  support:
+    groups:
+      git:
+        commands:
+          push: { task: "push" }
 """)
 
     # act
@@ -431,14 +487,16 @@ def test_a_nested_env_first_group_spells_its_usage_hint_with_spaces():
     # arrange: the hint is a command line, so a dotted path there would be unusable. A NESTED group takes
     # its env-first flag from the taxonomy node - `env_groups:` names top-level groups only.
     m = _load("""
-taxonomy:
-  cloud:
-    help: "Cloud."
-    groups:
-      stack: { help: "Stacks.", env_first: true }
+tasks:
+  up: { impl: "simplon.test_impls:nullary", help: "Bring it up." }
+
 groups:
-  cloud.stack:
-    up: { impl: "simplon.test_impls:nullary", help: "Bring it up." }
+  cloud:
+    env_first: true
+    groups:
+      stack:
+        commands:
+          up: { task: "up" }
 """)
 
     # act
@@ -453,13 +511,16 @@ def test_a_param_declaring_short_first_puts_the_short_decl_before_the_long_one()
     # netctl's surface uses both orders - `--watch -w` on one command, `-f --follow` on the next - so the
     # order is not a house style the generator may pick (netctl#1444).
     m = _load("""
+tasks:
+  logs:
+    impl: "simplon.test_impls:pruner"
+    help: "Show logs."
+    params: { dry_run: { help: "follow the log", short: "-f", short_first: true } }
+
 groups:
   monitor:
-    logs:
-      impl: "simplon.test_impls:pruner"
-      help: "Show logs."
-      params:
-        dry_run: { help: "follow the log", short: "-f", short_first: true }
+    commands:
+      logs: { task: "logs" }
 """)
 
     # act
@@ -472,13 +533,16 @@ groups:
 def test_a_param_without_short_first_keeps_the_long_decl_in_front():
     # arrange: the default, and the shape every other declared parameter in netctl's surface has
     m = _load("""
+tasks:
+  logs:
+    impl: "simplon.test_impls:pruner"
+    help: "Show logs."
+    params: { dry_run: { help: "follow the log", short: "-f" } }
+
 groups:
   monitor:
-    logs:
-      impl: "simplon.test_impls:pruner"
-      help: "Show logs."
-      params:
-        dry_run: { help: "follow the log", short: "-f" }
+    commands:
+      logs: { task: "logs" }
 """)
 
     # act
@@ -494,13 +558,16 @@ def test_a_param_declaring_only_help_still_names_its_long_decl():
     # stays out of `params:` entirely - which is consistent, since `params:` is where a command departs
     # from the derivation.
     m = _load("""
+tasks:
+  prune-branches:
+    impl: "simplon.test_impls:pruner"
+    help: "Delete merged branches."
+    params: { dry_run: { help: "preview only" } }
+
 groups:
   git:
-    prune-branches:
-      impl: "simplon.test_impls:pruner"
-      help: "Delete merged branches."
-      params:
-        dry_run: { help: "preview only" }
+    commands:
+      prune-branches: { task: "prune-branches" }
 """)
 
     # act
@@ -514,13 +581,16 @@ def test_an_undeclared_param_is_left_to_typers_own_derivation():
     # arrange: emitting an explicit decl for EVERY parameter would suppress the `--no-remote` secondary
     # Typer derives for a bare bool, which is a working flag disappearing from the surface.
     m = _load("""
+tasks:
+  prune-branches:
+    impl: "simplon.test_impls:pruner"
+    help: "Delete merged branches."
+    params: { dry_run: { help: "preview only" } }
+
 groups:
   git:
-    prune-branches:
-      impl: "simplon.test_impls:pruner"
-      help: "Delete merged branches."
-      params:
-        dry_run: { help: "preview only" }
+    commands:
+      prune-branches: { task: "prune-branches" }
 """)
 
     # act
@@ -537,14 +607,16 @@ def test_a_param_declaring_a_metavar_carries_it_into_the_rendered_argument():
     # bare `[MEMBER]`. netctl's CLI-surface golden does not capture it, so nothing else would notice a
     # body losing it on the way into generated source (netctl#1444).
     m = _load("""
+tasks:
+  nexus:
+    impl: "simplon.test_impls:member_dispatch"
+    help: "Drive the proxy."
+    params: { member: { help: "the group member to run; omit to list them", argument: true, metavar: "[up|down|status|repos|cleanup]" } }
+
 groups:
   support:
-    nexus:
-      impl: "simplon.test_impls:member_dispatch"
-      help: "Drive the proxy."
-      params:
-        member: { help: "the group member to run; omit to list them", argument: true,
-                  metavar: "[up|down|status|repos|cleanup]" }
+    commands:
+      nexus: { task: "nexus" }
 """)
 
     # act
@@ -562,13 +634,16 @@ def test_a_param_declaring_only_a_metavar_is_declared_enough_to_leave_typers_der
     # `member: str | None = None` and drop the metavar without a word - the exact silent loss this key
     # exists to prevent.
     m = _load("""
+tasks:
+  nexus:
+    impl: "simplon.test_impls:member_dispatch"
+    help: "Drive the proxy."
+    params: { member: { argument: true, metavar: "[up|down]" } }
+
 groups:
   support:
-    nexus:
-      impl: "simplon.test_impls:member_dispatch"
-      help: "Drive the proxy."
-      params:
-        member: { argument: true, metavar: "[up|down]" }
+    commands:
+      nexus: { task: "nexus" }
 """)
 
     # act
@@ -582,13 +657,16 @@ def test_a_declared_required_parameter_renders_a_typer_argument():
     # arrange: a required parameter has no default to carry, and `typer.Option(...)` with an Ellipsis
     # default would render it as a required OPTION - a different command line.
     m = _load("""
+tasks:
+  pin:
+    impl: "simplon.test_impls:needs_site"
+    help: "Pin a site."
+    params: { site: { help: "site name (e.g. be)" } }
+
 groups:
   lab:
-    pin:
-      impl: "simplon.test_impls:needs_site"
-      help: "Pin a site."
-      params:
-        site: { help: "site name (e.g. be)" }
+    commands:
+      pin: { task: "pin" }
 """)
 
     # act
@@ -603,10 +681,15 @@ def test_every_parameter_is_annotated_from_the_body(tmp_path):
     # unannotated `dry_run=False` becomes a text option - `--dry-run TEXT` instead of a boolean flag -
     # while every string assertion about decls and help still passes.
     m = _load("""
+tasks:
+  prune-branches: { impl: "simplon.test_impls:pruner", help: "Delete merged branches." }
+  other: { impl: "simplon.test_impls:nullary", help: "Other." }
+
 groups:
   git:
-    prune-branches: { impl: "simplon.test_impls:pruner", help: "Delete merged branches." }
-    other:          { impl: "simplon.test_impls:nullary", help: "Other." }
+    commands:
+      prune-branches: { task: "prune-branches" }
+      other: { task: "other" }
 """)
 
     # act
@@ -622,19 +705,32 @@ groups:
 # --- the registration shapes simplon.cli.assemble performs (netctl#1437) -----------------------------
 
 _SHAPES = """
+tasks:
+  diff: { impl: "simplon.test_impls:nullary", help: "Diff it." }
+  all: { impl: "simplon.test_impls:nullary", help: "Every gate." }
+  unit: { impl: "simplon.test_impls:nullary", help: "One gate." }
+  internal: { impl: "simplon.test_impls:nullary", help: "A plan step." }
+  deploy-all: { impl: "simplon.test_impls:nullary", help: "Every step." }
+  gradle: { impl: "simplon.test_impls:gradle", help: "Run gradle.", passthrough_args: true }
+  package: { impl: "simplon.test_impls:nullary", help: "Package it." }
+
 groups:
   build:
-    build: { depends_on: [diff], help: "Build it." }
-    diff:  { impl: "simplon.test_impls:nullary", help: "Diff it." }
+    commands:
+      build: { depends_on: ["diff"], help: "Build it." }
+      diff: { task: "diff" }
   test:
-    all:      { impl: "simplon.test_impls:nullary", help: "Every gate." }
-    unit:     { impl: "simplon.test_impls:nullary", help: "One gate." }
-    internal: { impl: "simplon.test_impls:nullary", help: "A plan step.", hidden: true }
+    commands:
+      all: { task: "all" }
+      unit: { task: "unit" }
+      internal: { task: "internal", hidden: true }
   deploy:
-    all:    { impl: "simplon.test_impls:nullary", help: "Every step." }
-    gradle: { impl: "simplon.test_impls:gradle", help: "Run gradle.", passthrough_args: true }
+    commands:
+      all: { task: "deploy-all" }
+      gradle: { task: "gradle" }
   package:
-    package: { impl: "simplon.test_impls:nullary", help: "Package it." }
+    commands:
+      package: { task: "package" }
 env_groups: [deploy]
 """
 
@@ -753,14 +849,15 @@ def test_a_nested_group_registers_beneath_its_parent(tmp_path):
     # arrange: `support git commit` is the first intended use of nesting (Plan 5); the capability ships
     # here and is exercised there, so shipping and exercising stay separable in the golden diff.
     m = _load("""
-taxonomy:
-  support:
-    help: "Host and tooling upkeep."
-    groups:
-      git: { help: "Version control verbs." }
+tasks:
+  commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
+
 groups:
-  support.git:
-    commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
+  support:
+    groups:
+      git:
+        commands:
+          commit: { task: "commit" }
 env_groups: []
 """)
 
@@ -780,10 +877,15 @@ def test_a_commands_own_help_wins_over_its_bodys_docstring_even_when_the_impl_is
     # the body's docstring beat the manifest. The new chain puts the command's own `help:` first,
     # regardless of how many commands share the body.
     m = _load("""
+tasks:
+  seed: { impl: "simplon.test_impls:seed", help: "A DIFFERENT summary." }
+  other: { impl: "simplon.test_impls:nullary", help: "Other." }
+
 groups:
   lab:
-    seed:  { impl: "simplon.test_impls:seed", help: "A DIFFERENT summary." }
-    other: { impl: "simplon.test_impls:nullary", help: "Other." }
+    commands:
+      seed: { task: "seed" }
+      other: { task: "other" }
 """)
 
     # act
@@ -839,10 +941,15 @@ def test_an_impl_shared_by_several_commands_takes_each_summary_from_the_manifest
     # arrange: one body has ONE docstring, so all of them would render the same blurb (netctl#1406,
     # where one kernel suite-runner backs every declared test level)
     m = _load("""
+tasks:
+  system: { impl: "simplon.test_impls:nullary", help: "The SYSTEM gate." }
+  acceptance: { impl: "simplon.test_impls:nullary", help: "The ACCEPTANCE gate." }
+
 groups:
   test:
-    system:     { impl: "simplon.test_impls:nullary", help: "The SYSTEM gate." }
-    acceptance: { impl: "simplon.test_impls:nullary", help: "The ACCEPTANCE gate." }
+    commands:
+      system: { task: "system" }
+      acceptance: { task: "acceptance" }
 """)
 
     # act
@@ -856,10 +963,14 @@ groups:
 def test_an_aggregate_takes_its_summary_from_the_manifest_because_it_has_no_body(tmp_path):
     # arrange
     m = _load("""
+tasks:
+  diff: { impl: "simplon.test_impls:nullary", help: "Diff it." }
+
 groups:
   build:
-    build: { depends_on: [diff], help: "Build the images." }
-    diff:  { impl: "simplon.test_impls:nullary", help: "Diff it." }
+    commands:
+      build: { depends_on: ["diff"], help: "Build the images." }
+      diff: { task: "diff" }
 """)
 
     # act
@@ -877,13 +988,21 @@ def test_a_qualified_name_colliding_with_a_literal_command_name_is_rejected():
     # bare name and therefore NOT qualified. Two `def test_all` in one module: Python binds the second
     # over the first and `test all` dispatches the wrong body.
     m = _load("""
+tasks:
+  all: { impl: "simplon.test_impls:nullary", help: "Every test." }
+  deploy-all: { impl: "simplon.test_impls:no_context", help: "Every deploy step." }
+  test_all: { impl: "simplon.test_impls:seed", help: "Something else entirely." }
+
 groups:
   test:
-    all: { impl: "simplon.test_impls:nullary", help: "Every test." }
+    commands:
+      all: { task: "all" }
   deploy:
-    all: { impl: "simplon.test_impls:no_context", help: "Every deploy step." }
+    commands:
+      all: { task: "deploy-all" }
   misc:
-    test_all: { impl: "simplon.test_impls:seed", help: "Something else entirely." }
+    commands:
+      test_all: { task: "test_all" }
 env_groups: [deploy]
 """)
 
@@ -896,10 +1015,15 @@ env_groups: [deploy]
 def test_two_dashed_names_rendering_one_identifier_are_rejected():
     # arrange: `disk-guard` and `disk_guard` are different COMMANDS and one Python name
     m = _load("""
+tasks:
+  disk-guard: { impl: "simplon.test_impls:nullary", help: "Guard the disk." }
+  disk_guard: { impl: "simplon.test_impls:no_context", help: "Guard it differently." }
+
 groups:
   support:
-    disk-guard: { impl: "simplon.test_impls:nullary", help: "Guard the disk." }
-    disk_guard: { impl: "simplon.test_impls:no_context", help: "Guard it differently." }
+    commands:
+      disk-guard: { task: "disk-guard" }
+      disk_guard: { task: "disk_guard" }
 """)
 
     # act / assert
@@ -958,10 +1082,15 @@ def test_a_with_override_on_a_required_parameter_does_not_give_it_a_default(tmp_
     # nobody passed - the exact failure the required-parameter branch exists to prevent, reached through
     # the branch above it.
     m = _load("""
+tasks:
+  pin: { impl: "simplon.test_impls:needs_site", help: "Pin a site." }
+  other: { impl: "simplon.test_impls:nullary", help: "Other." }
+
 groups:
   lab:
-    pin:   { impl: "simplon.test_impls:needs_site", help: "Pin a site.", with: { site: be } }
-    other: { impl: "simplon.test_impls:nullary", help: "Other." }
+    commands:
+      pin: { task: "pin", with: { site: "be" } }
+      other: { task: "other" }
 """)
 
     # act
@@ -979,10 +1108,15 @@ def test_a_pinned_parameter_cannot_be_set_from_the_command_line(tmp_path):
     # arrange: this is what "pins" has to mean to be worth the name - the suite runner's gate name is the
     # motivating case, and a user redirecting it would run one suite under another's identity
     m = _load("""
+tasks:
+  pin: { impl: "simplon.test_impls:needs_site", help: "Pin a site." }
+  other: { impl: "simplon.test_impls:nullary", help: "Other." }
+
 groups:
   lab:
-    pin:   { impl: "simplon.test_impls:needs_site", help: "Pin a site.", with: { site: be } }
-    other: { impl: "simplon.test_impls:nullary", help: "Other." }
+    commands:
+      pin: { task: "pin", with: { site: "be" } }
+      other: { task: "other" }
 """)
     root = _assembled(m, tmp_path)
 
@@ -997,10 +1131,15 @@ def test_an_optional_parameter_is_pinned_by_with_too_rather_than_merely_redefaul
     # arrange: one rule for one key. "sets the default" for an optional parameter and "pins" for a
     # required one is a distinction a reader has to open the body to predict.
     m = _load("""
+tasks:
+  seed: { impl: "simplon.test_impls:seed", help: "Seed." }
+  other: { impl: "simplon.test_impls:nullary", help: "Other." }
+
 groups:
   lab:
-    seed:  { impl: "simplon.test_impls:seed", help: "Seed.", with: { sites: zh } }
-    other: { impl: "simplon.test_impls:nullary", help: "Other." }
+    commands:
+      seed: { task: "seed", with: { sites: "zh" } }
+      other: { task: "other" }
 """)
 
     # act
@@ -1012,21 +1151,29 @@ groups:
 
 def test_describing_a_pinned_parameter_in_params_is_rejected():
     # arrange: a pinned parameter has no command line to appear on, so help text for it would be written
-    # and never shown
-    m = _load("""
+    # and never shown. On the COMMAND's own `params:`, which is where the contradiction lives - a
+    # parameter the TASK documents and this instance pins is the design's canonical shape (one template
+    # documents it once, every instance may pin it), so that half is dropped rather than refused.
+    text = """
+tasks:
+  pin:
+    impl: "simplon.test_impls:needs_site"
+    help: "Pin a site."
+
 groups:
   lab:
-    pin:
-      impl: "simplon.test_impls:needs_site"
-      help: "Pin a site."
-      with: { site: be }
-      params:
-        site: { help: "which site" }
-""")
+    commands:
+      pin:
+        task: "pin"
+        with: { site: "be" }
+        params: { site: { help: "which site" } }
+"""
 
-    # act / assert
+    # act / assert: at LOAD, which is earlier than the render this rule used to be caught by - a
+    # contradiction inside one command is a manifest error, and there is no reason to carry it as far as
+    # the generator
     with pytest.raises(ValueError, match="pinned"):
-        taskgen.render(m, source="demo.yaml", product="sample")
+        _load(text)
 
 
 # --- a partial render, and the hybrid it enables (netctl#1444) ----------------------------------------
@@ -1075,16 +1222,19 @@ def test_a_nested_group_pulls_its_ancestor_into_the_render(tmp_path):
     # arrange: `support.git` cannot be registered without a `support` sub-app to hang from, and asking a
     # product to list both would be bookkeeping the generator can do
     m = _load("""
-taxonomy:
-  support:
-    help: "Host and tooling upkeep."
-    groups:
-      git: { help: "Version control verbs." }
+tasks:
+  commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
+  unit: { impl: "simplon.test_impls:nullary", help: "One gate." }
+
 groups:
-  support.git:
-    commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
+  support:
+    groups:
+      git:
+        commands:
+          commit: { task: "commit" }
   test:
-    unit: { impl: "simplon.test_impls:nullary", help: "One gate." }
+    commands:
+      unit: { task: "unit" }
 env_groups: []
 """)
 
@@ -1109,10 +1259,15 @@ def test_unrenderable_names_the_commands_whose_bodies_cannot_be_written():
     impls.legacy = legacy
     try:
         m = _load("""
+tasks:
+  legacy: { impl: "simplon.test_impls:legacy", help: "Legacy." }
+  push: { impl: "simplon.test_impls:nullary", help: "Push." }
+
 groups:
   git:
-    legacy: { impl: "simplon.test_impls:legacy", help: "Legacy." }
-    push:   { impl: "simplon.test_impls:nullary", help: "Push." }
+    commands:
+      legacy: { task: "legacy" }
+      push: { task: "push" }
 """)
 
         # act
@@ -1155,13 +1310,21 @@ def test_rendering_no_groups_at_all_still_runs_the_manifest_wide_clash_check():
     # it. This is how a product asserts none is hiding behind an empty report - render nothing, and the
     # check that belongs to no single command still runs.
     m = _load("""
+tasks:
+  all: { impl: "simplon.test_impls:nullary", help: "Every test." }
+  deploy-all: { impl: "simplon.test_impls:no_context", help: "Every deploy step." }
+  test_all: { impl: "simplon.test_impls:seed", help: "Something else." }
+
 groups:
   test:
-    all: { impl: "simplon.test_impls:nullary", help: "Every test." }
+    commands:
+      all: { task: "all" }
   deploy:
-    all: { impl: "simplon.test_impls:no_context", help: "Every deploy step." }
+    commands:
+      all: { task: "deploy-all" }
   misc:
-    test_all: { impl: "simplon.test_impls:seed", help: "Something else." }
+    commands:
+      test_all: { task: "test_all" }
 env_groups: [deploy]
 """)
 

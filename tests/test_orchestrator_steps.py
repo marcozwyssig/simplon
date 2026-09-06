@@ -283,19 +283,37 @@ def test_pipeline_carries_the_plan_tree_and_the_invoked_commands_dotted_path():
 # Leaf (= step) order is therefore: unit, image, up-preflight, up-deploy, accept.
 
 _GATES_MANIFEST = """
+tasks:
+  unit: { impl: "demo.impls:unit", help: "The unit gate." }
+  image: { impl: "demo.impls:image", help: "Build the image." }
+  up-preflight: { impl: "demo.impls:preflight", help: "The image provenance guard." }
+  up-deploy: { impl: "demo.impls:deploy", help: "Deploy the lab." }
+  accept: { impl: "demo.impls:accept", help: "The acceptance gate." }
+
 groups:
   build:
-    unit:  { impl: "demo.impls:unit",  help: "The unit gate." }
-    image: { impl: "demo.impls:image", help: "Build the image." }
-    build: { help: "The full build.", depends_on: [unit, image], stop_on_failure: BUILD_FLAG }
+    commands:
+      unit: { task: "unit" }
+      image: { task: "image" }
+      build:
+        help: "The full build."
+        depends_on: ["unit", "image"]
+        stop_on_failure: BUILD_FLAG
   deploy:
-    up-preflight: { impl: "demo.impls:preflight", help: "The image provenance guard." }
-    up-deploy:    { impl: "demo.impls:deploy",    help: "Deploy the lab." }
-    up:           { help: "Bring the lab up.", depends_on: [up-preflight, up-deploy],
-                    stop_on_failure: UP_FLAG }
+    commands:
+      up-preflight: { task: "up-preflight" }
+      up-deploy: { task: "up-deploy" }
+      up:
+        help: "Bring the lab up."
+        depends_on: ["up-preflight", "up-deploy"]
+        stop_on_failure: UP_FLAG
   test:
-    accept: { impl: "demo.impls:accept", help: "The acceptance gate." }
-    all:    { help: "Every gate.", depends_on: [build, up, accept], stop_on_failure: ROOT_FLAG }
+    commands:
+      accept: { task: "accept" }
+      all:
+        help: "Every gate."
+        depends_on: ["build", "up", "accept"]
+        stop_on_failure: ROOT_FLAG
 env_groups: [deploy]
 """
 
@@ -312,16 +330,33 @@ env_groups: [deploy]
 # Leaf order: a1, a2, b1, tail.
 
 _NESTED_GATES_MANIFEST = """
+tasks:
+  a1: { impl: "demo.impls:a1", help: "Inner step one." }
+  a2: { impl: "demo.impls:a2", help: "Inner step two." }
+  b1: { impl: "demo.impls:b1", help: "The inner aggregate's sibling." }
+  tail: { impl: "demo.impls:tail", help: "The step after everything." }
+
 groups:
   gate:
-    a1:    { impl: "demo.impls:a1", help: "Inner step one." }
-    a2:    { impl: "demo.impls:a2", help: "Inner step two." }
-    b1:    { impl: "demo.impls:b1", help: "The inner aggregate's sibling." }
-    inner: { help: "The inner aggregate.", depends_on: [a1, a2], stop_on_failure: INNER_FLAG }
-    mid:   { help: "The middle aggregate.", depends_on: [inner, b1], stop_on_failure: MID_FLAG }
+    commands:
+      a1: { task: "a1" }
+      a2: { task: "a2" }
+      b1: { task: "b1" }
+      inner:
+        help: "The inner aggregate."
+        depends_on: ["a1", "a2"]
+        stop_on_failure: INNER_FLAG
+      mid:
+        help: "The middle aggregate."
+        depends_on: ["inner", "b1"]
+        stop_on_failure: MID_FLAG
   run:
-    tail: { impl: "demo.impls:tail", help: "The step after everything." }
-    root: { help: "The whole run.", depends_on: [mid, tail], stop_on_failure: ROOT_FLAG }
+    commands:
+      tail: { task: "tail" }
+      root:
+        help: "The whole run."
+        depends_on: ["mid", "tail"]
+        stop_on_failure: ROOT_FLAG
 env_groups: [run]
 """
 
@@ -462,8 +497,8 @@ def test_a_leafs_own_stop_on_failure_is_rejected_at_load_rather_than_silently_sc
     would still be correct, so this pins the LOUD half. The message itself is pinned in test_manifest.py."""
     # Arrange: the flag on the LEAF, on no aggregate above it
     text = _with_flags(_GATES_MANIFEST, root=False, build=False, up=False).replace(
-        'unit:  { impl: "demo.impls:unit",  help: "The unit gate." }',
-        'unit:  { impl: "demo.impls:unit",  help: "The unit gate.", stop_on_failure: true }')
+        'unit: { task: "unit" }',
+        'unit: { task: "unit", stop_on_failure: true }')
     # Act / Assert
     with pytest.raises(ValueError, match="stop_on_failure applies to an aggregate"):
         manifest_load(text)
@@ -714,15 +749,28 @@ def test_a_failure_in_the_last_leaf_of_a_flagged_subtree_is_no_abort_at_all():
 #       build.late           <- stop_on_failure, declares aot, carries only image
 #         build.image
 _RELOCATED_DEP_MANIFEST = """
+tasks:
+  jar: { impl: "demo.impls:jar", help: "Build the jar." }
+  aot: { impl: "demo.impls:aot", help: "The shared dependency." }
+  image: { impl: "demo.impls:image", help: "Build the image." }
+
 groups:
   build:
-    jar:   { impl: "demo.impls:jar",   help: "Build the jar." }
-    aot:   { impl: "demo.impls:aot",   help: "The shared dependency." }
-    image: { impl: "demo.impls:image", help: "Build the image." }
-    early: { help: "Planned first.", depends_on: [jar, aot], stop_on_failure: EARLY_FLAG }
-    late:  { help: "Declares aot too.", depends_on: [aot, image], stop_on_failure: true }
+    commands:
+      jar: { task: "jar" }
+      aot: { task: "aot" }
+      image: { task: "image" }
+      early:
+        help: "Planned first."
+        depends_on: ["jar", "aot"]
+        stop_on_failure: EARLY_FLAG
+      late:
+        help: "Declares aot too."
+        depends_on: ["aot", "image"]
+        stop_on_failure: true
   run:
-    root: { help: "The whole run.", depends_on: [early, late] }
+    commands:
+      root: { help: "The whole run.", depends_on: ["early", "late"] }
 env_groups: [run]
 """
 
@@ -772,16 +820,23 @@ def test_a_relocated_dependency_between_agreeing_declarers_keeps_the_scope_of_wh
 #           gate.other
 #       gate.later
 _ANCESTOR_FLAG_MANIFEST = """
+tasks:
+  shared: { impl: "demo.impls:shared", help: "The shared dependency." }
+  other: { impl: "demo.impls:other", help: "What the guard protects." }
+  later: { impl: "demo.impls:later", help: "A step after the guard." }
+
 groups:
   gate:
-    shared:  { impl: "demo.impls:shared", help: "The shared dependency." }
-    other:   { impl: "demo.impls:other",  help: "What the guard protects." }
-    later:   { impl: "demo.impls:later",  help: "A step after the guard." }
-    first:   { help: "Planned first.", depends_on: [shared] }
-    mid:     { help: "Declares shared too.", depends_on: [shared, other] }
-    guarded: { help: "Wants to stop.", depends_on: [mid], stop_on_failure: true }
+    commands:
+      shared: { task: "shared" }
+      other: { task: "other" }
+      later: { task: "later" }
+      first: { help: "Planned first.", depends_on: ["shared"] }
+      mid: { help: "Declares shared too.", depends_on: ["shared", "other"] }
+      guarded: { help: "Wants to stop.", depends_on: ["mid"], stop_on_failure: true }
   run:
-    root: { help: "The whole run.", depends_on: [first, guarded, later] }
+    commands:
+      root: { help: "The whole run.", depends_on: ["first", "guarded", "later"] }
 env_groups: [run]
 """
 

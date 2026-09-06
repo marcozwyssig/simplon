@@ -5,11 +5,14 @@ import pytest
 
 from simplon import context
 
-_MARKER = """\
-product: sample
+_MARKER = """product: sample
+tasks:
+  lint: { impl: "sample.cli:lint", help: "Lint it." }
+
 groups:
   code:
-    lint: { impl: "sample.cli:lint", help: "Lint it." }
+    commands:
+      lint: { task: "lint" }
 env_groups: []
 """
 

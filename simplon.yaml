@@ -4,104 +4,110 @@
 product: simplon
 default: dev
 
-# NOTE: no `commands:` nesting under each group. That shape is the manifest loader's "new form", reserved
-# for a command that INSTANTIATES a task declared under `tasks:` (`task: <name>`, netctl catalogue
-# coordinates included) - it rejects a bare `impl:` outright ("declare the body once under `tasks:` and
-# point this command at it with `task:`"). build/test/support are also catalogue coordinates (see
-# src/simplon/catalogue.yaml), but simplon's own three commands are one-off callables, not reusable task
-# templates, so this stays the flat "old form": group -> command name -> spec, `impl:` straight on the
-# command. Same CLI surface either way (`simplon build wheel`, `simplon test all`, `simplon support
-# doctor`); only the internal schema differs.
+# Simplon's own three bodies. A task is the TEMPLATE for a body, declared once here; a command under
+# `groups:` is an instance of one. These three are one-off callables rather than reusable templates - no
+# other product will ever place `orchestrator.cli:build_wheel` - and they are declared here anyway,
+# because there is no second way to declare a body any more: the flat form that let a command carry its
+# own `impl:` was deleted in si#33, and this manifest was one of the two things still written in it.
+tasks:
+  wheel:
+    impl: "orchestrator.cli:build_wheel"
+    help: "Build the wheel."
+  all:
+    impl: "orchestrator.cli:test_all"
+    help: "Run every test."
+  doctor:
+    impl: "orchestrator.cli:doctor"
+    help: "Check the tools and the environment."
+
+# The command tree. `groups:` hangs off the tree the catalogue declares
+# (src/simplon/catalogue.yaml: build/test/release/deploy/monitor/support) rather than inventing groups of
+# its own - which is also what makes the catalogue reachable without an `import:` section: a command names
+# a coordinate with `task: "<namespace>:<name>"` and the merge happens at load time.
+#
+# A group with no command anywhere under it does not render, so `deploy` and `monitor` are absent from
+# this CLI: simplon deploys nothing and watches nothing. They are the catalogue's, not missing.
 groups:
   build:
-    wheel:
-      help: "Build the wheel."
-      impl: "orchestrator.cli:build_wheel"
-    # The documentation website, as ONE command, and an impl-less AGGREGATE rather than a leaf (#2, task
-    # 3). `reference` writes site/content/using/commands.md by reading the assembled CLI; `site` runs Hugo
-    # over site/ and publishes into build/website/. The first WRITES a page the second READS, so the order
-    # is not a preference - run them the other way round and the published site carries the previous run's
-    # reference, or, the very first time, none at all.
-    #
-    # `depends_on` is where that ordering is stated, because the manifest is the only place it can be
-    # STATED rather than merely happen. A script beside the manifest that called the two in order would be
-    # a second declaration of the same fact, invisible to `plan_for`, and the kernel's own rule against two
-    # sources for one thing is what the generated reference exists to enforce in the first place. Siblings
-    # execute in list order, so [reference, site] IS the edge.
-    #
-    # It has to be an aggregate: `impl` and `depends_on` are mutually exclusive, so neither leaf could
-    # carry the dependency itself. `stop_on_failure` stays at its default (false), deliberately: if the
-    # reference step fails, the Hugo run is still worth attempting and its own verdict is still worth
-    # seeing - the site simply renders without that one page - and the aggregate takes the worst rc
-    # either way, so nothing is hidden by letting the second step run.
-    docs:
-      help: "Write the command reference, then build the website from it."
-      depends_on: [reference, site]
+    commands:
+      wheel: { task: wheel }
+      # The command reference the documentation website embeds is GENERATED, so simplon generates its own
+      # with the kernel it ships - the same rule that makes it build and test itself here.
+      #
+      # `output` is PINNED (#2, task 3): the Hugo project exists, so where the page belongs is no longer
+      # an open question a caller answers on the command line. Pinned with `with:`, the parameter leaves
+      # the command line entirely -- `./simplon.sh build reference` takes no arguments -- which is what
+      # makes the aggregate below possible at all, since a planned step is spawned without arguments. The
+      # path points INTO site/content/, because Hugo only renders what is under its content directory; the
+      # generated page is gitignored there, since only the sources belong in the repo.
+      reference:
+        task: "docs:reference"
+        with:
+          output: site/content/using/commands.md
+          title: "Command reference"
+      # The Hugo run itself. Its five values live in the `site:` section below rather than here, because
+      # they are the product's data and `docs:site` reads them through the manifest -- see
+      # src/simplon/tasks/site.py.
+      site: { task: "docs:site" }
+      # The documentation website, as ONE command, and an impl-less AGGREGATE rather than a leaf (#2, task
+      # 3). `reference` writes site/content/using/commands.md by reading the assembled CLI; `site` runs
+      # Hugo over site/ and publishes into build/website/. The first WRITES a page the second READS, so
+      # the order is not a preference - run them the other way round and the published site carries the
+      # previous run's reference, or, the very first time, none at all.
+      #
+      # `depends_on` is where that ordering is stated, because the manifest is the only place it can be
+      # STATED rather than merely happen. A script beside the manifest that called the two in order would
+      # be a second declaration of the same fact, invisible to `plan_for`, and the kernel's own rule
+      # against two sources for one thing is what the generated reference exists to enforce in the first
+      # place. Siblings execute in list order, so [reference, site] IS the edge.
+      #
+      # It has to be an aggregate: a command either instantiates a task or plans other commands, never
+      # both, so neither leaf could carry the dependency itself. `stop_on_failure` stays at its default
+      # (false), deliberately: if the reference step fails, the Hugo run is still worth attempting and its
+      # own verdict is still worth seeing - the site simply renders without that one page - and the
+      # aggregate takes the worst rc either way, so nothing is hidden by letting the second step run.
+      docs:
+        help: "Write the command reference, then build the website from it."
+        depends_on: [reference, site]
   test:
-    all:
-      help: "Run every test."
-      impl: "orchestrator.cli:test_all"
+    commands:
+      all: { task: all }
+      # The type gate, on the kernel that ships it (#8). Simplon has carried `test:typecheck-python` for
+      # other products since the catalogue had a `test` namespace and had never placed it for itself, so
+      # `mypy src` was something a developer ran by hand or not at all - and for months the answer was 36
+      # findings that everybody had agreed to read as environment noise. One of them was a real bug.
+      #
+      # Placed here rather than run from ci.yml directly, because a step that exists only in a workflow
+      # file is a second way to do the thing: `./simplon.sh test typecheck-python` has to be the SAME
+      # command in CI and on a developer's machine, or the two drift again and the next divergence is
+      # discovered in the pipeline by whoever has the least context. That is the rule this repository
+      # already applies to `test all` and `build wheel`, and there was never a reason for the type gate to
+      # be the exception.
+      #
+      # No `with:` - the defaults are exactly right here: mypy.ini at the product root, mypy run in the
+      # host venv (`orchestrator/requirements.txt` installs `-e .[typecheck]`, so the checker sees the
+      # same installed set the kernel runs against), and the roots stated by the config rather than on the
+      # argv.
+      typecheck-python: { task: "test:typecheck-python" }
+  release:
+    commands:
+      # The release itself (#32). Simplon cuts its own releases with the command it ships, for the same
+      # reason it builds and tests itself with itself: a step never run in its own house rots unseen, and
+      # this one had rotted the furthest - it was the only part of the loop that lived in the README as
+      # prose instead of in the manifest as a command.
+      #
+      # The catalogue PLACES `release:tag` itself, so this entry does not bring the command into
+      # existence - it confirms the placement in this product's own tree, which is what an empty-bodied
+      # refinement is for. That it lands in `release` is not a choice made here either: a coordinate that
+      # opens with a phase name belongs to that phase (si#34).
+      #
+      # Note what is NOT here: a version. There is nowhere to put one. `pyproject.toml` declares
+      # `dynamic = ["version"]`, setuptools-scm derives the number from the tag, and the tag is the
+      # argument - so `./simplon.sh release tag v0.1.14` IS the whole act of choosing 0.1.14.
+      tag: { task: "release:tag" }
   support:
-    doctor:
-      help: "Check the tools and the environment."
-      impl: "orchestrator.cli:doctor"
-
-# The command reference the documentation website embeds is GENERATED, so simplon generates its own with
-# the kernel it ships - the same rule that makes it build and test itself here. Both documentation tasks
-# are placed through `import:` + `tasks:` because this manifest is still the flat old form throughout:
-# that is the old form's way of instantiating a catalogue coordinate, and it needs no group migration to
-# work. The command NAME is the coordinate's second half under that form, which is why the two commands
-# are `build reference` and `build site` and the aggregate over them had to be called something else.
-import:
-  delivery: [docs, test, release]
-tasks:
-  # `output` is PINNED now (#2, task 3): the Hugo project exists, so where the page belongs is no longer
-  # an open question a caller answers on the command line. Pinned with `with:`, the parameter leaves the
-  # command line entirely - `./simplon.sh build reference` takes no arguments - which is what makes the
-  # aggregate above possible at all, since a planned step is spawned without arguments. The path points
-  # INTO site/content/, because Hugo only renders what is under its content directory; the generated page
-  # is gitignored there, since only the sources belong in the repo.
-  docs:reference:
-    group: build
-    with:
-      output: site/content/using/commands.md
-      title: "Command reference"
-  # The Hugo run itself. Its five values live in the `site:` section below rather than here, because they
-  # are the product's data and `docs:site` reads them through the manifest - see src/simplon/tasks/site.py.
-  docs:site:
-    group: build
-  # The type gate, on the kernel that ships it (#8). Simplon has carried `test:typecheck-python` for other
-  # products since the catalogue had a `test` namespace and had never placed it for itself, so `mypy src`
-  # was something a developer ran by hand or not at all - and for months the answer was 36 findings that
-  # everybody had agreed to read as environment noise. One of them was a real bug.
-  #
-  # Placed here rather than run from ci.yml directly, because a step that exists only in a workflow file
-  # is a second way to do the thing: `./simplon.sh test typecheck-python` has to be the SAME command in CI and on
-  # a developer's machine, or the two drift again and the next divergence is discovered in the pipeline by
-  # whoever has the least context. That is the rule this repository already applies to `test all` and
-  # `build wheel`, and there was never a reason for the type gate to be the exception.
-  #
-  # No `with:` - the defaults are exactly right here: mypy.ini at the product root, mypy run in the host
-  # venv (`orchestrator/requirements.txt` installs `-e .[typecheck]`, so the checker sees the same
-  # installed set the kernel runs against), and the roots stated by the config rather than on the argv.
-  test:typecheck-python:
-    group: test
-  # The release itself (#32). Simplon cuts its own releases with the command it ships, for the same
-  # reason it builds and tests itself with itself: a step never run in its own house rots unseen, and
-  # this one had rotted the furthest - it was the only part of the loop that lived in the README as
-  # prose instead of in the manifest as a command.
-  #
-  # `group: release` is not a choice made here. `release:tag` is a `release` coordinate, and a
-  # coordinate that opens with a phase name belongs to that phase; the kernel's own catalogue places it
-  # in exactly the same group for every product that adopts the new manifest form. This entry is the
-  # old form's way of saying the same thing, and it is what brings the `release` group into existence in
-  # this CLI - simplon had none, because until now it published nothing it had a command for.
-  #
-  # Note what is NOT here: a version. There is nowhere to put one. `pyproject.toml` declares
-  # `dynamic = ["version"]`, setuptools-scm derives the number from the tag, and the tag is the
-  # argument - so `./simplon.sh release tag v0.1.14` IS the whole act of choosing 0.1.14.
-  release:tag:
-    group: release
+    commands:
+      doctor: { task: doctor }
 
 # The documentation website's data (#2). Five values, every one of them required to BE declared: the
 # kernel defaults none of them, because a default would be simplon's own directory layout imposed on

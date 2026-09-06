@@ -7,13 +7,16 @@ import pytest
 from simplon import context
 from simplon.context import ProductContext
 
-_SAMPLE_MANIFEST = """\
-product: sample
+_SAMPLE_MANIFEST = """product: sample
 images:
   web: sample:local
+tasks:
+  lint: { impl: "sample.cli:lint", help: "Lint the thing." }
+
 groups:
   test:
-    lint: { impl: "sample.cli:lint", help: "Lint the thing." }
+    commands:
+      lint: { task: "lint" }
 env_groups: []
 """
 
@@ -70,9 +73,12 @@ def test_manifest_parses_and_validates_the_command_taxonomy(tmp_path):
     # act
     mf = ctx.manifest()
 
-    # assert: the CLI engine gets the parsed taxonomy
-    assert mf.groups == {"test": ("lint",)}
+    # assert: the CLI engine gets the parsed taxonomy - the product's own command, plus the baseline
+    # commands the kernel's catalogue places in every product (`ctx.manifest()` always passes it, which
+    # is exactly what makes the loop the platform's rather than each manifest's)
+    assert mf.groups["test"] == ("lint",)
     assert mf.spec_for("test", "lint").help == "Lint the thing."
+    assert mf.groups["support.git"][0] == "commit"
 
 
 def test_manifest_data_fails_loudly_on_a_missing_file(tmp_path):

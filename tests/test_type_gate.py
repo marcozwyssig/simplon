@@ -45,8 +45,9 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 REQUIREMENTS = ROOT / "orchestrator" / "requirements.txt"
 CONFIG = ROOT / "mypy.ini"
 
-#: The catalogue coordinate the kernel carries, and the command it becomes under this manifest's flat
-#: form (the coordinate's second half is the command name, as with `build reference` / `build site`).
+#: The catalogue coordinate the kernel carries, and the command that instantiates it in this manifest's
+#: `test` group (the coordinate's second half is the command name, as with `build reference` / `build
+#: site`).
 COORDINATE = "test:typecheck-python"
 GATE = "./simplon.sh test typecheck-python"
 
@@ -93,11 +94,11 @@ def test_theManifestPlacesTheKernelsOwnTypeGate() -> None:
     # arrange / act
     data = _manifest()
 
-    # assert: the coordinate is imported AND instantiated - importing a namespace without using it is
-    # caught by the loader, but declaring neither would just make the command quietly not exist.
-    assert "test" in data["import"]["delivery"]
-    assert COORDINATE in data["tasks"]
-    assert data["tasks"][COORDINATE]["group"] == "test"
+    # assert: a command in the `test` group instantiates the coordinate. Reading the manifest rather than
+    # the loaded model is deliberate - what si#8 is about is the DECLARATION being present in this file,
+    # and a command that merely resolves would still be one somebody could delete here without noticing.
+    commands = data["groups"]["test"]["commands"]
+    assert commands["typecheck-python"]["task"] == COORDINATE
 
 
 def test_everyWorkflowThatVerifiesThisTreeAlsoRunsTheGate() -> None:

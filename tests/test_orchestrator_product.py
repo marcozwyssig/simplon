@@ -31,15 +31,23 @@ def _factory(rc_by_cmd: dict[str, int] | None = None):
 # impl-less aggregate whose plan is (install, build, up, seed).
 
 _DEPS_MANIFEST = """
+tasks:
+  install: { impl: "demo.impls:install", help: "Install host prereqs." }
+  build: { impl: "demo.impls:build", help: "Build the artefacts." }
+  up: { impl: "demo.impls:up", help: "Deploy up." }
+  seed: { impl: "demo.impls:seed", help: "Seed." }
+
 groups:
   build:
-    install: { impl: "demo.impls:install", help: "Install host prereqs." }
-    build:   { impl: "demo.impls:build",   help: "Build the artefacts." }
-    prep:    { help: "Install + build.", depends_on: [install, build] }
+    commands:
+      install: { task: "install" }
+      build: { task: "build" }
+      prep: { help: "Install + build.", depends_on: ["install", "build"] }
   deploy:
-    up:      { impl: "demo.impls:up",   help: "Deploy up." }
-    seed:    { impl: "demo.impls:seed", help: "Seed." }
-    bringup: { help: "Full bring-up.", depends_on: [prep, up, seed] }
+    commands:
+      up: { task: "up" }
+      seed: { task: "seed" }
+      bringup: { help: "Full bring-up.", depends_on: ["prep", "up", "seed"] }
 env_groups: [deploy]
 """
 
@@ -68,8 +76,8 @@ def test_run_command_carries_the_commands_stop_on_failure_onto_the_pipeline(monk
     monkeypatch.setattr(product, "dispatch", lambda p: captured.setdefault("pipeline", p) or 0)
     factory, _ = _factory()
     ctx = product.StepFactoryContext("demo", factory)
-    text = _DEPS_MANIFEST.replace("depends_on: [prep, up, seed]",
-                                  f"depends_on: [prep, up, seed], stop_on_failure: {str(stop_on_failure).lower()}")
+    text = _DEPS_MANIFEST.replace('depends_on: ["prep", "up", "seed"]',
+                                  f'depends_on: ["prep", "up", "seed"], stop_on_failure: {str(stop_on_failure).lower()}')
     mf = manifest_load(text)
 
     # act
@@ -101,8 +109,8 @@ def test_run_command_holds_the_host_awake_for_a_plan_that_declares_it(monkeypatc
     monkeypatch.setattr(product, "dispatch", lambda p: (held.append("dispatch"), 0)[1])
     factory, _ = _factory()
     ctx = product.StepFactoryContext("demo", factory)
-    text = _DEPS_MANIFEST.replace("depends_on: [prep, up, seed]",
-                                  f"depends_on: [prep, up, seed], keep_awake: {str(declared).lower()}")
+    text = _DEPS_MANIFEST.replace('depends_on: ["prep", "up", "seed"]',
+                                  f'depends_on: ["prep", "up", "seed"], keep_awake: {str(declared).lower()}')
     mf = manifest_load(text)
 
     # act
@@ -163,13 +171,19 @@ def test_run_command_disambiguates_an_ambiguous_root_via_the_group_keyword(monke
     factory, built = _factory()
     ctx = product.StepFactoryContext("demo", factory)
     text = """
+tasks:
+  unit: { impl: "demo.impls:unit", help: "Unit gate." }
+  up: { impl: "demo.impls:up", help: "Deploy up." }
+
 groups:
   test:
-    unit: { impl: "demo.impls:unit", help: "Unit gate." }
-    all:  { help: "Every test stage.", depends_on: [unit] }
+    commands:
+      unit: { task: "unit" }
+      all: { help: "Every test stage.", depends_on: ["unit"] }
   deploy:
-    up:  { impl: "demo.impls:up", help: "Deploy up." }
-    all: { help: "Full bring-up.", depends_on: [up] }
+    commands:
+      up: { task: "up" }
+      all: { help: "Full bring-up.", depends_on: ["up"] }
 env_groups: [deploy]
 """
     mf = manifest_load(text)
@@ -266,13 +280,19 @@ def test_run_command_lines_up_steps_and_tree_leaves_index_for_index(monkeypatch)
 
 
 _TWO_ALLS_MANIFEST = """
+tasks:
+  unit: { impl: "demo.impls:unit", help: "Unit gate." }
+  up: { impl: "demo.impls:up", help: "Deploy up." }
+
 groups:
   test:
-    unit: { impl: "demo.impls:unit", help: "Unit gate." }
-    all:  { help: "Every test stage.", depends_on: [unit] }
+    commands:
+      unit: { task: "unit" }
+      all: { help: "Every test stage.", depends_on: ["unit"] }
   deploy:
-    up:  { impl: "demo.impls:up", help: "Deploy up." }
-    all: { help: "Full bring-up.", depends_on: [up] }
+    commands:
+      up: { task: "up" }
+      all: { help: "Full bring-up.", depends_on: ["up"] }
 env_groups: [deploy]
 """
 

@@ -32,15 +32,22 @@ from simplon.orchestrator.steps import (
 #         build.compile
 #       deploy.up
 _NESTED_MANIFEST = """
+tasks:
+  install: { impl: "demo.impls:install", help: "Install host prereqs." }
+  compile: { impl: "demo.impls:compile", help: "Compile the artefacts." }
+  up: { impl: "demo.impls:up", help: "Deploy up." }
+
 groups:
   build:
-    install: { impl: "demo.impls:install", help: "Install host prereqs." }
-    compile: { impl: "demo.impls:compile", help: "Compile the artefacts." }
-    prep:    { help: "Install + compile.", depends_on: [install, compile] }
-    build:   { help: "The full build.", depends_on: [prep] }
+    commands:
+      install: { task: "install" }
+      compile: { task: "compile" }
+      prep: { help: "Install + compile.", depends_on: ["install", "compile"] }
+      build: { help: "The full build.", depends_on: ["prep"] }
   deploy:
-    up:      { impl: "demo.impls:up", help: "Deploy up." }
-    bringup: { help: "Full bring-up.", depends_on: [prep, build, install, up] }
+    commands:
+      up: { task: "up" }
+      bringup: { help: "Full bring-up.", depends_on: ["prep", "build", "install", "up"] }
 env_groups: [deploy]
 """
 
