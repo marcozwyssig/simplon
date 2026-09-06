@@ -16,6 +16,7 @@ carries that. Two subprocess tests there take the evidence at five levels, the w
 """
 import ast
 import configparser
+import subprocess
 
 from conftest import ROOT
 
@@ -56,7 +57,14 @@ def test_the_kernels_own_block_sits_under_deploy_and_not_at_the_root() -> None:
     # the two halves the shim derives from LAUNCH_ORCH_DIR
     assert (block / "requirements.txt").is_file()
     assert (block / "src" / "python" / "orchestrator" / "cli.py").is_file()
-    assert not (ROOT / "orchestrator").exists(), "the old root-level block is still there"
+    # The REPOSITORY must not carry the old block any more. Deliberately asked of git rather than of the
+    # filesystem: a checkout that predates the move keeps an untracked `orchestrator/.venv` and its
+    # `__pycache__`, and `exists()` cannot tell that leftover from a block somebody committed back. Two
+    # states, one answer - the very confusion this repository is built to refuse. `git ls-files` answers
+    # the question actually being asked, and a stale venv is a local cleanup rather than a red suite.
+    tracked = subprocess.run(["git", "ls-files", "orchestrator"], cwd=ROOT,
+                             capture_output=True, text=True, check=True).stdout.split()
+    assert not tracked, f"the old root-level block is still tracked: {tracked[:5]}"
 
 
 def test_the_kernels_own_shims_are_exactly_what_its_own_scaffolder_writes() -> None:
