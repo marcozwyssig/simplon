@@ -1,16 +1,21 @@
 """Container-image build/publish naming primitives for the *ctl orchestrators (netctl#730, extracted from
 netctl's orchestrator tooling).
 
-Two pure string derivations the packaging/publish commands share: the image version TAG (from an
-``IMAGE_VERSION`` override, else the Gradle ``version = "..."``, else a fallback) and the fully-qualified
-registry repo string ``[registry/]namespace/name``. No docker, no I/O - product-agnostic, so a product's
-package/publish commands read them the same way. netctl and asbundle both import it.
+FIVE pure string derivations the packaging/publish commands share - ``image_version`` (from an
+``IMAGE_VERSION`` override, else the Gradle ``version = "..."``, else a fallback), ``hub_repo``,
+``image_ref``, ``registry_prefix`` and ``require_registry``, which between them produce the
+fully-qualified registry repo string ``[registry/]namespace/name``. No docker, no I/O - product-agnostic,
+so a product's package/publish commands read them the same way.
+
+All five are in use, across two products: netctl imports ``hub_repo`` and ``image_version``, asbundle
+calls ``image_ref``, ``registry_prefix`` and ``require_registry``. (The head said "two pure string
+derivations" from #730 until #37, back when there were two.)
 
 IT WAS CALLED ``simplon.images`` UNTIL #37, and the rename is the point rather than a tidy-up. That name
 sat one character of path away from ``simplon.tasks.image``, the container-image task body, and the #31
 review tripped over exactly that pair - while the two are not related at all: the task body builds and
-pushes with docker and has never imported this module. What is here is two pure string derivations, so
-``imagenames`` says what it is and no longer reads like the task. A tombstone at the old path says where
+pushes with docker and has never imported this module. What is here is naming, so ``imagenames`` says
+what it is and no longer reads like the task. A tombstone at the old path says where
 it went; see ``simplon.surface``.
 """
 from __future__ import annotations

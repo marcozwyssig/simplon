@@ -27,9 +27,22 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "simplon"
 NOT_CLASSIFIED = {"__init__", "_version"}
 
 
-def _top_level_modules() -> set[str]:
-    """Every module that actually sits at the top level of the package, read off the directory."""
-    return {p.stem for p in SRC.glob("*.py")} - NOT_CLASSIFIED
+def _top_level_names() -> set[str]:
+    """Every name importable as `simplon.<x>`, read off the directory - MODULES and SUBPACKAGES both.
+
+    The subpackages are the half this originally missed, and missing them was not a rounding error:
+    `simplon.orchestrator` and `simplon.tasks` are the second and third most imported things the kernel
+    offers. A version of this that globbed `*.py` called the declaration complete while the two biggest
+    names in it were classified by nobody, and a new subpackage beside `cli.py` passed in silence.
+    """
+    modules = {p.stem for p in SRC.glob("*.py")} - NOT_CLASSIFIED
+    packages = {d.name for d in SRC.iterdir() if d.is_dir() and (d / "__init__.py").exists()}
+    return modules | packages
+
+
+def _declared() -> set[str]:
+    """Every name the declaration places, whichever set it places it in."""
+    return set(surface.LIBRARY | surface.INTERNAL | surface.PACKAGES) | set(surface.MOVED)
 
 
 # --- the declaration against the tree ---------------------------------------------------------------
@@ -39,46 +52,41 @@ def test_every_top_level_module_is_classified():
     """The point of the whole module: a new file beside `cli.py` cannot appear without somebody saying
     which surface it is on. This is the test that makes the declaration a decision rather than a note -
     add a module and this goes red until it is placed."""
-    # arrange
-    classified = surface.LIBRARY | surface.INTERNAL | set(surface.MOVED)
-
     # act
-    unplaced = _top_level_modules() - classified
+    unplaced = _top_level_names() - _declared()
 
     # assert
     assert not unplaced, (
-        f"{sorted(unplaced)} sit at the top level of simplon and are in none of "
-        f"surface.LIBRARY / INTERNAL / MOVED - decide whether a product may import them")
+        f"{sorted(unplaced)} are importable as simplon.<name> and are in none of "
+        f"surface.LIBRARY / PACKAGES / INTERNAL / MOVED - decide whether a product may import them")
 
 
 def test_the_declaration_names_nothing_that_has_gone():
     """The other direction: a module deleted or moved without touching the declaration leaves a promise
     pointing at nothing, which is worse than no promise at all."""
-    # arrange
-    declared = surface.LIBRARY | surface.INTERNAL | set(surface.MOVED)
-
     # act
-    phantom = declared - _top_level_modules()
+    phantom = _declared() - _top_level_names()
 
     # assert
-    assert not phantom, f"surface declares {sorted(phantom)}, which are not top-level simplon modules"
+    assert not phantom, f"surface declares {sorted(phantom)}, which are not importable as simplon.<name>"
 
 
 def test_the_three_sets_do_not_overlap():
     """A module is on one surface. `library and also internal` is not a state anybody can act on."""
     # arrange / act
-    pairs = [("LIBRARY/INTERNAL", surface.LIBRARY & surface.INTERNAL),
-             ("LIBRARY/MOVED", surface.LIBRARY & set(surface.MOVED)),
-             ("INTERNAL/MOVED", surface.INTERNAL & set(surface.MOVED))]
+    sets = {"LIBRARY": set(surface.LIBRARY), "INTERNAL": set(surface.INTERNAL),
+            "PACKAGES": set(surface.PACKAGES), "MOVED": set(surface.MOVED)}
+    pairs = [(f"{a}/{b}", sets[a] & sets[b])
+             for i, a in enumerate(sorted(sets)) for b in sorted(sets)[i + 1:]]
 
     # assert
     for names, overlap in pairs:
         assert not overlap, f"{sorted(overlap)} is in both halves of {names}"
 
 
-def test_every_library_module_imports():
-    """A promised module that does not import is a promise broken at the first line."""
-    for name in sorted(surface.LIBRARY):
+def test_every_promised_name_imports():
+    """A promised module or subpackage that does not import is a promise broken at the first line."""
+    for name in sorted(surface.LIBRARY | surface.PACKAGES):
         importlib.import_module(f"simplon.{name}")
 
 
@@ -86,17 +94,24 @@ def test_no_module_is_promised_under_a_task_body_s_name():
     """The collision this ticket exists for. A top-level module sharing a name with a task body is the
     shape the #31 review lost time to - `simplon.images` against `simplon.tasks.image`. The library
     surface is the half that may not collide, because it is the half a product types."""
-    # arrange: task bodies, and the singular/plural spellings that read as the same word
+    # arrange: compare the two sides on a NORMALISED spelling, in both directions. An earlier version
+    # only added the plural of each body, so a body named `hosts` against the library's `host` - the
+    # mirror image of the original defect - went green. Normalising instead of expanding one side
+    # cannot be one-sided.
+    def singular(name: str) -> str:
+        return name[:-1] if name.endswith("s") and not name.endswith("ss") else name
+
     bodies = {p.stem for p in (SRC / "tasks").glob("*.py")} - {"__init__"}
-    spellings = bodies | {b + "s" for b in bodies}
+    by_body = {singular(b): b for b in bodies}
 
     # act
-    collisions = surface.LIBRARY & spellings
+    collisions = {f"simplon.{m} / simplon.tasks.{by_body[singular(m)]}"
+                  for m in surface.LIBRARY if singular(m) in by_body}
 
     # assert
     assert not collisions, (
-        f"{sorted(collisions)} is promised to products AND names a task body in simplon/tasks/ - "
-        f"one of the two has to be renamed, because nothing at the call site says which is which")
+        f"{sorted(collisions)} name the same thing on two levels - one of each pair has to be "
+        f"renamed, because nothing at the call site says which is which")
 
 
 # --- the tombstones ---------------------------------------------------------------------------------
@@ -181,9 +196,10 @@ def test_the_move_is_announced_where_python_will_actually_show_it(tmp_path):
 
 
 def test_a_tombstone_does_not_announce_a_move_for_a_dunder_probe():
-    """`inspect`, `pytest` and `importlib` ask any module they touch for `__path__`, `__all__` and
+    """`inspect`, `pytest` and `importlib` ask any module they touch for `__path__`, `__spec__` and
     friends. Answering those with a move notice would report a migration no product code asked for -
-    and, worse, teach the reader to ignore the message."""
+    and, worse, teach the reader to ignore the message. `__all__` is the deliberate exception and has
+    its own test below."""
     # arrange
     tombstone = importlib.import_module(f"simplon.{sorted(surface.MOVED)[0]}")
 
@@ -191,10 +207,66 @@ def test_a_tombstone_does_not_announce_a_move_for_a_dunder_probe():
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         with pytest.raises(AttributeError):
-            tombstone.__all__
+            tombstone.__path__
 
     # assert
     assert not caught, [str(w.message) for w in caught]
+
+
+@pytest.mark.parametrize("old, new", sorted(surface.MOVED.items()))
+def test_a_star_import_through_a_tombstone_binds_what_the_real_module_binds(old, new, tmp_path):
+    """A star-import is the one shape that fails SILENTLY through a forwarding module, which makes it
+    this project's recurring defect in miniature: `from simplon.images import *` asks for `__all__`,
+    and a tombstone that refuses it falls back to its own module dict - binding `Any`, `annotations`
+    and `surface` while raising no warning at all. The caller then has none of the names it asked for
+    and no statement that anything is wrong.
+
+    Measured before the fix: exactly those three names, zero warnings. So `__all__` is answered, and
+    answered with the TARGET's star-import surface, which is what this pins - not a hand-written list.
+    """
+    # arrange
+    reference: dict[str, object] = {}
+    exec(f"from {new} import *", reference)
+    expected = {k for k in reference if not k.startswith("__")}
+
+    # act
+    through_tombstone: dict[str, object] = {}
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        exec(f"from simplon.{old} import *", through_tombstone)
+    bound = {k for k in through_tombstone if not k.startswith("__")}
+
+    # assert: the same names, the same objects, and the move was not passed over in silence
+    assert bound == expected, f"star-import through simplon.{old} bound {sorted(bound)}"
+    assert all(through_tombstone[k] is reference[k] for k in expected)
+    assert any(surface.moved_message(f"simplon.{old}", new) == str(w.message)
+               for w in caught if issubclass(w.category, FutureWarning)), (
+        f"a star-import through simplon.{old} said nothing about the move")
+
+
+def test_the_innards_under_tasks_are_exactly_the_modules_no_coordinate_names():
+    """The claim the website makes about `simplon/tasks/`, derived rather than restated.
+
+    The tempting phrasing - "a product may not import a task body" - is FALSE, and the kernel is what
+    made it false: five consumers import one, and the generated CLI (`templates/cli.py.j2`, ours)
+    emits twelve such imports. The line that does hold is named versus unnamed: a module some
+    catalogue coordinate points its `impl:` at is reachable; one no coordinate names is innards.
+
+    This derives both sides from `catalogue.yaml` so the page cannot drift away from the catalogue.
+    """
+    # arrange
+    catalogue = (SRC / "catalogue.yaml").read_text(encoding="utf-8")
+    named = set(re.findall(r"impl:\s*\"?simplon\.tasks\.([a-z_]+):", catalogue))
+    present = {p.stem for p in (SRC / "tasks").glob("*.py")} - {"__init__"}
+
+    # act
+    innards = present - named
+
+    # assert: every module the catalogue names is really there, and the innards are the two that moved
+    assert named <= present, f"the catalogue names {sorted(named - present)}, which is not in tasks/"
+    assert innards == {"allure", "gitops"}, (
+        f"the innards of simplon/tasks/ are now {sorted(innards)}; the website names allure and "
+        f"gitops, and one of the two has to change")
 
 
 # --- the website says the same thing --------------------------------------------------------------

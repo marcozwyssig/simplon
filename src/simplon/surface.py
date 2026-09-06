@@ -24,8 +24,8 @@ written down, once, here - and `tests/test_surface.py` holds it to the tree: eve
 to appear in exactly one of the three sets below, so a module cannot be added without somebody deciding
 which surface it is on.
 
-THE TWO RULES THAT FOLLOW, and both are placements rather than refusals - nothing here rejects a
-manifest, nothing fails at load, and no product may say less than it could before.
+THE TWO RULES THAT FOLLOW. Both are placements, not refusals: nothing here rejects a manifest,
+nothing fails at load, and no PRODUCT may say less than it could before.
 
   1. A module only the kernel's own task bodies use is not library, and it does not belong beside
      `cli.py` and `context.py` where the kernel lives - it belongs under `simplon/tasks/`, with the
@@ -36,6 +36,27 @@ manifest, nothing fails at load, and no product may say less than it could befor
      gets renamed, because it is the half a product types.
 
 All four are reachable at their old paths, announcing the move; see `MOVED`.
+
+Both rules are held by `tests/test_surface.py`, and that makes them SELF-BINDING in the sense
+`CLAUDE.md` uses (kind 2): a future kernel author may no longer place a module wherever they like, or
+name a library module after a task body. It costs a product nothing - no manifest, no command and no
+import of theirs is affected - but calling it "no rule at all" would be two posts too generous.
+
+WHAT `simplon/tasks/` IS, STATED CAREFULLY, because the obvious phrasing is false. A task body is
+NORMALLY reached by coordinate: a product writes `<namespace>:<name>` and the kernel resolves the
+`impl:`. But "a product may not import a task body" is not true and never was - five consumers do it
+today, and the kernel is the one that taught them:
+
+  - a hand-written composition root imports a body to call or wrap it (`from simplon.tasks import
+    image` in agile-cockpit, `from simplon.tasks import artifact` in cleon);
+  - the GENERATED CLI imports every body it registers, and that generator is the kernel's own
+    `templates/cli.py.j2` - twelve such lines across netctl and asbundle, written by us.
+
+So the honest line inside `simplon/tasks/` is not "body versus product" but NAMED versus UNNAMED: a
+module some catalogue coordinate points its `impl:` at is reachable, by coordinate first and by import
+where a composition root has reason to. A module in there that NO coordinate names is innards -
+`allure` and `gitops` today - and nothing outside the directory imports either. That split is
+derivable from `catalogue.yaml` rather than declared, so `test_surface.py` derives it.
 """
 from __future__ import annotations
 
@@ -53,6 +74,17 @@ LIBRARY = frozenset({
     "interact", "labegress", "labhost", "labinstance", "labnet", "linux", "log", "nexusproxy",
     "portainer", "ports", "pyvenv", "run", "surface", "taskgen", "topology", "verdict", "waits",
 })
+
+#: The subpackages beside those modules. Both are on the library surface and are among the most
+#: imported things the kernel has (`simplon.orchestrator` at 21 consumer import sites,
+#: `simplon.tasks` at 16), which is exactly why leaving them unclassified was a hole: the completeness
+#: test read `*.py` only, so a new subpackage could appear beside `cli.py` and be classified by nobody.
+#:
+#: They are declared apart from `LIBRARY` rather than folded into it because their rule differs. A
+#: LIBRARY module is promised whole. `simplon.orchestrator` is too. `simplon.tasks` is a directory of
+#: task BODIES, where the coordinate is the front door and a direct import is the deliberate exception
+#: described in this module's head - and where the modules no coordinate names are innards.
+PACKAGES = frozenset({"orchestrator", "tasks"})
 
 #: The kernel's own machinery. No product imports these, and they may change without notice.
 #:
@@ -103,9 +135,22 @@ def moved_attr(old: str, new: str, name: str) -> Any:
     FutureWarning is shown by default whoever triggers it.
 
     Dunder lookups are refused rather than announced: `inspect`, `pytest` and `importlib` probe for
-    `__path__`, `__all__` and friends on any module they touch, and answering those with a warning would
-    report a move that no product code asked for.
+    `__path__`, `__spec__` and friends on any module they touch, and answering those with a warning
+    would report a move that no product code asked for.
+
+    `__all__` IS THE EXCEPTION, and it is not a technicality. `from simplon.images import *` asks a
+    module for `__all__` and then for each name in it. Refuse `__all__` and the star-import falls back
+    to "every public name in the module dict" - which, for a tombstone, is `Any`, `annotations` and
+    `surface`: the star-import silently binds the wrong three names and warns about nothing. That is
+    this project's recurring defect exactly - an outcome that cannot tell "nothing to do" from "wrong"
+    - so `__all__` is answered, with the move announced like any other use, and the answer is the
+    TARGET's own star-import surface so the tombstone behaves precisely like the module it stands for.
     """
+    if name == "__all__":
+        warnings.warn(moved_message(old, new), FutureWarning, stacklevel=3)
+        target = import_module(new)
+        return list(getattr(target, "__all__",
+                            [n for n in vars(target) if not n.startswith("_")]))
     if name.startswith("__") and name.endswith("__"):
         raise AttributeError(f"module {old!r} has no attribute {name!r}")
     warnings.warn(moved_message(old, new), FutureWarning, stacklevel=3)

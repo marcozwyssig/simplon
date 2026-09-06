@@ -18,18 +18,38 @@ import was to read every consumer and guess.
 
 ## The rule
 
-**Top level is the library. `simplon/tasks/` is the kernel's own.**
-
-```
-simplon/log.py            you may import this
-simplon/run.py            you may import this
-simplon/tasks/vcs.py      you may not — reach it by coordinate, `vcs:commit`
-simplon/tasks/gitops.py   you may not — it is that body's innards
-```
-
-A module that only the kernel's own task bodies import is not a library, and it does not belong beside
-`cli.py` and `context.py` where the kernel lives. It belongs under `simplon/tasks/`, with the bodies
+**A module that only the kernel's own task bodies import is not a library.** It does not belong beside
+`cli.py` and `context.py` where the kernel lives; it belongs under `simplon/tasks/`, with the bodies
 that use it.
+
+```
+simplon/log.py            library — import it
+simplon/run.py            library — import it
+simplon/catalogue.py      machinery — may change without notice
+simplon/tasks/vcs.py      a task body — reach it by coordinate, `vcs:commit`
+simplon/tasks/gitops.py   that body's innards — no promise at all
+```
+
+### What `simplon/tasks/` is, stated carefully
+
+The obvious phrasing — *"a product may not import a task body"* — is **false**, and it is worth being
+exact about, because five consumers import one today and the kernel is what taught them to:
+
+* a hand-written composition root imports a body to call or wrap it (`from simplon.tasks import image`
+  in agile-cockpit, `from simplon.tasks import artifact` in cleon);
+* the **generated** CLI imports every body it registers — and that generator is the kernel's own
+  `templates/cli.py.j2`. Twelve such lines across netctl and asbundle were written by us.
+
+So the coordinate is the **front door**, not the only door. `<namespace>:<name>` is what a *manifest*
+may say — it never names a module path, which is what lets a body move inside the kernel without
+breaking a product. A direct import is the deliberate exception a composition root and the generator
+take.
+
+The line that does hold inside `simplon/tasks/` is **named versus unnamed**: a module some catalogue
+coordinate points its `impl:` at is reachable, by coordinate first and by import where a composition
+root has reason to. A module in there that **no** coordinate names is innards — `allure` and `gitops`
+today — and nothing outside the directory imports either. That split is derived from `catalogue.yaml`,
+not declared, so it cannot drift.
 
 There is a second half, and it is the one that cost a review its afternoon:
 
@@ -45,7 +65,8 @@ In the package, not on this page:
 ```python
 from simplon import surface
 
-surface.LIBRARY     # you may import these
+surface.LIBRARY     # top-level modules you may import
+surface.PACKAGES    # the subpackages beside them: `orchestrator`, `tasks`
 surface.INTERNAL    # the kernel's machinery; it may change without notice
 surface.MOVED       # old path -> new home
 ```
@@ -59,8 +80,12 @@ deploy a compose stack is meant to find it. `simplon.catalogue` has no consumer 
 machinery. The import graph cannot tell those two apart, because the difference is an intention.
 
 So the intention is written down once, in `simplon/surface.py`, and `tests/test_surface.py` holds it to
-the tree: every top-level module has to appear in exactly one of the three sets, so a module cannot be
-added beside `cli.py` without somebody deciding which surface it is on.
+the tree: every top-level name — module **and** subpackage — has to appear in exactly one of the sets,
+so nothing can be added beside `cli.py` without somebody deciding which surface it is on.
+
+That test, and the one forbidding a library module named after a task body, bind the **kernel**, not
+you. A future kernel author may no longer place a module wherever they like or reuse a body's name;
+no product manifest, command or import is affected either way.
 
 ### The machinery, by name
 
@@ -89,6 +114,11 @@ is `__main__` — and the frame that triggers this one is a product's own task b
 notice would have been shown to nobody. Point the tombstone at `DeprecationWarning` and the kernel's own
 test goes red with an empty stderr, which is exactly the silent disappearance the tombstone exists to
 prevent.
+
+A star-import works too, and that took a fix rather than falling out for free: `from simplon.images
+import *` asks a module for `__all__`, and a forwarding module that refuses the question binds its own
+three private names instead — silently, with no warning at all. The tombstones answer `__all__` with the
+target's own star-import surface, so the names and the notice both arrive.
 
 The tombstones come out at the next **minor** release. Until then a product gets a working run with a
 message in it rather than a stack trace, and knows where to point the line.
