@@ -11,11 +11,32 @@ WHAT IS COMPARED, and why all three rather than one:
 
   * the OVERVIEW table - one row per namespace, its kind and its count - because that is the number a
     reader takes away;
-  * each SECTION's own coordinate table, because the overview could be right while the list under it is
+  * each SECTION's own coordinate list, because the overview could be right while the list under it is
     stale;
   * the DIAGRAM, because the two empty ribs are marked as empty in it, and a marker on the wrong node is
     exactly the lie the ticket exists to prevent ("a page that draws an empty rib as filled is worse
     than no page").
+
+THE DESCRIPTIONS ARE GONE, AND THAT IS THE FIX (si#46). The sections used to carry a sentence beside
+each of the twenty-two coordinates, and `_section_coordinates` read only the FIRST cell, so the
+sentences were an unchecked second source for something `catalogue.yaml` already states. si#46 offered
+three ways out: quote the `help:` sentences word for word, accept a DERIVED form (imperative -> third
+person) and refuse anything else, or drop the descriptions and point at the generated command
+reference. The third was taken, and measurement is what settled it rather than taste: of the
+twenty-two paraphrases, exactly NINE were imperative-to-third-person and THIRTEEN had already changed
+what the sentence says - `docs:render` had grown the word "architecture", `test:typecheck-python` had
+lost "(no Docker, no lab)", `vcs:submodules` had lost `lib/platform`. The drift the ticket predicted
+had already happened. A derived-form check would therefore have gone red on thirteen rows on the day
+it landed, forcing thirteen rewrites, and would then have fenced in every future wording on this page
+for good - a rule bought at the price of the flexibility the kernel is supposed to offer. A second
+source one does not have cannot drift, and it needs no rule to watch it either.
+
+What replaced it is not a wording rule but a structural one, and it is the whole of what si#46's first
+acceptance can still mean here: a coordinate in a section is a bare list item and nothing else, so a
+description put back beside one - the ticket's own
+`| build:image | Builds a wheel and uploads it to PyPI. |` included - makes this suite red. The
+sentences themselves live in the generated command reference, which carries the catalogue's own `help:`
+for all twenty-two and is rebuilt from it every time.
 
 Nothing here counts the page against itself: every expectation is computed from `catalogue.load()`, and
 the page is the thing being checked.
@@ -169,11 +190,17 @@ def _section_count(namespace: str) -> int:
     raise ValueError(f"{CHAPTER}: section '{namespace}' prints no 'In the catalogue today: N tasks.'")
 
 
+#: A coordinate as a section lists one: a bullet whose ENTIRE content is one backticked coordinate.
+#: Anchored at both ends on purpose - that is what makes "and nothing else" checkable, and what a
+#: description put back beside the name would break.
+_ITEM = re.compile(r"^- `([^`]+)`$")
+
+
 def _section_coordinates(namespace: str) -> set[str]:
-    """The coordinates that section's own table lists. Prose mentions do not count - only a first cell."""
+    """The coordinates that section lists. Prose mentions do not count - only a list item of its own."""
     found = set()
     for line in _section(namespace):
-        match = _ROW.match(line)
+        match = _ITEM.match(line)
         if match and ":" in match.group(1):
             found.add(match.group(1))
     return found
@@ -319,10 +346,10 @@ def test_the_overview_says_which_namespaces_are_phases_env_first_and_families():
 
 
 @pytest.mark.parametrize("namespace", sorted(_catalogue_coordinates()))
-def test_each_sections_own_table_lists_exactly_that_namespaces_coordinates(namespace):
+def test_each_sections_own_list_names_exactly_that_namespaces_coordinates(namespace):
     """Acceptance 3, the inner half. The overview could be right while the list under it is stale, so
     each section is compared with the catalogue on its own - and the section's own printed count with
-    its own table, which is what keeps the two halves of the page honest with each other."""
+    its own list, which is what keeps the two halves of the page honest with each other."""
     # arrange
     expected = _catalogue_coordinates()[namespace]
 
@@ -333,6 +360,59 @@ def test_each_sections_own_table_lists_exactly_that_namespaces_coordinates(names
     # assert
     assert listed == expected
     assert printed == len(expected)
+
+
+def test_no_section_writes_a_description_beside_a_coordinate():
+    """si#46's acceptance 1, in the only shape it can still have: the descriptions are GONE, so what has
+    to be red is a description coming back.
+
+    The sections used to print a sentence beside each coordinate, and nothing compared those sentences
+    with the `help:` they were paraphrases of. By the time anybody measured, thirteen of the twenty-two
+    had stopped saying what the catalogue says. The fix is not a rule about how a paraphrase may be
+    worded - that would fence in every future sentence on this page to catch a copy nobody needs - but
+    the removal of the copy: the coordinate is a bare list item, its sentence lives once, in the
+    generated command reference.
+
+    So this rules on SHAPE and never on wording, which is what keeps it from becoming the very thing
+    si#46 rejected.
+    """
+    # arrange: every line of every namespace section, and the ticket's own example of the shape that
+    # must not come back
+    example = "| `build:image` | Builds a wheel and uploads it to PyPI. |"
+
+    # act
+    offenders = []
+    listed = 0
+    for namespace in _catalogue_coordinates():
+        for line in _section(namespace):
+            if "`" not in line or ":" not in line:
+                continue
+            if _ITEM.match(line):
+                listed += 1
+                continue
+            if line.startswith(("|", "- `", "* `")):
+                offenders.append(f"{namespace}: {line}")
+
+    # assert
+    assert offenders == [], ("a coordinate carries a description again; the catalogue's own sentence is "
+                             f"in the generated command reference and belongs nowhere else: {offenders}")
+
+    # assert: the ticket's example really is a shape this rejects, rather than one that happens not to
+    # appear - the assertion above would pass just as happily over a page with nothing on it
+    assert not _ITEM.match(example)
+    assert listed == len(catalogue_mod.load().tasks) == 22
+
+
+def test_the_page_sends_the_reader_to_the_one_place_the_sentences_live():
+    """Dropping the descriptions is only honest if the page says where they went. The generated command
+    reference carries the catalogue's own `help:` for every coordinate and is rebuilt from it on every
+    build, so it is the single source rather than a second one."""
+    # act
+    body = _text()
+
+    # assert
+    assert "../../using/commands/" in body
+    assert "reference" in " ".join(body.split())
 
 
 def test_every_catalogue_coordinate_appears_somewhere_on_the_page():
