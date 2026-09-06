@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import shutil
 import tarfile
 import urllib.request
@@ -160,6 +161,70 @@ def ensure_docker() -> None:
             f"engine (./{name}.sh install / get.docker.com, or give the runner user NOPASSWD sudo so "
             f"{name} can), or on a container runner mount the host socket: "
             "-v /var/run/docker.sock:/var/run/docker.sock (plus --group-add its gid)")
+
+
+#: A docker tag: what may follow the ':' in an image reference. Used to reject the EMPTY tag ('hugo:',
+#: 'hugo::'), which reads as pinned to a careless eye and is not.
+_TAG_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,127}\Z")
+#: A content digest ('sha256:<hex>'): the strongest pin there is.
+_DIGEST_RE = re.compile(r"[A-Za-z0-9]+(?:[.+_-][A-Za-z0-9]+)*:[A-Fa-f0-9]{32,}\Z")
+
+
+def pinned_image(image: str, where: str, *, hint: str = "") -> str:
+    """Refuse an image reference that does not name a version, and hand back the reference when it does.
+
+    THE RULE. A build that renders something different depending on when it ran is not a build. An
+    untagged reference means ':latest', and ':latest' means the same command runs something else
+    tomorrow - so an untagged reference, an empty tag ('hugo:', 'hugo::', which read as pinned to a
+    careless eye) and the literal 'latest' are all refused. A tag or a digest passes; a digest is the
+    strongest form of the same statement.
+
+    WHY IT LIVES HERE, in the module about running containers, rather than beside any one caller
+    (si#47). It started in `tasks.site`, where it refused a PRODUCT's manifest image with a paragraph of
+    reasons - while the kernel itself handed docker two references that would not have survived it, and
+    `tasks.docs` demanded only that a tag be DECLARED, letting `doctoolchain_version: latest` through.
+    A rule the kernel argues for and does not keep is a rule the next reader believes less, whatever the
+    risk of the particular image. So there is now one gate and every image goes through it: the two the
+    manifest declares (`site:` image, `doctoolchain_version`) and the ones the kernel names ITSELF, which
+    are validated where they are declared, at import. That is the shape si#34 used for coordinate
+    placement - the check runs over the MERGED tree, so the catalogue's own placements are held to it too.
+
+    The registry is split off by docker's OWN rule, which needs BOTH halves: a first component is a host
+    when it carries a '.' or a ':' AND a '/' follows it, or when it is 'localhost'. That is what keeps a
+    private registry with a port (`registry.example:5000/hugo:0.148.2`) from being read as a tagged image
+    - and, just as important, what keeps `my.image:1.0` from being read as a registry. Without a slash
+    there is no registry, dot or no dot; docker reads such a reference as an image with a tag, and so does
+    this. `registry.example:5000` alone therefore passes as image `registry.example` tag `5000`, which is
+    what docker itself would do with it: nothing here can tell that port from a version without guessing,
+    and guessing costs valid references.
+
+    `hint` is the caller's, because the caller knows what the reader has to EDIT. A manifest key that
+    holds a whole reference wants the default; one that holds a bare tag - `doctoolchain_version` - does
+    not, and telling its author to write 'hugomods/hugo:exts-0.148.2' into it would be a message that
+    sends them the wrong way with total confidence.
+    """
+    hint = hint or "pin it as '<image>:<tag>' (e.g. 'hugomods/hugo:exts-0.148.2'), or by digest"
+    name, at, digest = image.partition("@")
+    if at:
+        if not name or not _DIGEST_RE.match(digest):
+            raise ValueError(f"{where}: 'image' carries a broken digest in '{image}'; {hint}")
+        return image
+    parts = image.split("/")
+    # A registry needs a '/' after it - `len(parts) > 1` IS that condition, and it is the half that stops
+    # `my.image:1.0` from being mistaken for a host.
+    registry = len(parts) > 1 and ("." in parts[0] or ":" in parts[0] or parts[0] == "localhost")
+    remainder = "/".join(parts[1:]) if registry else image
+    repo, colon, tag = remainder.rpartition(":")
+    if not colon:
+        raise ValueError(f"{where}: 'image' must pin a version ('<image>:<tag>'), got '{image}' "
+                         f"- an untagged image means ':latest', which moves under the build; {hint}")
+    if not repo or not _TAG_RE.match(tag):
+        raise ValueError(f"{where}: 'image' has no usable tag in '{image}'; {hint}")
+    if tag == "latest":
+        raise ValueError(f"{where}: 'image' must pin a version, not the moving tag 'latest' "
+                         f"(got '{image}') - a build whose output depends on when it ran is not a "
+                         f"build; {hint}")
+    return image
 
 
 def user_args() -> list[str]:

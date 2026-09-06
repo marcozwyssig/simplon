@@ -151,6 +151,16 @@ in every section below are read back out of `catalogue.yaml` by the test suite a
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
 
+**What each coordinate does is not written out here.** The sections below name them and nothing more,
+and the sentence that says what one is for lives in the [command
+reference](../../using/commands/) - generated on every build from the catalogue's own `help:`, for all
+twenty-two. This page used to paraphrase those sentences beside the names, and by the time anybody
+compared them several had quietly stopped saying what the catalogue says: `docs:render` had grown the
+word *architecture*, `test:typecheck-python` had lost *(no Docker, no lab)*, `vcs:submodules` had lost
+`lib/platform`. How many is a matter of how strictly one reads, and no count stands here for exactly
+that reason - a number typed onto a page is the second source this paragraph is about. The reliable
+fix is not to guard the copy but not to keep one.
+
 Separately from all of this, a catalogue task is either **offered** - a product declares a command for
 it - or **placed**, written into the tree for everybody. The bar a placed command has to clear, and why
 `release:tag` does not clear it, are in [Offered, or placed](../task-and-command/#offered-or-placed).
@@ -162,9 +172,7 @@ site.
 
 **In the catalogue today: 1 task.**
 
-| coordinate | what it does |
-|---|---|
-| `build:image` | Builds the product's container image from its declared Dockerfile, with VERSION/REVISION. |
+- `build:image`
 
 **What a product brings itself.** The artefact. There is exactly one thing the kernel knows how to
 build for you, and it is a container image - everything else is a body in the product's own `tasks:`,
@@ -182,12 +190,10 @@ four commands - `wheel`, `reference`, `site` and the `docs` aggregate - and not 
 
 **In the catalogue today: 4 tasks.**
 
-| coordinate | what it does |
-|---|---|
-| `test:gate` | Runs one declared pytest suite level against the running lab. |
-| `test:accept` | Runs the lab-based suites in sequence against the running lab. |
-| `test:report` | Merges the unit results into the shared Allure results and renders the HTML archive. |
-| `test:typecheck-python` | Type-checks the product's Python sources with mypy, in the host venv. |
+- `test:gate`
+- `test:accept`
+- `test:report`
+- `test:typecheck-python`
 
 **What a product brings itself.** A `suites:` section naming its levels, and a `mypy.ini` if it wants
 the type gate. `test:gate` is the clearest case in the catalogue of one body under several names: a
@@ -201,11 +207,9 @@ pushed image is somebody else's dependency by the time you notice.
 
 **In the catalogue today: 3 tasks.**
 
-| coordinate | what it does |
-|---|---|
-| `release:artifact` | Publishes a declared directory to a registry as an OCI artifact. |
-| `release:image` | Pushes the product's container image and reads back that the registry has the tag. |
-| `release:tag` | Cuts the release tag at HEAD and pushes it (`git push origin <tag>`, never `--tags`). |
+- `release:artifact`
+- `release:image`
+- `release:tag`
 
 **What a product brings itself.** An `artifacts:` or `images:` section, and - for `release:tag` - a
 workflow that a tag actually triggers. All three are **offered** rather than placed, and `release:tag`
@@ -241,12 +245,10 @@ environment.
 
 **In the catalogue today: 4 tasks.**
 
-| coordinate | what it does |
-|---|---|
-| `support:install` | Provisions the host tooling the kernel needs - today oras; idempotent. |
-| `support:nexus` | Drives the LAN Sonatype Nexus artefact proxy: up, down, status, repos, cleanup. |
-| `support:claude-plugins` | Installs the Claude Code plugins the manifest's `claude` section declares. |
-| `support:environments` | Lists the named environments and the backend each targets, marking the active one. |
+- `support:install`
+- `support:nexus`
+- `support:claude-plugins`
+- `support:environments`
 
 **What a product brings itself.** Nothing, for `support:install` - it is the one task here the catalogue
 **places**, so every product gets `support install` without asking, because it touches the machine and
@@ -284,13 +286,11 @@ product files each one where it belongs in *its* loop:
 
 **In the catalogue today: 5 tasks.**
 
-| coordinate | what it does |
-|---|---|
-| `vcs:commit` | `git add -A` plus `git commit -m`. |
-| `vcs:push` | `git pull --rebase`, then push the current branch. |
-| `vcs:prune-branches` | Deletes local branches already merged into main (squash-aware via `gh`). |
-| `vcs:submodules` | `git submodule update --init` for the submodule a fresh worktree needs. |
-| `vcs:auth-scopes` | Grants the stored `gh` token the package scopes GHCR needs (interactive, idempotent). |
+- `vcs:commit`
+- `vcs:push`
+- `vcs:prune-branches`
+- `vcs:submodules`
+- `vcs:auth-scopes`
 
 Committing belongs to no phase at all, which is the clearest argument that the second axis has to exist:
 had every coordinate been forced to name a group, this family would have been the first thing to break.
@@ -300,24 +300,20 @@ The catalogue places all five under `support git`.
 
 **In the catalogue today: 3 tasks.**
 
-| coordinate | what it does |
-|---|---|
-| `docs:render` | Renders the project's architecture docs via docToolchain (HTML and PDF), in Docker. |
-| `docs:site` | Builds the product's documentation website with Hugo, in Docker (HTML only). |
-| `docs:reference` | Writes the product's command reference as Markdown, read off its **built** command line. |
+- `docs:render`
+- `docs:site`
+- `docs:reference`
 
-This family is the standing example of why placement is the product's call: simplon files two of them
-- `docs:reference` and `docs:site` - under `build`, and a product that publishes its site as part of
-shipping would file `docs:site` under `release` and be just as right.
+This family is the standing example of why placement is the product's call: simplon files two of
+them - `docs:reference` and `docs:site` - under `build`, and a product that publishes its site as part
+of shipping would file `docs:site` under `release` and be just as right.
 
 ### `tasks`
 
 **In the catalogue today: 2 tasks.**
 
-| coordinate | what it does |
-|---|---|
-| `tasks:generate` | Regenerates the product's CLI module from its manifest (`--check` reports drift). |
-| `tasks:catalogue` | Lists the task coordinates the kernel offers, marking the ones this product reaches. |
+- `tasks:generate`
+- `tasks:catalogue`
 
 The task machinery itself, and host tooling for whoever develops the product rather than a stage of the
 loop - which is why the catalogue places both under `support tasks` and not at the top level, where
