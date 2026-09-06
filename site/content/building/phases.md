@@ -155,8 +155,11 @@ out.
 and the sentence that says what one is for lives in the [command
 reference](../../using/commands/) - generated on every build from the catalogue's own `help:`, for all
 twenty-two. This page used to paraphrase those sentences beside the names, and by the time anybody
-compared them thirteen of the twenty-two had quietly stopped saying what the catalogue says. That is
-what a second copy of a sentence does; the reliable fix is not to guard the copy but not to keep one.
+compared them several had quietly stopped saying what the catalogue says: `docs:render` had grown the
+word *architecture*, `test:typecheck-python` had lost *(no Docker, no lab)*, `vcs:submodules` had lost
+`lib/platform`. How many is a matter of how strictly one reads, and no count stands here for exactly
+that reason - a number typed onto a page is the second source this paragraph is about. The reliable
+fix is not to guard the copy but not to keep one.
 
 Separately from all of this, a catalogue task is either **offered** - a product declares a command for
 it - or **placed**, written into the tree for everybody. The bar a placed command has to clear, and why

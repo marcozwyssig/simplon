@@ -22,14 +22,21 @@ each of the twenty-two coordinates, and `_section_coordinates` read only the FIR
 sentences were an unchecked second source for something `catalogue.yaml` already states. si#46 offered
 three ways out: quote the `help:` sentences word for word, accept a DERIVED form (imperative -> third
 person) and refuse anything else, or drop the descriptions and point at the generated command
-reference. The third was taken, and measurement is what settled it rather than taste: of the
-twenty-two paraphrases, exactly NINE were imperative-to-third-person and THIRTEEN had already changed
-what the sentence says - `docs:render` had grown the word "architecture", `test:typecheck-python` had
-lost "(no Docker, no lab)", `vcs:submodules` had lost `lib/platform`. The drift the ticket predicted
-had already happened. A derived-form check would therefore have gone red on thirteen rows on the day
-it landed, forcing thirteen rewrites, and would then have fenced in every future wording on this page
-for good - a rule bought at the price of the flexibility the kernel is supposed to offer. A second
-source one does not have cannot drift, and it needs no rule to watch it either.
+reference. The third was taken, and measurement is what settled it rather than taste: the drift the
+ticket predicted had ALREADY happened, in paraphrases nobody had compared. `docs:render` had grown the
+word "architecture"; `test:typecheck-python` had lost "(no Docker, no lab)"; `vcs:submodules` had lost
+"lib/platform". A derived-form check would therefore have gone red on the page it was landing on,
+forcing those rows to be rewritten, and would then have fenced in every future wording here for good -
+a rule bought at the price of the flexibility the kernel exists to offer.
+
+NO COUNT IS GIVEN, and the omission is deliberate rather than lazy. The first version of this docstring
+said "nine and thirteen"; a mechanical word-for-word measure says ten and twelve, and a stricter reading
+of what "changed in substance" means says fewer again. The number depends on the method, and the first
+one here was typed rather than run - six paragraphs under a page which says that a count typed onto a
+page is wrong on the day nobody checks it. The named examples above hold under every reading, which is
+what makes them evidence and the number not.
+
+A second source one does not have cannot drift, and it needs no rule to watch it either.
 
 What replaced it is not a wording rule but a structural one, and it is the whole of what si#46's first
 acceptance can still mean here: a coordinate in a section is a bare list item and nothing else, so a
@@ -400,19 +407,29 @@ def test_no_section_writes_a_description_beside_a_coordinate():
     # assert: the ticket's example really is a shape this rejects, rather than one that happens not to
     # appear - the assertion above would pass just as happily over a page with nothing on it
     assert not _ITEM.match(example)
-    assert listed == len(catalogue_mod.load().tasks) == 22
+    assert listed == len(catalogue_mod.load().tasks)
+    assert listed > 0
 
 
 def test_the_page_sends_the_reader_to_the_one_place_the_sentences_live():
     """Dropping the descriptions is only honest if the page says where they went. The generated command
     reference carries the catalogue's own `help:` for every coordinate and is rebuilt from it on every
-    build, so it is the single source rather than a second one."""
-    # act
-    body = _text()
+    build, so it is the single source rather than a second one.
 
-    # assert
-    assert "../../using/commands/" in body
-    assert "reference" in " ".join(body.split())
+    The link is looked for in the SECTION that holds the coordinate lists, not anywhere on the page: a
+    chapter this long mentions the command reference in several places, and an assertion satisfied by
+    any of them would be satisfied by a page that had dropped the pointer where it is owed.
+    """
+    # arrange: the part of the page between the heading that introduces the lists and the first list
+    body = _text()
+    start = body.index("## What the catalogue offers today")
+    intro = body[start:body.index("### `", start)]
+
+    # act / assert
+    assert "../../using/commands/" in intro, "the sections drop the descriptions and point nowhere"
+
+    # assert: and it is offered as the place the sentences live, rather than as a bare link
+    assert "help:" in intro
 
 
 def test_every_catalogue_coordinate_appears_somewhere_on_the_page():
