@@ -545,8 +545,13 @@ def rewrite_of_old_form(data: dict) -> str:
 
     Two bodies that are byte-identical share ONE task, which is the point of the form: `test:gate`
     placed at four levels was four copies of one `impl:` in the flat form and is one template with four
-    pins here. A name already taken by a different body is qualified with its group, so the rewrite is
-    always loadable rather than merely illustrative.
+    pins here. A name already taken by a different body is qualified with its group.
+
+    WHAT THE REWRITE DOES NOT KNOW, and it is a real limit rather than a caveat: this function has no
+    catalogue. A command whose name the CATALOGUE also places - `support install`, `release tag` - is
+    printed without the `override: true` the merge then demands, and pasting it in fails with
+    "redeclares `task:`". That second refusal names the fix exactly, so the reader is not stranded; but
+    the printed block is a starting point in that case, not a finished manifest. Do not promise more.
     """
     all_groups = data.get("groups") or {}
     groups = old_form_groups(all_groups)

@@ -295,7 +295,12 @@ not lose its converted half when you paste. Three things to know about what it d
 - **A shared body becomes one task.** Two commands that spelled out the same `impl:` come out as one
   template with two placements - which is the point of the form.
 - **A name collision is qualified, not shadowed.** `build build` and `deploy build` are two different
-  bodies under one command name; the rewrite renames the second task, so what it prints always loads.
+  bodies under one command name; the rewrite renames the second task.
+
+One case needs a hand: a command whose name the *catalogue* also places - `support install`,
+`release tag` - is printed without the `override: true` the merge demands, and pasting it in fails
+with *"redeclares `task:`"*. That refusal names the fix, so the block is a starting point there rather
+than a finished manifest.
 
 What you lose is the `import:` section, and you lose nothing with it: the catalogue's own commands
 arrive by merging its tree, and any other coordinate is named directly by the command that wants it.
