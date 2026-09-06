@@ -1,6 +1,6 @@
 ---
 title: "The manifest"
-weight: 2
+weight: 3
 ---
 
 One YAML file per product. It declares what commands exist, what they run, what they are called and
