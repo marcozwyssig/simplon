@@ -62,10 +62,16 @@ def merge_results(dst: str, srcs: list[str], *, parent_suite: str = "Unit") -> N
                 # reader handed only the HTML can still see - and `shutil.copy` REPLACED it, so the
                 # products that merge something into their report were exactly the ones that lost it.
                 #
-                # The DESTINATION wins a key both sides declare: the verdict is what the kernel itself
-                # is answerable for, and a merged directory restating it is describing its own run. A
-                # dropped key is said out loud rather than vanishing - a silent loss in a report is the
-                # shape of defect this whole thing was.
+                # The DESTINATION wins a key both sides declare, for two reasons that hold separately.
+                # The verdict is what the kernel itself is answerable for, and a merged directory
+                # restating it is describing its own run. And a merged directory usually lives OUTSIDE
+                # the results dir, so a `results: clear` never touches it and it SURVIVES a run: after a
+                # run of only the unit gate, that directory still holds last week's system stamp. Source
+                # wins would write those stale lines over the fresh ones - the same defect this function
+                # is being fixed for, one level down.
+                #
+                # A dropped key is said out loud rather than vanishing. A conflict rule without a message
+                # is a quieter version of the same problem.
                 incoming = read_environment(f)
                 existing = read_environment(os.path.join(dst, base))
                 clashes = sorted(k for k in incoming if k in existing and incoming[k] != existing[k])
