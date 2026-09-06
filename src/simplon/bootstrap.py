@@ -17,7 +17,7 @@ It renders, mirroring the shape netctl's own `netctl.yaml` + `netctl.sh` use but
     <product>.sh                                     the entry point (bash): declares the four LAUNCH_*
                                                      params, provisions a host venv, execs the CLI
     <product>.cmd                                    the same entry point for Windows (cmd.exe)
-    <product>.yaml                                   the starter manifest (groups tree/env_groups/
+    <product>.yaml                                   the starter manifest (tasks/groups tree/
                                                      environments the Pydantic loader accepts)
     <orch-dir>/requirements.txt                      the host-venv deps: the kernel pinned by version
                                                      (`simplon==...`) + product-only pins
@@ -43,10 +43,13 @@ the pinned kernel from PyPI on first run; nothing needs vendoring.
 Design / scope (best-effort MINIMAL slice; netctl#651 strand 4 is under-specified on purpose):
 
     IN this slice
-      - a single-command-per-group starter manifest that loads clean and exercises BOTH an agnostic group
-        (`build`, flat-collapsed) and an env-first CD group (`deploy`), plus a WORKING aggregate (`all` is
-        an impl-less `depends_on: [build, up]` command the kernel binds via assemble(step_context=...), so
-        `<product> all` runs build->up, not a dead placeholder) and the env matrix;
+      - a starter manifest in the COMMAND TREE form that loads clean and shows ALL FIVE phases of the
+        CI/CD loop plus `support` (si#33), each holding at least one command: an agnostic group that
+        collapses to one flat command (`build`), two env-first groups (`deploy`, `monitor`), two commands
+        that place a catalogue coordinate rather than a body of their own (`release tag`,
+        `support install`), a WORKING aggregate (`all` is an impl-less `depends_on: [build, up]` command
+        the kernel binds via assemble(step_context=...), so `<product> all` runs build->up, not a dead
+        placeholder) and the env matrix;
       - the full product-adapter wiring (paths/environments/cli/__main__) so the CLI actually assembles;
       - the two launchers (`.sh` + `.cmd`) + requirements (the kernel pinned by version), so
         `./<product>.sh help` runs on a fresh clone with nothing to vendor;
@@ -254,57 +257,109 @@ def released_pin(version: str) -> str:
 _MANIFEST = """\
 # @@PRODUCT@@ delivery manifest - the single declarative source Simplon
 # (simplon.orchestrator.manifest) assembles @@PRODUCT@@'s CLI from. Scaffolded by
-# `simplon init` (netctl#651 strand 4). Fill it in: add your real groups + commands and
-# wire each `impl` to a "module:function" your orchestrator package exports.
+# `simplon init`. Fill it in: replace the placeholder tasks with your real bodies and
+# add the commands that instantiate them.
 #
 # Sections:
 #   product       the product label (shim/manifest name + diagnostics).
-#   groups        the ONE command tree: group -> command -> { impl: "module:function", help: "one-line
-#                 summary" }. The key order within a group is its membership order; the env-gate is derived.
-#   env_groups    the subset of groups that are env-first (`@@PRODUCT@@ <env> <group> <cmd>`, default below).
+#   tasks         the BODIES, each declared once: a bare name -> { impl: "module:function", help }.
+#   groups        the COMMAND TREE, hung off the one the kernel's catalogue owns: group ->
+#                 `commands:` -> command -> { task: <name>, ... }. A command is an INSTANCE of a
+#                 task, so it never writes `impl:` itself.
 #   environments  the deployment env matrix (a backend per env) + the default env.
 product: @@PRODUCT@@
 
 # --- product build data (read RAW by your paths adapter, IGNORED by the CLI engine) ---
-# The CLI engine reads only groups/env_groups and ignores any other top-level section, so your product's
+# The CLI engine reads only tasks/groups and ignores any other top-level section, so your product's
 # own build data lives here. Uncomment + extend as the pipeline grows.
 # images:
 #   app: @@PRODUCT@@:local
 # volumes:
 #   build_cache: @@PRODUCT@@-build-cache
 
-# The ONE command tree, along the CI/CD loop: group -> command -> { impl: "module:function", help }. The
-# key order within a group is its membership order. `build` is a single-member group whose member shares its
-# name, so it collapses to ONE flat top-level command (`@@PRODUCT@@ build`); `deploy` is a multi-member
-# env-first group (see env_groups). The starter impls point at the generated `orchestrator.cli` callbacks;
-# replace them with your own as you add commands.
+# THE BODIES. A task is a TEMPLATE: it names a "module:function" this product's own package exports,
+# and it is declared exactly once no matter how many commands run it. Two commands that differ only in
+# the data they run with (`test unit` and `test system`) are two commands over ONE task, each pinning
+# its own values with `with:` - which is why the body is here and the placement is below.
 #
-# `all` is an impl-less AGGREGATE (#895/#896): it declares no impl, only `depends_on`, and the kernel
-# binds it at assembly time (assemble(step_context=...) in orchestrator/cli.py) to run its dependency
-# plan build->up as live-streamed `./@@PRODUCT@@.sh <cmd>` steps - a live example, not a dead
-# placeholder. `stop_on_failure: false` (the default) runs every planned step and takes the worst rc.
+# These five are placeholders wired to the generated `orchestrator.cli` callbacks, one per phase, so a
+# fresh product has a CLI that runs before it has anything to run. Replace them.
+tasks:
+  build:   { impl: "orchestrator.cli:build",   help: "Build the product artefacts (placeholder)." }
+  check:   { impl: "orchestrator.cli:check",   help: "Verify the artefacts (placeholder)." }
+  up:      { impl: "orchestrator.cli:up",      help: "Deploy the product to the target environment (placeholder)." }
+  down:    { impl: "orchestrator.cli:down",    help: "Tear the deployment down (placeholder)." }
+  status:  { impl: "orchestrator.cli:status",  help: "Report what is running in the target environment (placeholder)." }
+
+# THE COMMAND TREE, and it is not this file's invention: the kernel's catalogue declares the CI/CD loop
+# - build -> test -> release -> deploy -> monitor, plus support - and every product hangs its commands
+# off those same six slots. That is the whole point: a person moving between two Simplon products finds
+# the same groups holding the same general commands. A group name the catalogue does not declare is
+# refused at load; add it to the platform's catalogue once, for everybody, or find the slot it belongs
+# in.
+#
+# All six are shown here, each with at least one command, because a group is only useful once something
+# is in it - and because the loop is easiest to learn on the day the product is empty. A group you
+# declare and leave without a single command anywhere under it is a load error naming the group: it is a
+# promise nobody kept. So grow a phase by ADDING to the list under its `commands:`, and if you truly
+# have nothing for one yet, delete the group and let the catalogue's default (nothing rendered) stand.
 groups:
   build:
-    build: { impl: "orchestrator.cli:build", help: "Build the product artefacts (placeholder)." }
+    commands:
+      # WHAT YOU PRODUCE: the wheel, the image, the bundle - whatever a later phase hands over.
+      build: { task: build }
+  test:
+    commands:
+      # WHAT YOU CHECK, and one command per level rather than one that runs everything: `test unit`,
+      # `test system`, `test typecheck-python`. The kernel's `test:gate` runs a declared pytest suite,
+      # `test:typecheck-python` runs mypy - declare a command for either the day you have its config.
+      check: { task: check }
+  release:
+    commands:
+      # WHAT YOU HAND OVER. `tag` is the catalogue's own `release:tag`: the BODY lives in the kernel,
+      # this line only confirms the placement in your tree. A command with a colon in its `task:` names
+      # a catalogue coordinate; one without names a task from the `tasks:` block above. Its neighbours
+      # `release:artifact` and `release:image` need an `artifacts:`/`images:` section, so declare those
+      # the day you have one.
+      tag: { task: "release:tag" }
   deploy:
-    up:   { impl: "orchestrator.cli:up",     help: "Deploy the product to the target environment (placeholder)." }
-    down: { impl: "orchestrator.cli:down",   help: "Tear the deployment down (placeholder)." }
-    all:  { help: "Run build then deploy up end to end (the build->up dependency plan).",
-            depends_on: [build, up], stop_on_failure: false }
+    commands:
+      # WHERE IT RUNS. `deploy` and `monitor` are ENV-FIRST in the catalogue, so the environment is the
+      # outer token: `@@PRODUCT@@ <env> deploy up` (`dev` below is the default). Every other group takes
+      # no env and refuses one.
+      up:   { task: up }
+      down: { task: down }
+      # An AGGREGATE: no body at all, only a plan. The kernel binds it at assembly time
+      # (assemble(step_context=...) in orchestrator/cli.py) and runs its dependency plan build->up as
+      # live-streamed `./@@PRODUCT@@.sh <cmd>` steps - a live example, not a dead placeholder. A command
+      # is either an instance of a task or a plan over other commands, never both. `stop_on_failure:
+      # false` (the default) runs every planned step and takes the worst rc.
+      all:
+        help: "Run build then deploy up end to end (the build->up dependency plan)."
+        depends_on: [build, up]
+        stop_on_failure: false
+  monitor:
+    commands:
+      # WHAT IT LOOKS LIKE ONCE IT RUNS: health, logs, the version actually deployed. Env-first, like
+      # `deploy` - you watch ONE environment.
+      status: { task: status }
+  support:
+    commands:
+      # HOST PREFLIGHT AND TOOLING - not a stage of the loop, which is why it sits beside the five
+      # rather than among them. `install` is the catalogue's `support:install`, placed the same way
+      # `release tag` is above. The catalogue also brings `support git` (commit/push/...) and
+      # `support tasks` with no line from you at all - run `@@PRODUCT@@ support tasks catalogue` to see
+      # every coordinate it offers.
+      install: { task: "support:install" }
 
-# The env-first CD groups: `@@PRODUCT@@ <env> deploy up` (default env below). Every other group is
-# environment-agnostic and rejects an env prefix.
-env_groups: [deploy]
-
-# The deployment environment matrix (#15, folded into the one manifest per #651 strand 1): one env per row,
-# `backend` decides HOW it is realised (`local` today; add a cloud backend and widen _VALID_BACKENDS in
-# environments.py later). A deploy command runs against ONE env, selected env-first; `default` is the
-# implicit one.
+# The deployment environment matrix (#15, folded into the one manifest per #651 strand 1): one env per
+# row, `backend` decides HOW it is realised (`local` today; add a cloud backend and widen
+# _VALID_BACKENDS in environments.py later). An env-first command runs against ONE env, selected as the
+# outer token; `default` is the implicit one.
 default: dev
 environments:
   dev: { backend: local, description: "Local development environment (the default)." }
 """
-
 
 def _render_launcher(name: str, template: str, orch_dir: str) -> str:
     """Read a launcher template from package data and fill in the product name + the block dir.
@@ -374,12 +429,15 @@ resolve to, and hands the app + product context + environments + aliases to Simp
 the CI/CD panels) and the env-first dispatch live in the kernel, driven entirely by the manifest - so a
 fresh product adds groups/commands in @@PRODUCT@@.yaml and impl callables HERE, and nowhere else.
 
-Replace the placeholder commands (build/up/down) with your own; keep them as module-level callables so the
-manifest's impl refs resolve (simplon.orchestrator.manifest.resolve_impl imports THIS module and getattrs
-the function named after the `:`). The `all` command in @@PRODUCT@@.yaml is a WORKING example of an
-impl-less AGGREGATE (#895/#896): it carries only `depends_on: [build, up]` and the kernel binds it at
-assembly time via the step context below, so a fresh product sees the pattern live instead of a dead
-placeholder - grow it by adding dependencies to that command in the manifest.
+Replace the placeholder bodies (build/check/up/down/status - one per phase of the loop) with your own;
+keep them as module-level callables so the manifest's task refs resolve
+(simplon.orchestrator.manifest.resolve_impl imports THIS module and getattrs the function named after
+the `:`). Note where they are NAMED: a body is declared once under `tasks:` in @@PRODUCT@@.yaml and a
+command instantiates it with `task:` - a command never carries an `impl:` of its own, so there is one
+place a body is written down and one place it is placed. The `all` command in @@PRODUCT@@.yaml is a
+WORKING example of an impl-less AGGREGATE (#895/#896): it carries only `depends_on: [build, up]` and the
+kernel binds it at assembly time via the step context below, so a fresh product sees the pattern live
+instead of a dead placeholder - grow it by adding dependencies to that command in the manifest.
 """
 from __future__ import annotations
 
@@ -393,10 +451,12 @@ from . import environments
 from . import paths
 
 app = typer.Typer(add_completion=False, no_args_is_help=True,
-                  help=("@@PRODUCT@@ orchestrator (scaffolded on Simplon). AGNOSTIC groups take "
-                        "no env (build); ENV-FIRST CD groups run against a target env as the outer prefix "
-                        "`@@PRODUCT@@ <env> <group> <cmd>` (default dev): deploy (up/down/all, where `all` "
-                        "runs the build->up dependency plan). Fill in @@PRODUCT@@.yaml to grow the CLI."))
+                  help=("@@PRODUCT@@ orchestrator (scaffolded on Simplon). The CI/CD loop is the "
+                        "kernel's: build -> test -> release -> deploy -> monitor, plus support. AGNOSTIC "
+                        "groups take no env (build, test, release, support); ENV-FIRST groups run "
+                        "against a target env as the outer prefix `@@PRODUCT@@ <env> <group> <cmd>` "
+                        "(default dev): deploy (up/down/all, where `all` runs the build->up dependency "
+                        "plan) and monitor (status). Fill in @@PRODUCT@@.yaml to grow the CLI."))
 
 # Back-compat command aliases (old token -> canonical), passed IN so the kernel hardcodes none. Empty for a
 # fresh product; add entries here as you rename commands and want the old muscle memory to keep working.
@@ -411,6 +471,18 @@ def build() -> int:
     return 0
 
 
+def check() -> int:
+    """Verify the artefacts (placeholder). Replace with your real checks.
+
+    One command per LEVEL rather than one that runs everything: the kernel's `test:gate` runs a declared
+    pytest suite and `test:typecheck-python` runs mypy, so a real product usually replaces this with a
+    `suites:` section and one command per gate - and keeps each verdict its own.
+    """
+    log.info("@@PRODUCT@@: check (placeholder) - wire me up in @@PKG_DIR@@/cli.py")
+    # See build() above: the exit code is the return value, not a raise.
+    return 0
+
+
 def up() -> int:
     """Deploy the product to the target environment (placeholder)."""
     log.info("@@PRODUCT@@: up (placeholder)")
@@ -421,6 +493,13 @@ def up() -> int:
 def down() -> int:
     """Tear the deployment down (placeholder)."""
     log.info("@@PRODUCT@@: down (placeholder)")
+    # See build() above: the exit code is the return value, not a raise.
+    return 0
+
+
+def status() -> int:
+    """Report what is running in the target environment (placeholder)."""
+    log.info("@@PRODUCT@@: status (placeholder)")
     # See build() above: the exit code is the return value, not a raise.
     return 0
 
