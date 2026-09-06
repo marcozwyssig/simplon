@@ -777,6 +777,17 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     keep = treeform.declared_paths(tree) | treeform.paths_with_commands(flat)
     flat = {path: members for path, members in flat.items() if path in keep}
     treeform.check_every_task_is_used(flat, product_tasks)
+    # Placement or family (si#34): a coordinate whose namespace is one of the platform's own top-level
+    # group names is a PLACEMENT (`build:image` is under `build`, always); any other namespace is a
+    # FAMILY, and the product places it where it likes (`docs:site` under `build` here, under `release`
+    # elsewhere). Stated over GROUPS rather than phases on purpose: five of them are the loop's phases
+    # and `support` is the group that supports those five, but `support:install` still has to be
+    # governed. The set is the CATALOGUE's own top-level groups rather than a constant, so a loader
+    # running without one has no groups to name and every namespace is a family. It reads the MERGED
+    # tree, so the catalogue's own placed commands are held to the rule beside the product's. Runs
+    # BEFORE `resolve`, because `resolve` consumes the `task:` this rule is about and hands back an
+    # `impl:` the coordinate is no longer visible in.
+    treeform.check_coordinate_placement(flat, frozenset(catalogue_groups))
     resolved = treeform.resolve(flat, product_tasks, getattr(catalogue, "tasks", {}) or {})
     data = {**data, "groups": resolved, "tasks": {}}
     try:

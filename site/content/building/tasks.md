@@ -175,6 +175,11 @@ groups:
 **A kernel body:** it goes in the catalogue under a coordinate, with the help text as its fallback
 wording, and products place it by coordinate.
 
+Choosing that coordinate's **namespace** is a real decision and not a label: a namespace that is one of
+the platform's group names pins the task to that group in every product, and any other namespace leaves
+the placement to each product. Make it deliberately - see [placement or
+family](../task-and-command/#placement-or-family-which-half-of-a-coordinate-says-where-it-goes).
+
 ```yaml
 docs:site:
   impl: simplon.tasks.site:build

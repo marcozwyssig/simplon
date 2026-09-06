@@ -697,3 +697,88 @@ def check_every_task_is_used(flat: dict, product_tasks: dict) -> None:
             + (f" (also: {', '.join(orphans[1:])})" if len(orphans) > 1 else "")
             + ". A template nobody uses is a dead declaration: add a command for it under `groups:`, or "
               "delete it")
+
+
+# --- placement or family: what a coordinate's namespace says about where it may go (si#34) ------------
+
+
+def check_coordinate_placement(flat: dict, platform_groups: frozenset[str]) -> int:
+    """Reject a coordinate that names a platform group and is placed in a different one.
+
+    THE RULE. A catalogue coordinate is `<namespace>:<name>`, and the namespace answers one of two
+    questions depending on what it is:
+
+      - it is one of the PLATFORM'S OWN GROUP NAMES, and then it is a PLACEMENT: `build:image` belongs
+        under `build`, in every product, always;
+      - it is anything else, and then it is a FAMILY - what kind of task this is, said without saying
+        where it goes. `docs:site` is a documentation task; one product places it under `build` and
+        another under `release`, and both are right.
+
+    THE GROUPS ARE NOT ALL PHASES, and this docstring says so because the rule is easy to misremember as
+    "phase or family". Five of the platform's groups are the phases of the delivery loop - `build`,
+    `test`, `release`, `deploy`, `monitor`. `support` is not a sixth phase; it is the group that
+    SUPPORTS the five, which is why `bootstrap` seeds it "beside the five rather than among them" and
+    why the getting-started page counts five and then adds it. The rule still covers it - `support:install`
+    would otherwise be the one placed coordinate nothing governed - so the rule is stated over the
+    platform's GROUPS, and "phase" is left to mean the five things it means everywhere else.
+
+    Coordinate and group are deliberately TWO AXES (netctl#1437), and this rule is what keeps them two
+    without letting either become unpredictable. It costs the second axis nothing: a family namespace is
+    still placed wherever the product wants it. What it removes is the third state - a namespace that
+    reads like a group and is placed elsewhere - because that is the only case where a reader cannot tell
+    which axis a name is on.
+
+    Neighbour to the PLACEMENT HURDLE (si#39, `catalogue.yaml`'s `groups:` block), and the two must not
+    be confused: that one decides whether the kernel places a command at all ("useful in every product,
+    not merely harmless in most"), this one decides, once something IS placed, WHERE it may go. One
+    guards the kernel's own tree, the other guards every product's.
+
+    `platform_groups` is the platform's top-level group names, and it is a parameter rather than a
+    constant because "which names carry a placement" is the CATALOGUE's statement. A caller with no
+    catalogue hands in an empty set and every namespace is a family, which is right: with no platform
+    there are no groups to name.
+
+    The flat map this reads is the MERGED one - the product's tree folded onto the platform's - so the
+    catalogue's OWN placed commands are ruled on beside the product's. That is deliberate: `support:install`
+    and the `vcs:` verbs are placed by the kernel, and a rule the kernel exempted itself from would be a
+    rule about other people's manifests.
+
+    Only the FIRST path segment is compared. A group's sub-groups are still that group - `support:install`
+    under `support git` would be oddly filed and is not a rule violation, because the rule is about which
+    group a task runs in, not about the shelf it sits on inside one.
+
+    RETURNS how many placements it ruled on, and that return value is the point of the function being
+    written this way. A manifest whose coordinates are all families passes this check without the rule
+    ever applying to anything, and a manifest with twenty group-named placements passes it too - both
+    simply return. Only one of those two greens is evidence that the rule holds, so the count is handed
+    back rather than discarded. It has to come from HERE rather than be recomputed by the caller: a test
+    that counted the placements itself would still count seven while a broken check ruled on none, and
+    the count would then be evidence about the test rather than about this function.
+    """
+    ruled = 0
+    for group_path, members in (flat or {}).items():
+        # The tree is dotted, the CLI and every manifest are spaced. A message that said `support.git`
+        # would send its reader looking for a key that appears nowhere in the file they have to edit.
+        placed_in = str(group_path).replace(".", " ")
+        group = str(group_path).split(".", 1)[0]
+        for name, spec in (members or {}).items():
+            ref = (spec or {}).get("task")
+            if ref is None or ":" not in str(ref):
+                continue
+            namespace = str(ref).split(":", 1)[0]
+            if namespace not in platform_groups:
+                continue
+            if namespace == group:
+                ruled += 1
+                continue
+            raise ValueError(
+                f"command '{placed_in} {name}' places the coordinate '{ref}', and '{namespace}' is one "
+                f"of the platform's own group names. A coordinate that starts with one says where the "
+                f"task belongs, so '{ref}' belongs under `groups: {namespace}:` and nowhere else - this "
+                f"places it under '{placed_in}'. Move the command to `groups: {namespace}: commands: "
+                f"{name}:`, or - if this body really is a family each product places where it likes - "
+                f"give it a namespace in the platform catalogue that names no group, the way `docs:site` "
+                f"can sit under `build` in one product and under `release` in another. The names that "
+                f"carry a placement are the platform's groups: {', '.join(sorted(platform_groups))} - "
+                f"the phases of the delivery loop, plus the group that supports them")
+    return ruled
