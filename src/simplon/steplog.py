@@ -41,6 +41,23 @@ def log_directory() -> Path | None:
     return root / "build" / "logs"
 
 
+def existing_log(command: str) -> Path | None:
+    """The file a step's output really landed in, or None when there is none.
+
+    It answers the question a red run asks - "where do I read the whole of it?" - and it answers it by
+    LOOKING, not by computing a name. Not every step writes a log: `argv_step` does, on every run and
+    whatever the rc, while a hand-built `action` step keeps its output in the Outcome. A summary that
+    printed `build/logs/<step>.log` for all of them would hand a reader a path to nothing, which is worse
+    than saying nothing - the reader spends the trip before finding out. The two answers are therefore
+    kept apart: a path that exists, or None so the caller can say it does not know (#49).
+    """
+    directory = log_directory()
+    if directory is None:
+        return None
+    path = directory / log_name(command)
+    return path if path.is_file() else None
+
+
 def write(command: str, output: str) -> Path | None:
     """Write one step's output; returns the path, or None when there was nowhere to put it.
 

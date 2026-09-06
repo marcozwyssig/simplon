@@ -309,6 +309,31 @@ def test_for_shim_stamps_each_step_with_the_planned_commands_dotted_path():
     assert step.label == "install"
 
 
+def test_both_factories_stamp_the_commands_own_help_on_the_step():
+    """#49's second question: the manifest makes `help` mandatory on every command and it was reaching
+    no runner at all - a reader saw `build.install` and had to look the name up. The factories already
+    hold the manifest, so the stamp costs a lookup and nothing else."""
+    # arrange
+    mf = manifest_load(_DEPS_MANIFEST)
+    shim = product.StepFactoryContext.for_shim("demo", "/repo/demo.sh", mf)
+    module = product.StepFactoryContext.for_module("demo", "orchestrator", mf)
+
+    # act / assert: one help text, whichever way the step is spawned
+    assert shim.step_factory("install").help == "Install host prereqs."
+    assert module.step_factory("install").help == "Install host prereqs."
+
+
+def test_a_step_for_an_ambiguous_name_carries_no_help_rather_than_a_guessed_one():
+    """`all` is owned by two groups, so the manifest cannot say WHICH command it is - and a help text
+    picked from one of them would describe the other half of the time. No help is the honest answer, and
+    the entry line simply stays bare."""
+    # arrange
+    ctx = product.StepFactoryContext.for_shim("demo", "/repo/demo.sh", manifest_load(_TWO_ALLS_MANIFEST))
+
+    # act / assert
+    assert ctx.step_factory("all").help == ""
+
+
 def test_for_shim_falls_back_to_the_bare_name_when_several_groups_own_the_command():
     # arrange: `all` is owned by test AND deploy (the #519 shape), so the manifest cannot resolve a path
     ctx = product.StepFactoryContext.for_shim("demo", "/repo/demo.sh", manifest_load(_TWO_ALLS_MANIFEST))

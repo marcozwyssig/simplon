@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import sys
 
-from .steps import (STATE_ICON, Emit, Pipeline, Row, StepState, abort_after, build_rows,
-                    omitted_note, overall_rc, run_headless)
+from .steps import (STATE_ICON, Emit, Pipeline, Row, Step, StepState, abort_after, build_rows,
+                    failure_report, omitted_note, overall_rc, run_headless)
 
 
 def run_pipeline(pipeline: Pipeline) -> int:
@@ -28,6 +28,11 @@ def run_pipeline(pipeline: Pipeline) -> int:
     except Exception:  # noqa: BLE001 - any Textual import/construct issue -> safe fallback
         return run_headless(pipeline)
     app.run()
+    # The TUI's screen - and with it the details pane that held the reason - is gone the moment the app
+    # exits. The same block a CI log gets is therefore printed onto the terminal the operator is left
+    # looking at (#49). A run with no failure prints nothing here, so a green run is not one line longer.
+    for line in failure_report(pipeline):
+        print(line, flush=True)
     return overall_rc(pipeline)
 
 
@@ -166,6 +171,14 @@ class _StepApp(App):
         node = self._tree().cursor_node
         return node.data if node is not None else None
 
+    @staticmethod
+    def _step_header(step: Step) -> str:
+        """The details pane's first line for a step: its exact command, plus the command's own help text
+        when the manifest gave it one (#49). One line, and only where a step is ENTERED - the left pane's
+        rows stay the dotted paths, which is what makes them scannable."""
+        identity = step.command or step.label
+        return f"$ {identity} - {step.help}" if step.help else f"$ {identity}"
+
     def _details_text(self, row: Row) -> str:
         """What the right pane shows for `row`, as plain text - the one source `_show_details`, `c` and
         `s` all read, so what is copied is what is displayed rather than a second rendering of it."""
@@ -180,7 +193,7 @@ class _StepApp(App):
                 StepState.SKIPPED: f"(skipped: {self._skipped_because.get(id(step), 'a previous step failed')})",
                 StepState.PENDING: "(pending)",
             }.get(step.state, "")
-            return f"$ {step.command or step.label}\n\n{body}".rstrip("\n")
+            return f"{self._step_header(step)}\n\n{body}".rstrip("\n")
         lines = [f"$ {row.label}", ""]
         for child in row.children:
             verdict = f"rc {child.rc}" if child.rc is not None else f"({child.state.value})"
@@ -217,7 +230,7 @@ class _StepApp(App):
         rlog.clear()
         step = row.step
         if step is not None:
-            rlog.write(f"$ {step.command or step.label}\n")
+            rlog.write(f"{self._step_header(step)}\n")
             if step.output:
                 rlog.write(step.output.rstrip("\n"))
             elif step.state == StepState.RUNNING:
@@ -252,7 +265,7 @@ class _StepApp(App):
             rlog = self.query_one("#details", RichLog)
             rlog.clear()
             step = self.pipeline.steps[i]
-            rlog.write(f"$ {step.command or step.label}\n")
+            rlog.write(f"{self._step_header(step)}\n")
         else:
             self._show_details(cursor)
 

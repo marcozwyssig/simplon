@@ -8,8 +8,11 @@ import shlex
 
 import pytest
 
+from simplon import context
+from simplon.context import ProductContext
 from simplon.orchestrator.manifest import load as manifest_load
 from simplon.orchestrator.steps import (
+    FAILURE_TAIL_LINES,
     VERBOSE_ENV,
     Abort,
     Outcome,
@@ -18,6 +21,7 @@ from simplon.orchestrator.steps import (
     StepState,
     abort_after,
     argv_step,
+    failure_report,
     overall_rc,
     run_headless,
 )
@@ -120,19 +124,28 @@ def test_run_headless_verbose_defaults_to_the_delivery_verbose_env(capsys, monke
 
 
 def test_run_headless_does_not_reprint_a_streaming_steps_live_output(capsys):
-    # Arrange: a FAILING streaming step - its lines already went out live through emit, and
-    # outcome.output is the same text again
+    """The runner never dumps a streamed step's body a SECOND time - the whole of a build log twice is
+    what this pins. Since #49 a failed step's last few lines come back in the closing summary, which is a
+    different thing and is bounded: an early line is still printed exactly once."""
+    # Arrange: a FAILING streaming step with more lines than the summary's tail, so "printed live" and
+    # "quoted in the summary" are distinguishable
+    body = [f"step {n}/40: layer" for n in range(1, 41)]
+
     def stream(emit):
-        emit("step 1/3: FROM alpine")
-        return Outcome(rc=1, output="step 1/3: FROM alpine")
+        for line in body:
+            emit(line)
+        return Outcome(rc=1, output="\n".join(body))
 
     p = Pipeline("build", [Step(label="web image", stream=stream)])
     # Act
     rc = run_headless(p, verbose=True)
-    # Assert: printed exactly once (live), never a second time by the runner
+    # Assert: the body is not redumped - an early line went out live and only live
     out = capsys.readouterr().out
     assert rc == 1
-    assert out.count("step 1/3: FROM alpine") == 1
+    assert out.count("step 1/40: layer") == 1
+    # and the summary quotes the TAIL, bounded and announced as a tail
+    assert out.count("step 40/40: layer") == 2
+    assert f"... {len(body) - FAILURE_TAIL_LINES} earlier line(s) not shown" in out
 
 
 def test_overall_rc_matches_step_states():
@@ -862,3 +875,170 @@ def test_a_flag_contradicted_through_an_ancestor_of_a_declarer_survives_the_guar
         "other": StepState.OK,
         "later": StepState.OK,
     }
+
+
+# --- #49: a red run says WHY, and where the whole of it is -------------------------------------------
+
+
+def _failing_pipeline(*outputs: str) -> Pipeline:
+    """A pipeline whose steps all fail, each with its own captured output."""
+    return Pipeline("ci", [Step(label=f"test.{i}", command=f"test.{i}",
+                                action=lambda o=o: Outcome(rc=1, output=o))
+                           for i, o in enumerate(outputs)])
+
+
+def test_failure_report_is_empty_for_a_green_run():
+    """Acceptance 3 of #49, at the source: a run with nothing to explain explains nothing, so a green
+    run cannot grow by a single line."""
+    # Arrange
+    p = Pipeline("ci", [_step("test.unit", 0, output="42 passed")])
+    run_headless(p, verbose=False)
+    # Act / Assert
+    assert failure_report(p) == []
+
+
+def test_failure_report_names_every_failed_step_not_just_how_many():
+    """The gap #49 exists for: the count said HOW MANY and the tree said WHICH; neither said WHY. Two
+    failures, two reasons - seen red by asserting both, not the number 2."""
+    # Arrange
+    p = _failing_pipeline("ruff: E501 line too long", "mypy: 3 errors in 2 files")
+    run_headless(p, verbose=False)
+    # Act
+    report = "\n".join(failure_report(p))
+    # Assert
+    assert "why test.0 failed (rc 1):" in report
+    assert "ruff: E501 line too long" in report
+    assert "why test.1 failed (rc 1):" in report
+    assert "mypy: 3 errors in 2 files" in report
+
+
+def test_failure_report_skips_the_steps_that_passed_and_the_ones_that_never_ran():
+    # Arrange: one green, one red, one that the red one aborted
+    p = Pipeline("ci", [_command_step("test.lint", rc=0),
+                        _command_step("test.unit", rc=1),
+                        _command_step("test.e2e", rc=0)],
+                 stop_on_failure=True)
+    run_headless(p, verbose=False)
+    # Act
+    report = "\n".join(failure_report(p))
+    # Assert
+    assert p.steps[2].state == StepState.SKIPPED
+    assert "test.unit" in report
+    assert "test.lint" not in report and "test.e2e" not in report
+
+
+def test_failure_report_says_so_when_the_step_printed_nothing():
+    """Acceptance 2's second half: a run that does not know the reason says it does NOT know. An empty
+    block under a failed step would read as 'nothing was wrong' - this repo's recurring defect, in a
+    summary."""
+    # Arrange
+    p = _failing_pipeline("")
+    run_headless(p, verbose=False)
+    # Act / Assert
+    assert any("does not know why it failed" in line for line in failure_report(p))
+
+
+def test_failure_report_never_names_a_log_file_that_was_never_written(tmp_path, monkeypatch):
+    """A hand-built action step keeps its output in the Outcome and writes no file. Printing
+    `build/logs/<step>.log` for it would hand the reader a path to nothing, and the reader only finds
+    out after the trip."""
+    # Arrange: a product IS registered, so a computed path would look plausible
+    monkeypatch.setattr(context, "_current",
+                        ProductContext("demo", tmp_path, tmp_path / "demo.yaml"))
+    p = _failing_pipeline("boom")
+    run_headless(p, verbose=False)
+    # Act
+    report = "\n".join(failure_report(p))
+    # Assert
+    assert "build/logs" not in report
+    assert "not written to a file" in report
+
+
+def test_failure_report_gives_the_tail_and_the_path_never_only_one_of_them(tmp_path, monkeypatch):
+    """#49's open question, decided: both or neither. A truncated cause on its own reads as the whole
+    answer; a bare path makes the reader open a file to learn what a line would have told them."""
+    # Arrange: a real streaming step, so a log file is really written next to the run
+    monkeypatch.setattr(context, "_current",
+                        ProductContext("demo", tmp_path, tmp_path / "demo.yaml"))
+    argv = ["python3", "-c", "import sys; print('E501 line too long'); sys.exit(1)"]
+    p = Pipeline("ci", [argv_step("lint", argv, command="test.lint")])
+    run_headless(p, verbose=False)
+    # Act
+    report = "\n".join(failure_report(p))
+    # Assert: the cause AND the file holding all of it
+    assert "E501 line too long" in report
+    assert str(tmp_path / "build" / "logs" / "test.lint.log") in report
+
+
+def test_failure_report_bounds_the_quoted_output_and_says_how_much_it_dropped():
+    # Arrange: more lines than the tail
+    body = "\n".join(f"line {n}" for n in range(1, 31))
+    p = _failing_pipeline(body)
+    run_headless(p, verbose=False)
+    # Act
+    report = failure_report(p)
+    # Assert: the last FAILURE_TAIL_LINES lines, and the drop is announced rather than silent
+    assert f"  line {30 - FAILURE_TAIL_LINES + 1}" in report and "  line 30" in report
+    assert f"  line {30 - FAILURE_TAIL_LINES}" not in report
+    assert f"  ... {30 - FAILURE_TAIL_LINES} earlier line(s) not shown" in report
+
+
+def test_run_headless_prints_the_reasons_between_the_tree_and_the_verdict(capsys):
+    # Arrange
+    p = _failing_pipeline("ruff: E501 line too long")
+    # Act
+    rc = run_headless(p, verbose=False)
+    # Assert
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert out.index("the same steps") < out.index("why test.0 failed")
+    assert out.index("why test.0 failed") < out.index("1/1 step(s) failed")
+
+
+def test_a_green_headless_run_prints_no_failure_block(capsys):
+    """Acceptance 3 of #49 at the runner: the normal case does not pay for the exceptional one."""
+    # Arrange
+    p = Pipeline("ci", [_step("test.unit", 0, output="42 passed")])
+    # Act
+    run_headless(p, verbose=False)
+    # Assert
+    out = capsys.readouterr().out
+    assert "why " not in out and "full output:" not in out
+
+
+# --- #49: what a step is FOR, said where the step is entered -----------------------------------------
+
+
+def test_run_headless_shows_a_steps_help_when_it_enters_it(capsys):
+    """'Was passiert darin' - the manifest makes `help` mandatory on every command and no runner showed
+    it. On the entry line, so a green run keeps exactly the lines it had."""
+    # Arrange
+    step = Step(label="reference", command="build.reference", help="Render the CLI reference.",
+                action=lambda: Outcome(rc=0, output=""))
+    # Act
+    run_headless(Pipeline("docs", [step], root_path="build.docs"), verbose=False)
+    # Assert
+    out = capsys.readouterr().out
+    assert "build.reference - Render the CLI reference." in out
+
+
+def test_the_retraced_tree_carries_no_help_text(capsys):
+    """Decided in #49: help on entry, never on a tree row. One help text per row turns a column into a
+    paragraph, and the tree's job is the shape."""
+    # Arrange
+    step = Step(label="reference", command="build.reference", help="Render the CLI reference.",
+                action=lambda: Outcome(rc=0, output=""))
+    # Act
+    run_headless(Pipeline("docs", [step], root_path="build.docs"), verbose=False)
+    # Assert
+    out = capsys.readouterr().out
+    tree = out[out.index("the same steps"):]
+    assert "Render the CLI reference." not in tree
+
+
+def test_a_step_without_help_keeps_its_bare_entry_line(capsys):
+    # Arrange: a hand-built probe, whose prose label already is its description
+    # Act
+    run_headless(Pipeline("doctor", [_step("docker engine", 0)]), verbose=False)
+    # Assert
+    assert "docker engine - " not in capsys.readouterr().out

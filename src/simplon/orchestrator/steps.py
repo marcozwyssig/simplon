@@ -84,6 +84,13 @@ class Step:
     action: Callable[[], Outcome] | None = None
     stream: Callable[[Emit], Outcome] | None = None
     command: str = ""
+    # The command's own one-line summary from the manifest, where the step was built for a planned
+    # command; "" for a hand-built probe, whose prose `label` already is its description. Shown when a
+    # step is ENTERED and nowhere else (#49): the manifest makes `help` mandatory on every command and it
+    # was reaching no runner at all, so a reader saw `build.reference` and had to look the name up. Not
+    # in the retraced tree - one help text per row would turn a column into a paragraph, and the tree's
+    # job is the shape, not the prose.
+    help: str = ""
     state: StepState = StepState.PENDING
     output: str = ""
     rc: int | None = None
@@ -439,6 +446,55 @@ def omitted_note(row: Row) -> str:
             + ", ".join(row.omitted))
 
 
+# How many TRAILING lines of a failed step's output the summary shows. The last ones, because a tool
+# prints its diagnosis immediately before it exits - `Found 3 errors`, the traceback's final frame, the
+# compiler's summary. "Meist" is not a rule, which is why the tail is never shown ALONE: #49 settles that
+# question as BOTH or NEITHER - the lines AND the path to the whole file, or an explicit sentence saying
+# the reason is not known here. A truncated cause on its own is worse than a path, because it reads as
+# the whole answer.
+FAILURE_TAIL_LINES = 10
+
+
+def failure_report(pipeline: Pipeline, tail: int = FAILURE_TAIL_LINES) -> list[str]:
+    """Why each FAILED step failed, as text lines - empty for a run with no failure (#49).
+
+    The gap this closes: a red run said HOW MANY steps failed and the tree said WHICH, while the reason
+    sat in `build/logs/<step>.log` and the run named the DIRECTORY. With three files a reader finds it;
+    with twenty steps the reader searches for something the run knew exactly. Nothing here is new
+    information - it is the output the step already captured and the file it was already written to.
+
+    Three shapes, and the difference between them is the point:
+
+    - output AND a log file: the last `tail` lines, then the path to the rest. When lines were dropped,
+      the count of them is said, so nothing pretends to be the whole.
+    - output but no log file: a hand-built `action` step keeps its text in the Outcome and writes
+      nothing; the lines are all there is, and the report says so rather than naming a path to nothing.
+    - no output at all: the report says the run does not know the reason. An empty block under a failed
+      step would read as "nothing was wrong", which is this repo's recurring defect wearing a summary.
+
+    Pure: it returns lines and prints none of them, so both runners can place it where their own output
+    wants it and a test can read it without a terminal.
+    """
+    lines: list[str] = []
+    for step in pipeline.steps:
+        if step.state != StepState.FAILED:
+            continue
+        identity = step.command or step.label
+        lines.append(f"why {identity} failed (rc {step.rc}):")
+        body = step.output.rstrip("\n").splitlines()
+        if len(body) > tail:
+            lines.append(f"  ... {len(body) - tail} earlier line(s) not shown")
+        lines += [f"  {text}" for text in body[-tail:]]
+        if not body:
+            lines.append("  this step printed nothing, so the run does not know why it failed")
+        path = steplog.existing_log(identity)
+        if path is not None:
+            lines.append(f"  full output: {path}")
+        elif body:
+            lines.append("  full output: not written to a file - the lines above are all of it")
+    return lines
+
+
 def render_tree(root: Row, indent: str = "  ") -> list[str]:
     """The display tree as text lines, one per row, indented by depth - what `run_headless` prints so a CI
     log shows the structure the TUI draws."""
@@ -453,7 +509,7 @@ def render_tree(root: Row, indent: str = "  ") -> list[str]:
     return lines
 
 
-def argv_step(label: str, argv: list[str], command: str | None = None) -> Step:
+def argv_step(label: str, argv: list[str], command: str | None = None, help: str = "") -> Step:
     """A STREAMING Step that runs an arbitrary command and feeds its output live into the details pane.
     The build pipeline uses it to render each image build (a docker build/run) as its own step.
     `command` is the step's exact-command identity for the section header; it defaults to the real argv
@@ -476,7 +532,7 @@ def argv_step(label: str, argv: list[str], command: str | None = None) -> Step:
         output = "\n".join(lines)
         steplog.write(identity, output)
         return Outcome(rc=rc, output=output)
-    return Step(label=label, stream=stream, command=identity)
+    return Step(label=label, stream=stream, command=identity, help=help)
 
 
 def _print_captured(output: str) -> None:
@@ -504,7 +560,11 @@ def run_headless(pipeline: Pipeline, verbose: bool | None = None) -> int:
     After the last step it prints the SAME tree the TUI draws (netctl#1276), indented, with each row's
     final icon - so a CI log and a TTY show one structure in one vocabulary. It goes at the END rather than
     up front on purpose: the tree's value is the aggregate verdicts, which only exist once the leaves have
-    run, and the plan itself is already implied by the per-step lines above it."""
+    run, and the plan itself is already implied by the per-step lines above it.
+
+    A RED run then adds `failure_report` between that tree and the verdict line (#49): the tree says which
+    steps failed, the report says why each of them did, and the count stays last. A green run adds
+    nothing - the normal case must not pay for the exceptional one, which is #49's own acceptance."""
     show_passing = _verbose_env() if verbose is None else verbose
     failures = 0
     skipped = 0
@@ -520,7 +580,10 @@ def run_headless(pipeline: Pipeline, verbose: bool | None = None) -> int:
             skipped += 1
             log.warn(f"{title} - skipped ({aborted[index]})")
             continue
-        log.info(title)
+        # The help text rides on the ENTRY line, not on a line of its own and not in the retraced tree
+        # (#49): a green run keeps exactly the lines it had, one of them wider. `build.reference` alone
+        # made a reader look the command up in the manifest to learn what it was about to do.
+        log.info(f"{title} - {step.help}" if step.help else title)
         outcome = step.run(lambda line: print(f"  {line}", flush=True))
         if step.stream is None and outcome.output and (not outcome.ok or show_passing):
             _print_captured(outcome.output)
@@ -540,6 +603,11 @@ def run_headless(pipeline: Pipeline, verbose: bool | None = None) -> int:
     for line in render_tree(build_rows(pipeline)):
         print(line, flush=True)
     if failures:
+        # The reasons go BETWEEN the tree and the verdict: the tree says which steps failed, this says
+        # why each of them did, and the count stays the last line so the verdict is where it has always
+        # been. A green run reaches none of this (#49).
+        for line in failure_report(pipeline):
+            print(line, flush=True)
         tail = f", {skipped} skipped" if skipped else ""
         log.warn(f"{pipeline.name}: {failures}/{len(pipeline.steps)} step(s) failed{tail}")
         return 1

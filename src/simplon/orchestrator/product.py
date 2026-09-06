@@ -66,7 +66,9 @@ class StepFactoryContext:
         argv0 = str(script)
 
         def factory(cmd: str) -> Step:
-            return argv_step(cmd, [argv0, cmd], command=manifest.path_by_name(cmd) or cmd)
+            spec = manifest.spec_by_name(cmd)
+            return argv_step(cmd, [argv0, cmd], command=manifest.path_by_name(cmd) or cmd,
+                             help=spec.help if spec is not None else "")
 
         return cls(product=product, step_factory=factory)
 
@@ -96,8 +98,10 @@ class StepFactoryContext:
         requirements change mid-plan - still wants the script, and that is a real if rare shape.
         """
         def factory(cmd: str) -> Step:
+            spec = manifest.spec_by_name(cmd)
             return argv_step(cmd, [sys.executable, "-u", "-m", module, cmd],
-                             command=manifest.path_by_name(cmd) or cmd)
+                             command=manifest.path_by_name(cmd) or cmd,
+                             help=spec.help if spec is not None else "")
 
         return cls(product=product, step_factory=factory)
 
