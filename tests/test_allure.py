@@ -207,7 +207,7 @@ def test_render_report_via_docker_runs_as_the_calling_user_so_the_mounted_report
     argv = seen["argv"]
     assert "--user" in argv, f"docker render must pass --user; got {argv}"
     assert argv[argv.index("--user") + 1] == f"{os.getuid()}:{os.getgid()}"
-    assert argv.index("--user") < argv.index("frankescobar/allure-docker-service")
+    assert argv.index("--user") < argv.index(allure.IMAGE)
 
 
 def test_render_report_returns_the_archive_path_it_wrote(tmp_path, monkeypatch):

@@ -24,7 +24,7 @@ import shutil
 import time
 from typing import Callable
 
-from simplon import diskguard, log
+from simplon import diskguard, docker, log
 from simplon import host as host_mod     # module-level, so a test can monkeypatch the socket probe
 from simplon.host import Host
 from simplon.run import run
@@ -149,6 +149,18 @@ def warn_if_vm_underprovisioned() -> tuple[str, ...]:
 
 # --- amd64 emulation + the deploy-scoped rosetta watchdog (Darwin only) -----------------------------
 
+#: The image that registers the qemu binfmt handlers, PINNED and validated by the gate a product's
+#: manifest image goes through (si#47). This one was the reference the ticket did not name: the kernel
+#: handed docker a bare `tonistiigi/binfmt` while `docs:site` refused exactly that shape in a manifest.
+#: It registers an INTERPRETER for every x86 process in the VM afterwards, which is a wider blast radius
+#: than a documentation build, not a narrower one.
+#:
+#: qemu-v10.2.3 is what ':latest' resolved to when the pin was written (both tags,
+#: sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0), so the pin changed the
+#: guarantee and not the bytes. Bump it deliberately.
+BINFMT_IMAGE = docker.pinned_image("tonistiigi/binfmt:qemu-v10.2.3", "simplon.labhost")
+
+
 def ensure_amd64_emulation(host: Host) -> None:
     """Ensure an F-flagged (container-capable) amd64 binfmt handler exists in the VM, so x86 nodes can
     exec. colima's Rosetta counts; only register qemu as a fallback when neither rosetta nor a qemu-x86_64
@@ -161,7 +173,7 @@ def ensure_amd64_emulation(host: Host) -> None:
         return
     log.info("registering F-flagged amd64 (qemu) emulation in the colima VM (x86 nodes need it)")
     if run(["colima", "ssh", "--", "sudo", "docker", "run", "--privileged", "--rm",
-            "tonistiigi/binfmt", "--install", "amd64"]).ok:
+            BINFMT_IMAGE, "--install", "amd64"]).ok:
         log.ok("amd64 emulation registered (qemu, F-flagged) - x86 nodes can exec")
     else:
         log.warn("amd64 emulation registration failed; x86 nodes may fail - native-arch sites still come up")

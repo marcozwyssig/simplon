@@ -83,6 +83,52 @@ def test_render_refuses_a_manifest_that_pins_no_version(monkeypatch, tmp_path):
         docs_cmd.render()
 
 
+@pytest.mark.parametrize("version", ["latest", "", "  "])
+def test_render_refuses_a_tag_that_is_declared_but_moves(monkeypatch, tmp_path, version):
+    # arrange: si#47. This check used to ask only that a tag be DECLARED, so `doctoolchain_version:
+    # latest` came through - while `docs:site` refused exactly that shape in a product's manifest, at
+    # length and in writing. A kernel that argues for a pin in one task and takes `latest` in the other
+    # has a rule and an exception, and the exception is what a reader remembers
+    _register(monkeypatch, tmp_path, {"doctoolchain_version": version})
+    _stub_run(monkeypatch, rc=0)
+
+    # act / assert
+    with pytest.raises(ValueError):
+        docs_cmd.render()
+
+
+def test_render_refuses_the_moving_tag_by_the_same_gate_the_site_build_uses(monkeypatch, tmp_path):
+    # arrange: not "a check that behaves the same" but the same function - `simplon.docker.pinned_image`,
+    # which is also what `docs:site` calls and what the kernel's own two images are validated by. The
+    # message names the manifest key, so the reader is told which line to change
+    _register(monkeypatch, tmp_path, {"doctoolchain_version": "latest"})
+    _stub_run(monkeypatch, rc=0)
+
+    # act / assert
+    with pytest.raises(ValueError) as excinfo:
+        docs_cmd.render()
+    message = str(excinfo.value)
+    assert docs_cmd.VERSION_KEY in message
+    assert "latest" in message
+
+
+@pytest.mark.parametrize("version", ["v3.5.0", "3.5.0", "5.3.2-boneyard"])
+def test_render_accepts_a_tag_that_names_one_version(monkeypatch, tmp_path, version):
+    # arrange: the gate must not cost a valid pin. The refusal is about tags that MOVE, and the tags
+    # docToolchain actually publishes - a leading 'v' or not, a suffixed build - have to keep working
+    _register(monkeypatch, tmp_path, {"doctoolchain_version": version})
+    seen = []
+    _stub_run(monkeypatch, rc=0, seen=seen)
+    _html(tmp_path)
+
+    # act
+    rc = docs_cmd.render()
+
+    # assert
+    assert rc == 0
+    assert f"{docs_cmd.IMAGE_REPOSITORY}:{version}" in seen[0]
+
+
 # --- the two failures ------------------------------------------------------------------------------------
 
 

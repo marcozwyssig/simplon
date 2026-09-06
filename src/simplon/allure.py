@@ -24,6 +24,18 @@ from simplon import docker, log
 from simplon.run import run
 
 
+#: The image the DOCKER fallback renders in, PINNED and validated by the same gate a product's manifest
+#: image goes through (si#47). It is validated HERE, at import, rather than in a test: the kernel refuses
+#: an unpinned image in a product's manifest with a paragraph of reasons, and named this one without a tag
+#: - which is ':latest', which is "the same command renders with a different allure next month". A rule
+#: the kernel argues for and exempts itself from is worth less than no rule.
+#:
+#: 2.44.0 is what ':latest' resolved to when the pin was written (both tags,
+#: sha256:dc171ec796d58e133f0258d4934066747434c99bc2e35ff561269b81b27285b1), so the pin changed the
+#: guarantee and not the bytes. Bump it deliberately, the way `DOCKER_CLI_VERSION` is bumped.
+IMAGE = docker.pinned_image("frankescobar/allure-docker-service:2.44.0", "simplon.allure")
+
+
 def report_filename(now: datetime | None = None, *, prefix: str = "allure") -> str:
     """The archived single-file report name for a run: ``<prefix>-YYYYMMDD-HHMMSS.html`` (netctl#402). Pure
     and now-injectable so the timestamped naming is unit-tested without invoking allure or the wall clock."""
@@ -194,7 +206,7 @@ def render_report(report_dir: str, results: str | None = None, *, prefix: str = 
         tool = "docker"
         log.info("no local allure CLI; rendering the allure HTML report via docker (single-file)")
         ok = run(["docker", "run", "--rm", *_docker_user(), "-v", f"{report_dir}:/work", "-w", "/work",
-                  "--entrypoint", "allure", "frankescobar/allure-docker-service",
+                  "--entrypoint", "allure", IMAGE,
                   "generate", "--single-file", "--clean",
                   os.path.join("/work", os.path.relpath(results, report_dir)), "-o", "/work/allure-report"]).ok
         if not ok:

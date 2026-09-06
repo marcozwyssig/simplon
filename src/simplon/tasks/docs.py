@@ -33,6 +33,11 @@ from simplon.run import run
 #: value, and the manifest already carries the other build-data pins (image names, cache volumes) flat.
 VERSION_KEY = "doctoolchain_version"
 
+#: The repository half of the image reference - the kernel's, because the tool IS docToolchain; only the
+#: TAG is the product's to choose. Split out from the f-string it used to live in so `_version` can hand
+#: the complete reference to the same pin gate a `site:` image goes through.
+IMAGE_REPOSITORY = "doctoolchain/doctoolchain"
+
 #: docToolchain's OWN conventions, not a product's: the config file it looks for and the tree it writes.
 CONFIG_FILE = "docToolchainConfig.groovy"
 OUTPUT_DIR = Path("build") / "docToolchain"
@@ -45,10 +50,20 @@ GENERATORS = ("generateHTML", "generatePDF")
 def _version(data: dict) -> str:
     """The pinned docToolchain image tag, or a loud failure. An unpinned tool version would silently
     render against whatever `latest` happens to be, which is the one thing a documentation build must
-    not do: the output is committed-to prose, and a generator change rewrites it wholesale."""
+    not do: the output is committed-to prose, and a generator change rewrites it wholesale.
+
+    THE TAG IS HELD TO THE SAME RULE AS A `site:` IMAGE (si#47). This used to demand only that a tag be
+    DECLARED, so `doctoolchain_version: latest` came through untouched - while `docs:site` refused
+    exactly that in a product's manifest, at length and in writing. Two documentation renders in one
+    kernel, one of them arguing for a pin the other did not ask for, is not a rule; it is a rule and an
+    exception. `simplon.docker.pinned_image` is now the one gate, and it is handed the COMPLETE
+    reference, because that is the string docker resolves - a tag is only pinned in the context of the
+    repository it tags.
+    """
     version = str(data.get(VERSION_KEY, "")).strip()
     if not version:
         raise ValueError(f"manifest: '{VERSION_KEY}' is missing or empty - pin the docToolchain image tag")
+    docker.pinned_image(f"{IMAGE_REPOSITORY}:{version}", f"manifest: '{VERSION_KEY}'")
     return version
 
 
@@ -63,7 +78,7 @@ def render() -> int:
     rc = run(["docker", "run", "--rm", "--platform", "linux/amd64", "--entrypoint", "/bin/bash",
               "--user", "0:0",
               "-e", "DTC_HEADLESS=true", "-v", f"{ctx.root}:/project", "-w", "/project",
-              f"doctoolchain/doctoolchain:{version}", "-c",
+              f"{IMAGE_REPOSITORY}:{version}", "-c",
               f"doctoolchain . {' '.join(GENERATORS)} -PmainConfigFile={CONFIG_FILE}"],
              capture=False).rc
     if rc != 0:

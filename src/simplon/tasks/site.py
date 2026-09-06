@@ -115,53 +115,10 @@ def _str(body: Mapping, key: str, where: str, *, required: bool = False) -> str:
     return value.strip()
 
 
-#: A docker tag: what may follow the ':' in an image reference. Used to reject the EMPTY tag ('hugo:',
-#: 'hugo::'), which reads as pinned to a careless eye and is not.
-_TAG_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,127}\Z")
-#: A content digest ('sha256:<hex>'): the strongest pin there is.
-_DIGEST_RE = re.compile(r"[A-Za-z0-9]+(?:[.+_-][A-Za-z0-9]+)*:[A-Fa-f0-9]{32,}\Z")
 #: A Go module version: a version TAG ('v0.9.6', 'v1.2.3-rc.1') or a commit. Anything else that `hugo mod
 #: get` accepts - 'latest', 'upgrade', a branch name - is a query that resolves differently tomorrow.
 _MODULE_VERSION_RE = re.compile(r"v\d+(?:\.\d+)*(?:[-+][0-9A-Za-z.-]+)?\Z")
 _COMMIT_RE = re.compile(r"[0-9a-f]{7,40}\Z")
-
-
-def _pinned_image(image: str, where: str) -> str:
-    """Refuse an image reference that does not name a version. A build that renders something different
-    depending on when it ran is not a build, and a documentation site is committed-to prose: a generator
-    change rewrites it wholesale. `docs.py` makes only the WEAKER half of the same demand for the
-    docToolchain tag: it requires one to be declared, and does not refuse a moving one.
-
-    The registry is split off by docker's OWN rule, which needs BOTH halves: a first component is a host
-    when it carries a '.' or a ':' AND a '/' follows it, or when it is 'localhost'. That is what keeps a
-    private registry with a port (`registry.example:5000/hugo:0.148.2`) from being read as a tagged image
-    - and, just as important, what keeps `my.image:1.0` from being read as a registry. Without a slash
-    there is no registry, dot or no dot; docker reads such a reference as an image with a tag, and so does
-    this. `registry.example:5000` alone therefore passes as image `registry.example` tag `5000`, which is
-    what docker itself would do with it: nothing here can tell that port from a version without guessing,
-    and guessing costs valid references.
-    """
-    hint = ("pin it as '<image>:<tag>' (e.g. 'hugomods/hugo:exts-0.148.2'), or by digest")
-    name, at, digest = image.partition("@")
-    if at:
-        if not name or not _DIGEST_RE.match(digest):
-            raise ValueError(f"{where}: 'image' carries a broken digest in '{image}'; {hint}")
-        return image
-    parts = image.split("/")
-    # A registry needs a '/' after it - `len(parts) > 1` IS that condition, and it is the half that stops
-    # `my.image:1.0` from being mistaken for a host.
-    registry = len(parts) > 1 and ("." in parts[0] or ":" in parts[0] or parts[0] == "localhost")
-    remainder = "/".join(parts[1:]) if registry else image
-    repo, colon, tag = remainder.rpartition(":")
-    if not colon:
-        raise ValueError(f"{where}: 'image' must pin a version ('<image>:<tag>'), got '{image}' "
-                         f"- an untagged image means ':latest', which moves under the build; {hint}")
-    if not repo or not _TAG_RE.match(tag):
-        raise ValueError(f"{where}: 'image' has no usable tag in '{image}'; {hint}")
-    if tag == "latest":
-        raise ValueError(f"{where}: 'image' must pin a version, not the moving tag 'latest' "
-                         f"(got '{image}') - a build whose output depends on when it ran is not a build")
-    return image
 
 
 def _pinned_theme(theme: str, where: str) -> str:
@@ -227,7 +184,10 @@ def declared(data: Mapping[str, object], source: str = "manifest") -> Site:
     src = _str(section, "source", where, required=True)
     out = _str(section, "output", where, required=True)
     theme = _str(section, "theme", where)
-    return Site(image=_pinned_image(image, where),
+    # The image pin is `simplon.docker.pinned_image` rather than a rule of this module's own (si#47):
+    # `docs:render` holds its docToolchain tag to the SAME gate, and so do the images the kernel names
+    # itself - which is what makes this refusal something the kernel keeps rather than only demands.
+    return Site(image=docker.pinned_image(image, where),
                 source=_inside_the_product(src, "source", where),
                 output=_inside_the_product(out, "output", where),
                 base_url=_str(section, "base_url", where),
