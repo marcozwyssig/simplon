@@ -65,6 +65,13 @@ unexamined one is.
   justification.
 - **Would deleting be cheaper than guarding?** A second source you do not
   have cannot drift, and it needs no rule to watch it. First applied in #46.
+- **If a manifest does violate it, what does the fix cost that product?** Not
+  the manifest line — the surface. #34 moved netctl's `monitor accept` to
+  `test accept`, and its maintainers measured the real bill: the manifest is
+  one line, the old command name is in eight comments and docstrings and an
+  architecture document, and every user who types it has to learn the new one.
+  "One violation" and "one line" are not the same number, and only the product
+  can tell you which it is. Ask before shipping, not after.
 
 ## The recurring defect this project hunts
 
