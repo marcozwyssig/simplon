@@ -17,6 +17,7 @@ Pure functions over plain dicts: no pydantic, no I/O, no import of any body.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 
 # A group node's own keys. Everything else under a node would be ambiguous, which is why members live
 # under `commands:` rather than directly on the node: otherwise `help:` would be a group attribute in one
@@ -114,6 +115,20 @@ def paths_with_commands(flat: dict) -> frozenset[str]:
                             if other == path or other.startswith(f"{path}.")))
 
 
+def shape_is_the_platforms(path: str, key: str) -> str:
+    """The refusal a product gets for restating the SHAPE of a group the platform declares.
+
+    One string with two callers, and that is the point (si#43). `merge` raises it for `env_first:` (or
+    `help:`) written onto a platform group; `check_env_groups` raises it for `env_groups:`, which says
+    `env_first: true` about a group from the top level of the same file. Two spellings of one statement
+    have to be refused for one reason and point at one way out, or the second spelling reads as a
+    separate rule with its own exceptions - which is exactly how it became a back door.
+    """
+    return (f"group '{path}' declares `{key}:`, which the platform's node already sets. A product may "
+            f"add commands and sub-groups to a platform group, never change its shape - change it in "
+            f"the platform's `groups:` instead, once, for everybody")
+
+
 def merge(kernel: dict, product: dict, _path: tuple[str, ...] = (),
          *, product_tasks: dict | None = None, catalogue_tasks: dict | None = None,
          locked: bool = True) -> dict:
@@ -190,11 +205,7 @@ def merge(kernel: dict, product: dict, _path: tuple[str, ...] = (),
             elif own:
                 merged[key] = value
             else:
-                raise ValueError(
-                    f"group '{'.'.join(path)}' declares `{key}:`, which the platform's node already "
-                    f"sets. A product may add commands and sub-groups to a platform group, never "
-                    f"change its shape - change it in the platform's `groups:` instead, once, for "
-                    f"everybody")
+                raise ValueError(shape_is_the_platforms(".".join(path), key))
         if _is_empty(merged):
             raise ValueError(
                 f"group '{'.'.join(path)}' declares no commands. A group this manifest names is a "
@@ -529,7 +540,33 @@ def _node_at(tree: dict, path: tuple[str, ...]) -> dict:
     return node
 
 
-def rewrite_of_old_form(data: dict) -> str:
+def placed_commands(tree: dict, _path: tuple[str, ...] = ()) -> dict[tuple[str, ...], dict[str, str]]:
+    """Every command a tree PLACES, as `group path -> {command name -> its task ref}`.
+
+    The platform's answer to "which names are already taken, and by which body". `rewrite_of_old_form`
+    reads it to decide where a product's own body needs `override: true`, and it is the whole of what
+    that decision needs: the merge only demands the key when the two `task:` refs DIFFER, so the ref has
+    to come along beside the name.
+
+    The path is a tuple of segments rather than a dotted string because both callers already hold one -
+    a flat `support.git` key split on the dot, and this walk's own recursion - and joining it here only
+    to split it again is where the two spellings of a nested group get to disagree.
+    """
+    out: dict[tuple[str, ...], dict[str, str]] = {}
+    for name, node in (tree or {}).items():
+        if not isinstance(node, dict):
+            continue
+        path = _path + (str(name),)
+        commands = {str(command): str((spec or {}).get("task", ""))
+                    for command, spec in (node.get("commands") or {}).items()
+                    if isinstance(spec, dict)}
+        if commands:
+            out[path] = commands
+        out.update(placed_commands(node.get("groups") or {}, path))
+    return out
+
+
+def rewrite_of_old_form(data: dict, catalogue_groups: dict | None = None) -> str:
     """This manifest's `tasks:` and `groups:` sections, rewritten as the command tree - YAML, ready to
     paste over both.
 
@@ -545,17 +582,53 @@ def rewrite_of_old_form(data: dict) -> str:
 
     Two bodies that are byte-identical share ONE task, which is the point of the form: `test:gate`
     placed at four levels was four copies of one `impl:` in the flat form and is one template with four
-    pins here. A name already taken by a different body is qualified with its group.
+    pins here. A name already taken by a different body is qualified with its group, and a name the
+    CATALOGUE places is printed with the `override: true` the merge demands - so what is printed LOADS,
+    rather than merely illustrating the shape (si#42; the promise was withdrawn in si#33 because it was
+    not true, and it is made again here because it now is).
 
-    WHAT THE REWRITE DOES NOT KNOW, and it is a real limit rather than a caveat: this function has no
-    catalogue. A command whose name the CATALOGUE also places - `support install`, `release tag` - is
-    printed without the `override: true` the merge then demands, and pasting it in fails with
-    "redeclares `task:`". That second refusal names the fix exactly, so the reader is not stranded; but
-    the printed block is a starting point in that case, not a finished manifest. Do not promise more.
+    What no rewrite can make loadable is a manifest that says something the tree form does not allow at
+    all: a group the platform's tree does not declare, a coordinate placed outside the group its
+    namespace names (si#34), a name that is an aggregate here and a task-backed command in the
+    catalogue. Those are refusals of the old MANIFEST rather than gaps in this renderer - each names its
+    own way out, and none of them is a second round on the same problem.
+
+    `catalogue_groups` is the platform's own tree, and it is what makes the printed block a finished
+    manifest rather than an illustration (si#42). A command whose name the CATALOGUE also places -
+    `support install`, in the catalogue since 0.1.7, is the commonest - is a DIFFERENT body under a name
+    the platform already uses, so the merge demands `override: true` on it. Without the catalogue this
+    function could not know which names those are, printed the placement without the key, and the paste
+    failed with "redeclares `task:`" - a block that loads in three cases of four and asks for a second
+    round in the fourth, on exactly the names most manifests have. The key is added only where the
+    catalogue places the SAME name with a DIFFERENT `task:`: a placement naming the platform's own body
+    is a refinement, and an `override: true` there would claim a replacement that is not happening.
+
+    With no catalogue there is nothing to override, which is the case that lets this renderer be read and
+    tested on its own.
     """
     all_groups = data.get("groups") or {}
     groups = old_form_groups(all_groups)
     tasks = old_form_tasks(data.get("tasks") or {})
+    placed = placed_commands(catalogue_groups or {})
+
+    def override_if_replacing(path: tuple[str, ...], command: object, placement: dict) -> dict:
+        """`placement` with `override: true` inserted next to its `task:`, where the catalogue places
+        this name in this group with a different body - and untouched everywhere else.
+
+        Next to `task:` rather than appended, because that is where the merge's own refusal tells a
+        reader to write it, and a rewrite that printed the same fix in a different place would be a
+        second spelling of one instruction.
+        """
+        theirs = placed.get(path, {}).get(str(command))
+        ours = placement.get("task")
+        if not theirs or ours is None or str(ours) == theirs:
+            return placement
+        out: dict = {}
+        for key, value in placement.items():
+            out[key] = value
+            if key == "task":
+                out["override"] = True
+        return out
     declared = {str(name): dict(spec or {}) for name, spec in (data.get("tasks") or {}).items()
                 if str(name) not in tasks}
     tree: dict = {}
@@ -594,7 +667,9 @@ def rewrite_of_old_form(data: dict) -> str:
                 continue
             body = {key: spec[key] for key in _TASK_SIDE_KEYS if key in spec}
             rest = {key: value for key, value in spec.items() if key not in _TASK_SIDE_KEYS}
-            node["commands"][str(command)] = {"task": task_name_for(str(command), group, body), **rest}
+            node["commands"][str(command)] = override_if_replacing(
+                tuple(group.split(".")), command,
+                {"task": task_name_for(str(command), group, body), **rest})
 
     for coordinate, spec in tasks.items():
         spec = dict(spec or {})
@@ -618,7 +693,8 @@ def rewrite_of_old_form(data: dict) -> str:
             body = {key: spec[key] for key in _TASK_SIDE_KEYS if key in spec}
             rest = {key: value for key, value in spec.items() if key not in _TASK_SIDE_KEYS}
             placement = {"task": task_name_for(name, group, body), **rest}
-        _node_at(tree, tuple(group.split(".")))["commands"][name] = placement
+        path = tuple(group.split("."))
+        _node_at(tree, path)["commands"][name] = override_if_replacing(path, name, placement)
 
     lines: list[str] = []
     if declared:
@@ -632,7 +708,7 @@ def rewrite_of_old_form(data: dict) -> str:
     return "\n".join(lines)
 
 
-def check_no_old_form(data: dict) -> None:
+def check_no_old_form(data: dict, catalogue_groups: dict | None = None) -> None:
     """Reject a manifest still written in the flat form, showing what it becomes.
 
     The four things that say "flat" are checked together rather than one per load, because they are one
@@ -665,7 +741,7 @@ def check_no_old_form(data: dict) -> None:
     if stale_import:
         found.append("an `import:` section makes catalogue coordinates available")
 
-    rewrite = rewrite_of_old_form(data)
+    rewrite = rewrite_of_old_form(data, catalogue_groups)
     notes = ["a command is an INSTANCE of a task: the body is declared once under `tasks:` and the "
              "command points at it with `task:`",
              "a catalogue task keeps its body in the kernel - the command names the coordinate "
@@ -781,4 +857,62 @@ def check_coordinate_placement(flat: dict, platform_groups: frozenset[str]) -> i
                 f"can sit under `build` in one product and under `release` in another. The names that "
                 f"carry a placement are the platform's groups: {', '.join(sorted(platform_groups))} - "
                 f"the phases of the delivery loop, plus the group that supports them")
+    return ruled
+
+
+# --- env_groups: the flat spelling of a group's env-first shape, and who owns it (si#43) --------------
+
+
+def check_env_groups(merged: dict, env_groups: Iterable[str], platform_groups: frozenset[str]) -> int:
+    """Reject an `env_groups:` entry that contradicts the merged node's `env_first:`.
+
+    THE RULE is `merge`'s, and this function only reaches the one spelling `merge` never sees.
+    `env_first: true` written onto a group the catalogue declares is refused there - not because it
+    switches the gate the wrong way, but because a product may not STATE a platform group's shape at all.
+    `env_groups: [<that group>]` says the same thing from the top level of the same file, so it lands on
+    the same refusal, from `shape_is_the_platforms`.
+
+    NOT "it only switches on, never off". That reading was the one this check replaces, and it does not
+    survive contact with `merge`: `merge` allows no switching in either direction. `env_first: true` on a
+    group the catalogue already calls env-first is refused just as flatly as `false` on one. There is no
+    asymmetry to mirror.
+
+    So the entry is measured against the MERGED node rather than allowed to overrule it:
+
+      - the merged node is already env-first: the entry AGREES with the platform. Harmless, probably
+        redundant, accepted - and counted, because agreement is the case a reader has to be able to tell
+        apart from the entry having done something;
+      - the merged node is not env-first and the platform owns the group: the entry CONTRADICTS the
+        platform, and that is the refusal;
+      - the merged node is not env-first and no platform owns the group: nothing has been contradicted.
+        The group is the manifest's own - a loader running without a catalogue - and `env_groups:` is
+        its own statement about it, which is the case the key was written for. `load` gates it on.
+
+    `platform_groups` is the catalogue's own top-level group names, a parameter for the same reason
+    `check_coordinate_placement`'s is: "which groups have a shape somebody else owns" is the CATALOGUE's
+    statement, and a caller with no catalogue hands in an empty set and owns every group it declares.
+
+    Only TOP-LEVEL entries reach here; the model's rule 2 rejects a dotted one before this runs, so a
+    nested node's `env_first:` is never spoken about from this key.
+
+    RETURNS how many entries it ruled on - entries measured against a group the platform owns - because a
+    manifest with no `env_groups:` at all returns 0 exactly as a manifest whose every entry was checked
+    against a platform node that agreed, and only the second is evidence that the rule ran. The count
+    has to come from here rather than be recomputed by a caller, for the reason si#34's does: a test that
+    counted the entries itself would count them while a check that ruled on none stayed green.
+    """
+    ruled = 0
+    for group in env_groups or ():
+        node = (merged or {}).get(str(group)) or {}
+        if bool(node.get("env_first", False)):
+            ruled += 1
+            continue
+        if str(group) not in platform_groups:
+            continue
+        ruled += 1
+        raise ValueError(
+            shape_is_the_platforms(str(group), "env_groups")
+            + f". `env_groups: [{group}]` says `env_first: true` about '{group}', and the platform's "
+              f"node says `env_first: false` - drop the entry, or turn the group env-first in the "
+              f"platform's `groups:`, once, for every product that has it")
     return ruled

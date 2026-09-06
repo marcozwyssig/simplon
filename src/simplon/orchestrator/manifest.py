@@ -686,7 +686,11 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     caught here and not deep in the CLI:
       - `groups` maps each declared group to its ordered command tree (group -> command -> spec, the ONE
         membership + spec source);
-      - every `env_groups` entry is a declared group;
+      - every `env_groups` entry is a declared group, and AGREES with the merged node's `env_first:`
+        (si#43): the key states a group's SHAPE, so where the platform owns that shape the entry may
+        restate it and may not contradict it - the same refusal `env_first:` written onto that group
+        already gets. Where no platform owns the group it still gates it on, which is what the key is
+        for;
       - every command spec declares a non-empty `help`, plus either a well-formed "module:function" `impl`
         (a leaf) or a non-empty `depends_on` (an impl-less aggregate, #895) - never both;
       - every `depends_on` entry (#895) names a known, UNAMBIGUOUS command, and the dependency graph is
@@ -712,7 +716,9 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
 
     The FLAT form - `impl:` written straight onto a command, `import:`, a coordinate-keyed `tasks:` entry -
     is gone (netctl#1469 plan 3, si#33). A manifest still written that way is refused before anything else
-    runs, with its own sections rewritten in the message (`treeform.check_no_old_form`).
+    runs, with its own sections rewritten in the message (`treeform.check_no_old_form`) - and that
+    rewrite is given the CATALOGUE, so a command whose name the catalogue also places is printed with
+    the `override: true` the merge then demands and the printed block loads as printed (si#42).
     Unknown top-level keys stay ignored (backward compatible), with ONE exception: a leftover `composites:`
     key is rejected loudly (the concept was removed in netctl#898; declare an impl-less aggregate command
     with `depends_on` instead) - silently dropping it would turn a still-declared pipeline into dead data.
@@ -727,7 +733,15 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     # report a symptom of it instead. `impl:` on a command would otherwise surface as `treeform.resolve`'s
     # "declare the body once under `tasks:`" one command at a time, which is true and useless: it names
     # the rule, not the file's way out of it.
-    treeform.check_no_old_form(data)
+    # The catalogue's own tree, read HERE rather than further down: `check_no_old_form` needs it too, so
+    # that the rewrite it prints carries `override: true` on the names the catalogue itself places
+    # (si#42). `taxonomy:` is `groups:`'s predecessor (netctl#1444, superseded by netctl#1469) and a
+    # catalogue carries one or the other, never both. The two spell a node the same way - help,
+    # env_first, nested groups - so the older one is simply a tree with no commands placed in it, and
+    # reading it here is what keeps a catalogue that has not moved yet owning the shape AND the
+    # existence of its groups.
+    catalogue_groups = (getattr(catalogue, "groups", {}) or {}) or (getattr(catalogue, "taxonomy", {}) or {})
+    treeform.check_no_old_form(data, catalogue_groups)
     tree = data.get("groups") or {}
     if not isinstance(tree, dict):
         raise ValueError(
@@ -754,11 +768,6 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     # says nothing about groups at all - and an unconditional lock against an empty kernel tree would
     # reject every group any manifest could possibly declare, which is a rule about nothing enforced over
     # everything. The kernel's own catalogue declares all six, so every real product is locked.
-    # `taxonomy:` is `groups:`'s predecessor (netctl#1444, superseded by netctl#1469) and a catalogue
-    # carries one or the other, never both. The two spell a node the same way - help, env_first, nested
-    # groups - so the older one is simply a tree with no commands placed in it, and reading it here is
-    # what keeps a catalogue that has not moved yet owning the shape AND the existence of its groups.
-    catalogue_groups = (getattr(catalogue, "groups", {}) or {}) or (getattr(catalogue, "taxonomy", {}) or {})
     merged = treeform.merge(catalogue_groups, tree,
                             product_tasks=product_tasks,
                             catalogue_tasks=getattr(catalogue, "tasks", {}) or {},
@@ -828,9 +837,15 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     # `env_groups:` is the flat, top-level way of saying what a group node says with `env_first: true`,
     # and it has to keep meaning something now that every manifest is a tree: a node built from the
     # taxonomy carries the flag the NODE declared, so without this the key would validate, list a real
-    # group, and gate nothing - the silent no-op this loader rejects everywhere else. It only ever gates
-    # ON: a group the platform declares env-first stays env-first whatever a product omits here, which is
-    # the same rule `merge` enforces on `env_first:` itself.
+    # group, and gate nothing - the silent no-op this loader rejects everywhere else.
+    #
+    # It is CHECKED against the merged node before it is applied (si#43), and that order is the whole
+    # point: applying it first made the key a way around the rule `merge` enforces on `env_first:`, so a
+    # product could turn a platform group env-first from the top level of the file after being refused
+    # the same statement inside the group node. What survives the check is an entry naming a group no
+    # platform owns - the manifest's own group, which is the case the key was written for - so this
+    # replacement now only ever fires there.
+    treeform.check_env_groups(merged, model.env_groups, frozenset(catalogue_groups))
     tree = {name: (dataclasses.replace(node, env_first=True)
                    if name in env_groups and not node.env_first else node)
             for name, node in tree.items()}

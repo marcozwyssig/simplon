@@ -886,3 +886,170 @@ def test_a_manifest_part_way_through_the_migration_gets_a_rewrite_of_the_whole_b
     assert 'img: { impl: "demo.tooling:image", help: "Build an image." }' in rewrite
     assert 'web-image: { task: "img" }' in rewrite
     assert 'unit: { task: "unit" }' in rewrite
+
+
+# --- the printed rewrite loads where the catalogue places the same name (si#42) ------------------------
+#
+# The rewrite exists so nobody with an old manifest has to GUESS. A block that loads in three cases of
+# four and asks for a second round in the fourth solves the task three quarters of the way - and the
+# names it failed on were the commonest ones, `support install` above all, in the catalogue since 0.1.7.
+#
+# So every green below is the SHARPER probe: not "the printed text mentions override" but the printed
+# text, pasted in and LOADED, with the product's own body proved to be the one that runs.
+
+#: A catalogue that places `release tag`, which the SHIPPED one no longer does (si#39 unplaced it: a
+#: command that publishes must not arrive in every product unasked). The review found `release tag` as
+#: one of the three cases, so it is covered here against a catalogue that still places it - the rule is
+#: about what a catalogue places, not about which names today's catalogue happens to hold.
+_PLACES_RELEASE_TAG = """
+groups:
+  release:
+    help: "Publish them."
+    commands:
+      tag: { task: "release:tag" }
+tasks:
+  release:tag: { impl: "simplon.tasks.release:tag", help: "Cut the tag." }
+"""
+
+_OLD_SUPPORT_INSTALL = """
+groups:
+  support:
+    install: { impl: "orchestrator.cli:install", help: "install our stuff" }
+"""
+
+_OLD_RELEASE_TAG = """
+groups:
+  release:
+    tag: { impl: "orchestrator.cli:tag", help: "cut our tag" }
+"""
+
+_OLD_FLAT_SUPPORT_GIT = """
+groups:
+  support.git:
+    commit: { impl: "orchestrator.cli:commit", help: "commit it our way" }
+"""
+
+
+def _refused_rewrite(text: str, cat) -> str:
+    """The rewrite the refusal prints for `text`, taken out of the refusal itself.
+
+    Out of the MESSAGE rather than off `rewrite_of_old_form` directly, because the claim under test is
+    about what a human is handed, and a test that called the renderer would prove the renderer agrees
+    with itself while the loader printed something else.
+    """
+    with pytest.raises(ValueError) as exc:
+        manifest.load(text, catalogue=cat)
+    message = str(exc.value)
+    body = message.split("Rewrite those sections as:\n\n", 1)[1].split("\n\n  - ", 1)[0]
+    return textwrap.dedent(body)
+
+
+def test_the_rewrite_carries_override_where_the_catalogue_places_the_same_name():
+    # arrange: `support install` is the commonest case - the catalogue has placed it since 0.1.7
+    cat = catalogue_mod.load()
+
+    # act
+    rewrite = _refused_rewrite(_OLD_SUPPORT_INSTALL, cat)
+
+    # assert: next to the `task:`, which is where the merge's own refusal tells a reader to put it
+    assert 'install: { task: "install", override: true }' in rewrite
+
+
+def test_the_printed_rewrite_of_support_install_loads_without_a_second_round():
+    # arrange
+    cat = catalogue_mod.load()
+    rewrite = _refused_rewrite(_OLD_SUPPORT_INSTALL, cat)
+
+    # act
+    mf = manifest.load(rewrite, catalogue=cat)
+
+    # assert: it loads, and the body that runs is the PRODUCT's - an override that loaded while leaving
+    # the platform's body in place would be the silent choice the merge refuses to make
+    assert mf.spec_for("support", "install").impl == "orchestrator.cli:install"
+
+
+def test_the_printed_rewrite_of_release_tag_loads_without_a_second_round():
+    # arrange: against a catalogue that places `release tag` (see _PLACES_RELEASE_TAG)
+    cat = catalogue_mod.loads(_PLACES_RELEASE_TAG)
+    rewrite = _refused_rewrite(_OLD_RELEASE_TAG, cat)
+
+    # act
+    mf = manifest.load(rewrite, catalogue=cat)
+
+    # assert
+    assert 'tag: { task: "tag", override: true }' in rewrite
+    assert mf.spec_for("release", "tag").impl == "orchestrator.cli:tag"
+
+
+def test_the_printed_rewrite_of_a_flat_nested_group_loads_without_a_second_round():
+    # arrange: the dotted flat key `support.git`, whose members the catalogue places one level down
+    cat = catalogue_mod.load()
+    rewrite = _refused_rewrite(_OLD_FLAT_SUPPORT_GIT, cat)
+
+    # act
+    mf = manifest.load(rewrite, catalogue=cat)
+
+    # assert: the override reached the NESTED node, not the `support` level it was written flat under
+    assert 'commit: { task: "commit", override: true }' in rewrite
+    assert mf.spec_for("support.git", "commit").impl == "orchestrator.cli:commit"
+
+
+def test_every_name_the_shipped_catalogue_places_rewrites_into_a_manifest_that_loads():
+    """The three review cases are the ones that were MEASURED; this is the rule they are cases of.
+
+    Derived from the catalogue rather than listed, so a command placed there tomorrow is covered the day
+    it is placed instead of the day somebody remembers this file. The count is asserted for the reason
+    si#34's placement count is: a loop over an empty set is as green as a loop over eight.
+    """
+    # arrange: one old-form manifest per placed name, each colliding with the catalogue's own body
+    cat = catalogue_mod.load()
+    placed = treeform.placed_commands(cat.groups)
+    cases = {f"{'.'.join(path)} {command}": (path, command)
+             for path, commands in placed.items() for command in commands}
+
+    # act / assert
+    for label, (path, command) in cases.items():
+        text = yaml.safe_dump(
+            {"groups": {".".join(path): {command: {"impl": f"orchestrator.cli:{command}",
+                                                   "help": f"our own {command}"}}}},
+            sort_keys=False)
+        rewrite = _refused_rewrite(text, cat)
+        mf = manifest.load(rewrite, catalogue=cat)
+        assert mf.spec_for(".".join(path), command).impl == f"orchestrator.cli:{command}", label
+    assert len(cases) >= 8
+
+
+def test_a_name_the_catalogue_does_not_place_gets_no_override():
+    # arrange: `release tag` against the SHIPPED catalogue, which does not place it (si#39). An
+    # `override: true` printed where nothing is being overridden is a second kind of noise - it would
+    # tell a reader the platform has a body here when it has none.
+    cat = catalogue_mod.load()
+
+    # act
+    rewrite = _refused_rewrite(_OLD_RELEASE_TAG, cat)
+
+    # assert
+    assert 'tag: { task: "tag" }' in rewrite
+    assert "override" not in rewrite
+    assert manifest.load(rewrite, catalogue=cat).spec_for("release", "tag").impl == "orchestrator.cli:tag"
+
+
+def test_a_placement_that_names_the_platforms_own_body_is_a_refinement_and_gets_no_override():
+    # arrange: the old way of placing a PLATFORM task - a coordinate-keyed `tasks:` entry with `group:`.
+    # It rewrites to the same `task:` the catalogue already places there, which is a refinement of the
+    # platform's command and not a replacement of it.
+    cat = catalogue_mod.load()
+    text = """
+tasks:
+  support:install:
+    group: support
+"""
+
+    # act
+    rewrite = _refused_rewrite(text, cat)
+
+    # assert
+    assert 'install: { task: "support:install" }' in rewrite
+    assert "override" not in rewrite
+    assert manifest.load(rewrite, catalogue=cat).spec_for("support", "install").impl \
+        == "simplon.tasks.hosttools:install"
