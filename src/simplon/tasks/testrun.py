@@ -521,25 +521,23 @@ def gate(ctx: typer.Context, name: str = "") -> int:
     whether it clears or appends to the shared allure results comes from the product manifest's `suites`
     section; trailing args reach pytest verbatim where the level declares `args: true`.
 
-    `name` is a manifest-pinned parameter (`with: { name: ... }`, netctl#1469 plan 2): the command-tree
-    form places this ONE task at several commands, each pinning its own suite name, so the gate resolves
-    from a value rather than from which command it was invoked as. The empty default plus the
-    `or ctx.info_name` fallback is TRANSITIONAL - it is what lets a product that has not migrated keep
-    naming this module raw per command and telling two commands bound to it apart by invocation name
-    (netctl#1406). Plan 3 deletes the fallback along with the old form it exists for.
+    `name` is a manifest-pinned parameter (`with: { name: ... }`, netctl#1469 plan 2): the command tree
+    places this ONE task at several commands, each pinning its own suite name, so the gate resolves from
+    a value rather than from which command it was invoked as.
 
-    THIS IS A BREAKING CHANGE for a caller that does not pin `name`, BY CONSTRUCTION, not by accident -
-    measured, not assumed. `signatures.shape` renders every NON-PINNED parameter as a visible option
-    regardless of whether the manifest describes it (`params:` only shapes an ALREADY-visible parameter's
-    presentation, it does not hide one); only `with:` removes a parameter from the wrapper's signature
-    entirely (`treeform`/`taskgen`'s pin logic). So `name`'s empty default does NOT keep it invisible - a
-    command bound to this function that pins nothing (netctl's current `system` / `acceptance-dataplane`,
-    both still old-form `impl: "simplon.tasks.testrun:gate"`) grows a real, stray `--name` option the
-    moment the generated module is regenerated against this signature. That is why this lands as its own
-    platform PR rather than folded into the per-group-partition PR: netctl's pointer bump to THIS commit
-    must happen in the same commit as its `test` group migration, which supplies the `with: { name: ... }`
-    pins that make the option disappear again. A red `tasks generate --check` / `test_mechanism_parity`
-    on an unmigrated caller between the two pointer bumps is expected, not a regression.
+    THE `or ctx.info_name` FALLBACK SURVIVED THE FLAT FORM'S DELETION (si#33), and deliberately - the
+    docstring here used to say plan 3 would take it along. It would have been the wrong deletion. The
+    fallback exists for a command that does not PIN `name`, and that is still a legal command in the tree
+    form: `unit: { task: "test:gate" }` with no `with:` names its suite by the only thing it has, the name
+    it was invoked as. What went with the flat form is the reason the fallback used to be called
+    transitional, not the case it answers.
+
+    WHAT AN UNPINNED COMMAND COSTS, stated because it is easy to meet by accident. `signatures.shape`
+    renders every NON-PINNED parameter as a visible option regardless of whether the manifest describes
+    it (`params:` only shapes an ALREADY-visible parameter's presentation, it does not hide one); only
+    `with:` removes a parameter from the wrapper's signature entirely (`treeform`/`taskgen`'s pin logic).
+    So an unpinned command grows a real, stray `--name` option, and a caller can then ask one gate to run
+    another gate's suite. Pin it.
     """
     cfg = config()
     extra = list(ctx.args)

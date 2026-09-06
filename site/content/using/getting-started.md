@@ -66,30 +66,70 @@ Stripped of its comments, `myctl.yaml` is this:
 ```yaml
 product: myctl
 
+tasks:
+  build:   { impl: "orchestrator.cli:build",   help: "Build the product artefacts (placeholder)." }
+  check:   { impl: "orchestrator.cli:check",   help: "Verify the artefacts (placeholder)." }
+  up:      { impl: "orchestrator.cli:up",      help: "Deploy the product to the target environment (placeholder)." }
+  down:    { impl: "orchestrator.cli:down",    help: "Tear the deployment down (placeholder)." }
+  status:  { impl: "orchestrator.cli:status",  help: "Report what is running in the target environment (placeholder)." }
+
 groups:
   build:
-    build: { impl: "orchestrator.cli:build", help: "Build the product artefacts (placeholder)." }
+    commands:
+      build: { task: build }
+  test:
+    commands:
+      check: { task: check }
+  release:
+    commands:
+      tag: { task: "release:tag" }
   deploy:
-    up:   { impl: "orchestrator.cli:up",     help: "Deploy the product to the target environment (placeholder)." }
-    down: { impl: "orchestrator.cli:down",   help: "Tear the deployment down (placeholder)." }
-    all:  { help: "Run build then deploy up end to end (the build->up dependency plan).",
-            depends_on: [build, up], stop_on_failure: false }
-
-env_groups: [deploy]
+    commands:
+      up:   { task: up }
+      down: { task: down }
+      all:
+        help: "Run build then deploy up end to end (the build->up dependency plan)."
+        depends_on: [build, up]
+        stop_on_failure: false
+  monitor:
+    commands:
+      status: { task: status }
+  support:
+    commands:
+      install: { task: "support:install" }
 
 default: dev
 environments:
   dev: { backend: local, description: "Local development environment (the default)." }
 ```
 
-Four commands, and every one of them is a live example of a different shape:
+**All five phases of the loop are there, plus `support`** - `build`, `test`, `release`, `deploy`,
+`monitor` - and that is on purpose. The groups are not this manifest's invention: the kernel's catalogue
+declares them, every Simplon product hangs its commands off the same six, and a group name the catalogue
+does not declare is refused at load. A scaffold that showed two of them would teach you two ribs of a
+corset you are going to be wearing anyway. Each starts with one command so you can run it today; grow a
+phase by adding to its `commands:` list.
+
+Two sections, and the split is the model:
+
+- **`tasks:`** holds the **bodies**, each written down once as a `module:function`.
+- **`groups:`** holds the **placements**. A command is an *instance* of a task, so it names one with
+  `task:` and never writes an `impl:` of its own. That is what lets the same body sit at two commands
+  with different pinned values - `test unit` and `test system` over one `test:gate` - without being
+  copied.
+
+Six commands, and each is a live example of a different shape:
 
 - **`build`** is a single-member group whose member shares the group's name. Simplon collapses that to
   one flat top-level command, so you type `myctl build`, not `myctl build build`.
-- **`up`** and **`down`** sit in an env-first group. They take a target environment as the outer token:
-  `myctl dev deploy up`.
-- **`all`** declares no `impl:` at all - only `depends_on: [build, up]`. That is an **aggregate**: the
-  kernel plans its dependencies and runs each as a step. It is a working example rather than a dead
+- **`up`**, **`down`** and **`status`** sit in env-first groups. They take a target environment as the
+  outer token: `myctl dev deploy up`. Which groups are env-first is the catalogue's statement, not a
+  second list in your manifest.
+- **`tag`** and **`install`** name a **catalogue coordinate** - `task: "release:tag"`, with a colon. The
+  body lives in the kernel; the line only says where the command sits in your tree. A `task:` without a
+  colon names one of your own tasks above.
+- **`all`** names no task at all - only `depends_on: [build, up]`. That is an **aggregate**: the kernel
+  plans its dependencies and runs each as a step. It is a working example rather than a dead
   placeholder, which matters, because the aggregate is the shape people get wrong first.
 
 ### The first run
@@ -108,16 +148,23 @@ What comes back is the assembled CLI, in two panels:
 
 ```text
 ╭─ CI / agnostic (no env) ─────────────────────────────────────────────────────╮
-│ build   Build the product artefacts (placeholder).                           │
+│ build    Build the product artefacts (placeholder).                          │
+│ release  release commands. Environment-agnostic (no env).                    │
+│ support  support commands. Environment-agnostic (no env).                    │
+│ test     test commands. Environment-agnostic (no env).                       │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 ╭─ CD / env-first (myctl <env> <group> <cmd>, default dev) ────────────────────╮
-│ deploy  deploy commands. Env-first: `myctl <env> deploy <cmd>` (default dev).│
+│ deploy   deploy commands. Env-first: `myctl <env> deploy <cmd>` (default dev)│
+│ monitor  monitor commands. Env-first: `myctl <env> monitor <cmd>` (default   │
+│          dev).                                                               │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 ```
 
-Nobody wrote those panels. They are the manifest's `env_groups: [deploy]` rendered: the groups that take
-an environment and the groups that refuse one, told apart in the help because they are told apart in the
-dispatch.
+Nobody wrote those panels, and nobody listed the groups in them either. They are the catalogue's own
+`env_first:` rendered: the groups that take an environment and the groups that refuse one, told apart in
+the help because they are told apart in the dispatch. `support` has more under it than your manifest
+asked for - `support git commit`, `support tasks catalogue` - because the catalogue places those in
+every product; try `./myctl.sh support tasks catalogue` to see the whole coordinate space.
 
 Now run something:
 
@@ -146,9 +193,9 @@ Two files, and the division between them is the whole design:
 **`myctl.yaml`** - what commands exist, what they are called, which group they live in, what their
 options are named, which ones take an environment, what depends on what.
 
-**`orchestrator/cli.py`** - the callables the manifest's `impl:` references resolve to. Replace
-`build`/`up`/`down` with your own; keep them as module-level functions, because that is what
-`"orchestrator.cli:build"` means - import this module, get the attribute named after the colon.
+**`orchestrator/cli.py`** - the callables the manifest's `tasks:` block points its `impl:` at. Replace
+`build`/`check`/`up`/`down`/`status` with your own; keep them as module-level functions, because that is
+what `"orchestrator.cli:build"` means - import this module, get the attribute named after the colon.
 
 Everything else - the sub-application per group, the flat aliases, the help panels, the option types and
 defaults, the environment gate - is assembled from the manifest by the kernel. That is why the next

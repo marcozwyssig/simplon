@@ -145,9 +145,11 @@ environments:
   prod: { backend: exoscale, description: "Production." }
 ```
 
-`env_groups` names the groups whose commands take a target environment as the outer token
-(`myctl prod deploy up`). Everything else refuses one. See [Environments](../environments/) for what the
-dispatch does with it.
+A group's env gate is normally the **catalogue's** statement, not yours: `deploy` and `monitor` carry
+`env_first: true` on their nodes there, so every product gates them the same way and no manifest has to
+say it twice. `env_groups:` is the flat spelling, and it still means something for a **top-level group
+the catalogue's tree does not already gate** - it only ever switches the gate on, never off. Everything
+not gated refuses the token. See [Environments](../environments/) for what the dispatch does with it.
 
 ## Product data sections
 
@@ -238,26 +240,62 @@ defines, `environments:` the deployment matrix, `nexus:` and `claude:` the data 
 read. A task that needs a section it does not find fails on its first line, which is why such tasks stay
 *tasks* in the catalogue rather than being placed as commands for everybody.
 
-## The older flat form
+## The flat form, and how to leave it
 
-You will meet a second spelling, in manifests that predate the tree:
+You may meet an older spelling, in a manifest that predates the tree: a body written straight onto a
+command, and catalogue tasks placed through an `import:` section plus a coordinate-keyed `tasks:` entry.
 
 ```yaml
+groups:
+  build:
+    wheel: { impl: "orchestrator.cli:build_wheel", help: "Build the wheel." }
+
 import:
   delivery: [docs]
 
 tasks:
   docs:reference:
     group: build
-    with: { output: "site/content/using/commands.md" }
 ```
 
-Here `import:` makes a namespace's coordinates *available*, and a `tasks:` entry keyed by a coordinate
-is what actually *places* one - in the group its namespace names, unless `group:` says otherwise. The
-command's name is the coordinate's second half, so `docs:reference` becomes `myctl build reference`.
+**That form is gone.** A manifest written that way no longer loads.
 
-`import:` alone places nothing. A manifest that imports and never references warns rather than failing,
-because that is a manifest that forgot a step, not a corrupt one.
+It does not fail with "no longer supported", though, and that is the part worth knowing about: the
+loader rewrites *your* sections, in *your* names, and prints the result. Feeding the manifest above to
+the loader answers with
 
-Both forms produce the same command line. The new one is where the model is going; the old one is why a
-product can migrate one group at a time instead of in a single all-or-nothing change.
+```
+this manifest is written in the flat command form, which this kernel no longer loads: group(s) 'build'
+name commands directly, with `impl:` on them; task(s) 'docs:reference' are keyed by a platform
+coordinate; an `import:` section makes catalogue coordinates available. Rewrite those sections as:
+
+    tasks:
+      wheel: { impl: "orchestrator.cli:build_wheel", help: "Build the wheel." }
+
+    groups:
+      build:
+        commands:
+          wheel: { task: "wheel" }
+          reference: { task: "docs:reference" }
+
+  - a command is an INSTANCE of a task: the body is declared once under `tasks:` and the command points
+    at it with `task:`
+  - a catalogue task keeps its body in the kernel - the command names the coordinate
+    (`task: "<namespace>:<name>"`) and copies nothing
+  - the catalogue's own commands arrive by merging its tree, so `import:` has nothing left to do -
+    delete the section
+```
+
+Paste that block over the sections it names and the manifest loads. The rewrite covers the whole of
+`tasks:` and `groups:`, including any group you had already converted, so a half-migrated manifest does
+not lose its converted half when you paste. Three things to know about what it does:
+
+- **An aggregate crosses unchanged.** A command with `depends_on:` and no `impl:` was never a body, so
+  there is nothing to move.
+- **A shared body becomes one task.** Two commands that spelled out the same `impl:` come out as one
+  template with two placements - which is the point of the form.
+- **A name collision is qualified, not shadowed.** `build build` and `deploy build` are two different
+  bodies under one command name; the rewrite renames the second task, so what it prints always loads.
+
+What you lose is the `import:` section, and you lose nothing with it: the catalogue's own commands
+arrive by merging its tree, and any other coordinate is named directly by the command that wants it.

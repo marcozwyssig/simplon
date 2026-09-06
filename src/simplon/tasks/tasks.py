@@ -98,10 +98,10 @@ def _reached_namespaces(manifest: Manifest, cat: catalogue_mod.Catalogue) -> fro
         (`support.git`, `tasks.catalogue`/`tasks.generate`) - `treeform.merge` folds that block onto
         every product that has migrated even one group, whether or not that group is the one the
         platform placed a command in;
-      - a group mid-migration still names a raw `impl:` that happens to BE a kernel module path (`test`,
-        while it has not converted to a command tree as a whole);
-      - the pre-#1469 `import:` mechanism, which also bottoms out in a plain `impl:` once
-        `_expand_imports` places it.
+      - a product declares a TASK of its own whose `impl:` happens to BE a kernel module path, rather
+        than naming the coordinate that points at the same body;
+      - a command names the coordinate outright with `task: "<namespace>:<name>"`, which is the ordinary
+        way in.
 
     All three collapse to the same shape once the manifest is loaded: a command whose resolved `impl`
     equals the `impl` a catalogue coordinate names. Matching on that - what the loader produced, not how

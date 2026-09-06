@@ -184,10 +184,11 @@ The check is made against the **assembled application** rather than against the 
 the parsed manifest is not what a user types against: a group that was correctly dropped shows up as an
 unregistered command, and everything the product does implement still works.
 
-A second defect of the same shape sits next to it. A flat-form manifest could declare `import:`, make
+A second defect of the same shape sat next to it. A flat-form manifest could declare `import:`, make
 catalogue coordinates available, reference none of them, and load perfectly clean having placed nothing at
-all - no command, no warning, no error. That is now a warning naming the likely cause. **A mechanism that
-accepts something and does nothing is the shape of both**, and it is worth looking for by name.
+all - no command, no warning, no error. That one is gone at the root: `import:` no longer exists, and a
+manifest that still carries it is refused by name. **A mechanism that accepts something and does nothing
+is the shape of both**, and it is worth looking for by name.
 
 {{< callout type="info" >}}
 **Check your own:** run your CLI's top-level `--help` and try every group it lists. Any entry that exists
@@ -300,7 +301,8 @@ nothing tested. A collision that resolved to a plausible answer with the evidenc
 None of them threw. All of them looked fine.
 
 So the working rule the kernel keeps applying is: **a mechanism that accepts something and does nothing
-is a defect, even when nothing is on fire.** An unused `import:`. An empty group in a menu. A `with:`
+is a defect, even when nothing is on fire.** A section with no meaning left, like `import:`. An empty
+group in a menu. A `with:`
 that names a parameter the body does not take. A task key that is read by nobody. A gate whose hook
 returns nothing. Each of those is now a load error or a warning, because a declaration that renders
 nowhere is worse than one that fails.

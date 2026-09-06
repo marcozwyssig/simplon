@@ -30,6 +30,11 @@ keep in step.
 env_groups: [deploy, monitor]
 ```
 
+`deploy` and `monitor` are declared `env_first: true` in the kernel's own catalogue, so a product
+inherits the gate and the two lines above are a restatement rather than a requirement. Write
+`env_groups:` when a top-level group of your own needs the gate and the catalogue's tree does not
+already give it one; it switches the gate on and never off.
+
 Commands in those groups take the environment as the **outer** token, before the group:
 
 ```text
