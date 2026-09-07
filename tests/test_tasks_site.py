@@ -871,3 +871,97 @@ def test_a_longer_fence_is_closed_by_a_longer_fence_and_not_by_a_shorter_one():
     # assert: one block, and the three-backtick line is part of it rather than its end
     assert len(found) == 1
     assert found[0].body == "flowchart LR\n```\n  a --> b"
+
+
+# --- the cache that makes a second build possible without a network (si#27) --------------------------------
+
+
+def test_every_hugo_run_is_handed_a_cache_that_outlives_the_container(monkeypatch, tmp_path):
+    # arrange: `docker run --rm` with only the product root mounted left hugo's cache inside the
+    # container, so both the module fetch AND the build itself went to the network on every run - si#27's
+    # finding, and the reason a build in a train or during a GitHub outage was impossible
+    _register(monkeypatch, tmp_path)
+    _docker(monkeypatch)
+    seen = _stub_run(monkeypatch, seen=[], writes=["index.html"])
+
+    # act
+    rc = site_task.build()
+
+    # assert: BOTH runs get it - the fetch and the build resolve the theme module separately, and a cache
+    # on only one of them leaves the other going to the network
+    assert rc == 0
+    assert len(seen) == 2
+    for argv, _kwargs in seen:
+        assert "-e" in argv, f"no environment reaches hugo in {argv}"
+        assert f"HUGO_CACHEDIR={site_task.MOUNT / site_task.CACHE_DIR}" in argv, argv
+
+    # assert: and it is a path inside the mount, so the container writes it into the product tree rather
+    # than into a layer that goes away with `--rm`
+    assert str(site_task.CACHE_DIR).startswith("build")
+
+
+def test_the_cache_directory_exists_on_the_host_before_hugo_is_told_about_it(monkeypatch, tmp_path):
+    # arrange: a HUGO_CACHEDIR that is not there is handed to a container running as the caller's uid,
+    # which cannot create it under a root-owned parent - the failure `--user` exists to avoid, reached
+    # from the other side
+    _register(monkeypatch, tmp_path)
+    _docker(monkeypatch)
+    _stub_run(monkeypatch, writes=["index.html"])
+
+    # act
+    rc = site_task.build()
+
+    # assert
+    assert rc == 0
+    assert (tmp_path / site_task.CACHE_DIR).is_dir()
+
+
+def test_the_cache_survives_the_wipe_of_the_destination(monkeypatch, tmp_path):
+    # arrange: the destination is cleared before every build, and a cache cleared with it would send the
+    # next run back to the network without a word - the whole point of si#27 undone by the neighbouring
+    # step. A product whose output is `build/website` keeps both, which is the normal shape.
+    _register(monkeypatch, tmp_path)
+    _docker(monkeypatch)
+    _stub_run(monkeypatch, writes=["index.html"])
+    kept = tmp_path / site_task.CACHE_DIR / "modules" / "warm"
+    kept.parent.mkdir(parents=True)
+    kept.write_text("cached", encoding="utf-8")
+
+    # act
+    rc = site_task.build()
+
+    # assert
+    assert rc == 0
+    assert kept.read_text(encoding="utf-8") == "cached"
+
+
+def test_a_product_whose_output_swallows_the_cache_still_gets_a_directory(monkeypatch, tmp_path):
+    # arrange: `output: build` puts the destination ON TOP of the cache, so the wipe takes it. That
+    # product pays a cold cache every run - the behaviour it had before si#27 - but hugo must never be
+    # handed a HUGO_CACHEDIR that is not there, and the recreation is what guarantees it. Stated rather
+    # than refused: it is a real manifest a product may write, and a cold cache is slow, not wrong.
+    _register(monkeypatch, tmp_path, {**_SITE, "output": "build"})
+    _docker(monkeypatch)
+    _stub_run(monkeypatch, writes=["index.html"])
+
+    # act
+    rc = site_task.build()
+
+    # assert
+    assert rc == 0
+    assert (tmp_path / site_task.CACHE_DIR).is_dir()
+
+
+def test_the_diagram_sweep_does_not_read_the_theme_out_of_the_cache(tmp_path):
+    # arrange: the cache now holds the theme module's OWN Markdown, inside the product root. A product
+    # whose site source is the product root would otherwise have every hextra page swept for diagrams,
+    # and a broken one in somebody else's theme would fail this product's build
+    source = tmp_path
+    _page(source, "content/mine.md", _GOOD_DIAGRAM)
+    _page(source, f"{site_task.CACHE_DIR}/modules/theirs.md", _BROKEN_KEYWORD)
+
+    # act
+    found = site_task.diagrams_under(source)
+
+    # assert
+    assert [d.page.name for d in found] == ["mine.md"]

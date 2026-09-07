@@ -61,6 +61,43 @@ SECTION = "site"
 #: `/project`: it is a path INSIDE a container the kernel creates, so no product ever sees it.
 MOUNT = PurePosixPath("/project")
 
+#: Hugo's cache, kept on the HOST between runs (si#27) - the kernel's convention, like docs.py's
+#: `build/docToolchain/` and `simplon.tools`' `build/tools/bin`, and covered by the same `build/` rule a
+#: product's `clean` and `.gitignore` already carry.
+#:
+#: WHY IT EXISTS AT ALL. Every run is `docker run --rm` with nothing but the product root mounted, so
+#: hugo's cache lived at `/tmp/hugo_cache` INSIDE the container and died with it. Two things therefore
+#: went to the network on every single build, whether or not anything had changed:
+#:
+#:   * `hugo mod get <theme>@<version>`, which ends at `git ls-remote` when there is no network;
+#:   * the BUILD ITSELF, which resolves the theme module again - and, with Hextra, fetches FlexSearch
+#:     and mermaid through `resources.GetRemote` while rendering.
+#:
+#: MEASURED, on this repository's own site with the pinned image, `--network none` for the no-network
+#: runs:
+#:
+#:   | run                                        | network | before | after |
+#:   | `hugo mod get`, nothing cached             | yes     | 3.0 s  | 2.7 s |
+#:   | `hugo mod get`, cache warm                 | yes     | 3.0 s  | 0.9 s |
+#:   | `hugo mod get`, cache warm                 | NO      | rc 1   | rc 0  |
+#:   | full build, module cached, nothing else    | NO      | rc 1   | rc 1  |
+#:   | full build, cache warm from one net build  | NO      | rc 1   | rc 0, 26 pages |
+#:
+#: The fourth row is the one that decided the design. si#27 proposes making `hugo mod get` CONDITIONAL -
+#: run it only when go.sum and the pin disagree - and calls that the likely answer. It is not sufficient:
+#: with the fetch skipped entirely and no host cache, the build still died on `git ls-remote`, because
+#: the module resolution the build does itself has nowhere to read from. And it would not have touched
+#: the theme's remote JavaScript at all. A persistent cache fixes both; the condition fixes neither.
+#:
+#: SO THERE IS NO CONDITION, and that is the second half of the decision. With the cache warm the fetch
+#: costs 0.9 s and needs no network, so a condition would buy under a second and cost exactly the defect
+#: this repository hunts: a build that answers "are they the same?" wrongly and does NOT fetch a pin that
+#: HAS moved renders against the old theme and says nothing. Without the condition that case is loud and
+#: was measured too - with the cache warm for v0.12.3 and the pin moved to v0.11.1, `hugo mod get` under
+#: `--network none` exits 1 naming the version it could not reach, and `build_site` returns the failed
+#: verdict. "Nothing to do" and "did not look" stay different answers because nothing ever guesses.
+CACHE_DIR = Path("build") / "hugo-cache"
+
 #: The one file whose absence means "no site". Hugo's home page, at the publish root - the file a static
 #: host serves for the site's own URL, so a destination without it is not a website whatever else is in it.
 INDEX = "index.html"
@@ -88,7 +125,7 @@ MERMAID_MOUNT = PurePosixPath("/data")
 #: Directories under a product's site source that belong to HUGO rather than to whoever writes the
 #: pages: its asset cache, its default destination, a vendored module tree, npm's. Markdown found in
 #: them is somebody else's, and a diagram somebody else shipped is not this build's to fail on.
-_NOT_THE_AUTHORS = {"resources", "public", "_vendor", "node_modules"}
+_NOT_THE_AUTHORS = {"resources", "public", "_vendor", "node_modules", CACHE_DIR.name}
 
 
 @dataclass(frozen=True)
@@ -244,8 +281,15 @@ def _hugo(cfg: Site, root: Path, argv: list[str]) -> bool:
     a fact about that image, not about containers - deciding it here would take the choice away from the
     product that picked the image.
     """
+    # The cache is created HERE rather than once in `build_site`, so it exists for every hugo run
+    # whatever order they happen in - including after `_wipe`, which may sit between two of them and,
+    # for a product whose `output:` is `build/` itself, takes the cache with it. That product then pays
+    # a cold cache on every run, which is the behaviour it had before this existed; what it must not do
+    # is hand hugo a HUGO_CACHEDIR that is not there.
+    (root / CACHE_DIR).mkdir(parents=True, exist_ok=True)
     return run(["docker", "run", "--rm", *docker.user_args(),
                 "-v", f"{root}:{MOUNT}", "-w", str(MOUNT / cfg.source),
+                "-e", f"HUGO_CACHEDIR={MOUNT / CACHE_DIR}",
                 "--entrypoint", "hugo", cfg.image, *argv], capture=False).ok
 
 

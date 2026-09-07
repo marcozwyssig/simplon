@@ -191,6 +191,11 @@ A publishing job that asserts "working tree clean" after building the site will 
 mechanism working, not a fault: the manifest is the single place the theme version is declared, and
 `hugo mod get` is what makes `go.mod` agree with it. Commit `go.mod` and `go.sum`; do not gate on a
 clean tree after a site build.
+
+It also writes `build/hugo-cache/`, which is Hugo's own cache kept between runs so that a second build
+needs no network - the module it resolves and the theme's remote assets are both answered from it. That
+path is the kernel's, not the manifest's: it is covered by the same `build/` rule a product's `clean`
+and `.gitignore` already carry, and a CI job that wants offline builds is the one that should cache it.
 {{< /callout >}}
 
 ### `images:` - the container image

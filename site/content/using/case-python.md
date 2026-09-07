@@ -195,15 +195,22 @@ One aggregate, two steps, and the order between them is a `depends_on` edge rath
 the first writes the command reference the second publishes. Which of the three documentation commands
 produces what is [a table in the examples](../examples/#8-publish-the-documentation).
 
-{{< callout type="warning" >}}
-**That third line is a known cost, not a detail.** `docs:site` runs `hugo mod get` before *every*
-build, and there is no host-side module cache, so the step reaches the network even when nothing has
-changed since the last run. A pinned build that cannot run offline is reproducible and still not
-repeatable - it fails in a train, and it fails during a GitHub outage.
+{{< callout type="info" >}}
+**That third line used to mean the build needed the network.** `hugo mod get` runs before *every*
+build, and hugo resolves the theme module again while building; with nothing kept on the host, both
+went out to fetch it on every run and the step ended at `git ls-remote` without a network. A pinned
+build that cannot run offline is reproducible and still not repeatable - it failed in a train and it
+failed during a GitHub outage.
 
-If you hit it, you have not found a surprise: it is
-[simplon#27](https://github.com/marcozwyssig/simplon/issues/27), open, with the two candidate fixes
-written down.
+Hugo's cache now lives in `build/hugo-cache/` and outlives the container. Measured on this checkout:
+the run above, repeated with every container cut off from the network, publishes the same site and
+exits 0, where the same run against the previous kernel died on that third line. The fetch is still
+made on every build rather than put behind a "have they drifted?" condition - with the cache warm it
+costs under a second and no network, and a condition that answered wrongly would render against the
+theme it already had and say nothing.
+[simplon#27](https://github.com/marcozwyssig/simplon/issues/27) carries the measurements, including
+the one that decided it: skipping the fetch alone does *not* make the build offline, because the build
+resolves the module itself.
 {{< /callout >}}
 
 The AsciiDoc side - `docs:render`, the one that produces a PDF - is in the catalogue and simplon places
