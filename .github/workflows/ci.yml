@@ -17,15 +17,20 @@ jobs:
   # Stage zero is the working tree. The launcher provisions its own venv and installs this
   # checkout with `-e .`, so the code under test is the code that runs the test - a commit that
   # breaks CLI assembly fails here, in the same round, rather than after a release.
+  #
+  # Why the full history below matters to THIS product in particular (si#3): the version is
+  # derived from the git tag by setuptools-scm, so a shallow clone makes it produce a version
+  # that is merely wrong rather than failing - and on the release path PyPI accepts the wheel.
+  # The kernel emits the setting and states what it does; this is simplon's own reason for
+  # caring, which no other product has to inherit.
   self-build:
     runs-on: ubuntu-latest
     steps:
-      # The full history, and it is a precondition rather than an optimisation (si#3).
-      # The version comes from the git tag via setuptools-scm, and checkout's default shallow
-      # clone has the tag without the history behind it: the derivation then produces a version
-      # that is merely WRONG instead of failing, and PyPI accepts the wheel. Emitted by the
-      # generator rather than declared per job, so a workflow written later inherits the rule
-      # instead of somebody having to remember it.
+      # The full history, and it is a precondition rather than an optimisation.
+      # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
+      # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
+      # by the generator rather than declared per job, so a workflow written later inherits the
+      # rule instead of somebody having to remember it.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0

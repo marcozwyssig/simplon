@@ -176,6 +176,12 @@ workflows:
           Stage zero is the working tree. The launcher provisions its own venv and installs this
           checkout with `-e .`, so the code under test is the code that runs the test - a commit that
           breaks CLI assembly fails here, in the same round, rather than after a release.
+
+          Why the full history below matters to THIS product in particular (si#3): the version is
+          derived from the git tag by setuptools-scm, so a shallow clone makes it produce a version
+          that is merely wrong rather than failing - and on the release path PyPI accepts the wheel.
+          The kernel emits the setting and states what it does; this is simplon's own reason for
+          caring, which no other product has to inherit.
         runs-on: ubuntu-latest
         python: "3.12"
         steps:

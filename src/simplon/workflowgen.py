@@ -91,17 +91,22 @@ FETCH_DEPTH = 0
 
 #: Why the checkout looks the way it does, emitted INTO the generated file above the step.
 #:
-#: A generated file has to explain itself to whoever opens it, and this reasoning used to live in
-#: simplon's own ci.yml as a hand-written comment. Moving the setting into the generator without moving
-#: its justification would leave a reader looking at `fetch-depth: 0` with nowhere to find out why - the
-#: quiet kind of loss si#40 says a generator must not cause. It is the kernel's prose because the setting
-#: is the kernel's, so it is stated here once instead of in every product's manifest.
-CHECKOUT_NOTE = """The full history, and it is a precondition rather than an optimisation (si#3).
-The version comes from the git tag via setuptools-scm, and checkout's default shallow
-clone has the tag without the history behind it: the derivation then produces a version
-that is merely WRONG instead of failing, and PyPI accepts the wheel. Emitted by the
-generator rather than declared per job, so a workflow written later inherits the rule
-instead of somebody having to remember it."""
+#: A generated file has to explain itself to whoever opens it: moving the setting into the generator
+#: without moving its justification would leave a reader looking at `fetch-depth: 0` with nowhere to
+#: find out why, which is the quiet kind of loss si#40 says a generator must not cause.
+#:
+#: SAYS WHAT THE SETTING DOES, NOT WHY SIMPLON NEEDS IT. The first draft of this named setuptools-scm and
+#: PyPI, which is simplon's own story - and this text is written into EVERY product's workflows, so
+#: agile-cockpit would have carried a justification that does not apply to it. A generator that ships one
+#: product's reasoning into another's repository is a second source for something that was never true
+#: there. What is left is the part that holds everywhere: the default clone is shallow, a shallow clone
+#: has no tags, and whatever reads one then gets a wrong answer rather than an error. A product with a
+#: sharper reason of its own says it in the job's `note:`, where it belongs.
+CHECKOUT_NOTE = """The full history, and it is a precondition rather than an optimisation.
+actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
+that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
+by the generator rather than declared per job, so a workflow written later inherits the
+rule instead of somebody having to remember it."""
 
 _HEADER = ("GENERATED from {source} by `{product} support workflows`. Do not edit.",
            "",
@@ -124,6 +129,9 @@ class Step(NamedTuple):
     """
 
     command: str = ""
+    #: The step keys carried beside a resolved command - `name:`, `if:`, `env:`, and anything else
+    #: GitHub allows on a step. Kept in declared order, so `name:` written first is emitted first.
+    modifiers: Mapping[str, object] = {}
     verbatim: Mapping[str, object] | None = None
     note: str = ""
 
@@ -163,6 +171,7 @@ class Workflow:
     on: object = None
     jobs: tuple[Job, ...] = ()
     handwritten: str = ""
+    extras: Mapping[str, object] = field(default_factory=dict)
 
     @property
     def generated(self) -> bool:
@@ -188,6 +197,11 @@ class Report(NamedTuple):
     drifted: tuple[Drift, ...]
     handwritten: tuple[str, ...]
     unmanaged: tuple[str, ...]
+    #: Declared hand-written, and there is no such file. THE MIRROR IMAGE of `unmanaged`: instead of a
+    #: file nobody names, a name behind which no file stands - and it fails exactly the same way, by
+    #: looking accounted for. A rename, a deletion "for now", a path typed with one letter wrong: each
+    #: leaves a manifest that says a workflow is somebody's own work when nothing is there to own.
+    absent: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -196,9 +210,11 @@ class Report(NamedTuple):
         An UNMANAGED file counts against it. That is deliberate and it is the whole reason this bucket
         exists: a workflow nothing generates and nothing declares is the shape that already went wrong
         once, when three assertions ran against a CI file that had stopped executing months earlier.
-        Declaring it `handwritten:` costs one line and moves it into a bucket that says somebody knows.
+        Declaring it `handwritten:` costs one line and moves it into a bucket that says somebody knows -
+        but only while the file it names exists, which is what `absent` holds. The declaration has to
+        keep being true, or it is just a quieter way of not looking.
         """
-        return not self.drifted and not self.unmanaged
+        return not self.drifted and not self.unmanaged and not self.absent
 
 
 # --- parsing the section ---------------------------------------------------------------------------------
@@ -262,7 +278,38 @@ def _workflow(key: str, body: object) -> Workflow:
 
     return Workflow(key=key, path=path, name=str(body.get("name") or key),
                     note=str(body.get("note") or ""), on=trigger,
-                    jobs=tuple(_job(str(name), spec, where) for name, spec in jobs.items()))
+                    jobs=tuple(_job(str(name), spec, where) for name, spec in jobs.items()),
+                    extras=_workflow_extras(body))
+
+
+#: The workflow-level keys this module reads itself. Everything else GitHub allows at that level -
+#: `permissions:`, `concurrency:`, `defaults:`, `env:`, `run-name:` - is the PRODUCT's and is carried
+#: through, exactly as a job's unknown keys are.
+_OWN_WORKFLOW_KEYS = frozenset({"path", "handwritten", "name", "note", "on", "jobs", True})
+
+
+def _workflow_extras(body: Mapping[object, object]) -> dict[str, object]:
+    """Every workflow-level key the kernel does not interpret, in declared order.
+
+    DROPPING THESE SILENTLY WAS A REAL DEFECT, and it is this project's own recurring one wearing a new
+    hat: the reader saw a workflow, the writer saw a workflow, and the key in between was gone with
+    nobody told. Measured across the sixteen real workflows of the six products, eleven carry at least
+    one - `permissions:` in ten files, `concurrency:` in three, `defaults:` in two.
+
+    The one that shows why silence was the wrong answer: agile-cockpit's nightly declares
+    `defaults: run: shell: bash`, and it is there so that `<product>.sh test system | tee run.log` does
+    not swallow the left-hand side's exit code. Its own comment calls losing it "the same road to 'green
+    though nothing ran' as a `|| true`, only quieter". A generator that dropped it would have restored
+    that defect on adoption - and `--check` would have stayed green, because neither side would have had
+    the key.
+
+    CARRIED rather than REFUSED, and the choice is measured rather than tidy. Refusing is diagnosis and
+    costs nothing in the abstract, but here it would make eleven of sixteen real workflows inexpressible
+    for no gain: the kernel has no opinion about any of these keys and never needs one. Carrying them
+    also keeps the three levels consistent - a job already does exactly this, and a step already refuses
+    what it cannot place. Only this level was silent, and the inconsistency is what gave it away.
+    """
+    return {str(k): v for k, v in body.items() if k not in _OWN_WORKFLOW_KEYS}
 
 
 def _declared_trigger(body: Mapping[object, object], where: str) -> object:
@@ -348,13 +395,25 @@ def _step(item: object, where: str) -> Step:
     command = str(item.get("command") or "").strip()
     rest = {str(k): v for k, v in item.items() if str(k) not in ("command", "note")}
 
-    if command and rest:
-        # `command:` IS the step. Letting it carry `uses:` or its own `run:` beside it would produce a
-        # step whose meaning depends on which key the renderer happens to read first.
-        raise ValueError(f"{where}: `command:` renders the whole step, so it cannot also declare "
-                         f"{', '.join(sorted(rest))}")
     if command:
-        return Step(command=command, note=note)
+        # `command:` is the step's BODY, not the whole step. A second body beside it - `uses:` or a
+        # `run:` of its own - is refused, because which one wins would then depend on the order the
+        # renderer happens to read keys in. Everything else GitHub allows on a step is the product's and
+        # is carried: `name:`, `if:`, `env:`, `id:`, `continue-on-error:`, `working-directory:`,
+        # `timeout-minutes:`.
+        #
+        # WHY THAT MATTERS MORE THAN IT LOOKS, measured: of the 41 command-invoking steps in the six
+        # products' real workflows, 34 carry `name:`, `if:` or `env:`. Without this they would each have
+        # had to be written as a verbatim `run:` line - which is exactly the hand-typed, unchecked string
+        # this module exists to abolish, so a rule meant to keep a step honest would have driven five out
+        # of six steps back out of the mechanism. Two of the five lines si#40 quotes as its own evidence
+        # carry `if: always()`.
+        clash = sorted(k for k in ("uses", "run") if k in rest)
+        if clash:
+            raise ValueError(
+                f"{where}: `command:` already gives this step its body, so it cannot also declare "
+                f"{', '.join(clash)} - drop one of the two")
+        return Step(command=command, modifiers=rest, note=note)
     if not rest:
         raise ValueError(f"{where}: declares neither `command:` nor a verbatim GitHub step")
     if "uses" not in rest and "run" not in rest:
@@ -422,6 +481,11 @@ def render(workflow: Workflow, *, manifest: Manifest, product: str, source: str)
     lines.append(f"name: {_scalar(workflow.name)}")
     lines.append("on:")
     lines += _dumped(workflow.on, "  ")
+    # The product's own workflow-level keys, between the trigger and the jobs - where GitHub's own
+    # documentation puts `permissions:`, `env:`, `defaults:` and `concurrency:`, and in the order the
+    # manifest declared them.
+    for key, value in workflow.extras.items():
+        lines += _key_and_value(key, value, "")
     lines.append("")
     lines.append("jobs:")
     for job in workflow.jobs:
@@ -460,7 +524,18 @@ def _render_job(job: Job, *, manifest: Manifest, product: str, workflow: str) ->
         if step.command:
             group, name = resolve_command(manifest, step.command,
                                           where=f"{where}, step {index + 1}")
-            lines.append(f"      - run: {launcher(product)} {group.replace('.', ' ')} {name}")
+            # The modifiers first and the body last, which is both GitHub's own ordering convention and
+            # the order the author wrote them in. Rendered through the same dumper as a verbatim step, so
+            # a multi-line `env:` value or an `if:` expression is quoted by the same rules.
+            #
+            # NO INVENTED `name:`. A step that declares none shows its `run:` line in the Actions UI,
+            # and that line is `./<product>.sh test all` - the same string a developer types, which is
+            # the most useful thing that could stand there. A generated name would be the kernel putting
+            # words in the product's mouth for no gain; a product that wants different words says
+            # `name:` and gets exactly those.
+            body = {**step.modifiers,
+                    "run": f"{launcher(product)} {group.replace('.', ' ')} {name}"}
+            lines += _dumped_step(body, "      ")
         else:
             lines += _dumped_step(step.verbatim or {}, "      ")
     return lines
@@ -473,6 +548,30 @@ def _key_and_value(key: str, value: object, indent: str) -> list[str]:
     return [f"{indent}{key}: {_scalar(value)}"]
 
 
+class _BlockDumper(yaml.SafeDumper):
+    """A dumper that writes a multi-line string as a LITERAL block (`|`) instead of a quoted scalar.
+
+    PyYAML's default turns a shell script into `"set -euo pipefail\nif ! git fetch...\n"`, which carries
+    the same VALUE - measured, seven shapes round-trip identically - and is a different FILE. The point of
+    committing generated workflows is that they stay greppable and diffable: a reviewer looks for
+    `merge-base` and a one-line quoted scalar does not show them where it sits, while a diff that touches
+    one line of a script rewrites the whole scalar. Faithful in value and unreadable in form is not good
+    enough for a file whose whole justification is that people read it.
+
+    PyYAML falls back to a quoted scalar on its own where a literal block cannot represent the string
+    exactly (a line with trailing whitespace, say). That is correct and is left alone: the value has to
+    survive, and legibility is what yields.
+    """
+
+
+def _literal_str(dumper: yaml.SafeDumper, data: str) -> yaml.ScalarNode:
+    style = "|" if "\n" in data else None
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data, style=style)
+
+
+_BlockDumper.add_representer(str, _literal_str)
+
+
 def _dumped(value: object, indent: str) -> list[str]:
     """A product's verbatim sub-tree, dumped and indented.
 
@@ -480,15 +579,15 @@ def _dumped(value: object, indent: str) -> list[str]:
     `pull_request`, a permission list in the order somebody reasoned about it - and re-sorting it would
     make the generated file disagree with the declaration it came from for no reason at all.
     """
-    text = yaml.safe_dump(_plain(value), sort_keys=False, default_flow_style=False,
-                          allow_unicode=True, width=100)
+    text = yaml.dump(_plain(value), Dumper=_BlockDumper, sort_keys=False, default_flow_style=False,
+                     allow_unicode=True, width=100)
     return [f"{indent}{line}".rstrip() for line in text.rstrip("\n").splitlines()]
 
 
 def _dumped_step(step: Mapping[str, object], indent: str) -> list[str]:
     """One verbatim step as a YAML list item, dumped so a multi-line `run:` block keeps its shape."""
-    text = yaml.safe_dump([_plain(step)], sort_keys=False, default_flow_style=False,
-                          allow_unicode=True, width=100)
+    text = yaml.dump([_plain(step)], Dumper=_BlockDumper, sort_keys=False, default_flow_style=False,
+                     allow_unicode=True, width=100)
     return [f"{indent}{line}".rstrip() for line in text.rstrip("\n").splitlines()]
 
 
@@ -623,10 +722,11 @@ def check(workflows: Sequence[Workflow], root: Path, *, manifest: Manifest, prod
     agreed: list[str] = []
     drifted: list[Drift] = []
     handwritten: list[str] = []
+    absent: list[str] = []
 
     for workflow in workflows:
         if not workflow.generated:
-            handwritten.append(workflow.path)
+            (handwritten if (root / workflow.path).exists() else absent).append(workflow.path)
             continue
         text = render(workflow, manifest=manifest, product=product, source=source)
         target = root / workflow.path
@@ -640,7 +740,7 @@ def check(workflows: Sequence[Workflow], root: Path, *, manifest: Manifest, prod
         drifted.append(Drift(path=workflow.path, diff=diff))
 
     return Report(agreed=tuple(agreed), drifted=tuple(drifted), handwritten=tuple(handwritten),
-                  unmanaged=unmanaged(workflows, root))
+                  unmanaged=unmanaged(workflows, root), absent=tuple(absent))
 
 
 def unmanaged(workflows: Sequence[Workflow], root: Path) -> tuple[str, ...]:

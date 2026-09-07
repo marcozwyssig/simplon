@@ -329,7 +329,24 @@ def test_the_reason_for_the_full_history_is_written_into_the_file(manifest):
 
     # Assert
     assert "# The full history" in text
-    assert "setuptools-scm" in text
+    assert "carries no tags" in text
+
+
+def test_the_kernels_prose_carries_no_product_specific_reason(manifest):
+    """It is written into EVERY product's workflows, so it may only say what is true in every product.
+
+    The first draft named setuptools-scm and PyPI - simplon's own story - which would have put a
+    justification into agile-cockpit's repository that does not apply to it: a second source for
+    something that was never true there. What is left is the part that holds everywhere. A product with
+    a sharper reason states it in the job's own `note:`, and simplon does.
+    """
+    # Arrange / Act
+    text = _render(manifest, _MINIMAL)
+
+    # Assert
+    for product_specific in ("setuptools-scm", "PyPI", "si#3", "wheel"):
+        assert product_specific not in workflowgen.CHECKOUT_NOTE, product_specific
+    assert "actions/checkout defaults to a shallow clone" in text
 
 
 def test_a_job_may_decline_the_checkout(manifest):
@@ -694,7 +711,8 @@ def test_a_job_declaring_no_runner_is_refused():
 
 @pytest.mark.parametrize("steps, complaint", [
     ("[]", "must be a non-empty list"),
-    ("[{ command: test all, uses: actions/checkout@v4 }]", "renders the whole step"),
+    ("[{ command: test all, uses: actions/checkout@v4 }]", "already gives this step its body"),
+    ("[{ command: test all, run: pytest -q }]", "already gives this step its body"),
     ("[{ note: nothing else }]", "neither `command:` nor a verbatim"),
     ("[{ name: a step with no body }]", "needs `uses:` or `run:`"),
     ("['a bare string']", "must be a mapping"),
@@ -961,3 +979,412 @@ def test_a_missing_workflows_directory_is_not_a_complaint(manifest, tmp_path):
     is not this scan's complaint to make."""
     # Arrange / Act / Assert
     assert workflowgen.unmanaged(_parse_minimal(), tmp_path) == ()
+
+
+# --- what the workflow LEVEL carries, which was silently dropped (review B1) --------------------------
+#
+# The defect and its measurement: `_workflow` read six keys and threw the rest away without a word, so a
+# product's `permissions:`, `concurrency:`, `defaults:` or `env:` vanished between the manifest and the
+# file - and `--check` stayed green, because neither side had them. Across the sixteen real workflows of
+# the six products, eleven carry at least one: `permissions:` in ten, `concurrency:` in three,
+# `defaults:` in two.
+#
+# The three levels now agree, and the disagreement is what exposed this: a job already carried its
+# unknown keys, a step already refused what it could not place, and only the workflow level was silent.
+
+
+@pytest.mark.parametrize("key, value", [
+    ("permissions", {"contents": "read", "packages": "write"}),
+    ("concurrency", {"group": "ci-${{ github.ref }}", "cancel-in-progress": True}),
+    ("defaults", {"run": {"shell": "bash"}}),
+    ("env", {"TZ": "UTC"}),
+    ("run-name", "nightly by @${{ github.actor }}"),
+])
+def test_a_workflow_level_key_the_kernel_does_not_know_is_carried(manifest, key, value):
+    """Carried, not dropped and not refused.
+
+    Refusing is diagnosis and would cost nothing in the abstract; here it would make eleven of sixteen
+    real workflows inexpressible for no gain, because the kernel has no opinion about any of these keys
+    and never needs one.
+    """
+    # Arrange / Act
+    doc = yaml.safe_load(_render(manifest, f"""
+    workflows:
+      ci:
+        on: [push]
+        {key}: {workflowgen._scalar(value)}
+        jobs:
+          build: {{ runs-on: ubuntu-latest, steps: [{{ command: test all }}] }}
+    """))
+
+    # Assert
+    assert doc[key] == value
+
+
+def test_the_shell_default_that_keeps_a_pipeline_honest_survives(manifest):
+    """THE case that made this a severe defect rather than a tidiness one.
+
+    agile-cockpit's nightly declares `defaults: run: shell: bash`, and it is there so that
+    `<product>.sh test system | tee run.log` does not report the exit code of `tee` instead of the suite's.
+    Its own comment calls losing it "the same road to 'green though nothing ran' as a `|| true`, only
+    quieter". Adopting a generator that dropped it would have restored that defect silently - and
+    `--check` would have agreed, because neither side would have carried the key.
+    """
+    # Arrange / Act
+    doc = yaml.safe_load(_render(manifest, """
+    workflows:
+      nightly:
+        on: { schedule: [{ cron: "0 2 * * *" }] }
+        defaults:
+          run:
+            shell: bash
+        jobs:
+          system: { runs-on: ubuntu-latest, steps: [{ command: test all }] }
+    """, key="nightly"))
+
+    # Assert
+    assert doc["defaults"] == {"run": {"shell": "bash"}}
+
+
+def test_the_workflow_level_keys_sit_between_the_trigger_and_the_jobs(manifest):
+    """Where GitHub's own documentation puts them, and in the order the manifest declared them."""
+    # Arrange / Act
+    text = _render(manifest, """
+    workflows:
+      ci:
+        on: [push]
+        permissions: { contents: read }
+        concurrency: { group: ci }
+        jobs:
+          build: { runs-on: ubuntu-latest, steps: [{ command: test all }] }
+    """)
+
+    # Assert
+    assert text.index("\non:") < text.index("\npermissions:") < text.index("\nconcurrency:") \
+        < text.index("\njobs:")
+
+
+def test_the_trigger_is_not_mistaken_for_a_carried_key(manifest):
+    """The boolean key `True` must be recognised as the trigger and NOT swept into the carried keys - it
+    would then be emitted a second time, as `true:`, beside the `on:` that already holds it."""
+    # Arrange / Act
+    workflows = workflowgen.parse(_section(_MINIMAL))
+
+    # Assert
+    assert workflows[0].extras == {}
+    assert "\ntrue:" not in _render(manifest, _MINIMAL)
+
+
+# --- what a COMMAND step may carry beside its command (review B3) -------------------------------------
+#
+# Measured: of the 41 command-invoking steps in the six products' real workflows, 34 carry `name:`, `if:`
+# or `env:`. A `command:` that refused those would have forced five out of six of them back into a
+# verbatim `run:` line - the hand-typed, unchecked string this module exists to abolish. Two of the five
+# lines si#40 quotes as its own evidence carry `if: always()`.
+
+
+@pytest.mark.parametrize("key, value", [
+    ("name", "Run every test"),
+    ("if", "always()"),
+    ("env", {"CI": "1"}),
+    ("continue-on-error", True),
+    ("timeout-minutes", 45),
+    ("working-directory", "sub"),
+    ("id", "suite"),
+])
+def test_a_command_step_carries_the_modifiers_a_real_workflow_needs(manifest, key, value):
+    """The command is the step's BODY, not the whole step."""
+    # Arrange / Act
+    doc = yaml.safe_load(_render(manifest, f"""
+    workflows:
+      ci:
+        on: [push]
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            steps:
+              - command: test all
+                {key}: {workflowgen._scalar(value)}
+    """))
+
+    # Assert
+    step = doc["jobs"]["build"]["steps"][-1]
+    assert step[key] == value
+    assert step["run"] == "./sample.sh test all", "the command is still resolved and still the body"
+
+
+def test_a_named_command_step_puts_the_name_first(manifest):
+    """GitHub's own ordering, and the order the author wrote. A `name:` after the `run:` reads as an
+    afterthought in every diff it appears in."""
+    # Arrange / Act
+    text = _render(manifest, """
+    workflows:
+      ci:
+        on: [push]
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            steps:
+              - name: Run every test
+                command: test all
+    """)
+
+    # Assert
+    assert "- name: Run every test\n        run: ./sample.sh test all" in text
+
+
+def test_a_command_step_with_no_name_shows_the_command_itself(manifest):
+    """A DECISION, not an omission, and it is the one si#40's fourth quality goal ("what is happening")
+    turns on.
+
+    A step with no `name:` is displayed by the Actions UI as its `run:` line, and that line is
+    `./sample.sh test all` - the same string a developer types in a checkout, which is the most useful
+    thing that could stand there. Inventing a name would be the kernel putting words in the product's
+    mouth for no gain, and a product that wants different words says `name:` and gets exactly those.
+    """
+    # Arrange / Act
+    step = yaml.safe_load(_render(manifest, _MINIMAL))["jobs"]["build"]["steps"][-1]
+
+    # Assert
+    assert "name" not in step
+    assert step["run"] == "./sample.sh test all"
+
+
+def test_a_command_step_may_not_carry_a_second_body(manifest):
+    """`uses:` or a `run:` of its own beside the command. Which one won would depend on the order the
+    renderer reads keys in, and nobody discovers that by reading."""
+    # Arrange / Act / Assert
+    for second in ("uses: actions/checkout@v4", "run: pytest -q"):
+        with pytest.raises(ValueError, match="already gives this step its body"):
+            workflowgen.parse(_section(f"""
+            workflows:
+              ci:
+                on: [push]
+                jobs:
+                  build:
+                    runs-on: ubuntu-latest
+                    steps:
+                      - command: test all
+                        {second}
+            """))
+
+
+def test_a_conditional_command_step_is_still_resolved_against_the_manifest(manifest):
+    """The modifiers must not become a way past the join. A step carrying `if:` is checked exactly as a
+    bare one is - otherwise the 83% of real steps that carry one would be the 83% nothing verifies."""
+    # Arrange / Act / Assert
+    with pytest.raises(ValueError, match="names no command in group 'test'"):
+        _render(manifest, """
+        workflows:
+          ci:
+            on: [push]
+            jobs:
+              build:
+                runs-on: ubuntu-latest
+                steps:
+                  - command: test unit
+                    if: always()
+        """)
+
+
+# --- a multi-line script keeps its shape (review B7) --------------------------------------------------
+
+
+def test_a_multi_line_script_is_written_as_a_literal_block(manifest):
+    """Faithful in VALUE was not enough.
+
+    PyYAML's default renders a shell script as one quoted scalar with `\\n` escapes. The value survives -
+    but the point of committing a generated workflow is that it stays greppable and diffable, and a
+    reviewer looking for `merge-base` cannot see where it sits in a single quoted line, while a one-line
+    change rewrites the whole scalar in the diff.
+    """
+    # Arrange / Act
+    text = _render(manifest, """
+    workflows:
+      ci:
+        on: [push]
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            steps:
+              - name: Is this tag on main? (report only)
+                run: |
+                  set -euo pipefail
+                  git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main
+                  exit 0
+    """)
+
+    # Assert
+    assert "run: |" in text, f"the script was not written as a literal block:\n{text}"
+    assert "\n          set -euo pipefail\n" in text
+    assert "\\n" not in text, "the script was escaped into a quoted scalar"
+    # and the value is unchanged
+    step = yaml.safe_load(text)["jobs"]["build"]["steps"][-1]
+    assert step["run"].splitlines()[0] == "set -euo pipefail"
+    assert step["run"].endswith("exit 0\n")
+
+
+def test_a_single_line_run_stays_a_plain_scalar(manifest):
+    """Only a multi-line value becomes a block. Turning every string into one would be noise, and
+    `run: echo hi` reads better as itself."""
+    # Arrange / Act
+    text = _render(manifest, """
+    workflows:
+      ci:
+        on: [push]
+        jobs:
+          build: { runs-on: ubuntu-latest, steps: [{ run: echo hi }] }
+    """)
+
+    # Assert
+    assert "- run: echo hi" in text
+
+
+# --- a name with no file behind it (review B2) --------------------------------------------------------
+
+
+def test_a_hand_written_declaration_whose_file_is_gone_is_red(manifest, tree):
+    """THE MIRROR IMAGE of the unmanaged file, and it fails the same way - by looking accounted for.
+
+    Instead of a file nobody names, a name behind which nothing stands: a rename, a deletion "for now",
+    a path typed with one letter wrong. Before this, `--check` reported it as a hand-written workflow and
+    returned 0, which is precisely the dead `.gitlab-ci.yml` shape seen from the other side.
+    """
+    # Arrange: declared hand-written, and the file is not there
+    workflows = workflowgen.parse(_section("""
+    workflows:
+      release:
+        handwritten: two shell scripts and a great deal of reasoning
+    """))
+
+    # Act
+    report = workflowgen.check(workflows, tree, manifest=manifest, product="sample",
+                               source="sample.yaml")
+
+    # Assert
+    assert report.absent == (".github/workflows/release.yml",)
+    assert report.handwritten == (), "a declaration with no file is not a hand-written workflow"
+    assert not report.ok
+
+
+def test_a_hand_written_declaration_whose_file_exists_stays_green(manifest, tree):
+    """The pair, so the assertion above is about the file's absence and not about the decline itself."""
+    # Arrange
+    (tree / ".github/workflows/release.yml").write_text("name: release\n", encoding="utf-8")
+    workflows = workflowgen.parse(_section("""
+    workflows:
+      release:
+        handwritten: two shell scripts and a great deal of reasoning
+    """))
+
+    # Act
+    report = workflowgen.check(workflows, tree, manifest=manifest, product="sample",
+                               source="sample.yaml")
+
+    # Assert
+    assert report.absent == ()
+    assert report.handwritten == (".github/workflows/release.yml",)
+    assert report.ok
+
+
+# --- the fourth case, taken from a real file rather than built to fit --------------------------------
+
+
+def test_a_product_may_declare_the_nightly_agile_cockpit_actually_has(manifest):
+    """ACCEPTANCE 3, rebuilt from the real workflow instead of from what the mechanism happened to allow.
+
+    The first version of this test was written after the mechanism and quietly avoided everything the
+    mechanism could not do: it had no `permissions:`, no `defaults:`, no `concurrency:`, and its
+    `if: always()` had been moved off the command step onto a verbatim one, where it was already legal.
+    That is a proof built to pass. This one carries all four, because agile-cockpit's nightly does - and
+    every one of them was broken until the review found it.
+    """
+    # Arrange / Act
+    text = _render(manifest, """
+    workflows:
+      nightly:
+        note: |
+          The full system gate, measured at 16m03s. No `push` trigger, deliberately: it is too long to
+          sit in front of a pull request, and a gate people learn to skip is worse than no gate.
+        on:
+          schedule:
+            - cron: "0 2 * * *"
+          workflow_dispatch: null
+        permissions:
+          contents: read
+        defaults:
+          run:
+            shell: bash
+        concurrency:
+          group: nightly
+          cancel-in-progress: false
+        jobs:
+          system:
+            runs-on: ubuntu-latest
+            timeout-minutes: 45
+            python: "3.12"
+            steps:
+              - note: |
+                  `pipefail` is why `defaults.run.shell` is declared above: piping into `tee` would
+                  otherwise report tee's exit code and the run would be green though nothing passed.
+                name: The system gate
+                command: test all
+              - name: Publish the report
+                if: always()
+                command: test all
+              - uses: actions/upload-artifact@v4
+                if: always()
+                with: { name: allure, path: build/allure-report }
+    """, key="nightly")
+    doc = yaml.safe_load(text)
+
+    # Assert: the four things that were silently dropped or refused before the review
+    assert doc["permissions"] == {"contents": "read"}
+    assert doc["defaults"] == {"run": {"shell": "bash"}}
+    assert doc["concurrency"] == {"group": "nightly", "cancel-in-progress": False}
+    by_name = {s.get("name"): s for s in doc["jobs"]["system"]["steps"]}
+    assert by_name["Publish the report"]["if"] == "always()"
+    assert by_name["Publish the report"]["run"] == "./sample.sh test all"
+
+    # and the rest of the shape it really has
+    assert set(workflowgen.trigger_of(doc)) == {"schedule", "workflow_dispatch"}
+    assert doc["jobs"]["system"]["timeout-minutes"] == 45
+    assert by_name["The system gate"]["run"] == "./sample.sh test all"
+    assert "16m03s" in text and "pipefail" in text
+
+
+def test_the_three_levels_agree_about_a_key_they_do_not_know():
+    """The rule the review's finding came from: a workflow and a job CARRY what the kernel cannot read,
+    a step REFUSES what it cannot place. Two behaviours, deliberately, and neither of them is silence.
+
+    A step is different on purpose - it has exactly one body, so an unplaceable key there is a step that
+    would do nothing. A workflow and a job are containers, and GitHub keeps adding keys to both.
+    """
+    # Arrange
+    carried = """
+    workflows:
+      ci:
+        on: [push]
+        some-future-key: value
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            another-future-key: value
+            steps: [{ command: test all }]
+    """
+
+    # Act
+    workflows = workflowgen.parse(_section(carried))
+
+    # Assert: both containers kept it
+    assert workflows[0].extras == {"some-future-key": "value"}
+    assert workflows[0].jobs[0].extras == {"another-future-key": "value"}
+    # and the step refuses, loudly, rather than dropping it
+    with pytest.raises(ValueError, match="needs `uses:` or `run:`"):
+        workflowgen.parse(_section("""
+        workflows:
+          ci:
+            on: [push]
+            jobs:
+              build: { runs-on: ubuntu-latest, steps: [{ some-future-key: value }] }
+        """))

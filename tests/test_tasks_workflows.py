@@ -327,3 +327,71 @@ def test_a_product_with_no_workflows_section_is_refused_loudly(tmp_path, monkeyp
     # Act / Assert
     with pytest.raises(ValueError, match="declares no 'workflows' section"):
         workflows_task.generate(check=True)
+
+
+# --- a declaration with no file behind it (review B2) --------------------------------------------------
+
+
+def _said(capsys) -> str:
+    """Everything the run said, on BOTH streams.
+
+    `log.error` writes to stderr, which is right - this is an error, and a caller piping stdout into a
+    report should not have it silently land in the report. A test reading only `.out` would therefore
+    have gone red while the message was there, which is how the first version of these two failed.
+    """
+    captured = capsys.readouterr()
+    return captured.out + captured.err
+
+
+def test_a_hand_written_declaration_whose_file_is_gone_returns_one(product, capsys):
+    """The mirror image of the undeclared file, as an exit code.
+
+    Before this, tidying `release.yml` away left `--check` saying "is declared hand-written" and
+    returning 0 - a name with nothing behind it, reported as if somebody were looking after it. That is
+    the dead `.gitlab-ci.yml` seen from the other side, and it went green for the same reason: the
+    manifest's claim was never checked against the disk.
+    """
+    # Arrange: declared hand-written, and never written
+    product.manifest_path.write_text(_WITH_A_HAND_WRITTEN_ONE, encoding="utf-8")
+    workflows_task.generate()
+    capsys.readouterr()
+
+    # Act
+    rc = workflows_task.generate(check=True)
+
+    # Assert
+    assert rc == 1
+    said = _said(capsys)
+    assert "release.yml is declared hand-written and does not exist" in said
+    assert "restore it, or drop the entry" in said
+
+
+def test_generating_also_refuses_a_declaration_with_no_file(product, capsys):
+    """The write path says it too. A run that had just rewritten the directory and still reported success
+    over a declaration pointing at nothing would be the quietest place for this to hide."""
+    # Arrange
+    product.manifest_path.write_text(_WITH_A_HAND_WRITTEN_ONE, encoding="utf-8")
+
+    # Act
+    rc = workflows_task.generate()
+
+    # Assert
+    assert rc == 1
+    assert "does not exist" in _said(capsys)
+
+
+def test_the_declaration_goes_green_once_the_file_is_back(product, capsys):
+    """The pair, so the assertion above is about the file and not about the decline. Restoring the file
+    is the whole fix - the manifest never had to change."""
+    # Arrange
+    product.manifest_path.write_text(_WITH_A_HAND_WRITTEN_ONE, encoding="utf-8")
+    workflows_task.generate()
+    (product.root / ".github" / "workflows" / "release.yml").write_text("name: release\n",
+                                                                       encoding="utf-8")
+
+    # Act
+    rc = workflows_task.generate(check=True)
+
+    # Assert
+    assert rc == 0
+    assert "is declared hand-written: two shell scripts" in _said(capsys)

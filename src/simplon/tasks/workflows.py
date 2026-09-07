@@ -45,7 +45,9 @@ def generate(check: bool = False) -> int:
     if not check:
         changed = workflowgen.write(workflows, ctx.root, manifest=manifest, product=ctx.name,
                                     source=source)
-        _report_handwritten(workflows)
+        absent = tuple(w.path for w in workflows
+                       if not w.generated and not (ctx.root / w.path).exists())
+        _report_handwritten(workflows, absent)
         if changed:
             log.ok(f"regenerated {len(changed)} workflow(s) from {source} - commit them: "
                    f"{', '.join(changed)}")
@@ -55,29 +57,39 @@ def generate(check: bool = False) -> int:
         # The scan runs on a WRITE too. Generating is exactly when a file left behind by a rename stops
         # having an owner, and a run that had just rewritten the directory is the cheapest moment to say
         # so - rather than leaving it for whoever next happens to run the gate.
-        return _report_unmanaged(workflowgen.unmanaged(workflows, ctx.root), source)
+        return 1 if absent else _report_unmanaged(workflowgen.unmanaged(workflows, ctx.root), source)
 
     report = workflowgen.check(workflows, ctx.root, manifest=manifest, product=ctx.name, source=source)
     for path in report.agreed:
         log.ok(f"{path} agrees with {source}")
-    _report_handwritten(workflows)
+    _report_handwritten(workflows, report.absent)
     for drift in report.drifted:
         log.warn(f"{drift.path} disagrees with {source} - regenerate with "
                  f"`{ctx.name} support workflows`")
         print(drift.diff)
     rc = _report_unmanaged(report.unmanaged, source)
-    return 1 if report.drifted else rc
+    return 1 if (report.drifted or report.absent) else rc
 
 
-def _report_handwritten(workflows: tuple[workflowgen.Workflow, ...]) -> None:
+def _report_handwritten(workflows: tuple[workflowgen.Workflow, ...],
+                        absent: tuple[str, ...] = ()) -> None:
     """Name every declared hand-written workflow, and why, on every run.
 
     Said out loud rather than counted, because the reason is the part that decays: "this one is
     hand-written" is easy to keep believing after it has stopped being true, and a line that repeats the
     stated reason is what gives somebody the chance to notice it no longer holds.
+
+    A declaration whose FILE is gone is reported as the error it is, not as a hand-written workflow. It
+    is the mirror image of an unmanaged file - a name with nothing behind it rather than a file with
+    nobody in front of it - and it fails the same way, by looking accounted for.
     """
     for workflow in workflows:
-        if not workflow.generated:
+        if workflow.generated:
+            continue
+        if workflow.path in absent:
+            log.error(f"{workflow.path} is declared hand-written and does not exist - the declaration "
+                      f"names a file nothing has: restore it, or drop the entry")
+        else:
             log.info(f"{workflow.path} is declared hand-written: {workflow.handwritten}")
 
 

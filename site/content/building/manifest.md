@@ -263,16 +263,52 @@ is `./myctl.sh test all`. Rename that command and generation fails, loudly, in t
 in a hand-written workflow, a renamed command leaves a `run:` line calling something that is gone, and
 the first anybody hears of it is a red runner.
 
-Everything the kernel cannot know stays yours and is carried through untouched: the trigger, the runner
-image, `permissions:`, `environment:`, `needs:`, `concurrency:`, a timeout, an `if:`. **Whether a tag
-publishes is your statement**, so a workflow that declares no `on:` is refused rather than given a
-default. A step the kernel has no business modelling - `pypa/gh-action-pypi-publish`, an upload, a shell
-script that reports something - is written out verbatim beside the resolved ones.
+Everything the kernel cannot know stays yours and is carried through untouched, **at the level GitHub
+puts it**:
+
+| level | carried |
+|---|---|
+| workflow | `permissions:`, `concurrency:`, `defaults:`, `env:`, `run-name:` - and anything else GitHub adds |
+| job | `permissions:`, `environment:`, `needs:`, `concurrency:`, `if:`, `strategy:`, `timeout-minutes:`, ... |
+| step (beside `command:`) | `name:`, `if:`, `env:`, `id:`, `continue-on-error:`, `working-directory:`, ... |
+
+The levels are not interchangeable, and getting them the wrong way round is the mistake this table
+exists to prevent: `environment:` and `needs:` are a **job's**, `defaults:` and `run-name:` are a
+**workflow's**. Neither list is enumerated in the kernel - the keys are simply passed through, because a
+kernel that policed GitHub's schema would be wrong the week GitHub extends it.
+
+A **step** is the exception, and deliberately: it has exactly one body, so a key that is neither a
+modifier nor a body is refused rather than carried. Two bodies - `command:` beside `uses:` or `run:` -
+are refused for the same reason.
+
+**Whether a tag publishes is your statement**, so a workflow that declares no `on:` is refused rather
+than given a default. A step the kernel has no business modelling - `pypa/gh-action-pypi-publish`, an
+upload, a shell script that reports something - is written out verbatim beside the resolved ones.
+
+A command step keeps its modifiers, which is what lets it stay a command step:
+
+```yaml
+steps:
+  - name: The system gate
+    command: test system
+  - name: Publish the report
+    if: always()
+    command: test report
+```
+
+Without that, every step carrying a `name:` or an `if:` would have had to be written as a verbatim
+`run:` line - the hand-typed, unchecked string this section exists to abolish. Measured across six real
+products: **34 of 41** command-invoking steps carry one of `name:`, `if:` or `env:`.
+
+A command step that declares no `name:` shows its `run:` line in the Actions UI, and that line is
+`./myctl.sh test all` - the same string you type in a checkout. The kernel does not invent a name for
+it; say `name:` if you want different words.
 
 Two things are the kernel's, and both are settings you should not have to remember. The checkout is
-emitted with `fetch-depth: 0`, because a shallow clone makes setuptools-scm derive a version that is
-merely *wrong* rather than failing; and `python:` becomes a `setup-python` step, or nothing at all if
-you declare none.
+emitted with `fetch-depth: 0`, because `actions/checkout` defaults to a shallow clone that carries no
+tags - so anything deriving a version from one gets a wrong answer *silently* rather than an error; and
+`python:` becomes a `setup-python` step, or nothing at all if you declare none. A job that wants neither
+says `checkout: false` and writes its own.
 
 **Your comments survive.** `note:` may sit on the workflow, on a job or on a step, and is written out as
 a comment in that position. That is a requirement rather than a nicety - a real workflow carries measured
@@ -306,6 +342,10 @@ workflows:
 
 A declined workflow is never written to, and it is **named with its reason on every run** - because
 "this one is hand-written" is easy to keep believing after it has stopped being true.
+
+The declaration has to keep being true, too: if the file it names is **not there**, `--check` returns 1
+and says so. A name with nothing behind it fails exactly the way a file nobody names does - by looking
+accounted for.
 
 Other sections work the same way: `suites:` is the test-level taxonomy a product's own test tree
 defines, `environments:` the deployment matrix, `nexus:` and `claude:` the data their respective tasks
