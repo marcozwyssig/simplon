@@ -136,7 +136,10 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
     # publish what a build produced and both read a manifest section, while `tag` publishes NOTHING - it
     # cuts the name the release is made under and pushes it, which is what makes the workflows run at
     # all. It reads no product data, which is why it is also PLACED (the assertion below walks for that).
-    assert sorted(cat.namespace("release")) == ["artifact", "image", "tag"]
+    # `release:asset` is the newest, and it pairs with `artifact` rather than adding a category: both
+    # publish what a build produced, one to a registry a pipeline pulls from and one to a page a person
+    # downloads from. A product may declare either, both or neither.
+    assert sorted(cat.namespace("release")) == ["artifact", "asset", "image", "tag"]
 
 
 def test_the_two_image_coordinates_reach_the_generated_reference():

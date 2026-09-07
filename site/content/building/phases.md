@@ -138,7 +138,7 @@ the number that says whether a rib is filled:
 |---|---|---|
 | `build` | phase, agnostic | 1 |
 | `test` | phase, agnostic | 4 |
-| `release` | phase, agnostic | 3 |
+| `release` | phase, agnostic | 4 |
 | `deploy` | phase, env-first | 0 |
 | `monitor` | phase, env-first | 0 |
 | `support` | not a phase | 6 |
@@ -146,7 +146,7 @@ the number that says whether a rib is filled:
 | `docs` | family | 3 |
 | `tasks` | family | 2 |
 
-Twenty-four coordinates: fourteen carrying a placement, ten free to be filed. The numbers in this sentence, in that
+Twenty-five coordinates: fifteen carrying a placement, ten free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -205,17 +205,23 @@ are two commands over one template. That mechanism is in [Test levels](../test-l
 *Publish them.* The point where a mistake stops being local: a tag can be deleted but not un-seen, and a
 pushed image is somebody else's dependency by the time you notice.
 
-**In the catalogue today: 3 tasks.**
+**In the catalogue today: 4 tasks.**
 
 - `release:artifact`
+- `release:asset`
 - `release:image`
 - `release:tag`
 
-**What a product brings itself.** An `artifacts:` or `images:` section, and - for `release:tag` - a
-workflow that a tag actually triggers. All three are **offered** rather than placed, and `release:tag`
+**What a product brings itself.** An `artifacts:`, `assets:` or `images:` section, and - for
+`release:tag` - a workflow that a tag actually triggers. All four are **offered** rather than placed, and `release:tag`
 is the case that fixed that bar: it is the one `release:` task that reads no product data at all, so it
 came closest to being handed to everybody, and it is still not - because it **publishes**, and a
 misfire is public and cannot be taken back.
+
+`release:artifact` and `release:asset` are the same act aimed at different readers: a directory in a
+registry that a consuming pipeline pulls with its own token, and files on a release page that a person
+downloads. Which of the two a product offers is a question about its audience, and about what its
+licence lets it hand out - never one the kernel answers for it.
 
 `release:image` is worth reading as a rule rather than a task. It pushes *and then asks the registry
 whether the tag is there*, because a push nobody verifies is the same defect as a report nobody reads.

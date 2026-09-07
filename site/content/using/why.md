@@ -153,7 +153,7 @@ by the kind of work instead of by the phase it runs in:
 | version control | `git`, `gh` | `vcs:commit`, `vcs:push`, `vcs:prune-branches`, `vcs:submodules`, `vcs:auth-scopes`, `release:tag` |
 | testing | pytest, mypy, Allure | `test:gate`, `test:accept`, `test:report`, `test:typecheck-python` |
 | documentation | Hugo, docToolchain, the assembled command line itself | `docs:site`, `docs:render`, `docs:reference` |
-| packaging and publishing | `docker`, `oras` | `build:image`, `release:image`, `release:artifact` |
+| packaging and publishing | `docker`, `oras`, `gh` | `build:image`, `release:image`, `release:artifact`, `release:asset` |
 | the machine and its services | `oras`, `docker compose`, `claude` - and nothing at all for `support:environments`, which only reads the manifest | `support:install`, `support:nexus`, `support:claude-plugins`, `support:environments` |
 | the manifest itself | nothing external | `tasks:generate`, `tasks:catalogue`, `support:workflows`, `support:completion` |
 
