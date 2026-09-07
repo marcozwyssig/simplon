@@ -10,9 +10,13 @@ pinned next to the runner, in tests/test_tasks_testrun.py.
 AAA throughout, negative cases included.
 """
 import json
+import shlex
+import signal
+import sys
 
 import pytest
 
+from simplon import run as run_module
 from simplon import verdict as verdict_module
 from simplon.verdict import GateVerdict, RunVerdict, Verdict
 
@@ -23,7 +27,13 @@ from simplon.verdict import GateVerdict, RunVerdict, Verdict
 def test_onlyAPassedOrFailedGateIsEvidenceAboutTheProduct():
     # arrange / act / assert: the predicate the whole module turns on
     assert Verdict.PASSED.ran and Verdict.FAILED.ran
-    assert not Verdict.SETUP_FAILED.ran and not Verdict.NOT_RUN.ran
+    assert not Verdict.SETUP_FAILED.ran and not Verdict.NOT_RUN.ran and not Verdict.KILLED.ran
+
+
+def test_everyOutcomeIsRanked_soANewOneCannotBeAddedWithoutSayingHowWeakItIs():
+    # arrange / act / assert: `rank` is a dict lookup, and a member missing from it would not degrade -
+    # `RunVerdict.worst` would raise on the first run that produced it
+    assert sorted(v.rank for v in Verdict) == list(range(len(Verdict)))
 
 
 def test_aSetupFailureSaysTheSuiteNeverRan_ratherThanOnlyThatItWasRed():
@@ -241,3 +251,118 @@ def test_anExploratoryRunSaysSoInItsSentenceAndItsEnvironment():
     assert run.line.startswith("partial run - ")
     assert run.environment()["verdict.partial"] == "true"
     assert run.as_dict()["filtered"] is True
+
+
+# --- a run a signal ended (#55) ---------------------------------------------------------------------------
+
+
+def test_aKilledRunIsNotEvidence_becauseTheSuiteWasShotRatherThanHavingReported():
+    # arrange: the exact rc the field produced - a pytest child terminated by SIGTERM
+    gv = GateVerdict("unit", Verdict.KILLED, -15)
+
+    # act
+    line = gv.line
+
+    # assert: the sentence a reader used to get here claimed the suite had reported failures
+    assert not gv.verdict.ran
+    assert "the suite ran and reported failures" not in line
+    assert "reported nothing" in line and "nothing about the product" in line
+
+
+def test_aKilledRunNamesTheSignal_andNotTheNegativeNumberThatSaysNothing():
+    # arrange / act / assert: SIGTERM tells a reader that something asked the run to stop; -15 does not,
+    # and it reads like an exit code while it is there
+    assert GateVerdict("unit", Verdict.KILLED, -15).line.startswith("killed (SIGTERM)")
+    assert "-15" not in GateVerdict("unit", Verdict.KILLED, -15).line
+    assert GateVerdict("unit", Verdict.KILLED, -9).line.startswith("killed (SIGKILL)")
+    assert GateVerdict("unit", Verdict.KILLED, -6).line.startswith("killed (SIGABRT)")
+    assert GateVerdict("unit", Verdict.KILLED, -11).line.startswith("killed (SIGSEGV)")
+
+
+def test_signal_name_stillReadsAsASignal_forANumberThisPlatformKnowsNoSignalBy():
+    # arrange: a wait status is produced by whatever killed the child, so the set is not closed
+    unknown = max(int(member) for member in signal.Signals) + 1
+
+    # act / assert: a fallback rather than a ValueError raised from inside a log line
+    assert verdict_module.signal_name(-unknown) == f"signal {unknown}"
+
+
+def test_aKilledVerdictCannotCarryANonNegativeRc_becauseThenItNamesNoSignal():
+    # arrange / act / assert: the outcome is READ OFF a signal, so a value object holding one without a
+    # wait status would have `line` spelling out a signal nobody sent
+    with pytest.raises(ValueError, match="read off a signal"):
+        GateVerdict("unit", Verdict.KILLED, 1)
+    with pytest.raises(ValueError, match="read off a signal"):
+        GateVerdict("unit", Verdict.KILLED, 0)
+
+
+def test_aKilledGateOutranksEveryOtherOutcome_soTheSignalIsWhatTheRunReports():
+    # arrange: a run in which one gate's lab broke and another was shot - the shot one LAST, so a run that
+    # simply reported its final gate would also pass this by accident
+    run = RunVerdict((GateVerdict("system", Verdict.SETUP_FAILED, 1, "provision"),
+                      GateVerdict("unit", Verdict.KILLED, -15)))
+
+    # act / assert: a reader told "setup failed" about a run that was actually shot hunts a healthy lab
+    assert run.verdict is Verdict.KILLED
+    assert run.line.startswith("unit: killed (SIGTERM)")
+    assert run.environment()["verdict"] == "killed"
+
+
+def test_aKilledGateOwnedTheResultsDir_soTheRunsRecordStillBelongsInTheArchive():
+    # arrange / act / assert: unlike `not-run`, a shot gate had already cleared and started filling the
+    # results, so leaving the archive alone would leave the LAST run's verdict standing in it
+    assert RunVerdict((GateVerdict("unit", Verdict.KILLED, -15),)).wrote_results
+
+
+def test_write_stamp_recordsTheSignalInTheSentenceAndTheWaitStatusInTheField(tmp_path):
+    # arrange
+    run = RunVerdict((GateVerdict("unit", Verdict.KILLED, -15),))
+
+    # act
+    path = verdict_module.write_stamp(str(tmp_path), run)
+
+    # assert: the human half names the signal, the machine half keeps the number it was read from
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    assert data["verdict"] == "killed"
+    assert data["gates"][0]["rc"] == -15
+    assert "SIGTERM" in data["gates"][0]["line"]
+
+
+# --- the second half of the same defect: the number the shell gets (#55) ----------------------------------
+
+
+def test_of_subprocess_readsAChildsWaitStatus_andOnlyANegativeOneNamesASignal():
+    # arrange / act / assert
+    assert verdict_module.of_subprocess(0) is Verdict.PASSED
+    assert verdict_module.of_subprocess(1) is Verdict.FAILED
+    assert verdict_module.of_subprocess(-15) is Verdict.KILLED
+
+
+def test_exit_code_handsOnTheNumberAShellItselfWritesForAChildKilledByThatSignal():
+    # arrange: the SAME child twice - once through the kernel's subprocess seam, once under a shell that
+    # reports its own $? - so neither number in this test is typed from memory
+    killer = "import os, signal; os.kill(os.getpid(), signal.SIGTERM)"
+    quoted = f"{shlex.quote(sys.executable)} -c {shlex.quote(killer)}"
+    observed = run_module.run([sys.executable, "-c", killer]).rc
+    reported = run_module.run(["sh", "-c", f"{quoted}; echo $?"]).out.strip()
+
+    # act / assert: the translation is exactly the shell's own, and it is never green
+    assert observed == -15
+    assert verdict_module.exit_code(observed) == int(reported)
+    assert verdict_module.exit_code(observed) != 0
+
+
+def test_exit_code_removesTheNumberSysExitWouldHaveManufacturedFromTheWaitStatus():
+    # arrange: what handing the raw wait status to `sys.exit` actually does - the modulo, measured, not
+    # quoted from a document
+    mangled = run_module.run([sys.executable, "-c", "import sys; sys.exit(-15)"]).rc
+
+    # act / assert: 241 is neither the signal nor anything reserved, and it reads like an ordinary rc
+    assert mangled == 241
+    assert verdict_module.exit_code(-15) != mangled
+
+
+def test_exit_code_leavesAnOrdinaryReturnCodeExactlyWhereItWas():
+    # arrange / act / assert: only a wait status is translated; everything else is the rc it always was
+    assert [verdict_module.exit_code(rc) for rc in (0, 1, 2, 7, 255)] == [0, 1, 2, 7, 255]

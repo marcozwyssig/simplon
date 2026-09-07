@@ -41,11 +41,37 @@ THE FOURTH OUTCOME, and why it is not just "red". A gate whose `precondition` sa
 shared results dir is cleared, deliberately: nothing ran, so the archive of the last real run must survive
 untouched. That run therefore has nothing to say about the product either, and it says so as `not-run`
 rather than borrowing the vocabulary of a run that happened.
+
+THE FIFTH OUTCOME, and why it is not `failed` (#55). A run a signal ended did not report anything - it was
+shot. The evidence is right there in the exit code: `subprocess.returncode` is negative and carries the
+signal number, which is POSIX's own encoding and not a convention invented here. But the four outcomes
+above offered no word for it, so it arrived as `FAILED` and the record said "the suite ran and reported
+failures" about a run whose output was empty. Measured three times in one day on one product, with three
+different causes - a rate limit, a stray `gh auth refresh`, an unexplained hang - and the sentence was the
+same false one every time. `KILLED` is that case: `ran` is False, like the other two non-verdicts, and the
+line names the SIGNAL rather than the negative number, because `SIGTERM` tells a reader that something
+asked the run to stop and `-15` tells them nothing.
+
+WHERE THAT DERIVATION IS HONEST AND WHERE IT IS NOT. A negative rc means "terminated by signal" only when
+it is a CHILD PROCESS'S wait status. A number returned by a Python callable is just a number, and this
+repository already has one that answers -1 to mean "could not parse" (`simplon.waits.device_count`). So
+`of_subprocess` is the seam and it is named after what it may be applied to: `simplon.tasks.testrun` hands
+it the rc it read off the pytest child and nothing else, and a gate whose runner is the product's own stays
+exactly as opaque as it was.
+
+AND THE EXIT CODE, which is the same defect on the way out. `sys.exit(-15)` is taken modulo 256, so a shell
+reads 241 - measured - a number that is neither the signal nor anything reserved and that looks exactly
+like an ordinary exit code. `exit_code` translates a signal rc to 128+n instead, which is what every shell
+already writes into `$?` for a child killed by signal n. This is NOT the widened rc the paragraph above
+rejects: it carries no new distinction for a caller to decode and no caller has to learn a private
+convention. It only stops the distinction the operating system already made from being mangled on the way
+through `sys.exit`.
 """
 from __future__ import annotations
 
 import json
 import os
+import signal
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -73,14 +99,16 @@ class Verdict(str, Enum):
     FAILED = "failed"
     SETUP_FAILED = "setup-failed"
     NOT_RUN = "not-run"
+    KILLED = "killed"
 
     @property
     def ran(self) -> bool:
         """True when the suite actually executed, so the outcome is a statement about the PRODUCT.
 
         The whole point of the module in one predicate: only `PASSED` and `FAILED` are evidence. The other
-        two are reports about the lab, and a reader who treats them as evidence draws the conclusion this
-        module exists to prevent.
+        three are reports about the lab or about the invocation - a setup that broke, a gate that refused,
+        a run a signal ended - and a reader who treats them as evidence draws the conclusion this module
+        exists to prevent.
         """
         return self in (Verdict.PASSED, Verdict.FAILED)
 
@@ -93,8 +121,15 @@ class Verdict(str, Enum):
         gates found, so the non-verdicts outrank the verdicts. Between the two non-verdicts the more
         specific one wins, because `setup-failed` names a stage a reader can act on where `not-run` names
         only an abort.
+
+        `killed` outranks all of them, and that is the one placement worth arguing. A signal did not come
+        from the suite, the lab or the manifest: it ended the INVOCATION from outside, so it is the fact
+        that explains whatever else the run appears to have found - a gate whose preamble then fell over, a
+        suite that then reported nothing. A reader told "setup failed" about a run that was actually shot
+        goes looking for a broken lab that may be perfectly healthy.
         """
-        return {Verdict.PASSED: 0, Verdict.FAILED: 1, Verdict.NOT_RUN: 2, Verdict.SETUP_FAILED: 3}[self]
+        return {Verdict.PASSED: 0, Verdict.FAILED: 1, Verdict.NOT_RUN: 2, Verdict.SETUP_FAILED: 3,
+                Verdict.KILLED: 4}[self]
 
 
 @dataclass(frozen=True)
@@ -139,6 +174,12 @@ class GateVerdict:
         # has to decide what rc it means.
         if self.verdict is Verdict.PASSED and self.rc != 0:
             raise ValueError(f"'{self.gate}': a passing gate cannot carry rc {self.rc}")
+        # A `killed` verdict is READ OFF a signal - it is the one outcome that is observed rather than
+        # decided - so a non-negative rc names no signal and `line` would have nothing to spell out.
+        # Checked before the rc-0 rule below so this outcome always gets the reason that applies to it.
+        if self.verdict is Verdict.KILLED and self.rc >= 0:
+            raise ValueError(f"'{self.gate}': a 'killed' verdict is read off a signal, so it cannot carry "
+                             f"rc {self.rc} - only a child's negative wait status names one")
         if self.verdict is not Verdict.PASSED and self.rc == 0:
             raise ValueError(f"'{self.gate}': a '{self.verdict.value}' verdict cannot carry rc 0 - a red "
                              f"record with a green exit code is the confusion this exists to prevent")
@@ -160,6 +201,13 @@ class GateVerdict:
             return "passed"
         if self.verdict is Verdict.FAILED:
             return f"failed (rc {self.rc}) - {self.detail or 'the suite ran and reported failures'}"
+        if self.verdict is Verdict.KILLED:
+            # THE SIGNAL NAME, AND NOT THE NUMBER. Every other line here carries its rc because the rc is
+            # what a reader would otherwise go looking for; here it is the thing that misleads - it reads
+            # as an exit code - and the stamp's machine-readable `rc` field keeps it anyway.
+            return (f"killed ({signal_name(self.rc)}) - "
+                    + (self.detail or "the suite was ended by a signal and reported nothing, so this says "
+                                      "nothing about the product"))
         if self.verdict is Verdict.SETUP_FAILED:
             return (f"setup failed ({self.stage}, rc {self.rc}) - "
                     + (self.detail or "the suite never ran, so this says nothing about the product"))
@@ -250,6 +298,45 @@ class RunVerdict:
         return {"written": (now or datetime.now()).isoformat(timespec="seconds"),
                 "verdict": self.verdict.value, "line": self.line, "filtered": self.filtered,
                 "gates": [gate.as_dict() for gate in self.gates]}
+
+
+def signal_name(rc: int) -> str:
+    """The signal a child's negative wait status names - `SIGTERM` for -15 - or a plain rendering of the
+    number where this platform knows no signal by it.
+
+    The fallback is not decoration. `signal.Signals` knows only the signals the running platform defines,
+    and a wait status is produced by whatever killed the child, so a number outside that set is possible
+    and has to keep reading as a signal instead of raising from inside a log line.
+    """
+    try:
+        return signal.Signals(-rc).name
+    except ValueError:
+        return f"signal {-rc}"
+
+
+def of_subprocess(rc: int) -> Verdict:
+    """What a gate learned from the exit status of the CHILD PROCESS it ran: green, red, or shot.
+
+    Only from a child's status - that is the whole precondition, and it is in the name because getting it
+    wrong invents a signal. A Python callable's return value may be negative for reasons of its own, and a
+    `killed (SIGHUP)` conjured out of some body's `return -1` would be a fabricated statement about the
+    product, produced by the very module that exists to remove them.
+    """
+    if rc < 0:
+        return Verdict.KILLED
+    return Verdict.PASSED if rc == 0 else Verdict.FAILED
+
+
+def exit_code(rc: int) -> int:
+    """The number a gate hands the PROCESS, given the rc it observed from its child.
+
+    A pass-through for everything but a signal status, which does not survive `sys.exit` intact: the value
+    is taken modulo 256, so -15 leaves the process as 241 and -9 as 247 - measured - and neither number
+    says "signal" to anything downstream. 128+n is what a shell already writes into `$?` for a child killed
+    by signal n, so it is the one translation nobody has to be told about; and red stays red, because
+    128+n is never zero.
+    """
+    return 128 - rc if rc < 0 else rc
 
 
 def stamp_name(*, filtered: bool = False) -> str:

@@ -71,9 +71,10 @@ the one placement it made configurable is not using what it ships.
 
 ## Why a gate is red
 
-A gate can be red for two reasons, and they are not the same statement: the
-**probe is red** (the suite ran and found something) or the **setup failed**
-(the suite never ran, because the preparation fell over first). Both are
+A gate can be red for several reasons, and they are not the same statement: the
+**probe is red** (the suite ran and found something), the **setup failed** (the
+suite never ran, because the preparation fell over first), or the run was
+**killed** (a signal ended it, so it reported nothing at all). All are
 `rc != 0`, and they stay that way -- an exit code is one bit and no reserved
 value is invented for this. The distinction lives in what gets **written**:
 
@@ -83,9 +84,17 @@ value is invented for this. The distinction lives in what gets **written**:
 * `environment.properties` in the run's allure results -- the same verdict
   inside the archive, where somebody handed only the HTML report still sees it.
 
-`simplon.verdict` holds the four outcomes (`passed`, `failed`, `setup-failed`,
-`not-run`) and the reasoning; `simplon.tasks.testrun.assess_gate` produces one
-per gate for a caller that wants it in hand rather than as an rc.
+`simplon.verdict` holds the five outcomes (`passed`, `failed`, `setup-failed`,
+`not-run`, `killed`) and the reasoning; `simplon.tasks.testrun.assess_gate`
+produces one per gate for a caller that wants it in hand rather than as an rc.
+
+`killed` is read off the pytest child's wait status, which is negative when a
+signal ended it, and the sentence names the **signal** rather than the number:
+`killed (SIGTERM)`, not `rc -15`. The one number that does change is the gate's
+own exit code, because `sys.exit(-15)` is taken modulo 256 and leaves a shell
+reading `241` -- neither the signal nor anything reserved. A killed gate exits
+`128+n` instead, which is what a shell already writes into `$?` for a child
+killed by signal `n`.
 
 A product whose lab is prepared through the gate's `precondition:` or
 `preamble:` hooks gets this for free. A product that builds its lab **inside a
