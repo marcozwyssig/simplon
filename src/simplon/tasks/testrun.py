@@ -25,7 +25,10 @@ the report dir and the archive's own Environment widget (#30). A suite that prep
 session fixture, out of the kernel's sight, says so through the marker file at `SETUP_MARKER_ENV`.
 
 A gate may also be declared as a bare `impl:` instead of a pytest `suite:`, for a level whose runner is the
-product's own (a browser journey suite, say); the kernel just calls it for its rc and sequences it.
+product's own (a browser journey suite, say); the kernel just calls it for its rc and sequences it. It
+therefore reports that gate in terms of the rc AND SAYS SO (#65) rather than borrowing the sentence written
+for a suite it ran itself, and it opens the same setup marker to it as to a pytest gate (#59), so a runner
+that knows its own preparation fell over has somewhere to say it.
 
 EXPLORATORY RUNS (netctl#1406). A gate that declares `args: true` forwards the command's passthrough args
 to pytest, which is what makes `<product> test system -k <expr>` - a ~60s answer instead of a ~24min gate -
@@ -65,19 +68,48 @@ SCRATCH = "allure-report"
 
 CLEAR, APPEND = "clear", "append"
 
-#: The file a SUITE may drop to say that its own preparation fell over (#30), and the environment variable
-#: that tells it where. The kernel names the two setup stages it sequences itself - `precondition` and
-#: `preamble` - but a product whose lab is built inside a pytest session fixture prepares it where the
-#: kernel cannot see: from out here that failure is just a non-zero pytest rc, indistinguishable from a red
-#: suite. This is the seam for it, and it is deliberately the cheapest one that works: a path in the
-#: environment and a file with a stage name in it. No import of the kernel from inside the suite's own
-#: venv, no protocol, nothing to keep in step across a version bump.
+#: The name the report step carries in a run's record. It is not a declared gate, but it is a step the run
+#: is answerable for, so the stamp names it the same way every time - including when it is the step that
+#: raised (#63) and the record has to say which one that was.
+REPORT = "report"
+#: The rc the record carries for a step that raised. An exception leaves this process through the CLI,
+#: which exits 1, so the record and the exit code agree; and `GateVerdict` refuses a red verdict carrying
+#: rc 0 outright, because a red record with a green exit is the confusion the whole module is against.
+ABANDONED_RC = 1
+
+#: The file a SUITE OR A PRODUCT-OWNED RUNNER may drop to say that its own preparation fell over (#30),
+#: and the environment variable that tells it where. The kernel names the two setup stages it sequences
+#: itself - `precondition` and `preamble` - but a product whose lab is built inside a pytest session
+#: fixture prepares it where the kernel cannot see: from out here that failure is just a non-zero pytest
+#: rc, indistinguishable from a red suite. This is the seam for it, and it is deliberately the cheapest
+#: one that works: a path in the environment and a file with a stage name in it. No import of the kernel
+#: from inside the suite's own venv, no protocol, nothing to keep in step across a version bump.
+#:
+#: AN `impl:` GATE REACHES IT TOO (#59). It used to be a pytest-only seam by accident of placement rather
+#: than by decision - the impl branch returned above it - which left the runner that needs it most, one
+#: the kernel cannot see into at all, with two of the five outcomes. The cheapness is what makes it work
+#: for both: an in-process callable reads the same environment variable and writes the same file as a
+#: pytest child does.
 SETUP_MARKER = "setup-failed"
 SETUP_MARKER_ENV = "SIMPLON_SETUP_FAILED"
 #: The rc a setup failure gets when the thing that failed left none of its own - a suite that dropped the
 #: marker and still exited 0. The generic failure code, because the kernel has no better one to offer and
 #: the alternative (passing the 0 on) is a red record with a green exit.
 SETUP_FAILED_RC = 1
+
+#: What a RED `impl:` gate says instead of `GateVerdict.line`'s default, and the whole of #65 in one
+#: string. The default explains a failure by saying "the suite ran and reported failures", which is the
+#: right sentence for a suite the kernel itself started and a FALSE one here: the kernel called a Python
+#: callable, took a number back, and saw neither a suite nor a result file. Measured on a Gradle build
+#: that stopped in `:compileJava` - no class compiled, no test executed, no JUnit XML written - where all
+#: three records said the suite had run and reported failures.
+#:
+#: It says what the kernel actually observed and then says, in as many words, that the rest is not its to
+#: state. "I do not know" is a statement a record may carry; "the suite reported" is not. It deliberately
+#: does not guess at a cause, name a stage or read the rc as a signal - a runner that knows any of those
+#: says so itself, through the marker file the branch now opens (#59).
+IMPL_DETAIL = ("the product's own runner returned this rc; the kernel did not run a suite here and "
+               "cannot say whether one ran at all")
 
 
 @dataclass(frozen=True)
@@ -342,8 +374,25 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
 
     A gate declared as a bare `impl:` stays opaque, deliberately. The kernel calls the product's runner for
     its rc and nothing else, so it has no honest basis for saying more than passed/failed about it - not
-    even the signal reading above, since that rc never passed through a wait status; a product that wants
-    the distinction there owns both halves and can write its own verdict.
+    even the signal reading above, since that rc never passed through a wait status.
+
+    THAT OPACITY IS THE REASON FOR `IMPL_DETAIL`, NOT AN EXCUSE FOR THE OLD SENTENCE (#65). The reasoning
+    above is right and the consequence drawn from it was not: from "the kernel does not know" the kernel
+    concluded that it might say the default, and the default is "the suite ran and reported failures" -
+    a statement about a suite it never saw. Measured against a real Gradle build with a deliberate
+    compiler error: nothing compiled, no test ran, no result file was written, and the log line, the
+    stamp and the archive's environment widget all said the suite had run and reported failures. Not
+    knowing is a thing a record may say; it is not a licence to say something else. So an impl gate now
+    states exactly what happened - the product's runner returned an rc - and nothing about a suite.
+
+    AND THE MARKER IS OPEN TO IT (#59). `_setup_marker` is the seam a runner uses to say "my own
+    preparation fell over", and it used to sit BELOW this branch, so the one outcome a product-owned
+    runner most needs was the one it could not reach: of the five outcomes, an impl gate had two. It is
+    opened here without widening what the kernel claims, because the kernel still claims nothing - the
+    marker is the PRODUCT speaking, in the product's own words, exactly as a pytest session fixture
+    speaks through the same file. A runner that stays silent still gets `passed`/`failed` and no invented
+    stage; that is asserted, because a fix that hallucinated a stage would have moved this defect rather
+    than removed it.
 
     `earlier` is what the gates before this one in the SAME invocation found. It exists so the environment
     this gate writes into the shared results dir states the RUN's verdict rather than its own: the write is
@@ -355,16 +404,28 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
         rc = _hook(gate.precondition, f"gates.{gate.name}.precondition")()
         if rc != 0:
             return GateVerdict(gate.name, Verdict.NOT_RUN, rc, verdict.PRECONDITION)
+    reports = _reports_dir(cfg)
     if gate.impl:
         # NOT `verdict.of_subprocess`: this rc is a Python callable's return value, not a child's wait
         # status, so a negative one names no signal and reading it as one would invent a statement. Same
-        # reason the paragraph below gives for saying nothing else about an impl gate.
-        rc = _hook(gate.impl, f"gates.{gate.name}.impl")()
-        return GateVerdict(gate.name, Verdict.PASSED if rc == 0 else Verdict.FAILED, rc)
+        # reason the docstring gives for saying nothing else about an impl gate.
+        #
+        # The marker window is the product's, not the kernel's: it is opened, and what comes out of it is
+        # whatever the runner chose to write. Nothing is read if nothing is written.
+        with _setup_marker(reports) as marker:
+            rc = _hook(gate.impl, f"gates.{gate.name}.impl")()
+            stage = _reported_stage(marker)
+        if stage:
+            # The runner's own claim wins over its rc, including over a green one - the same precedence a
+            # pytest gate's marker gets below, and for the same reason: a runner that reports a broken
+            # setup and still returns 0 is a runner whose green means nothing.
+            return GateVerdict(gate.name, Verdict.SETUP_FAILED, rc or SETUP_FAILED_RC, stage)
+        if rc == 0:
+            return GateVerdict(gate.name, Verdict.PASSED, rc)
+        return GateVerdict(gate.name, Verdict.FAILED, rc, detail=IMPL_DETAIL)
 
     log.info(gate.announce or f"{gate.name} gate: {gate.suite} against the running lab")
     suite_dir = str(context.current().root / gate.suite)
-    reports = _reports_dir(cfg)
     results = results_dir(cfg, filtered=filtered)
     py, _ = pyvenv.venv_python_pip(suite_dir)
     if gate.clears:
@@ -465,8 +526,19 @@ def report(cfg: Suites | None = None, *, filtered: bool = False, run: RunVerdict
         # would be the stale-verdict defect pointing the other way.
         allure.write_environment(results, run.environment())
     if cfg.merge:
-        allure.merge_results(results, [str(root / d) for d in cfg.merge], parent_suite=cfg.parent_suite)
-        log.ok(f"per-module results merged (parentSuite={cfg.parent_suite})")
+        # THE RESULT, NOT THE INTENTION (#64). The old line said `per-module results merged
+        # (parentSuite=X)` unconditionally, and it was the same sentence for a merge that tagged three
+        # results, for one that copied a JUnit XML through untagged, and for one whose declared source
+        # dir did not exist because the build had stopped before writing it. `merge_results` is the only
+        # thing that can tell those apart, so it now says which it was and this only reports it.
+        #
+        # A missing source is a WARNING and not a failure: skipping it is deliberate (a standalone report
+        # step archives what is present), but a declared dir that is not there is the runtime twin of the
+        # typo `declared` refuses at load, and the run it belongs to is usually one where something
+        # upstream never got that far.
+        merged = allure.merge_results(results, [str(root / d) for d in cfg.merge],
+                                      parent_suite=cfg.parent_suite)
+        (log.warn if merged.missing or merged.empty else log.ok)(f"per-module results: {merged.line}")
     log.ok(f"allure results written to {results}")
     render = allure.render_report(_reports_dir(cfg), results,
                                   prefix="allure-filtered" if filtered else "allure")
@@ -488,6 +560,15 @@ def accept(extra: list[str], cfg: Suites | None = None) -> int:
     instead of leaving the last complete run's verdict standing as though it were this one's. The
     section-level abort writes one too: "this run never started" is a thing the record has to be able to
     say, and it is the one thing the old code could only say by staying silent.
+
+    AND A STAMP IS WRITTEN WHEN A STEP RAISES (#63), which is the half that rule was missing. Stamping
+    after every gate means the record is always one step behind; while the run finishes normally the last
+    write catches up, and when it does not, the stamp that stays on the disk is a true statement about the
+    last gate and a FALSE one about the run. Measured: a run that ended with rc 1 and an
+    `IsADirectoryError` out of the report step left `test-verdict.json` saying `"verdict": "passed"`,
+    `"line": "passed"`, with no `report` entry to hint that anything had been cut short. The gates really
+    had been green; the run had not, and the record a reader consults a week later is the record of the
+    run. The exception is re-raised afterwards - this adds a record, it does not swallow a failure.
     """
     cfg = cfg or config()
     reports = _reports_dir(cfg)
@@ -505,16 +586,34 @@ def accept(extra: list[str], cfg: Suites | None = None) -> int:
         _warn_filtered(cfg)
     log.info(f"accept: running the lab-based suites ({' + '.join(g.name for g in cfg.gates)} + report)")
     verdicts: list[GateVerdict] = []
-    for gate in cfg.gates:
-        verdicts.append(assess_gate(gate, cfg, extra if gate.args else [], filtered=filtered,
-                                    earlier=tuple(verdicts)))
+    step = cfg.gates[0].name
+    try:
+        for gate in cfg.gates:
+            step = gate.name
+            verdicts.append(assess_gate(gate, cfg, extra if gate.args else [], filtered=filtered,
+                                        earlier=tuple(verdicts)))
+            verdict.write_stamp(reports, RunVerdict(tuple(verdicts), filtered=filtered))
+        step = REPORT
+        rc = report(cfg, filtered=filtered, run=RunVerdict(tuple(verdicts), filtered=filtered))
+    except Exception as exc:
+        # AN ABANDONED RUN LEAVES AN ABANDONED RUN'S RECORD (#63). The stamp after the last completed gate
+        # is a true statement about that gate and a false one about the run, because it is the only thing
+        # a later reader finds: measured, a run that ended with rc 1 and an `IsADirectoryError` out of the
+        # report step left `test-verdict.json` saying `"verdict": "passed"` with no `report` entry at all.
+        # `write_stamp` is called after every gate precisely so a run that stops early still leaves a
+        # record - and the one place it could not reach was the step that runs last.
+        #
+        # The exception is RE-RAISED, so the operator keeps the traceback and the process keeps its exit
+        # code: this adds a record, it does not swallow a failure. `Exception` and not `BaseException` -
+        # a KeyboardInterrupt is the operator ending their own run, not a run that reports green.
+        verdicts.append(_abandoned(step, exc))
         verdict.write_stamp(reports, RunVerdict(tuple(verdicts), filtered=filtered))
-    rc = report(cfg, filtered=filtered, run=RunVerdict(tuple(verdicts), filtered=filtered))
+        raise
     # The report step runs NO tests, so it must not borrow the sentence written for a gate that does: it
     # renders an archive, and when it is red the archive is what is missing. Handing it the default wording
     # would put "the suite ran and reported failures" into the stamp - and, when it is the run's weakest
     # element, into `verdict.summary` - about a step that ran no suite at all.
-    verdicts.append(GateVerdict("report", Verdict.PASSED if rc == 0 else Verdict.FAILED, rc,
+    verdicts.append(GateVerdict(REPORT, Verdict.PASSED if rc == 0 else Verdict.FAILED, rc,
                                 detail="" if rc == 0 else "a render tool was present and wrote no "
                                                           "archive; this run has none"))
     run = RunVerdict(tuple(verdicts), filtered=filtered)
@@ -523,6 +622,29 @@ def accept(extra: list[str], cfg: Suites | None = None) -> int:
         log.warn("accept is RED (" + ", ".join(f"{gv.gate} {gv.line}" for gv in verdicts) + ")")
         return 1
     return 0
+
+
+def _abandoned(step: str, exc: BaseException) -> GateVerdict:
+    """The record entry for a step that RAISED - the one thing the stamp could not previously say (#63).
+
+    It names the step, the exception type and its message, because a record whose whole purpose is to be
+    read a week later must carry the cause and not only the fact. The message is flattened onto one line
+    for the same reason `allure.write_environment` flattens: this string is also written into a properties
+    file, whose format has no continuation.
+
+    WHY `FAILED` AND NOT A SIXTH OUTCOME. The five outcomes answer "what did the gate learn about the
+    product"; a step that raised did not get far enough to learn anything, and none of the three non-verdicts
+    fits - nothing about a SETUP broke, and the step was not skipped. `FAILED` with an explicit `detail` is
+    the idiom this function's only other non-suite neighbour already uses: the report step's render failure,
+    which is likewise a statement about the step rather than about the product, and which the `detail` field
+    exists for. Widening `Verdict` to say "abandoned" would be a change to the vocabulary every consumer
+    reads, made in passing while fixing a stamp that says the opposite of what happened; that belongs in a
+    ticket of its own, and the limit is recorded here rather than left to whoever hits it.
+    """
+    said = " ".join(str(exc).split())
+    return GateVerdict(step, Verdict.FAILED, ABANDONED_RC,
+                       detail=f"the step raised {type(exc).__name__}" + (f": {said}" if said else "")
+                              + ", so the run was abandoned there and nothing after it ran")
 
 
 def _warn_filtered(cfg: Suites) -> None:

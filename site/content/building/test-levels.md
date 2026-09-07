@@ -119,6 +119,53 @@ If your non-pytest runner produces allure results of its own, hand them to the r
 `report.merge` instead. That is what that list is for: result directories other steps already wrote,
 copied in and tagged with a parent suite so the merged archive groups them.
 
+### What the kernel says about your runner, and what only you can say
+
+Opacity cuts both ways, and the second way is the one that produced a bug. Because the kernel sees a
+return code and nothing else, a red `impl:` gate reports **the return code and says so**:
+
+> unit: failed (rc 1) - the product's own runner returned this rc; the kernel did not run a suite here
+> and cannot say whether one ran at all
+
+It used to borrow the sentence written for a pytest gate - *the suite ran and reported failures* - and
+that sentence was measured against a Gradle build with a deliberate compiler error
+([simplon#65](https://github.com/marcozwyssig/simplon/issues/65)): nothing compiled, no test executed, no
+JUnit XML was written, and the log line, the stamp and the archive's Environment widget all said the suite
+had run and reported failures. *Not knowing* is a thing a record may say. It is not a licence to say
+something else.
+
+**Which leaves the half only you have.** From out there a compiler error and a failing assertion are the
+same `rc 1`; from inside your runner they are not. So the setup marker is open to an `impl:` gate exactly
+as it is to a pytest suite ([simplon#59](https://github.com/marcozwyssig/simplon/issues/59)): the kernel
+puts a path in `SIMPLON_SETUP_FAILED` before it calls you, and a file written there names the stage that
+broke. Write it only when you *know*, and the gate reports `setup-failed` with your word in it:
+
+```python
+import os
+from simplon.tasks.testrun import SETUP_MARKER_ENV
+
+
+def integration() -> int:
+    """Run the JVM integration suite, and say when the build never reached it."""
+    root = context.current().root
+    results = root / "build" / "junit-xml"
+    shutil.rmtree(results, ignore_errors=True)          # this run's evidence, not the last run's
+    rc = run(["./gradlew", "--no-daemon", "integrationTest"], capture=False, cwd=str(root)).rc
+    if rc != 0 and not list(results.glob("TEST-*.xml")):
+        # gradle stopped before :test - a statement about this lab, not about the product
+        with open(os.environ[SETUP_MARKER_ENV], "w", encoding="utf-8") as fh:
+            fh.write("gradle build (:test never ran)\n")
+    return rc
+```
+
+> unit: setup failed (gradle build (:test never ran), rc 1) - the suite never ran, so this says nothing
+> about the product
+
+The claim wins over your return code, including over a green one: a runner that reports a broken setup
+and still returns `0` is a runner whose green means nothing. And a runner that writes nothing gets
+`passed` or `failed` and **no invented stage** - the kernel does not guess a setup failure out of a
+non-zero number, because a guessed one is the same false statement pointing the other way.
+
 ## Order, and who clears
 
 The `gates:` list is a list because **order is meaning**: the gates run in the order they are declared,
@@ -284,6 +331,39 @@ deliberately *not* an error there - a standalone report still archives whatever 
 stringified nonsense path would be skipped in silence:
 
 > sample.yaml: 'suites.report.merge' holds a non-path entry: None
+
+### What the merge reports, and what it will not do to your files
+
+The merge says what it **did**, not that it was called
+([simplon#64](https://github.com/marcozwyssig/simplon/issues/64)). It used to print
+`per-module results merged (parentSuite=Java)` whatever had happened, and two different runs got that
+identical sentence without having done what it claims:
+
+> per-module results: merged 1 file from 1 of 1 declared source dirs: 1 copied unchanged, carrying no
+> parentSuite; skipped 1 subdirectory allure would not read (…/build/test-results/test/binary)
+
+> per-module results: nothing merged: 0 of 1 declared source dirs present, missing: …/build/junit-xml
+
+Three things in that are worth reading off:
+
+**`parent_suite` applies to allure raw results only.** Tagging means editing a `*-result.json`, so a JUnit
+XML - or any other foreign format - is copied through untagged and reaches the report under whatever suite
+its own format names. The line no longer claims otherwise.
+
+**A declared source that is not there is a warning, not a failure.** Skipping it stays right - a standalone
+report step archives what is present - but it is now named, because that is exactly the shape of a run
+where a build stopped before writing anything.
+
+**A subdirectory is skipped, and named.** Gradle's default `build/test-results/test/` holds `binary/`
+beside the XML, and the merge used to hand every entry to `shutil.copy`, which raises `IsADirectoryError`
+on a directory - so the standard layout of the most common non-pytest runner in existence crashed the
+report step, and products worked around it by redirecting Gradle's report to a flat directory
+([simplon#62](https://github.com/marcozwyssig/simplon/issues/62)). **That workaround is no longer needed.**
+The choice between skipping, recursing and refusing was measured rather than argued: an allure results
+directory is read *flat*, and a results dir holding `aaa-result.json` next to `sub/bbb-result.json` renders
+`total: 1` with only the top-level suite. Recursing would copy bytes the renderer ignores; skipping is the
+only one of the three that is true. If your runner writes attachments into a subdirectory, flatten them -
+allure would not have read them there either.
 
 ## When a level does not exist
 

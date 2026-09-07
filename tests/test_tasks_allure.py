@@ -107,6 +107,184 @@ def test_merge_results_skips_missing_source_dirs(tmp_path):
     assert list(dst.iterdir()) == []
 
 
+# --- what a merge REPORTS about itself (si#64) ------------------------------------------------------------
+
+
+def test_a_merge_that_did_nothing_is_distinguishable_from_one_that_worked(tmp_path):
+    # arrange: the two runs that used to produce the identical log line - one real merge, one whose
+    # declared source dir is not there because the build stopped before writing it
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a-result.json").write_text(json.dumps({"name": "t", "labels": []}), encoding="utf-8")
+
+    # act
+    did = allure.merge_results(str(tmp_path / "d1"), [str(src)], parent_suite="Java")
+    nothing = allure.merge_results(str(tmp_path / "d2"), [str(tmp_path / "gone")], parent_suite="Java")
+
+    # assert: the whole of si#64's second half. "Nothing to do" and "done" now differ in the value AND in
+    # the sentence, which is the only place the caller could ever have got it from.
+    assert not did.empty and nothing.empty
+    assert did.line != nothing.line
+    assert "nothing merged" in nothing.line
+    assert str(tmp_path / "gone") in nothing.line
+
+
+def test_a_merge_says_how_many_results_it_tagged_and_how_many_it_only_copied(tmp_path):
+    # arrange: exactly the mixture a Java product produces - allure raw results from its pytest gate and a
+    # JUnit XML from Gradle, in one merge
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a-result.json").write_text(json.dumps({"name": "t", "labels": []}), encoding="utf-8")
+    (src / "b-result.json").write_text(
+        json.dumps({"name": "u", "labels": [{"name": "parentSuite", "value": "Existing"}]}),
+        encoding="utf-8")
+    (src / "TEST-demo.CalculatorTest.xml").write_text("<testsuite/>", encoding="utf-8")
+
+    # act
+    merged = allure.merge_results(str(tmp_path / "dst"), [str(src)], parent_suite="Java")
+
+    # assert: three files, three different fates, and the sentence keeps them apart
+    assert (merged.tagged, merged.already_labelled, merged.copied) == (1, 1, 1)
+    assert merged.files == 3
+    assert "1 tagged parentSuite=Java" in merged.line
+    assert "1 already labelled" in merged.line
+    assert "1 copied unchanged, carrying no parentSuite" in merged.line
+
+
+def test_a_merge_does_not_claim_a_parent_suite_for_the_files_it_only_copied(tmp_path):
+    # arrange: a JUnit XML alone - the measured Java case, where the report showed three test cases with
+    # parentSuite=None under a log line announcing they had one
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "TEST-demo.CalculatorTest.xml").write_text("<testsuite/>", encoding="utf-8")
+
+    # act
+    merged = allure.merge_results(str(tmp_path / "dst"), [str(src)], parent_suite="Java")
+
+    # assert: nothing was tagged, and the sentence does not say a parent suite was applied to anything.
+    # The FILE still has to arrive - allure reads JUnit XML with its own plugin, and a merge that
+    # protected the sentence by dropping the file would have removed a capability to fix a message.
+    assert merged.tagged == 0
+    assert "tagged parentSuite" not in merged.line
+    assert (tmp_path / "dst" / "TEST-demo.CalculatorTest.xml").is_file()
+
+
+def test_a_merge_counts_the_sources_it_found_and_names_the_ones_it_did_not(tmp_path):
+    # arrange: two declared sources, one of them absent - a product whose second module never ran
+    src = tmp_path / "there"
+    src.mkdir()
+    (src / "a-result.json").write_text(json.dumps({"name": "t", "labels": []}), encoding="utf-8")
+    gone = str(tmp_path / "not-there")
+
+    # act
+    merged = allure.merge_results(str(tmp_path / "dst"), [str(src), gone], parent_suite="Java")
+
+    # assert: a partial merge reports as a partial merge, with the missing dir named rather than counted
+    assert merged.present == (str(src),) and merged.missing == (gone,)
+    assert "1 of 2 declared source dirs" in merged.line
+    assert f"missing: {gone}" in merged.line
+
+
+# --- a subdirectory in a source dir (si#62) ---------------------------------------------------------------
+
+
+def _gradle_layout(tmp_path):
+    """Gradle's DEFAULT `build/test-results/test/`, byte for byte the shape that crashed the report step:
+    the JUnit XML beside a `binary/` directory of Gradle's own internal format."""
+    src = tmp_path / "test-results" / "test"
+    (src / "binary").mkdir(parents=True)
+    (src / "TEST-demo.CalculatorTest.xml").write_text("<testsuite/>", encoding="utf-8")
+    for name in ("output.bin", "output.bin.idx", "results.bin"):
+        (src / "binary" / name).write_bytes(b"\x00\x01")
+    return src
+
+
+def test_merge_results_does_not_die_on_gradles_default_layout(tmp_path):
+    # arrange: the measured crash - `IsADirectoryError: [Errno 21] Is a directory: .../test/binary`,
+    # uncaught, out of shutil, with no sentence naming the cause
+    src = _gradle_layout(tmp_path)
+    dst = tmp_path / "dst"
+
+    # act
+    merged = allure.merge_results(str(dst), [str(src)], parent_suite="Java")
+
+    # assert: it completes, and the file that MATTERS arrived. Before this, a Java product had to redirect
+    # its Gradle report to a flat directory to get an archive at all.
+    assert (dst / "TEST-demo.CalculatorTest.xml").is_file()
+    assert merged.copied == 1
+
+
+def test_a_skipped_subdirectory_is_named_rather_than_silently_dropped(tmp_path):
+    # arrange
+    src = _gradle_layout(tmp_path)
+
+    # act
+    merged = allure.merge_results(str(tmp_path / "dst"), [str(src)], parent_suite="Java")
+
+    # assert: "nothing to do" that nobody is told about is the defect this module hunts. A runner that
+    # writes attachments into a subdirectory has to learn that those bytes did not travel.
+    assert merged.skipped_dirs == (str(src / "binary"),)
+    assert "skipped 1 subdirectory allure would not read" in merged.line
+    assert str(src / "binary") in merged.line
+
+
+def test_a_skipped_subdirectory_is_not_copied_in_some_other_shape(tmp_path):
+    # arrange
+    src = _gradle_layout(tmp_path)
+    dst = tmp_path / "dst"
+
+    # act
+    allure.merge_results(str(dst), [str(src)], parent_suite="Java")
+
+    # assert: skip means SKIP. Measured against the pinned allure image, a results dir holding
+    # `aaa-result.json` and `sub/bbb-result.json` renders `total: 1` and the suite `TopSuite` alone - the
+    # nested result is not read - so recursing would copy bytes the renderer ignores while reporting a
+    # merge, and a flattened `binary/` would put Gradle's internal format where allure looks for results.
+    assert sorted(p.name for p in dst.iterdir()) == ["TEST-demo.CalculatorTest.xml"]
+
+
+def test_a_source_dir_holding_only_a_subdirectory_reports_nothing_merged(tmp_path):
+    # arrange: the run where Gradle wrote its binary output and no XML - nothing for the report to take
+    src = tmp_path / "only-dirs"
+    (src / "binary").mkdir(parents=True)
+
+    # act
+    merged = allure.merge_results(str(tmp_path / "dst"), [str(src)], parent_suite="Java")
+
+    # assert: a merge that met one directory and no file is EMPTY, and does not read as a merge that
+    # worked merely because the source dir existed
+    assert merged.empty
+    assert "nothing merged" in merged.line
+    assert "skipped 1 subdirectory" in merged.line
+
+
+def test_the_verbatim_passthrough_is_how_foreign_results_reach_the_report_at_all(tmp_path):
+    """THE CAPABILITY THIS MUST NOT LOSE, stated as an assertion because it was never designed.
+
+    A Gradle product's JUnit XML reaches the archive for one reason only: it is not `*-result.json`, so it
+    falls into the verbatim branch and is copied through, and allure then reads it with its own junit-xml
+    plugin - no converter anywhere in this kernel. That is incidental rather than decided, which is
+    exactly why it needs a test: a later tidy-up of this function that filtered the `else` down to "files
+    allure understands" would delete a working capability and pass every other assertion here.
+
+    Measured end to end on the real product (si#26, re-measured on si#63): with the XML merged, the
+    rendered archive reports `{"failed":0,"passed":3,"total":3}` green and `{"failed":1,"passed":2,
+    "total":3}` with one Java test flipped red - two Java cases plus the one Python case.
+    """
+    # arrange: Gradle's XML, an unrelated attachment, and a subdirectory, in one source
+    src = _gradle_layout(tmp_path)
+    (src / "some-attachment.txt").write_text("stderr", encoding="utf-8")
+    dst = tmp_path / "dst"
+
+    # act
+    merged = allure.merge_results(str(dst), [str(src)], parent_suite="Java")
+
+    # assert: BOTH non-result files travelled, byte for byte, and the skip took only the directory
+    assert (dst / "TEST-demo.CalculatorTest.xml").read_text(encoding="utf-8") == "<testsuite/>"
+    assert (dst / "some-attachment.txt").read_text(encoding="utf-8") == "stderr"
+    assert merged.copied == 2
+
+
 # --- render_report (moved here from netctl's testrun.allure_report, netctl#1406) ------------------------
 
 

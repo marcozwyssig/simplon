@@ -416,6 +416,159 @@ def test_run_gate_callsTheProductsOwnRunner_forAGateDeclaredAsAnImpl(monkeypatch
     assert runner["argv"] is None
 
 
+# --- what an `impl:` gate is entitled to say about itself (si#65, si#59) ----------------------------------
+
+
+def _impl_gate(monkeypatch, tmp_path, body):
+    """A taxonomy whose second level is a bare `impl:` gate, with `body` as the product's own runner.
+
+    The runner is registered through `resolve_ref` rather than through the `runner` fixture, because
+    these tests are about what the KERNEL says when the product's runner does or does not speak - so the
+    body has to be able to write the marker file, and a fixture that only records the ref cannot.
+    """
+    data = _data()
+    data["suites"]["gates"].append({"name": "acceptance-ui", "impl": "product.tooling:ui"})
+    _register(monkeypatch, tmp_path, data)
+    monkeypatch.setattr(testrun, "resolve_ref", lambda ref, where: body)
+    cfg = testrun.config()
+    return cfg, cfg.gate("acceptance-ui")
+
+
+def test_aRedImplGateDoesNotClaimTheSuiteRanAndReportedFailures(monkeypatch, tmp_path):
+    # arrange: the product's own runner comes back red - a Gradle build that stopped in :compileJava, in
+    # the measured case, having compiled nothing and run no test at all
+    cfg, gate = _impl_gate(monkeypatch, tmp_path, lambda: 1)
+
+    # act
+    gv = testrun.assess_gate(gate, cfg, [], filtered=False)
+
+    # assert: the outcome and the rc are unchanged; the SENTENCE no longer describes a suite the kernel
+    # never saw. This is the whole of si#65 - the old line said the suite had run and reported failures
+    # about a build that had not compiled.
+    assert gv.verdict is Verdict.FAILED
+    assert gv.rc == 1
+    assert "the suite ran and reported failures" not in gv.line
+    assert gv.line == f"failed (rc 1) - {testrun.IMPL_DETAIL}"
+
+
+def test_aRedImplGateSaysWhatTheKernelSaw_andSaysThatTheRestIsNotItsToState(monkeypatch, tmp_path):
+    # arrange: same red runner, read for what the replacement sentence CLAIMS rather than for its text
+    cfg, gate = _impl_gate(monkeypatch, tmp_path, lambda: 7)
+
+    # act
+    line = testrun.assess_gate(gate, cfg, [], filtered=False).line
+
+    # assert: it names the one thing the kernel observed - a runner that returned an rc - and then says it
+    # cannot tell whether a suite ran. Silence about the suite, not silence about the ignorance: "I do not
+    # know" is a statement a record may carry, "the suite reported" is not.
+    assert "the product's own runner returned this rc" in line
+    assert "cannot say whether one ran at all" in line
+    assert "rc 7" in line
+
+
+def test_aGreenImplGateIsUnchanged_becauseAPassingGateNeverMadeAFalseClaim(monkeypatch, tmp_path):
+    # arrange
+    cfg, gate = _impl_gate(monkeypatch, tmp_path, lambda: 0)
+
+    # act
+    gv = testrun.assess_gate(gate, cfg, [], filtered=False)
+
+    # assert: `passed` says exactly what happened and carries no explanatory half to be wrong about
+    assert gv.verdict is Verdict.PASSED
+    assert gv.line == "passed"
+    assert gv.stage == ""
+
+
+def test_anImplGateThatSaysNothingGetsNoStageInvented_theKernelStaysAsOpaqueAsItWas(monkeypatch, tmp_path):
+    # arrange: the ordinary runner - it returns an rc and writes no marker, which is every runner that
+    # was ever written against this kernel
+    cfg, gate = _impl_gate(monkeypatch, tmp_path, lambda: 2)
+
+    # act
+    gv = testrun.assess_gate(gate, cfg, [], filtered=False)
+
+    # assert: opening the marker must not have MANUFACTURED the outcome it makes reachable. A fix that
+    # answered `setup-failed` for a runner that never claimed one would have moved si#65's defect instead
+    # of removing it, and stayed green while doing so.
+    assert gv.verdict is Verdict.FAILED
+    assert gv.stage == ""
+    assert "setup" not in gv.line
+    assert not os.path.exists(os.path.join(str(tmp_path / "test/reports"), testrun.SETUP_MARKER))
+
+
+def test_anImplRunnerCanSayItsOwnSetupFellOver_throughTheMarkerTheKernelNowOpens(monkeypatch, tmp_path):
+    # arrange: a product-owned runner that KNOWS its preparation broke - the Gradle case, where the build
+    # never reached :test - and writes the stage into the marker the kernel points it at
+    def compile_then_test():
+        with open(os.environ[testrun.SETUP_MARKER_ENV], "w", encoding="utf-8") as fh:
+            fh.write("compile\n")
+        return 1
+
+    cfg, gate = _impl_gate(monkeypatch, tmp_path, compile_then_test)
+
+    # act
+    gv = testrun.assess_gate(gate, cfg, [], filtered=False)
+
+    # assert: the third outcome, reached by an impl gate for the first time (si#59). The kernel invented
+    # nothing - `compile` is the product's own word for its own stage, which is why the marker carries a
+    # free string rather than an enum.
+    assert gv.verdict is Verdict.SETUP_FAILED
+    assert gv.stage == "compile"
+    assert not gv.verdict.ran
+    assert gv.line == "setup failed (compile, rc 1) - the suite never ran, so this says nothing about the product"
+
+
+def test_anImplRunnerThatDropsTheMarkerAndStillReturnsZeroIsNotGreen(monkeypatch, tmp_path):
+    # arrange: the direction that would otherwise be a red run with a green exit - a runner whose setup
+    # broke and whose rc says nothing about it
+    def broken_but_quiet():
+        open(os.environ[testrun.SETUP_MARKER_ENV], "w", encoding="utf-8").close()
+        return 0
+
+    cfg, gate = _impl_gate(monkeypatch, tmp_path, broken_but_quiet)
+
+    # act
+    gv = testrun.assess_gate(gate, cfg, [], filtered=False)
+
+    # assert: the claim wins over the rc, and the kernel supplies the rc the record needs - same
+    # precedence a pytest gate's marker gets, so the two runners cannot drift apart
+    assert gv.verdict is Verdict.SETUP_FAILED
+    assert gv.rc == testrun.SETUP_FAILED_RC
+    assert gv.stage == "the suite's own setup"
+    assert testrun.run_gate(gate, cfg, [], filtered=False) != 0
+
+
+def test_aStaleMarkerFromAnEarlierGateIsNotReadAsThisImplGatesVerdict(monkeypatch, tmp_path):
+    # arrange: a marker left lying in the reports dir, and a runner that says nothing at all
+    reports = tmp_path / "test/reports"
+    reports.mkdir(parents=True)
+    (reports / testrun.SETUP_MARKER).write_text("last week's provisioning\n", encoding="utf-8")
+    cfg, gate = _impl_gate(monkeypatch, tmp_path, lambda: 0)
+
+    # act
+    gv = testrun.assess_gate(gate, cfg, [], filtered=False)
+
+    # assert: a stale "setup failed" is the same defect as a stale "passed", pointing the other way. The
+    # window removes the file on the way in, and that has to hold for the branch it was just opened to.
+    assert gv.verdict is Verdict.PASSED
+    assert gv.stage == ""
+
+
+def test_theImplMarkerWindowLeavesNoEnvironmentVariableBehind(monkeypatch, tmp_path):
+    # arrange
+    monkeypatch.delenv(testrun.SETUP_MARKER_ENV, raising=False)
+    seen = {}
+    cfg, gate = _impl_gate(monkeypatch, tmp_path,
+                           lambda: seen.update(path=os.environ.get(testrun.SETUP_MARKER_ENV)) or 0)
+
+    # act
+    testrun.assess_gate(gate, cfg, [], filtered=False)
+
+    # assert: the runner saw the path, and the process is as it was afterwards
+    assert seen["path"] and seen["path"].endswith(testrun.SETUP_MARKER)
+    assert testrun.SETUP_MARKER_ENV not in os.environ
+
+
 # --- the exploratory (argument-filtered) run --------------------------------------------------------------
 
 
@@ -541,7 +694,8 @@ def test_report_mergesTheDeclaredResultDirs_intoTheSharedResults(monkeypatch, tm
     merged = {}
     monkeypatch.setattr(testrun.allure, "merge_results",
                         lambda dst, srcs, parent_suite="Unit": merged.update(dst=dst, srcs=srcs,
-                                                                             parent_suite=parent_suite))
+                                                                             parent_suite=parent_suite)
+                        or allure.Merge(parent_suite=parent_suite, tagged=1, present=tuple(srcs)))
     monkeypatch.setattr(testrun.allure, "render_report",
                         lambda *a, **k: merged.update(rendered=(a, k))
                         or allure.Render(report="/r/allure-1.html", tool="allure"))
@@ -556,11 +710,69 @@ def test_report_mergesTheDeclaredResultDirs_intoTheSharedResults(monkeypatch, tm
     assert merged["parent_suite"] == "Unit"
 
 
+def _report_lines(monkeypatch, tmp_path, capsys, *, merge):
+    """Run the report step over real source dirs and hand back the lines it printed."""
+    _register(monkeypatch, tmp_path, _data(report={"merge": merge, "parent_suite": "Java"}))
+    monkeypatch.setattr(testrun.allure, "render_report",
+                        lambda *a, **k: allure.Render(report="/r/allure-1.html", tool="allure"))
+    capsys.readouterr()
+    testrun.report()
+    return capsys.readouterr().out
+
+
+def test_report_saysWhatTheMergeDid_notThatItCalledIt(monkeypatch, tmp_path, capsys, runner):
+    # arrange: one real source dir holding one allure result
+    src = tmp_path / "mod/build/allure-results"
+    src.mkdir(parents=True)
+    (src / "a-result.json").write_text('{"name": "t", "labels": []}', encoding="utf-8")
+
+    # act
+    out = _report_lines(monkeypatch, tmp_path, capsys, merge=["mod/build/allure-results"])
+
+    # assert: the old line was `per-module results merged (parentSuite=Java)` whatever had happened. It
+    # now carries counted numbers, so two different outcomes cannot print the same sentence.
+    assert "1 tagged parentSuite=Java" in out
+    assert "1 of 1 declared source dirs" in out
+
+
+def test_report_saysNothingWasMerged_whenTheDeclaredSourceIsNotThere(monkeypatch, tmp_path, capsys,
+                                                                    runner):
+    # arrange: the measured case - Gradle stopped in :compileJava, so the dir the manifest declares was
+    # never written. `merge_results` skips it deliberately, and the run used to report a successful merge.
+    # act
+    out = _report_lines(monkeypatch, tmp_path, capsys, merge=["build/junit-xml"])
+
+    # assert: "nothing to do" says so, names the dir a reader has to go and look for, and does not wear
+    # the OK badge a real merge gets
+    assert "nothing merged" in out
+    assert str(tmp_path / "build/junit-xml") in out
+    assert "per-module results merged" not in out
+
+
+def test_report_doesNotAnnounceAParentSuiteForAJunitXmlThatCannotCarryOne(monkeypatch, tmp_path, capsys,
+                                                                         runner):
+    # arrange: Gradle's JUnit XML, which falls into the verbatim branch - three test cases arrived in the
+    # measured archive with parentSuite=None under a line saying parentSuite=Java
+    src = tmp_path / "build/junit-xml"
+    src.mkdir(parents=True)
+    (src / "TEST-demo.CalculatorTest.xml").write_text("<testsuite/>", encoding="utf-8")
+
+    # act
+    out = _report_lines(monkeypatch, tmp_path, capsys, merge=["build/junit-xml"])
+
+    # assert: the sentence claims no tagging, says the file went through untagged - and the FILE is there,
+    # because that verbatim copy is how a Java product's results reach the report at all
+    assert "tagged parentSuite" not in out
+    assert "1 copied unchanged, carrying no parentSuite" in out
+    assert (tmp_path / "test/reports/allure-results/TEST-demo.CalculatorTest.xml").is_file()
+
+
 def test_report_rendersAFilteredRunUnderItsOwnPrefix_soItCannotPassAsTheCanonicalArchive(monkeypatch, tmp_path, runner):
     # arrange
     _register(monkeypatch, tmp_path, _data())
     seen = {}
-    monkeypatch.setattr(testrun.allure, "merge_results", lambda *a, **k: None)
+    monkeypatch.setattr(testrun.allure, "merge_results",
+                        lambda *a, **k: allure.Merge(tagged=1, present=("src",)))
     monkeypatch.setattr(testrun.allure, "render_report",
                         lambda report_dir, results, prefix="allure": seen.update(results=results, prefix=prefix)
                         or allure.Render(report="/r/allure-1.html", tool="allure"))
@@ -577,7 +789,8 @@ def test_report_isRed_whenARenderToolWasPresentAndTheRenderFailed(monkeypatch, t
     # arrange: allure (or docker) IS installed and the render failed - the run has no archive and used to
     # say so with a warning behind rc 0, which no CI reads (#6)
     _register(monkeypatch, tmp_path, _data())
-    monkeypatch.setattr(testrun.allure, "merge_results", lambda *a, **k: None)
+    monkeypatch.setattr(testrun.allure, "merge_results",
+                        lambda *a, **k: allure.Merge(tagged=1, present=("src",)))
     monkeypatch.setattr(testrun.allure, "render_report", lambda *a, **k: allure.Render(tool="docker"))
 
     # act
@@ -591,7 +804,8 @@ def test_report_staysGreen_whenNoRenderToolIsInstalledAtAll(monkeypatch, tmp_pat
     # arrange: no allure CLI and no docker. The rule stands: archiving must not itself be the reason a run
     # is red when the host simply has no render tool.
     _register(monkeypatch, tmp_path, _data())
-    monkeypatch.setattr(testrun.allure, "merge_results", lambda *a, **k: None)
+    monkeypatch.setattr(testrun.allure, "merge_results",
+                        lambda *a, **k: allure.Merge(tagged=1, present=("src",)))
     monkeypatch.setattr(testrun.allure, "render_report", lambda *a, **k: allure.Render())
 
     # act
@@ -833,6 +1047,132 @@ def test_accept_stampsThatItNeverStarted_whenTheSectionPreconditionRefuses(monke
     assert rc == 7
     stamp = verdict_module.read_stamp(str(tmp_path / "test/reports"))
     assert stamp is not None and stamp["verdict"] == "not-run"
+
+
+# --- a step that RAISED still leaves this run's record (si#63) --------------------------------------------
+
+
+def _raising_report(monkeypatch, exc):
+    """A report step that raises - the measured case is an `IsADirectoryError` out of `merge_results`."""
+    def boom(cfg=None, *, filtered=False, run=None):
+        raise exc
+    monkeypatch.setattr(testrun, "report", boom)
+
+
+def test_accept_doesNotLeaveAStampSayingPassed_whenTheReportStepRaised(monkeypatch, tmp_path, runner):
+    # arrange: every gate green, and the step after them falls over - the measured run, where
+    # `merge_results` met Gradle's `test-results/test/binary` and the process ended with rc 1
+    _register(monkeypatch, tmp_path, _data())
+    _stub_chain(monkeypatch, {})
+    _raising_report(monkeypatch, IsADirectoryError(21, "Is a directory", "/p/build/test-results/test/binary"))
+
+    # act
+    with pytest.raises(IsADirectoryError):
+        testrun.accept([])
+
+    # assert: THE WHOLE OF si#63. The gates really were green; the run was not, and the record a reader
+    # consults a week later is the record of the RUN. It used to say `"verdict": "passed"`.
+    stamp = verdict_module.read_stamp(str(tmp_path / "test/reports"))
+    assert stamp is not None
+    assert stamp["verdict"] == "failed"
+    assert stamp["line"] != "passed"
+
+
+def test_theAbandonedRecordNamesTheStepAndTheCause_notMerelyThatSomethingWentWrong(monkeypatch, tmp_path,
+                                                                                  runner):
+    # arrange
+    _register(monkeypatch, tmp_path, _data())
+    _stub_chain(monkeypatch, {})
+    _raising_report(monkeypatch, OSError("No space left on device"))
+
+    # act
+    with pytest.raises(OSError):
+        testrun.accept([])
+
+    # assert: a stamp that said only "failed" would be the defect wearing a hat. It names the step that
+    # raised, the exception type and its message, because that is what a week-old record is FOR.
+    entry = verdict_module.read_stamp(str(tmp_path / "test/reports"))["gates"][-1]
+    assert entry["gate"] == "report"
+    assert "OSError" in entry["line"]
+    assert "No space left on device" in entry["line"]
+    assert "abandoned" in entry["line"]
+
+
+def test_theAbandonedRecordKeepsTheGatesThatDidFinish(monkeypatch, tmp_path, runner):
+    # arrange: one red gate, one green, then a report step that raises
+    _register(monkeypatch, tmp_path, _data())
+    _stub_chain(monkeypatch, {"system": 1})
+    _raising_report(monkeypatch, ValueError("a broken result file"))
+
+    # act
+    with pytest.raises(ValueError):
+        testrun.accept([])
+
+    # assert: the record is CUMULATIVE, not a single line about the crash - what the run did learn before
+    # it was cut short is exactly what a reader came for
+    gates = verdict_module.read_stamp(str(tmp_path / "test/reports"))["gates"]
+    assert [g["gate"] for g in gates] == ["system", "acceptance-dataplane", "report"]
+    assert [g["verdict"] for g in gates] == ["failed", "passed", "failed"]
+
+
+def test_aGateThatRaisesIsRecordedUnderItsOwnName_notUnderTheReportStep(monkeypatch, tmp_path, runner):
+    # arrange: the same property one step earlier. `assess_gate` does filesystem work and calls product
+    # hooks, so it can raise for reasons of its own, and the stamp of the gate BEFORE it would then be the
+    # run's whole record.
+    _register(monkeypatch, tmp_path, _data())
+
+    def assess(gate, cfg, extra, *, filtered, earlier=()):
+        if gate.name == "acceptance-dataplane":
+            raise RuntimeError("the product's preamble hook blew up")
+        return _gv(gate.name, 0)
+
+    monkeypatch.setattr(testrun, "assess_gate", assess)
+
+    # act
+    with pytest.raises(RuntimeError):
+        testrun.accept([])
+
+    # assert: the run is red, and it says WHICH step ended it
+    stamp = verdict_module.read_stamp(str(tmp_path / "test/reports"))
+    assert stamp["verdict"] == "failed"
+    assert [g["gate"] for g in stamp["gates"]] == ["system", "acceptance-dataplane"]
+    assert "RuntimeError" in stamp["gates"][-1]["line"]
+
+
+def test_anAbandonedExploratoryRunStampsIntoItsOwnFile_leavingTheCanonicalRecordAlone(monkeypatch,
+                                                                                     tmp_path, runner):
+    # arrange: a full green run's record, then a one-test hunt that falls over in the report step
+    reports = str(tmp_path / "test/reports")
+    verdict_module.write_stamp(reports, RunVerdict((GateVerdict("system", Verdict.PASSED),)))
+    _register(monkeypatch, tmp_path, _data())
+    _stub_chain(monkeypatch, {})
+    _raising_report(monkeypatch, OSError("boom"))
+
+    # act
+    with pytest.raises(OSError):
+        testrun.accept(["-k", "one_test"])
+
+    # assert: the quarantine holds on the way out too - an exploratory crash must not overwrite the
+    # finding of the last full gate, which is the rule the whole filtered path exists for
+    assert verdict_module.read_stamp(reports)["verdict"] == "passed"
+    assert verdict_module.read_stamp(reports, filtered=True)["verdict"] == "failed"
+
+
+def test_accept_isUnchangedWhenNothingRaises_soTheRecordingDidNotBecomeTheVerdict(monkeypatch, tmp_path,
+                                                                                 runner):
+    # arrange: the ordinary green chain, through the same try
+    _register(monkeypatch, tmp_path, _data())
+    _stub_chain(monkeypatch, {})
+
+    # act
+    rc = testrun.accept([])
+
+    # assert: no `report`-that-raised entry invented, and the exit code is the one it always was
+    stamp = verdict_module.read_stamp(str(tmp_path / "test/reports"))
+    assert rc == 0
+    assert stamp["verdict"] == "passed"
+    assert [g["gate"] for g in stamp["gates"]] == ["system", "acceptance-dataplane", "report"]
+    assert all("raised" not in g["line"] for g in stamp["gates"])
 
 
 def test_report_putsTheRunsVerdictIntoTheArchiveItArchives(monkeypatch, tmp_path, runner):
