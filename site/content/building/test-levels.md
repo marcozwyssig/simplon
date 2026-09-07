@@ -104,16 +104,28 @@ Declaring both keys, or neither, is refused rather than guessed at:
 
 ### An `impl:` gate is opaque, and says so
 
-Because the kernel only calls an `impl:` gate's runner for the return code, four keys make no sense on
+Because the kernel only calls an `impl:` gate's runner for the return code, three keys make no sense on
 one, and declaring them **fails** rather than being quietly dropped:
 
-> sample.yaml: 'suites.gates[2]' ('ui'): an 'impl' gate cannot declare 'results', 'args' - the kernel only
+> sample.yaml: 'suites.gates[2]' ('ui'): an 'impl' gate cannot declare 'junit', 'args' - the kernel only
 > calls its runner for the rc
 
-The one that matters most there is `results`. An `impl:` gate carrying `results: clear` would satisfy the
-"exactly one gate clears" rule below while **nothing ever actually cleared** - which is precisely the
-forever-appending archive that rule exists to prevent. A key that is accepted and does nothing is worse
-than one that is refused.
+`results` used to be on that list, and taking it off is worth the sentence. The argument for refusing it
+was real: an `impl:` gate carrying `results: clear` satisfied the "exactly one gate clears" rule below
+while **nothing ever actually cleared**, because the clear hung on the pytest branch and an `impl:` gate
+returns before it. A key accepted and inert is worse than one refused.
+
+But the repair was on the wrong side. The clear could hang on nothing else, so a product whose only test
+runner is its own could write no loadable `suites:` section at all - measured on a Java product with no
+Python in it: both spellings refused, no report, and the way out was to ship a pytest gate holding
+`assert True` purely to own the directory, at 29 MB of suite venv and an archive that counted four tests
+where the product has three. So the inert half was fixed instead: an `impl:` gate honours the clear now,
+and declaring it says exactly what it does - **this gate opens the run, and the run's results directory
+starts empty**.
+
+It still writes nothing into that directory. That is a different statement, and it stays pinned: a fix
+that let the kernel invent a result for a runner it cannot see would have moved this defect rather than
+removed it.
 
 If your non-pytest runner produces allure results of its own, hand them to the report step through
 `report.merge` instead. That is what that list is for: result directories other steps already wrote,
