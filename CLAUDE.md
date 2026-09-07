@@ -22,12 +22,19 @@ cause; the total was never weighed. It is weighed now — see #48.
 **Do not restate the count here.** si#48 found that the `grep`-level number
 this paragraph used to carry (61) was the wrong population: six of those
 raises run at plan or run time, or only re-raise. The live count, split by
-kind, is computed from the two load-path modules' syntax trees by
+kind, is computed from the load-path modules' syntax trees by
 `tests/test_refusal_census.py` and published on `building/rules.md`. A new
 refusal with no census entry turns that suite red until somebody says which
 kind it is, which is the point — a number typed into a document instead is
-wrong on the first day nobody checks it, and this repository has proved that
-twice.
+wrong on the first day nobody checks it, and this repository has now proved
+that five times, twice in this very file.
+
+**The census only counts what it is pointed at.** si#61 found sixteen
+load-time refusals sitting outside it, because the population was a list of
+modules and `tasks/testrun.py` was not on it — a census whose whole purpose is
+that the sum cannot grow quietly, growing quietly. When you add a refusal in a
+module the census does not read, the suite stays green. Check the population,
+not only the entry.
 
 ## Three kinds of refusal — only one costs flexibility
 
@@ -46,14 +53,15 @@ Do not lump these together. Before adding a refusal, say which kind it is.
 first draft of this file listed it separately and put #34 under both, which is
 how the mistake showed. Ask instead how far a rule reaches: does it hold the
 kernel's own catalogue too (#34 checks over the *merged* tree, so it does), or
-does it exempt the kernel from what it asks of a product? Measured in #48: of
-sixteen expression rules, nine bind the kernel with the product, six sit
-exactly on the platform/product seam, and **one exempts the kernel** —
+does it exempt the kernel from what it asks of a product? Measured in #48 and
+again in #61, and **the split is on `building/rules.md`, not here** — every
+count this paragraph used to carry has gone stale, the last two within a day of
+being typed. Most expression rules bind the kernel with the product; a few sit
+exactly on the platform/product seam; and exactly **one exempts the kernel** —
 `check_every_task_is_used`, which would reject most of the kernel's own
 catalogue tasks — `test_the_one_self_exemption_is_real_and_its_size_is_measured`
-computes how many, and no count stands here, because two typed into this file
-have already gone stale and a third was caught in review. An exemption is not
-automatically wrong. An unexamined one is.
+computes how many. An exemption is not automatically wrong. An unexamined one
+is.
 
 ## Before building an expression rule, answer these
 
