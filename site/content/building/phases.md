@@ -146,8 +146,8 @@ the number that says whether a rib is filled:
 | `docs` | family | 3 |
 | `tasks` | family | 2 |
 
-Twenty-four coordinates: fourteen carrying a placement, ten free to be filed. The numbers in that table and
-in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
+Twenty-four coordinates: fourteen carrying a placement, ten free to be filed. The numbers in this sentence, in that
+table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
 
