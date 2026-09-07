@@ -416,6 +416,159 @@ def test_run_gate_callsTheProductsOwnRunner_forAGateDeclaredAsAnImpl(monkeypatch
     assert runner["argv"] is None
 
 
+# --- what an `impl:` gate is entitled to say about itself (si#65, si#59) ----------------------------------
+
+
+def _impl_gate(monkeypatch, tmp_path, body):
+    """A taxonomy whose second level is a bare `impl:` gate, with `body` as the product's own runner.
+
+    The runner is registered through `resolve_ref` rather than through the `runner` fixture, because
+    these tests are about what the KERNEL says when the product's runner does or does not speak - so the
+    body has to be able to write the marker file, and a fixture that only records the ref cannot.
+    """
+    data = _data()
+    data["suites"]["gates"].append({"name": "acceptance-ui", "impl": "product.tooling:ui"})
+    _register(monkeypatch, tmp_path, data)
+    monkeypatch.setattr(testrun, "resolve_ref", lambda ref, where: body)
+    cfg = testrun.config()
+    return cfg, cfg.gate("acceptance-ui")
+
+
+def test_aRedImplGateDoesNotClaimTheSuiteRanAndReportedFailures(monkeypatch, tmp_path):
+    # arrange: the product's own runner comes back red - a Gradle build that stopped in :compileJava, in
+    # the measured case, having compiled nothing and run no test at all
+    cfg, gate = _impl_gate(monkeypatch, tmp_path, lambda: 1)
+
+    # act
+    gv = testrun.assess_gate(gate, cfg, [], filtered=False)
+
+    # assert: the outcome and the rc are unchanged; the SENTENCE no longer describes a suite the kernel
+    # never saw. This is the whole of si#65 - the old line said the suite had run and reported failures
+    # about a build that had not compiled.
+    assert gv.verdict is Verdict.FAILED
+    assert gv.rc == 1
+    assert "the suite ran and reported failures" not in gv.line
+    assert gv.line == f"failed (rc 1) - {testrun.IMPL_DETAIL}"
+
+
+def test_aRedImplGateSaysWhatTheKernelSaw_andSaysThatTheRestIsNotItsToState(monkeypatch, tmp_path):
+    # arrange: same red runner, read for what the replacement sentence CLAIMS rather than for its text
+    cfg, gate = _impl_gate(monkeypatch, tmp_path, lambda: 7)
+
+    # act
+    line = testrun.assess_gate(gate, cfg, [], filtered=False).line
+
+    # assert: it names the one thing the kernel observed - a runner that returned an rc - and then says it
+    # cannot tell whether a suite ran. Silence about the suite, not silence about the ignorance: "I do not
+    # know" is a statement a record may carry, "the suite reported" is not.
+    assert "the product's own runner returned this rc" in line
+    assert "cannot say whether one ran at all" in line
+    assert "rc 7" in line
+
+
+def test_aGreenImplGateIsUnchanged_becauseAPassingGateNeverMadeAFalseClaim(monkeypatch, tmp_path):
+    # arrange
+    cfg, gate = _impl_gate(monkeypatch, tmp_path, lambda: 0)
+
+    # act
+    gv = testrun.assess_gate(gate, cfg, [], filtered=False)
+
+    # assert: `passed` says exactly what happened and carries no explanatory half to be wrong about
+    assert gv.verdict is Verdict.PASSED
+    assert gv.line == "passed"
+    assert gv.stage == ""
+
+
+def test_anImplGateThatSaysNothingGetsNoStageInvented_theKernelStaysAsOpaqueAsItWas(monkeypatch, tmp_path):
+    # arrange: the ordinary runner - it returns an rc and writes no marker, which is every runner that
+    # was ever written against this kernel
+    cfg, gate = _impl_gate(monkeypatch, tmp_path, lambda: 2)
+
+    # act
+    gv = testrun.assess_gate(gate, cfg, [], filtered=False)
+
+    # assert: opening the marker must not have MANUFACTURED the outcome it makes reachable. A fix that
+    # answered `setup-failed` for a runner that never claimed one would have moved si#65's defect instead
+    # of removing it, and stayed green while doing so.
+    assert gv.verdict is Verdict.FAILED
+    assert gv.stage == ""
+    assert "setup" not in gv.line
+    assert not os.path.exists(os.path.join(str(tmp_path / "test/reports"), testrun.SETUP_MARKER))
+
+
+def test_anImplRunnerCanSayItsOwnSetupFellOver_throughTheMarkerTheKernelNowOpens(monkeypatch, tmp_path):
+    # arrange: a product-owned runner that KNOWS its preparation broke - the Gradle case, where the build
+    # never reached :test - and writes the stage into the marker the kernel points it at
+    def compile_then_test():
+        with open(os.environ[testrun.SETUP_MARKER_ENV], "w", encoding="utf-8") as fh:
+            fh.write("compile\n")
+        return 1
+
+    cfg, gate = _impl_gate(monkeypatch, tmp_path, compile_then_test)
+
+    # act
+    gv = testrun.assess_gate(gate, cfg, [], filtered=False)
+
+    # assert: the third outcome, reached by an impl gate for the first time (si#59). The kernel invented
+    # nothing - `compile` is the product's own word for its own stage, which is why the marker carries a
+    # free string rather than an enum.
+    assert gv.verdict is Verdict.SETUP_FAILED
+    assert gv.stage == "compile"
+    assert not gv.verdict.ran
+    assert gv.line == "setup failed (compile, rc 1) - the suite never ran, so this says nothing about the product"
+
+
+def test_anImplRunnerThatDropsTheMarkerAndStillReturnsZeroIsNotGreen(monkeypatch, tmp_path):
+    # arrange: the direction that would otherwise be a red run with a green exit - a runner whose setup
+    # broke and whose rc says nothing about it
+    def broken_but_quiet():
+        open(os.environ[testrun.SETUP_MARKER_ENV], "w", encoding="utf-8").close()
+        return 0
+
+    cfg, gate = _impl_gate(monkeypatch, tmp_path, broken_but_quiet)
+
+    # act
+    gv = testrun.assess_gate(gate, cfg, [], filtered=False)
+
+    # assert: the claim wins over the rc, and the kernel supplies the rc the record needs - same
+    # precedence a pytest gate's marker gets, so the two runners cannot drift apart
+    assert gv.verdict is Verdict.SETUP_FAILED
+    assert gv.rc == testrun.SETUP_FAILED_RC
+    assert gv.stage == "the suite's own setup"
+    assert testrun.run_gate(gate, cfg, [], filtered=False) != 0
+
+
+def test_aStaleMarkerFromAnEarlierGateIsNotReadAsThisImplGatesVerdict(monkeypatch, tmp_path):
+    # arrange: a marker left lying in the reports dir, and a runner that says nothing at all
+    reports = tmp_path / "test/reports"
+    reports.mkdir(parents=True)
+    (reports / testrun.SETUP_MARKER).write_text("last week's provisioning\n", encoding="utf-8")
+    cfg, gate = _impl_gate(monkeypatch, tmp_path, lambda: 0)
+
+    # act
+    gv = testrun.assess_gate(gate, cfg, [], filtered=False)
+
+    # assert: a stale "setup failed" is the same defect as a stale "passed", pointing the other way. The
+    # window removes the file on the way in, and that has to hold for the branch it was just opened to.
+    assert gv.verdict is Verdict.PASSED
+    assert gv.stage == ""
+
+
+def test_theImplMarkerWindowLeavesNoEnvironmentVariableBehind(monkeypatch, tmp_path):
+    # arrange
+    monkeypatch.delenv(testrun.SETUP_MARKER_ENV, raising=False)
+    seen = {}
+    cfg, gate = _impl_gate(monkeypatch, tmp_path,
+                           lambda: seen.update(path=os.environ.get(testrun.SETUP_MARKER_ENV)) or 0)
+
+    # act
+    testrun.assess_gate(gate, cfg, [], filtered=False)
+
+    # assert: the runner saw the path, and the process is as it was afterwards
+    assert seen["path"] and seen["path"].endswith(testrun.SETUP_MARKER)
+    assert testrun.SETUP_MARKER_ENV not in os.environ
+
+
 # --- the exploratory (argument-filtered) run --------------------------------------------------------------
 
 

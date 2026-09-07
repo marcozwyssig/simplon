@@ -119,6 +119,53 @@ If your non-pytest runner produces allure results of its own, hand them to the r
 `report.merge` instead. That is what that list is for: result directories other steps already wrote,
 copied in and tagged with a parent suite so the merged archive groups them.
 
+### What the kernel says about your runner, and what only you can say
+
+Opacity cuts both ways, and the second way is the one that produced a bug. Because the kernel sees a
+return code and nothing else, a red `impl:` gate reports **the return code and says so**:
+
+> unit: failed (rc 1) - the product's own runner returned this rc; the kernel did not run a suite here
+> and cannot say whether one ran at all
+
+It used to borrow the sentence written for a pytest gate - *the suite ran and reported failures* - and
+that sentence was measured against a Gradle build with a deliberate compiler error
+([simplon#65](https://github.com/marcozwyssig/simplon/issues/65)): nothing compiled, no test executed, no
+JUnit XML was written, and the log line, the stamp and the archive's Environment widget all said the suite
+had run and reported failures. *Not knowing* is a thing a record may say. It is not a licence to say
+something else.
+
+**Which leaves the half only you have.** From out there a compiler error and a failing assertion are the
+same `rc 1`; from inside your runner they are not. So the setup marker is open to an `impl:` gate exactly
+as it is to a pytest suite ([simplon#59](https://github.com/marcozwyssig/simplon/issues/59)): the kernel
+puts a path in `SIMPLON_SETUP_FAILED` before it calls you, and a file written there names the stage that
+broke. Write it only when you *know*, and the gate reports `setup-failed` with your word in it:
+
+```python
+import os
+from simplon.tasks.testrun import SETUP_MARKER_ENV
+
+
+def integration() -> int:
+    """Run the JVM integration suite, and say when the build never reached it."""
+    root = context.current().root
+    results = root / "build" / "junit-xml"
+    shutil.rmtree(results, ignore_errors=True)          # this run's evidence, not the last run's
+    rc = run(["./gradlew", "--no-daemon", "integrationTest"], capture=False, cwd=str(root)).rc
+    if rc != 0 and not list(results.glob("TEST-*.xml")):
+        # gradle stopped before :test - a statement about this lab, not about the product
+        with open(os.environ[SETUP_MARKER_ENV], "w", encoding="utf-8") as fh:
+            fh.write("gradle build (:test never ran)\n")
+    return rc
+```
+
+> unit: setup failed (gradle build (:test never ran), rc 1) - the suite never ran, so this says nothing
+> about the product
+
+The claim wins over your return code, including over a green one: a runner that reports a broken setup
+and still returns `0` is a runner whose green means nothing. And a runner that writes nothing gets
+`passed` or `failed` and **no invented stage** - the kernel does not guess a setup failure out of a
+non-zero number, because a guessed one is the same false statement pointing the other way.
+
 ## Order, and who clears
 
 The `gates:` list is a list because **order is meaning**: the gates run in the order they are declared,
