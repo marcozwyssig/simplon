@@ -4,7 +4,7 @@ weight: 3
 ---
 
 The [command reference](../commands/) is complete and generated, which means it can tell you what every
-command takes and still not tell you which one you want. This chapter is the other half: seven jobs that
+command takes and still not tell you which one you want. This chapter is the other half: eight jobs that
 actually come up, done end to end, with the reasoning about *why that command and not the neighbouring
 one*.
 

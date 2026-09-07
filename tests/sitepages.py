@@ -225,3 +225,22 @@ def generated_pages() -> frozenset[Path]:
                 if page.is_relative_to(CONTENT.resolve()):
                     found.add(page)
     return frozenset(found)
+
+
+# --- numbers, spelled the way this site spells them ------------------------------------------------------
+
+#: The number words 0-99, built rather than listed. The site spells its counts out in words, so a count
+#: read off a source has to be spelled out too - and building them means the range cannot quietly run out
+#: the way a hand-written list does at whatever number somebody stopped typing.
+_ONES = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
+         "sixteen seventeen eighteen nineteen").split()
+_TENS = ("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
+
+
+def number_word(number: int) -> str:
+    """`24` -> `twenty-four`. Raises above 99, because a silent wrong answer is what this is about."""
+    assert 0 <= number < 100, f"no word for {number}"
+    if number < 20:
+        return _ONES[number]
+    tens, ones = divmod(number, 10)
+    return _TENS[tens] + (f"-{_ONES[ones]}" if ones else "")

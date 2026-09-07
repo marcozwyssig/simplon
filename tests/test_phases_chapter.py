@@ -61,6 +61,7 @@ import pytest
 
 from simplon import catalogue as catalogue_mod
 
+import sitepages
 from conftest import ROOT
 
 #: The chapter under test.
@@ -570,21 +571,10 @@ def test_the_diagram_puts_support_beside_the_loop_and_not_in_it():
 # --- the summary sentence above the table ---------------------------------------------------------------
 
 
-#: The number words 0-99, built rather than listed. The page spells its counts out in words, so a
-#: comparison against the catalogue has to spell them out too - and building them here means the range
-#: cannot quietly run out the way a hand-written list does at whatever number somebody stopped typing.
-_ONES = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
-         "sixteen seventeen eighteen nineteen").split()
-_TENS = ("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
-
-
-def _word(number: int) -> str:
-    """`24` -> `twenty-four`. Raises above 99, because a silent wrong answer is what this file is about."""
-    assert 0 <= number < 100, f"no word for {number}"
-    if number < 20:
-        return _ONES[number]
-    tens, ones = divmod(number, 10)
-    return _TENS[tens] + (f"-{_ONES[ones]}" if ones else "")
+#: `24` -> `twenty-four`. The page spells its counts out in words, so a comparison against the catalogue
+#: has to spell them out too. It lives in `sitepages` because three suites now need it (si#66) and a
+#: number formatter copied per suite is the second source these suites exist to remove.
+_word = sitepages.number_word
 
 
 def test_the_summary_sentence_counts_the_catalogue_and_not_a_memory():
