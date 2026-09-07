@@ -302,6 +302,20 @@ tasks:
     params:
       name: { help: "the artifact to publish (normally pinned per command with `with:`)" }
       tag:  { help: "the tag to publish under, for a version only known after a build" }
+  # The same act aimed at a PERSON rather than at a build. `release:artifact` puts a directory where a
+  # consuming pipeline pulls it with its own token; this puts files where somebody clicks them. A product
+  # may want both, one, or neither, and a public repository has a third answer - what its licence lets it
+  # hand out is not the kernel's to assume, which is the whole reason this is offered and not placed.
+  #
+  # `gh` rather than a GitHub client, and the reason is a dependency and not a taste: create-if-absent and
+  # replace-if-present are one flag each in `gh`, and twenty lines of PyGithub plus a content-type table
+  # in the product this was ported from. See src/simplon/tasks/asset.py.
+  release:asset:
+    impl: simplon.tasks.asset:publish
+    help: "Attach declared files to a GitHub release, creating it if it is not there yet."
+    params:
+      name: { help: "the asset to publish (normally pinned per command with `with:`)" }
+      tag:  { help: "the release to attach to, for a version only known after a build" }
   # The image's other half: log in, push, and READ BACK that the registry has the tag. That last step is
   # the reason this is a kernel task at all - a push nobody verifies is the same defect as a report
   # nobody reads, and this project has shipped it twice (see src/simplon/tasks/image.py).
