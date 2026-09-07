@@ -150,6 +150,16 @@ class GateVerdict:
     that forced the field - it renders an archive and runs no tests at all, so "the suite ran and reported
     failures" would be a false statement of exactly the kind this module exists to remove, produced by the
     module itself.
+
+    `owned_results` SAYS WHETHER THIS GATE TOOK THE RUN'S RESULTS DIR (si#69) - cleared it, filled it, or
+    both. It is a fact about the artefact and not about the product, which is why it sits beside the
+    verdict rather than inside it, and it has to be REPORTED by the producer rather than derived from the
+    verdict, because the two questions have different answers. A gate the kernel ran itself owned the dir
+    whatever it found; a gate whose runner is the product's own owns it only if the taxonomy said so, and
+    writes into it in no case at all. `RunVerdict.owns_results` is the whole reason it exists: that is the
+    condition under which the run's verdict may be written into the archive, and it used to be guessed
+    from `verdict is not NOT_RUN` - which said True for a run of product-owned gates that had written
+    nothing anywhere. It was unreachable while the load path refused such a taxonomy; si#61 let one load.
     """
 
     gate: str
@@ -157,6 +167,7 @@ class GateVerdict:
     rc: int = 0
     stage: str = ""
     detail: str = ""
+    owned_results: bool = False
 
     def __post_init__(self) -> None:
         # A stage belongs to the two outcomes in which the suite never ran, and to no other: `not-run`
@@ -215,6 +226,27 @@ class GateVerdict:
                 + (self.detail or "nothing was prepared, cleared or written, and the previous archive "
                                   "stands"))
 
+    @property
+    def exit_code(self) -> int:
+        """The number THIS gate hands the process (si#71).
+
+        `exit_code` below translates a child's signal status to 128+n, and it was applied to every gate's
+        rc including an `impl:` gate's - whose rc is a Python callable's RETURN VALUE and not a wait
+        status. Harmless in every case measured, because both numbers were non-zero and the result
+        happened to agree; but the docstring said "the rc it observed from its child" while the
+        application said something wider, and the two have to say the same thing or the next reader
+        widens the wrong one. `of_subprocess` was kept narrow for exactly this reason (#55); the boundary
+        was simply blurred again a level up.
+
+        So the translation is applied where its precondition is CARRIED rather than assumed: `KILLED` is
+        the only outcome read off a signal, `__post_init__` refuses one that does not carry a negative
+        wait status, and `simplon.tasks.testrun` produces it from `of_subprocess` and nowhere else. Every
+        other rc passes through as it is - a product body answering -1 for "could not read"
+        (`simplon.waits.device_count` does exactly that in this repository) leaves the process as an
+        ordinary failure instead of one that names a signal nobody sent.
+        """
+        return exit_code(self.rc) if self.verdict is Verdict.KILLED else self.rc
+
     def as_dict(self) -> dict[str, object]:
         """The stamp's per-gate entry: the machine-readable fields AND the sentence, because a reader who
         opens the file by hand should not have to reconstruct it from an enum value."""
@@ -259,17 +291,26 @@ class RunVerdict:
         return worst.verdict if worst is not None else Verdict.NOT_RUN
 
     @property
-    def wrote_results(self) -> bool:
-        """True when some gate of this run created or filled the run's results dir - the ONE condition
-        under which the run's verdict may be written into the archive.
+    def owns_results(self) -> bool:
+        """True when some gate of this run took the run's results dir - the ONE condition under which the
+        run's verdict may be written into the archive.
 
-        `NOT_RUN` is exactly "nothing was prepared, cleared or written", so a run made only of those must
-        leave the last real run's archive alone; writing into it would be the original defect with the
-        sign flipped. An impl-only run cannot reach here with this True by accident: `declared` requires
-        exactly one CLEARING gate, it must be the first, and an impl gate is forbidden from declaring the
-        clear - so every valid taxonomy opens with a pytest gate that owns the dir.
+        IT ASKS THE GATES RATHER THAN THEIR VERDICTS (si#69), and that is the fix. It used to read
+        `verdict is not NOT_RUN`, on the argument that `NOT_RUN` is exactly "nothing was prepared,
+        cleared or written" and every other outcome implies a dir that was taken - true of a gate the
+        kernel runs, false of one whose runner is the product's own, which returns a number and touches
+        nothing. Measured: `wrote_results: True` beside `results dir: []`.
+
+        The old docstring answered the objection by saying such a run could not reach here - `declared`
+        required exactly one CLEARING gate, it had to be the first, and an impl gate was forbidden from
+        declaring the clear, so every valid taxonomy opened with a pytest gate that owned the dir. That
+        was a statement about the LOAD PATH and not about this property, and the property is what a
+        caller holds. si#61 let an impl-only taxonomy load; the load-time scaffolding is gone and the
+        seam now stands on its own, which is what it was always supposed to do.
+
+        The value each gate reports is `owned_results`; a run with no gates at all owns nothing.
         """
-        return any(gate.verdict is not Verdict.NOT_RUN for gate in self.gates)
+        return any(gate.owned_results for gate in self.gates)
 
     @property
     def line(self) -> str:
@@ -328,7 +369,13 @@ def of_subprocess(rc: int) -> Verdict:
 
 
 def exit_code(rc: int) -> int:
-    """The number a gate hands the PROCESS, given the rc it observed from its child.
+    """The number a gate hands the PROCESS, given the rc it observed from its CHILD.
+
+    THE PRECONDITION IS IN THE FIRST LINE AND IT IS NOT DECORATION (si#71). This maps a negative number
+    onto a signal name's numbering, so applying it to anything that is not a wait status invents a signal
+    - the same mistake `of_subprocess` is named against. Callers holding a `GateVerdict` should use
+    `GateVerdict.exit_code`, which carries the precondition with it; this function is for a caller that
+    knows it has a child's status in hand.
 
     A pass-through for everything but a signal status, which does not survive `sys.exit` intact: the value
     is taken modulo 256, so -15 leaves the process as 241 and -9 as 247 - measured - and neither number

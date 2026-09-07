@@ -218,12 +218,33 @@ def test_aSingleGatesEnvironmentHoldsOnlyItsOwnLine_neverTheRunsVerdict():
     assert list(env) == ["verdict.gate.system"]
 
 
-def test_wrote_results_isFalseForARunWhoseGatesAllRefusedBeforeTouchingAnything():
+def test_owns_results_isFalseForARunWhoseGatesAllRefusedBeforeTouchingAnything():
     # arrange / act / assert: the condition under which the run's verdict may enter the archive at all
-    assert not RunVerdict((GateVerdict("a", Verdict.NOT_RUN, 7, "precondition"),)).wrote_results
+    assert not RunVerdict((GateVerdict("a", Verdict.NOT_RUN, 7, "precondition"),)).owns_results
     assert RunVerdict((GateVerdict("a", Verdict.NOT_RUN, 7, "precondition"),
-                       GateVerdict("b", Verdict.FAILED, 1))).wrote_results
-    assert not RunVerdict().wrote_results
+                       GateVerdict("b", Verdict.FAILED, 1, owned_results=True))).owns_results
+    assert not RunVerdict().owns_results
+
+
+def test_owns_results_asksTheGatesAndDoesNotInferOwnershipFromAVerdict():
+    # arrange: si#69. A gate whose runner is the product's own returns a number and touches nothing, so
+    # `passed` says nothing about a results dir. The old rule - anything but NOT_RUN owned the dir - was
+    # true of a gate the kernel runs and false of this one, and it was held out of reach by a load-time
+    # refusal rather than by being right
+    took_nothing = GateVerdict("ui", Verdict.PASSED, 0)
+    took_the_dir = GateVerdict("ui", Verdict.PASSED, 0, owned_results=True)
+
+    # act / assert: the verdict is identical in both and the ownership is not
+    assert took_nothing.verdict is took_the_dir.verdict
+    assert not RunVerdict((took_nothing,)).owns_results, (
+        "a run of gates that took no results dir still claims the archive standing in it")
+    assert RunVerdict((took_the_dir,)).owns_results
+
+    # assert: and it holds for every outcome, not only the green one - a red product-owned gate wrote no
+    # result file either
+    for outcome, rc in ((Verdict.FAILED, 1), (Verdict.SETUP_FAILED, 1), (Verdict.KILLED, -15)):
+        stage = "provision" if outcome is Verdict.SETUP_FAILED else ""
+        assert not RunVerdict((GateVerdict("ui", outcome, rc, stage),)).owns_results
 
 
 # --- an exploratory run's record says so (#30, review 1) --------------------------------------------------
@@ -309,9 +330,11 @@ def test_aKilledGateOutranksEveryOtherOutcome_soTheSignalIsWhatTheRunReports():
 
 
 def test_aKilledGateOwnedTheResultsDir_soTheRunsRecordStillBelongsInTheArchive():
-    # arrange / act / assert: unlike `not-run`, a shot gate had already cleared and started filling the
-    # results, so leaving the archive alone would leave the LAST run's verdict standing in it
-    assert RunVerdict((GateVerdict("unit", Verdict.KILLED, -15),)).wrote_results
+    # arrange / act / assert: unlike `not-run`, a shot pytest gate had already cleared and started filling
+    # the results, so leaving the archive alone would leave the LAST run's verdict standing in it. It is
+    # the GATE that reports having taken the dir (si#69) - `simplon.tasks.testrun._written` sets it on
+    # every outcome that got that far - rather than the reader inferring it from `killed`
+    assert RunVerdict((GateVerdict("unit", Verdict.KILLED, -15, owned_results=True),)).owns_results
 
 
 def test_write_stamp_recordsTheSignalInTheSentenceAndTheWaitStatusInTheField(tmp_path):
@@ -366,3 +389,39 @@ def test_exit_code_removesTheNumberSysExitWouldHaveManufacturedFromTheWaitStatus
 def test_exit_code_leavesAnOrdinaryReturnCodeExactlyWhereItWas():
     # arrange / act / assert: only a wait status is translated; everything else is the rc it always was
     assert [verdict_module.exit_code(rc) for rc in (0, 1, 2, 7, 255)] == [0, 1, 2, 7, 255]
+
+
+# --- the exit code is translated only where a signal was actually observed (si#71) ------------------------
+#
+# `exit_code` maps a negative wait status onto 128+n. It was applied to every gate's rc, including an
+# `impl:` gate's - a Python callable's RETURN VALUE, which names no signal however negative it is. Harmless
+# in every case measured, because both numbers were non-zero; but the function's docstring spoke of a child
+# and the use did not, and #55 kept `of_subprocess` narrow for exactly this reason.
+
+
+def test_exit_code_ofAKilledGateIsThe128PlusNAShellWouldReport():
+    # arrange / act / assert: the case the translation exists for - `sys.exit(-15)` leaves 241, which is
+    # neither the signal nor anything reserved
+    assert GateVerdict("system", Verdict.KILLED, -15).exit_code == 143
+    assert GateVerdict("system", Verdict.KILLED, -9).exit_code == 137
+
+
+def test_exit_code_leavesAProductRunnersNegativeReturnValueAlone():
+    # arrange: `simplon.waits.device_count` answers -1 for "could not read" in this very repository, and a
+    # product body may do the same. A gate whose runner is the product's own reports FAILED with that rc
+    gv = GateVerdict("ui", Verdict.FAILED, -1, detail="the product's own runner returned this rc")
+
+    # act / assert: no signal is invented - it stays the number the body returned
+    assert gv.exit_code == -1, (
+        "a callable's return value was read as a wait status, so the process exits on a number that "
+        "names a signal nobody sent")
+    assert verdict_module.exit_code(-1) == 129, (
+        "the free function is the one that translates; the point is that it is no longer applied here")
+
+
+def test_exit_code_passesAnOrdinaryRcThrough():
+    # arrange / act / assert: every non-killed outcome hands on exactly what it holds
+    assert GateVerdict("unit", Verdict.PASSED, 0).exit_code == 0
+    assert GateVerdict("unit", Verdict.FAILED, 1).exit_code == 1
+    assert GateVerdict("unit", Verdict.SETUP_FAILED, 2, "preamble").exit_code == 2
+    assert GateVerdict("unit", Verdict.NOT_RUN, 7, "precondition").exit_code == 7

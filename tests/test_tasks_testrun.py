@@ -10,6 +10,7 @@ an archive that reports one test and looks like a full gate). AAA throughout, ne
 import contextlib
 import os
 import sys
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -127,17 +128,22 @@ def test_declared_rejectsAGateDeclaringBothASuiteAndAnImpl():
         testrun.declared(data, source="sample.yaml")
 
 
-def test_declared_rejectsAnImplGateThatClaimsTheClear_becauseItWouldNeverActuallyClear():
-    # arrange: an `impl:` gate is opaque - the kernel calls the product's runner for its rc and nothing
-    # else - so a clear declared on one is dropped at runtime. Accepting it would satisfy the
-    # exactly-one-clearing-gate rule while nothing ever cleared: the silent forever-appending archive
+def test_declared_acceptsAnImplGateThatClaimsTheClear_becauseItNowActuallyClears():
+    # arrange: this used to be refused, on the ground that the clear was dropped on the impl branch and
+    # an accepted key that does nothing is worse than a refused one. True of the code, and the wrong
+    # repair: the clear could hang on no other kind of gate, so a product whose only runner is its own
+    # could write no loadable section at all (si#61). The branch honours it now - see
+    # tests/test_suites_impl_only.py, which measures the clearing - so the declaration is no longer inert
     data = _data()
     data["suites"]["gates"] = [{"name": "ui", "impl": "product.tooling:ui", "results": "clear"},
                                data["suites"]["gates"][1]]
 
-    # act / assert
-    with pytest.raises(ValueError, match="an 'impl' gate cannot declare 'results'"):
-        testrun.declared(data, source="sample.yaml")
+    # act
+    cfg = testrun.declared(data, source="sample.yaml")
+
+    # assert: it loads, and the gate that owns the run's results dir is the product's own
+    assert cfg.gates[0].impl == "product.tooling:ui" and cfg.gates[0].clears
+    assert not cfg.gates[1].clears
 
 
 def test_declared_rejectsAnImplGateThatDeclaresPytestOnlyKeys():
@@ -249,6 +255,24 @@ def test_run_gate_clearsTheSharedResults_forTheFirstGateOnly(monkeypatch, tmp_pa
     # the transient render dir is gone
     assert os.listdir(results) == [allure.ENVIRONMENT]
     assert not (tmp_path / "test/reports/allure-report").exists()
+
+
+def test_assess_gate_everyPytestGateReportsThatItTookTheResultsDir(monkeypatch, tmp_path, runner):
+    # arrange: si#69. A gate the KERNEL runs owns the dir whatever it finds there - it made it, it ran
+    # pytest into it and it wrote the environment - and it has to SAY so, because the run's verdict may
+    # only enter an archive some gate of that run took. Every outcome that reaches `_written` counts,
+    # not only the green one, so the clearing gate and the appending gate are both measured
+    _register(monkeypatch, tmp_path, _data())
+    cfg = testrun.config()
+
+    # act / assert
+    for gate in cfg.gates[:2]:
+        gv = testrun.assess_gate(gate, cfg, [], filtered=False)
+        assert gv.owned_results is True, (
+            f"the pytest gate '{gate.name}' does not report taking the results dir it just filled, so "
+            f"the run cannot state its verdict in the archive it wrote")
+    assert RunVerdict(tuple(testrun.assess_gate(g, cfg, [], filtered=False)
+                            for g in cfg.gates[:2])).owns_results
 
 
 def test_run_gate_appendsIntoTheSharedResults_forALaterGate(monkeypatch, tmp_path, runner):
@@ -620,15 +644,23 @@ def test_run_gate_clearsTheQuarantineDir_soAFilteredRunIsNeverMixedWithTheLastOn
 # --- accept: the whole chain ------------------------------------------------------------------------------
 
 
-def _stub_chain(monkeypatch, rcs, report_rc=0):
-    """Record the gates accept ran (with the args each received) and inject each one's rc."""
+def _stub_chain(monkeypatch, rcs, report_rc=0, seen=None):
+    """Record the gates accept ran (with the args each received) and inject each one's rc.
+
+    `seen`, when a caller passes one, also collects the keyword arguments the report step was handed -
+    kept out of `ran` so the ordering assertions every caller writes stay about the ORDER."""
     ran = []
     monkeypatch.setattr(testrun, "assess_gate",
                         lambda gate, cfg, extra, *, filtered, earlier=():
                         ran.append((gate.name, extra, filtered)) or _gv(gate.name, rcs.get(gate.name, 0)))
-    monkeypatch.setattr(testrun, "report",
-                        lambda cfg=None, *, filtered=False, run=None:
-                        ran.append(("report", [], filtered)) or report_rc)
+
+    def _report(cfg=None, *, filtered=False, run=None, since=None):
+        ran.append(("report", [], filtered))
+        if seen is not None:
+            seen.update(filtered=filtered, run=run, since=since)
+        return report_rc
+
+    monkeypatch.setattr(testrun, "report", _report)
     return ran
 
 
@@ -693,8 +725,9 @@ def test_report_mergesTheDeclaredResultDirs_intoTheSharedResults(monkeypatch, tm
     _register(monkeypatch, tmp_path, _data())
     merged = {}
     monkeypatch.setattr(testrun.allure, "merge_results",
-                        lambda dst, srcs, parent_suite="Unit": merged.update(dst=dst, srcs=srcs,
-                                                                             parent_suite=parent_suite)
+                        lambda dst, srcs, parent_suite="Unit", not_before=None:
+                        merged.update(dst=dst, srcs=srcs, parent_suite=parent_suite,
+                                      not_before=not_before)
                         or allure.Merge(parent_suite=parent_suite, tagged=1, present=tuple(srcs)))
     monkeypatch.setattr(testrun.allure, "render_report",
                         lambda *a, **k: merged.update(rendered=(a, k))
@@ -708,6 +741,15 @@ def test_report_mergesTheDeclaredResultDirs_intoTheSharedResults(monkeypatch, tm
     assert merged["dst"] == str(tmp_path / "test/reports/allure-results")
     assert merged["srcs"] == [str(tmp_path / "a/build/allure-results"), str(tmp_path / "b/build/allure-results")]
     assert merged["parent_suite"] == "Unit"
+    # a standalone report step has no run behind it, so it merges what is present (si#70)
+    assert merged["not_before"] is None
+
+    # act / assert: and a report step that DOES know when its run began hands that on, or the whole
+    # distinction stops at this function's own signature
+    testrun.report(since=1234.0)
+    assert merged["not_before"] == 1234.0, (
+        "the report step knows when the run began and does not tell the merge, so the merge takes "
+        "whatever lies in the product's dirs - which is the previous run's")
 
 
 def _report_lines(monkeypatch, tmp_path, capsys, *, merge):
@@ -1017,7 +1059,7 @@ def test_accept_reportsTheWeakestClaimOfTheWholeRun_soOneBrokenSetupIsNotHiddenB
     # arrange: one gate probed and found something, the other never probed at all
     _register(monkeypatch, tmp_path, _data())
     reports = str(tmp_path / "test/reports")
-    monkeypatch.setattr(testrun, "report", lambda cfg=None, *, filtered=False, run=None: 0)
+    monkeypatch.setattr(testrun, "report", lambda cfg=None, *, filtered=False, run=None, since=None: 0)
     verdicts = {"system": GateVerdict("system", Verdict.FAILED, 1),
                 "acceptance-dataplane": GateVerdict("acceptance-dataplane", Verdict.SETUP_FAILED, 1,
                                                     "preamble")}
@@ -1052,9 +1094,58 @@ def test_accept_stampsThatItNeverStarted_whenTheSectionPreconditionRefuses(monke
 # --- a step that RAISED still leaves this run's record (si#63) --------------------------------------------
 
 
+def test_accept_tellsTheReportStepWhenTheRunBegan_soItCannotMergeTheLastRunsResults(monkeypatch,
+                                                                                     tmp_path, runner):
+    # arrange: si#70. The declared merge sources belong to the PRODUCT and no gate of either kind empties
+    # them, so without this instant the report step merged whatever the last run left there. Measured on
+    # a real Java product: a build that stopped in `:compileJava` shipped `{"failed":0,"passed":3,
+    # "total":3}` out of a file 66 seconds older than the run
+    _register(monkeypatch, tmp_path, _data())
+    seen = {}
+    before = time.time()
+    _stub_chain(monkeypatch, {}, seen=seen)
+
+    # act
+    testrun.accept([])
+
+    # assert: the report step got an instant, and it is this run's rather than any later one
+    assert seen["since"] is not None, "the report step was told nothing about when this run began"
+    assert seen["since"] <= time.time()
+    # floored to the whole second, deliberately: a coarse-granularity filesystem must not make this run's
+    # own output look older than the run (a second of the previous run's leavings is the cheaper error)
+    assert seen["since"] == float(int(seen["since"]))
+    assert seen["since"] >= float(int(before))
+
+
+def test_accept_takesTheInstantBeforeTheFirstGateRuns_notAfterIt(monkeypatch, tmp_path, runner):
+    # arrange: a gate that takes measurable time. If the instant were read at the report step, everything
+    # the gates wrote would already be older than it and the whole run's results would count as stale
+    _register(monkeypatch, tmp_path, _data())
+    seen = {}
+    ran = []
+    monkeypatch.setattr(testrun, "assess_gate",
+                        lambda gate, cfg, extra, *, filtered, earlier=():
+                        (ran.append(time.time()), time.sleep(1.1))
+                        and None or _gv(gate.name, 0))
+
+    def _report(cfg=None, *, filtered=False, run=None, since=None):
+        seen.update(since=since)
+        return 0
+
+    monkeypatch.setattr(testrun, "report", _report)
+
+    # act
+    testrun.accept([])
+
+    # assert: every gate started at or after the instant handed to the report step
+    assert seen["since"] <= min(ran), (
+        "the run's start was read after the gates ran, so this run's own results would be merged as the "
+        "previous run's")
+
+
 def _raising_report(monkeypatch, exc):
     """A report step that raises - the measured case is an `IsADirectoryError` out of `merge_results`."""
-    def boom(cfg=None, *, filtered=False, run=None):
+    def boom(cfg=None, *, filtered=False, run=None, since=None):
         raise exc
     monkeypatch.setattr(testrun, "report", boom)
 
@@ -1181,7 +1272,9 @@ def test_report_putsTheRunsVerdictIntoTheArchiveItArchives(monkeypatch, tmp_path
     cfg = testrun.config()
     monkeypatch.setattr(testrun.allure, "render_report", lambda *a, **kw: allure.Render(report="r.html",
                                                                                        tool="allure"))
-    run = RunVerdict((GateVerdict("system", Verdict.SETUP_FAILED, 1, "provision"),))
+    # `owned_results` is what the pytest gate that ran this dir reports (si#69); without it the run owns
+    # no archive to speak in, which is the case the test below covers
+    run = RunVerdict((GateVerdict("system", Verdict.SETUP_FAILED, 1, "provision", owned_results=True),))
 
     # act
     testrun.report(cfg, run=run)
@@ -1189,6 +1282,30 @@ def test_report_putsTheRunsVerdictIntoTheArchiveItArchives(monkeypatch, tmp_path
     # assert
     written = (tmp_path / "test/reports/allure-results" / allure.ENVIRONMENT).read_text(encoding="utf-8")
     assert "verdict=setup-failed" in written
+
+
+def test_report_leavesTheArchiveAloneForARunOfGatesThatTookNothing(monkeypatch, tmp_path, runner):
+    # arrange: the last real run's archive, and a run made only of product-owned gates that appended -
+    # they returned a number, took no dir and wrote no file, so the archive standing there is not theirs
+    # (si#69). This used to be written over, because the run's verdict was derived from `not NOT_RUN`
+    _register(monkeypatch, tmp_path, _data())
+    cfg = testrun.config()
+    monkeypatch.setattr(testrun.allure, "render_report", lambda *a, **kw: allure.Render(report="r.html",
+                                                                                       tool="allure"))
+    results = tmp_path / "test/reports/allure-results"
+    results.mkdir(parents=True)
+    allure.write_environment(str(results), {"verdict": "failed", "verdict.summary": "last run was red"})
+    run = RunVerdict((GateVerdict("ui", Verdict.PASSED, 0),))
+
+    # act
+    assert not run.owns_results
+    testrun.report(cfg, run=run)
+
+    # assert: the last real run's verdict still stands, unaltered by a run that owned nothing
+    written = allure.read_environment(str(results / allure.ENVIRONMENT))
+    assert written["verdict"] == "failed", (
+        f"a run that took no results dir wrote its verdict into somebody else's archive: {written}")
+    assert written["verdict.summary"] == "last run was red"
 
 
 # --- an exploratory run must not speak for the archive it did not run (#30, review 1) ---------------------
@@ -1467,3 +1584,38 @@ def test_aGateThatMerelyExitsNonZeroIsStillARedSuite_soTheSignalReadingDidNotSwa
     assert gv.verdict is Verdict.FAILED
     assert gv.line == "failed (rc 1) - the suite ran and reported failures"
     assert testrun.run_gate(cfg.gates[0], cfg, [], filtered=False) == 1
+
+
+# --- what the gate command hands the process (si#71) -----------------------------------------------------
+
+
+def test_gate_handsOnAnImplRunnersNegativeReturnValueWithoutCallingItASignal(monkeypatch, tmp_path,
+                                                                            runner):
+    # arrange: an `impl:` gate whose body answers -1 - "could not read", which is what
+    # `simplon.waits.device_count` means by it in this repository - not a child killed by SIGHUP
+    data = _data()
+    data["suites"]["gates"] = [data["suites"]["gates"][0],
+                               {"name": "ui", "impl": "product.tooling:ui"}]
+    _register(monkeypatch, tmp_path, data)
+    monkeypatch.setattr(testrun, "resolve_ref", lambda ref, where: (lambda: -1))
+    cfg = testrun.config()
+
+    # act
+    rc = testrun.run_gate(cfg.gate("ui"), cfg, [], filtered=False)
+
+    # assert: red, and not 129 - the translation belongs to a wait status and this is a return value
+    assert rc == -1, f"a product runner's return value was translated as a signal status: {rc}"
+
+
+def test_run_gate_stillTranslatesTheWaitStatusOfASuiteASignalKilled(monkeypatch, tmp_path, runner):
+    # arrange: the case the translation exists for (#55) - the pytest child's negative wait status, which
+    # `sys.exit` would otherwise take modulo 256 and leave a shell reading 241
+    _register(monkeypatch, tmp_path, _data())
+    cfg = testrun.config()
+    monkeypatch.setattr(testrun, "run", lambda *a, **k: SimpleNamespace(rc=-15))
+
+    # act
+    rc = testrun.run_gate(cfg.gates[1], cfg, [], filtered=False)
+
+    # assert
+    assert rc == 143

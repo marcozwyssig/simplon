@@ -25,7 +25,13 @@ the report dir and the archive's own Environment widget (#30). A suite that prep
 session fixture, out of the kernel's sight, says so through the marker file at `SETUP_MARKER_ENV`.
 
 A gate may also be declared as a bare `impl:` instead of a pytest `suite:`, for a level whose runner is the
-product's own (a browser journey suite, say); the kernel just calls it for its rc and sequences it. It
+product's own (a browser journey suite, say); the kernel just calls it for its rc and sequences it. SUCH A
+GATE MAY OWN THE RESULTS DIR (si#61): `results: clear` on it says the run opens with this gate and the dir
+starts empty, which is the only way a product with no pytest anywhere in it can write a loadable taxonomy.
+Measured before the fix, on a Java product: both spellings of that section were refused, and the way out
+was a pytest gate containing `assert True`, a 29 MB suite venv, and an archive that counted four tests for
+a product that has three. Clearing is not writing - the kernel still learns exactly one number here - and
+the empty half is pinned in `tests/test_suites_impl_only.py` beside the running half. It
 therefore reports that gate in terms of the rc AND SAYS SO (#65) rather than borrowing the sentence written
 for a suite it ran itself, and it opens the same setup marker to it as to a pytest gate (#59), so a runner
 that knows its own preparation fell over has somewhere to say it.
@@ -43,8 +49,9 @@ from __future__ import annotations
 import contextlib
 import os
 import shutil
+import time
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable
 
 import typer
@@ -120,6 +127,11 @@ class Gate:
     its rc) is set, never both. `results` says whether this gate CLEARS the shared results dir or APPENDS
     into it - the whole of the clear-versus-append rule, held as data. `args` marks the ONE gate a run's
     passthrough pytest args belong to.
+
+    `results` IS THE ONE KEY THAT MEANS THE SAME THING ON BOTH KINDS (si#61). It is not a statement about
+    what a gate writes - an `impl` gate writes nothing the kernel can see - but about whose run the
+    results dir belongs to, and that question has the same answer whoever runs the tests. It used to be
+    refused on an `impl` gate, which left a product whose only runner is its own unable to say it at all.
     """
 
     name: str
@@ -182,12 +194,27 @@ def _gate(body: object, where: str) -> Gate:
         raise ValueError(f"{where}: declare exactly one of 'suite' (a pytest root) or 'impl' "
                          f"(a product-owned runner), not both and not neither")
     if impl:
-        # An `impl:` gate is opaque: the kernel calls the product's runner for its rc and nothing else, so
-        # it neither writes the shared results, nor takes pytest args, nor runs the preamble. Declaring any
-        # of those on it must FAIL rather than be dropped - `results: clear` on an impl gate would otherwise
-        # satisfy the exactly-one-clearing-gate rule below while nothing ever cleared, which is the silent
-        # forever-appending archive that rule exists to prevent.
-        stray = [key for key in ("results", "junit", "args", "preamble") if key in body]
+        # An `impl:` gate is opaque: the kernel calls the product's runner for its rc and learns nothing
+        # else, so it takes no pytest args, has no junit file of the kernel's making and gets no preamble.
+        # Declaring any of those on it must FAIL rather than be dropped.
+        #
+        # `results` LEFT THIS LIST (si#61), and the reason is the one the list is built on. It was refused
+        # because `results: clear` here would satisfy the exactly-one-clearing-gate rule below while
+        # nothing ever cleared - `assess_gate` returned on the impl branch above the clear - and a key
+        # that counts and does nothing is worse than one that is refused. That was true of the code and
+        # it was the wrong repair. The clear could hang on NOTHING ELSE, so a product whose only test
+        # runner is its own could write no loadable `suites:` section at all. Measured on a Java product
+        # with no Python in it: both spellings refused, rc 1, no report; the way out was to ship a pytest
+        # gate holding `assert True` purely to own the directory, at 29 MB of suite venv and a report
+        # that counted four tests where the product has three.
+        #
+        # So the inert declaration was fixed where it was inert - `assess_gate` honours the clear on this
+        # branch now - and the refusal has nothing left to protect. An impl gate that declares the clear
+        # says exactly what it does: this gate OPENS the run, and the run's results dir starts empty. It
+        # still writes nothing into that dir; that is a different statement, and `test_suites_impl_only`
+        # keeps it pinned, because a fix that let the kernel invent a result for a runner it cannot see
+        # would have moved this defect rather than removed it.
+        stray = [key for key in ("junit", "args", "preamble") if key in body]
         if stray:
             raise ValueError(f"{where}: an 'impl' gate cannot declare {', '.join(repr(k) for k in stray)} "
                              f"- the kernel only calls its runner for the rc")
@@ -234,7 +261,9 @@ def declared(data: Mapping[str, object], source: str = "manifest") -> Suites:
     clearing = [gate.name for gate in gates if gate.clears]
     if len(clearing) != 1:
         raise ValueError(f"{source}: exactly one gate must declare results: {CLEAR} "
-                         f"(the first one to run); got {clearing or 'none'}")
+                         f"(the first one to run); got {clearing or 'none'}. Any gate may carry it, an "
+                         f"'impl' one included - that gate then opens the run's results dir without "
+                         f"writing into it.")
     if not gates[0].clears:
         raise ValueError(f"{source}: '{clearing[0]}' clears the shared results but is not the FIRST gate; "
                          f"a later clear deletes what the gates before it wrote")
@@ -353,6 +382,21 @@ def _reported_stage(path: str) -> str:
     return "the suite's own setup"
 
 
+def _clear_results(results: str, reports: str) -> None:
+    """Empty the run's results dir and the transient render dir, and leave the results dir THERE.
+
+    One place, because two branches reach it now (si#61) and a second copy of a rule is a second rule.
+    The scratch dir goes with the results because `allure generate -o` writes into it and a stale render
+    of the last run standing beside this run's results is the same lie one directory across.
+
+    The dir is RECREATED rather than merely removed: "cleared" is a statement about ownership, and an
+    absent directory and an empty one say different things to the report step that reads it next.
+    """
+    shutil.rmtree(results, ignore_errors=True)
+    shutil.rmtree(os.path.join(reports, SCRATCH), ignore_errors=True)
+    os.makedirs(results, exist_ok=True)
+
+
 def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
                 earlier: tuple[GateVerdict, ...] = ()) -> GateVerdict:
     """Run ONE gate and say not only whether it was red but whether it was red ABOUT anything (#30).
@@ -405,7 +449,25 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
         if rc != 0:
             return GateVerdict(gate.name, Verdict.NOT_RUN, rc, verdict.PRECONDITION)
     reports = _reports_dir(cfg)
+    results = results_dir(cfg, filtered=filtered)
     if gate.impl:
+        # THE CLEAR IS HONOURED HERE TOO (si#61), and that is the whole of the fix. It used to be
+        # unreachable on this branch and refused at load in consequence, which left a product whose only
+        # runner is its own with no way to say that its run OWNS the results dir - the clear could hang
+        # on a pytest gate and on nothing else. It hangs on this one now: the gate opens the run, the
+        # dir starts empty, and the report step that follows sees this run and no other.
+        #
+        # It clears and it still WRITES NOTHING. The two are not the same claim: clearing is about whose
+        # run the directory belongs to, writing is about what the kernel learned, and the kernel learned
+        # one number here. `test_suites_impl_only` pins the second by asserting the dir stays empty.
+        #
+        # `owned_results` carries the first claim onward (si#69), and it is `gate.clears` and not True:
+        # an APPENDING impl gate takes nothing, writes nothing and leaves the dir exactly as it found it,
+        # so a run made only of those owns no archive to state its verdict in. That distinction used to
+        # be unreachable because such a taxonomy could not load, and the property that stood in for it
+        # said True for a run whose results dir was empty.
+        if gate.clears:
+            _clear_results(results, reports)
         # NOT `verdict.of_subprocess`: this rc is a Python callable's return value, not a child's wait
         # status, so a negative one names no signal and reading it as one would invent a statement. Same
         # reason the docstring gives for saying nothing else about an impl gate.
@@ -419,20 +481,19 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
             # The runner's own claim wins over its rc, including over a green one - the same precedence a
             # pytest gate's marker gets below, and for the same reason: a runner that reports a broken
             # setup and still returns 0 is a runner whose green means nothing.
-            return GateVerdict(gate.name, Verdict.SETUP_FAILED, rc or SETUP_FAILED_RC, stage)
+            return GateVerdict(gate.name, Verdict.SETUP_FAILED, rc or SETUP_FAILED_RC, stage,
+                               owned_results=gate.clears)
         if rc == 0:
-            return GateVerdict(gate.name, Verdict.PASSED, rc)
-        return GateVerdict(gate.name, Verdict.FAILED, rc, detail=IMPL_DETAIL)
+            return GateVerdict(gate.name, Verdict.PASSED, rc, owned_results=gate.clears)
+        return GateVerdict(gate.name, Verdict.FAILED, rc, detail=IMPL_DETAIL, owned_results=gate.clears)
 
     log.info(gate.announce or f"{gate.name} gate: {gate.suite} against the running lab")
     suite_dir = str(context.current().root / gate.suite)
-    results = results_dir(cfg, filtered=filtered)
     py, _ = pyvenv.venv_python_pip(suite_dir)
     if gate.clears:
         # The FIRST gate clears the run's results + the transient render dir exactly once; every later gate
         # appends into it, so the report step sees every suite of the run and only this run.
-        shutil.rmtree(results, ignore_errors=True)
-        shutil.rmtree(os.path.join(reports, SCRATCH), ignore_errors=True)
+        _clear_results(results, reports)
     os.makedirs(results, exist_ok=True)
     junit = os.path.join(reports, f"{os.path.splitext(gate.junit)[0]}-filtered.xml" if filtered else gate.junit)
     with _setup_marker(reports) as marker, keep_awake():
@@ -479,7 +540,12 @@ def _written(gv: GateVerdict, results: str, earlier: tuple[GateVerdict, ...], fi
     point is that it touched nothing. Writing there would overwrite the environment of the last real run's
     archive with the verdict of a run that never started, which is the original defect with the sign
     flipped.
+
+    So this is also where `owned_results` becomes True (si#69), and it is set HERE rather than computed
+    from the verdict by whoever reads it later: reaching this function is the ownership, and a consumer
+    deriving the same fact from the outcome would be a second source that has already been wrong once.
     """
+    gv = replace(gv, owned_results=True)
     (log.ok if gv.ok else log.warn)(f"{gv.gate}: {gv.line}")
     allure.write_environment(results, RunVerdict(earlier + (gv,), filtered=filtered).environment())
     return gv
@@ -492,14 +558,20 @@ def run_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool) -> in
     That is the point. Everything a later reader needs is in what was WRITTEN, and a caller who wants it in
     hand calls `assess_gate` instead of decoding the rc.
 
-    `verdict.exit_code` is not an exception to that (#55). A gate a signal killed still returns simply
+    `GateVerdict.exit_code` is not an exception to that (#55). A gate a signal killed still returns simply
     non-zero; what it does is stop the wait status from being MANGLED into 241 by `sys.exit`'s modulo, and
     hand on the 128+n a shell would have reported for the same child. No new distinction, one fewer lie.
+
+    IT IS THE VERDICT'S PROPERTY AND NOT THE FREE FUNCTION (si#71). The free function's own docstring says
+    it is given "the rc it observed from its child", and this line used to hand it every gate's rc -
+    including an `impl:` gate's, which is a Python callable's return value and names no signal however
+    negative it is. Harmless in every case measured, and the comment and the use said different things.
     """
-    return verdict.exit_code(assess_gate(gate, cfg, extra, filtered=filtered).rc)
+    return assess_gate(gate, cfg, extra, filtered=filtered).exit_code
 
 
-def report(cfg: Suites | None = None, *, filtered: bool = False, run: RunVerdict | None = None) -> int:
+def report(cfg: Suites | None = None, *, filtered: bool = False, run: RunVerdict | None = None,
+           since: float | None = None) -> int:
     """Merge the per-module results the product's OTHER gates already wrote into this run's results dir,
     then render the merged single-file archive. Runs NO tests: it archives the verdict of what ran before
     it.
@@ -515,15 +587,30 @@ def report(cfg: Suites | None = None, *, filtered: bool = False, run: RunVerdict
     the archive's own Environment widget (#30). That is the half a later reader meets: the stamp beside the
     report says why a run was red, and this says it INSIDE the report, where somebody who was handed only
     the HTML file can still see that a gate's setup fell over rather than its suite.
+
+    `since` IS WHEN THE RUN BEGAN, and without it this step merged the last run's results as though they
+    were this one's (si#70). The declared merge sources are the PRODUCT's directories - a Gradle build's
+    JUnit XML, an npm reporter's output - and no `results: clear` on either kind of gate touches them, so
+    a product with its own runner has nothing that empties them at all. Measured: a build that stopped in
+    `:compileJava` shipped an archive reading `{"failed":0,"passed":3,"total":3}` from a file 66 seconds
+    older than the run. With `since`, files written before it are left where they are and NAMED in the
+    line; without it - `test report` on its own, which has no run behind it - everything present is
+    merged, which is that command's documented job.
+
+    Skipping does not make the step red. The gates carry the verdict, and in the case that produced this
+    the gate was already red; what was wrong was the archive, and an archive that says "nothing was
+    merged, these files are the previous run's" is the true one.
     """
     cfg = cfg or config()
     root = context.current().root
     results = results_dir(cfg, filtered=filtered)
     os.makedirs(results, exist_ok=True)
-    if run is not None and run.wrote_results:
+    if run is not None and run.owns_results:
         # Only when some gate of this run actually owned the results dir. A run made entirely of gates that
         # never started must leave the last real run's archive alone - stating this run's verdict in it
-        # would be the stale-verdict defect pointing the other way.
+        # would be the stale-verdict defect pointing the other way. And a run made entirely of gates whose
+        # runner is the PRODUCT'S own is the same case (si#69): it took nothing and wrote nothing, so the
+        # archive standing in that dir belongs to whichever run last did.
         allure.write_environment(results, run.environment())
     if cfg.merge:
         # THE RESULT, NOT THE INTENTION (#64). The old line said `per-module results merged
@@ -537,8 +624,9 @@ def report(cfg: Suites | None = None, *, filtered: bool = False, run: RunVerdict
         # typo `declared` refuses at load, and the run it belongs to is usually one where something
         # upstream never got that far.
         merged = allure.merge_results(results, [str(root / d) for d in cfg.merge],
-                                      parent_suite=cfg.parent_suite)
-        (log.warn if merged.missing or merged.empty else log.ok)(f"per-module results: {merged.line}")
+                                      parent_suite=cfg.parent_suite, not_before=since)
+        (log.warn if merged.missing or merged.empty or merged.stale
+         else log.ok)(f"per-module results: {merged.line}")
     log.ok(f"allure results written to {results}")
     render = allure.render_report(_reports_dir(cfg), results,
                                   prefix="allure-filtered" if filtered else "allure")
@@ -576,6 +664,12 @@ def accept(extra: list[str], cfg: Suites | None = None) -> int:
     # file like every other exploratory run, or the abort of a one-test hunt overwrites the canonical
     # record of the last full run.
     filtered = bool(extra)
+    # WHEN THIS RUN BEGAN (si#70), taken before any gate does anything and floored to the whole second.
+    # The report step merges the product's own result dirs, which nothing on this side of the seam ever
+    # empties, so without this instant it merges whatever the LAST run left there. Floored because some
+    # filesystems carry mtime at one- or two-second granularity: erring early keeps at most a second of
+    # the previous run's leavings, erring late silently drops a result this run really did write.
+    started = float(int(time.time()))
     if cfg.precondition:
         rc = _hook(cfg.precondition, "precondition")()
         if rc != 0:
@@ -594,7 +688,8 @@ def accept(extra: list[str], cfg: Suites | None = None) -> int:
                                         earlier=tuple(verdicts)))
             verdict.write_stamp(reports, RunVerdict(tuple(verdicts), filtered=filtered))
         step = REPORT
-        rc = report(cfg, filtered=filtered, run=RunVerdict(tuple(verdicts), filtered=filtered))
+        rc = report(cfg, filtered=filtered, run=RunVerdict(tuple(verdicts), filtered=filtered),
+                    since=started)
     except Exception as exc:
         # AN ABANDONED RUN LEAVES AN ABANDONED RUN'S RECORD (#63). The stamp after the last completed gate
         # is a true statement about that gate and a false one about the run, because it is the only thing
@@ -700,8 +795,9 @@ def gate(ctx: typer.Context, name: str = "") -> int:
     # its OWN file: the quarantine that already keeps its results out of the archive has to keep its
     # verdict out of the canonical record too, or a one-test hunt overwrites the finding of a full gate.
     verdict.write_stamp(_reports_dir(cfg), RunVerdict((gv,), filtered=filtered))
-    # The record keeps the wait status it observed; the PROCESS gets the number a shell can read (#55).
-    return verdict.exit_code(gv.rc)
+    # The record keeps the wait status it observed; the PROCESS gets the number a shell can read (#55) -
+    # from the verdict, which carries the precondition that translation needs (si#71).
+    return gv.exit_code
 
 
 def report_cmd() -> int:
