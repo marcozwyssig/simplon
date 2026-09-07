@@ -558,11 +558,16 @@ def run_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool) -> in
     That is the point. Everything a later reader needs is in what was WRITTEN, and a caller who wants it in
     hand calls `assess_gate` instead of decoding the rc.
 
-    `verdict.exit_code` is not an exception to that (#55). A gate a signal killed still returns simply
+    `GateVerdict.exit_code` is not an exception to that (#55). A gate a signal killed still returns simply
     non-zero; what it does is stop the wait status from being MANGLED into 241 by `sys.exit`'s modulo, and
     hand on the 128+n a shell would have reported for the same child. No new distinction, one fewer lie.
+
+    IT IS THE VERDICT'S PROPERTY AND NOT THE FREE FUNCTION (si#71). The free function's own docstring says
+    it is given "the rc it observed from its child", and this line used to hand it every gate's rc -
+    including an `impl:` gate's, which is a Python callable's return value and names no signal however
+    negative it is. Harmless in every case measured, and the comment and the use said different things.
     """
-    return verdict.exit_code(assess_gate(gate, cfg, extra, filtered=filtered).rc)
+    return assess_gate(gate, cfg, extra, filtered=filtered).exit_code
 
 
 def report(cfg: Suites | None = None, *, filtered: bool = False, run: RunVerdict | None = None,
@@ -790,8 +795,9 @@ def gate(ctx: typer.Context, name: str = "") -> int:
     # its OWN file: the quarantine that already keeps its results out of the archive has to keep its
     # verdict out of the canonical record too, or a one-test hunt overwrites the finding of a full gate.
     verdict.write_stamp(_reports_dir(cfg), RunVerdict((gv,), filtered=filtered))
-    # The record keeps the wait status it observed; the PROCESS gets the number a shell can read (#55).
-    return verdict.exit_code(gv.rc)
+    # The record keeps the wait status it observed; the PROCESS gets the number a shell can read (#55) -
+    # from the verdict, which carries the precondition that translation needs (si#71).
+    return gv.exit_code
 
 
 def report_cmd() -> int:

@@ -1584,3 +1584,38 @@ def test_aGateThatMerelyExitsNonZeroIsStillARedSuite_soTheSignalReadingDidNotSwa
     assert gv.verdict is Verdict.FAILED
     assert gv.line == "failed (rc 1) - the suite ran and reported failures"
     assert testrun.run_gate(cfg.gates[0], cfg, [], filtered=False) == 1
+
+
+# --- what the gate command hands the process (si#71) -----------------------------------------------------
+
+
+def test_gate_handsOnAnImplRunnersNegativeReturnValueWithoutCallingItASignal(monkeypatch, tmp_path,
+                                                                            runner):
+    # arrange: an `impl:` gate whose body answers -1 - "could not read", which is what
+    # `simplon.waits.device_count` means by it in this repository - not a child killed by SIGHUP
+    data = _data()
+    data["suites"]["gates"] = [data["suites"]["gates"][0],
+                               {"name": "ui", "impl": "product.tooling:ui"}]
+    _register(monkeypatch, tmp_path, data)
+    monkeypatch.setattr(testrun, "resolve_ref", lambda ref, where: (lambda: -1))
+    cfg = testrun.config()
+
+    # act
+    rc = testrun.run_gate(cfg.gate("ui"), cfg, [], filtered=False)
+
+    # assert: red, and not 129 - the translation belongs to a wait status and this is a return value
+    assert rc == -1, f"a product runner's return value was translated as a signal status: {rc}"
+
+
+def test_run_gate_stillTranslatesTheWaitStatusOfASuiteASignalKilled(monkeypatch, tmp_path, runner):
+    # arrange: the case the translation exists for (#55) - the pytest child's negative wait status, which
+    # `sys.exit` would otherwise take modulo 256 and leave a shell reading 241
+    _register(monkeypatch, tmp_path, _data())
+    cfg = testrun.config()
+    monkeypatch.setattr(testrun, "run", lambda *a, **k: SimpleNamespace(rc=-15))
+
+    # act
+    rc = testrun.run_gate(cfg.gates[1], cfg, [], filtered=False)
+
+    # assert
+    assert rc == 143

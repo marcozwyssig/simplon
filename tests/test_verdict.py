@@ -389,3 +389,39 @@ def test_exit_code_removesTheNumberSysExitWouldHaveManufacturedFromTheWaitStatus
 def test_exit_code_leavesAnOrdinaryReturnCodeExactlyWhereItWas():
     # arrange / act / assert: only a wait status is translated; everything else is the rc it always was
     assert [verdict_module.exit_code(rc) for rc in (0, 1, 2, 7, 255)] == [0, 1, 2, 7, 255]
+
+
+# --- the exit code is translated only where a signal was actually observed (si#71) ------------------------
+#
+# `exit_code` maps a negative wait status onto 128+n. It was applied to every gate's rc, including an
+# `impl:` gate's - a Python callable's RETURN VALUE, which names no signal however negative it is. Harmless
+# in every case measured, because both numbers were non-zero; but the function's docstring spoke of a child
+# and the use did not, and #55 kept `of_subprocess` narrow for exactly this reason.
+
+
+def test_exit_code_ofAKilledGateIsThe128PlusNAShellWouldReport():
+    # arrange / act / assert: the case the translation exists for - `sys.exit(-15)` leaves 241, which is
+    # neither the signal nor anything reserved
+    assert GateVerdict("system", Verdict.KILLED, -15).exit_code == 143
+    assert GateVerdict("system", Verdict.KILLED, -9).exit_code == 137
+
+
+def test_exit_code_leavesAProductRunnersNegativeReturnValueAlone():
+    # arrange: `simplon.waits.device_count` answers -1 for "could not read" in this very repository, and a
+    # product body may do the same. A gate whose runner is the product's own reports FAILED with that rc
+    gv = GateVerdict("ui", Verdict.FAILED, -1, detail="the product's own runner returned this rc")
+
+    # act / assert: no signal is invented - it stays the number the body returned
+    assert gv.exit_code == -1, (
+        "a callable's return value was read as a wait status, so the process exits on a number that "
+        "names a signal nobody sent")
+    assert verdict_module.exit_code(-1) == 129, (
+        "the free function is the one that translates; the point is that it is no longer applied here")
+
+
+def test_exit_code_passesAnOrdinaryRcThrough():
+    # arrange / act / assert: every non-killed outcome hands on exactly what it holds
+    assert GateVerdict("unit", Verdict.PASSED, 0).exit_code == 0
+    assert GateVerdict("unit", Verdict.FAILED, 1).exit_code == 1
+    assert GateVerdict("unit", Verdict.SETUP_FAILED, 2, "preamble").exit_code == 2
+    assert GateVerdict("unit", Verdict.NOT_RUN, 7, "precondition").exit_code == 7

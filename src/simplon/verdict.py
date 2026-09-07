@@ -226,6 +226,27 @@ class GateVerdict:
                 + (self.detail or "nothing was prepared, cleared or written, and the previous archive "
                                   "stands"))
 
+    @property
+    def exit_code(self) -> int:
+        """The number THIS gate hands the process (si#71).
+
+        `exit_code` below translates a child's signal status to 128+n, and it was applied to every gate's
+        rc including an `impl:` gate's - whose rc is a Python callable's RETURN VALUE and not a wait
+        status. Harmless in every case measured, because both numbers were non-zero and the result
+        happened to agree; but the docstring said "the rc it observed from its child" while the
+        application said something wider, and the two have to say the same thing or the next reader
+        widens the wrong one. `of_subprocess` was kept narrow for exactly this reason (#55); the boundary
+        was simply blurred again a level up.
+
+        So the translation is applied where its precondition is CARRIED rather than assumed: `KILLED` is
+        the only outcome read off a signal, `__post_init__` refuses one that does not carry a negative
+        wait status, and `simplon.tasks.testrun` produces it from `of_subprocess` and nowhere else. Every
+        other rc passes through as it is - a product body answering -1 for "could not read"
+        (`simplon.waits.device_count` does exactly that in this repository) leaves the process as an
+        ordinary failure instead of one that names a signal nobody sent.
+        """
+        return exit_code(self.rc) if self.verdict is Verdict.KILLED else self.rc
+
     def as_dict(self) -> dict[str, object]:
         """The stamp's per-gate entry: the machine-readable fields AND the sentence, because a reader who
         opens the file by hand should not have to reconstruct it from an enum value."""
@@ -348,7 +369,13 @@ def of_subprocess(rc: int) -> Verdict:
 
 
 def exit_code(rc: int) -> int:
-    """The number a gate hands the PROCESS, given the rc it observed from its child.
+    """The number a gate hands the PROCESS, given the rc it observed from its CHILD.
+
+    THE PRECONDITION IS IN THE FIRST LINE AND IT IS NOT DECORATION (si#71). This maps a negative number
+    onto a signal name's numbering, so applying it to anything that is not a wait status invents a signal
+    - the same mistake `of_subprocess` is named against. Callers holding a `GateVerdict` should use
+    `GateVerdict.exit_code`, which carries the precondition with it; this function is for a caller that
+    knows it has a child's status in hand.
 
     A pass-through for everything but a signal status, which does not survive `sys.exit` intact: the value
     is taken modulo 256, so -15 leaves the process as 241 and -9 as 247 - measured - and neither number
