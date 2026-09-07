@@ -68,6 +68,15 @@ SCRATCH = "allure-report"
 
 CLEAR, APPEND = "clear", "append"
 
+#: The name the report step carries in a run's record. It is not a declared gate, but it is a step the run
+#: is answerable for, so the stamp names it the same way every time - including when it is the step that
+#: raised (#63) and the record has to say which one that was.
+REPORT = "report"
+#: The rc the record carries for a step that raised. An exception leaves this process through the CLI,
+#: which exits 1, so the record and the exit code agree; and `GateVerdict` refuses a red verdict carrying
+#: rc 0 outright, because a red record with a green exit is the confusion the whole module is against.
+ABANDONED_RC = 1
+
 #: The file a SUITE OR A PRODUCT-OWNED RUNNER may drop to say that its own preparation fell over (#30),
 #: and the environment variable that tells it where. The kernel names the two setup stages it sequences
 #: itself - `precondition` and `preamble` - but a product whose lab is built inside a pytest session
@@ -540,6 +549,15 @@ def accept(extra: list[str], cfg: Suites | None = None) -> int:
     instead of leaving the last complete run's verdict standing as though it were this one's. The
     section-level abort writes one too: "this run never started" is a thing the record has to be able to
     say, and it is the one thing the old code could only say by staying silent.
+
+    AND A STAMP IS WRITTEN WHEN A STEP RAISES (#63), which is the half that rule was missing. Stamping
+    after every gate means the record is always one step behind; while the run finishes normally the last
+    write catches up, and when it does not, the stamp that stays on the disk is a true statement about the
+    last gate and a FALSE one about the run. Measured: a run that ended with rc 1 and an
+    `IsADirectoryError` out of the report step left `test-verdict.json` saying `"verdict": "passed"`,
+    `"line": "passed"`, with no `report` entry to hint that anything had been cut short. The gates really
+    had been green; the run had not, and the record a reader consults a week later is the record of the
+    run. The exception is re-raised afterwards - this adds a record, it does not swallow a failure.
     """
     cfg = cfg or config()
     reports = _reports_dir(cfg)
@@ -557,16 +575,34 @@ def accept(extra: list[str], cfg: Suites | None = None) -> int:
         _warn_filtered(cfg)
     log.info(f"accept: running the lab-based suites ({' + '.join(g.name for g in cfg.gates)} + report)")
     verdicts: list[GateVerdict] = []
-    for gate in cfg.gates:
-        verdicts.append(assess_gate(gate, cfg, extra if gate.args else [], filtered=filtered,
-                                    earlier=tuple(verdicts)))
+    step = cfg.gates[0].name
+    try:
+        for gate in cfg.gates:
+            step = gate.name
+            verdicts.append(assess_gate(gate, cfg, extra if gate.args else [], filtered=filtered,
+                                        earlier=tuple(verdicts)))
+            verdict.write_stamp(reports, RunVerdict(tuple(verdicts), filtered=filtered))
+        step = REPORT
+        rc = report(cfg, filtered=filtered, run=RunVerdict(tuple(verdicts), filtered=filtered))
+    except Exception as exc:
+        # AN ABANDONED RUN LEAVES AN ABANDONED RUN'S RECORD (#63). The stamp after the last completed gate
+        # is a true statement about that gate and a false one about the run, because it is the only thing
+        # a later reader finds: measured, a run that ended with rc 1 and an `IsADirectoryError` out of the
+        # report step left `test-verdict.json` saying `"verdict": "passed"` with no `report` entry at all.
+        # `write_stamp` is called after every gate precisely so a run that stops early still leaves a
+        # record - and the one place it could not reach was the step that runs last.
+        #
+        # The exception is RE-RAISED, so the operator keeps the traceback and the process keeps its exit
+        # code: this adds a record, it does not swallow a failure. `Exception` and not `BaseException` -
+        # a KeyboardInterrupt is the operator ending their own run, not a run that reports green.
+        verdicts.append(_abandoned(step, exc))
         verdict.write_stamp(reports, RunVerdict(tuple(verdicts), filtered=filtered))
-    rc = report(cfg, filtered=filtered, run=RunVerdict(tuple(verdicts), filtered=filtered))
+        raise
     # The report step runs NO tests, so it must not borrow the sentence written for a gate that does: it
     # renders an archive, and when it is red the archive is what is missing. Handing it the default wording
     # would put "the suite ran and reported failures" into the stamp - and, when it is the run's weakest
     # element, into `verdict.summary` - about a step that ran no suite at all.
-    verdicts.append(GateVerdict("report", Verdict.PASSED if rc == 0 else Verdict.FAILED, rc,
+    verdicts.append(GateVerdict(REPORT, Verdict.PASSED if rc == 0 else Verdict.FAILED, rc,
                                 detail="" if rc == 0 else "a render tool was present and wrote no "
                                                           "archive; this run has none"))
     run = RunVerdict(tuple(verdicts), filtered=filtered)
@@ -575,6 +611,29 @@ def accept(extra: list[str], cfg: Suites | None = None) -> int:
         log.warn("accept is RED (" + ", ".join(f"{gv.gate} {gv.line}" for gv in verdicts) + ")")
         return 1
     return 0
+
+
+def _abandoned(step: str, exc: BaseException) -> GateVerdict:
+    """The record entry for a step that RAISED - the one thing the stamp could not previously say (#63).
+
+    It names the step, the exception type and its message, because a record whose whole purpose is to be
+    read a week later must carry the cause and not only the fact. The message is flattened onto one line
+    for the same reason `allure.write_environment` flattens: this string is also written into a properties
+    file, whose format has no continuation.
+
+    WHY `FAILED` AND NOT A SIXTH OUTCOME. The five outcomes answer "what did the gate learn about the
+    product"; a step that raised did not get far enough to learn anything, and none of the three non-verdicts
+    fits - nothing about a SETUP broke, and the step was not skipped. `FAILED` with an explicit `detail` is
+    the idiom this function's only other non-suite neighbour already uses: the report step's render failure,
+    which is likewise a statement about the step rather than about the product, and which the `detail` field
+    exists for. Widening `Verdict` to say "abandoned" would be a change to the vocabulary every consumer
+    reads, made in passing while fixing a stamp that says the opposite of what happened; that belongs in a
+    ticket of its own, and the limit is recorded here rather than left to whoever hits it.
+    """
+    said = " ".join(str(exc).split())
+    return GateVerdict(step, Verdict.FAILED, ABANDONED_RC,
+                       detail=f"the step raised {type(exc).__name__}" + (f": {said}" if said else "")
+                              + ", so the run was abandoned there and nothing after it ran")
 
 
 def _warn_filtered(cfg: Suites) -> None:

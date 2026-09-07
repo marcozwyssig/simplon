@@ -988,6 +988,132 @@ def test_accept_stampsThatItNeverStarted_whenTheSectionPreconditionRefuses(monke
     assert stamp is not None and stamp["verdict"] == "not-run"
 
 
+# --- a step that RAISED still leaves this run's record (si#63) --------------------------------------------
+
+
+def _raising_report(monkeypatch, exc):
+    """A report step that raises - the measured case is an `IsADirectoryError` out of `merge_results`."""
+    def boom(cfg=None, *, filtered=False, run=None):
+        raise exc
+    monkeypatch.setattr(testrun, "report", boom)
+
+
+def test_accept_doesNotLeaveAStampSayingPassed_whenTheReportStepRaised(monkeypatch, tmp_path, runner):
+    # arrange: every gate green, and the step after them falls over - the measured run, where
+    # `merge_results` met Gradle's `test-results/test/binary` and the process ended with rc 1
+    _register(monkeypatch, tmp_path, _data())
+    _stub_chain(monkeypatch, {})
+    _raising_report(monkeypatch, IsADirectoryError(21, "Is a directory", "/p/build/test-results/test/binary"))
+
+    # act
+    with pytest.raises(IsADirectoryError):
+        testrun.accept([])
+
+    # assert: THE WHOLE OF si#63. The gates really were green; the run was not, and the record a reader
+    # consults a week later is the record of the RUN. It used to say `"verdict": "passed"`.
+    stamp = verdict_module.read_stamp(str(tmp_path / "test/reports"))
+    assert stamp is not None
+    assert stamp["verdict"] == "failed"
+    assert stamp["line"] != "passed"
+
+
+def test_theAbandonedRecordNamesTheStepAndTheCause_notMerelyThatSomethingWentWrong(monkeypatch, tmp_path,
+                                                                                  runner):
+    # arrange
+    _register(monkeypatch, tmp_path, _data())
+    _stub_chain(monkeypatch, {})
+    _raising_report(monkeypatch, OSError("No space left on device"))
+
+    # act
+    with pytest.raises(OSError):
+        testrun.accept([])
+
+    # assert: a stamp that said only "failed" would be the defect wearing a hat. It names the step that
+    # raised, the exception type and its message, because that is what a week-old record is FOR.
+    entry = verdict_module.read_stamp(str(tmp_path / "test/reports"))["gates"][-1]
+    assert entry["gate"] == "report"
+    assert "OSError" in entry["line"]
+    assert "No space left on device" in entry["line"]
+    assert "abandoned" in entry["line"]
+
+
+def test_theAbandonedRecordKeepsTheGatesThatDidFinish(monkeypatch, tmp_path, runner):
+    # arrange: one red gate, one green, then a report step that raises
+    _register(monkeypatch, tmp_path, _data())
+    _stub_chain(monkeypatch, {"system": 1})
+    _raising_report(monkeypatch, ValueError("a broken result file"))
+
+    # act
+    with pytest.raises(ValueError):
+        testrun.accept([])
+
+    # assert: the record is CUMULATIVE, not a single line about the crash - what the run did learn before
+    # it was cut short is exactly what a reader came for
+    gates = verdict_module.read_stamp(str(tmp_path / "test/reports"))["gates"]
+    assert [g["gate"] for g in gates] == ["system", "acceptance-dataplane", "report"]
+    assert [g["verdict"] for g in gates] == ["failed", "passed", "failed"]
+
+
+def test_aGateThatRaisesIsRecordedUnderItsOwnName_notUnderTheReportStep(monkeypatch, tmp_path, runner):
+    # arrange: the same property one step earlier. `assess_gate` does filesystem work and calls product
+    # hooks, so it can raise for reasons of its own, and the stamp of the gate BEFORE it would then be the
+    # run's whole record.
+    _register(monkeypatch, tmp_path, _data())
+
+    def assess(gate, cfg, extra, *, filtered, earlier=()):
+        if gate.name == "acceptance-dataplane":
+            raise RuntimeError("the product's preamble hook blew up")
+        return _gv(gate.name, 0)
+
+    monkeypatch.setattr(testrun, "assess_gate", assess)
+
+    # act
+    with pytest.raises(RuntimeError):
+        testrun.accept([])
+
+    # assert: the run is red, and it says WHICH step ended it
+    stamp = verdict_module.read_stamp(str(tmp_path / "test/reports"))
+    assert stamp["verdict"] == "failed"
+    assert [g["gate"] for g in stamp["gates"]] == ["system", "acceptance-dataplane"]
+    assert "RuntimeError" in stamp["gates"][-1]["line"]
+
+
+def test_anAbandonedExploratoryRunStampsIntoItsOwnFile_leavingTheCanonicalRecordAlone(monkeypatch,
+                                                                                     tmp_path, runner):
+    # arrange: a full green run's record, then a one-test hunt that falls over in the report step
+    reports = str(tmp_path / "test/reports")
+    verdict_module.write_stamp(reports, RunVerdict((GateVerdict("system", Verdict.PASSED),)))
+    _register(monkeypatch, tmp_path, _data())
+    _stub_chain(monkeypatch, {})
+    _raising_report(monkeypatch, OSError("boom"))
+
+    # act
+    with pytest.raises(OSError):
+        testrun.accept(["-k", "one_test"])
+
+    # assert: the quarantine holds on the way out too - an exploratory crash must not overwrite the
+    # finding of the last full gate, which is the rule the whole filtered path exists for
+    assert verdict_module.read_stamp(reports)["verdict"] == "passed"
+    assert verdict_module.read_stamp(reports, filtered=True)["verdict"] == "failed"
+
+
+def test_accept_isUnchangedWhenNothingRaises_soTheRecordingDidNotBecomeTheVerdict(monkeypatch, tmp_path,
+                                                                                 runner):
+    # arrange: the ordinary green chain, through the same try
+    _register(monkeypatch, tmp_path, _data())
+    _stub_chain(monkeypatch, {})
+
+    # act
+    rc = testrun.accept([])
+
+    # assert: no `report`-that-raised entry invented, and the exit code is the one it always was
+    stamp = verdict_module.read_stamp(str(tmp_path / "test/reports"))
+    assert rc == 0
+    assert stamp["verdict"] == "passed"
+    assert [g["gate"] for g in stamp["gates"]] == ["system", "acceptance-dataplane", "report"]
+    assert all("raised" not in g["line"] for g in stamp["gates"])
+
+
 def test_report_putsTheRunsVerdictIntoTheArchiveItArchives(monkeypatch, tmp_path, runner):
     # arrange
     _register(monkeypatch, tmp_path, _data())
