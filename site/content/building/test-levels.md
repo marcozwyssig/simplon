@@ -332,6 +332,39 @@ stringified nonsense path would be skipped in silence:
 
 > sample.yaml: 'suites.report.merge' holds a non-path entry: None
 
+### What the merge reports, and what it will not do to your files
+
+The merge says what it **did**, not that it was called
+([simplon#64](https://github.com/marcozwyssig/simplon/issues/64)). It used to print
+`per-module results merged (parentSuite=Java)` whatever had happened, and two different runs got that
+identical sentence without having done what it claims:
+
+> per-module results: merged 1 file from 1 of 1 declared source dirs: 1 copied unchanged, carrying no
+> parentSuite; skipped 1 subdirectory allure would not read (…/build/test-results/test/binary)
+
+> per-module results: nothing merged: 0 of 1 declared source dirs present, missing: …/build/junit-xml
+
+Three things in that are worth reading off:
+
+**`parent_suite` applies to allure raw results only.** Tagging means editing a `*-result.json`, so a JUnit
+XML - or any other foreign format - is copied through untagged and reaches the report under whatever suite
+its own format names. The line no longer claims otherwise.
+
+**A declared source that is not there is a warning, not a failure.** Skipping it stays right - a standalone
+report step archives what is present - but it is now named, because that is exactly the shape of a run
+where a build stopped before writing anything.
+
+**A subdirectory is skipped, and named.** Gradle's default `build/test-results/test/` holds `binary/`
+beside the XML, and the merge used to hand every entry to `shutil.copy`, which raises `IsADirectoryError`
+on a directory - so the standard layout of the most common non-pytest runner in existence crashed the
+report step, and products worked around it by redirecting Gradle's report to a flat directory
+([simplon#62](https://github.com/marcozwyssig/simplon/issues/62)). **That workaround is no longer needed.**
+The choice between skipping, recursing and refusing was measured rather than argued: an allure results
+directory is read *flat*, and a results dir holding `aaa-result.json` next to `sub/bbb-result.json` renders
+`total: 1` with only the top-level suite. Recursing would copy bytes the renderer ignores; skipping is the
+only one of the three that is true. If your runner writes attachments into a subdirectory, flatten them -
+allure would not have read them there either.
+
 ## When a level does not exist
 
 A command bound to `test:gate` whose pinned `name` matches no declared gate is a manifest typo, not a

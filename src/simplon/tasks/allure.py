@@ -83,6 +83,7 @@ class Merge:
     environments: int = 0
     present: tuple[str, ...] = ()
     missing: tuple[str, ...] = ()
+    skipped_dirs: tuple[str, ...] = ()
 
     @property
     def files(self) -> int:
@@ -91,7 +92,11 @@ class Merge:
 
     @property
     def empty(self) -> bool:
-        """Nothing was merged - the case that used to read exactly like a successful merge."""
+        """Nothing was merged - the case that used to read exactly like a successful merge.
+
+        A source dir holding ONLY subdirectories is empty by this measure and says so, which is the whole
+        point: `binary/` next to no XML at all is a run that produced nothing, not a run that merged.
+        """
         return self.files == 0
 
     @property
@@ -102,8 +107,10 @@ class Merge:
         if self.empty:
             said = f"nothing merged: {where} present"
             if self.missing:
-                return said + f", missing: {', '.join(self.missing)}"
-            return said + " and they hold no files"
+                said += f", missing: {', '.join(self.missing)}"
+            else:
+                said += " and they hold no files"
+            return said + self._dirs
         parts = []
         if self.tagged:
             parts.append(f"{self.tagged} tagged parentSuite={self.parent_suite}")
@@ -118,7 +125,21 @@ class Merge:
         said = f"merged {self.files} file{'' if self.files == 1 else 's'} from {where}: " + ", ".join(parts)
         if self.missing:
             said += f"; missing: {', '.join(self.missing)}"
-        return said
+        return said + self._dirs
+
+    @property
+    def _dirs(self) -> str:
+        """The subdirectories that were passed over, NAMED (#62).
+
+        Not a footnote. A reader whose runner writes attachments into a subdirectory has to be told that
+        those bytes did not travel, and a silent skip is the same defect this class was built against one
+        line further down - the reason the crash it replaces was worth a ticket rather than an `isdir`.
+        """
+        if not self.skipped_dirs:
+            return ""
+        return (f"; skipped {len(self.skipped_dirs)} subdirector"
+                f"{'y' if len(self.skipped_dirs) == 1 else 'ies'} allure would not read "
+                f"({', '.join(self.skipped_dirs)})")
 
 
 def merge_results(dst: str, srcs: list[str], *, parent_suite: str = "Unit") -> Merge:
@@ -130,11 +151,16 @@ def merge_results(dst: str, srcs: list[str], *, parent_suite: str = "Unit") -> M
     RETURNS WHAT IT DID (#64). A missing source dir is still skipped rather than refused - a standalone
     report step must archive what is present - but the skip is now COUNTED and named, because a caller
     that cannot tell it from a successful merge will announce one.
+
+    THREE FATES, NOT TWO (#62). The docstring above described `*-result.json` and "everything else", and a
+    SUBDIRECTORY was neither: it fell into `shutil.copy` and raised. It is now its own case - skipped, and
+    named in the result - and the branch below carries the measurement the choice rests on.
     """
     os.makedirs(dst, exist_ok=True)
     tagged = labelled = copied = environments = 0
     present: list[str] = []
     missing: list[str] = []
+    dirs: list[str] = []
     for src in srcs:
         if not os.path.isdir(src):
             missing.append(src)
@@ -176,11 +202,34 @@ def merge_results(dst: str, srcs: list[str], *, parent_suite: str = "Unit") -> M
                              f"values and dropping the merged directory's")
                 write_environment(dst, {**incoming, **existing})
                 environments += 1
+            elif os.path.isdir(f):
+                # A SUBDIRECTORY IS SKIPPED, AND SAID (#62). `glob` returns every entry, and this branch
+                # used to hand each one to `shutil.copy`, which raises `IsADirectoryError` on a directory
+                # - uncaught, with a `shutil` traceback and no sentence naming the cause. Gradle's default
+                # `build/test-results/test/` holds exactly one (`binary/`, its own internal format beside
+                # the JUnit XML), so the standard layout of the most common non-pytest runner in existence
+                # made the report step crash, and the product had to redirect its Gradle report to a flat
+                # directory to get an archive at all.
+                #
+                # Three answers were possible and they are not the same - skip, recurse, or refuse - so
+                # the choice was MEASURED rather than argued. An allure results dir is read FLAT: a
+                # results dir holding `aaa-result.json` and `sub/bbb-result.json`, rendered by the pinned
+                # image, produced `total: 1` and the single suite `TopSuite`. The nested result was not
+                # read at all. Recursing would therefore copy bytes the renderer ignores - and would do it
+                # while reporting a merge, which is this module's own defect wearing a bigger hat.
+                # Refusing would keep the crash under a nicer name and leave Gradle's ordinary layout
+                # unusable. Skipping is the only one of the three that is true.
+                #
+                # It is COUNTED and NAMED, because a runner that does write attachments into a
+                # subdirectory has to learn that they did not travel - and, by the measurement above, that
+                # allure would not have read them there either.
+                dirs.append(f)
             else:
                 shutil.copy(f, os.path.join(dst, base))
                 copied += 1
     return Merge(parent_suite=parent_suite, tagged=tagged, already_labelled=labelled, copied=copied,
-                 environments=environments, present=tuple(present), missing=tuple(missing))
+                 environments=environments, present=tuple(present), missing=tuple(missing),
+                 skipped_dirs=tuple(dirs))
 
 
 #: Allure's own convention: a `key=value` file in the RESULTS dir, rendered as the report's Environment
