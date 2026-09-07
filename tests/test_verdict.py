@@ -218,12 +218,33 @@ def test_aSingleGatesEnvironmentHoldsOnlyItsOwnLine_neverTheRunsVerdict():
     assert list(env) == ["verdict.gate.system"]
 
 
-def test_wrote_results_isFalseForARunWhoseGatesAllRefusedBeforeTouchingAnything():
+def test_owns_results_isFalseForARunWhoseGatesAllRefusedBeforeTouchingAnything():
     # arrange / act / assert: the condition under which the run's verdict may enter the archive at all
-    assert not RunVerdict((GateVerdict("a", Verdict.NOT_RUN, 7, "precondition"),)).wrote_results
+    assert not RunVerdict((GateVerdict("a", Verdict.NOT_RUN, 7, "precondition"),)).owns_results
     assert RunVerdict((GateVerdict("a", Verdict.NOT_RUN, 7, "precondition"),
-                       GateVerdict("b", Verdict.FAILED, 1))).wrote_results
-    assert not RunVerdict().wrote_results
+                       GateVerdict("b", Verdict.FAILED, 1, owned_results=True))).owns_results
+    assert not RunVerdict().owns_results
+
+
+def test_owns_results_asksTheGatesAndDoesNotInferOwnershipFromAVerdict():
+    # arrange: si#69. A gate whose runner is the product's own returns a number and touches nothing, so
+    # `passed` says nothing about a results dir. The old rule - anything but NOT_RUN owned the dir - was
+    # true of a gate the kernel runs and false of this one, and it was held out of reach by a load-time
+    # refusal rather than by being right
+    took_nothing = GateVerdict("ui", Verdict.PASSED, 0)
+    took_the_dir = GateVerdict("ui", Verdict.PASSED, 0, owned_results=True)
+
+    # act / assert: the verdict is identical in both and the ownership is not
+    assert took_nothing.verdict is took_the_dir.verdict
+    assert not RunVerdict((took_nothing,)).owns_results, (
+        "a run of gates that took no results dir still claims the archive standing in it")
+    assert RunVerdict((took_the_dir,)).owns_results
+
+    # assert: and it holds for every outcome, not only the green one - a red product-owned gate wrote no
+    # result file either
+    for outcome, rc in ((Verdict.FAILED, 1), (Verdict.SETUP_FAILED, 1), (Verdict.KILLED, -15)):
+        stage = "provision" if outcome is Verdict.SETUP_FAILED else ""
+        assert not RunVerdict((GateVerdict("ui", outcome, rc, stage),)).owns_results
 
 
 # --- an exploratory run's record says so (#30, review 1) --------------------------------------------------
@@ -309,9 +330,11 @@ def test_aKilledGateOutranksEveryOtherOutcome_soTheSignalIsWhatTheRunReports():
 
 
 def test_aKilledGateOwnedTheResultsDir_soTheRunsRecordStillBelongsInTheArchive():
-    # arrange / act / assert: unlike `not-run`, a shot gate had already cleared and started filling the
-    # results, so leaving the archive alone would leave the LAST run's verdict standing in it
-    assert RunVerdict((GateVerdict("unit", Verdict.KILLED, -15),)).wrote_results
+    # arrange / act / assert: unlike `not-run`, a shot pytest gate had already cleared and started filling
+    # the results, so leaving the archive alone would leave the LAST run's verdict standing in it. It is
+    # the GATE that reports having taken the dir (si#69) - `simplon.tasks.testrun._written` sets it on
+    # every outcome that got that far - rather than the reader inferring it from `killed`
+    assert RunVerdict((GateVerdict("unit", Verdict.KILLED, -15, owned_results=True),)).owns_results
 
 
 def test_write_stamp_recordsTheSignalInTheSentenceAndTheWaitStatusInTheField(tmp_path):

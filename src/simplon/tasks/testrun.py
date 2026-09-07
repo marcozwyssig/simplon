@@ -50,7 +50,7 @@ import contextlib
 import os
 import shutil
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable
 
 import typer
@@ -459,6 +459,12 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
         # It clears and it still WRITES NOTHING. The two are not the same claim: clearing is about whose
         # run the directory belongs to, writing is about what the kernel learned, and the kernel learned
         # one number here. `test_suites_impl_only` pins the second by asserting the dir stays empty.
+        #
+        # `owned_results` carries the first claim onward (si#69), and it is `gate.clears` and not True:
+        # an APPENDING impl gate takes nothing, writes nothing and leaves the dir exactly as it found it,
+        # so a run made only of those owns no archive to state its verdict in. That distinction used to
+        # be unreachable because such a taxonomy could not load, and the property that stood in for it
+        # said True for a run whose results dir was empty.
         if gate.clears:
             _clear_results(results, reports)
         # NOT `verdict.of_subprocess`: this rc is a Python callable's return value, not a child's wait
@@ -474,10 +480,11 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
             # The runner's own claim wins over its rc, including over a green one - the same precedence a
             # pytest gate's marker gets below, and for the same reason: a runner that reports a broken
             # setup and still returns 0 is a runner whose green means nothing.
-            return GateVerdict(gate.name, Verdict.SETUP_FAILED, rc or SETUP_FAILED_RC, stage)
+            return GateVerdict(gate.name, Verdict.SETUP_FAILED, rc or SETUP_FAILED_RC, stage,
+                               owned_results=gate.clears)
         if rc == 0:
-            return GateVerdict(gate.name, Verdict.PASSED, rc)
-        return GateVerdict(gate.name, Verdict.FAILED, rc, detail=IMPL_DETAIL)
+            return GateVerdict(gate.name, Verdict.PASSED, rc, owned_results=gate.clears)
+        return GateVerdict(gate.name, Verdict.FAILED, rc, detail=IMPL_DETAIL, owned_results=gate.clears)
 
     log.info(gate.announce or f"{gate.name} gate: {gate.suite} against the running lab")
     suite_dir = str(context.current().root / gate.suite)
@@ -532,7 +539,12 @@ def _written(gv: GateVerdict, results: str, earlier: tuple[GateVerdict, ...], fi
     point is that it touched nothing. Writing there would overwrite the environment of the last real run's
     archive with the verdict of a run that never started, which is the original defect with the sign
     flipped.
+
+    So this is also where `owned_results` becomes True (si#69), and it is set HERE rather than computed
+    from the verdict by whoever reads it later: reaching this function is the ownership, and a consumer
+    deriving the same fact from the outcome would be a second source that has already been wrong once.
     """
+    gv = replace(gv, owned_results=True)
     (log.ok if gv.ok else log.warn)(f"{gv.gate}: {gv.line}")
     allure.write_environment(results, RunVerdict(earlier + (gv,), filtered=filtered).environment())
     return gv
@@ -573,10 +585,12 @@ def report(cfg: Suites | None = None, *, filtered: bool = False, run: RunVerdict
     root = context.current().root
     results = results_dir(cfg, filtered=filtered)
     os.makedirs(results, exist_ok=True)
-    if run is not None and run.wrote_results:
+    if run is not None and run.owns_results:
         # Only when some gate of this run actually owned the results dir. A run made entirely of gates that
         # never started must leave the last real run's archive alone - stating this run's verdict in it
-        # would be the stale-verdict defect pointing the other way.
+        # would be the stale-verdict defect pointing the other way. And a run made entirely of gates whose
+        # runner is the PRODUCT'S own is the same case (si#69): it took nothing and wrote nothing, so the
+        # archive standing in that dir belongs to whichever run last did.
         allure.write_environment(results, run.environment())
     if cfg.merge:
         # THE RESULT, NOT THE INTENTION (#64). The old line said `per-module results merged

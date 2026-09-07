@@ -256,6 +256,24 @@ def test_run_gate_clearsTheSharedResults_forTheFirstGateOnly(monkeypatch, tmp_pa
     assert not (tmp_path / "test/reports/allure-report").exists()
 
 
+def test_assess_gate_everyPytestGateReportsThatItTookTheResultsDir(monkeypatch, tmp_path, runner):
+    # arrange: si#69. A gate the KERNEL runs owns the dir whatever it finds there - it made it, it ran
+    # pytest into it and it wrote the environment - and it has to SAY so, because the run's verdict may
+    # only enter an archive some gate of that run took. Every outcome that reaches `_written` counts,
+    # not only the green one, so the clearing gate and the appending gate are both measured
+    _register(monkeypatch, tmp_path, _data())
+    cfg = testrun.config()
+
+    # act / assert
+    for gate in cfg.gates[:2]:
+        gv = testrun.assess_gate(gate, cfg, [], filtered=False)
+        assert gv.owned_results is True, (
+            f"the pytest gate '{gate.name}' does not report taking the results dir it just filled, so "
+            f"the run cannot state its verdict in the archive it wrote")
+    assert RunVerdict(tuple(testrun.assess_gate(g, cfg, [], filtered=False)
+                            for g in cfg.gates[:2])).owns_results
+
+
 def test_run_gate_appendsIntoTheSharedResults_forALaterGate(monkeypatch, tmp_path, runner):
     # arrange: the first gate's results are already there
     _register(monkeypatch, tmp_path, _data())
@@ -1186,7 +1204,9 @@ def test_report_putsTheRunsVerdictIntoTheArchiveItArchives(monkeypatch, tmp_path
     cfg = testrun.config()
     monkeypatch.setattr(testrun.allure, "render_report", lambda *a, **kw: allure.Render(report="r.html",
                                                                                        tool="allure"))
-    run = RunVerdict((GateVerdict("system", Verdict.SETUP_FAILED, 1, "provision"),))
+    # `owned_results` is what the pytest gate that ran this dir reports (si#69); without it the run owns
+    # no archive to speak in, which is the case the test below covers
+    run = RunVerdict((GateVerdict("system", Verdict.SETUP_FAILED, 1, "provision", owned_results=True),))
 
     # act
     testrun.report(cfg, run=run)
@@ -1194,6 +1214,30 @@ def test_report_putsTheRunsVerdictIntoTheArchiveItArchives(monkeypatch, tmp_path
     # assert
     written = (tmp_path / "test/reports/allure-results" / allure.ENVIRONMENT).read_text(encoding="utf-8")
     assert "verdict=setup-failed" in written
+
+
+def test_report_leavesTheArchiveAloneForARunOfGatesThatTookNothing(monkeypatch, tmp_path, runner):
+    # arrange: the last real run's archive, and a run made only of product-owned gates that appended -
+    # they returned a number, took no dir and wrote no file, so the archive standing there is not theirs
+    # (si#69). This used to be written over, because the run's verdict was derived from `not NOT_RUN`
+    _register(monkeypatch, tmp_path, _data())
+    cfg = testrun.config()
+    monkeypatch.setattr(testrun.allure, "render_report", lambda *a, **kw: allure.Render(report="r.html",
+                                                                                       tool="allure"))
+    results = tmp_path / "test/reports/allure-results"
+    results.mkdir(parents=True)
+    allure.write_environment(str(results), {"verdict": "failed", "verdict.summary": "last run was red"})
+    run = RunVerdict((GateVerdict("ui", Verdict.PASSED, 0),))
+
+    # act
+    assert not run.owns_results
+    testrun.report(cfg, run=run)
+
+    # assert: the last real run's verdict still stands, unaltered by a run that owned nothing
+    written = allure.read_environment(str(results / allure.ENVIRONMENT))
+    assert written["verdict"] == "failed", (
+        f"a run that took no results dir wrote its verdict into somebody else's archive: {written}")
+    assert written["verdict.summary"] == "last run was red"
 
 
 # --- an exploratory run must not speak for the archive it did not run (#30, review 1) ---------------------

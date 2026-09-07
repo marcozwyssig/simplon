@@ -296,32 +296,60 @@ def test_an_impl_gate_writes_nothing_into_the_shared_results_dir(monkeypatch, tm
         assert not (results / "environment.properties").exists()
 
 
-def test_a_run_of_only_impl_gates_already_claims_it_wrote_results(monkeypatch, tmp_path):
-    """The seam the two refusals are currently holding shut, named so a fix cannot walk into it.
+def test_a_run_of_only_impl_gates_does_not_claim_an_archive_it_never_filled(monkeypatch, tmp_path):
+    """si#69, the seam the two refusals used to hold shut - now that one of them is gone.
 
-    `RunVerdict.wrote_results` is the one condition under which a run's verdict may be written into the
-    archive, and its docstring says an impl-only run cannot reach it True by accident - because `declared`
-    refuses such a taxonomy. That is true of the LOAD PATH and not of the property: the value is computed
-    from the gate verdicts alone, and a passing impl gate that wrote nothing already answers True.
+    `RunVerdict.owns_results` is the one condition under which a run's verdict may be written into the
+    archive. Its predecessor was derived from the gate verdicts alone (`anything but not-run`), and its
+    docstring answered the obvious objection by saying an impl-only run could not reach it - because
+    `declared` refused such a taxonomy. That was true of the LOAD PATH and not of the property. si#61
+    let an impl-only taxonomy load, so the scaffolding is gone and the property has to stand by itself.
 
-    So the refusal is load-time scaffolding around a seam that does not defend itself. Whoever lets an
-    impl-only taxonomy load owns this too.
+    It does now, by asking each gate what it took rather than what it found.
     """
-    # arrange: the run an impl-only taxonomy would produce, and the dir it did not write
+    # arrange: the run an impl-only taxonomy produces, and the dir it did not write
     _register(monkeypatch, tmp_path)
     monkeypatch.setattr(testrun, "resolve_ref", lambda ref, where: (lambda: 0))
     results = _results_dir(tmp_path)
     results.mkdir(parents=True)
-    gate = testrun.Gate(name="unit", suite="", impl="orchestrator.gradle:test")
-    gv = testrun.assess_gate(gate, _cfg(gate), [], filtered=False)
+    appending = testrun.Gate(name="ui", suite="", impl="orchestrator.journeys:run")
+    gv = testrun.assess_gate(appending, _cfg(appending), [], filtered=False)
 
     # act
     run = RunVerdict((gv,))
 
-    # assert: it says the run wrote results, and the dir is the second source saying it did not
-    assert run.wrote_results is True
-    assert sorted(path.name for path in results.iterdir()) == []
+    # assert: green, empty, and it no longer claims to have written the archive standing there
     assert run.verdict is Verdict.PASSED
+    assert sorted(path.name for path in results.iterdir()) == []
+    assert run.owns_results is False, (
+        "a run of product-owned gates that wrote nothing still claims the results dir; the archive in "
+        "there belongs to whichever run last filled it, and stating this run's verdict in it is the "
+        "stale-verdict defect with the sign flipped")
+
+
+def test_a_clearing_impl_gate_owns_the_dir_it_emptied_but_still_wrote_nothing(monkeypatch, tmp_path):
+    """The other side, and the reason `owned_results` is not simply False on this branch. A gate that
+    cleared the dir DID take it: the archive there is this run's, empty or not, and the run's verdict
+    belongs in it - an empty report that says why is the honest artefact, and it is the one si#70 asks
+    for. What the gate still did not do is write a result, and both halves are asserted here so a later
+    fix cannot trade one for the other."""
+    # arrange
+    _register(monkeypatch, tmp_path)
+    monkeypatch.setattr(testrun, "resolve_ref", lambda ref, where: (lambda: 0))
+    results = _results_dir(tmp_path)
+    results.mkdir(parents=True)
+    (results / "STALE-from-an-earlier-run-result.json").write_text("{}", encoding="utf-8")
+    gate = testrun.Gate(name="unit", suite="", impl="orchestrator.gradle:test", results=testrun.CLEAR)
+
+    # act
+    gv = testrun.assess_gate(gate, _cfg(gate), [], filtered=False)
+
+    # assert: it owns the dir, and the dir is empty
+    assert RunVerdict((gv,)).owns_results is True, (
+        "the gate that emptied the results dir does not own it, so the run has nowhere to state its "
+        "verdict and an impl-only product gets an archive with no verdict widget at all")
+    assert sorted(path.name for path in results.iterdir()) == [], (
+        "owning the dir was read as filling it - the kernel knows one number here and no result")
 
 
 # --- the mixed taxonomy, which is what most products have ------------------------------------------------

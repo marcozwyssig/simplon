@@ -150,6 +150,16 @@ class GateVerdict:
     that forced the field - it renders an archive and runs no tests at all, so "the suite ran and reported
     failures" would be a false statement of exactly the kind this module exists to remove, produced by the
     module itself.
+
+    `owned_results` SAYS WHETHER THIS GATE TOOK THE RUN'S RESULTS DIR (si#69) - cleared it, filled it, or
+    both. It is a fact about the artefact and not about the product, which is why it sits beside the
+    verdict rather than inside it, and it has to be REPORTED by the producer rather than derived from the
+    verdict, because the two questions have different answers. A gate the kernel ran itself owned the dir
+    whatever it found; a gate whose runner is the product's own owns it only if the taxonomy said so, and
+    writes into it in no case at all. `RunVerdict.owns_results` is the whole reason it exists: that is the
+    condition under which the run's verdict may be written into the archive, and it used to be guessed
+    from `verdict is not NOT_RUN` - which said True for a run of product-owned gates that had written
+    nothing anywhere. It was unreachable while the load path refused such a taxonomy; si#61 let one load.
     """
 
     gate: str
@@ -157,6 +167,7 @@ class GateVerdict:
     rc: int = 0
     stage: str = ""
     detail: str = ""
+    owned_results: bool = False
 
     def __post_init__(self) -> None:
         # A stage belongs to the two outcomes in which the suite never ran, and to no other: `not-run`
@@ -259,17 +270,26 @@ class RunVerdict:
         return worst.verdict if worst is not None else Verdict.NOT_RUN
 
     @property
-    def wrote_results(self) -> bool:
-        """True when some gate of this run created or filled the run's results dir - the ONE condition
-        under which the run's verdict may be written into the archive.
+    def owns_results(self) -> bool:
+        """True when some gate of this run took the run's results dir - the ONE condition under which the
+        run's verdict may be written into the archive.
 
-        `NOT_RUN` is exactly "nothing was prepared, cleared or written", so a run made only of those must
-        leave the last real run's archive alone; writing into it would be the original defect with the
-        sign flipped. An impl-only run cannot reach here with this True by accident: `declared` requires
-        exactly one CLEARING gate, it must be the first, and an impl gate is forbidden from declaring the
-        clear - so every valid taxonomy opens with a pytest gate that owns the dir.
+        IT ASKS THE GATES RATHER THAN THEIR VERDICTS (si#69), and that is the fix. It used to read
+        `verdict is not NOT_RUN`, on the argument that `NOT_RUN` is exactly "nothing was prepared,
+        cleared or written" and every other outcome implies a dir that was taken - true of a gate the
+        kernel runs, false of one whose runner is the product's own, which returns a number and touches
+        nothing. Measured: `wrote_results: True` beside `results dir: []`.
+
+        The old docstring answered the objection by saying such a run could not reach here - `declared`
+        required exactly one CLEARING gate, it had to be the first, and an impl gate was forbidden from
+        declaring the clear, so every valid taxonomy opened with a pytest gate that owned the dir. That
+        was a statement about the LOAD PATH and not about this property, and the property is what a
+        caller holds. si#61 let an impl-only taxonomy load; the load-time scaffolding is gone and the
+        seam now stands on its own, which is what it was always supposed to do.
+
+        The value each gate reports is `owned_results`; a run with no gates at all owns nothing.
         """
-        return any(gate.verdict is not Verdict.NOT_RUN for gate in self.gates)
+        return any(gate.owned_results for gate in self.gates)
 
     @property
     def line(self) -> str:
