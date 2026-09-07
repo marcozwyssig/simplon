@@ -1,29 +1,47 @@
+# GENERATED from simplon.yaml by `simplon support workflows`. Do not edit.
+#
+# The steps below are the product's own commands, resolved against simplon.yaml's command tree, so
+# a command that is renamed or removed breaks generation instead of leaving a workflow calling
+# something that is gone. `--check` reports drift and returns 1.
+
+# Every push and every pull request, and it is the SAME three commands a developer types in a
+# checkout - not a pipeline's own spelling of them. Two routes to one verdict is the shape that
+# produced si#8, where the CI was green for months because it had never run mypy at all.
 name: ci
-on: [push, pull_request]
+on:
+  - push
+  - pull_request
 
 jobs:
+
+  # Stage zero is the working tree. The launcher provisions its own venv and installs this
+  # checkout with `-e .`, so the code under test is the code that runs the test - a commit that
+  # breaks CLI assembly fails here, in the same round, rather than after a release.
+  #
+  # Why the full history below matters to THIS product in particular (si#3): the version is
+  # derived from the git tag by setuptools-scm, so a shallow clone makes it produce a version
+  # that is merely wrong rather than failing - and on the release path PyPI accepts the wheel.
+  # The kernel emits the setting and states what it does; this is simplon's own reason for
+  # caring, which no other product has to inherit.
   self-build:
     runs-on: ubuntu-latest
     steps:
-      # fetch-depth: 0 (#3). The version comes from the git tag via setuptools-scm, and checkout's
-      # default shallow clone has no tags at all - the kernel would then call itself something the
-      # scaffolder cannot turn into a released pin, and a suite that is green in every checkout would go
-      # red only here. Full history is a precondition of the build, not an optimisation of it.
+      # The full history, and it is a precondition rather than an optimisation.
+      # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
+      # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
+      # by the generator rather than declared per job, so a workflow written later inherits the
+      # rule instead of somebody having to remember it.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      # Stage zero is the working tree. The launcher provisions its own venv and
-      # installs this checkout with `-e .`, so the code under test is the code
-      # that runs the test -- a commit that breaks CLI assembly fails here, in
-      # the same round, rather than after a release.
+          python-version: '3.12'
       - run: ./simplon.sh test all
-      # The type gate (#8), and it runs HERE rather than as a `mypy src` step of its own, because the
-      # command has to be the same one a developer runs. #8 was raised as "mypy is red locally and green
-      # in CI, so it must be the Python version" - and the CI had simply never run mypy at all. Two ways
-      # to reach one verdict is the shape that produced that; one way is the fix. What it checks and what
-      # it excuses is stated in mypy.ini, not here.
+      # The type gate (si#8), and it runs HERE rather than as a `mypy src` step of its own,
+      # because the command has to be the same one a developer runs. si#8 was raised as "mypy is
+      # red locally and green in CI, so it must be the Python version" - and the CI had simply
+      # never run mypy at all. Two ways to reach one verdict is the shape that produced that; one
+      # way is the fix. What it checks and what it excuses is stated in mypy.ini, not here.
       - run: ./simplon.sh test typecheck-python
       - run: ./simplon.sh build wheel

@@ -140,6 +140,7 @@ LIBRARY = frozenset({
     "degraded", "disk", "docker", "environments", "githubpackages", "healthgate", "host", "imagenames",
     "interact", "labegress", "labhost", "labinstance", "labnet", "linux", "log", "nexusproxy",
     "portainer", "ports", "pyvenv", "run", "surface", "taskgen", "topology", "verdict", "waits",
+    "workflowgen",
 })
 
 #: The subpackages beside those modules. Both are on the library surface and are among the most
