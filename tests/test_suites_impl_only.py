@@ -1,37 +1,32 @@
-"""si#61: what an IMPL-ONLY test taxonomy runs into, measured against the mechanism rather than argued.
+"""si#61: an IMPL-ONLY test taxonomy, measured against the mechanism rather than argued.
 
 THE CASE. A product whose only test runner is its own - a Gradle build, a browser journey suite - wants
-to write the `suites:` section si#26 names: one gate, `impl:`, no pytest anywhere in the product. It does
+to write the `suites:` section si#26 names: one gate, `impl:`, no pytest anywhere in the product. It did
 not load. Both spellings were run against a real Java product and both were refused: without
-`results: clear` because no gate declares the clear, and with `results: clear` on the impl gate because an
-impl gate may not declare it. So a Java product ships a Python test that asserts nothing about the product,
-purely to own the shared allure results dir.
+`results: clear` because no gate declared the clear, and with `results: clear` on the impl gate because
+an impl gate might not declare it. So a Java product shipped a Python test that asserts nothing about
+the product, purely to own the shared allure results dir.
 
-WHY THIS FILE EXISTS RATHER THAN A PATCH. The ticket reads the pair as an EXPRESSION RULE - the kind that
-costs flexibility, and the only kind that owes an argument. The census in `test_refusal_census.py` sorts a
-refusal by one question: *would the refused manifest have produced a WORKING product, just a different
-one?* That question is answerable by measurement, and the answer decides whether the fix is a looser rule
-or a better message. So it is measured here, at the mechanism, and the census entries for these two
-refusals cite these tests.
-
-WHAT THE MEASUREMENTS SAY.
+WHAT THE MEASUREMENTS SAID, AND WHICH ONE WAS THE REPAIR.
 
   - Nothing but a CLEARING GATE ever clears the shared results dir. `report()` merges into whatever is
-    already there, so a taxonomy with no clearing gate merges run N into run N-1's results forever. The
-    refused manifest would NOT have produced a working product -> diagnosis.
-  - `results: clear` on an impl gate PARSES (`Gate.clears` is True) and CLEARS NOTHING: `assess_gate`
-    returns on the impl branch before the clear is reached. The declaration is inert -> diagnosis.
+    already there, so a taxonomy with no clearing gate merges run N into run N-1's results forever. That
+    is still true and it is why `declared` still requires exactly one clearing gate.
+  - `results: clear` on an impl gate PARSED (`Gate.clears` was True) and CLEARED NOTHING: `assess_gate`
+    returned on the impl branch before the clear was reached. A key that counts and does nothing is
+    worse than one that is refused - and refusing it was the wrong repair, because the clear could hang
+    on no other kind of gate. **The inert branch is where the defect was, and it is fixed there**: an
+    impl gate now honours `results: clear`, and the refusal that stood in for the fix is gone.
 
-AND THE HALF A FIX MUST NOT INVENT. An impl gate writes NOTHING into the shared results dir - the kernel
-calls the product's runner for its rc and learns nothing else - yet `RunVerdict.wrote_results` already says
-True for a run made only of impl gates. Today that pair is unreachable, held apart by the very refusals
-above. The day an impl-only taxonomy is allowed to load, it is reachable, and a fix that lets the run write
-its verdict into an archive no gate filled would have MOVED the defect rather than removed it. So what
-stays EMPTY is pinned here beside what runs.
+AND THE HALF THE FIX MUST NOT INVENT (CLAUDE.md). An impl gate CLEARS the dir and writes NOTHING into
+it - the kernel calls the product's runner for its rc and learns nothing else. Those are two different
+claims and a fix that let the second follow from the first would have moved the defect rather than
+removed it: a run's verdict written into an archive no gate ever filled, over a report whose numbers came
+from somewhere else. So what stays EMPTY is pinned here beside what runs, in the same tests.
 
 Every gate below is built by calling `Gate`/`Suites` directly, deliberately: that is the only way past
-`declared` to the mechanism underneath it, and the mechanism is the thing under test. The two tests that
-DO go through `declared` are the two that pin the refusals themselves.
+`declared` to the mechanism underneath it, and the mechanism is the thing under test. The tests that DO
+go through `declared` are the ones that pin what loads and what does not.
 
 AAA throughout.
 """
@@ -79,11 +74,31 @@ def _cfg(*gates, merge=()):
                           gates=gates, merge=tuple(merge), parent_suite="Java")
 
 
-# --- the two refusals, pinned against their real messages ------------------------------------------------
+# --- what an impl-only taxonomy may now say, and what it still may not -----------------------------
 
 
-def test_an_impl_only_taxonomy_is_refused_because_no_gate_declares_the_clear():
-    """Horn one, as si#26 wrote the section: the manifest the Java use case actually wants."""
+def test_an_impl_only_taxonomy_loads_once_its_own_gate_owns_the_results_dir():
+    """THE FIX, at the load path: the section si#26 asks for, with the clear on the product's own gate.
+
+    Before si#61 this was refused - "an 'impl' gate cannot declare 'results'" - and the spelling without
+    it was refused too, which between them left an impl-only product no loadable section at all.
+    """
+    # arrange: one gate, the product's own runner, no pytest anywhere
+    data = _section({**IMPL_ONLY_GATE, "results": "clear"})
+
+    # act
+    cfg = testrun.declared(data, source="javademo.yaml")
+
+    # assert: it loads, and the gate that owns the run's results dir is the product's own
+    assert [gate.name for gate in cfg.gates] == ["unit"]
+    assert cfg.gates[0].impl == "orchestrator.gradle:test" and not cfg.gates[0].suite
+    assert cfg.gates[0].clears
+
+
+def test_an_impl_only_taxonomy_that_declares_no_clear_is_still_refused():
+    """The rule that did NOT go. Somebody has to own the dir, and the measurement below says why: nothing
+    else empties it, so a taxonomy with no clearing gate merges this run into the last one's results
+    forever. What changed is who may own it, not whether anybody must."""
     # arrange
     data = _section(IMPL_ONLY_GATE)
 
@@ -97,41 +112,37 @@ def test_an_impl_only_taxonomy_is_refused_because_no_gate_declares_the_clear():
         f"the refusal no longer says WHICH gates clear (none): {refused.value}")
 
 
-def test_an_impl_gate_may_not_declare_the_clear_that_would_have_satisfied_the_first_refusal():
-    """Horn two: the obvious answer to horn one, and the trap closing. Note what the two messages between
-    them do NOT say - that an impl-only product has no third spelling at all."""
+def test_the_refusal_names_the_way_out_and_not_only_the_cause():
+    """CLAUDE.md: a message that names the cause and the way out is worth writing; one that says
+    something went wrong is the defect wearing a hat. This one used to name only the rule, which for an
+    impl-only product pointed at a spelling the next refusal then rejected."""
     # arrange
-    data = _section({**IMPL_ONLY_GATE, "results": "clear"})
+    data = _section(IMPL_ONLY_GATE)
 
-    # act / assert
+    # act
     with pytest.raises(ValueError) as refused:
         testrun.declared(data, source="javademo.yaml")
 
-    assert "an 'impl' gate cannot declare 'results'" in str(refused.value), (
-        f"the refusal no longer names the offending key: {refused.value}")
-    assert "only calls its runner for the rc" in str(refused.value), (
-        f"the refusal no longer gives its reason: {refused.value}")
+    # assert: it says who may carry the clear, which is the whole of what the reader has to do next
+    said = str(refused.value)
+    assert "'impl' one included" in said, f"the refusal names no way out: {said}"
 
 
-def test_the_two_refusals_leave_an_impl_only_product_no_loadable_spelling():
-    """The pair, as a pair. Either refusal alone would be an inconvenience; together they are the finding,
-    and a fix that removes only one of them still leaves the section unwritable."""
-    # arrange: every way an impl-only taxonomy can spell the clear
-    spellings = [_section(IMPL_ONLY_GATE),
-                 _section({**IMPL_ONLY_GATE, "results": "clear"}),
-                 _section({**IMPL_ONLY_GATE, "results": "append"})]
+def test_an_impl_gate_still_may_not_declare_the_three_keys_that_do_nothing_on_it():
+    """The rest of the opacity lock, which si#61 did not touch. `junit`, `args` and `preamble` are still
+    inert on a gate the kernel only calls for an rc, so declaring one is still refused and still named."""
+    # arrange
+    stray = {"junit": "unit.xml", "args": True, "preamble": "orchestrator.lab:ready"}
 
-    # act
-    refused = []
-    for data in spellings:
-        with pytest.raises(ValueError) as raised:
-            testrun.declared(data, source="javademo.yaml")
-        refused.append(str(raised.value))
-
-    # assert: all three, and each for a stated reason rather than the same one three times
-    assert len(refused) == len(spellings)
-    assert len({line.split(": ", 1)[-1] for line in refused}) == 2, (
-        f"the three spellings were expected to fail for two distinct stated reasons: {refused}")
+    # act / assert: each on its own, so the message is about the key and not about the set
+    for key, value in stray.items():
+        with pytest.raises(ValueError) as refused:
+            testrun.declared(_section({**IMPL_ONLY_GATE, "results": "clear", key: value}),
+                             source="javademo.yaml")
+        assert f"an 'impl' gate cannot declare '{key}'" in str(refused.value), (
+            f"the refusal no longer names the offending key '{key}': {refused.value}")
+        assert "only calls its runner for the rc" in str(refused.value), (
+            f"the refusal no longer gives its reason: {refused.value}")
 
 
 # --- the property the refusals protect, measured -------------------------------------------------------
@@ -174,31 +185,86 @@ def test_only_a_clearing_gate_clears_the_shared_results_dir(monkeypatch, tmp_pat
         "which is the whole reason the missing-clear refusal is diagnosis and not an expression rule")
 
 
-def test_results_clear_on_an_impl_gate_parses_and_then_clears_nothing(monkeypatch, tmp_path):
-    """The second refusal's reason, measured rather than read off a comment.
+def test_results_clear_on_an_impl_gate_now_actually_clears(monkeypatch, tmp_path):
+    """THE FIX, at the mechanism. This test used to assert the opposite and named the condition under
+    which it would change: "if that is deliberate, the refusal in `_gate` has become an expression rule".
+    It did not become one - it went, because the inert branch was the defect and the refusal was standing
+    in for the repair.
 
-    `results: clear` on an impl gate is not merely redundant: `Gate.clears` says True, so it would satisfy
-    the exactly-one-clearing-gate rule, while `assess_gate` returns on the impl branch before the clear is
-    ever reached. A declaration that counts and does nothing is the shape this repository refuses on
-    sight, and refusing it takes nothing away - diagnosis, not an expression rule.
+    What an impl gate declaring the clear does is exactly what it says: the run's results dir starts
+    empty. Nothing else about the gate changed.
     """
-    # arrange: an impl gate that says it clears, and something in the dir for it to clear
+    # arrange: an impl gate that says it clears, and last run's leftovers for it to clear
     _register(monkeypatch, tmp_path)
     monkeypatch.setattr(testrun, "resolve_ref", lambda ref, where: (lambda: 0))
     results = _results_dir(tmp_path)
     results.mkdir(parents=True)
     (results / "STALE-from-an-earlier-run-result.json").write_text("{}", encoding="utf-8")
+    scratch = tmp_path / "build" / "reports" / testrun.SCRATCH
+    scratch.mkdir(parents=True)
+    (scratch / "index.html").write_text("last run's render", encoding="utf-8")
     gate = testrun.Gate(name="unit", suite="", impl="orchestrator.gradle:test", results=testrun.CLEAR)
 
     # act
     assert gate.clears, "the taxonomy would not even have counted this gate as the clearing one"
     gv = testrun.assess_gate(gate, _cfg(gate), [], filtered=False)
 
-    # assert: it passed, and the dir it claimed to clear is untouched
+    # assert: green, the dir is there and it is empty, and the stale render went with it
     assert gv.verdict is Verdict.PASSED
-    assert (results / "STALE-from-an-earlier-run-result.json").exists(), (
-        "the impl branch now honours results: clear - if that is deliberate, the refusal in `_gate` has "
-        "become an expression rule and the census must say so")
+    assert results.is_dir(), "the clear removed the results dir instead of emptying it"
+    assert sorted(path.name for path in results.iterdir()) == [], (
+        "an impl gate declaring results: clear left the previous run's results standing - which is the "
+        "forever-appending archive the clear-versus-append rule exists to prevent")
+    assert not scratch.exists(), "the transient render dir of the last run survived the clear"
+
+
+def test_an_appending_impl_gate_clears_nothing(monkeypatch, tmp_path):
+    """The other half of the same key, so the fix is a distinction and not a blanket. A gate that does
+    not declare the clear must leave the dir exactly as it found it - otherwise the second gate of a run
+    would delete the first one's results, which is what the rule is against."""
+    # arrange
+    _register(monkeypatch, tmp_path)
+    monkeypatch.setattr(testrun, "resolve_ref", lambda ref, where: (lambda: 0))
+    results = _results_dir(tmp_path)
+    results.mkdir(parents=True)
+    (results / "EARLIER-GATE-of-this-run-result.json").write_text("{}", encoding="utf-8")
+    gate = testrun.Gate(name="ui", suite="", impl="orchestrator.journeys:run")
+
+    # act
+    assert not gate.clears
+    gv = testrun.assess_gate(gate, _cfg(gate), [], filtered=False)
+
+    # assert
+    assert gv.verdict is Verdict.PASSED
+    assert (results / "EARLIER-GATE-of-this-run-result.json").exists(), (
+        "an appending impl gate deleted what an earlier gate of the same run had written")
+
+
+def test_a_clearing_impl_gate_of_an_exploratory_run_clears_the_quarantine_and_not_the_archive(
+        monkeypatch, tmp_path):
+    """The quarantine rule reaches the new branch too. An exploratory run is partial by construction, so
+    its clear must land in `filtered_results` and the canonical archive of the last full gate must be
+    untouched - the same guarantee a pytest gate already had, and a fix that opened the clear to a second
+    branch without carrying that rule across would have re-opened it."""
+    # arrange: a full archive beside an empty quarantine
+    _register(monkeypatch, tmp_path)
+    monkeypatch.setattr(testrun, "resolve_ref", lambda ref, where: (lambda: 0))
+    archive = _results_dir(tmp_path)
+    archive.mkdir(parents=True)
+    (archive / "THE-LAST-FULL-GATE-result.json").write_text("{}", encoding="utf-8")
+    quarantine = tmp_path / "build" / "reports" / f"{RESULTS}-filtered"
+    quarantine.mkdir(parents=True)
+    (quarantine / "LAST-HUNT-result.json").write_text("{}", encoding="utf-8")
+    gate = testrun.Gate(name="unit", suite="", impl="orchestrator.gradle:test", results=testrun.CLEAR)
+
+    # act
+    testrun.assess_gate(gate, _cfg(gate), ["-k", "adds"], filtered=True)
+
+    # assert
+    assert (archive / "THE-LAST-FULL-GATE-result.json").exists(), (
+        "a one-test hunt cleared the canonical archive of the last full gate")
+    assert sorted(path.name for path in quarantine.iterdir()) == [], (
+        "the exploratory run did not clear its own quarantined results dir")
 
 
 # --- what a fix must not invent ------------------------------------------------------------------------
@@ -210,22 +276,24 @@ def test_an_impl_gate_writes_nothing_into_the_shared_results_dir(monkeypatch, tm
     so an impl gate contributes no allure result and no environment of its own. A fix that lets an
     impl-only taxonomy load must leave this assertion standing.
     """
-    # arrange: an empty results dir and an impl gate that succeeds
+    # arrange: an empty results dir and an impl gate that succeeds - BOTH spellings of `results`, because
+    # si#61 opened the clear to this branch and clearing a dir is not the same claim as filling one
     _register(monkeypatch, tmp_path)
     monkeypatch.setattr(testrun, "resolve_ref", lambda ref, where: (lambda: 0))
     results = _results_dir(tmp_path)
     results.mkdir(parents=True)
-    gate = testrun.Gate(name="unit", suite="", impl="orchestrator.gradle:test")
+    for spelling in (testrun.APPEND, testrun.CLEAR):
+        gate = testrun.Gate(name="unit", suite="", impl="orchestrator.gradle:test", results=spelling)
 
-    # act
-    gv = testrun.assess_gate(gate, _cfg(gate), [], filtered=False)
+        # act
+        gv = testrun.assess_gate(gate, _cfg(gate), [], filtered=False)
 
-    # assert: green, and it left nothing behind - not even the environment every pytest gate writes
-    assert gv.verdict is Verdict.PASSED
-    assert sorted(path.name for path in results.iterdir()) == [], (
-        "an impl gate wrote into the shared results dir; the kernel knows only this gate's rc, so "
-        "anything in there is a statement about the product that nobody made")
-    assert not (results / "environment.properties").exists()
+        # assert: green, and it left nothing behind - not even the environment every pytest gate writes
+        assert gv.verdict is Verdict.PASSED
+        assert sorted(path.name for path in results.iterdir()) == [], (
+            f"an impl gate with results: {spelling} wrote into the shared results dir; the kernel knows "
+            f"only this gate's rc, so anything in there is a statement about the product that nobody made")
+        assert not (results / "environment.properties").exists()
 
 
 def test_a_run_of_only_impl_gates_already_claims_it_wrote_results(monkeypatch, tmp_path):
@@ -256,18 +324,16 @@ def test_a_run_of_only_impl_gates_already_claims_it_wrote_results(monkeypatch, t
     assert run.verdict is Verdict.PASSED
 
 
-# --- what the product does instead today ----------------------------------------------------------------
+# --- the mixed taxonomy, which is what most products have ------------------------------------------------
 
 
-def test_the_taxonomy_that_loads_is_the_one_with_a_python_test_in_front_of_the_java_one(monkeypatch,
-                                                                                        tmp_path):
-    """The workaround si#26 had to build to measure anything at all, pinned as the price.
-
-    The section loads only once a pytest gate stands in front of the product's own runner, owning the
-    shared results dir. What that gate tests is not the kernel's business - and in the measured product it
-    was `assert True`, because the product has no Python to test.
+def test_a_pytest_gate_may_still_own_the_dir_for_an_impl_gate_behind_it():
+    """The workaround si#26 had to build is still a legal taxonomy - it just is not the only one any
+    more. This is what every existing product declares (a pytest first gate, a product-owned runner
+    behind it), and si#61 must not have taken it away: measured over all seven reachable manifests, two
+    declare a `suites:` section and both open with a clearing pytest gate.
     """
-    # arrange: exactly the section the Java product ships today
+    # arrange: the section the Java product had to ship before si#61
     data = _section({"name": "bootstrap", "suite": "tests/bootstrap", "junit": "bootstrap-junit.xml",
                      "results": "clear"},
                     IMPL_ONLY_GATE)
@@ -275,10 +341,25 @@ def test_the_taxonomy_that_loads_is_the_one_with_a_python_test_in_front_of_the_j
     # act
     cfg = testrun.declared(data, source="javademo.yaml")
 
-    # assert: it loads, and the gate that owns the dir is the Python one rather than the product's own
+    # assert: unchanged - it loads, and the Python gate still owns the dir
     assert [gate.name for gate in cfg.gates] == ["bootstrap", "unit"]
     assert cfg.gates[0].suite == "tests/bootstrap" and cfg.gates[0].clears
     assert cfg.gates[1].impl and not cfg.gates[1].clears
+
+
+def test_a_clearing_impl_gate_must_still_be_the_first_one():
+    """The ordering rule reaches the new spelling as well. A clear that runs second deletes what the
+    first gate wrote, and whether the clearing gate is the kernel's or the product's changes nothing
+    about that."""
+    # arrange: the clear on the impl gate, and a pytest gate ahead of it
+    data = _section({"name": "bootstrap", "suite": "tests/bootstrap", "junit": "bootstrap-junit.xml"},
+                    {**IMPL_ONLY_GATE, "results": "clear"})
+
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        testrun.declared(data, source="javademo.yaml")
+    assert "is not the FIRST gate" in str(refused.value), (
+        f"a clearing impl gate was allowed to run second: {refused.value}")
 
 
 def test_a_pytest_gate_that_declares_no_junit_name_would_have_written_to_a_directory(tmp_path):

@@ -25,7 +25,13 @@ the report dir and the archive's own Environment widget (#30). A suite that prep
 session fixture, out of the kernel's sight, says so through the marker file at `SETUP_MARKER_ENV`.
 
 A gate may also be declared as a bare `impl:` instead of a pytest `suite:`, for a level whose runner is the
-product's own (a browser journey suite, say); the kernel just calls it for its rc and sequences it. It
+product's own (a browser journey suite, say); the kernel just calls it for its rc and sequences it. SUCH A
+GATE MAY OWN THE RESULTS DIR (si#61): `results: clear` on it says the run opens with this gate and the dir
+starts empty, which is the only way a product with no pytest anywhere in it can write a loadable taxonomy.
+Measured before the fix, on a Java product: both spellings of that section were refused, and the way out
+was a pytest gate containing `assert True`, a 29 MB suite venv, and an archive that counted four tests for
+a product that has three. Clearing is not writing - the kernel still learns exactly one number here - and
+the empty half is pinned in `tests/test_suites_impl_only.py` beside the running half. It
 therefore reports that gate in terms of the rc AND SAYS SO (#65) rather than borrowing the sentence written
 for a suite it ran itself, and it opens the same setup marker to it as to a pytest gate (#59), so a runner
 that knows its own preparation fell over has somewhere to say it.
@@ -120,6 +126,11 @@ class Gate:
     its rc) is set, never both. `results` says whether this gate CLEARS the shared results dir or APPENDS
     into it - the whole of the clear-versus-append rule, held as data. `args` marks the ONE gate a run's
     passthrough pytest args belong to.
+
+    `results` IS THE ONE KEY THAT MEANS THE SAME THING ON BOTH KINDS (si#61). It is not a statement about
+    what a gate writes - an `impl` gate writes nothing the kernel can see - but about whose run the
+    results dir belongs to, and that question has the same answer whoever runs the tests. It used to be
+    refused on an `impl` gate, which left a product whose only runner is its own unable to say it at all.
     """
 
     name: str
@@ -182,12 +193,27 @@ def _gate(body: object, where: str) -> Gate:
         raise ValueError(f"{where}: declare exactly one of 'suite' (a pytest root) or 'impl' "
                          f"(a product-owned runner), not both and not neither")
     if impl:
-        # An `impl:` gate is opaque: the kernel calls the product's runner for its rc and nothing else, so
-        # it neither writes the shared results, nor takes pytest args, nor runs the preamble. Declaring any
-        # of those on it must FAIL rather than be dropped - `results: clear` on an impl gate would otherwise
-        # satisfy the exactly-one-clearing-gate rule below while nothing ever cleared, which is the silent
-        # forever-appending archive that rule exists to prevent.
-        stray = [key for key in ("results", "junit", "args", "preamble") if key in body]
+        # An `impl:` gate is opaque: the kernel calls the product's runner for its rc and learns nothing
+        # else, so it takes no pytest args, has no junit file of the kernel's making and gets no preamble.
+        # Declaring any of those on it must FAIL rather than be dropped.
+        #
+        # `results` LEFT THIS LIST (si#61), and the reason is the one the list is built on. It was refused
+        # because `results: clear` here would satisfy the exactly-one-clearing-gate rule below while
+        # nothing ever cleared - `assess_gate` returned on the impl branch above the clear - and a key
+        # that counts and does nothing is worse than one that is refused. That was true of the code and
+        # it was the wrong repair. The clear could hang on NOTHING ELSE, so a product whose only test
+        # runner is its own could write no loadable `suites:` section at all. Measured on a Java product
+        # with no Python in it: both spellings refused, rc 1, no report; the way out was to ship a pytest
+        # gate holding `assert True` purely to own the directory, at 29 MB of suite venv and a report
+        # that counted four tests where the product has three.
+        #
+        # So the inert declaration was fixed where it was inert - `assess_gate` honours the clear on this
+        # branch now - and the refusal has nothing left to protect. An impl gate that declares the clear
+        # says exactly what it does: this gate OPENS the run, and the run's results dir starts empty. It
+        # still writes nothing into that dir; that is a different statement, and `test_suites_impl_only`
+        # keeps it pinned, because a fix that let the kernel invent a result for a runner it cannot see
+        # would have moved this defect rather than removed it.
+        stray = [key for key in ("junit", "args", "preamble") if key in body]
         if stray:
             raise ValueError(f"{where}: an 'impl' gate cannot declare {', '.join(repr(k) for k in stray)} "
                              f"- the kernel only calls its runner for the rc")
@@ -234,7 +260,9 @@ def declared(data: Mapping[str, object], source: str = "manifest") -> Suites:
     clearing = [gate.name for gate in gates if gate.clears]
     if len(clearing) != 1:
         raise ValueError(f"{source}: exactly one gate must declare results: {CLEAR} "
-                         f"(the first one to run); got {clearing or 'none'}")
+                         f"(the first one to run); got {clearing or 'none'}. Any gate may carry it, an "
+                         f"'impl' one included - that gate then opens the run's results dir without "
+                         f"writing into it.")
     if not gates[0].clears:
         raise ValueError(f"{source}: '{clearing[0]}' clears the shared results but is not the FIRST gate; "
                          f"a later clear deletes what the gates before it wrote")
@@ -353,6 +381,21 @@ def _reported_stage(path: str) -> str:
     return "the suite's own setup"
 
 
+def _clear_results(results: str, reports: str) -> None:
+    """Empty the run's results dir and the transient render dir, and leave the results dir THERE.
+
+    One place, because two branches reach it now (si#61) and a second copy of a rule is a second rule.
+    The scratch dir goes with the results because `allure generate -o` writes into it and a stale render
+    of the last run standing beside this run's results is the same lie one directory across.
+
+    The dir is RECREATED rather than merely removed: "cleared" is a statement about ownership, and an
+    absent directory and an empty one say different things to the report step that reads it next.
+    """
+    shutil.rmtree(results, ignore_errors=True)
+    shutil.rmtree(os.path.join(reports, SCRATCH), ignore_errors=True)
+    os.makedirs(results, exist_ok=True)
+
+
 def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
                 earlier: tuple[GateVerdict, ...] = ()) -> GateVerdict:
     """Run ONE gate and say not only whether it was red but whether it was red ABOUT anything (#30).
@@ -405,7 +448,19 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
         if rc != 0:
             return GateVerdict(gate.name, Verdict.NOT_RUN, rc, verdict.PRECONDITION)
     reports = _reports_dir(cfg)
+    results = results_dir(cfg, filtered=filtered)
     if gate.impl:
+        # THE CLEAR IS HONOURED HERE TOO (si#61), and that is the whole of the fix. It used to be
+        # unreachable on this branch and refused at load in consequence, which left a product whose only
+        # runner is its own with no way to say that its run OWNS the results dir - the clear could hang
+        # on a pytest gate and on nothing else. It hangs on this one now: the gate opens the run, the
+        # dir starts empty, and the report step that follows sees this run and no other.
+        #
+        # It clears and it still WRITES NOTHING. The two are not the same claim: clearing is about whose
+        # run the directory belongs to, writing is about what the kernel learned, and the kernel learned
+        # one number here. `test_suites_impl_only` pins the second by asserting the dir stays empty.
+        if gate.clears:
+            _clear_results(results, reports)
         # NOT `verdict.of_subprocess`: this rc is a Python callable's return value, not a child's wait
         # status, so a negative one names no signal and reading it as one would invent a statement. Same
         # reason the docstring gives for saying nothing else about an impl gate.
@@ -426,13 +481,11 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
 
     log.info(gate.announce or f"{gate.name} gate: {gate.suite} against the running lab")
     suite_dir = str(context.current().root / gate.suite)
-    results = results_dir(cfg, filtered=filtered)
     py, _ = pyvenv.venv_python_pip(suite_dir)
     if gate.clears:
         # The FIRST gate clears the run's results + the transient render dir exactly once; every later gate
         # appends into it, so the report step sees every suite of the run and only this run.
-        shutil.rmtree(results, ignore_errors=True)
-        shutil.rmtree(os.path.join(reports, SCRATCH), ignore_errors=True)
+        _clear_results(results, reports)
     os.makedirs(results, exist_ok=True)
     junit = os.path.join(reports, f"{os.path.splitext(gate.junit)[0]}-filtered.xml" if filtered else gate.junit)
     with _setup_marker(reports) as marker, keep_awake():

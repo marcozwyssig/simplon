@@ -127,17 +127,22 @@ def test_declared_rejectsAGateDeclaringBothASuiteAndAnImpl():
         testrun.declared(data, source="sample.yaml")
 
 
-def test_declared_rejectsAnImplGateThatClaimsTheClear_becauseItWouldNeverActuallyClear():
-    # arrange: an `impl:` gate is opaque - the kernel calls the product's runner for its rc and nothing
-    # else - so a clear declared on one is dropped at runtime. Accepting it would satisfy the
-    # exactly-one-clearing-gate rule while nothing ever cleared: the silent forever-appending archive
+def test_declared_acceptsAnImplGateThatClaimsTheClear_becauseItNowActuallyClears():
+    # arrange: this used to be refused, on the ground that the clear was dropped on the impl branch and
+    # an accepted key that does nothing is worse than a refused one. True of the code, and the wrong
+    # repair: the clear could hang on no other kind of gate, so a product whose only runner is its own
+    # could write no loadable section at all (si#61). The branch honours it now - see
+    # tests/test_suites_impl_only.py, which measures the clearing - so the declaration is no longer inert
     data = _data()
     data["suites"]["gates"] = [{"name": "ui", "impl": "product.tooling:ui", "results": "clear"},
                                data["suites"]["gates"][1]]
 
-    # act / assert
-    with pytest.raises(ValueError, match="an 'impl' gate cannot declare 'results'"):
-        testrun.declared(data, source="sample.yaml")
+    # act
+    cfg = testrun.declared(data, source="sample.yaml")
+
+    # assert: it loads, and the gate that owns the run's results dir is the product's own
+    assert cfg.gates[0].impl == "product.tooling:ui" and cfg.gates[0].clears
+    assert not cfg.gates[1].clears
 
 
 def test_declared_rejectsAnImplGateThatDeclaresPytestOnlyKeys():
