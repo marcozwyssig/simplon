@@ -336,9 +336,14 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
     lab that was not there, and whatever the suite then reported was recorded as a statement about the
     product. `SETUP_FAILED` is that case, and the suite does not run.
 
+    A SUITE ENDED BY A SIGNAL IS `KILLED`, not red (#55). The rc read back here is the pytest child's wait
+    status, so a negative one IS the signal - and a suite that was shot reported nothing, which makes
+    "the suite ran and reported failures" a statement about the product that nobody made.
+
     A gate declared as a bare `impl:` stays opaque, deliberately. The kernel calls the product's runner for
-    its rc and nothing else, so it has no honest basis for saying more than passed/failed about it; a
-    product that wants the distinction there owns both halves and can write its own verdict.
+    its rc and nothing else, so it has no honest basis for saying more than passed/failed about it - not
+    even the signal reading above, since that rc never passed through a wait status; a product that wants
+    the distinction there owns both halves and can write its own verdict.
 
     `earlier` is what the gates before this one in the SAME invocation found. It exists so the environment
     this gate writes into the shared results dir states the RUN's verdict rather than its own: the write is
@@ -351,6 +356,9 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
         if rc != 0:
             return GateVerdict(gate.name, Verdict.NOT_RUN, rc, verdict.PRECONDITION)
     if gate.impl:
+        # NOT `verdict.of_subprocess`: this rc is a Python callable's return value, not a child's wait
+        # status, so a negative one names no signal and reading it as one would invent a statement. Same
+        # reason the paragraph below gives for saying nothing else about an impl gate.
         rc = _hook(gate.impl, f"gates.{gate.name}.impl")()
         return GateVerdict(gate.name, Verdict.PASSED if rc == 0 else Verdict.FAILED, rc)
 
@@ -376,6 +384,16 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
         rc = run(allure.integration_pytest_argv(py, results, junit, extra),
                  capture=False, cwd=suite_dir).rc
         stage = _reported_stage(marker)
+    if verdict.of_subprocess(rc) is Verdict.KILLED:
+        # THE SUITE DID NOT REPORT; IT WAS SHOT (#55). This is the one place in the kernel that may read a
+        # negative rc as a signal, because this rc is a child process's wait status and nothing else.
+        #
+        # Checked BEFORE the suite's own setup marker, deliberately. A marker is the suite's claim about a
+        # run that then did not finish; the signal is the reason nothing came back at all, and it is the
+        # one fact that also explains a half-written marker. `verdict.rank` places the two the same way
+        # round for the same reason, and the two orderings have to agree or a run and a gate would name
+        # different causes for one event.
+        return _written(GateVerdict(gate.name, Verdict.KILLED, rc), results, earlier, filtered)
     if stage:
         # The suite's own claim wins over its exit code, INCLUDING over a green one. A suite that reports
         # a broken setup and still exits 0 is a suite whose green means nothing, and believing the rc there
@@ -389,8 +407,7 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
         return _written(GateVerdict(gate.name, Verdict.SETUP_FAILED, rc or SETUP_FAILED_RC, stage),
                         results, earlier, filtered)
     log.ok(f"{gate.name} results written to {results}")
-    return _written(GateVerdict(gate.name, Verdict.PASSED if rc == 0 else Verdict.FAILED, rc),
-                    results, earlier, filtered)
+    return _written(GateVerdict(gate.name, verdict.of_subprocess(rc), rc), results, earlier, filtered)
 
 
 def _written(gv: GateVerdict, results: str, earlier: tuple[GateVerdict, ...], filtered: bool) -> GateVerdict:
@@ -413,8 +430,12 @@ def run_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool) -> in
     The rc stays exactly what it was before #30: zero or not, with no reserved value carrying the reason.
     That is the point. Everything a later reader needs is in what was WRITTEN, and a caller who wants it in
     hand calls `assess_gate` instead of decoding the rc.
+
+    `verdict.exit_code` is not an exception to that (#55). A gate a signal killed still returns simply
+    non-zero; what it does is stop the wait status from being MANGLED into 241 by `sys.exit`'s modulo, and
+    hand on the 128+n a shell would have reported for the same child. No new distinction, one fewer lie.
     """
-    return assess_gate(gate, cfg, extra, filtered=filtered).rc
+    return verdict.exit_code(assess_gate(gate, cfg, extra, filtered=filtered).rc)
 
 
 def report(cfg: Suites | None = None, *, filtered: bool = False, run: RunVerdict | None = None) -> int:
@@ -557,7 +578,8 @@ def gate(ctx: typer.Context, name: str = "") -> int:
     # its OWN file: the quarantine that already keeps its results out of the archive has to keep its
     # verdict out of the canonical record too, or a one-test hunt overwrites the finding of a full gate.
     verdict.write_stamp(_reports_dir(cfg), RunVerdict((gv,), filtered=filtered))
-    return gv.rc
+    # The record keeps the wait status it observed; the PROCESS gets the number a shell can read (#55).
+    return verdict.exit_code(gv.rc)
 
 
 def report_cmd() -> int:
