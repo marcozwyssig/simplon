@@ -10,6 +10,7 @@ an archive that reports one test and looks like a full gate). AAA throughout, ne
 import contextlib
 import os
 import sys
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -643,15 +644,23 @@ def test_run_gate_clearsTheQuarantineDir_soAFilteredRunIsNeverMixedWithTheLastOn
 # --- accept: the whole chain ------------------------------------------------------------------------------
 
 
-def _stub_chain(monkeypatch, rcs, report_rc=0):
-    """Record the gates accept ran (with the args each received) and inject each one's rc."""
+def _stub_chain(monkeypatch, rcs, report_rc=0, seen=None):
+    """Record the gates accept ran (with the args each received) and inject each one's rc.
+
+    `seen`, when a caller passes one, also collects the keyword arguments the report step was handed -
+    kept out of `ran` so the ordering assertions every caller writes stay about the ORDER."""
     ran = []
     monkeypatch.setattr(testrun, "assess_gate",
                         lambda gate, cfg, extra, *, filtered, earlier=():
                         ran.append((gate.name, extra, filtered)) or _gv(gate.name, rcs.get(gate.name, 0)))
-    monkeypatch.setattr(testrun, "report",
-                        lambda cfg=None, *, filtered=False, run=None:
-                        ran.append(("report", [], filtered)) or report_rc)
+
+    def _report(cfg=None, *, filtered=False, run=None, since=None):
+        ran.append(("report", [], filtered))
+        if seen is not None:
+            seen.update(filtered=filtered, run=run, since=since)
+        return report_rc
+
+    monkeypatch.setattr(testrun, "report", _report)
     return ran
 
 
@@ -716,8 +725,9 @@ def test_report_mergesTheDeclaredResultDirs_intoTheSharedResults(monkeypatch, tm
     _register(monkeypatch, tmp_path, _data())
     merged = {}
     monkeypatch.setattr(testrun.allure, "merge_results",
-                        lambda dst, srcs, parent_suite="Unit": merged.update(dst=dst, srcs=srcs,
-                                                                             parent_suite=parent_suite)
+                        lambda dst, srcs, parent_suite="Unit", not_before=None:
+                        merged.update(dst=dst, srcs=srcs, parent_suite=parent_suite,
+                                      not_before=not_before)
                         or allure.Merge(parent_suite=parent_suite, tagged=1, present=tuple(srcs)))
     monkeypatch.setattr(testrun.allure, "render_report",
                         lambda *a, **k: merged.update(rendered=(a, k))
@@ -731,6 +741,15 @@ def test_report_mergesTheDeclaredResultDirs_intoTheSharedResults(monkeypatch, tm
     assert merged["dst"] == str(tmp_path / "test/reports/allure-results")
     assert merged["srcs"] == [str(tmp_path / "a/build/allure-results"), str(tmp_path / "b/build/allure-results")]
     assert merged["parent_suite"] == "Unit"
+    # a standalone report step has no run behind it, so it merges what is present (si#70)
+    assert merged["not_before"] is None
+
+    # act / assert: and a report step that DOES know when its run began hands that on, or the whole
+    # distinction stops at this function's own signature
+    testrun.report(since=1234.0)
+    assert merged["not_before"] == 1234.0, (
+        "the report step knows when the run began and does not tell the merge, so the merge takes "
+        "whatever lies in the product's dirs - which is the previous run's")
 
 
 def _report_lines(monkeypatch, tmp_path, capsys, *, merge):
@@ -1040,7 +1059,7 @@ def test_accept_reportsTheWeakestClaimOfTheWholeRun_soOneBrokenSetupIsNotHiddenB
     # arrange: one gate probed and found something, the other never probed at all
     _register(monkeypatch, tmp_path, _data())
     reports = str(tmp_path / "test/reports")
-    monkeypatch.setattr(testrun, "report", lambda cfg=None, *, filtered=False, run=None: 0)
+    monkeypatch.setattr(testrun, "report", lambda cfg=None, *, filtered=False, run=None, since=None: 0)
     verdicts = {"system": GateVerdict("system", Verdict.FAILED, 1),
                 "acceptance-dataplane": GateVerdict("acceptance-dataplane", Verdict.SETUP_FAILED, 1,
                                                     "preamble")}
@@ -1075,9 +1094,58 @@ def test_accept_stampsThatItNeverStarted_whenTheSectionPreconditionRefuses(monke
 # --- a step that RAISED still leaves this run's record (si#63) --------------------------------------------
 
 
+def test_accept_tellsTheReportStepWhenTheRunBegan_soItCannotMergeTheLastRunsResults(monkeypatch,
+                                                                                     tmp_path, runner):
+    # arrange: si#70. The declared merge sources belong to the PRODUCT and no gate of either kind empties
+    # them, so without this instant the report step merged whatever the last run left there. Measured on
+    # a real Java product: a build that stopped in `:compileJava` shipped `{"failed":0,"passed":3,
+    # "total":3}` out of a file 66 seconds older than the run
+    _register(monkeypatch, tmp_path, _data())
+    seen = {}
+    before = time.time()
+    _stub_chain(monkeypatch, {}, seen=seen)
+
+    # act
+    testrun.accept([])
+
+    # assert: the report step got an instant, and it is this run's rather than any later one
+    assert seen["since"] is not None, "the report step was told nothing about when this run began"
+    assert seen["since"] <= time.time()
+    # floored to the whole second, deliberately: a coarse-granularity filesystem must not make this run's
+    # own output look older than the run (a second of the previous run's leavings is the cheaper error)
+    assert seen["since"] == float(int(seen["since"]))
+    assert seen["since"] >= float(int(before))
+
+
+def test_accept_takesTheInstantBeforeTheFirstGateRuns_notAfterIt(monkeypatch, tmp_path, runner):
+    # arrange: a gate that takes measurable time. If the instant were read at the report step, everything
+    # the gates wrote would already be older than it and the whole run's results would count as stale
+    _register(monkeypatch, tmp_path, _data())
+    seen = {}
+    ran = []
+    monkeypatch.setattr(testrun, "assess_gate",
+                        lambda gate, cfg, extra, *, filtered, earlier=():
+                        (ran.append(time.time()), time.sleep(1.1))
+                        and None or _gv(gate.name, 0))
+
+    def _report(cfg=None, *, filtered=False, run=None, since=None):
+        seen.update(since=since)
+        return 0
+
+    monkeypatch.setattr(testrun, "report", _report)
+
+    # act
+    testrun.accept([])
+
+    # assert: every gate started at or after the instant handed to the report step
+    assert seen["since"] <= min(ran), (
+        "the run's start was read after the gates ran, so this run's own results would be merged as the "
+        "previous run's")
+
+
 def _raising_report(monkeypatch, exc):
     """A report step that raises - the measured case is an `IsADirectoryError` out of `merge_results`."""
-    def boom(cfg=None, *, filtered=False, run=None):
+    def boom(cfg=None, *, filtered=False, run=None, since=None):
         raise exc
     monkeypatch.setattr(testrun, "report", boom)
 

@@ -49,6 +49,7 @@ from __future__ import annotations
 import contextlib
 import os
 import shutil
+import time
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, replace
 from typing import Callable
@@ -564,7 +565,8 @@ def run_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool) -> in
     return verdict.exit_code(assess_gate(gate, cfg, extra, filtered=filtered).rc)
 
 
-def report(cfg: Suites | None = None, *, filtered: bool = False, run: RunVerdict | None = None) -> int:
+def report(cfg: Suites | None = None, *, filtered: bool = False, run: RunVerdict | None = None,
+           since: float | None = None) -> int:
     """Merge the per-module results the product's OTHER gates already wrote into this run's results dir,
     then render the merged single-file archive. Runs NO tests: it archives the verdict of what ran before
     it.
@@ -580,6 +582,19 @@ def report(cfg: Suites | None = None, *, filtered: bool = False, run: RunVerdict
     the archive's own Environment widget (#30). That is the half a later reader meets: the stamp beside the
     report says why a run was red, and this says it INSIDE the report, where somebody who was handed only
     the HTML file can still see that a gate's setup fell over rather than its suite.
+
+    `since` IS WHEN THE RUN BEGAN, and without it this step merged the last run's results as though they
+    were this one's (si#70). The declared merge sources are the PRODUCT's directories - a Gradle build's
+    JUnit XML, an npm reporter's output - and no `results: clear` on either kind of gate touches them, so
+    a product with its own runner has nothing that empties them at all. Measured: a build that stopped in
+    `:compileJava` shipped an archive reading `{"failed":0,"passed":3,"total":3}` from a file 66 seconds
+    older than the run. With `since`, files written before it are left where they are and NAMED in the
+    line; without it - `test report` on its own, which has no run behind it - everything present is
+    merged, which is that command's documented job.
+
+    Skipping does not make the step red. The gates carry the verdict, and in the case that produced this
+    the gate was already red; what was wrong was the archive, and an archive that says "nothing was
+    merged, these files are the previous run's" is the true one.
     """
     cfg = cfg or config()
     root = context.current().root
@@ -604,8 +619,9 @@ def report(cfg: Suites | None = None, *, filtered: bool = False, run: RunVerdict
         # typo `declared` refuses at load, and the run it belongs to is usually one where something
         # upstream never got that far.
         merged = allure.merge_results(results, [str(root / d) for d in cfg.merge],
-                                      parent_suite=cfg.parent_suite)
-        (log.warn if merged.missing or merged.empty else log.ok)(f"per-module results: {merged.line}")
+                                      parent_suite=cfg.parent_suite, not_before=since)
+        (log.warn if merged.missing or merged.empty or merged.stale
+         else log.ok)(f"per-module results: {merged.line}")
     log.ok(f"allure results written to {results}")
     render = allure.render_report(_reports_dir(cfg), results,
                                   prefix="allure-filtered" if filtered else "allure")
@@ -643,6 +659,12 @@ def accept(extra: list[str], cfg: Suites | None = None) -> int:
     # file like every other exploratory run, or the abort of a one-test hunt overwrites the canonical
     # record of the last full run.
     filtered = bool(extra)
+    # WHEN THIS RUN BEGAN (si#70), taken before any gate does anything and floored to the whole second.
+    # The report step merges the product's own result dirs, which nothing on this side of the seam ever
+    # empties, so without this instant it merges whatever the LAST run left there. Floored because some
+    # filesystems carry mtime at one- or two-second granularity: erring early keeps at most a second of
+    # the previous run's leavings, erring late silently drops a result this run really did write.
+    started = float(int(time.time()))
     if cfg.precondition:
         rc = _hook(cfg.precondition, "precondition")()
         if rc != 0:
@@ -661,7 +683,8 @@ def accept(extra: list[str], cfg: Suites | None = None) -> int:
                                         earlier=tuple(verdicts)))
             verdict.write_stamp(reports, RunVerdict(tuple(verdicts), filtered=filtered))
         step = REPORT
-        rc = report(cfg, filtered=filtered, run=RunVerdict(tuple(verdicts), filtered=filtered))
+        rc = report(cfg, filtered=filtered, run=RunVerdict(tuple(verdicts), filtered=filtered),
+                    since=started)
     except Exception as exc:
         # AN ABANDONED RUN LEAVES AN ABANDONED RUN'S RECORD (#63). The stamp after the last completed gate
         # is a true statement about that gate and a false one about the run, because it is the only thing

@@ -4,6 +4,7 @@ import json
 import os
 import pathlib
 import re
+import time
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -563,3 +564,100 @@ def test_a_key_dropped_in_a_conflict_is_said_out_loud(tmp_path, capsys):
     # stdout, not stderr: this kernel matches bash, where only `die` writes to stderr and a warning is
     # ordinary output. Asserting the wrong stream is how a test claims a message is missing that is there.
     assert "verdict" in capsys.readouterr().out
+
+
+# --- a merge only takes what this run wrote (si#70) -------------------------------------------------------
+#
+# `merge_results` merged whatever lay in the source dir. The source dirs are the PRODUCT's - a Gradle
+# build's JUnit XML, an npm reporter's output - and nothing on the kernel's side ever empties them, so a
+# run whose build wrote nothing merged the last run's results and the archive presented them as its own.
+# Measured on a real Java product: a build that stopped in `:compileJava` shipped
+# `{"failed":0,"passed":3,"total":3}` out of a file 66 seconds older than the run that shipped it.
+
+
+def _aged(path, seconds, body="<testsuite/>"):
+    """A file whose mtime is `seconds` in the past - the leftovers of a run that finished before this one
+    started, which is the only thing that distinguishes them from this run's output."""
+    path.write_text(body, encoding="utf-8")
+    os.utime(path, (time.time() - seconds, time.time() - seconds))
+    return path
+
+
+def test_merge_results_leavesBehindAFileWrittenBeforeTheRunThatIsMergingIt(tmp_path):
+    # arrange: the previous run's green JUnit XML, and nothing from this one
+    src, dst = tmp_path / "junit-xml", tmp_path / "results"
+    src.mkdir()
+    _aged(src / "TEST-demo.CalculatorTest.xml", 66, "<testsuite tests='3'/>")
+    started = time.time()
+
+    # act
+    merged = allure.merge_results(str(dst), [str(src)], parent_suite="Java", not_before=started)
+
+    # assert: nothing travelled, and the archive is empty rather than green about somebody else's run
+    assert merged.empty, f"the previous run's result was merged into this run's archive: {merged.line}"
+    assert merged.stale == (str(src / "TEST-demo.CalculatorTest.xml"),)
+    assert not (dst / "TEST-demo.CalculatorTest.xml").exists()
+
+    # assert: and the file stays where it is - this decides nothing on the product's behalf
+    assert (src / "TEST-demo.CalculatorTest.xml").is_file()
+
+
+def test_merge_results_takesTheFileThisRunWroteAndLeavesTheOneItDidNot(tmp_path):
+    # arrange: one leftover and one this run produced, in the same dir
+    src, dst = tmp_path / "junit-xml", tmp_path / "results"
+    src.mkdir()
+    _aged(src / "TEST-old.xml", 66)
+    started = time.time()
+    (src / "TEST-new.xml").write_text("<testsuite/>", encoding="utf-8")
+
+    # act
+    merged = allure.merge_results(str(dst), [str(src)], parent_suite="Java", not_before=started)
+
+    # assert: the distinction is per FILE, because a build rewrites some of its outputs and not others
+    assert merged.copied == 1 and merged.stale == (str(src / "TEST-old.xml"),)
+    assert sorted(p.name for p in dst.iterdir()) == ["TEST-new.xml"]
+
+
+def test_merge_results_withNoRunBehindItStillMergesEverythingPresent(tmp_path):
+    # arrange: the standalone report step, whose documented job is to archive what is there
+    src, dst = tmp_path / "junit-xml", tmp_path / "results"
+    src.mkdir()
+    _aged(src / "TEST-old.xml", 66)
+
+    # act
+    merged = allure.merge_results(str(dst), [str(src)], parent_suite="Java")
+
+    # assert
+    assert merged.copied == 1 and merged.stale == ()
+
+
+def test_merge_line_namesTheFilesItLeftBehindAndWhy(tmp_path):
+    # arrange: a silent skip is the same defect one line down, so the sentence has to carry it
+    src, dst = tmp_path / "junit-xml", tmp_path / "results"
+    src.mkdir()
+    _aged(src / "TEST-old.xml", 66)
+
+    # act
+    line = allure.merge_results(str(dst), [str(src)], not_before=time.time()).line
+
+    # assert: it says nothing was merged, how many were left, why, and which
+    assert "nothing merged" in line
+    assert "1 file older than this run left behind" in line, line
+    assert "the previous run's" in line, line
+    assert "TEST-old.xml" in line, line
+    assert "they hold no files" not in line, f"an empty merge blamed the dir for being empty: {line}"
+
+
+def test_merge_results_readsWhatAnEntryIsBeforeWhatItIsCalled(tmp_path):
+    # arrange: si#70 moved the isdir branch first. A DIRECTORY whose name ends in `-result.json` used to
+    # reach the json branch and be opened as a file - the same crash #62 fixed one case over
+    src, dst = tmp_path / "results-src", tmp_path / "results"
+    src.mkdir()
+    (src / "attachments-result.json").mkdir()
+
+    # act
+    merged = allure.merge_results(str(dst), [str(src)])
+
+    # assert: skipped and named, not opened
+    assert merged.skipped_dirs == (str(src / "attachments-result.json"),)
+    assert merged.empty
