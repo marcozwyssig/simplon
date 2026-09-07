@@ -108,6 +108,15 @@ groups:
   support:
     commands:
       doctor: { task: doctor }
+      # The manifest's second output (si#40), declared here rather than placed by the catalogue for the
+      # reason stated there: it reads the `workflows:` section below, so a product without one would get
+      # a command that refuses on its first line. Simplon has the section, so simplon declares the
+      # command - the same "used in its own house" rule that makes this repository build and test itself
+      # with the kernel it ships.
+      #
+      # It lands in `support` because the coordinate opens with a group name, and si#34 makes that a
+      # placement rather than a preference.
+      workflows: { task: "support:workflows" }
 
 # The documentation website's data (#2). Five values, every one of them required to BE declared: the
 # kernel defaults none of them, because a default would be simplon's own directory layout imposed on
@@ -133,3 +142,67 @@ site:
   output: "build/website"
   base_url: "https://marcozwyssig.github.io/simplon/"
   theme: "github.com/imfing/hextra@v0.12.3"
+
+# The workflow declarations (si#40). "One source, two outputs" has stood in
+# src/simplon/orchestrator/manifest.py since it was written: the same manifest assembles the runtime CLI,
+# and - this is that second output - the CI workflows.
+#
+# WHAT IS HERE AND WHAT IS NOT. The runner image, the trigger, the interpreter version and the
+# permissions are declared, because the kernel cannot know them and must not guess: whether a tag
+# publishes is this product's statement. The step SEQUENCE is not declared twice - a step says
+# `command: test all`, and the generator resolves that against the command tree above before writing
+# `./simplon.sh test all`. Rename `test all` and generation fails; today, renaming it would leave a
+# workflow calling a command that is gone, and the first anybody would hear of it is a red runner.
+#
+# The checkout is not declared either. `fetch-depth: 0` is si#3's invariant - a shallow clone makes
+# setuptools-scm derive a version that is merely wrong rather than failing - and the generator emits it,
+# so a workflow written next year inherits the rule instead of somebody having to remember it.
+#
+# COMMENTS ARE CARRIED. Every `note:` below is rendered as a comment block in the generated file, in the
+# position it is declared in. That is a requirement rather than a nicety: a generator that dropped the
+# reasoning would make these files worse than the hand-written ones it replaced.
+workflows:
+
+  ci:
+    note: |
+      Every push and every pull request, and it is the SAME three commands a developer types in a
+      checkout - not a pipeline's own spelling of them. Two routes to one verdict is the shape that
+      produced si#8, where the CI was green for months because it had never run mypy at all.
+    # VERBATIM product data: whether a push runs the suite is nothing the kernel can derive.
+    on: [push, pull_request]
+    jobs:
+      self-build:
+        note: |
+          Stage zero is the working tree. The launcher provisions its own venv and installs this
+          checkout with `-e .`, so the code under test is the code that runs the test - a commit that
+          breaks CLI assembly fails here, in the same round, rather than after a release.
+
+          Why the full history below matters to THIS product in particular (si#3): the version is
+          derived from the git tag by setuptools-scm, so a shallow clone makes it produce a version
+          that is merely wrong rather than failing - and on the release path PyPI accepts the wheel.
+          The kernel emits the setting and states what it does; this is simplon's own reason for
+          caring, which no other product has to inherit.
+        runs-on: ubuntu-latest
+        python: "3.12"
+        steps:
+          - command: test all
+          - note: |
+              The type gate (si#8), and it runs HERE rather than as a `mypy src` step of its own,
+              because the command has to be the same one a developer runs. si#8 was raised as "mypy is
+              red locally and green in CI, so it must be the Python version" - and the CI had simply
+              never run mypy at all. Two ways to reach one verdict is the shape that produced that; one
+              way is the fix. What it checks and what it excuses is stated in mypy.ini, not here.
+            command: test typecheck-python
+          - command: build wheel
+
+  # DECLARED HAND-WRITTEN, which is a decision and not a gap - si#40 asked for exactly this to be an
+  # explained possibility rather than an emergency exit. The generator carries comments, so prose is not
+  # what keeps this file out; what keeps it out is that release.yml is roughly two-thirds reasoning and
+  # carries two multi-line shell scripts (the report on whether a tag sits on `main`, and the check that
+  # the wheel which was built is the tag), and moving those into this manifest would move the work
+  # without reducing it. It stays hand-written, and it stays NAMED - so it is accounted for rather than
+  # merely unmanaged, which is the state si#40 exists to make impossible.
+  release:
+    handwritten: >-
+      two-thirds prose and two multi-line shell scripts (the on-main report of si#23, the
+      wheel-is-the-tag check of si#3); declaring it would move that work rather than remove it

@@ -141,7 +141,7 @@ the number that says whether a rib is filled:
 | `release` | phase, agnostic | 3 |
 | `deploy` | phase, env-first | 0 |
 | `monitor` | phase, env-first | 0 |
-| `support` | not a phase | 4 |
+| `support` | not a phase | 5 |
 | `vcs` | family | 5 |
 | `docs` | family | 3 |
 | `tasks` | family | 2 |
@@ -153,8 +153,8 @@ out.
 
 **What each coordinate does is not written out here.** The sections below name them and nothing more,
 and the sentence that says what one is for lives in the [command
-reference](../../using/commands/) - generated on every build from the catalogue's own `help:`, for all
-twenty-two. This page used to paraphrase those sentences beside the names, and by the time anybody
+reference](../../using/commands/) - generated on every build from the catalogue's own `help:`, for
+every coordinate there is. This page used to paraphrase those sentences beside the names, and by the time anybody
 compared them several had quietly stopped saying what the catalogue says: `docs:render` had grown the
 word *architecture*, `test:typecheck-python` had lost *(no Docker, no lab)*, `vcs:submodules` had lost
 `lib/platform`. How many is a matter of how strictly one reads, and no count stands here for exactly
@@ -243,17 +243,18 @@ environment.
 
 *Host preflight, environment introspection and host tooling.* Not a phase - the group the five stand on.
 
-**In the catalogue today: 4 tasks.**
+**In the catalogue today: 5 tasks.**
 
 - `support:install`
 - `support:nexus`
 - `support:claude-plugins`
 - `support:environments`
+- `support:workflows`
 
 **What a product brings itself.** Nothing, for `support:install` - it is the one task here the catalogue
 **places**, so every product gets `support install` without asking, because it touches the machine and
-reads no manifest at all. The other three each read a section (`nexus:`, `claude:`, `environments:`) and
-are therefore offered.
+reads no manifest at all. The other four each read a section (`nexus:`, `claude:`, `environments:`,
+`workflows:`) and are therefore offered.
 
 ## The two empty ribs
 

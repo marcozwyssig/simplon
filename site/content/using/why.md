@@ -155,7 +155,7 @@ by the kind of work instead of by the phase it runs in:
 | documentation | Hugo, docToolchain, the assembled command line itself | `docs:site`, `docs:render`, `docs:reference` |
 | packaging and publishing | `docker`, `oras` | `build:image`, `release:image`, `release:artifact` |
 | the machine and its services | `oras`, `docker compose`, `claude` - and nothing at all for `support:environments`, which only reads the manifest | `support:install`, `support:nexus`, `support:claude-plugins`, `support:environments` |
-| the manifest itself | nothing external | `tasks:generate`, `tasks:catalogue` |
+| the manifest itself | nothing external | `tasks:generate`, `tasks:catalogue`, `support:workflows` |
 
 Six kinds of work, and the middle column barely intersects. Every one of them is reached through
 `build`, `test`, `release`, `deploy`, `monitor`, `support` and nothing else. That is the claim the fixed
