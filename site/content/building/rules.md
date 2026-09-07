@@ -52,30 +52,38 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 39 | nothing - the declaration had no working meaning |
-| expression rule | 16 | something it could otherwise have said |
-| **all load-time refusals** | **55** | |
+| diagnosis | 54 | nothing - the declaration had no working meaning |
+| expression rule | 17 | something it could otherwise have said |
+| **all load-time refusals** | **71** | |
 
 These are the refusals a **product manifest** can trip while loading. Refusals that happen later - a task
 whose tool is missing, an image without a pin - are a different population with a different cost, and are
 not counted here.
 
 {{< callout type="info" >}}
-**None of these three numbers is typed.** They are computed from the two load-path modules'
+**None of these three numbers is typed.** They are computed from the three load-path modules'
 syntax trees and compared with this table by `tests/test_refusal_census.py`, which is also what makes a
 new refusal impossible to add quietly: an unclassified one has no census entry, and the suite goes red
 naming it until somebody says which kind it is. A number typed onto a page is wrong on the first day
 nobody checks it, and this repository has proved that twice.
 {{< /callout >}}
 
-### How far the sixteen reach
+**The total went from 55 to 71 without a single new rule being written.** The census started with the
+loader's two modules, and a manifest's test taxonomy - the `suites:` section - is refused somewhere else:
+in the task module that reads it, on the manifest's content alone, before any tool is consulted. Sixteen
+refusals were therefore outside a census whose entire purpose is that the sum cannot grow quietly. Fifteen
+of them are diagnosis; one costs a product something. Worth saying plainly, because the mechanism was
+correct and the *population* was not, which is the harder of the two mistakes to notice: a count that is
+computed rather than typed is still only a count of what you pointed it at.
+
+### How far the seventeen reach
 
 Self-binding is not a third bucket of refusals; it is how far an expression rule reaches. Split that way,
-the sixteen are:
+the seventeen are:
 
 | reach | count | meaning |
 | --- | --- | --- |
-| the kernel is held to it too | 9 | the check runs over the merged tree, so the catalogue's own declarations are ruled on beside the product's |
+| the kernel is held to it too | 10 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
 | a statement about the platform/product seam | 6 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
 | the kernel exempts itself | 1 | `check_every_task_is_used` is scoped to the product on purpose |
 
