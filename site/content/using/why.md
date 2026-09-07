@@ -227,11 +227,17 @@ section, are in [The manifest](../../building/manifest/#product-data-sections).
 
 A page that only listed the upside would be recommending something it had not used.
 
-- **The pin fixes the version, not the availability.** `docs:site` runs `hugo mod get <module>@<version>`
-  before *every* build, and there is no host-side module cache for it to answer from, so the call ends
-  at `git ls-remote`. A build with no network is therefore impossible today, even when nothing has moved
-  since the last one - which is reproducible without being repeatable, and those are not the same
-  property. Open as [simplon#27](https://github.com/marcozwyssig/simplon/issues/27).
+- **The pin fixes the version; a cache is what makes it repeatable.** `docs:site` runs
+  `hugo mod get <module>@<version>` before *every* build, and hugo resolves the module a second time
+  while building - so with nothing kept on the host, both went to the network on every run and a build
+  with nothing changed since the last one was impossible without one. Reproducible without being
+  repeatable, and those are not the same property. Hugo's cache now lives in `build/hugo-cache/` and
+  outlives the container: measured on this repository, `./simplon.sh build docs` with every container
+  cut off from the network publishes the site, where the same run against the previous kernel died at
+  `git ls-remote`. The remaining cost is real rather than none - a fresh checkout, a `clean`, and any
+  move of the pin each need the network once, and the cache is a directory the product's `build/` rule
+  has to cover. The measurements are on
+  [simplon#27](https://github.com/marcozwyssig/simplon/issues/27).
 - **A green Hugo proves nothing about the pictures, so the build checks them separately.** Hugo emits a
   Mermaid block into the HTML whether or not the Mermaid parses, because the diagram is drawn in the
   reader's browser and not during the build. Measured: a one-character error in the source gives exit
