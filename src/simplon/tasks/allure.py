@@ -59,23 +59,98 @@ def integration_pytest_argv(py: str, results: str, junit: str, extra: list[str])
     return [py, "-m", "pytest", f"--alluredir={results}", f"--junit-xml={junit}", *extra]
 
 
-def merge_results(dst: str, srcs: list[str], *, parent_suite: str = "Unit") -> None:
+@dataclass(frozen=True)
+class Merge:
+    """What one merge actually DID, so its caller can report a result instead of an intention (#64).
+
+    `merge_results` used to return None, and the only thing a caller could say afterwards was that it had
+    called it - which is what the log line said: ``per-module results merged (parentSuite=Java)``. Two
+    different runs got that same sentence and neither had done what it claims. A JUnit XML falls into the
+    verbatim branch and carries NO parentSuite, so the report showed three test cases with
+    ``parentSuite=None`` under a line announcing they had one; and a declared source dir that does not
+    exist is skipped silently, so a Gradle build that stopped before writing anything produced the same
+    sentence as a successful merge. "Nothing to do" and "done" were indistinguishable from outside.
+
+    This function is the only thing that knows the difference, so it is the thing that has to say it: how
+    many results were tagged, how many were already labelled, how many files went through unchanged and
+    therefore carry no parent suite, and which declared sources were not there at all.
+    """
+
+    parent_suite: str = ""
+    tagged: int = 0
+    already_labelled: int = 0
+    copied: int = 0
+    environments: int = 0
+    present: tuple[str, ...] = ()
+    missing: tuple[str, ...] = ()
+
+    @property
+    def files(self) -> int:
+        """Every entry this merge handled, however it handled it."""
+        return self.tagged + self.already_labelled + self.copied + self.environments
+
+    @property
+    def empty(self) -> bool:
+        """Nothing was merged - the case that used to read exactly like a successful merge."""
+        return self.files == 0
+
+    @property
+    def line(self) -> str:
+        """The one sentence the report step logs, and every number in it is counted rather than assumed."""
+        declared = len(self.present) + len(self.missing)
+        where = f"{len(self.present)} of {declared} declared source dirs"
+        if self.empty:
+            said = f"nothing merged: {where} present"
+            if self.missing:
+                return said + f", missing: {', '.join(self.missing)}"
+            return said + " and they hold no files"
+        parts = []
+        if self.tagged:
+            parts.append(f"{self.tagged} tagged parentSuite={self.parent_suite}")
+        if self.already_labelled:
+            parts.append(f"{self.already_labelled} already labelled")
+        if self.copied:
+            # THE HALF THE OLD LINE GOT WRONG. These are not allure result files, so nothing tags them and
+            # they reach the report under whatever suite their own format names.
+            parts.append(f"{self.copied} copied unchanged, carrying no parentSuite")
+        if self.environments:
+            parts.append(f"{self.environments} {ENVIRONMENT} merged")
+        said = f"merged {self.files} file{'' if self.files == 1 else 's'} from {where}: " + ", ".join(parts)
+        if self.missing:
+            said += f"; missing: {', '.join(self.missing)}"
+        return said
+
+
+def merge_results(dst: str, srcs: list[str], *, parent_suite: str = "Unit") -> Merge:
     """Copy each source dir's allure result files into ``dst``, tagging every ``*-result.json`` with
     ``parentSuite=<parent_suite>`` unless already labelled (so a merged report groups a module's results
     under one suite). Non-result files are copied through unchanged. Ported from the inline python in
-    netctl's run_unit_tests."""
+    netctl's run_unit_tests.
+
+    RETURNS WHAT IT DID (#64). A missing source dir is still skipped rather than refused - a standalone
+    report step must archive what is present - but the skip is now COUNTED and named, because a caller
+    that cannot tell it from a successful merge will announce one.
+    """
     os.makedirs(dst, exist_ok=True)
+    tagged = labelled = copied = environments = 0
+    present: list[str] = []
+    missing: list[str] = []
     for src in srcs:
         if not os.path.isdir(src):
+            missing.append(src)
             continue
+        present.append(src)
         for f in glob.glob(os.path.join(src, "*")):
             base = os.path.basename(f)
             if base.endswith("-result.json"):
                 with open(f, encoding="utf-8") as fh:
                     r = json.load(fh)
                 labels = r.setdefault("labels", [])
-                if not any(l.get("name") == "parentSuite" for l in labels):
+                if any(l.get("name") == "parentSuite" for l in labels):
+                    labelled += 1
+                else:
                     labels.append({"name": "parentSuite", "value": parent_suite})
+                    tagged += 1
                 with open(os.path.join(dst, base), "w", encoding="utf-8") as fh:
                     json.dump(r, fh)
             elif base == ENVIRONMENT:
@@ -100,8 +175,12 @@ def merge_results(dst: str, srcs: list[str], *, parent_suite: str = "Unit") -> N
                     log.warn(f"{src}: {ENVIRONMENT} restates {', '.join(clashes)}; keeping this run's "
                              f"values and dropping the merged directory's")
                 write_environment(dst, {**incoming, **existing})
+                environments += 1
             else:
                 shutil.copy(f, os.path.join(dst, base))
+                copied += 1
+    return Merge(parent_suite=parent_suite, tagged=tagged, already_labelled=labelled, copied=copied,
+                 environments=environments, present=tuple(present), missing=tuple(missing))
 
 
 #: Allure's own convention: a `key=value` file in the RESULTS dir, rendered as the report's Environment

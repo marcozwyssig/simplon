@@ -107,6 +107,84 @@ def test_merge_results_skips_missing_source_dirs(tmp_path):
     assert list(dst.iterdir()) == []
 
 
+# --- what a merge REPORTS about itself (si#64) ------------------------------------------------------------
+
+
+def test_a_merge_that_did_nothing_is_distinguishable_from_one_that_worked(tmp_path):
+    # arrange: the two runs that used to produce the identical log line - one real merge, one whose
+    # declared source dir is not there because the build stopped before writing it
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a-result.json").write_text(json.dumps({"name": "t", "labels": []}), encoding="utf-8")
+
+    # act
+    did = allure.merge_results(str(tmp_path / "d1"), [str(src)], parent_suite="Java")
+    nothing = allure.merge_results(str(tmp_path / "d2"), [str(tmp_path / "gone")], parent_suite="Java")
+
+    # assert: the whole of si#64's second half. "Nothing to do" and "done" now differ in the value AND in
+    # the sentence, which is the only place the caller could ever have got it from.
+    assert not did.empty and nothing.empty
+    assert did.line != nothing.line
+    assert "nothing merged" in nothing.line
+    assert str(tmp_path / "gone") in nothing.line
+
+
+def test_a_merge_says_how_many_results_it_tagged_and_how_many_it_only_copied(tmp_path):
+    # arrange: exactly the mixture a Java product produces - allure raw results from its pytest gate and a
+    # JUnit XML from Gradle, in one merge
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a-result.json").write_text(json.dumps({"name": "t", "labels": []}), encoding="utf-8")
+    (src / "b-result.json").write_text(
+        json.dumps({"name": "u", "labels": [{"name": "parentSuite", "value": "Existing"}]}),
+        encoding="utf-8")
+    (src / "TEST-demo.CalculatorTest.xml").write_text("<testsuite/>", encoding="utf-8")
+
+    # act
+    merged = allure.merge_results(str(tmp_path / "dst"), [str(src)], parent_suite="Java")
+
+    # assert: three files, three different fates, and the sentence keeps them apart
+    assert (merged.tagged, merged.already_labelled, merged.copied) == (1, 1, 1)
+    assert merged.files == 3
+    assert "1 tagged parentSuite=Java" in merged.line
+    assert "1 already labelled" in merged.line
+    assert "1 copied unchanged, carrying no parentSuite" in merged.line
+
+
+def test_a_merge_does_not_claim_a_parent_suite_for_the_files_it_only_copied(tmp_path):
+    # arrange: a JUnit XML alone - the measured Java case, where the report showed three test cases with
+    # parentSuite=None under a log line announcing they had one
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "TEST-demo.CalculatorTest.xml").write_text("<testsuite/>", encoding="utf-8")
+
+    # act
+    merged = allure.merge_results(str(tmp_path / "dst"), [str(src)], parent_suite="Java")
+
+    # assert: nothing was tagged, and the sentence does not say a parent suite was applied to anything.
+    # The FILE still has to arrive - allure reads JUnit XML with its own plugin, and a merge that
+    # protected the sentence by dropping the file would have removed a capability to fix a message.
+    assert merged.tagged == 0
+    assert "tagged parentSuite" not in merged.line
+    assert (tmp_path / "dst" / "TEST-demo.CalculatorTest.xml").is_file()
+
+
+def test_a_merge_counts_the_sources_it_found_and_names_the_ones_it_did_not(tmp_path):
+    # arrange: two declared sources, one of them absent - a product whose second module never ran
+    src = tmp_path / "there"
+    src.mkdir()
+    (src / "a-result.json").write_text(json.dumps({"name": "t", "labels": []}), encoding="utf-8")
+    gone = str(tmp_path / "not-there")
+
+    # act
+    merged = allure.merge_results(str(tmp_path / "dst"), [str(src), gone], parent_suite="Java")
+
+    # assert: a partial merge reports as a partial merge, with the missing dir named rather than counted
+    assert merged.present == (str(src),) and merged.missing == (gone,)
+    assert "1 of 2 declared source dirs" in merged.line
+    assert f"missing: {gone}" in merged.line
+
+
 # --- render_report (moved here from netctl's testrun.allure_report, netctl#1406) ------------------------
 
 

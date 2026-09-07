@@ -694,7 +694,8 @@ def test_report_mergesTheDeclaredResultDirs_intoTheSharedResults(monkeypatch, tm
     merged = {}
     monkeypatch.setattr(testrun.allure, "merge_results",
                         lambda dst, srcs, parent_suite="Unit": merged.update(dst=dst, srcs=srcs,
-                                                                             parent_suite=parent_suite))
+                                                                             parent_suite=parent_suite)
+                        or allure.Merge(parent_suite=parent_suite, tagged=1, present=tuple(srcs)))
     monkeypatch.setattr(testrun.allure, "render_report",
                         lambda *a, **k: merged.update(rendered=(a, k))
                         or allure.Render(report="/r/allure-1.html", tool="allure"))
@@ -709,11 +710,69 @@ def test_report_mergesTheDeclaredResultDirs_intoTheSharedResults(monkeypatch, tm
     assert merged["parent_suite"] == "Unit"
 
 
+def _report_lines(monkeypatch, tmp_path, capsys, *, merge):
+    """Run the report step over real source dirs and hand back the lines it printed."""
+    _register(monkeypatch, tmp_path, _data(report={"merge": merge, "parent_suite": "Java"}))
+    monkeypatch.setattr(testrun.allure, "render_report",
+                        lambda *a, **k: allure.Render(report="/r/allure-1.html", tool="allure"))
+    capsys.readouterr()
+    testrun.report()
+    return capsys.readouterr().out
+
+
+def test_report_saysWhatTheMergeDid_notThatItCalledIt(monkeypatch, tmp_path, capsys, runner):
+    # arrange: one real source dir holding one allure result
+    src = tmp_path / "mod/build/allure-results"
+    src.mkdir(parents=True)
+    (src / "a-result.json").write_text('{"name": "t", "labels": []}', encoding="utf-8")
+
+    # act
+    out = _report_lines(monkeypatch, tmp_path, capsys, merge=["mod/build/allure-results"])
+
+    # assert: the old line was `per-module results merged (parentSuite=Java)` whatever had happened. It
+    # now carries counted numbers, so two different outcomes cannot print the same sentence.
+    assert "1 tagged parentSuite=Java" in out
+    assert "1 of 1 declared source dirs" in out
+
+
+def test_report_saysNothingWasMerged_whenTheDeclaredSourceIsNotThere(monkeypatch, tmp_path, capsys,
+                                                                    runner):
+    # arrange: the measured case - Gradle stopped in :compileJava, so the dir the manifest declares was
+    # never written. `merge_results` skips it deliberately, and the run used to report a successful merge.
+    # act
+    out = _report_lines(monkeypatch, tmp_path, capsys, merge=["build/junit-xml"])
+
+    # assert: "nothing to do" says so, names the dir a reader has to go and look for, and does not wear
+    # the OK badge a real merge gets
+    assert "nothing merged" in out
+    assert str(tmp_path / "build/junit-xml") in out
+    assert "per-module results merged" not in out
+
+
+def test_report_doesNotAnnounceAParentSuiteForAJunitXmlThatCannotCarryOne(monkeypatch, tmp_path, capsys,
+                                                                         runner):
+    # arrange: Gradle's JUnit XML, which falls into the verbatim branch - three test cases arrived in the
+    # measured archive with parentSuite=None under a line saying parentSuite=Java
+    src = tmp_path / "build/junit-xml"
+    src.mkdir(parents=True)
+    (src / "TEST-demo.CalculatorTest.xml").write_text("<testsuite/>", encoding="utf-8")
+
+    # act
+    out = _report_lines(monkeypatch, tmp_path, capsys, merge=["build/junit-xml"])
+
+    # assert: the sentence claims no tagging, says the file went through untagged - and the FILE is there,
+    # because that verbatim copy is how a Java product's results reach the report at all
+    assert "tagged parentSuite" not in out
+    assert "1 copied unchanged, carrying no parentSuite" in out
+    assert (tmp_path / "test/reports/allure-results/TEST-demo.CalculatorTest.xml").is_file()
+
+
 def test_report_rendersAFilteredRunUnderItsOwnPrefix_soItCannotPassAsTheCanonicalArchive(monkeypatch, tmp_path, runner):
     # arrange
     _register(monkeypatch, tmp_path, _data())
     seen = {}
-    monkeypatch.setattr(testrun.allure, "merge_results", lambda *a, **k: None)
+    monkeypatch.setattr(testrun.allure, "merge_results",
+                        lambda *a, **k: allure.Merge(tagged=1, present=("src",)))
     monkeypatch.setattr(testrun.allure, "render_report",
                         lambda report_dir, results, prefix="allure": seen.update(results=results, prefix=prefix)
                         or allure.Render(report="/r/allure-1.html", tool="allure"))
@@ -730,7 +789,8 @@ def test_report_isRed_whenARenderToolWasPresentAndTheRenderFailed(monkeypatch, t
     # arrange: allure (or docker) IS installed and the render failed - the run has no archive and used to
     # say so with a warning behind rc 0, which no CI reads (#6)
     _register(monkeypatch, tmp_path, _data())
-    monkeypatch.setattr(testrun.allure, "merge_results", lambda *a, **k: None)
+    monkeypatch.setattr(testrun.allure, "merge_results",
+                        lambda *a, **k: allure.Merge(tagged=1, present=("src",)))
     monkeypatch.setattr(testrun.allure, "render_report", lambda *a, **k: allure.Render(tool="docker"))
 
     # act
@@ -744,7 +804,8 @@ def test_report_staysGreen_whenNoRenderToolIsInstalledAtAll(monkeypatch, tmp_pat
     # arrange: no allure CLI and no docker. The rule stands: archiving must not itself be the reason a run
     # is red when the host simply has no render tool.
     _register(monkeypatch, tmp_path, _data())
-    monkeypatch.setattr(testrun.allure, "merge_results", lambda *a, **k: None)
+    monkeypatch.setattr(testrun.allure, "merge_results",
+                        lambda *a, **k: allure.Merge(tagged=1, present=("src",)))
     monkeypatch.setattr(testrun.allure, "render_report", lambda *a, **k: allure.Render())
 
     # act

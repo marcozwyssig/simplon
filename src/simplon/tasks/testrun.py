@@ -526,8 +526,19 @@ def report(cfg: Suites | None = None, *, filtered: bool = False, run: RunVerdict
         # would be the stale-verdict defect pointing the other way.
         allure.write_environment(results, run.environment())
     if cfg.merge:
-        allure.merge_results(results, [str(root / d) for d in cfg.merge], parent_suite=cfg.parent_suite)
-        log.ok(f"per-module results merged (parentSuite={cfg.parent_suite})")
+        # THE RESULT, NOT THE INTENTION (#64). The old line said `per-module results merged
+        # (parentSuite=X)` unconditionally, and it was the same sentence for a merge that tagged three
+        # results, for one that copied a JUnit XML through untagged, and for one whose declared source
+        # dir did not exist because the build had stopped before writing it. `merge_results` is the only
+        # thing that can tell those apart, so it now says which it was and this only reports it.
+        #
+        # A missing source is a WARNING and not a failure: skipping it is deliberate (a standalone report
+        # step archives what is present), but a declared dir that is not there is the runtime twin of the
+        # typo `declared` refuses at load, and the run it belongs to is usually one where something
+        # upstream never got that far.
+        merged = allure.merge_results(results, [str(root / d) for d in cfg.merge],
+                                      parent_suite=cfg.parent_suite)
+        (log.warn if merged.missing or merged.empty else log.ok)(f"per-module results: {merged.line}")
     log.ok(f"allure results written to {results}")
     render = allure.render_report(_reports_dir(cfg), results,
                                   prefix="allure-filtered" if filtered else "allure")
