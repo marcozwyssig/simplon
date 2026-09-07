@@ -189,23 +189,29 @@ CENSUS: dict[tuple[str, str], str] = {
 
     # --- tasks/testrun.py: the `suites:` section (si#61) --------------------------------------------
     #
-    # THE TWO THAT THE TICKET IS ABOUT ARE BOTH DIAGNOSIS, AND THAT IS A MEASURED ANSWER RATHER THAN A
-    # reading. Together they make an IMPL-ONLY taxonomy - a product whose only test runner is its own,
-    # which is every Java product - impossible to write, so a Java product ships a Python test that
-    # asserts nothing in order to get a report at all. That looks exactly like an expression rule, and
-    # the census sorts on one question: would the refused manifest have produced a WORKING product?
+    # ONE OF THE TWO THE TICKET WAS ABOUT IS GONE, AND HOW IT WENT IS THE INTERESTING PART. The census
+    # sorts on one question - would the refused manifest have produced a WORKING product? - and for both
+    # of them the measured answer was NO, which made both diagnosis and neither a cost. That answer was
+    # right and it was not the whole story: TOGETHER they made an impl-only taxonomy - a product whose
+    # only test runner is its own, which is every Java product - impossible to write at all, so a Java
+    # product shipped a Python test asserting nothing in order to get a report.
     #
-    #   - "exactly one gate must declare results: clear": NO. Nothing but a clearing gate ever clears
-    #     the shared results dir - `report()` merges into whatever is already there - so a taxonomy with
-    #     no clearing gate merges this run into the last one's results forever.
-    #   - "an 'impl' gate cannot declare 'results'": NO. `Gate.clears` says True for it, so it would
-    #     satisfy the rule above, while `assess_gate` returns on the impl branch before the clear is
-    #     reached. The declaration counts and does nothing.
+    #   - "exactly one gate must declare results: clear": still here, still diagnosis. Nothing but a
+    #     clearing gate ever clears the shared results dir - `report()` merges into whatever is already
+    #     there - so a taxonomy with no clearing gate merges this run into the last one's forever.
+    #   - "an 'impl' gate cannot declare 'results'": GONE (si#61). It was diagnosis on a true reading -
+    #     `Gate.clears` said True while `assess_gate` returned on the impl branch before the clear was
+    #     reached, so the declaration counted and did nothing - and the repair was aimed at the wrong
+    #     half. A key that is accepted and inert should be MADE to work where it can be; refusing it was
+    #     only defensible while some other gate could carry the clear, and for an impl-only product none
+    #     could. The impl branch honours the clear now, so there is nothing left to refuse. The raise
+    #     site below is the same one, minus that key: `junit`, `args` and `preamble` are still inert on
+    #     a gate the kernel only calls for an rc.
     #
-    # Both are measured against the mechanism in `test_suites_impl_only.py`, and both would go green
-    # there if the mechanism changed - at which point these two lines are wrong and that file says so.
-    # What the pair costs a product is real and is si#61's finding; it is the cost of a MISSING
-    # EXPRESSION (no way to say "the run owns the dir"), not of a refusal that could simply be dropped.
+    # Both halves stay measured against the mechanism in `test_suites_impl_only.py`, which is also where
+    # the lesson is recorded: a refusal classified as diagnosis is not thereby free. Diagnosis is a
+    # statement about the manifest that was refused; what the SET of refusals makes unsayable is a
+    # separate question, and this census does not answer it.
     ("_str", "is required"): DIAGNOSIS,
     ("_str", "must be a non-empty string"): DIAGNOSIS,
     ("_gate", "each gate must be a mapping"): DIAGNOSIS,
