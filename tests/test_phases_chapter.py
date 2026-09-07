@@ -446,7 +446,7 @@ def test_every_catalogue_coordinate_appears_somewhere_on_the_page():
 
     # assert
     assert listed == set(cat.tasks)
-    assert len(listed) == 23, "the count moved - update the page, then this number"
+    assert len(listed) == 24, "the count moved - update the page, then this number"
 
 
 # --- the two empty ribs --------------------------------------------------------------------------------
@@ -565,3 +565,52 @@ def test_the_diagram_puts_support_beside_the_loop_and_not_in_it():
 
     # assert: and it carries none of the five handovers
     assert not [edge for edge in _EDGE.findall(diagram) if "support" in (edge[0], edge[2])]
+
+
+# --- the summary sentence above the table ---------------------------------------------------------------
+
+
+#: The number words 0-99, built rather than listed. The page spells its counts out in words, so a
+#: comparison against the catalogue has to spell them out too - and building them here means the range
+#: cannot quietly run out the way a hand-written list does at whatever number somebody stopped typing.
+_ONES = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
+         "sixteen seventeen eighteen nineteen").split()
+_TENS = ("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
+
+
+def _word(number: int) -> str:
+    """`24` -> `twenty-four`. Raises above 99, because a silent wrong answer is what this file is about."""
+    assert 0 <= number < 100, f"no word for {number}"
+    if number < 20:
+        return _ONES[number]
+    tens, ones = divmod(number, 10)
+    return _TENS[tens] + (f"-{_ONES[ones]}" if ones else "")
+
+
+def test_the_summary_sentence_counts_the_catalogue_and_not_a_memory():
+    """The one number on this page that nothing was reading, six lines above the sentence promising it is.
+
+    The page says: "The numbers in that table and in every section below are read back out of
+    `catalogue.yaml` by the test suite". That was true of the TABLE and false of the sentence that
+    summarises it - three words spelled out by hand, checked by nothing. It had already gone stale: the
+    catalogue held twenty-three coordinates with thirteen placed while the page still said twenty-two and
+    twelve, and si#58 made it twenty-four and fourteen. A page that states a property of itself which is
+    not true of itself is the defect this project hunts, wearing the costume of prose.
+
+    The split is si#34's rule: a coordinate whose namespace is a group the catalogue DECLARES carries its
+    placement with it; anything else is a family the product files where it likes.
+    """
+    # arrange
+    cat = catalogue_mod.load()
+    placed = [c for c in cat.tasks if c.split(":", 1)[0] in cat.groups]
+    free = [c for c in cat.tasks if c.split(":", 1)[0] not in cat.groups]
+
+    # act
+    sentence = (f"{_word(len(cat.tasks)).capitalize()} coordinates: {_word(len(placed))} carrying a "
+                f"placement, {_word(len(free))} free to be filed.")
+
+    # assert
+    assert sentence in CHAPTER.read_text(encoding="utf-8"), f"the page must say: {sentence}"
+
+    # assert: and the split really ruled on something, rather than agreeing with an empty page
+    assert placed and free and len(placed) + len(free) == len(cat.tasks)

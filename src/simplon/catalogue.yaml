@@ -58,6 +58,21 @@ groups:
       # in a subgroup because it is about the machine as a whole, and a fresh checkout should reach it
       # without knowing which tool is missing.
       install: { task: "support:install" }
+      # PLACED rather than offered (si#58), and it is the same argument `install` above is placed on.
+      # The placement bar is "useful in EVERY product": this one reads no manifest section - the command
+      # tree it writes out is the tree every manifest already has - it publishes nothing, it touches
+      # only the product's own root, and a product that never runs it is no worse off. `tasks:generate`
+      # is the closer precedent still: it too is placed, and it too writes a generated file at a path
+      # the kernel chooses.
+      #
+      # What settles it is what the thing IS. A completion that has to be asked for is a completion
+      # nobody has - the cost of not knowing it exists falls entirely on the person who would have
+      # benefited, and they cannot discover it by pressing TAB, because that is the thing that does not
+      # work yet. That is the fourth quality goal, and it is exactly the shape of the defect si#58 was
+      # raised for: the tool declining to say what it already knows.
+      # No `params:` here - the TASK below carries the presentation for `check`, and repeating it in
+      # the placement would be a second source for one option's help text.
+      completion: { task: "support:completion" }
     groups:
       git:
         help: "Version-control helpers."
@@ -201,6 +216,22 @@ tasks:
   # "useful in EVERY product", and this one reads a `workflows:` section. Placed, it would be a command
   # that refuses on its first line in every product that has not declared one. A product declares it the
   # day it has workflows to generate; simplon does exactly that.
+  # The manifest's THIRD output (si#58): the runtime CLI, the CI workflows, and now the shell
+  # completion. Read out of the same command tree, so the three cannot describe different products.
+  #
+  # A `support:` NAMESPACE, so si#34 makes it a PLACEMENT: it may only sit under `support`, in every
+  # product. That is the right axis - a completion file is tooling for whoever USES the product, not a
+  # stage of the delivery loop - and `treeform.check_coordinate_placement` holds it.
+  #
+  # Why generated at all rather than Typer's own `--install-completion`: that hook runs the program on
+  # every TAB, measured here at 340-360 ms per start. This writes the tree out once as shell, so the TAB
+  # costs a `case` statement in the shell the user is already in. The price is a second source for the
+  # command tree, and `--check` plus `tests/test_own_completion.py` is what pays it.
+  support:completion:
+    impl: simplon.tasks.completion:generate
+    help: "Regenerate the product's shell completion from its manifest (--check reports drift and writes nothing)."
+    params:
+      check: { help: "report drift and write nothing" }
   support:workflows:
     impl: simplon.tasks.workflows:generate
     help: "Regenerate the product's GitHub workflows from its manifest (--check reports drift and writes nothing)."

@@ -82,6 +82,38 @@ class ProductContext:
 _current: ProductContext | None = None
 
 
+def shim(product: str) -> str:
+    """The launcher FILE a product is driven through, as it is named on disk: `<product>.sh`.
+
+    ONE spelling, in one place, because three things have to agree about it and two of them are read by
+    something other than a human: the usage line Click prints (`simplon.cli.main` passes `launcher()` as
+    `prog_name`), the `run:` line a generated workflow carries (`simplon.workflowgen.launcher`), and the
+    command word a generated shell completion registers on (`simplon.completiongen`). A second spelling
+    anywhere would be a completion registered on a name the usage line does not mention.
+
+    THE BASENAME, not the typed path, and that is what the completion needs: measured on bash 5.3.9, a
+    compspec registered for `simplon.sh` is what answers for `./simplon.sh` and for an absolute path too
+    - bash falls back to the portion following the final slash when the full pathname has no compspec of
+    its own (bash manual 5.3.9, Programmable Completion).
+
+    `<product>.cmd` is the Windows entry point and is deliberately NOT derived here: nothing in this
+    kernel registers a PowerShell completion or prints a `.cmd` usage line, and inventing a name for a
+    mechanism that does not exist would be a second source for nothing.
+    """
+    return f"{product}.sh"
+
+
+def launcher(product: str) -> str:
+    """How a user types the product in a checkout: `./<product>.sh`.
+
+    The `./` is not decoration. The launcher is not on `PATH` - it lives in the checkout and provisions
+    the venv the CLI runs in - so a usage line or an error message that omitted it would hand somebody a
+    line that does not dispatch, which is exactly the defect si#58 found in Click's derived
+    `python -m orchestrator`.
+    """
+    return f"./{shim(product)}"
+
+
 def set_current(ctx: ProductContext) -> ProductContext:
     """Register the process' product context (called once by the product's paths adapter at import) and
     return it, so the adapter can `CONTEXT = context.set_current(context.ProductContext.resolve(...))`."""

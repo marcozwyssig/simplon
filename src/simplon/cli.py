@@ -26,8 +26,8 @@ from typing import Callable, Mapping, Protocol, TypedDict, cast
 
 import typer
 
-from simplon import log, signatures
-from simplon.context import ProductContext
+from simplon import clitaxonomy, log, signatures
+from simplon.context import ProductContext, launcher
 from simplon.orchestrator import manifest
 from simplon.orchestrator.product import StepFactoryContext, run_command
 from simplon.taskgen import _docstring
@@ -388,19 +388,15 @@ def _group_paths(mf: manifest.Manifest, tax, skipped: frozenset[str]) -> list[st
     children to hang from. Ordering matters because a child is attached to its parent's app.
 
     A collapsed flat group is skipped: it has no sub-app, its single member is a top-level command. So is
-    a group the product registered from its generated module. Mirrors `taskgen._group_paths`, which is
-    what makes the two mechanisms produce the same tree.
+    a group the product registered from its generated module.
+
+    The ancestor walk itself is `clitaxonomy.group_paths` (si#58), which `simplon.taskgen` and
+    `simplon.completiongen` also call - what used to be this docstring's "mirrors taskgen._group_paths"
+    is now one function rather than a promise about two.
     """
-    out: list[str] = []
-    for group in mf.groups:
-        if group in skipped or tax.is_flat_command_group(group):
-            continue
-        parts = group.split(".")
-        for depth in range(1, len(parts) + 1):
-            path = ".".join(parts[:depth])
-            if path not in out and path not in skipped:
-                out.append(path)
-    return out
+    return clitaxonomy.group_paths(
+        (group for group in mf.groups if group not in skipped and not tax.is_flat_command_group(group)),
+        exclude=skipped)
 
 
 def _skipped_groups(mf: manifest.Manifest, skip: frozenset[tuple[str, str]]) -> frozenset[str]:
@@ -465,8 +461,15 @@ def main(*, app: typer.Typer, context: ProductContext,
     asking_help = "--help" in sys.argv or "-h" in sys.argv
     verdict = taxonomy.env_verdict(cmd, env_explicit)
     if verdict == "reject-env" and not asking_help:
-        log.die(f"'{cmd}' is environment-agnostic and takes no env prefix; run '{context.name} {cmd}'")
+        log.die(f"'{cmd}' is environment-agnostic and takes no env prefix; "
+                f"run '{launcher(context.name)} {cmd}'")
     if verdict == "gate-backend" and not asking_help and not environments.is_local(env):
         environments.require_backend(environments.LOCAL)
 
-    app()
+    # `prog_name`, and without it Click derives one nobody can type (si#58). `_detect_program_name()`
+    # sees `python -m orchestrator`, because that is literally how the launcher execs the module - so
+    # every usage line and every Click error message named an invocation that works only with the
+    # launcher's own PYTHONPATH already exported. The product IS driven through its launcher, so that is
+    # the name; it comes off `simplon.context.launcher`, the same spelling the generated workflows call
+    # and the generated completion registers on.
+    app(prog_name=launcher(context.name))
