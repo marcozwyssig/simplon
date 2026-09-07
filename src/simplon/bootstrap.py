@@ -634,11 +634,48 @@ def shim_relpath(name: str) -> str:
     return f"{validate_product_name(name)}.sh"
 
 
+#: The two line endings a scaffolded file can carry, named so the choice below reads as a choice.
+CRLF, LF = "\r\n", "\n"
+
+#: The suffixes cmd.exe reads. Everything else a scaffold writes - the shell shim, the manifest, the
+#: generated python - is read on the host the product RUNS on, and that host wants LF.
+_BATCH_SUFFIXES = (".cmd",)
+
+
+def newline_for(rel: str) -> str:
+    """The line ending the scaffolded file at `rel` must carry, decided by the host that will RUN it (si#57).
+
+    NOT the host that scaffolds it, which is what `Path.write_text` does by default: `newline=None`
+    translates `\n` to `os.linesep`, so the launcher a Linux CI job writes reaches a Windows user as LF and
+    the launcher a Windows developer writes reaches a Linux user as CRLF. A generator whose output depends
+    on the machine it happened to run on is the defect either way, and the file extension is the only thing
+    in the scaffold that knows which host the file is for.
+
+    THE TWO HALVES ARE NOT EQUALLY WELL EVIDENCED, and this docstring says so rather than implying they
+    are. The shell half is measured: a shim written with CRLF does not launch at all on this host - the
+    kernel reads `bash\r` as the interpreter name and reports "No such file or directory"; the test beside
+    it runs exactly that. The batch half is this repository's own standing claim, carried in
+    `.gitattributes` (`*.cmd text eol=crlf`) and in `tests/test_launch_cmd.py`: cmd.exe mis-parses the
+    multi-line `if (...)` blocks the launcher is built from when the file is LF-only. That claim is
+    inherited, not reproduced - there is no Windows here to shoot it at. What is reproduced is the
+    inconsistency: the kernel keeps that promise for its OWN `simplon.cmd` through `.gitattributes`, and a
+    scaffolded product is handed no `.gitattributes` at all.
+
+    So the pin lives in `write` rather than in a `.gitattributes` shipped alongside: the bytes were wrong
+    where they were written, and a file that only takes effect once the product is in git would leave the
+    scaffold itself producing whatever its host had.
+    """
+    return CRLF if rel.endswith(_BATCH_SUFFIXES) else LF
+
+
 def write(name: str, target: Path, *, force: bool = False, orch_dir: str = _ORCH_DIR) -> list[Path]:
     """Render the skeleton and write it under ``target``, returning the written paths (sorted). Creates parent
     dirs; sets the shim executable (0o755). Refuses to overwrite an existing file unless ``force`` - a fresh
     scaffold must never silently clobber a hand-edited manifest or shim - raising FileExistsError listing the
-    conflicts."""
+    conflicts.
+
+    Line endings come from `newline_for`, so what is written is decided by the host the file will RUN on and
+    not by the one it was scaffolded on (si#57)."""
     product = validate_product_name(name)
     # render() validates `orch_dir`, and it does so before any directory is created: a refused path must
     # leave no half-scaffold behind.
@@ -655,7 +692,7 @@ def write(name: str, target: Path, *, force: bool = False, orch_dir: str = _ORCH
     for rel, content in files.items():
         path = target / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        path.write_text(content, encoding="utf-8", newline=newline_for(rel))
         path.chmod(0o755 if rel == shim else 0o644)
         written.append(path)
     return sorted(written)
