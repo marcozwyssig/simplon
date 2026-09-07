@@ -49,9 +49,11 @@ kernel's own catalogue too (#34 checks over the *merged* tree, so it does), or
 does it exempt the kernel from what it asks of a product? Measured in #48: of
 sixteen expression rules, nine bind the kernel with the product, six sit
 exactly on the platform/product seam, and **one exempts the kernel** —
-`check_every_task_is_used`, which would reject fourteen of the kernel's own
-twenty-two catalogue tasks. An exemption is not automatically wrong. An
-unexamined one is.
+`check_every_task_is_used`, which would reject most of the kernel's own
+catalogue tasks — `test_the_one_self_exemption_is_real_and_its_size_is_measured`
+computes how many, and no count stands here, because two typed into this file
+have already gone stale and a third was caught in review. An exemption is not
+automatically wrong. An unexamined one is.
 
 ## Before building an expression rule, answer these
 
