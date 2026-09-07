@@ -69,6 +69,15 @@ class Outcome:
         return self.rc == 0
 
 
+#: The clock `Step.run` measures with, as a module attribute rather than a bare `time.perf_counter()`
+#: call - so a test can freeze it (#68). What those tests assert on is the FORMAT of a duration, not how
+#: fast this machine happened to be, and a wall clock inside an assertion turns machine load into a
+#: verdict: `format_duration` prints `<0.1s` below 0.05s, so a step doing nothing at all printed `0.1s`
+#: whenever the box was busy. Measured three times red, twice of them while verifying an unrelated merge.
+#: Production never rebinds this; it exists so a test can state the elapsed time it means.
+clock: Callable[[], float] = time.perf_counter
+
+
 @dataclass
 class Step:
     """One pipeline step. Either a quick `action` (returns an Outcome) OR a `stream` action (receives an
@@ -122,7 +131,7 @@ class Step:
 
     def run(self, emit: Emit = _noop) -> Outcome:
         self.state = StepState.RUNNING
-        self.started_at = time.perf_counter()
+        self.started_at = clock()
         if self.stream is not None:
             outcome = self.stream(emit)
         elif self.action is not None:
@@ -135,7 +144,7 @@ class Step:
             raise ValueError("a Step needs exactly one of action / stream")
         # After the action and before the verdict fields: a step that raised leaves `ended_at` unset and
         # therefore carries no duration, which is the truth - it never finished one.
-        self.ended_at = time.perf_counter()
+        self.ended_at = clock()
         self.output = outcome.output
         self.rc = outcome.rc
         self.state = StepState.OK if outcome.ok else StepState.FAILED

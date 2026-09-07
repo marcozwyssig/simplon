@@ -12,6 +12,7 @@ pytest.importorskip("textual")
 
 from simplon.orchestrator.manifest import load as manifest_load  # noqa: E402
 from simplon.orchestrator.steps import Outcome, Pipeline, Step, StepState  # noqa: E402
+from simplon.orchestrator import steps as steps_mod  # noqa: E402
 from simplon.orchestrator.tui import _StepApp  # noqa: E402
 
 _NESTED_MANIFEST = """
@@ -40,6 +41,22 @@ def _pipeline() -> Pipeline:
         Step(label="fails", action=lambda: Outcome(rc=1, output="boom")),
     ])
 
+
+@pytest.fixture(autouse=True)
+def frozen_clock(monkeypatch):
+    """Every duration this module asserts on comes from a clock the TEST holds still (#68).
+
+    These assertions are about the FORMAT of a row - `<0.1s` for a step too fast to matter - not about
+    how fast this machine happened to be. With the real `perf_counter`, a step whose action does nothing
+    still measured over `format_duration`'s 0.05s threshold whenever the box was busy, and printed
+    `0.1s`. That went red three times, twice while verifying an unrelated merge, and each time it said
+    something about the machine's load and nothing about the code.
+
+    A frozen clock does NOT weaken what is checked, which is the point of freezing it here rather than
+    dropping the duration from the assertions: the value still travels start -> finish ->
+    `format_duration` -> row text. Advance this clock and the rows say `2.4s`; both halves seen red.
+    """
+    monkeypatch.setattr(steps_mod, "clock", lambda: 0.0)
 
 def _planned_pipeline(rc_by_name: dict[str, int] | None = None) -> Pipeline:
     """A Pipeline shaped exactly as `run_command` builds one: deploy.bringup over build.prep
