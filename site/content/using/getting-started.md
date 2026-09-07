@@ -177,7 +177,7 @@ And try to run it against an environment:
 
 ```text
 $ ./myctl.sh dev build
-[14:48:59] ERR 'build' is environment-agnostic and takes no env prefix; run 'myctl build'
+[14:48:59] ERR 'build' is environment-agnostic and takes no env prefix; run './myctl.sh build'
 $ echo $?
 1
 ```
@@ -185,6 +185,27 @@ $ echo $?
 That refusal is worth a second look on day one. `build` produces an artefact; an artefact built "for
 dev" is either a lie or a different artefact, and both are worth failing over. The manifest said which
 groups take an environment, so the dispatch can say no - and it says no with the command you meant.
+
+### Make TAB work
+
+One more command on day one, and it is the one nobody thinks to look for:
+
+    ./myctl.sh support completion
+    echo "source $PWD/completions/myctl.bash" >> ~/.bashrc
+
+That writes `completions/myctl.bash` - the whole command tree as a shell function - and the second line
+is what makes it do anything: a generated completion nobody sources completes nothing. Open a new shell
+and `./myctl.sh support git <TAB>` answers from the manifest. In zsh the same file works after
+`autoload -U +X bashcompinit && bashcompinit`.
+
+**Commit the file.** It is generated from `myctl.yaml`, so it is a second description of the command
+tree, and a second description drifts: run `./myctl.sh support completion --check` in CI, which exits 1
+when a command has been added and the completion does not know it.
+
+Why a file rather than the completion Typer ships: Typer's runs the program on every TAB. Measured on
+this kernel's own CLI, a start costs 340-360 ms and one call of the generated function costs 0.16 ms.
+The file is registered on `myctl.sh` and that is deliberate - bash falls back to the part of a command
+word after the final slash, so the same registration answers for `./myctl.sh` and for an absolute path.
 
 ## Growing it
 

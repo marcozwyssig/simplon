@@ -20,7 +20,7 @@ from typing import Callable, NamedTuple
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
-from simplon import signatures
+from simplon import clitaxonomy, signatures
 from simplon.orchestrator.manifest import Manifest, resolve_ref
 
 _TEMPLATES = Path(__file__).resolve().parent / "templates"
@@ -326,15 +326,11 @@ def _group_paths(manifest: Manifest) -> list[str]:
     `groups:` names only the nodes that HOLD members. A nested group's ancestors (`support` above
     `support.git`) hold none and are declared in the `taxonomy:` block, yet each still needs a sub-app
     for its children to hang from - and it must exist before them, which is why the order matters.
+
+    The walk lives in `clitaxonomy.group_paths` since si#58, shared with `simplon.cli` and
+    `simplon.completiongen`: three mechanisms render the same tree, so the tree is computed once.
     """
-    out: list[str] = []
-    for group in manifest.groups:
-        parts = group.split(".")
-        for depth in range(1, len(parts) + 1):
-            path = ".".join(parts[:depth])
-            if path not in out:
-                out.append(path)
-    return out
+    return clitaxonomy.group_paths(manifest.groups)
 
 
 def _function_names(manifest: Manifest) -> dict[tuple[str, str], str]:

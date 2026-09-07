@@ -5,7 +5,7 @@ decisions, no Typer, fully unit-testable.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Container, Iterable, Mapping
 from dataclasses import dataclass, field
 
 
@@ -21,6 +21,33 @@ class TaxonomyNode:
     commands: tuple[str, ...] = ()
     groups: Mapping[str, "TaxonomyNode"] = field(default_factory=dict)
     env_first: bool = False
+
+
+def group_paths(groups: Iterable[str], *, exclude: Container[str] = frozenset()) -> list[str]:
+    """Every group that needs a sub-app, ANCESTORS FIRST, in declaration order.
+
+    `groups:` names only the nodes that HOLD members, so a nested group's ancestors (`support` above
+    `support.git`) can be declared in a `taxonomy:` block alone and still need a node of their own for
+    their children to hang from. Order matters because a child is attached to its parent.
+
+    ONE COPY, and it is here because three mechanisms have to produce the same tree from the same
+    manifest: `simplon.cli.assemble` binds it to Typer at run time, `simplon.taskgen` writes it out as a
+    generated module, and `simplon.completiongen` writes it out as a shell completion. Two of those
+    carried a private copy of this loop and said so in their docstrings ("Mirrors taskgen._group_paths,
+    which is what makes the two mechanisms produce the same tree"); a third copy is how that stops being
+    true, so si#58 moved the loop rather than adding one.
+
+    `exclude` drops a path both as an ENTRY and as an ANCESTOR - what `simplon.cli` needs for the groups
+    a product registers from its generated module instead.
+    """
+    out: list[str] = []
+    for group in groups:
+        parts = group.split(".")
+        for depth in range(1, len(parts) + 1):
+            path = ".".join(parts[:depth])
+            if path not in out and path not in exclude:
+                out.append(path)
+    return out
 
 
 def merge_trees(catalogue: dict[str, TaxonomyNode],

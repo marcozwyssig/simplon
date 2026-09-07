@@ -446,7 +446,7 @@ def test_every_catalogue_coordinate_appears_somewhere_on_the_page():
 
     # assert
     assert listed == set(cat.tasks)
-    assert len(listed) == 23, "the count moved - update the page, then this number"
+    assert len(listed) == 24, "the count moved - update the page, then this number"
 
 
 # --- the two empty ribs --------------------------------------------------------------------------------

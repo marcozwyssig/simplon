@@ -141,12 +141,12 @@ the number that says whether a rib is filled:
 | `release` | phase, agnostic | 3 |
 | `deploy` | phase, env-first | 0 |
 | `monitor` | phase, env-first | 0 |
-| `support` | not a phase | 5 |
+| `support` | not a phase | 6 |
 | `vcs` | family | 5 |
 | `docs` | family | 3 |
 | `tasks` | family | 2 |
 
-Twenty-two coordinates: twelve carrying a placement, ten free to be filed. The numbers in that table and
+Twenty-four coordinates: fourteen carrying a placement, ten free to be filed. The numbers in that table and
 in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -243,18 +243,21 @@ environment.
 
 *Host preflight, environment introspection and host tooling.* Not a phase - the group the five stand on.
 
-**In the catalogue today: 5 tasks.**
+**In the catalogue today: 6 tasks.**
 
 - `support:install`
 - `support:nexus`
 - `support:claude-plugins`
 - `support:environments`
 - `support:workflows`
+- `support:completion`
 
-**What a product brings itself.** Nothing, for `support:install` - it is the one task here the catalogue
-**places**, so every product gets `support install` without asking, because it touches the machine and
-reads no manifest at all. The other four each read a section (`nexus:`, `claude:`, `environments:`,
-`workflows:`) and are therefore offered.
+**What a product brings itself.** Nothing, for `support:install` and `support:completion` - they are the
+two tasks here the catalogue **places**, so every product gets `support install` and `support completion`
+without asking. One touches the machine and reads no manifest at all; the other writes the product's
+shell completion out of the command tree every manifest already has, and a completion that has to be
+asked for is a completion nobody has. The other four each read a section (`nexus:`, `claude:`,
+`environments:`, `workflows:`) and are therefore offered.
 
 ## The two empty ribs
 

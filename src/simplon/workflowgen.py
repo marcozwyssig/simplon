@@ -62,6 +62,7 @@ from typing import NamedTuple
 
 import yaml
 
+from simplon import context
 from simplon.orchestrator.manifest import Manifest
 
 #: The manifest section this module owns. A product that declares no section declares no workflows, and
@@ -455,8 +456,12 @@ def launcher(product: str) -> str:
     `tests/test_type_gate.py` refuses a workflow step that reaches for `mypy`, `pytest` or `pip`
     directly). Deriving the launcher here rather than letting a workflow spell out a `run:` line is what
     makes a generated workflow unable to grow a second route to a verdict.
+
+    DERIVED, not spelled here (si#58). The same string is now needed in two more places - the usage line
+    Click prints and the command word a generated shell completion registers on - so the spelling moved
+    to `simplon.context.launcher` and this stays the name a workflow author looks for.
     """
-    return f"./{product}.sh"
+    return context.launcher(product)
 
 
 # --- rendering -----------------------------------------------------------------------------------------------

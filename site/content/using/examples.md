@@ -150,7 +150,7 @@ that does not take an environment refuses one, loudly:
 
 ```text
 $ ./myctl.sh dev build
-[14:48:59] ERR 'build' is environment-agnostic and takes no env prefix; run 'myctl build'
+[14:48:59] ERR 'build' is environment-agnostic and takes no env prefix; run './myctl.sh build'
 ```
 
 Read that as a statement about artefacts, not about syntax. An artefact built "for dev" is either

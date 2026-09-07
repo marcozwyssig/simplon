@@ -612,8 +612,15 @@ def test_the_shipped_catalogue_places_the_general_commands_and_nothing_that_need
     # The old rationale, kept because it is still true of the ones that remain: the first PHASE command to
     # tag, the repo root and the remote's default branch are all it reads, so unlike its two neighbours
     # in the `release` namespace it cannot die on its first line in a product that declared nothing.
+    #
+    # `support:completion` joins them (si#58), and by the same test rather than by exception: it reads no
+    # manifest section - the command tree it writes out is the one every manifest already has - it
+    # publishes nothing and it touches only the product's own root. What settles it is what the thing IS:
+    # a completion that has to be asked for is a completion nobody has, because the way somebody would
+    # discover it is by pressing TAB, and that is precisely what does not work yet. `tasks:generate` is
+    # the standing precedent for the write - placed, and writing a generated file at a kernel-chosen path.
     assert placed == {"vcs:commit", "vcs:push", "vcs:prune-branches", "vcs:submodules",
-                      "vcs:auth-scopes", "support:install",
+                      "vcs:auth-scopes", "support:install", "support:completion",
                       "tasks:catalogue", "tasks:generate"}
     # `release` is DECLARED and holds nothing. The group exists so a product can place its own release
     # commands into it - the rule that a coordinate opening with a phase name belongs to that phase is

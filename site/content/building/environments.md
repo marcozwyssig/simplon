@@ -55,7 +55,7 @@ Every other group is environment-agnostic and refuses the token:
 
 ```text
 $ ./myctl.sh dev build
-[14:48:59] ERR 'build' is environment-agnostic and takes no env prefix; run 'myctl build'
+[14:48:59] ERR 'build' is environment-agnostic and takes no env prefix; run './myctl.sh build'
 ```
 
 Say that as a statement about artefacts. A wheel built "for dev" is either byte-identical to the one you
