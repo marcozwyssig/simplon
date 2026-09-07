@@ -16,13 +16,21 @@ population the moment it is written. It then has no entry in `CENSUS` and
 cannot grow silently, because growing it breaks the build until somebody says which kind the new one
 is. A hand-maintained list would have exactly the drift the ticket is about.
 
-THE COUNT THAT STARTED THE TICKET WAS 61, AND IT WAS THE WRONG POPULATION. `grep -c 'raise ValueError'`
-over the two modules returns 61 today. Six of those are not load-time refusals a product can trip:
-five are methods on `Manifest`/`PlanNode` that run when a plan is built or a command is run (two of
-them documented as defensive - "load() already rejects cyclic manifests, so a validated manifest never
-trips it here"), and one is `_validation_message`'s funnel, which re-raises what the model already
-raised rather than refusing anything of its own. Both exclusions are computed here rather than listed,
-so they stay true: a class rename or a second funnel is picked up by the walk.
+THE COUNT THAT STARTED THE TICKET WAS 61, AND IT WAS THE WRONG POPULATION - TWICE. `grep -c 'raise
+ValueError'` over the loader's two modules returns 61, and six of those are not load-time refusals a
+product can trip: five are methods on `Manifest`/`PlanNode` that run when a plan is built or a command is
+run (two of them documented as defensive - "load() already rejects cyclic manifests, so a validated
+manifest never trips it here"), and one is `_validation_message`'s funnel, which re-raises what the model
+already raised rather than refusing anything of its own.
+
+The second error was the other way round and si#61 found it: the population was two modules, and there
+are three. The `suites:` section is refused by `tasks/testrun.py` - sixteen refusals a product manifest
+trips at load, on the manifest's content alone - and every one of them was outside a census whose whole
+job is that the sum cannot grow quietly. `Suites.gate` is the one exclusion there, on the same rule as
+`Manifest`/`PlanNode`: it refuses a command name against an already-validated taxonomy.
+
+All exclusions are computed here rather than listed, so they stay true: a class rename or a second funnel
+is picked up by the walk.
 
 THE THREE KINDS, AND WHY ONLY TWO OF THEM PARTITION. `CLAUDE.md` names diagnosis, self-binding and
 expression rule. Those are not three buckets of refusal sites, and its own examples say so: si#34 is
@@ -65,17 +73,29 @@ from simplon.orchestrator.model import treeform
 
 from conftest import ROOT
 
-#: The two modules a product manifest is refused by. Everything else in the kernel refuses at RUN time -
+#: The three modules a product manifest is refused by. Everything else in the kernel refuses at RUN time -
 #: a task that cannot reach its tool, an image without a pin - and those are a different population with
 #: a different cost.
+#:
+#: `tasks/testrun.py` JOINED THIS LIST IN si#61, and the population it was missing is the point. The
+#: `suites:` section is product-owned data the CLI engine never looks at, so its refusals are raised in the
+#: task module rather than in the loader - but `declared()` runs before anything else does, on the
+#: manifest's content alone, and refuses the whole test taxonomy without consulting a tool. Measured on a
+#: real Java product: `./javademo.sh test unit` came back with a ValueError from `declared` having run no
+#: gradle, no pytest and no docker. That is a load-time cost by any reading, and sixteen refusals of it
+#: were outside the census while the page published a total.
 LOAD_PATH = (ROOT / "src" / "simplon" / "orchestrator" / "manifest.py",
-             ROOT / "src" / "simplon" / "orchestrator" / "model" / "treeform.py")
+             ROOT / "src" / "simplon" / "orchestrator" / "model" / "treeform.py",
+             ROOT / "src" / "simplon" / "tasks" / "testrun.py")
 
 #: The chapter that publishes the counts.
 CHAPTER = ROOT / "site" / "content" / "building" / "rules.md"
 
 #: Classes whose methods run against an ALREADY LOADED manifest - planning and running, not loading.
-NOT_LOAD_TIME = ("Manifest", "PlanNode")
+#: `Suites` is the third for the same reason as the other two: `Suites.gate(name)` is a lookup a command
+#: does after `declared()` has already validated the taxonomy, so it refuses a command name and not a
+#: manifest section.
+NOT_LOAD_TIME = ("Manifest", "PlanNode", "Suites")
 
 #: The funnel that re-raises a Pydantic error as the plain ValueError `load()` promises. It refuses
 #: nothing of its own; every rule it carries is raised inside `_ManifestModel` and counted there.
@@ -166,6 +186,48 @@ CENSUS: dict[tuple[str, str], str] = {
     ("check_every_task_is_used", "is declared and no command instantiates it"): EXPRESSION,
     ("check_coordinate_placement", "places the coordinate"): EXPRESSION,
     ("check_env_groups", "shape_is_the_platforms"): EXPRESSION,
+
+    # --- tasks/testrun.py: the `suites:` section (si#61) --------------------------------------------
+    #
+    # THE TWO THAT THE TICKET IS ABOUT ARE BOTH DIAGNOSIS, AND THAT IS A MEASURED ANSWER RATHER THAN A
+    # reading. Together they make an IMPL-ONLY taxonomy - a product whose only test runner is its own,
+    # which is every Java product - impossible to write, so a Java product ships a Python test that
+    # asserts nothing in order to get a report at all. That looks exactly like an expression rule, and
+    # the census sorts on one question: would the refused manifest have produced a WORKING product?
+    #
+    #   - "exactly one gate must declare results: clear": NO. Nothing but a clearing gate ever clears
+    #     the shared results dir - `report()` merges into whatever is already there - so a taxonomy with
+    #     no clearing gate merges this run into the last one's results forever.
+    #   - "an 'impl' gate cannot declare 'results'": NO. `Gate.clears` says True for it, so it would
+    #     satisfy the rule above, while `assess_gate` returns on the impl branch before the clear is
+    #     reached. The declaration counts and does nothing.
+    #
+    # Both are measured against the mechanism in `test_suites_impl_only.py`, and both would go green
+    # there if the mechanism changed - at which point these two lines are wrong and that file says so.
+    # What the pair costs a product is real and is si#61's finding; it is the cost of a MISSING
+    # EXPRESSION (no way to say "the run owns the dir"), not of a refusal that could simply be dropped.
+    ("_str", "is required"): DIAGNOSIS,
+    ("_str", "must be a non-empty string"): DIAGNOSIS,
+    ("_gate", "each gate must be a mapping"): DIAGNOSIS,
+    ("_gate", "declare exactly one of 'suite'"): DIAGNOSIS,
+    ("_gate", "an 'impl' gate cannot declare"): DIAGNOSIS,
+    ("_gate", "'results' must be"): DIAGNOSIS,
+    # A pytest gate with no `junit:` is not refused for tidiness: the name is spliced into the argv, and
+    # an empty one leaves `--junit-xml=` pointing at the reports DIRECTORY. Measured beside the two above.
+    ("_gate", "must declare its own 'junit' file name"): DIAGNOSIS,
+    ("declared", "section is missing or is not a mapping"): DIAGNOSIS,
+    ("declared", "must be a non-empty list"): DIAGNOSIS,
+    ("declared", "declares a duplicate gate name"): DIAGNOSIS,
+    # The one refusal in this section that costs a product something. Two gates each taking the same
+    # passthrough `-k` is a coherent thing to declare and the manifest would load and run; what the
+    # kernel refuses is the RESULT - an expression written for one suite filters the other down to
+    # nothing and still reports green. Same shape as the `stop_on_failure` disagreement above.
+    ("declared", "at most one gate may declare args: true"): EXPRESSION,
+    ("declared", "exactly one gate must declare results:"): DIAGNOSIS,
+    ("declared", "is not the FIRST gate"): DIAGNOSIS,
+    ("declared", "'{SECTION}.report' must be a mapping"): DIAGNOSIS,
+    ("declared", "must be a list of result dirs"): DIAGNOSIS,
+    ("declared", "holds a non-path entry"): DIAGNOSIS,
 }
 
 #: For each EXPRESSION rule only, the third kind `CLAUDE.md` names: how far the rule reaches.
@@ -187,6 +249,10 @@ REACH: dict[tuple[str, str], str] = {
     ("check_every_task_is_used", "is declared and no command instantiates it"): REACH_KERNEL_EXEMPT,
     ("check_coordinate_placement", "places the coordinate"): REACH_MERGED,
     ("check_env_groups", "shape_is_the_platforms"): REACH_SEAM,
+    # The `suites:` section is not part of the merged tree at all - it is product data end to end - so
+    # "the kernel too" is a real statement here rather than an empty one: a kernel manifest declaring
+    # `suites:` goes through the same `declared()` with no exemption path.
+    ("declared", "at most one gate may declare args: true"): REACH_MERGED,
 }
 
 
@@ -254,17 +320,23 @@ def _reach_counts() -> dict[str, int]:
 # --- the population ------------------------------------------------------------------------------------
 
 
-def test_the_walk_finds_refusals_in_both_load_path_modules():
+def test_the_walk_finds_refusals_in_every_load_path_module():
     """The one that has to fail first. Every count below is computed from this walk, so a walk that
     found nothing - a renamed module, an `ast` change, a refactor to a different raise shape - must be a
-    red suite rather than a census of zero things classified perfectly."""
+    red suite rather than a census of zero things classified perfectly.
+
+    Named per module rather than in total, because that is how the third one went missing: a total of 55
+    looked healthy while an entire manifest section's refusals were outside the population.
+    """
     # act
     per_module = {path.name: len(_refusals(path)) for path in LOAD_PATH}
 
-    # assert: both modules refuse, and neither has quietly become the only one that does
+    # assert: every module refuses, and none has quietly become the only one that does
     assert per_module["manifest.py"] > 0
     assert per_module["treeform.py"] > 0
+    assert per_module["testrun.py"] > 0
     assert sum(per_module.values()) == len(_all_refusals())
+    assert len(per_module) == len(LOAD_PATH)
 
 
 def test_the_excluded_raises_are_the_ones_that_do_not_refuse_a_manifest_at_load():
@@ -282,12 +354,12 @@ def test_the_excluded_raises_are_the_ones_that_do_not_refuse_a_manifest_at_load(
     # act
     load_time = len(_all_refusals())
 
-    # assert: the walk really is narrower than the grep, and by the six sites named in the docstring
+    # assert: the walk really is narrower than the grep, and by the seven sites named in the docstring
     assert load_time < total
     excluded = total - load_time
-    assert excluded == 6, (
+    assert excluded == 7, (
         f"the grep finds {total} raises and the walk keeps {load_time}; the {excluded} excluded are "
-        f"meant to be the five Manifest/PlanNode methods plus the _validation_message funnel")
+        f"meant to be the six Manifest/PlanNode/Suites methods plus the _validation_message funnel")
 
     # assert: and they are excluded for the stated reason, not by accident - every dropped raise sits in
     # a plan/run-time class or is the funnel
@@ -301,7 +373,7 @@ def test_the_excluded_raises_are_the_ones_that_do_not_refuse_a_manifest_at_load(
             if (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call) and node.exc.args
                     and FUNNEL in ast.unparse(node.exc.args[0])):
                 funnels += 1
-    assert plan_time == 5, f"{plan_time} raises sit in {NOT_LOAD_TIME}, not the five documented"
+    assert plan_time == 6, f"{plan_time} raises sit in {NOT_LOAD_TIME}, not the six documented"
     assert funnels == 1, f"{funnels} funnels re-raise a Pydantic error, not the one documented"
     assert plan_time + funnels == excluded
 
@@ -494,7 +566,7 @@ def test_the_page_prints_the_reach_of_the_expression_rules():
     expected = _reach_counts()
 
     # act
-    printed = _published_counts("### How far the sixteen reach", "| reach |")
+    printed = _published_counts("### How far the seventeen reach", "| reach |")
 
     # assert
     assert printed["the kernel is held to it too"] == expected[REACH_MERGED]
