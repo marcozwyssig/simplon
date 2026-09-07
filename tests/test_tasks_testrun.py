@@ -9,6 +9,7 @@ an archive that reports one test and looks like a full gate). AAA throughout, ne
 """
 import contextlib
 import os
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -1002,3 +1003,127 @@ def test_aRedReportStepThatIsTheWeakestElementDoesNotPutSuiteWordingIntoTheRunSu
     stamp = verdict_module.read_stamp(str(tmp_path / "test/reports"))
     assert stamp["line"].startswith("report: failed")
     assert "the suite ran" not in stamp["line"]
+
+
+# --- a run a signal ended (#55) ---------------------------------------------------------------------------
+#
+# THE SUBPROCESS SEAM IS NOT STUBBED IN THIS SECTION, and that is the whole point of it. Every other test in
+# this file hands `assess_gate` an rc; a rc typed into a test would prove only that the branch exists, and
+# the defect was never in the branch - it was in the claim the kernel made about a process it had actually
+# watched die. So the "pytest" these tests run is a real child that raises a real signal on itself, `run`
+# is the kernel's own, and the rc travels the seam it travels in the field. The output is empty here for
+# the same reason it was empty in the report that opened #55: nobody was left to write any.
+
+
+def _shot_gate(monkeypatch, tmp_path, signum):
+    """A one-gate taxonomy whose suite is a real child process that kills itself with `signum`.
+
+    Everything the gate needs OFF the machine is still stubbed - the keep-awake window and the per-suite
+    venv - because neither is what is under test. The subprocess call is not.
+    """
+    data = _data()
+    data["suites"]["gates"] = [{"name": "unit", "suite": "test/unit/python", "results": "clear",
+                                "junit": "junit.xml"}]
+    _register(monkeypatch, tmp_path, data)
+    (tmp_path / "test/unit/python").mkdir(parents=True)
+    monkeypatch.setattr(testrun, "keep_awake", contextlib.nullcontext)
+    monkeypatch.setattr(testrun.pyvenv, "venv_python_pip", lambda d: (sys.executable, "pip"))
+    monkeypatch.setattr(testrun.allure, "integration_pytest_argv",
+                        lambda py, results, junit, extra: [
+                            py, "-c", f"import os, signal; os.kill(os.getpid(), {signum})"])
+    return testrun.config()
+
+
+def test_aSuiteThatWasShotDoesNotClaimToHaveRunAndReportedFailures(monkeypatch, tmp_path):
+    # arrange: a real child, terminated by a real SIGTERM
+    cfg = _shot_gate(monkeypatch, tmp_path, 15)
+
+    # act
+    gv = testrun.assess_gate(cfg.gates[0], cfg, [], filtered=False)
+
+    # assert: the rc the operating system produced, and a sentence that is about the RUN and not about the
+    # product - the old one said "the suite ran and reported failures" about an empty output
+    assert gv.rc == -15
+    assert gv.verdict is Verdict.KILLED
+    assert not gv.verdict.ran
+    assert gv.line == ("killed (SIGTERM) - the suite was ended by a signal and reported nothing, so this "
+                       "says nothing about the product")
+
+
+def test_everySignalGetsItsOwnNameFromARealChild_notOneNegativeNumberForAllOfThem(monkeypatch, tmp_path):
+    # arrange / act: the three other signals #55 names, each shot for real
+    lines = {}
+    for signum in (9, 6, 11):
+        cfg = _shot_gate(monkeypatch, tmp_path / str(signum), signum)
+        lines[signum] = testrun.assess_gate(cfg.gates[0], cfg, [], filtered=False).line
+
+    # assert: three different sentences where the kernel used to produce one
+    assert lines[9].startswith("killed (SIGKILL)")
+    assert lines[6].startswith("killed (SIGABRT)")
+    assert lines[11].startswith("killed (SIGSEGV)")
+
+
+def test_aShotGateSaysSoInTheArchiveAndInTheStamp_notOnlyOnTheTerminal(monkeypatch, tmp_path):
+    # arrange: the gate is invoked the way the CLI invokes it, so the stamp is written too
+    cfg = _shot_gate(monkeypatch, tmp_path, 15)
+    ctx = SimpleNamespace(info_name="unit", args=[])
+
+    # act
+    rc = testrun.gate(ctx, name="unit")
+
+    # assert: red on the terminal, and both written records say WHAT ended it rather than claiming a
+    # suite reported something
+    assert rc != 0
+    written = (tmp_path / "test/reports/allure-results" / allure.ENVIRONMENT).read_text(encoding="utf-8")
+    assert "verdict=killed" in written
+    assert "killed (SIGTERM)" in written
+    stamp = verdict_module.read_stamp(str(tmp_path / "test/reports"))
+    assert stamp is not None
+    assert stamp["verdict"] == "killed" and stamp["gates"][0]["rc"] == -15
+    assert "SIGTERM" in stamp["line"]
+
+
+def test_aShotGateExitsWithTheNumberAShellWritesForThatSignal_ratherThanTheModuloOfIt(monkeypatch, tmp_path):
+    # arrange: the same shot gate, through both callers that hand an rc to the process
+    cfg = _shot_gate(monkeypatch, tmp_path, 15)
+    ctx = SimpleNamespace(info_name="unit", args=[])
+
+    # act
+    from_run_gate = testrun.run_gate(cfg.gates[0], cfg, [], filtered=False)
+    from_callback = testrun.gate(ctx, name="unit")
+
+    # assert: 143, which is what `sh` reported for the identical child in tests/test_verdict.py - and NOT
+    # the 241 `sys.exit(-15)` would have manufactured. The record keeps the wait status either way.
+    assert from_run_gate == from_callback == verdict_module.exit_code(-15)
+    assert from_run_gate != 241 and from_run_gate != 0
+    assert testrun.assess_gate(cfg.gates[0], cfg, [], filtered=False).rc == -15
+
+
+def test_aRunThatWasShotOutranksAGateWhoseSetupMerelyBroke(monkeypatch, tmp_path, runner):
+    # arrange: one gate's lab fell over, another was shot - the state after a signal reached a process
+    # group rather than a single child
+    shot = GateVerdict("unit", Verdict.KILLED, -15)
+    broken = GateVerdict("system", Verdict.SETUP_FAILED, 1, "preamble")
+
+    # act
+    run = RunVerdict((shot, broken))
+
+    # assert: the run reports the signal, because it is what explains the broken lab and not the reverse
+    assert run.verdict is Verdict.KILLED
+    assert run.line.startswith("unit: killed (SIGTERM)")
+
+
+def test_aGateThatMerelyExitsNonZeroIsStillARedSuite_soTheSignalReadingDidNotSwallowIt(monkeypatch,
+                                                                                       tmp_path):
+    # arrange: the ordinary red run, through the same unstubbed seam - a child that exits 1 by itself
+    cfg = _shot_gate(monkeypatch, tmp_path, 15)
+    monkeypatch.setattr(testrun.allure, "integration_pytest_argv",
+                        lambda py, results, junit, extra: [py, "-c", "import sys; sys.exit(1)"])
+
+    # act
+    gv = testrun.assess_gate(cfg.gates[0], cfg, [], filtered=False)
+
+    # assert: unchanged wording and an unchanged exit code for the case that was never broken
+    assert gv.verdict is Verdict.FAILED
+    assert gv.line == "failed (rc 1) - the suite ran and reported failures"
+    assert testrun.run_gate(cfg.gates[0], cfg, [], filtered=False) == 1
