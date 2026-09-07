@@ -5,12 +5,12 @@ Today a product's manifest points `impl:` at a kernel MODULE PATH, so moving a b
 breaks the product's manifest. A coordinate `<namespace>:<name>` is the indirection: the catalogue maps
 it to whatever module currently holds the body, and the product never names one.
 
-The kernel is a product of itself too (simplon.yaml, orchestrator/): its own build/test/support commands
-are assembled from this same catalogue, exactly like any other *ctl product. That reverses an earlier rule
-("only a product generates, because only a product has a surface") - the reversal exists because a spike
-found this catalogue resolved by walking five directories up to the old monorepo's root, correct only
-while vendored and silently wrong once installed. Nobody had noticed, because nobody had ever run the
-kernel the way a consumer does. A tool never used in its own house rots unseen.
+The kernel is a product of itself too (simplon.yaml, deploy/orchestrator/): its own build/test/support
+commands are assembled from this same catalogue, exactly like any other *ctl product. That reverses an
+earlier rule ("only a product generates, because only a product has a surface") - the reversal exists
+because a spike found this catalogue resolved by walking five directories up to the old monorepo's
+root, correct only while vendored and silently wrong once installed. Nobody had noticed, because
+nobody had ever run the kernel the way a consumer does. A tool never used in its own house rots unseen.
 
 Deliberately small. It is a dict of coordinates with two lookups and four rejections, not a second
 manifest loader: the value shape is `_CommandSpecModel`, the very model the manifest already validates a

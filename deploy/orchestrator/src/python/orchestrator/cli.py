@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from pathlib import Path
 
 import typer
 
@@ -37,9 +36,14 @@ app = typer.Typer(add_completion=False, no_args_is_help=True,
 # fresh product; add entries here as you rename commands and want the old muscle memory to keep working.
 _ALIASES: dict[str, str] = {}
 
-# cli.py lands under orchestrator/src/python/orchestrator/ -- four levels
-# below the root, not three.
-ROOT = Path(__file__).resolve().parents[4]
+# The repo root, and it is READ from the product context rather than counted out in `parents[n]`.
+# There used to be a `parents[4]` here with a comment explaining the count, next to a `paths.ROOT`
+# that already carried the answer -- two sources for one path, and the counted one was wrong the
+# moment the block moved (si#24): it resolved to `deploy/`, and `test all` went looking for
+# `deploy/tests`. It failed loudly, which is the only reason this is a finding and not a silently
+# wrong build. `simplon.context.bootstrap` walks up to the manifest marker, so the derived one is
+# right at any depth, and deleting the second source is cheaper than keeping it in step.
+ROOT = paths.ROOT
 
 
 def _run(*args: str) -> int:

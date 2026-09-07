@@ -45,6 +45,13 @@ output. One case still needs a hand: where the catalogue places the same name
 (`support install`, `release tag`), the printed block lacks the `override: true`
 the merge then asks for, and the second refusal names that fix.
 
+**And it replaces the structure, not your comments.** The rewrite is generated
+from the parsed manifest, so a comment explaining *why* something stands where
+it does does not survive it. A consumer whose manifest carried forty lines of
+reasoning used the output as a blueprint and rebuilt by hand rather than
+pasting — otherwise the migration would have been green and the reasons gone.
+If your manifest is uncommented, paste it; if it is not, read it.
+
 **`release tag` disappears from every product.** It was placed; it is now
 offered. A placed command has to be useful in *every* product, and a product
 with no release workflow does not need one. Declare it yourself if you want it:
@@ -81,6 +88,13 @@ The warning is a `FutureWarning` rather than a `DeprecationWarning`, and the
 reason is measured: Python's default filters drop a DeprecationWarning unless
 the frame that triggered it is `__main__`, and a product's task body never is.
 A warning nobody sees is not a warning.
+
+**Check the call, not the import.** The warning fires when a name is *used*,
+not when the module is imported — `from simplon import images` is silent even
+under `-W error::FutureWarning`, and `images.image_ref(...)` is what speaks. A
+consumer who verifies "does it still import?" after the bump sees nothing and
+meets the warning later, in operation. Measured by a consumer during their
+migration, not by us.
 
 Which modules are library and which are internals is now declared rather than
 guessed — see [Surface](../../building/surface/).
