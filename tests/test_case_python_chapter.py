@@ -466,48 +466,14 @@ def test_the_images_the_transcript_shows_are_the_ones_the_manifest_pins():
 # --- the links, which are the chapter's design -----------------------------------------------------
 
 
-def _anchor(heading: str) -> str:
-    """The id Hugo's markdown renderer gives a heading: inline code and emphasis dropped, lowercased,
-    punctuation removed, spaces hyphenated.
-
-    Derived rather than guessed: this function was run over every internal link the site already
-    carries, and all of them resolve, which is what makes it usable as a measure here.
-    """
-    text = re.sub(r"[`*]", "", heading).strip().lower()
-    text = re.sub(r"[^a-z0-9 _\-]", "", text)
-    return re.sub(r"\s", "-", text)
-
-
-def _headings(page) -> set[str]:
-    return {_anchor(match.group(1))
-            for match in re.finditer(r"^#{1,6}\s+(.*?)\s*$", page.read_text(encoding="utf-8"), re.M)}
-
-
-def _url_dir(page):
-    """The directory a page's own URL sits in - `building/phases.md` is served at `building/phases/`, so
-    a link of `../manifest/` from it means `building/manifest/` and not `manifest/`."""
-    return page.parent if page.name == "_index.md" else page.parent / page.stem
-
-
-@pytest.mark.parametrize("target", sorted(set(re.findall(
-    r"\]\((\.\.?/[^)]*)\)", CHAPTER.read_text(encoding="utf-8")))))
-def test_every_page_the_chapter_points_at_resolves(target):
-    """The chapter's design is to link instead of retelling, so a link that goes nowhere is not a typo -
-    it is the design failing. Hugo renders a dead relative link without a word, which is exactly the
-    silence this repository refuses everywhere else."""
-    # arrange
-    path, _, fragment = target.partition("#")
-    resolved = (_url_dir(CHAPTER) / path).resolve()
-
-    # act
-    page = next((candidate for candidate in (resolved.with_suffix(".md"), resolved / "_index.md")
-                 if candidate.is_file()), None)
-
-    # assert
-    assert page is not None, f"{target} points at no page under site/content/"
-    if fragment:
-        assert fragment in _headings(page), (
-            f"{target}: '{page.name}' has no heading whose id is '{fragment}'")
+# The URL base, the heading-id rule and the walk over every link now live in `sitepages` and are applied
+# by `test_site_links.py` to the WHOLE site (si#67), which strictly contains this chapter: it reads the
+# same relative links plus the theme shortcodes, resolves them with the same `url_dir`, and checks each
+# fragment against the same `anchor`. The per-chapter copy that used to stand here is gone rather than
+# kept beside it - two implementations of one rule is the second source this repository spends its time
+# removing, and the copy would have been the one that drifted, because both would have stayed green.
+#
+# What stays here is the chapter's own DESIGN claim, which is not a fact about links in general.
 
 
 def test_the_chapter_really_points_somewhere():
