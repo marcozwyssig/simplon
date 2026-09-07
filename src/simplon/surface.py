@@ -36,7 +36,9 @@ nothing fails at load, and no PRODUCT may say less than it could before.
      apart, and the reader at the call site had nothing to go on. The library half is the half that
      gets renamed, because it is the half a product types.
 
-All four are reachable at their old paths, announcing the move; see `MOVED`.
+All four were reachable at their old paths for one release, announcing the move. That period ended at
+0.5.0 and the tombstones are gone; an old import is now a `ModuleNotFoundError`. What the period was,
+and what ending it cost, is under `MOVED` below.
 
 Both rules are held by `tests/test_surface.py`, and that makes them SELF-BINDING in the sense
 `CLAUDE.md` uses (kind 2): a future kernel author may no longer place a module wherever they like, or
@@ -77,28 +79,29 @@ compares them - #46's second-source problem at a new place. The cheap half of th
 the copy: heads point HERE instead of reciting a list. What is left here is one datum with the date it
 was taken on, and `test_surface.py` holds the kernel's own prose to it.
 
-THE TOMBSTONES HAVE A DEADLINE, AND THIS IS WHERE IT IS TRACKED (#50). `MOVED` promises that the four
-old paths are removed at the next minor. That promise was written in five places - `moved_message`
-below, the four tombstone modules' own heads - and quoted on the website, and for a while it was
-written in none of them WHO would notice when it came due. That is how a transition period turns into
-a permanent one: not by a decision, but because at the next minor nobody thought of it, and then it
-lasts one more, and one more.
+THE TOMBSTONES HAD A DEADLINE, IT WAS TRACKED HERE (#50), AND IT HELD. `MOVED` promised that the four
+old paths came out at the next minor. That promise was written in five places and quoted on the
+website, and for a while it was written in none of them WHO would notice when it came due. That is how
+a transition period turns into a permanent one: not by a decision, but because at the next minor nobody
+thought of it, and then it lasts one more, and one more.
 
-So three things live together below, and they are meant to be read as one entry:
+IT CAME DUE AT 0.5.0 AND THE MECHANISM DID ITS JOB, which is worth recording because a gate that has
+never fired is a claim rather than a guarantee. `test_surface.py` went red on the release run, after
+the tag and before the publish, exactly where `MOVED_DUE_AFTER` said it would - so v0.5.0 was cut,
+published nothing, and the period ended in the same afternoon instead of quietly lasting a fifth
+release. It cost one tag its publish. That was the design.
 
-  - `MOVED`             - what was promised.
-  - `MOVED_CONSUMERS`   - who still uses the old path, MEASURED, down to the line. Six lines in three
-                          repositories, which is what makes ending the period cheap: it is a morning's
-                          work for three product owners, not a migration.
-  - `MOVED_DUE_AFTER`   - the release the promise names. `test_surface.py` turns red the moment a
-                          version past it is built, and says exactly what has to go.
+WHAT THE REMOVAL ACTUALLY TOOK, since the instruction this docstring used to carry named the files
+first and the measurement last, and the measurement was the half that mattered. The record said six
+import lines in three repositories; re-measured on the day, it was three lines in ONE, and none of them
+a consumer this period ever protected - see `MOVED_CONSUMERS`. Two of the recorded lines had never been
+simplon's at all. A count taken once decays, and this one decayed inside a day.
 
-WHAT REMOVING THEM ACTUALLY IS, because deleting the four files is the smaller half and leaves a
-promise with no object behind it: delete `simplon/{allure,images,nexus,vcs}.py`, empty `MOVED` and
-`MOVED_CONSUMERS`, drop the migration table and the deadline sentence from
-`site/content/building/surface.md`, and re-measure `MOVED_CONSUMERS` FIRST - the acceptance is that no
-consumer still imports an old path, measured on the day, not remembered from this one. After that an
-old import fails with `ModuleNotFoundError`, which is loud enough.
+The three records below stay, empty, for the next move: `MOVED` (what is promised), `MOVED_CONSUMERS`
+(who still uses the old path, measured down to the line) and `MOVED_DUE_AFTER` (the release the promise
+names). `moved_attr` stays with them. Re-measure FIRST when the next deadline comes: the acceptance is
+that no consumer still imports an old path, measured on the day, not remembered from the day the
+tombstone was written.
 """
 from __future__ import annotations
 
@@ -164,52 +167,32 @@ INTERNAL = frozenset({
     "test_impls", "tools",
 })
 
-#: Old import path -> where it lives now. Each key is a module that stayed behind as a tombstone: it
-#: still imports, and it says on use where the thing went (see `moved_attr`). They come out at the next
-#: MINOR release, which is the whole point of announcing rather than deleting - a product gets a working
-#: run with a message in it, not a stack trace, and has until then to change the line.
+#: Old import path -> where it lives now. EMPTY SINCE 0.5.0, and empty is the finished state rather
+#: than an unused feature: four modules (`allure`, `images`, `nexus`, `vcs`) stood here as tombstones
+#: through 0.4.x and came out on the deadline `MOVED_DUE_AFTER` names. `moved_attr` below is what they
+#: delegated to and stays for the next move; `test_surface.py` exercises it against a synthetic pair, so
+#: it cannot rot between moves.
 #:
-#: Two of them moved because nothing outside `simplon/tasks/` imported them - `allure` and `vcs` were
-#: the innards of a task sitting where the kernel lives. The other two are library and were RENAMED
-#: where they stood, because each shared a name with a task body and nothing at a call site said which
-#: was which: `simplon.images` against `simplon.tasks.image` (unrelated modules - the body has never
-#: imported the other) and `simplon.nexus` against `simplon.tasks.nexus` (the body calls it). That pair
-#: of near-identical names is what the #31 review lost time to; `test_surface.py` now holds the property
-#: rather than the three instances.
-MOVED = {
-    "allure": "simplon.tasks.allure",
-    "images": "simplon.imagenames",
-    "nexus": "simplon.nexusproxy",
-    "vcs": "simplon.tasks.gitops",
-}
+#: WHAT ENDING THE PERIOD ACTUALLY COST, because the record said one thing and the day said another. The
+#: measurement below recorded six import lines in three repositories; re-measured on the day, it was
+#: three lines in ONE. Two were never simplon's - asbundle reads `from delivery import images`, a
+#: different kernel with the same module name - and biz-cockpit had already migrated. That is why the
+#: removal instruction says re-measure FIRST: a count taken once decays, and this one decayed in a day.
+MOVED: dict[str, str] = {}
 
-#: Who still imports each old path, and from which line. MEASURED on 2026-09-06 (#50): the tarball of
-#: every repository this account can read was fetched and every `from simplon ...` / `import simplon ...`
-#: line was read. Not a phrase search - `from simplon import compose, images, log, ports, waits` is one
-#: of these lines and no search for "simplon.images" finds it, which is why the first count of this said
-#: five lines in two repositories and biz-cockpit was not among them.
-#:
-#: An EMPTY tuple is a finding, not a gap: `allure` and `vcs` have no consumer at all and could come out
-#: today without anybody changing a line.
-MOVED_CONSUMERS: dict[str, tuple[str, ...]] = {
-    "allure": (),
-    "images": (
-        "asbundle    deploy/provision/orchestrator/src/python/orchestrator/container.py:21",
-        "asbundle    deploy/provision/orchestrator/src/python/orchestrator/release.py:14",
-        "biz-cockpit deploy/provision/orchestrator/src/python/orchestrator/cli.py:28",
-        "netctl      deploy/provision/orchestrator/src/python/orchestrator/tooling.py:32",
-    ),
-    "nexus": (
-        "netctl      deploy/provision/orchestrator/src/python/orchestrator/guard.py:55",
-        "netctl      deploy/provision/orchestrator/test/unit/python/orchestrator/"
-        "test_nexus_manifest.py:20",
-    ),
-    "vcs": (),
-}
+#: Who still imports each old path, and from which line. EMPTY SINCE 0.5.0, with the tombstones it
+#: recorded. Re-measured on 2026-09-07 before the removal, and the finding is worth keeping even though
+#: the record is now empty: netctl still reads `simplon.images` and `simplon.nexus` at three lines, and
+#: it is NOT a consumer the tombstones ever protected. It pins `simplon==0.3.0`, where those two are the
+#: real modules and `imagenames`/`nexusproxy` do not exist yet. A grace period only reaches a product
+#: that runs the release carrying it; netctl skipped 0.4.x entirely, so its migration is part of
+#: whatever upgrade takes it past 0.3.0, not of this removal.
+MOVED_CONSUMERS: dict[str, tuple[str, ...]] = {}
 
-#: The last release the tombstones are promised to survive: 0.4.0, the one that introduces them. "The
-#: next minor" is what the warning says, and a moving phrase cannot be checked - this is the same
-#: sentence as a pair of numbers, so a test can read it.
+#: The last release the tombstones were promised to survive: 0.4.0, the one that introduced them. "The
+#: next minor" is what the warning said, and a moving phrase cannot be checked - this is the same
+#: sentence as a pair of numbers, so a test could read it. It DID: the gate went red on 0.5.0's release
+#: run, cost that tag its publish, and is the only reason the period ended on time.
 #:
 #: WHEN IT FIRES, stated exactly, because the timing is the whole value and it is not the timing anybody
 #: would assume. setuptools-scm is on `no-guess-dev`, so every commit after v0.4.0 calls itself

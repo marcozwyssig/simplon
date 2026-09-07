@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 import simplon
-from simplon import surface
+from simplon import log, surface
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "simplon"
 
@@ -115,134 +115,44 @@ def test_no_module_is_promised_under_a_task_body_s_name():
         f"renamed, because nothing at the call site says which is which")
 
 
-# --- the tombstones ---------------------------------------------------------------------------------
+# --- the tombstone machinery, with no tombstone standing ---------------------------------------------
+#
+# `MOVED` is empty since 0.5.0 and the four modules are gone, so nothing in the tree reaches `moved_attr`
+# any more. The machinery stays because the next move needs it, and it is measured rather than obvious -
+# FutureWarning over DeprecationWarning, and `__all__` answered rather than refused, each cost a defect
+# to find. Kept untested it would rot silently, so these three exercise it against a SYNTHETIC pair
+# instead of a real tombstone: `simplon.log` stands in for the new home, and no old module has to exist.
 
 
-@pytest.mark.parametrize("old", sorted(surface.MOVED))
-def test_a_moved_module_still_imports(old):
-    """Acceptance 3, first half: the old path has not simply gone."""
-    importlib.import_module(f"simplon.{old}")
-
-
-@pytest.mark.parametrize("old, new", sorted(surface.MOVED.items()))
-def test_a_moved_module_points_at_a_real_home(old, new):
-    """A forwarding address that forwards nowhere is the silent break with extra steps."""
-    importlib.import_module(new)
-
-
-@pytest.mark.parametrize("old, new", sorted(surface.MOVED.items()))
-def test_a_moved_module_announces_the_move_on_use(old, new):
-    """ACCEPTANCE 4, and the assertion the ticket was written for: reaching a moved module through its
-    old path works and SAYS where the module went. Seen red before the tombstones existed - the probe
-    imported `simplon.images.hub_repo` against the unchanged tree and no warning was raised at all.
-
-    The warning is pinned against `surface.moved_message`, not retyped, because a quoted message is a
-    second source for a string."""
-    # arrange: a name the new module really has and the tombstone does NOT define itself - otherwise
-    # the lookup never reaches `__getattr__` and this would assert nothing. `annotations` is the one
-    # that bites: every module here does `from __future__ import annotations`, tombstones included.
-    target = importlib.import_module(new)
-    tombstone = importlib.import_module(f"simplon.{old}")
-    attribute = next(n for n in sorted(vars(target))
-                     if not n.startswith("_") and n not in vars(tombstone))
-
-    # act
+def test_a_move_is_announced_when_an_attribute_is_served_through_it():
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        value = getattr(tombstone, attribute)
+        served = surface.moved_attr("simplon.gone", "simplon.log", "info")
 
-    # assert: the same object, and a warning naming both ends of the move
-    assert value is getattr(target, attribute)
-    messages = [str(w.message) for w in caught if issubclass(w.category, FutureWarning)]
-    assert surface.moved_message(f"simplon.{old}", new) in messages, (
-        f"using simplon.{old}.{attribute} said {messages or 'nothing'}; it has to name {new}")
+    assert served is log.info
+    assert [str(w.message) for w in caught] == [surface.moved_message("simplon.gone", "simplon.log")]
 
 
-def test_the_move_is_announced_where_python_will_actually_show_it(tmp_path):
-    """WHY FutureWarning AND NOT DeprecationWarning, and this measures it rather than asserting it.
-
-    Python's default filters ignore a DeprecationWarning unless the frame that triggered it is
-    `__main__`. The frame that triggers this one is a product's own task body, which never is - so a
-    DeprecationWarning here would be shown to NOBODY, which is exactly the silent disappearance
-    acceptance 3 forbids. A test that raised the warning in-process could not see that difference,
-    because pytest installs its own filters; this one runs a fresh interpreter with the defaults and
-    reads what actually reached stderr.
-    """
-    # arrange: a LIBRARY module (never __main__) that uses the tombstone, plus a DeprecationWarning
-    # raised from the same depth, so the only thing differing between the two is the category
-    consumer = tmp_path / "consumer.py"
-    consumer.write_text("import warnings\n"
-                        "from simplon import images\n"
-                        "images.hub_repo\n"
-                        # stacklevel=1: attributed to consumer.py itself, which is where
-                        # `moved_attr`'s stacklevel=3 lands too - same frame, so only the CATEGORY
-                        # differs between the two notices below.
-                        "warnings.warn('DEPRECATION-COMPARISON', DeprecationWarning, stacklevel=1)\n")
-    (tmp_path / "main.py").write_text("import consumer\n")
-
-    # act: default filters (no -W), fresh interpreter
-    env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(SRC.parent), str(tmp_path)])}
-    done = subprocess.run([sys.executable, str(tmp_path / "main.py")],
-                          capture_output=True, text=True, env=env, cwd=tmp_path)
-
-    # assert: the move was announced, and the same notice as a DeprecationWarning would have vanished
-    assert done.returncode == 0, done.stderr
-    assert "simplon.imagenames" in done.stderr, (
-        f"the move was not announced under Python's DEFAULT filters; stderr was {done.stderr!r}")
-    assert "consumer.py" in done.stderr, (
-        f"the notice was blamed on the wrong frame, so `moved_attr`'s stacklevel is off; "
-        f"stderr was {done.stderr!r}")
-    assert "DEPRECATION-COMPARISON" not in done.stderr, (
-        "a DeprecationWarning WAS shown here, so the reason for choosing FutureWarning no longer holds")
-
-
-def test_a_tombstone_does_not_announce_a_move_for_a_dunder_probe():
-    """`inspect`, `pytest` and `importlib` ask any module they touch for `__path__`, `__spec__` and
-    friends. Answering those with a move notice would report a migration no product code asked for -
-    and, worse, teach the reader to ignore the message. `__all__` is the deliberate exception and has
-    its own test below."""
-    # arrange
-    tombstone = importlib.import_module(f"simplon.{sorted(surface.MOVED)[0]}")
-
-    # act
+def test_a_dunder_probe_is_refused_rather_than_announced():
+    """`inspect`, `pytest` and `importlib` probe every module they touch. Announcing a move for those
+    would report a migration no product code asked for, and teach the reader to ignore the message."""
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         with pytest.raises(AttributeError):
-            tombstone.__path__
+            surface.moved_attr("simplon.gone", "simplon.log", "__path__")
 
-    # assert
     assert not caught, [str(w.message) for w in caught]
 
 
-@pytest.mark.parametrize("old, new", sorted(surface.MOVED.items()))
-def test_a_star_import_through_a_tombstone_binds_what_the_real_module_binds(old, new, tmp_path):
-    """A star-import is the one shape that fails SILENTLY through a forwarding module, which makes it
-    this project's recurring defect in miniature: `from simplon.images import *` asks for `__all__`,
-    and a tombstone that refuses it falls back to its own module dict - binding `Any`, `annotations`
-    and `surface` while raising no warning at all. The caller then has none of the names it asked for
-    and no statement that anything is wrong.
-
-    Measured before the fix: exactly those three names, zero warnings. So `__all__` is answered, and
-    answered with the TARGET's star-import surface, which is what this pins - not a hand-written list.
-    """
-    # arrange
-    reference: dict[str, object] = {}
-    exec(f"from {new} import *", reference)
-    expected = {k for k in reference if not k.startswith("__")}
-
-    # act
-    through_tombstone: dict[str, object] = {}
+def test_a_star_import_gets_the_targets_own_surface_and_is_still_announced():
+    """The recurring defect in miniature: refuse `__all__` and a star-import falls back to the
+    tombstone's own module dict, binding the wrong names while warning about nothing."""
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        exec(f"from simplon.{old} import *", through_tombstone)
-    bound = {k for k in through_tombstone if not k.startswith("__")}
+        names = surface.moved_attr("simplon.gone", "simplon.log", "__all__")
 
-    # assert: the same names, the same objects, and the move was not passed over in silence
-    assert bound == expected, f"star-import through simplon.{old} bound {sorted(bound)}"
-    assert all(through_tombstone[k] is reference[k] for k in expected)
-    assert any(surface.moved_message(f"simplon.{old}", new) == str(w.message)
-               for w in caught if issubclass(w.category, FutureWarning)), (
-        f"a star-import through simplon.{old} said nothing about the move")
+    assert set(names) == {n for n in vars(log) if not n.startswith("_")}
+    assert [str(w.message) for w in caught] == [surface.moved_message("simplon.gone", "simplon.log")]
 
 
 def test_the_innards_under_tasks_are_exactly_the_modules_no_coordinate_names():

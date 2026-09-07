@@ -128,25 +128,19 @@ target's own star-import surface, so the names and the notice both arrive.
 The tombstones come out at the next **minor** release. Until then a product gets a working run with a
 message in it rather than a stack trace, and knows where to point the line.
 
-That deadline is tracked rather than remembered. `simplon.surface` carries three things beside the
-table below: `MOVED_CONSUMERS`, which names every line in every repository that still imports an old
-path — measured, down to the file and the line number — `MOVED_DUE_AFTER`, the release the promise
-names, and a test that turns red once a version past it is built. The measurement is what makes ending
-the period cheap: **six import lines in three repositories**, and two of the four tombstones
-(`simplon.allure`, `simplon.vcs`) have no consumer at all and could go today.
+That deadline is tracked rather than remembered, and it has now been collected once. `simplon.surface`
+carries `MOVED` (what is promised), `MOVED_CONSUMERS` (every line in every repository that still imports
+an old path — measured, down to the file and the line number) and `MOVED_DUE_AFTER` (the release the
+promise names), with a test that turns red once a version past it is built.
 
-If one of those lines is yours, the fix is the right-hand column of the table below, and you have until
-the next minor to type it. [Cutting a release](../../using/releasing/) says what the person on the
-other end owes you before the paths disappear.
+**The first period ran through 0.4.x and ended at 0.5.0.** Four modules stood as tombstones and are now
+gone; an import of one is a `ModuleNotFoundError`. The gate is what ended it: the test went red on the
+release run, after the tag and before the publish, so v0.5.0 was cut, published nothing, and the period
+closed the same afternoon rather than lasting a fifth release. See
+[Releases](../../using/releases/#050) for what moved where.
 
-### What moved
-
-| Old path | Now | Why |
-|---|---|---|
-| `simplon.allure` | `simplon.tasks.allure` | only `simplon.tasks.testrun` ever imported it |
-| `simplon.vcs` | `simplon.tasks.gitops` | only `tasks.vcs` and `tasks.release`; also collided with `simplon.tasks.vcs` |
-| `simplon.images` | `simplon.imagenames` | collided with `simplon.tasks.image`, which is a different thing entirely |
-| `simplon.nexus` | `simplon.nexusproxy` | collided with `simplon.tasks.nexus`, the command body that calls it |
-
-The two on the right of that table are still library — they were renamed where they stood, not moved
-inward. The two above them were the innards of a task body sitting one level too high.
+The lesson worth carrying to the next move is about the measurement, not the files. The record said six
+import lines in three repositories; re-measured on the day, it was three lines in one — two of the
+recorded lines had never been simplon's at all (a sibling kernel ships a module of the same name), and
+one product had already migrated. **Re-measure before removing.** A count taken once decays, and this
+one decayed inside a day.
