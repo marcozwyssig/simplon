@@ -10,6 +10,66 @@ writing their notes now would mean reconstructing them from memory, and a
 reconstructed record reads exactly like a real one. The [release
 procedure](../releasing/) explains how a version comes into being.
 
+## 0.5.0
+
+Two changes, and they pull in opposite directions: one adds a way to hand
+something over, the other takes four import paths away.
+
+### Before you bump
+
+**Four modules that 0.4.0 announced as moved are gone.** If your product still
+imports one of the old paths, it now fails with `ModuleNotFoundError` rather
+than warning. The fix is the right-hand column:
+
+| Gone | Import instead |
+|---|---|
+| `simplon.allure` | `simplon.tasks.allure` |
+| `simplon.vcs` | `simplon.tasks.gitops` |
+| `simplon.images` | `simplon.imagenames` |
+| `simplon.nexus` | `simplon.nexusproxy` |
+
+Measured through the API on the day of the release rather than assumed: **one
+product is affected, at three lines** — netctl, at
+`orchestrator/tooling.py:32`, `orchestrator/guard.py:55` and
+`test/.../test_nexus_manifest.py:20`. It is not, however, a product this
+grace period ever reached: netctl pins `simplon==0.3.0`, where `images` and
+`nexus` are the *real* modules and `imagenames`/`nexusproxy` do not exist yet.
+Those three lines are part of whatever upgrade takes netctl past 0.3.0, and
+they change in the same commit that lifts the pin.
+
+Two further lines the record named turned out never to have been simplon's:
+asbundle reads `from delivery import images` — a different kernel that ships a
+module of the same name — and biz-cockpit had already migrated. See
+[Surface](../../building/surface/) for why re-measuring beats remembering.
+
+### New
+
+**`release:asset` attaches declared files to a GitHub release.** The other half
+of `release:artifact`: that one publishes a directory to a registry, where a
+consuming pipeline pulls it with its own token; this one puts files on a release
+page, where a person downloads them. A product declares an `assets:` section and
+pins one with `with: { name: ... }`, the same shape `release:artifact` uses.
+
+```yaml
+assets:
+  bundle:
+    source: "build-out/product_*.zip"   # glob, relative to the product root
+    repository: owner/name              # optional — gh resolves it from the remote
+    title: "..."                        # optional, defaults to the tag
+    notes: "..."                        # optional
+```
+
+It runs `gh`, so the kernel gained no GitHub client and no new dependency, and
+the token comes from the two sources `githubpackages.token` already documents.
+Two behaviours are worth knowing because they are decisions rather than
+defaults: a `create` that fails because another matrix cell got there first is
+read as success and the upload proceeds, while any other failure stops before
+anything is attached; and `--notes` is always passed, because `gh` opens an
+editor where it has a terminal and refuses where it does not.
+
+Which of the two a product offers is a question about its audience — and about
+what its licence lets it hand out. Neither is placed; both are offered.
+
 ## 0.4.0
 
 Thirty commits since 0.3.0. Three of them change what an existing product must
