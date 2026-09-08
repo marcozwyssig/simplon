@@ -73,12 +73,28 @@ count this paragraph used to carry has gone stale, the last two within a day of
 being typed. Most expression rules bind the kernel with the product; a few sit
 exactly on the platform/product seam; and **none exempts the kernel** any more.
 There was one, `check_every_task_is_used`, and si#53 struck it — measuring the
-exemption is what ended it. The rule would have refused 14 of the kernel's own
-22 catalogue tasks, it was the only expression rule with no measured cause in
-ticket, commit or docstring, and over every reachable manifest — this kernel's own
-and the five in `surface.CONSUMERS` — it had never refused anything. An exemption is not automatically wrong. An unexamined one is
-— and examining this one is what showed there was nothing left to defend.
-`test_no_expression_rule_exempts_the_kernel_from_itself` holds the zero.
+exemption is what ended it. It was the only expression rule with no measured
+cause in ticket, commit or docstring, and over every reachable manifest — this
+kernel's own and the five in `surface.CONSUMERS` — it had never refused
+anything.
+
+**The third reason once given is withdrawn**, and how it fell is worth more
+than the reason was. si#48 said the rule would refuse *14 of the kernel's own
+22 catalogue tasks*. si#83 read the signature —
+`check_every_task_is_used(flat, product_tasks)` — and the catalogue's
+coordinates were never handed to it. **The count was right over a set nobody
+had looked at**, the fourth time in this repository, which is why a number
+about a set is two questions and not one: is the count right, and is it the set
+being talked about?
+
+What stands in its place is a measurement rather than a label:
+`test_every_merged_reach_expression_rule_ruled_on_the_kernels_own_declarations`
+loads this manifest against the real catalogue and asks each rule what it was
+handed. Every rule that claims to hold the kernel really ruled on the
+catalogue's own placements. An exemption is not automatically wrong. An
+unexamined one is — and examining this one is what showed there was nothing
+left to defend. `test_no_expression_rule_exempts_the_kernel_from_itself` holds
+the zero.
 
 ## Before building an expression rule, answer these
 
