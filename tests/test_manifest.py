@@ -1414,6 +1414,13 @@ env_groups: []
 def test_a_new_form_manifest_and_its_old_form_twin_load_identically():
     # arrange: the SAME surface written both ways. This is the oracle for the whole migration - if the
     # two Manifests differ, some product's CLI is about to change without anyone deciding to.
+    #
+    # The twin restates every `help:` the catalogue declares, and it has to since si#75: a group's
+    # description is part of the surface now (it is the blurb its `--help` renders), so a twin that left
+    # it out would be a DIFFERENT CLI and this oracle would be comparing two surfaces rather than two
+    # spellings of one. Restating it is exactly what the old form permits - with no catalogue to own the
+    # group, `treeform.merge` lets the manifest state its own shape - so the two halves below also show
+    # that a product-declared description and a platform-declared one build the same node.
     catalogue = catalogue_mod.loads(textwrap.dedent("""
         tasks:
           vcs:push: { impl: simplon.tasks.vcs:push, help: "push it." }
@@ -1444,11 +1451,14 @@ def test_a_new_form_manifest_and_its_old_form_twin_load_identically():
 
         groups:
           support:
+            help: "Host tooling."
             groups:
               git:
+                help: "VCS helpers."
                 commands:
                   push: { task: "push" }
           build:
+            help: "Produce the artefacts."
             commands:
               frr-image: { task: "frr-image", with: { key: "frr" } }
     """)

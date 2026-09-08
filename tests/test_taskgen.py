@@ -1332,3 +1332,81 @@ env_groups: [deploy]
     assert taskgen.unrenderable(m) == {}
     with pytest.raises(ValueError, match="shadow"):
         taskgen.render(m, source="demo.yaml", product="sample", groups=frozenset())
+
+
+# --- a group's declared `help:` reaches the generated module too (si#75) --------------------------------
+#
+# Two mechanisms render this tree - `simplon.cli.assemble` at run time and this generator into a committed
+# file - and a description that arrived in one of them only would be a new place for the same defect to
+# hide. The blurb is one function (`clitaxonomy.group_help`) since si#75; the second test below is what
+# holds the two to it rather than trusting that they still call it.
+
+_DECLARED_HELP_MANIFEST = """
+tasks:
+  fmt: { impl: "simplon.test_impls:nullary", help: "Format the sources." }
+  up: { impl: "simplon.test_impls:nullary", help: "Bring it up." }
+  push: { impl: "simplon.test_impls:nullary", help: "Push." }
+
+groups:
+  code:
+    commands:
+      fmt: { task: "fmt" }
+  deploy:
+    help: "Put them into an environment."
+    env_first: true
+    commands:
+      up: { task: "up" }
+  support:
+    help: "Host preflight, environment introspection and host tooling."
+    groups:
+      git:
+        help: "Version-control helpers."
+        commands:
+          push: { task: "push" }
+"""
+
+
+def test_the_generated_module_carries_each_groups_declared_help(tmp_path):
+    # arrange
+    m = _load(_DECLARED_HELP_MANIFEST)
+
+    # act
+    text = taskgen.render(m, source="demo.yaml", product="sample")
+
+    # assert: the declaration, plus the addressing hint the declaration does not carry
+    assert "help='Host preflight, environment introspection and host tooling. " \
+           "Environment-agnostic (no env).'" in text
+    assert "help='Version-control helpers. Environment-agnostic (no env).'" in text
+    assert "help='Put them into an environment. " \
+           "Env-first: `sample <env> deploy <cmd>` (default dev).'" in text
+    # a group that declares none keeps the sentence synthesized from its token
+    assert "help='code commands. Environment-agnostic (no env).'" in text
+    assert "support commands." not in text, \
+        "die generierte Datei zeigt weiter den erfundenen Satz statt des deklarierten `help:`"
+
+
+def test_both_mechanisms_render_the_same_group_blurb(tmp_path):
+    # arrange: the generated module and the run-time assembly, from ONE manifest. The ticket that raised
+    # si#75 asked for exactly this - a declared description that reached one renderer and not the other
+    # would be the defect moved, not removed.
+    from simplon import cli
+
+    m = _load(_DECLARED_HELP_MANIFEST)
+    generated = _module(m, tmp_path, product="sample")
+    gen_app = typer.Typer(add_completion=False, no_args_is_help=True)
+    generated.register(gen_app)
+    live_app = typer.Typer(add_completion=False, no_args_is_help=True)
+    cli.assemble(live_app, m, product="sample")
+
+    def blurb(app, *path):
+        node = get_command(app)
+        for name in path:
+            node = node.get_command(click.Context(node), name)
+        return node.help or ""
+
+    # act / assert
+    for path in (("code",), ("deploy",), ("support",), ("support", "git")):
+        assert blurb(gen_app, *path) == blurb(live_app, *path), \
+            f"die beiden Mechanismen beschreiben '{' '.join(path)}' verschieden"
+    assert blurb(live_app, "support").startswith("Host preflight"), \
+        "beide Mechanismen sind einig - und beide zeigen den erfundenen Satz"
