@@ -154,7 +154,13 @@ def tree(mf: Manifest, *, environments: Iterable[str] = ()) -> Tree:
             if name == namesake or mf.spec_for(group, name).hidden:
                 continue
             # A collapsed flat group's member is registered on the ROOT app, not under its parent - that
-            # is what `assemble` does today, at every depth.
+            # is what `assemble` does today, at every depth. TODAY'S BEHAVIOUR ON PURPOSE (si#58, si#60):
+            # a nested collapsed group landing at the root rather than under its parent is si#60's second
+            # exit, and it is reported there rather than repaired here. Completing what the CLI SHOULD do
+            # would put the tree and the surface out of step, and the assurance that compares them is the
+            # one that would go red - so the mismatch would be reported in the wrong place. si#60's first
+            # exit needs nothing here: a nested group-default group is now refused at load, so the
+            # `namesake` line above can only ever be answering about a TOP-LEVEL group.
             where = "" if flat else group
             nodes.setdefault(where, []).append(_token(name, f"command '{group} {name}'"))
             if flat and tax.group_requires_env(group):

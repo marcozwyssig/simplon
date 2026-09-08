@@ -523,12 +523,40 @@ class _ManifestModel(BaseModel):
                     raise ValueError(
                         f"command '{group}.{name}': keep_awake applies to an aggregate's plan "
                         f"(depends_on); a leaf's own impl arms it itself")
+                # A NESTED group-default group does not assemble, and si#60 is the decision to SAY so
+                # rather than build it. The seam: `clitaxonomy.is_group_default_command` compares a
+                # group's LEAF (`git` in `support.git`), and `cli.assemble` then asks
+                # `mf.spec_for(group, group)` with the DOTTED PATH - which the manifest does not carry,
+                # because membership is keyed by the member's own name. Measured on this kernel: a
+                # manifest declaring `support.git` with a `git` member and one sibling comes back
+                # `KeyError: 'support.git'` from `assemble`, i.e. a stacktrace where a diagnosis belongs.
+                #
+                # The CAPABILITY is deliberately not built (si#60): no reachable manifest declares such a
+                # group - measured 2026-09-08 over this kernel's own and the five in `surface.CONSUMERS`,
+                # zero of six - so what a product needs is to be told where the floor is, not a feature
+                # nobody asked for. `completiongen` mirrors today's behaviour for the same reason and
+                # says so at its own group-default line.
+                #
+                # This is DIAGNOSIS in the census's sense: the refused manifest produced no working
+                # product, it produced a KeyError. The condition is the group-default one, written
+                # against the LEAF - which is also why the `hidden` rule below never fired for a nested
+                # group, and why it now cannot need to: the nested case no longer exists.
+                if "." in group and name == group.rsplit(".", 1)[-1] and len(members) > 1:
+                    raise ValueError(
+                        f"command '{group}.{name}': a NESTED group cannot have a group-default namesake "
+                        f"member. `{group}` is nested and its member '{name}' repeats the group's last "
+                        f"segment, which would make it the sub-app's default action - and this kernel "
+                        f"cannot assemble that: the taxonomy matches on the segment '{name}' while the "
+                        f"assembly looks the spec up under the full path '{group}', which no manifest "
+                        f"carries. Rename the member, or move the group to the top level where the two "
+                        f"names are the same string (si#60)")
                 # hidden (netctl#1277) is honoured by simplon.cli.assemble, which threads it onto a
                 # command's GROUP registration. A group-default group's NAMESAKE member (#592 D4: the
                 # member whose name equals its multi-member group's name) never reaches that registration
                 # at all - it is bound as the sub-app's default callback, never a listed subcommand or a
                 # separate flat command - so hidden there would do nothing, the same reasoning that rejects
-                # keep_awake on a leaf above.
+                # keep_awake on a leaf above. Top-level only, now that the refusal above has removed the
+                # nested case this condition could never have matched anyway.
                 if spec.hidden and name == group and len(members) > 1:
                     raise ValueError(
                         f"command '{group}.{name}': hidden has no effect on a group-default namesake "
@@ -785,7 +813,6 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     # self-declared ever reaches this filter.
     keep = treeform.declared_paths(tree) | treeform.paths_with_commands(flat)
     flat = {path: members for path, members in flat.items() if path in keep}
-    treeform.check_every_task_is_used(flat, product_tasks)
     # Placement or family (si#34): a coordinate whose namespace is one of the platform's own top-level
     # group names is a PLACEMENT (`build:image` is under `build`, always); any other namespace is a
     # FAMILY, and the product places it where it likes (`docs:site` under `build` here, under `release`
@@ -924,8 +951,23 @@ def _enforce_the_catalogue_owns_the_groups(members: dict[str, tuple[str, ...]],
     invent a top-level group by writing a bare `groups:` key nobody had declared, and `_flat_tree` would
     dutifully emit a node for it. Shape without existence is most of the value gone - the promise is that
     a person moving between two products finds the same groups with the same general tasks in them, and a
-    product that can put `lint` beside `test` or `ci` beside `build` has broken exactly that promise. This
-    is not hypothetical: biz-cockpit declares four such groups today (netctl#1462).
+    product that can put `lint` beside `test` or `ci` beside `build` has broken exactly that promise.
+
+    THE FOUR GROUPS THAT ARGUMENT NAMED ARE GONE, AND THAT IS NOT AN ARGUMENT AGAINST THE RULE (si#53).
+    This paragraph used to end "biz-cockpit declares four such groups today (netctl#1462)", and it had
+    stopped being true: measured 2026-09-08 through the GitHub API over every reachable manifest - this
+    kernel's own and the five in `surface.CONSUMERS` - not one declares a group the catalogue does not,
+    biz-cockpit included (build, deploy, monitor, release, test, every one the catalogue's). A docstring
+    that keeps
+    citing a violation nobody can reproduce is a second source that lies, which is why it is corrected
+    here rather than left as colour.
+
+    Zero violations is what a STRUCTURAL PROMISE looks like when it is kept, not a guard with nothing
+    left to guard. The owner weighed exactly that in si#53 and kept the rule: it is the sentence the
+    fixed vocabulary rests on - the groups belong to the platform - and striking it would withdraw the
+    promise rather than retire an idle watchman. The distinction is worth stating because CLAUDE.md's
+    third question ("would deleting be cheaper than guarding?") reads the other way if you only look at
+    the count.
 
     Two things are refused, and the second is what makes the first stick:
 

@@ -347,11 +347,22 @@ env_groups: []
         manifest.load(text)
 
 
-def test_a_products_own_body_left_behind_by_a_coordinate_placement_is_reported_not_dropped():
-    # arrange: the likeliest mistake of the whole migration. A product moving a command onto a catalogue
-    # coordinate keeps its own task declaration next to the new placement - and the LOCAL body, the one
-    # still being maintained, is the half that used to disappear without a word. It is now a load error
-    # naming the orphaned task.
+def test_a_products_own_body_left_behind_by_a_coordinate_placement_now_loads_silently():
+    """CHARACTERISATION, and it records a LOSS rather than a capability (si#53).
+
+    Until si#53 this was a load error: `check_every_task_is_used` refused a `tasks:` entry no command
+    instantiated, and this case - a product moving a command onto a catalogue coordinate and leaving its
+    own body behind next to the new placement - is the mistake that refusal actually caught. The owner
+    struck the rule as an expression rule with no measured cause; these two tests are the cause nobody
+    had looked at, because they are in a suite rather than in a ticket, a commit message or a docstring.
+
+    So the case is pinned as it now behaves, and it behaves silently: the manifest loads, `git commit`
+    runs the CATALOGUE's body, and the product's own `nullary` - the half still being maintained - is
+    reachable from nowhere and reported by nothing. That is the shape this repository hunts, and it is
+    named here so that it cannot be rediscovered as a surprise. si#53 carries the narrower diagnosis
+    that would catch it again without forbidding a catalogue-as-offer; it is proposed there, not built.
+    """
+    # arrange: the product's own `commit` beside a command that places the catalogue's `vcs:commit`
     text = """
 tasks:
   commit: { impl: "simplon.test_impls:nullary", help: "The product's own commit." }
@@ -363,14 +374,23 @@ groups:
 env_groups: []
 """
 
-    # act / assert
-    with pytest.raises(ValueError) as exc:
-        _loaded(text)
-    assert "task 'commit' is declared and no command instantiates it" in str(exc.value)
+    # act
+    loaded = _loaded(text)
+
+    # assert: it loads, and the body that runs is the CATALOGUE's
+    assert loaded.groups == {"git": ("commit",)}
+    assert loaded.commands["git"]["commit"].impl == "simplon.test_impls:no_context"
+
+    # assert: which is the loss, stated as an assertion rather than as prose - the product's own body is
+    # in the manifest that loaded and is instantiated by nothing in it
+    placed = {spec.impl for members in loaded.commands.values() for spec in members.values()}
+    assert "simplon.test_impls:nullary" not in placed
 
 
-def test_a_products_own_definition_landing_on_an_existing_groups_entry_is_rejected():
-    # arrange: same rule for a definition - a command has ONE declaration
+def test_a_products_own_definition_landing_on_an_existing_groups_entry_now_loads_silently():
+    """The same loss, seen from the other side: two product tasks, one command, and the one the command
+    does not name is dropped without a word. Pinned for the same reason as the case above."""
+    # arrange
     text = """
 tasks:
   disk-guard: { impl: "simplon.test_impls:nullary", help: "Guard the disk." }
@@ -385,9 +405,14 @@ groups:
 env_groups: []
 """
 
-    # act / assert
-    with pytest.raises(ValueError, match="disk-guard"):
-        manifest.load(text)
+    # act
+    loaded = manifest.load(text)
+
+    # assert: the command resolves to the task it names, and the namesake declaration is gone
+    assert loaded.groups == {"support": ("disk-guard",)}
+    assert loaded.commands["support"]["disk-guard"].impl == "simplon.test_impls:no_context"
+    placed = {spec.impl for members in loaded.commands.values() for spec in members.values()}
+    assert "simplon.test_impls:nullary" not in placed
 
 
 # --- the catalogue owns the tree's SHAPE (netctl#1444, spec step 7) -------------------------------------

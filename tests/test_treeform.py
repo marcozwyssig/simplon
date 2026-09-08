@@ -696,23 +696,39 @@ def test_a_tree_form_manifest_passes_the_flat_form_check():
                                 "groups": {"build": {"commands": {"img": {"task": "img"}}}}})
 
 
-def test_a_product_task_no_command_instantiates_is_rejected():
-    # arrange: a template nobody uses is a dead declaration
-    flat = {"build": {"frr-image": {"task": "lab-image"}}}
-    tasks = {"lab-image": {"impl": "a:b", "help": "h."}, "orphan": {"impl": "c:d", "help": "h."}}
+def test_a_declared_task_no_command_places_is_accepted():
+    """si#53 struck `check_every_task_is_used`, and this is the assertion the deletion is worth.
 
-    # act / assert
-    with pytest.raises(ValueError, match="no command instantiates"):
-        treeform.check_every_task_is_used(flat, tasks)
+    The rule refused a `tasks:` entry no command instantiated. It was the ONE expression rule the kernel
+    exempted itself from, because its own catalogue declares far more than it places - a task needing
+    product data must not become a baseline command that dies on its first line - and si#48 measured the
+    exemption at 14 of 22. Over every reachable manifest - this kernel's own and the five in
+    `surface.CONSUMERS` - it had refused nothing, ever.
 
+    What has to be true now is not "the function is gone" but that an ORPHAN TASK LOADS, which is the
+    capability the rule took away. Asserted through `load()` rather than through the deleted helper,
+    because a test that names the helper would pass by import error rather than by behaviour.
+    """
+    # arrange: a manifest declaring two tasks and placing exactly one of them
+    from simplon.orchestrator import manifest as manifest_mod
+    text = """
+product: demo
+tasks:
+  placed: { impl: "simplon.tasks.docs:site", help: "Placed." }
+  offered: { impl: "simplon.tasks.docs:site", help: "Declared and not placed - an offer." }
+groups:
+  build:
+    commands:
+      placed: { task: "placed", help: "The one command." }
+"""
 
-def test_every_instantiated_product_task_passes_the_check():
-    # arrange
-    flat = {"build": {"frr-image": {"task": "lab-image"}, "web-image": {"depends_on": ["aot"]}}}
-    tasks = {"lab-image": {"impl": "a:b", "help": "h."}}
+    # act
+    loaded = manifest_mod.load(text)
 
-    # act / assert: no exception
-    treeform.check_every_task_is_used(flat, tasks)
+    # assert: it loaded, and the unplaced task really was in the manifest that loaded
+    assert loaded.commands["build"]["placed"].impl == "simplon.tasks.docs:site"
+    assert "offered" not in loaded.commands.get("build", {})
+    assert not hasattr(treeform, "check_every_task_is_used")
 
 
 # --- the flat form is gone, and the refusal shows the way out (si#33) ----------------------------------

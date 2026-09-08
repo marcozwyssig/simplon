@@ -757,22 +757,19 @@ def check_no_old_form(data: dict, catalogue_groups: dict | None = None) -> None:
         + "\n".join(f"  - {note}" for note in notes))
 
 
-def check_every_task_is_used(flat: dict, product_tasks: dict) -> None:
-    """Reject a task this manifest declares and no command in it instantiates.
-
-    Scoped to the PRODUCT on purpose. The kernel's `tasks:` is an offer - it deliberately declares more
-    than its own `groups:` places, because a task needing product data (a `nexus:` section, a running
-    lab) must not become a baseline command that dies on its first line.
-    """
-    used = {str(spec.get("task")) for members in (flat or {}).values()
-            for spec in (members or {}).values() if spec.get("task")}
-    orphans = sorted(name for name in (product_tasks or {}) if name not in used)
-    if orphans:
-        raise ValueError(
-            f"task '{orphans[0]}' is declared and no command instantiates it"
-            + (f" (also: {', '.join(orphans[1:])})" if len(orphans) > 1 else "")
-            + ". A template nobody uses is a dead declaration: add a command for it under `groups:`, or "
-              "delete it")
+# --- a declared task nobody places is a task on OFFER (si#53) -----------------------------------------
+#
+# `check_every_task_is_used` stood here and refused it. It was the one expression rule the kernel did not
+# apply to itself - "Scoped to the PRODUCT on purpose" - and si#48 measured what that exemption was worth:
+# the rule would have refused 14 of the kernel's own 22 catalogue tasks. It was also the only one of the
+# sixteen with no measured cause in ticket, commit or docstring, and over every reachable manifest - this
+# kernel's own and the five in `surface.CONSUMERS` - it had never refused anything: `unused = 0` in every
+# one of them, measured 2026-09-08 through the GitHub API.
+#
+# So it forbade a product exactly what the kernel does fourteen times over - declaring a catalogue as an
+# OFFER rather than a duty roster - and caught nothing while doing it. The owner struck it in si#53.
+# `test_a_declared_task_no_command_places_is_accepted` is what stands here now, and it is the assertion
+# that matters: the deletion has to make an orphan task LOAD, not merely stop raising somewhere.
 
 
 # --- placement or family: what a coordinate's namespace says about where it may go (si#34) ------------
