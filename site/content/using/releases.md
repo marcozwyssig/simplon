@@ -10,6 +10,14 @@ writing their notes now would mean reconstructing them from memory, and a
 reconstructed record reads exactly like a real one. The [release
 procedure](../releasing/) explains how a version comes into being.
 
+Every section from **0.5.0** on names the number of every ticket merged into
+that release, and `tests/test_releases_page.py` measures it against the merges
+in the release's own range, so a change cannot go out undescribed. The numbers
+are issues and pull requests in [this
+repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
+predates that rule: it describes its release in prose and names no numbers, and
+it is the one section held only to existing.
+
 ## 0.6.0
 
 Seven merges. The theme, if there is one, is ownership: a test run learns which
