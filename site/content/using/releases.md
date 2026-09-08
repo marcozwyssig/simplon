@@ -85,10 +85,19 @@ reachable manifests it had never refused anything. A catalogue is an offer, and 
 product may now write one too. **The price is recorded rather than implied:** a
 product that moves a command onto a catalogue coordinate and leaves its own body
 standing beside it now loses that body *silently* — the manifest loads, the
-catalogue body runs, and the product's own is reachable from nowhere. Two
-assertions hold that loss as a characterisation, and the narrower diagnosis that
-would find the case again without forbidding the offer is proposed and not built
-(si#81).
+catalogue body runs, and the product's own is reachable from nowhere.
+
+**The narrower diagnosis was then built** (si#81), and it draws the line
+somewhere other than "used" and "unused". A catalogue coordinate is placeable by
+any product, so unplaced there means *offered*; a manifest's own `tasks:` entry
+is a bare name reachable only from commands in that same manifest, so unplaced
+there means *unreachable*, with no second reading. Refused is the narrow case
+only: a declaration no command instantiates **and** whose name a command has
+already spent on a different body. A task nobody names still loads. What the
+narrow form does not catch is recorded rather than implied — a move that renames
+at the same time. Measured over all six reachable manifests: zero violations, and
+zero for the broad form too, so the narrowness costs nothing today and only stops
+it costing something later.
 
 **Group help text changes** (si#75). `catalogue.yaml` has declared a description
 per group since it was written and nothing ever rendered it; the CLI built
