@@ -917,8 +917,23 @@ def _enforce_the_catalogue_owns_the_groups(members: dict[str, tuple[str, ...]],
     invent a top-level group by writing a bare `groups:` key nobody had declared, and `_flat_tree` would
     dutifully emit a node for it. Shape without existence is most of the value gone - the promise is that
     a person moving between two products finds the same groups with the same general tasks in them, and a
-    product that can put `lint` beside `test` or `ci` beside `build` has broken exactly that promise. This
-    is not hypothetical: biz-cockpit declares four such groups today (netctl#1462).
+    product that can put `lint` beside `test` or `ci` beside `build` has broken exactly that promise.
+
+    THE FOUR GROUPS THAT ARGUMENT NAMED ARE GONE, AND THAT IS NOT AN ARGUMENT AGAINST THE RULE (si#53).
+    This paragraph used to end "biz-cockpit declares four such groups today (netctl#1462)", and it had
+    stopped being true: measured 2026-09-08 through the GitHub API over every reachable manifest - this
+    kernel's own and the five in `surface.CONSUMERS` - not one declares a group the catalogue does not,
+    biz-cockpit included (build, deploy, monitor, release, test, every one the catalogue's). A docstring
+    that keeps
+    citing a violation nobody can reproduce is a second source that lies, which is why it is corrected
+    here rather than left as colour.
+
+    Zero violations is what a STRUCTURAL PROMISE looks like when it is kept, not a guard with nothing
+    left to guard. The owner weighed exactly that in si#53 and kept the rule: it is the sentence the
+    fixed vocabulary rests on - the groups belong to the platform - and striking it would withdraw the
+    promise rather than retire an idle watchman. The distinction is worth stating because CLAUDE.md's
+    third question ("would deleting be cheaper than guarding?") reads the other way if you only look at
+    the count.
 
     Two things are refused, and the second is what makes the first stick:
 
