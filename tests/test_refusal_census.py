@@ -245,6 +245,14 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("treeform", "_resolve_one", "names no task"): DIAGNOSIS,
     ("treeform", "_resolve_one", "with `with:` and also declares `params:`"): DIAGNOSIS,
     ("treeform", "check_no_old_form", "is written in the flat command form"): EXPRESSION,
+    # si#81, and it is DIAGNOSIS by the sorting question rather than by preference. What is refused is a
+    # `tasks:` declaration that is accepted and INERT: a command of the same name already runs a
+    # different body, so the one written here is dead in the tree and nothing said so. That is the same
+    # call this census already makes for `hidden` on a group-default namesake and for a `nexus:` block
+    # declaring no repositories. It is deliberately NARROWER than `check_every_task_is_used`, which si#53
+    # struck: a declared task whose name no command has taken is an offer and still loads.
+    ("treeform", "check_no_shadowed_task_declaration",
+     "is declared under `tasks:` and instantiated by no command"): DIAGNOSIS,
     ("treeform", "check_coordinate_placement", "places the coordinate"): EXPRESSION,
     ("treeform", "check_env_groups", "shape_is_the_platforms"): EXPRESSION,
 
