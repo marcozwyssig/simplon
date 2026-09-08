@@ -1,4 +1,6 @@
 """si#95: the toolchain declaration a product writes, and what the kernel refuses."""
+from pathlib import Path
+
 import pytest
 
 from simplon.tasks import toolchain
@@ -50,3 +52,87 @@ def test_workdir_defaults_so_a_product_need_not_write_it():
 
     # assert: the spec's "the user has only their parameters" - /work is the kernel's answer
     assert cfg.workdir == "/work"
+
+
+def _cfg(**kw):
+    body = {"image": "gradle:jdk25", "argv": ["gradle", "build"]}
+    body.update(kw)
+    return toolchain.declared(body, where="build.compile")
+
+
+def test_the_argv_mounts_the_tree_and_runs_as_the_caller(monkeypatch):
+    # arrange
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: ["--user", "1000:1000"])
+
+    # act
+    line = toolchain.argv(_cfg(), root=Path("/repo"), product="netctl", instance="dev", extra=[])
+
+    # assert: the bind mount, the workdir, and the uid that owns whatever the run writes
+    assert "--user" in line and "1000:1000" in line
+    assert "-v" in line and "/repo:/work" in line
+    assert line[-2:] == ["gradle", "build"]
+
+
+def test_the_caller_argv_is_APPENDED_to_the_manifest_argv(monkeypatch):
+    # arrange
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: [])
+
+    # act
+    line = toolchain.argv(_cfg(), root=Path("/repo"), product="netctl", instance="dev",
+                          extra=["--rerun-tasks"])
+
+    # assert: netctl#1091's promise - the full vocabulary survives - on top of a pinned default
+    assert line[-3:] == ["gradle", "build", "--rerun-tasks"]
+
+
+def test_an_empty_caller_argv_changes_nothing(monkeypatch):
+    # arrange
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: [])
+
+    # act
+    a = toolchain.argv(_cfg(), root=Path("/repo"), product="netctl", instance="dev", extra=[])
+    b = toolchain.argv(_cfg(), root=Path("/repo"), product="netctl", instance="dev", extra=[])
+
+    # assert
+    assert a == b and a[-2:] == ["gradle", "build"]
+
+
+def test_cache_volumes_carry_the_product_and_the_instance(monkeypatch):
+    # arrange: netctl#453's property, which only netctl knew by hand until now
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: [])
+    cfg = _cfg(caches=[{"volume": "gradle-cache", "path": "/home/gradle/.gradle"}])
+
+    # act
+    dev = toolchain.argv(cfg, root=Path("/repo"), product="netctl", instance="dev", extra=[])
+    a1 = toolchain.argv(cfg, root=Path("/repo"), product="netctl", instance="a1", extra=[])
+
+    # assert
+    assert "netctl-gradle-cache-dev:/home/gradle/.gradle" in dev
+    assert "netctl-gradle-cache-a1:/home/gradle/.gradle" in a1
+
+
+def test_env_reaches_the_container_and_nothing_else_does(monkeypatch):
+    # arrange
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: [])
+    cfg = _cfg(env={"GRADLE_USER_HOME": "/home/gradle/.gradle"})
+
+    # act
+    line = toolchain.argv(cfg, root=Path("/repo"), product="netctl", instance="dev", extra=[])
+
+    # assert: no implicit inheritance - what the manifest names, and only that
+    assert "GRADLE_USER_HOME=/home/gradle/.gradle" in line
+    assert len([x for x in line if x == "-e"]) == 1
+
+
+def test_the_network_appears_only_when_it_is_given(monkeypatch):
+    # arrange: the one runtime value the manifest cannot supply (the spec's section 5)
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: [])
+
+    # act
+    without = toolchain.argv(_cfg(), root=Path("/repo"), product="netctl", instance="dev", extra=[])
+    with_net = toolchain.argv(_cfg(), root=Path("/repo"), product="netctl", instance="dev", extra=[],
+                              network="scratch-net")
+
+    # assert
+    assert "--network" not in without
+    assert ["--network", "scratch-net"] == with_net[3:5]   # right after `docker run --rm`

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from simplon import docker, log
 
@@ -63,6 +64,35 @@ def declared(body: Mapping[str, object], where: str) -> Toolchain:
         env=_env(body.get("env"), where),
         caches=_caches(body.get("caches"), where),
     )
+
+
+def argv(cfg: Toolchain, root: Path, product: str, instance: str,
+         extra: list[str], network: str | None = None) -> list[str]:
+    """The full docker argv for one toolchain invocation. PURE: it assembles, it runs nothing.
+
+    Pure for the reason `gradle_argv` is pure in netctl: the decisions here - which volume, whose uid,
+    what order - are exactly what a test should be able to read without a docker daemon in the room.
+
+    `extra` is APPENDED, never merged: the manifest pins what a CI step means, and a person at a terminal
+    keeps the tool's whole vocabulary behind it. An empty `extra` therefore produces byte-for-byte what
+    the manifest declares.
+
+    A cache volume carries the PRODUCT and the INSTANCE (`<product>-<volume>-<instance>`), which is
+    netctl#453's property made the kernel's: two agents in two worktrees stop contending by construction
+    instead of by a convention each product writes out by hand.
+    """
+    volumes: list[str] = []
+    for cache in cfg.caches:
+        volumes += ["-v", f"{product}-{cache.volume}-{instance}:{cache.path}"]
+    env: list[str] = []
+    for key, value in cfg.env.items():
+        env += ["-e", f"{key}={value}"]
+    return ["docker", "run", "--rm",
+            *(["--network", network] if network else []),
+            *docker.user_args(),
+            "-v", f"{root}:{cfg.workdir}", "-w", cfg.workdir,
+            *volumes, *env,
+            cfg.image, *cfg.argv, *extra]
 
 
 def _pinned(image: str, where: str) -> str:
