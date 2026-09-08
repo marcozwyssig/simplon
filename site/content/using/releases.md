@@ -18,6 +18,54 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.7.0
+
+One merge, and both halves of it are the same observation: a value every product
+answered the same way was being carried as if it were a decision.
+
+### Before you bump
+
+**The committed shell completion moves to `deploy/completions/`** (#84). It was
+written into `completions/` at the product root — which is where a reader looks
+for what the product *is*, and a directory holding one generated shell file is
+not that. `deploy/` is where this kernel's other outputs already live.
+
+The path is still **not configurable**, for the reason it never was: a knob here
+would be a second place to look for one file, and an installation instruction has
+to be able to name the path without asking.
+
+Migration is two steps and a shell:
+
+```bash
+git mv completions/<product>.bash deploy/completions/<product>.bash
+./<product>.sh support completion          # rewrites it in place, and prints the source line
+```
+
+Then re-source it — the line in your `~/.bashrc` names the old path and will
+silently complete nothing after the move. `support completion --check` returns 1
+until the file is where the kernel now writes it, so a product whose CI runs that
+check finds out rather than losing TAB quietly.
+
+It is deliberately **not** `deploy/<orchestrator block>/completions`, which was
+the first proposal: the block does not sit at one path across products — this
+repository and agile-cockpit keep it at `deploy/orchestrator`, cleon at
+`deploy/provision/orchestrator` — so a constant naming it would be right in one
+checkout and wrong in the next. `deploy/` is the part they share.
+
+**`suites.reports:` is now optional and defaults to `tests/reports`** (#84). It
+was required until every product had written the same line, which is the point at
+which a universal answer has been masquerading as a per-product decision — and a
+required key with only one sensible answer teaches people to copy it rather than
+choose it. `tests/reports` sits beside the suite rather than under the product
+root, because the outputs of a test run belong with the tests and a root
+directory called `reports/` says nothing about what produced it.
+
+**Nothing changes for a manifest that declares the key**: a declared value still
+wins, and no existing product moves unless it deletes the line. An *empty*
+`reports:` is still refused rather than read as a request for the default —
+`""` is a statement, and reading a typo as a default is exactly the silence a
+default must not buy.
+
 ## 0.6.0
 
 Seven merges. The theme, if there is one, is ownership: a test run learns which
