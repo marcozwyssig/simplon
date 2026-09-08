@@ -380,7 +380,7 @@ def test_a_missing_file_is_drift_rather_than_an_error(tmp_path):
     drift = completiongen.check(_tree(), tmp_path, product="demo", source="demo.yaml")
 
     # assert
-    assert drift is not None and drift.path == "completions/demo.bash"
+    assert drift is not None and drift.path == "deploy/completions/demo.bash"
 
 
 def test_write_reports_whether_the_bytes_changed(tmp_path):
@@ -392,7 +392,7 @@ def test_write_reports_whether_the_bytes_changed(tmp_path):
 
     # assert
     assert (first, second) == (True, False)
-    assert (tmp_path / "completions" / "demo.bash").exists()
+    assert (tmp_path / "deploy" / "completions" / "demo.bash").exists()
 
 
 def test_a_grown_manifest_makes_check_report_the_new_command(tmp_path):

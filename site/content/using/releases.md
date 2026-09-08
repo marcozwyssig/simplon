@@ -235,7 +235,7 @@ beyond the command tree every manifest already carries, it publishes nothing, an
 it writes only under the product's own root — and the argument that settles it is
 what the thing is: a completion you have to know about in order to ask for it is a
 completion nobody has, because pressing TAB is the thing that does not work yet.
-It writes `completions/<product>.bash`, and `--check` reports drift and writes
+It writes `deploy/completions/<product>.bash`, and `--check` reports drift and writes
 nothing, which is what makes committing the file worth anything. Generated rather
 than switched on: Typer's own `--install-completion` runs the program on every
 TAB, measured here at 340–360 ms, against 0.16 ms for the generated function.

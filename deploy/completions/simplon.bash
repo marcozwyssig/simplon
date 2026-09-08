@@ -6,12 +6,12 @@
 #
 # INSTALL IT - a generated completion nobody sources completes nothing. From the product root:
 #
-#     echo "source $PWD/completions/simplon.bash" >> ~/.bashrc
+#     echo "source $PWD/deploy/completions/simplon.bash" >> ~/.bashrc
 #
 # and open a new shell. In zsh the same file works once bash's completion API is loaded:
 #
 #     autoload -U +X bashcompinit && bashcompinit
-#     echo "source $PWD/completions/simplon.bash" >> ~/.zshrc
+#     echo "source $PWD/deploy/completions/simplon.bash" >> ~/.zshrc
 #
 # It is registered on `simplon.sh` rather than on `./simplon.sh`, and that covers both: bash falls back
 # to the portion of a command word following the final slash when the full pathname carries no

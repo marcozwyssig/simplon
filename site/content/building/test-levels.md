@@ -53,8 +53,13 @@ is itself the first error:
 
 > sample.yaml: the 'suites' section is missing or is not a mapping
 
-`reports` is where the whole report tree lives. `filtered_results` may be declared and otherwise defaults
-to `allure-results-filtered`; what it is for is [further down](#exploratory-runs-are-quarantined).
+`reports` is where the whole report tree lives. It may be declared and otherwise defaults to
+`tests/reports` - beside the suite rather than under the product root, because the outputs of a test run
+belong with the tests and a root directory called `reports/` says nothing about what produced it. The
+example above declares it anyway, which is what a product whose outputs belong elsewhere does; an EMPTY
+`reports:` is refused rather than read as a request for the default. `filtered_results` may be declared
+and otherwise defaults to `allure-results-filtered`; what it is for is
+[further down](#exploratory-runs-are-quarantined).
 
 ## `suite:` against `impl:` - and this is how you attach Gradle
 

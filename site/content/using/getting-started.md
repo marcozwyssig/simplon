@@ -191,9 +191,9 @@ groups take an environment, so the dispatch can say no - and it says no with the
 One more command on day one, and it is the one nobody thinks to look for:
 
     ./myctl.sh support completion
-    echo "source $PWD/completions/myctl.bash" >> ~/.bashrc
+    echo "source $PWD/deploy/completions/myctl.bash" >> ~/.bashrc
 
-That writes `completions/myctl.bash` - the whole command tree as a shell function - and the second line
+That writes `deploy/completions/myctl.bash` - the whole command tree as a shell function - and the second line
 is what makes it do anything: a generated completion nobody sources completes nothing. Open a new shell
 and `./myctl.sh support git <TAB>` answers from the manifest. In zsh the same file works after
 `autoload -U +X bashcompinit && bashcompinit`.
