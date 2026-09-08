@@ -593,6 +593,11 @@ def rewrite_of_old_form(data: dict, catalogue_groups: dict | None = None) -> str
     catalogue. Those are refusals of the old MANIFEST rather than gaps in this renderer - each names its
     own way out, and none of them is a second round on the same problem.
 
+    What no rewrite BUILT THIS WAY can carry is a comment. This renders the parsed document, a comment
+    hangs on a line, and nothing in the parse remembers one - so the block is a rewrite of the STRUCTURE
+    and of nothing else. That limit is recorded rather than left to be discovered: `check_no_old_form`
+    counts the comment lines the block would replace and says so in the refusal (si#56).
+
     `catalogue_groups` is the platform's own tree, and it is what makes the printed block a finished
     manifest rather than an illustration (si#42). A command whose name the CATALOGUE also places -
     `support install`, in the catalogue since 0.1.7, is the commonest - is a DIFFERENT body under a name
@@ -708,7 +713,69 @@ def rewrite_of_old_form(data: dict, catalogue_groups: dict | None = None) -> str
     return "\n".join(lines)
 
 
-def check_no_old_form(data: dict, catalogue_groups: dict | None = None) -> None:
+# --- what the rewrite CANNOT carry, and how the refusal says so (si#56) --------------------------------
+#
+# A YAML comment hangs on a LINE. `rewrite_of_old_form` renders the PARSED document, and nothing in a
+# parsed tree remembers a line, so the printed block is correct YAML carrying none of the reasoning the
+# file it replaces carried. Pasted, the manifest LOADS - green - and years of "why it stands here" are
+# gone with no outcome anywhere saying so. That is this repository's own recurring defect inside the one
+# tool built against it, and it is not hypothetical: a consumer whose manifest carried forty lines of
+# reasoning kept them only because somebody looked, and the kernel's own migration (5b223ef) reported
+# using "exactly the printed rewrite" while a human carried the comments across by hand.
+#
+# So the refusal says WHICH CASE THE READER IS IN rather than warning everybody, and it can, because the
+# loader has the manifest TEXT. Three answers and not two: "the sections carry no comments" and "nobody
+# handed me the text to look at" are different facts, and printing nothing for both is exactly the
+# collapse this kernel refuses everywhere else.
+
+#: The top-level keys the message asks the reader to paste over. `import:` is in the span because the
+#: block deletes it, so a comment explaining the import list goes with it.
+_REPLACED_SECTIONS = ("tasks", "groups", "import")
+
+#: A top-level key: unindented, a name, a colon. A comment line and an indented line are not keys.
+_TOP_LEVEL_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_.\-]*)\s*:")
+
+
+def comments_in_replaced_sections(text: str) -> int:
+    """How many comment lines sit in the span the printed rewrite replaces - the `tasks:`/`groups:`/
+    `import:` sections, plus the comment block written immediately above one of them, which is where a
+    section's reasoning is actually written.
+
+    It counts LINES rather than parsing, because a comment IS a line and a parser is what loses it in the
+    first place. Every ambiguity resolves TOWARDS counting: an unindented comment inside a replaced
+    section is counted even though it may be the header of the section that follows, and a blank line
+    does not break a comment block off the key below it. Over-counting shows a reader a warning they did
+    not need; under-counting hides the one they did, and only one of those two failures is silent.
+
+    A `#` inside a quoted value is not a comment and is not counted: only a line whose first non-blank
+    character opens one is.
+    """
+    count = 0
+    inside = False
+    pending = 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            if inside:
+                count += 1
+            else:
+                pending += 1
+            continue
+        match = _TOP_LEVEL_KEY_RE.match(line)
+        if match:
+            inside = match.group(1) in _REPLACED_SECTIONS
+            if inside:
+                count += pending
+            pending = 0
+            continue
+        pending = 0
+    return count
+
+
+def check_no_old_form(data: dict, catalogue_groups: dict | None = None,
+                      source: str | None = None) -> None:
     """Reject a manifest still written in the flat form, showing what it becomes.
 
     The four things that say "flat" are checked together rather than one per load, because they are one
@@ -719,6 +786,12 @@ def check_no_old_form(data: dict, catalogue_groups: dict | None = None) -> None:
     The message carries the rewrite of THIS manifest's own sections (`rewrite_of_old_form`), not an
     example of the shape. That is the entire difference between a removal somebody can act on and one
     they have to reverse-engineer - and it is why the flat form's renderer outlived the flat form.
+
+    `source` is the manifest TEXT, and it is what lets the message name the one thing the rewrite cannot
+    do (si#56): the block is rendered from the parsed document and carries no comments, so pasting it
+    over a commented manifest loads and drops the reasoning. Given the text, the message says whether
+    THIS manifest is in that case and how many lines it is about; given no text, it says the block
+    carries no comments without claiming to know whether that costs anything.
     """
     groups = old_form_groups(data.get("groups") or {})
     tasks = old_form_tasks(data.get("tasks") or {})
@@ -751,9 +824,20 @@ def check_no_old_form(data: dict, catalogue_groups: dict | None = None) -> None:
     if not stale_import:
         notes = notes[:2]
     body = "\n".join(f"    {line}" if line else "" for line in rewrite.splitlines())
+    dropped = comments_in_replaced_sections(source) if source is not None else None
+    if dropped is None:
+        loss = (" The rewrite is rendered from the PARSED manifest, so it carries no comments; if yours "
+                "are commented, use it as a blueprint rather than pasting it.")
+    elif dropped:
+        loss = (f" The sections it replaces carry {dropped} comment line(s) and the rewrite carries none "
+                f"- it is rendered from the PARSED manifest, and a comment hangs on a line rather than "
+                f"on a node. Pasted, this manifest loads and the reasoning is gone, so use the block as "
+                f"a blueprint and carry your own lines across.")
+    else:
+        loss = ""
     raise ValueError(
         "this manifest is written in the flat command form, which this kernel no longer loads: "
-        + "; ".join(found) + ". Rewrite those sections as:\n\n" + body + "\n\n"
+        + "; ".join(found) + "." + loss + " Rewrite those sections as:\n\n" + body + "\n\n"
         + "\n".join(f"  - {note}" for note in notes))
 
 

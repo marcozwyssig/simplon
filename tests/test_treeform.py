@@ -1069,3 +1069,185 @@ tasks:
     assert "override" not in rewrite
     assert manifest.load(rewrite, catalogue=cat).spec_for("support", "install").impl \
         == "simplon.tasks.hosttools:install"
+
+
+# --- the rewrite is of the STRUCTURE, and the refusal says so (si#56) ----------------------------------
+#
+# Found on a consumer's 0.4.0 migration: the printed block is correct, loads in one round, and carries
+# NOTHING of the roughly forty comment lines their manifest used to explain why things stood where they
+# stood. Pasting it would have been green and the reasoning gone. They kept it only because they looked.
+#
+# It is the recurring defect in the one tool built against it - an outcome that cannot tell "migrated"
+# from "migrated and lost the reasons" - so the fix is at the seam where somebody acts: the terminal
+# message, which knows the manifest's own lines and can say which case this reader is in.
+#
+# The two manifests below are the SAME manifest. `_REAL_OLD_MANIFEST` is simplon's own `simplon.yaml` at
+# 0.3.0 with its comments stripped; the one here restores them, shortened but in the places they really
+# stood (`git show v0.3.0:simplon.yaml`). Same parse, same rewrite, and only one of them has anything to
+# lose - which is the whole property under test.
+
+_REAL_OLD_MANIFEST_COMMENTED = """
+# Simplon builds and tests itself with itself. The very kernel built here
+# assembles this CLI from this manifest -- if a commit breaks the assembly,
+# it fails in the same round instead of after a release.
+product: simplon
+default: dev
+
+# NOTE: no `commands:` nesting under each group. That shape is the loader's "new form", reserved for a
+# command that INSTANTIATES a task declared under `tasks:`, so this stays the flat "old form".
+groups:
+  build:
+    wheel:
+      help: "Build the wheel."
+      impl: "orchestrator.cli:build_wheel"
+    # The documentation website, as ONE command, and an impl-less AGGREGATE rather than a leaf (#2,
+    # task 3). `reference` WRITES the page `site` READS, so the order is not a preference - run them
+    # the other way round and the published site carries the previous run's reference. Siblings execute
+    # in list order, so [reference, site] IS the edge.
+    docs:
+      help: "Write the command reference, then build the website from it."
+      depends_on: [reference, site]
+  test:
+    all:
+      help: "Run every test."
+      impl: "orchestrator.cli:test_all"
+  support:
+    doctor:
+      help: "Check the tools and the environment."
+      impl: "orchestrator.cli:doctor"
+
+# Both documentation tasks are placed through `import:` + `tasks:` because this manifest is the flat old
+# form throughout: that is the old form's way of instantiating a catalogue coordinate.
+import:
+  delivery: [docs, test, release]
+tasks:
+  # `output` is PINNED (#2, task 3): the Hugo project exists, so where the page belongs is no longer an
+  # open question a caller answers on the command line.
+  docs:reference:
+    group: build
+    with:
+      output: site/content/using/commands.md
+      title: "Command reference"
+  docs:site:
+    group: build
+  test:typecheck-python:
+    group: test
+  release:tag:
+    group: release
+
+site:
+  # Outside the sections the block replaces: this one survives a paste and must not be counted.
+  image: "hugomods/hugo:exts-0.148.2"
+  source: "site"
+  output: "build/website"
+  base_url: "https://marcozwyssig.github.io/simplon/#top"
+  theme: "github.com/imfing/hextra@v0.12.3"
+"""
+
+#: What `comments_in_replaced_sections` has to answer for the manifest above, counted by hand: two lines
+#: above `groups:`, four inside it, two above `import:` and two inside `tasks:`. The three-line header
+#: above `product:` and the one inside `site:` are NOT in it - they survive the paste.
+_COMMENTS_A_PASTE_WOULD_DROP = 10
+
+
+def test_the_refusal_names_the_comment_lines_a_paste_would_drop():
+    # arrange / act
+    with pytest.raises(ValueError) as exc:
+        manifest.load(_REAL_OLD_MANIFEST_COMMENTED, catalogue=catalogue_mod.load())
+    message = str(exc.value)
+
+    # assert: the count, the cause, and the way out - a reader who never opens the release notes learns
+    # here that the block is a blueprint rather than a replacement
+    assert f"replaces carry {_COMMENTS_A_PASTE_WOULD_DROP} comment line(s)" in message
+    assert "rendered from the PARSED manifest" in message
+    assert "blueprint" in message
+
+
+def test_the_refusal_says_nothing_about_comments_when_the_manifest_has_none_to_lose():
+    """The other direction, and it is what keeps the sentence diagnosis rather than decoration: a
+    manifest with nothing in those sections but structure loses nothing by pasting, and telling its owner
+    to be careful would be a warning that is simply false for them."""
+    # arrange / act
+    with pytest.raises(ValueError) as exc:
+        manifest.load(_REAL_OLD_MANIFEST, catalogue=catalogue_mod.load())
+    message = str(exc.value)
+
+    # assert
+    assert "comment line" not in message
+    assert "blueprint" not in message
+
+
+def test_with_no_manifest_text_the_refusal_says_the_block_carries_no_comments_and_claims_nothing_more():
+    """"No comments in those sections" and "nobody handed me the text" are different facts. A caller that
+    passes only the parsed document cannot be told the first, so it is told the limit without the count -
+    printing nothing for both states is the collapse this kernel exists to refuse."""
+    # arrange / act
+    with pytest.raises(ValueError) as exc:
+        treeform.check_no_old_form({"groups": {"build": {"wheel": {"impl": "a:b", "help": "h."}}}})
+    message = str(exc.value)
+
+    # assert
+    assert "carries no comments" in message and "blueprint" in message
+    assert "comment line(s)" not in message
+
+
+def test_the_printed_rewrite_carries_none_of_the_manifests_comments():
+    """si#56 acceptance 2, as an assurance rather than an observation: the block the refusal prints is
+    the STRUCTURE, and the sentence beside it is only true for as long as that stays so. A renderer that
+    later learned to carry comments would break this - and would have to change the sentence with it."""
+    # arrange
+    cat = catalogue_mod.load()
+
+    # act
+    rewrite = _refused_rewrite(_REAL_OLD_MANIFEST_COMMENTED, cat)
+
+    # assert: not one comment line, and none of the manifest's own words
+    assert not [line for line in rewrite.splitlines() if line.strip().startswith("#")]
+    assert "impl-less AGGREGATE" not in rewrite
+    assert "flat old form" not in rewrite
+
+
+def test_the_comments_are_the_only_thing_the_two_manifests_differ_by():
+    """What makes the count above a measurement of LOSS rather than of a string: the commented manifest
+    and the stripped one rewrite to the same block, byte for byte. Everything the parse carries survives;
+    the difference between the two files is exactly what does not.
+
+    It is also what keeps the new sentence OUT of the pasteable block. Taken out of the message rather
+    than off the renderer, so a sentence written on the wrong side of "Rewrite those sections as:" would
+    land in one of these two blocks and not the other - measured red by moving it there."""
+    # arrange
+    cat = catalogue_mod.load()
+
+    # act
+    with_comments = _refused_rewrite(_REAL_OLD_MANIFEST_COMMENTED, cat)
+    without = _refused_rewrite(_REAL_OLD_MANIFEST, cat)
+
+    # assert
+    assert with_comments == without
+
+
+def test_only_the_comments_inside_the_replaced_sections_are_counted():
+    # arrange / act
+    counted = treeform.comments_in_replaced_sections(_REAL_OLD_MANIFEST_COMMENTED)
+
+    # assert: the header above `product:` and the line inside `site:` survive the paste and are not part
+    # of the loss - a count over the whole file would be 14 and would overstate what is at stake
+    assert counted == _COMMENTS_A_PASTE_WOULD_DROP
+
+
+def test_a_hash_inside_a_value_is_not_a_comment():
+    # arrange: `base_url` above ends in `#top`. A count that read `#` anywhere would find it - and would
+    # then report a loss to a product that has none.
+    text = 'groups:\n  build:\n    web: { impl: "a:b", help: "see https://x/#top" }\n'
+
+    # act / assert
+    assert treeform.comments_in_replaced_sections(text) == 0
+
+
+def test_a_comment_block_above_a_replaced_key_belongs_to_the_section_it_introduces():
+    # arrange: where a section's reasoning is actually written - above the key, not inside it. A count
+    # that started at the key would miss exactly the lines worth keeping.
+    text = "# why the bodies stand here\n# and why they stay\ntasks:\n  img: { impl: \"a:b\" }\n"
+
+    # act / assert
+    assert treeform.comments_in_replaced_sections(text) == 2

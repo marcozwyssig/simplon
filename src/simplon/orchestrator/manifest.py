@@ -750,7 +750,10 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     is gone (netctl#1469 plan 3, si#33). A manifest still written that way is refused before anything else
     runs, with its own sections rewritten in the message (`treeform.check_no_old_form`) - and that
     rewrite is given the CATALOGUE, so a command whose name the catalogue also places is printed with
-    the `override: true` the merge then demands and the printed block loads as printed (si#42).
+    the `override: true` the merge then demands and the printed block loads as printed (si#42). It is
+    given the TEXT too, because the block is rendered from the parse and carries no comments: the refusal
+    counts what a paste would drop and says so, rather than letting a green migration lose its reasoning
+    silently (si#56).
     Unknown top-level keys stay ignored (backward compatible), with ONE exception: a leftover `composites:`
     key is rejected loudly (the concept was removed in netctl#898; declare an impl-less aggregate command
     with `depends_on` instead) - silently dropping it would turn a still-declared pipeline into dead data.
@@ -773,7 +776,10 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     # reading it here is what keeps a catalogue that has not moved yet owning the shape AND the
     # existence of its groups.
     catalogue_groups = (getattr(catalogue, "groups", {}) or {}) or (getattr(catalogue, "taxonomy", {}) or {})
-    treeform.check_no_old_form(data, catalogue_groups)
+    # The TEXT goes with the parsed document (si#56). The rewrite is rendered from the parse and a comment
+    # hangs on a line, so a commented manifest pasted over with it loads and loses its reasoning - and the
+    # only place that can tell whether THIS manifest is in that case is here, where the lines still exist.
+    treeform.check_no_old_form(data, catalogue_groups, source=text)
     tree = data.get("groups") or {}
     if not isinstance(tree, dict):
         raise ValueError(
