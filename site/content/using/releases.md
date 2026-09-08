@@ -92,6 +92,19 @@ reference still showed the old text: a third surface of the same taxonomy that
 nobody had counted. The surfaces are counted now, and the description reaches all
 of them.
 
+### Named here, and deliberately not shipped: the notes guard itself (#89)
+
+Cutting this very release ran the guard into its own gap. `tests/test_releases_page.py` stopped the tag
+because the section described one of seven merges - which is exactly what it exists for, and it worked.
+But it is a HOUSE rule: it lives in this repository's `tests/`, `src/simplon/` knows nothing of it, and
+the catalogue places nothing, so **no other product has it**. A product on this kernel can tag, publish
+and never write it down, silently.
+
+si#89 records lifting the mechanism into the kernel as a placeable gate - the rule is product-free, and
+only the page path, the floor and the exemption list are product data. **None of it is in 0.7.1.** The
+number appears in this release's merge range because the notes commit referenced it, and this paragraph
+is here so that the number does not read as a shipped change.
+
 ### The self-exemption was measured against a population that never saw the rule (#83)
 
 The fourth wrongly chosen population in this repository, and it concerns a number
