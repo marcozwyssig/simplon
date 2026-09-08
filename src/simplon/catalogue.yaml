@@ -155,6 +155,19 @@ tasks:
     impl: simplon.tasks.vcs:submodules
     help: "git submodule update --init lib/platform (init the submodule a fresh worktree needs)."
 
+  # --- support: the privileges a CI host has to be given (si#92) ---------------------------------------
+  # DECLARED, NOT PLACED, and that is the whole point of si#92's design note. `support:install` above is
+  # placed because it is useful in EVERY product (si#58's bar); this one grants `NOPASSWD: ALL` and a
+  # docker group, which is a change nobody wants appearing in a CLI they did not ask for it in. A product
+  # that provisions CI hosts places it deliberately; every other product never sees it.
+  #
+  # It refuses when it is not root, and says so - the privilege it hands out is the one the kernel needs
+  # in order to be allowed to do anything, so it cannot take it from inside a job. si#87 drew the same
+  # line one level down, where the docker group moved to the engine install.
+  support:ci-privileges:
+    impl: simplon.tasks.ciprivileges:grant
+    help: "Give a user passwordless sudo and the docker group on THIS host (needs root; idempotent)."
+
   # --- test: the suite runner ------------------------------------------------------------------------
   # `gate` backs EVERY declared suite level: one body, several commands, each pinning its own level with
   # `with: { name: ... }` (netctl#1469 plan 2, replacing the old invocation-name trick of netctl#1406). A
