@@ -95,25 +95,61 @@ def _sudo_prefix() -> list | None:
     return None
 
 
+def _invoking_user() -> str:
+    """The account this process runs as - the one a docker group membership has to name."""
+    import pwd
+    return pwd.getpwuid(os.getuid()).pw_name
+
+
+def _join_docker_group(pfx: list) -> None:
+    """Put the invoking user in the `docker` group, which is what OWNS the socket (root:docker 660).
+
+    This is the DURABLE half of docker access, and si#87 moved it here from the failure path. It belongs
+    to the install for two reasons. The install is the one moment privilege is known to be present and
+    the state is being created from scratch; and `get.docker.com` creates the group but puts nobody in
+    it, so without this step a fresh host has an EMPTY docker group and every non-root caller is locked
+    out. Measured on three CI hosts: `getent group docker` -> `docker:x:991:`.
+
+    root is skipped deliberately: it reaches the socket by being root, and the group exists precisely
+    for those who are not.
+    """
+    run([*pfx, "groupadd", "-f", "docker"])
+    user = _invoking_user()
+    if user == "root":
+        return
+    run([*pfx, "usermod", "-aG", "docker", user])
+    log.info(f"added {user} to the docker group; a LONG-LIVED service (a CI runner agent) must be "
+             "restarted before it takes effect - a process inherits its groups at start")
+
+
 def _install_engine(pfx: list) -> None:
     """Install the docker ENGINE via the official installer (#488; the same pipe-into-shell pattern
-    as hostsetup._install_linux, never $(...)) and enable+start the service. Needs root/sudo."""
+    as hostsetup._install_linux, never $(...)), enable+start the service, and establish the group
+    membership that makes the socket reachable afterwards (si#87). Needs root/sudo."""
     log.info("docker missing; installing the engine via get.docker.com (root/sudo available)")
     shell = "sudo -E sh" if pfx else "sh"
     run(["bash", "-c", f"curl -fsSL https://get.docker.com | {shell}"], capture=False)
     run([*pfx, "systemctl", "enable", "--now", "docker"])
+    _join_docker_group(pfx)
 
 
 def _grant_socket_access(pfx: list) -> None:
-    """Make the daemon socket usable by the CURRENT process (#488): usermod covers future sessions,
-    but a running process cannot pick up a new group without re-login, so grant an ACL on the socket
-    now (chmod 666 as the fallback where setfacl is not installed - acceptable on a dedicated CI
-    runner, and the socket is recreated with default modes on the next daemon restart)."""
-    import pwd
+    """Make the socket usable by THIS process, which cannot change its own groups any more (#488).
+
+    A BRIDGE, not the fix - si#87 corrected the emphasis, because the emphasis was doing damage. The
+    durable half is the group membership, established at install time by `_join_docker_group`; the ACL
+    below (chmod 666 where setfacl is missing) only covers the running process, and the socket is
+    recreated with default modes on the next daemon restart. Because the ACL works INSTANTLY, it used to
+    hide the fact that the membership had not reached a long-lived caller at all: three CI hosts ran
+    green for months on a permissive socket left behind by an earlier run, then failed at three
+    unrelated moments when their daemons restarted.
+
+    The membership is (re)established here too, so a host whose engine predates si#87 still gets it.
+    """
     sock = _socket_path()
     if sock is None:
         return
-    run([*pfx, "usermod", "-aG", "docker", pwd.getpwuid(os.getuid()).pw_name])
+    _join_docker_group(pfx)
     if not run([*pfx, "setfacl", "--modify", f"user:{os.getuid()}:rw", str(sock)]).ok:
         log.warn(f"setfacl unavailable; falling back to chmod 666 on {sock}")
         run([*pfx, "chmod", "666", str(sock)])
