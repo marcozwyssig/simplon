@@ -8,6 +8,7 @@ each `module:function` ref to a real, identity-checkable callable without touchi
 product. AAA throughout.
 """
 import sys
+import textwrap
 import types
 
 import click
@@ -853,5 +854,185 @@ def test_a_nested_group_hangs_from_its_parent_not_from_the_root():
         assert [n for n in root.list_commands(ctx) if "." in n] == []
         assert "git" in support.list_commands(click.Context(support))
         assert support.get_command(click.Context(support), "git").get_short_help_str(60).startswith("git")
+    finally:
+        sys.modules.pop("demo_impls", None)
+
+
+# --- a group's declared `help:` reaches the screen (si#75) ---------------------------------------------
+#
+# `catalogue.yaml` has described each of its groups since the tree moved onto the platform, and until
+# si#75 the two renderings synthesized `"<label> commands."` from the group TOKEN and never asked the
+# node. Eight descriptions in the kernel's own catalogue were data no user could reach - the catalogue
+# looked maintained, the CLI said something generic, and each half was defensible on its own. That is
+# this project's recurring defect in its quietest form, so the assurances below are about the string that
+# actually lands on screen, not about the wiring that puts it there.
+
+_DECLARED_HELP_MANIFEST = """
+product: demo
+tasks:
+  fmt: { impl: "demo_impls:fmt", help: "Format the sources." }
+  up: { impl: "demo_impls:up", help: "Bring it up." }
+  push: { impl: "demo_impls:up", help: "Push." }
+
+groups:
+  code:
+    commands:
+      fmt: { task: "fmt" }
+  deploy:
+    help: "Put them into an environment."
+    env_first: true
+    commands:
+      up: { task: "up" }
+  support:
+    help: "Host preflight, environment introspection and host tooling."
+    groups:
+      git:
+        help: "Version-control helpers."
+        commands:
+          push: { task: "push" }
+"""
+
+
+def _blurb(app: typer.Typer, *path: str) -> str:
+    """The help string a group's sub-app renders, addressed the way a user types it."""
+    node = get_command(app)
+    for name in path:
+        node = node.get_command(click.Context(node), name)
+    return node.help or ""
+
+
+@pytest.fixture
+def declared_help_app():
+    """A manifest with NO catalogue, so every `help:` below is the product's own - which is the only case
+    `treeform.merge` lets a manifest state a group's shape in, and therefore the one that proves a
+    product-declared description travels the same path as a platform-declared one."""
+    sys.modules["demo_impls"] = _impls_module()
+    try:
+        app = typer.Typer(add_completion=False, no_args_is_help=True)
+        cli.assemble(app, manifest.load(_DECLARED_HELP_MANIFEST), product="demo")
+        yield app
+    finally:
+        sys.modules.pop("demo_impls", None)
+
+
+def test_a_groups_declared_help_is_the_blurb_its_sub_app_renders(declared_help_app):
+    # act
+    blurb = _blurb(declared_help_app, "support")
+
+    # assert: the declaration, and NOT the sentence synthesized from the group token
+    assert blurb.startswith("Host preflight, environment introspection and host tooling."), blurb
+    assert "support commands." not in blurb, \
+        f"die Gruppe zeigt weiter den erfundenen Satz statt ihres `help:`: {blurb!r}"
+
+
+def test_a_nested_groups_declared_help_reaches_its_own_sub_app(declared_help_app):
+    # act: addressed as a user types it - `demo support git`, not `demo support.git`
+    blurb = _blurb(declared_help_app, "support", "git")
+
+    # assert
+    assert blurb.startswith("Version-control helpers."), blurb
+    assert "git commands." not in blurb, \
+        f"die verschachtelte Gruppe zeigt weiter den erfundenen Satz: {blurb!r}"
+
+
+def test_a_group_that_declares_no_help_keeps_the_synthesized_blurb(declared_help_app):
+    # arrange: `code` declares none, and the synthesized sentence is the only description it can have -
+    # dropping it would leave a group on the listing with nothing beside it at all.
+
+    # act
+    blurb = _blurb(declared_help_app, "code")
+
+    # assert
+    assert blurb == "code commands. Environment-agnostic (no env).", blurb
+
+
+def test_a_declared_help_does_not_swallow_the_addressing_hint(declared_help_app):
+    # arrange: the hint is the half no `help:` carries and the half that is not decoration - it is the
+    # difference between `demo deploy up` and `demo prod deploy up`. A description that REPLACED it would
+    # trade one silence for another, which is why the declaration replaces the synthesized sentence only.
+
+    # act
+    blurb = _blurb(declared_help_app, "deploy")
+
+    # assert
+    assert blurb == ("Put them into an environment. "
+                     "Env-first: `demo <env> deploy <cmd>` (default dev)."), blurb
+
+
+def test_every_group_the_shipped_catalogue_describes_renders_that_description():
+    # arrange: the kernel's OWN catalogue against a manifest that places one command in every group it
+    # declares, so all eight sub-apps are actually assembled. This is the assurance that goes red when a
+    # description is declared and lands nowhere - it reads the catalogue, not a copy of it, so a group
+    # added tomorrow is covered without anybody remembering to add it here.
+    from simplon import catalogue as catalogue_mod
+
+    cat = catalogue_mod.load()
+    text = """
+    product: demo
+    tasks:
+      one: { impl: "demo_impls:fmt", help: "One." }
+    groups:
+      build:   { commands: { one: { task: one } } }
+      test:    { commands: { one: { task: one } } }
+      release: { commands: { one: { task: one } } }
+      deploy:  { commands: { one: { task: one } } }
+      monitor: { commands: { one: { task: one } } }
+    """
+    sys.modules["demo_impls"] = _impls_module()
+    try:
+        mf = manifest.load(textwrap.dedent(text), catalogue=cat)
+        app = typer.Typer(add_completion=False, no_args_is_help=True)
+        cli.assemble(app, mf, product="demo")
+
+        # act / assert
+        declared = _catalogue_help(cat.groups)
+        assert declared, "der Katalog beschreibt keine einzige Gruppe - dann prueft dieser Test nichts"
+        for path, help_text in declared.items():
+            assert help_text, f"Gruppe '{path}' im Katalog traegt kein `help:`"
+            blurb = _blurb(app, *path.split("."))
+            assert blurb.startswith(help_text), \
+                f"'{path}' zeigt {blurb!r} statt der deklarierten Beschreibung {help_text!r}"
+    finally:
+        sys.modules.pop("demo_impls", None)
+
+
+def _catalogue_help(tree: dict, prefix: str = "") -> dict[str, str]:
+    """Every group PATH a catalogue tree declares, mapped to the `help:` on its node."""
+    out: dict[str, str] = {}
+    for name, node in (tree or {}).items():
+        path = f"{prefix}.{name}" if prefix else name
+        out[path] = str((node or {}).get("help") or "")
+        out.update(_catalogue_help((node or {}).get("groups") or {}, path))
+    return out
+
+
+def test_a_group_default_groups_blurb_stays_its_namesake_members_help():
+    # arrange: the one group shape whose description does NOT come from the group node, and deliberately
+    # so. Its bare token RUNS the namesake member, and that member's `help:` says what running it does -
+    # measured against the real manifests, "Build the container images as a live split-pane pipeline" beats
+    # the catalogue's "Produce the artefacts." at the very place a user is about to press return. The
+    # loader already refuses a namesake with no `help:`, so this branch can never fall through to nothing.
+    sys.modules["demo_impls"] = _impls_module()
+    try:
+        text = """
+        product: demo
+        tasks:
+          build: { impl: "demo_impls:build", help: "Build every image, unit gates first." }
+          lint: { impl: "demo_impls:lint", help: "Lint the sources." }
+        groups:
+          build:
+            help: "Produce the artefacts."
+            commands:
+              build: { task: "build" }
+              lint: { task: "lint" }
+        """
+        app = typer.Typer(add_completion=False, no_args_is_help=True)
+        cli.assemble(app, manifest.load(textwrap.dedent(text)), product="demo")
+
+        # act
+        blurb = _blurb(app, "build")
+
+        # assert
+        assert blurb == "Build every image, unit gates first.", blurb
     finally:
         sys.modules.pop("demo_impls", None)

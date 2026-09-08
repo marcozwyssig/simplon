@@ -17,6 +17,7 @@ the other half is [Building on Simplon](../building/).
   {{< card link="getting-started/" title="Getting started" subtitle="`simplon init`, what it writes, and the first run - line by line." >}}
   {{< card link="examples/" title="Worked examples" subtitle="Eight real jobs, end to end: cutting a release, chasing a red suite, adding a command, deploying to one environment." >}}
   {{< card link="case-python/" title="A Python product, end to end" subtitle="One loop, two real products, all five verbs - and a label on every step saying whether anybody has driven it." >}}
+  {{< card link="case-java/" title="A Java product, end to end" subtitle="The same loop with no Python in the product at all: Gradle in Docker, JUnit XML in the Allure report, and a label on every step." >}}
   {{< card link="releasing/" title="Cutting a release" subtitle="One command. Why the tag *is* the version, why it pushes one tag and not all of them, what the guard refuses - and why a push to `main` publishes nothing." >}}
   {{< card link="commands/" title="Command reference" subtitle="Generated from the assembled application on every build." >}}
 {{< /cards >}}

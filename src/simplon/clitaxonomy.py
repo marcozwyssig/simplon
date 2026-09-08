@@ -11,16 +11,24 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True)
 class TaxonomyNode:
-    """One node of the command tree: the commands it owns, its child groups, and whether it is env-first.
+    """One node of the command tree: the commands it owns, its child groups, whether it is env-first, and
+    the wording the manifest that declared it gave it.
 
     A node is addressed by its dotted PATH from the root (`support`, `support.git`). `env_first` marks the
     ROOT of an env-first subtree; every descendant inherits it (see group_requires_env), so the flag is
     declared once and never restated per node.
+
+    `help` is the group's declared description (`help:` on the node). It was the one part of a group node
+    the tree did not carry, which is how si#75 happened: every manifest could declare it, the loader
+    validated it, and the two renderings synthesized a blurb from the group NAME instead - so eight
+    declarations in the kernel's own catalogue alone were data nobody could ever read. Empty means "this
+    node declared none", which is a real answer (`group_help` falls back), not a missing one.
     """
     name: str
     commands: tuple[str, ...] = ()
     groups: Mapping[str, "TaxonomyNode"] = field(default_factory=dict)
     env_first: bool = False
+    help: str = ""
 
 
 def group_paths(groups: Iterable[str], *, exclude: Container[str] = frozenset()) -> list[str]:
@@ -48,6 +56,31 @@ def group_paths(groups: Iterable[str], *, exclude: Container[str] = frozenset())
             if path not in out and path not in exclude:
                 out.append(path)
     return out
+
+
+def group_help(group: str, product: str, *, env_first: bool, declared: str = "") -> str:
+    """One group's `--help` blurb: what the group IS, then how it is addressed.
+
+    ONE COPY, for the same reason `group_paths` above is one: `simplon.cli.assemble` binds it to Typer at
+    run time and `simplon.taskgen` writes it into a generated module, and the two have to put the same
+    string on screen. taskgen carried this loop privately and cli.py inlined a second spelling of it.
+
+    TWO HALVES, and they answer different questions. The first is the group's own description, and it is
+    `declared` - the `help:` the manifest wrote on the node - falling back to `"<label> commands."` when
+    a node declared none. The second is the ADDRESSING hint, which no `help:` carries and which is not
+    decoration: it is the difference between `myctl deploy up` and `myctl prod deploy up`, and getting it
+    wrong is a command that does not run. So `help:` replaces the synthesized half and never the hint
+    (si#75) - "Put them into an environment. Env-first: ..." says both things, while dropping the hint
+    would trade one silence for another.
+
+    A nested group is named by its OWN segment and addressed by its PATH: `support.git` reads "git
+    commands." and is typed `<product> support git <cmd>`. Using the dotted path for either would put a
+    string on screen that nobody can type (netctl#1444, plan 5).
+    """
+    label, addressed = group.rpartition(".")[2], group.replace(".", " ")
+    return f"{declared or f'{label} commands.'} " + (
+        f"Env-first: `{product} <env> {addressed} <cmd>` (default dev)."
+        if env_first else "Environment-agnostic (no env).")
 
 
 def merge_trees(catalogue: dict[str, TaxonomyNode],

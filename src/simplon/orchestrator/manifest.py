@@ -898,6 +898,11 @@ def _catalogue_tree(declared: dict[str, dict],
 
     A group's members are declared under its dotted PATH in `groups:` (`support.git`), so a node's
     commands are looked up by the path this recursion has walked, not by its bare name.
+
+    `help:` is carried onto the node rather than read and dropped (si#75). `merge` has always folded the
+    product's tree onto the catalogue's before this runs, so this one line is the whole path for BOTH
+    sources: a platform group's wording and - where no catalogue owns the group, the only case in which
+    `merge` lets a manifest state its own shape - the product's.
     """
     def build(spec: dict[str, dict], prefix: str) -> dict[str, TaxonomyNode]:
         out: dict[str, TaxonomyNode] = {}
@@ -906,7 +911,8 @@ def _catalogue_tree(declared: dict[str, dict],
             out[name] = TaxonomyNode(name=name,
                                      commands=members.get(here, ()),
                                      groups=build(node.get("groups", {}) or {}, here),
-                                     env_first=bool(node.get("env_first", False)))
+                                     env_first=bool(node.get("env_first", False)),
+                                     help=str(node.get("help") or ""))
         return out
 
     return build(declared, "")
