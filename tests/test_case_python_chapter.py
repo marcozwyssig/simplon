@@ -426,6 +426,13 @@ def test_the_version_scheme_the_chapter_names_is_the_one_this_product_declares()
         "pyproject.toml carries a static version, so the chapter's 'nothing chose that number' is false")
 
 
+#: The one version the chapter names that must NOT be a tag: the row showing the release guard refusing.
+#: An exemption from the assertion below, and a deliberate one - see the second test for its other half,
+#: which is what keeps this from being a hole. A demonstration of a refusal is worthless if the thing
+#: refused quietly came into existence anyway.
+REFUSED_VERSION = "v9.9.9"
+
+
 def test_every_release_the_chapter_names_is_a_tag_this_repository_carries():
     """The chapter states that a named version was cut, published and landed on PyPI. The local half of
     that - the tag exists - is checkable here, and it is the half that would rot first if a number were
@@ -443,8 +450,30 @@ def test_every_release_the_chapter_names_is_a_tag_this_repository_carries():
     # assert
     assert tags, "this checkout carries no tags at all, so the comparison would be vacuous"
     assert named, "the chapter names no release, so this test is ruling on nothing"
-    for tag in sorted(named):
+    for tag in sorted(named - {REFUSED_VERSION}):
         assert tag in tags, f"the chapter names {tag}; this checkout has no such tag"
+
+
+def test_the_version_the_chapter_shows_being_refused_was_really_never_cut():
+    """The other half of the exemption above, and the reason it is not a hole.
+
+    Row 8 shows the release guard refusing a tag on a commit `main` does not carry. That row is evidence
+    only if the tag never appeared - a refusal that left the tag behind would be the opposite of what the
+    chapter claims, and the assertion above would have been the one place to notice.
+
+    So the exemption is paid for: the version is excluded from "must be a tag" and required here to be
+    absent. It also pins the row itself, because an exemption for a version the chapter no longer mentions
+    is a rule guarding nothing.
+    """
+    # arrange
+    out = subprocess.run(["git", "tag"], cwd=ROOT, capture_output=True, text=True, check=True)
+    tags = {line.strip() for line in out.stdout.splitlines() if line.strip()}
+
+    # assert: the chapter still shows the refusal, and the refused tag still does not exist
+    assert REFUSED_VERSION in _prose(), (
+        f"the chapter no longer names {REFUSED_VERSION}, so its exemption above guards nothing")
+    assert REFUSED_VERSION not in tags, (
+        f"{REFUSED_VERSION} exists as a tag, so the chapter's row 8 shows a refusal that did not refuse")
 
 
 def test_the_images_the_transcript_shows_are_the_ones_the_manifest_pins():

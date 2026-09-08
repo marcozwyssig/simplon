@@ -45,7 +45,7 @@ Every such row carries the ticket where the decision is still open.
 | 5 | Run every unit suite | `./simplon.sh test all` | run | this checkout, 2026-09-07, green |
 | 6 | Run the type gate | `./simplon.sh test typecheck-python` | run | this checkout, 2026-09-07, green |
 | 7 | Run a system gate against a real service | `./agile-cockpit.sh test system` (`test:gate`) | run | agile-cockpit nightly workflow, 2026-09-07 02:36 UTC, green |
-| 8 | Refuse a tag on a commit `main` does not carry | `./simplon.sh release tag` | run | this checkout, on a working branch, 2026-09-07; refused, nothing cut |
+| 8 | Refuse a tag on a commit `main` does not carry | `./simplon.sh release tag v9.9.9` | run | this checkout, on a throwaway commit, 2026-09-07; refused before `create_tag`, `git tag -l 'v9*'` empty afterwards |
 | 9 | Tag, then workflow, then PyPI | `./simplon.sh release tag v0.4.0` | run | simplon's release workflow, 2026-09-06 19:21 UTC; PyPI carries 0.4.0 |
 | 10 | Push the image and read it back off the registry | `./agile-cockpit.sh release image` (`release:image`) | run | agile-cockpit CI on master, 2026-09-06 |
 | 11 | Deploy to the local host | `./agile-cockpit.sh dev deploy up` | derived | read from the product's own task body: `docker run -d` against the image `build:image` tagged |
