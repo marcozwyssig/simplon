@@ -34,6 +34,13 @@ support:
     ci-privileges: { task: "support:ci-privileges" }
 ```
 
+### Also in this range: a design, and nothing built from it yet (si#95)
+
+The spec for `toolchain:run` and the uniform build across Java, C++, .NET and Python landed in this
+range as a document. **Nothing in 0.8.0 implements it** - it is in `docs/superpowers/specs/` to be read
+and argued with before code exists. The number appears here because the merge is in the range, and this
+paragraph is what keeps it from reading as a shipped change.
+
 ### The CI privileges of a host, as a task that refuses unless it is root (si#92, si#93)
 
 Every product that puts a CI agent on a host was writing the same six lines by hand, and one of them is
