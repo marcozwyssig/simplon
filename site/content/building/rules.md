@@ -52,29 +52,41 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 55 | nothing - the declaration had no working meaning |
-| expression rule | 16 | something it could otherwise have said |
-| **all load-time refusals** | **71** | |
+| diagnosis | 105 | nothing - the declaration had no working meaning |
+| expression rule | 22 | something it could otherwise have said |
+| **all load-time refusals** | **127** | |
 
-These are the refusals a **product manifest** can trip while loading. Refusals that happen later - a task
-whose tool is missing, an image without a pin - are a different population with a different cost, and are
-not counted here.
+A **load-time refusal** is one raised on the way from the manifest to a decision, with no tool consulted
+in between. Refusals that happen later - a task whose tool is missing, a build the daemon rejected - are a
+different population with a different cost, and are not counted here.
 
 {{< callout type="info" >}}
-**None of these three numbers is typed.** They are computed from the three load-path modules'
-syntax trees and compared with this table by `tests/test_refusal_census.py`, which is also what makes a
-new refusal impossible to add quietly: an unclassified one has no census entry, and the suite goes red
-naming it until somebody says which kind it is. A number typed onto a page is wrong on the first day
-nobody checks it, and this repository has proved that twice.
+**None of these three numbers is typed.** They are computed by walking out from the two places a manifest
+enters the kernel - `manifest.load(text)` and `ProductContext.manifest_data()` - and compared with this
+table by `tests/test_refusal_census.py`, which is also what makes a new refusal impossible to add quietly:
+an unclassified one has no census entry, and the suite goes red naming it until somebody says which kind
+it is. A number typed onto a page is wrong on the first day nobody checks it, and this repository has
+proved that twice.
 {{< /callout >}}
 
-**Sixteen of these refusals joined the total without a single new rule being written.** The census
-started with the loader's two modules, and a manifest's test taxonomy - the `suites:` section - is refused
-somewhere else: in the task module that reads it, on the manifest's content alone, before any tool is
-consulted. Those sixteen were therefore outside a census whose entire purpose is that the sum cannot grow
-quietly. Fifteen of them are diagnosis; one costs a product something. Worth saying plainly, because the
-mechanism was correct and the *population* was not, which is the harder of the two mistakes to notice: a
-count that is computed rather than typed is still only a count of what you pointed it at.
+**The total nearly doubled without a single new rule being written, and that is the most useful thing on
+this page.** The census began as a list of modules, and a list is right only for as long as somebody
+remembers it. It was first found short by one module - the `suites:` section is refused in the task module
+that reads it, sixteen refusals outside a census whose entire purpose is that the sum cannot grow quietly.
+The repair at the time was to add that module to the list. The list was then found short by six more.
+
+So the population is no longer listed. It is derived from the two seams above and everything the kernel
+reaches from them, and the derivation agrees three separate times with a number somebody had measured by
+hand - the loader's two modules exactly, and the `suites:` sixteen exactly. What it added, on the day it
+landed, was six modules: the ones that refuse a product's `nexus:`, `claude:`, `images:`, `site:` and
+`workflows:` sections, plus the image pin - and the sentence this section used to carry named that pin as
+its example of a refusal that is *not* load-time. It is decided on a string in the manifest with nothing
+running.
+
+Most of what came in is diagnosis; the few that cost a product something hold the kernel to them as well,
+and the table below carries the live split rather than a sentence about it. The lesson is not about any
+one of them: **a count that is computed rather than typed is still only a count of what you pointed it
+at**, and the fix for that is to stop pointing it by hand.
 
 ### How far an expression rule reaches
 
@@ -82,7 +94,7 @@ Self-binding is not a third bucket of refusals; it is how far an expression rule
 
 | reach | count | meaning |
 | --- | --- | --- |
-| the kernel is held to it too | 10 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
+| the kernel is held to it too | 16 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
 | a statement about the platform/product seam | 6 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
 | the kernel exempts itself | 0 | there is no longer a rule the kernel declines to apply to itself |
 

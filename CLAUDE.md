@@ -22,19 +22,33 @@ cause; the total was never weighed. It is weighed now — see #48.
 **Do not restate the count here.** si#48 found that the `grep`-level number
 this paragraph used to carry (61) was the wrong population: six of those
 raises run at plan or run time, or only re-raise. The live count, split by
-kind, is computed from the load-path modules' syntax trees by
-`tests/test_refusal_census.py` and published on `building/rules.md`. A new
+kind, is computed by `tests/test_refusal_census.py` — walking out from the two
+places a manifest enters the kernel — and published on `building/rules.md`. A new
 refusal with no census entry turns that suite red until somebody says which
 kind it is, which is the point — a number typed into a document instead is
 wrong on the first day nobody checks it, and this repository has now proved
 that five times, twice in this very file.
 
-**The census only counts what it is pointed at.** si#61 found sixteen
-load-time refusals sitting outside it, because the population was a list of
-modules and `tasks/testrun.py` was not on it — a census whose whole purpose is
-that the sum cannot grow quietly, growing quietly. When you add a refusal in a
-module the census does not read, the suite stays green. Check the population,
-not only the entry.
+**The census only counts what it is pointed at, and it is no longer pointed by
+hand.** si#61 found sixteen load-time refusals sitting outside it, because the
+population was a list of modules and `tasks/testrun.py` was not on it — a
+census whose whole purpose is that the sum cannot grow quietly, growing
+quietly. The repair then was to add the module to the list. si#53 stopped
+repairing the list and derived it — a manifest enters this kernel at two seams,
+`manifest.load(text)` and `ProductContext.manifest_data()`, and the population
+is everything raised on the way from either to a decision with no tool
+consulted in between — and the derivation found **six more modules**, nearly
+doubling the total without one new rule being written. **A count that is
+computed rather than typed is still only a count of what you pointed it at.**
+
+Two things follow, and both are assurances rather than advice. A module that
+reads the manifest is either walked or named in `READS_INLINE` with the reason,
+so a new manifest reader cannot join quietly. And the sentence "everything else
+in the kernel refuses at run time — a task that cannot reach its tool, an image
+without a pin", which stood at the head of the census and on
+`building/rules.md`, was **false**: the pin is decided on a manifest string
+with nothing running. Prose about a population ages exactly the way a number
+does, and nothing was checking it.
 
 ## Three kinds of refusal — only one costs flexibility
 
