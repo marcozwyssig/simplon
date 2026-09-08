@@ -1,0 +1,58 @@
+# javademo - a Java product, delivered by Simplon.
+#
+# There is no pytest here and no Python outside `orchestrator/`. Everything the loop does to Java it
+# does through `impl:`: a task body of this product's own that shells out to Gradle in Docker and
+# returns its exit code.
+product: javademo
+
+# The docToolchain image tag, held to the same pin gate as every other image the kernel runs.
+doctoolchain_version: "v3.5.0"
+
+# THE BODIES, each declared once. Two of them are this product's own (gradle, and the jar on a host);
+# `down` and `status` are still the scaffold's placeholders. The rest of the loop is the kernel's,
+# named by catalogue coordinate under `groups:`.
+tasks:
+  build:   { impl: "orchestrator.gradle:build", help: "Compile and jar the product (gradle, in Docker)." }
+  up:      { impl: "orchestrator.deploy:up",    help: "Run the jar on the local host (si#5: there is no further target)." }
+  down:    { impl: "orchestrator.cli:down",     help: "Tear the deployment down (placeholder)." }
+  status:  { impl: "orchestrator.cli:status",   help: "Report what is running in the target environment (placeholder)." }
+
+groups:
+  build:
+    commands:
+      jar:  { task: build }
+      docs: { task: "docs:render", help: "Render the architecture documentation to HTML and PDF." }
+  test:
+    commands:
+      unit:   { task: "test:gate", with: { name: "unit" }, help: "Run the Java unit suite (gradle)." }
+      accept: { task: "test:accept", help: "Every level in order, then the report." }
+      report: { task: "test:report", help: "Merge and render the allure archive." }
+  release:
+    commands:
+      tag: { task: "release:tag" }
+  deploy:
+    commands:
+      up:   { task: up }
+      down: { task: down }
+  monitor:
+    commands:
+      status: { task: status }
+  support:
+    commands:
+      install: { task: "support:install" }
+
+default: dev
+environments:
+  dev: { backend: local, description: "Local development environment (the default)." }
+
+# THE TEST TAXONOMY, and it is the whole point of the case: one gate, no `suite:` anywhere, and the
+# gate that opens the run is the product's own runner.
+suites:
+  reports: "build/reports"
+  gates:
+    - name: "unit"
+      impl: "orchestrator.gradle:test"
+      results: "clear"
+  report:
+    parent_suite: "Java"
+    merge: ["build/junit-xml"]
