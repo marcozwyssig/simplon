@@ -734,7 +734,11 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
         points that never meet, such as a strict bring-up chain next to a test collection) keep their
         differing policy, which is why the rule is scoped per plan rather than manifest-wide;
       - `hidden` (netctl#1277) is rejected on a group-default group's NAMESAKE member, because that member
-        never reaches the registration `simplon.cli.assemble` would apply it to.
+        never reaches the registration `simplon.cli.assemble` would apply it to;
+      - a `tasks:` entry no command instantiates whose NAME a command has taken for a different body
+        (si#81) is rejected as a half-finished move - the declaration is inert and the body written in
+        the manifest runs nowhere. A declared task whose name nothing has taken is an OFFER and loads:
+        that is the whole difference from `check_every_task_is_used`, which si#53 struck.
 
     `catalogue` (netctl#1437) supplies the platform's coordinate space AND its command tree: the product's
     `groups:` is merged onto the catalogue's before validation, and every command's `task:` is resolved
@@ -813,6 +817,15 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     # self-declared ever reaches this filter.
     keep = treeform.declared_paths(tree) | treeform.paths_with_commands(flat)
     flat = {path: members for path, members in flat.items() if path in keep}
+    # A declared task whose NAME a command has taken for a different body (si#81). This is what is left
+    # of `check_every_task_is_used` after si#53 struck it: that rule refused every `tasks:` entry no
+    # command instantiated, offer and mistake alike, and this one refuses only the mistake - the entry
+    # standing beside a command of the same name that runs something else, which is what a half-finished
+    # move onto a catalogue coordinate leaves behind. Runs over the FILTERED merged tree, so a command
+    # in a platform group nobody took cannot count as the one that took the name; and BEFORE `resolve`,
+    # which consumes the `task:` this rule reads.
+    treeform.check_no_shadowed_task_declaration(flat, product_tasks,
+                                                getattr(catalogue, "tasks", {}) or {})
     # Placement or family (si#34): a coordinate whose namespace is one of the platform's own top-level
     # group names is a PLACEMENT (`build:image` is under `build`, always); any other namespace is a
     # FAMILY, and the product places it where it likes (`docs:site` under `build` here, under `release`

@@ -770,6 +770,62 @@ def check_no_old_form(data: dict, catalogue_groups: dict | None = None) -> None:
 # OFFER rather than a duty roster - and caught nothing while doing it. The owner struck it in si#53.
 # `test_a_declared_task_no_command_places_is_accepted` is what stands here now, and it is the assertion
 # that matters: the deletion has to make an orphan task LOAD, not merely stop raising somewhere.
+#
+# What the deletion also took is below, and si#81 is the ticket that put it back at the size it is
+# actually worth.
+
+
+def check_no_shadowed_task_declaration(flat: dict, product_tasks: dict,
+                                       catalogue_tasks: dict | None = None) -> None:
+    """Reject a declared task whose NAME a command has taken for a different body (si#81).
+
+    THE CASE, and it is the one si#53 measured as the price of striking `check_every_task_is_used`: a
+    product moves a command onto a catalogue coordinate and leaves its own `tasks:` entry standing next
+    to the new placement. The manifest loads, the CATALOGUE's body runs under that name, and the body
+    the product still maintains is reachable from nowhere and reported by nothing. Same shape from the
+    other side: two product tasks, one command, and the one the command does not name is dropped without
+    a word. Both are pinned in `tests/test_catalogue.py`.
+
+    WHY THIS IS NARROWER THAN THE RULE IT REPLACES, which is the whole content of si#81. The struck rule
+    refused EVERY `tasks:` entry no command instantiated. This one refuses only the entry whose name a
+    command has already taken - a typo or a half-finished move, never an offer. A product that declares
+    a task and places it nowhere at all keeps doing exactly that: nothing here looks at it, and
+    `test_a_declared_task_no_command_places_is_accepted` is the assertion that says so. The two sets are
+    not the same size and the difference is the point.
+
+    DIAGNOSIS, not an expression rule, by this repository's own sorting question. What is refused is a
+    declaration that is accepted and INERT - the same call the kernel already makes for `hidden:` on a
+    group-default namesake and for a `nexus:` block declaring no repositories. The manifest would run;
+    what it would not do is run the body written in it.
+
+    It reads the MERGED tree, so the kernel's own manifest goes through this call with no exemption
+    path - unlike its predecessor, whose docstring said "Scoped to the PRODUCT on purpose".
+
+    `catalogue_tasks` is here for the MESSAGE only: `commit` and `commit` read identically, and naming
+    the two `module:function` bodies is what lets a human see which half is dead.
+    """
+    used = {str(spec.get("task")) for members in (flat or {}).values()
+            for spec in (members or {}).values() if isinstance(spec, dict) and spec.get("task")}
+    for name in sorted(str(key) for key in (product_tasks or {})):
+        if name in used:
+            continue
+        for path in sorted(flat or {}):
+            spec = ((flat or {})[path] or {}).get(name)
+            if not isinstance(spec, dict) or str(spec.get("task") or "") == name:
+                continue
+            ref = spec.get("task")
+            dead = _impl_of(name, product_tasks or {}, catalogue_tasks or {})
+            runs = (f"runs `{ref}` ({_impl_of(str(ref), product_tasks or {}, catalogue_tasks or {})})"
+                    if ref is not None else
+                    "is an aggregate that plans other commands and runs no body of its own")
+            raise ValueError(
+                f"task '{name}' is declared under `tasks:` and instantiated by no command, while the "
+                f"command '{path} {name}' - the one that bears its name - {runs} instead. That is a "
+                f"half-finished move or a typo, not an offer: the body this manifest still carries "
+                f"({dead}) is reachable from nowhere, and until now nothing said so. Either point "
+                f"`groups: {path}: commands: {name}:` at `task: {name}`, or delete the `tasks: {name}:` "
+                f"declaration whose body no longer runs. A task NO command names is untouched by this - "
+                f"declaring more than you place is what a catalogue is for (si#53)")
 
 
 # --- placement or family: what a coordinate's namespace says about where it may go (si#34) ------------
