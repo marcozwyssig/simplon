@@ -637,7 +637,13 @@ def report(cfg: Suites | None = None, *, filtered: bool = False, run: RunVerdict
         # upstream never got that far.
         merged = allure.merge_results(results, [str(root / d) for d in cfg.merge],
                                       parent_suite=cfg.parent_suite, not_before=since)
-        (log.warn if merged.missing or merged.empty or merged.stale
+        #
+        # AND A MERGE THAT COULD NOT APPLY THE PARENT SUITE IT WAS HANDED IS NOT AN OK EITHER (si#79).
+        # `parent_suite:` is accepted from any manifest and acts only on allure raw results, so a product
+        # whose runner writes JUnit XML declared a grouping the archive does not have - and the run said
+        # OK. `Merge.unreached` is the only thing that can tell that apart from a merge that had nothing
+        # to tag, and `Merge._unreached` carries the reason, measured against allure itself.
+        (log.warn if merged.missing or merged.empty or merged.stale or merged.unreached
          else log.ok)(f"per-module results: {merged.line}")
     log.ok(f"allure results written to {results}")
     render = allure.render_report(_reports_dir(cfg), results,

@@ -170,6 +170,100 @@ def test_a_merge_does_not_claim_a_parent_suite_for_the_files_it_only_copied(tmp_
     assert (tmp_path / "dst" / "TEST-demo.CalculatorTest.xml").is_file()
 
 
+# --- a parent suite that reached nothing (si#79) ----------------------------------------------------------
+
+
+def test_a_merge_says_the_parent_suite_reached_nothing_and_why(tmp_path):
+    # arrange: the Java case again, this time asked from the caller's side. The manifest declares
+    # `parent_suite: Java` and the merge cannot apply it to a JUnit XML - and MEASURED against allure
+    # 2.44.0, nothing can: its junit-xml plugin sets resultFormat, suite, host, testClass and package, and
+    # an `allure.label.parentSuite` property on the testsuite or the testcase, a bare `parentSuite`
+    # property, a `<testsuites>` wrapper and a `package=` attribute all produced a case without one
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "TEST-demo.CalculatorTest.xml").write_text("<testsuite/>", encoding="utf-8")
+
+    # act
+    merged = allure.merge_results(str(tmp_path / "dst"), [str(src)], parent_suite="Java")
+
+    # assert: the caller can tell, and the sentence names the cause and the way out rather than leaving
+    # the reader to think they mistyped the key
+    assert merged.unreached
+    assert "parentSuite=Java reached nothing" in merged.line
+    assert "junit-xml" in merged.line
+    assert "resultFormat, suite, host, testClass, package" in merged.line
+    assert "*-result.json" in merged.line
+
+
+def test_a_merge_that_tagged_something_does_not_report_an_unreached_parent_suite(tmp_path):
+    # arrange: the other direction, and the one that matters most - a diagnosis that fires on a merge
+    # which DID apply the parent suite is a false alarm on every pytest product in the family
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a-result.json").write_text(json.dumps({"name": "t", "labels": []}), encoding="utf-8")
+    (src / "TEST-demo.CalculatorTest.xml").write_text("<testsuite/>", encoding="utf-8")
+
+    # act
+    merged = allure.merge_results(str(tmp_path / "dst"), [str(src)], parent_suite="Java")
+
+    # assert
+    assert not merged.unreached
+    assert "reached nothing" not in merged.line
+
+
+def test_a_merge_of_results_that_were_already_labelled_is_not_an_unreached_parent_suite(tmp_path):
+    # arrange: every result already carries a parentSuite of its own, so this merge applied none - and has
+    # nothing to complain about, because the grouping the manifest asked for is in the archive
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a-result.json").write_text(
+        json.dumps({"name": "t", "labels": [{"name": "parentSuite", "value": "Existing"}]}),
+        encoding="utf-8")
+    (src / "TEST-demo.CalculatorTest.xml").write_text("<testsuite/>", encoding="utf-8")
+
+    # act
+    merged = allure.merge_results(str(tmp_path / "dst"), [str(src)], parent_suite="Java")
+
+    # assert
+    assert not merged.unreached
+    assert "reached nothing" not in merged.line
+
+
+def test_a_merge_that_found_nothing_at_all_is_not_an_unreached_parent_suite(tmp_path):
+    # arrange: the distinction this repository spends its time on - "nothing to do" is not "the key you
+    # declared does not work". An empty merge already has its own louder sentence
+    src = tmp_path / "src"
+    src.mkdir()
+
+    # act
+    merged = allure.merge_results(str(tmp_path / "dst"), [str(src)], parent_suite="Java")
+
+    # assert
+    assert merged.empty and not merged.unreached
+    assert "reached nothing" not in merged.line
+
+
+def test_a_merge_keeps_carrying_the_junit_xml_through_while_it_says_the_key_did_nothing(tmp_path):
+    # arrange: si#62's capability, guarded from the fix that would have been easiest - making the key work
+    # by writing allure raw results out of the XML, or by refusing the file. The XML travels UNCHANGED and
+    # allure reads it with its own plugin; that is the only reason a product with no pytest gets an
+    # archive at all
+    src = tmp_path / "src"
+    src.mkdir()
+    body = '<testsuite name="demo.CalculatorTest" tests="3"/>'
+    (src / "TEST-demo.CalculatorTest.xml").write_text(body, encoding="utf-8")
+
+    # act
+    merged = allure.merge_results(str(tmp_path / "dst"), [str(src)], parent_suite="Java")
+
+    # assert
+    assert merged.unreached
+    arrived = tmp_path / "dst" / "TEST-demo.CalculatorTest.xml"
+    assert arrived.read_text(encoding="utf-8") == body
+    assert list((tmp_path / "dst").iterdir()) == [arrived], (
+        "the merge invented an allure result beside the XML; allure would then count the same tests twice")
+
+
 def test_a_merge_counts_the_sources_it_found_and_names_the_ones_it_did_not(tmp_path):
     # arrange: two declared sources, one of them absent - a product whose second module never ran
     src = tmp_path / "there"

@@ -128,7 +128,48 @@ class Merge:
         said = f"merged {self.files} file{'' if self.files == 1 else 's'} from {where}: " + ", ".join(parts)
         if self.missing:
             said += f"; missing: {', '.join(self.missing)}"
-        return said + self._stale + self._dirs
+        return said + self._stale + self._dirs + self._unreached
+
+    @property
+    def unreached(self) -> bool:
+        """A parent suite was asked for and NOTHING here could take it (si#79).
+
+        The `copied` count above already says these files carry no parentSuite; this is the question the
+        CALLER has to ask, which is whether the merge as a whole managed to apply the one it was handed. A
+        merge that tagged nothing is not the OK it used to be logged as - the manifest declared a grouping
+        and the archive has none of it - and this is what lets the report step say so at the time instead
+        of leaving the reader to notice a missing level in the Suites tree afterwards.
+        """
+        return bool(self.copied) and not self.tagged and not self.already_labelled
+
+    @property
+    def _unreached(self) -> str:
+        """WHY the parent suite reached nothing, and what to do instead (si#79).
+
+        `parent_suite:` is accepted from every manifest and applies only to allure raw results, so a
+        product whose runner writes JUnit XML declares a key that cannot act. si#61's shape - a key taken
+        and left inert - and there the repair was to make the inert half WORK rather than to forbid the
+        key. So that was measured first, against a real file rather than assumed, and the answer is that
+        allure cannot be told: MEASURED against the pinned image (allure 2.44.0) on gradle's own JUnit XML,
+        the labels its junit-xml plugin produces are exactly resultFormat, suite, host, testClass and
+        package, and five ways of asking for a sixth all came back without one - `allure.label.parentSuite`
+        as a `<property>` on the `<testsuite>` and on the `<testcase>`, a bare `parentSuite` property, a
+        `<testsuites>` wrapper carrying the name, and a `package=` attribute.
+
+        So this is DIAGNOSIS and not a refusal. The kernel will not invent the label - writing allure raw
+        results out of the XML would move the defect rather than remove it, and it would cost the capability
+        si#62 measured: the XML travels unchanged and allure reads it with its own plugin, which is the only
+        reason a product with no pytest gets an archive at all. What was missing is the sentence, at the
+        moment, saying that the key did nothing and why, so the reader is not left to conclude they typed
+        it wrong.
+        """
+        if not self.unreached:
+            return ""
+        return (f"; parentSuite={self.parent_suite} reached nothing - allure reads a non-allure result "
+                f"with a format plugin of its own, and the junit-xml one has no parentSuite to set "
+                f"(measured on allure 2.44.0: resultFormat, suite, host, testClass, package, and no "
+                f"property, wrapper or attribute adds a sixth). Merge *-result.json to group a module, "
+                f"or drop the key")
 
     @property
     def _stale(self) -> str:
