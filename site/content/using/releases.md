@@ -440,12 +440,20 @@ groups:
       tag: { task: "release:tag", help: "Cut and push the release tag." }
 ```
 
-**`env_groups:` may no longer contradict the platform.** Naming a group the
-catalogue already shapes — `deploy`, which the catalogue declares
-`env_first: true` — is now refused, with the same sentence `env_first:` gets in
-the same position. The key used to validate and do nothing at all in the tree
-form, so a line like that was already having no effect; now it says so. One
-consumer found exactly this on the day it landed.
+**`env_groups:` may no longer CONTRADICT the platform.** An entry is measured
+against the merged node: one that *disagrees* — naming a group the catalogue
+shapes the other way — is refused, with the same sentence `env_first:` gets in
+the same position. One that *agrees* is harmless, probably redundant, and
+**accepted**. The key used to validate and do nothing at all in the tree form;
+now it says which of the two it is. One consumer found the contradicting case on
+the day it landed.
+
+*(This paragraph said "naming a group the catalogue already shapes is now
+refused", which is wrong for the agreeing case and was corrected after a
+consumer's migration measured it: `env_groups: [deploy]` beside a catalogue that
+declares `deploy` env-first **loads**. A reader who trusted the old wording would
+have deleted a working line for no reason — the note was stricter than the
+kernel, which is the direction nobody checks.)*
 
 ### Four modules moved
 
