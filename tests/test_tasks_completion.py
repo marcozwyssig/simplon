@@ -42,7 +42,7 @@ def product(tmp_path, monkeypatch):
 
 
 def _target(product):
-    return product.root / "completions" / "sample.bash"
+    return product.root / "deploy" / "completions" / "sample.bash"
 
 
 def test_a_generate_writes_the_completion_under_the_product_root(product):

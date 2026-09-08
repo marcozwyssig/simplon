@@ -66,6 +66,18 @@ from simplon.verdict import GateVerdict, RunVerdict, Verdict
 # The manifest section this module owns.
 SECTION = "suites"
 
+#: Where a run's outputs go when the manifest names no `reports:`. It was REQUIRED until every product
+#: had written the same line, which is the point at which a universal answer has been masquerading as a
+#: per-product decision - and a required key that always gets one answer only teaches people to copy it.
+#:
+#: BESIDE the suite rather than under the product root: the outputs of a test run belong with the tests,
+#: and a root directory called `reports/` says nothing about what produced it. A product whose outputs
+#: belong elsewhere still says so, and its declaration wins.
+#:
+#: An EMPTY `reports:` is still refused rather than read as "use the default": `""` is a statement, and
+#: reading a typo as a request for the default is exactly the silence a default must not buy.
+REPORTS = "tests/reports"
+
 # The shared results dir every canonical gate writes into, under the product's report dir. Fixed rather
 # than declared: it is the allure convention every tool in the chain (`allure serve`, the render below,
 # CI's artefact upload) already assumes, so making it configurable would buy nothing.
@@ -242,7 +254,7 @@ def declared(data: Mapping[str, object], source: str = "manifest") -> Suites:
     section = data.get(SECTION)
     if not isinstance(section, Mapping):
         raise ValueError(f"{source}: the '{SECTION}' section is missing or is not a mapping")
-    reports = _str(section, "reports", f"{source}: '{SECTION}'", required=True)
+    reports = _str(section, "reports", f"{source}: '{SECTION}'") or REPORTS
     filtered = _str(section, "filtered_results", f"{source}: '{SECTION}'") or f"{RESULTS}-filtered"
 
     raw_gates = section.get("gates")

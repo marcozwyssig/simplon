@@ -65,7 +65,7 @@ nothing and returns 1 on drift - a pre-commit hook and a CI step in one command.
 
 ```text
 $ ./simplon.sh support completion --check
-[07:15:18]  OK completions/simplon.bash agrees with simplon.yaml
+[07:15:18]  OK deploy/completions/simplon.bash agrees with simplon.yaml
 
 $ ./simplon.sh support workflows --check
 [07:15:19]  OK .github/workflows/ci.yml agrees with simplon.yaml

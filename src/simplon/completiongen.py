@@ -68,10 +68,19 @@ from typing import NamedTuple
 from simplon import clitaxonomy, context
 from simplon.orchestrator.manifest import Manifest
 
-#: Where the generated file goes, relative to the product root. Not configurable: a knob here would be a
-#: second place to look for one file, and the one thing an installation instruction must be able to do is
-#: name the path without asking.
-DIRECTORY = "completions"
+#: Where the generated file goes, relative to the product root. STILL not configurable, and for the
+#: unchanged reason: a knob here would be a second place to look for one file, and the one thing an
+#: installation instruction must be able to do is name the path without asking.
+#:
+#: It moved out of the product root because the root is where a reader looks for what the product IS, and
+#: a directory holding one generated shell file is not that. `deploy/` is where this kernel's other
+#: outputs already live, so the completion joins them instead of standing beside `src/`.
+#:
+#: NOT `deploy/<orchestrator block>/completions`, which was the first proposal. The block is not at one
+#: path across products - agile-cockpit keeps it at `deploy/orchestrator`, cleon at
+#: `deploy/provision/orchestrator` - so a constant naming it would be right in one repository and wrong
+#: in the next. `deploy/` is the part they share.
+DIRECTORY = "deploy/completions"
 
 #: The node key for "an environment token has been consumed". It is not a group path and cannot collide
 #: with one - a group name is a shell token and `@` is refused by `_token` below.

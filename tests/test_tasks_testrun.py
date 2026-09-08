@@ -179,6 +179,40 @@ def test_declared_rejectsANonPathEntryInTheReportMergeList():
         testrun.declared(data, source="sample.yaml")
 
 
+def test_declared_defaultsTheReportsDirToTestsReports_whenTheManifestNamesNone():
+    # arrange: every product wrote the same line, so the kernel says it instead. `reports:` was REQUIRED
+    # until now, which made a universal answer look like a per-product decision.
+    data = _data()
+    del data["suites"]["reports"]
+
+    # act
+    cfg = testrun.declared(data, source="sample.yaml")
+
+    # assert
+    assert cfg.reports == "tests/reports"
+
+
+def test_declared_letsADeclaredReportsDirWinOverTheDefault():
+    # arrange: the default is a default, not a rule - a product whose outputs belong elsewhere says so
+    data = _data(reports="build/reports")
+
+    # act
+    cfg = testrun.declared(data, source="sample.yaml")
+
+    # assert
+    assert cfg.reports == "build/reports"
+
+
+def test_declared_stillRejectsAnEmptyReportsDir_ratherThanFallingBackToTheDefault():
+    # arrange: `reports: ""` is a statement, not an absence. Reading it as "use the default" would turn a
+    # typo into a silently different output directory, which is what the default must NOT buy.
+    data = _data(reports="")
+
+    # act / assert
+    with pytest.raises(ValueError, match="'reports' must be a non-empty string"):
+        testrun.declared(data, source="sample.yaml")
+
+
 def test_declared_rejectsAMissingSection_ratherThanRunningNothing():
     # arrange / act / assert: an absent section must name itself, not surface as an empty gate list
     with pytest.raises(ValueError, match="the 'suites' section is missing"):

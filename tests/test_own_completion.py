@@ -79,7 +79,7 @@ def test_the_gate_is_ruling_on_something():
     path = completiongen.path_for(PRODUCT)
 
     # assert
-    assert path == "completions/simplon.bash"
+    assert path == "deploy/completions/simplon.bash"
     assert (ROOT / path).is_file()
 
 
