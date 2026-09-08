@@ -354,6 +354,12 @@ Expected: FAIL with `has no attribute 'run_toolchain'`
 - [ ] **Step 3: Implement, and declare the coordinate**
 
 ```python
+# Add to the imports at the top of the module in this task:
+#     from pathlib import Path
+#     from simplon import context, labinstance
+#     from simplon.run import run
+
+
 def run_toolchain(body: Mapping[str, object], where: str, extra: list[str],
                   network: str | None = None) -> int:
     """Run one toolchain invocation. Thin: `declared` decides what is legal, `argv` decides the line."""
@@ -597,6 +603,19 @@ Expected: FAIL with `has no attribute 'scaffold'`
 - [ ] **Step 3: Implement**
 
 ```python
+# Add to the imports in this task:
+#     import yaml
+#     from simplon.tasks import profiles
+#
+# And the seam the tests monkeypatch, which nothing else defines:
+
+
+def _manifest_path() -> Path:
+    """The product's own manifest. A function, not a constant, so a test can point it at tmp_path -
+    the same seam `context.current()` gives every other task."""
+    return context.current().manifest_path
+
+
 def scaffold(language: str, **params: str) -> int:
     """Write a language's ready-made toolchain commands into THIS product's manifest (si#95).
 
@@ -724,4 +743,8 @@ git commit -m "docs(#95): the release notes for the uniform build"
 
 - **Generating `CMakeLists.txt` / `.sln` / `.csproj`.** The spec's "What this is NOT". Separate coordinates, when a product needs them.
 - **netctl's migration**, including whether its Python moves into a container. That is a plan in netctl's own repo, against a released kernel.
+- **Enforcing the spec's section 3 coupling** - that a product's `analyse` command names the same image as
+  its `compile`. The spec leaves refuse-versus-warn OPEN, and building either answer before that is
+  decided is how a rule gets the wrong sharpness. It needs one line of decision and then a task; until
+  then the rule lives in the page from Task 6, where a reader meets it.
 - **Generalising the artefact-mirror flags.** The spec's section 5 rejects it for the first cut, on the grounds that the part carrying the most special cases - "a dead proxy must never fail a gate" - should be generalised against a second case, not the first.
