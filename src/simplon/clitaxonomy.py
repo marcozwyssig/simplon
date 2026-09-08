@@ -65,6 +65,12 @@ def group_help(group: str, product: str, *, env_first: bool, declared: str = "")
     run time and `simplon.taskgen` writes it into a generated module, and the two have to put the same
     string on screen. taskgen carried this loop privately and cli.py inlined a second spelling of it.
 
+    THOSE TWO ARE NOT THE WHOLE AUDIENCE, and assuming they were is si#77. Four surfaces name a group:
+    these two, the generated command reference, and the shell completion. The reference does not call this
+    function - it writes its own addressing note and takes the DECLARATION alone - and the completion is a
+    word list with no room for either half. The population is counted in
+    `tests/test_group_blurb_surfaces.py`; a fifth surface has to appear there before it can appear anywhere.
+
     TWO HALVES, and they answer different questions. The first is the group's own description, and it is
     `declared` - the `help:` the manifest wrote on the node - falling back to `"<label> commands."` when
     a node declared none. The second is the ADDRESSING hint, which no `help:` carries and which is not

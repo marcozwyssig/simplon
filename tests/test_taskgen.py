@@ -1340,6 +1340,12 @@ env_groups: [deploy]
 # file - and a description that arrived in one of them only would be a new place for the same defect to
 # hide. The blurb is one function (`clitaxonomy.group_help`) since si#75; the second test below is what
 # holds the two to it rather than trusting that they still call it.
+#
+# THEY ARE TWO OF FOUR, which si#77 found the hard way: the generated command reference showed no
+# description for another release, because nothing said how many surfaces there were. The population lives
+# in `tests/test_group_blurb_surfaces.py` now. These two tests stay here because this is also the only
+# arrangement in which a PRODUCT declares the description itself - with no catalogue to own the groups -
+# and the census over there runs on the locked arrangement every real product is in.
 
 _DECLARED_HELP_MANIFEST = """
 tasks:

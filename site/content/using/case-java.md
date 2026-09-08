@@ -215,15 +215,22 @@ is a measured story on the test levels page.
 And this is the half only the product has. From outside, a compiler error and a failing assertion are the
 same `rc 1`. From inside the runner they are not, because the runner knows that `:test` writes XML and
 that its absence after a non-zero rc means the task never ran. The kernel offers a marker file for exactly
-that and guesses nothing without one:
+that and guesses nothing without one - the kernel exports a path in `SIMPLON_SETUP_FAILED` before every
+gate, and a file written there names the stage that broke:
 
 ```python
+from simplon.tasks.testrun import SETUP_MARKER_ENV
+
 rc = _gradle("test")
 if rc != 0 and not list(results.glob("TEST-*.xml")):
     with open(os.environ[SETUP_MARKER_ENV], "w", encoding="utf-8") as fh:
         fh.write("gradle build (:test never ran)\n")
 return rc
 ```
+
+The variable is set for every gate and holds a path, so its presence says nothing - what carries the
+claim is the file. [The seam, and why the name stays as it
+is](../../building/test-levels/#the-variable-is-a-path-and-it-is-always-set), on the test levels page.
 
 With a deliberate type error in `src/main/java/demo/Broken.java`:
 

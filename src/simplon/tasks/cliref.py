@@ -117,6 +117,15 @@ class Entry:
     help: str
     env_first: bool
     params: tuple[Param, ...]
+    #: The group's own declared description - the `help:` the manifest or the catalogue wrote on the node -
+    #: and EMPTY when the node declared none, which is a real answer rather than a missing one. Read from
+    #: the manifest taxonomy for the same reason `env_first` is: the assembled group's `--help` string is
+    #: the declaration with an addressing hint appended (`clitaxonomy.group_help`), and taking it back out
+    #: of that string would be parsing text this module formatted somewhere else - the mistake the head of
+    #: this file exists to avoid. The synthesized fallback is deliberately NOT carried: a heading that
+    #: already says `build` gains nothing from the sentence "build commands.", and printing it would put an
+    #: invented description where the absence of one is the truth (si#77).
+    group_blurb: str = ""
     alias: str = ""
     default_action: bool = False
     #: A leaf sitting directly on the ROOT, so there is no group token between the product and it. Two
@@ -220,11 +229,17 @@ def _flat_spellings(root: click.Command) -> frozenset[str]:
 
 
 def entries(root: click.Command, *,
-            env_first: Callable[[str], bool] = lambda group: False) -> list[Entry]:
+            env_first: Callable[[str], bool] = lambda group: False,
+            group_blurb: Callable[[str], str] = lambda group: "") -> list[Entry]:
     """Every command the app offers a human, in the order the app declares them.
 
     Declaration order rather than alphabetical: it is the order the product's manifest chose, which groups
     a build stage next to the stage it feeds instead of next to whatever starts with the same letter.
+
+    `group_blurb` answers with a group's declared description, and it is a callable for the same reason
+    `env_first` is: both are facts about the TAXONOMY that the assembled Click object cannot be read back
+    for without parsing a string somebody else formatted. Both default to answering nothing, so this
+    function stays usable on an app with no manifest behind it at all.
     """
     aliases = _flat_spellings(root)
     found: list[Entry] = []
@@ -241,6 +256,7 @@ def entries(root: click.Command, *,
         text = str(cmd.help or "").strip()
         return Entry(path=path, group=group, summary=_summary(text), help=text,
                      env_first=bool(env_first(group)), params=_params(cmd),
+                     group_blurb="" if top_level else str(group_blurb(group) or ""),
                      alias=path[-1] if len(path) > 1 and path[-1] in aliases else "",
                      default_action=default_action, top_level=top_level)
 
@@ -417,8 +433,14 @@ def render(found: Sequence[Entry], *, product: str, title: str,
                         f"register a command on the root itself; neither has a group to type. Each says "
                         f"below whether it takes an environment token."]
             else:
-                out += ["", f"## {entry.group.replace('.', ' ')}", "",
-                        _group_note(entry.group, entry.env_first, product)]
+                out += ["", f"## {entry.group.replace('.', ' ')}", ""]
+                # The group's own description FIRST, because it says what the group is; the note below it
+                # says how the group is addressed. A group that declares none prints only the note, which
+                # is what the page said about every group before si#77 - the difference is that the
+                # sentence now comes from the manifest instead of from the group's name.
+                if entry.group_blurb:
+                    out += [entry.group_blurb, ""]
+                out += [_group_note(entry.group, entry.env_first, product)]
         out += ["", f"### `{_spelling(entry, product)}`"]
         if entry.top_level:
             out += ["", _top_level_note(entry)]
@@ -448,6 +470,22 @@ def render(found: Sequence[Entry], *, product: str, title: str,
     return "\n".join(out) + "\n"
 
 
+def _declared_blurb(mf: Manifest) -> Callable[[str], str]:
+    """A lookup from a group PATH to the `help:` its node declares, or "" for a node that declares none.
+
+    A path the taxonomy does not resolve also answers "": a product may register a group on its root app
+    that no manifest declares, and this page documents what a user can type rather than only what the
+    manifest says.
+    """
+    taxonomy = mf.taxonomy()
+
+    def blurb(group: str) -> str:
+        node = taxonomy.resolve_path(group)
+        return str(getattr(node, "help", "") or "") if node is not None else ""
+
+    return blurb
+
+
 def reference(output: str, title: str = "") -> int:
     """Write the product's command reference to `output`, as Markdown for Hugo.
 
@@ -467,7 +505,8 @@ def reference(output: str, title: str = "") -> int:
         "give a plain relative path under the product root, e.g. 'site/content/reference/commands.md'",
         inside="the product root")
     mf = ctx.manifest()
-    page = render(entries(root_command(), env_first=mf.taxonomy().group_requires_env),
+    page = render(entries(root_command(), env_first=mf.taxonomy().group_requires_env,
+                          group_blurb=_declared_blurb(mf)),
                   product=ctx.name,
                   title=title or f"{ctx.name} command reference",
                   unplaced_tasks=unplaced(mf, catalogue_mod.load()))

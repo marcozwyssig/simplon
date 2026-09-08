@@ -101,15 +101,34 @@ Self-binding is not a third bucket of refusals; it is how far an expression rule
 **That last row used to say one, and how it got to zero is the point of measuring it.** The rule was
 `check_every_task_is_used`: a product could not declare a task no command instantiated, while the kernel's
 own catalogue does exactly that - its `tasks:` is an **offer**, because a task needing product data must
-not become a baseline command that dies on its first line. The reasoning for the exemption was sound. What
-nobody had written down was its *size*, and once it was measured - the rule would have refused **14 of the
-kernel's own 22** catalogue tasks - the question answered itself. It was also the only one of the sixteen
-with no measured cause in ticket, commit or docstring, and across every reachable manifest - this kernel's
-own and the five products that install it - it had refused nothing, ever. A rule the kernel would have to break fourteen times in its own house is not a rule
-anybody believes twice, so it was struck rather than kept with a number beside it.
+not become a baseline command that dies on its first line. It was the only one of the expression rules with
+no measured cause in ticket, commit or docstring, and across every reachable manifest - this kernel's own
+and the five products that install it - it had refused nothing, ever. So it was struck.
+
+**A number that used to stand here has been withdrawn, and withdrawing it is worth more than it was.** The
+exemption was also published with a *size* - the rule would have refused *14 of the kernel's own 22*
+catalogue tasks - and that number was quoted here, in the working agreements, and in the commit that struck
+the rule. It does not survive reading the rule's signature: `check_every_task_is_used(flat, product_tasks)`
+was called with the merged tree and the **product's** `tasks:` block, and the catalogue's coordinates were
+never handed to it at all. The count was right and the set was wrong. That has now happened four times in
+this repository, every time to a number that was correctly computed, so the lesson is worth stating as a
+rule of its own: **a number about a set is two questions, not one.** Is the count right, and is it the set
+being talked about? The second one is the one that keeps going missing.
+
+**What replaces it is a measurement rather than a label.** The reach column above was hand-written, and a
+hand-written word beside a rule is exactly the kind of thing that was wrong. So the kernel's own manifest is
+now loaded against the real catalogue with every rule-bearing function on the merge path recorded, and each
+rule is asked what it was actually handed. The catalogue holds **25** coordinates and its own tree places
+**9** of them; those 9 are the platform's half - in the merged tree because the catalogue put them there,
+not because this product asked - and all 9 reach every rule the table calls *held to it too*. Exactly two
+functions never see them, `check_no_old_form` (which rules on the product's document and is merely *shown*
+the catalogue so its rewrite can print `override: true`) and the one that enforces which groups exist, and
+every rule in both is a seam statement. A rule labelled *held to it too* that was handed only the product's
+half is now red - which is the shape the struck rule had, and nothing would have caught it.
 
 The row stays, at zero, and the suite goes red if it ever leaves zero without an argument. A
-self-exemption is not automatically wrong; an unexamined one is.
+self-exemption is not automatically wrong; an unexamined one is - and neither is a *measured* one, if the
+measurement was taken over a set the rule never saw.
 
 **Striking it cost something, and the price was paid rather than argued away.** A product that moves a
 command onto a catalogue coordinate and leaves its own `tasks:` entry standing beside the new placement
