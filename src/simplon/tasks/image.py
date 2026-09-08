@@ -223,6 +223,36 @@ def _declared_for(name: str) -> tuple[Image, Path]:
     return declared(ctx.manifest_data(), name, source=str(ctx.manifest_path)), ctx.root
 
 
+def missing_declared_paths(cfg: Image, root: Path) -> list[str]:
+    """The declared paths that point at nothing, as ready-made lines - `dockerfile:` first, then `context:`.
+
+    WHY BOTH, AND WHY THE ANSWER SAYS WHICH (si#74). An image declaration carries two paths into the
+    product's tree and either can go stale on its own; the one that actually moved is the whole content of
+    the answer. The finding that opened the ticket is exactly this shape - agile-cockpit's Dockerfile moved
+    from the root into `deploy/` (ac#28) and nothing in the kernel noticed - and a message that said only
+    "the build failed" would have left the reader to guess which of two lines to look at.
+
+    WHY HERE AND NOT IN THE LOADER, which is the other half of si#74's question. `declared()` is handed the
+    manifest DOCUMENT and nothing else: these paths are relative to the PRODUCT ROOT, which it has no way
+    to know, and giving it one would make the manifest's parser touch the disk - it is used by tests and by
+    the completion generator against manifests whose tree is not checked out. So the look belongs where the
+    root is resolved, and `build` asks it BEFORE `ensure_docker`: a manifest that points at nothing is wrong
+    on a host with no docker too, and "docker is missing" must not be the answer to a question about a path.
+
+    A list rather than a bool: a caller that only wanted "is it broken" would have thrown away the half
+    that makes the message worth printing.
+    """
+    missing = []
+    if not (root / cfg.dockerfile).is_file():
+        missing.append(f"dockerfile: {cfg.dockerfile} - no file under the product root answers to it")
+    # `root / "."` IS `root`, so the normal `context: .` asks whether the product root is a directory and
+    # gets yes. A context that named a file rather than a directory would fail in docker with a message
+    # about tar, so `is_dir` is the question and not `exists`.
+    if not (root / cfg.context).is_dir():
+        missing.append(f"context: {cfg.context} - no directory under the product root answers to it")
+    return missing
+
+
 def resolve_tag(cfg: Image, tag: str) -> str:
     """The tag to build and publish under: the argument, else the section's own `tag:`.
 
@@ -350,14 +380,18 @@ def build(name: str = "", tag: str = "") -> int:
     `release:artifact` both use - a product with two images declares two commands rather than making the
     caller remember a string.
     """
-    docker.ensure_docker()
     cfg, root = _declared_for(name)
-    resolved = resolve_tag(cfg, tag)
-    dockerfile = root / cfg.dockerfile
-    if not dockerfile.is_file():
-        log.error(f"no Dockerfile at {cfg.dockerfile}: the image '{name}' declares it, and nothing under "
-                  f"the product root answers to that path")
+    # si#74, and the order is the point: the manifest's own paths are checked BEFORE the tool is demanded,
+    # so a declaration that points at nothing is answered as itself on a host that has no docker either.
+    missing = missing_declared_paths(cfg, root)
+    if missing:
+        both = "two paths that do not exist" if len(missing) > 1 else "a path that does not exist"
+        log.error(f"image '{name}' declares {both} under {root}:\n  " + "\n  ".join(missing)
+                  + f"\n  fix the `{SECTION}.{name}:` entry, or move what it names - docker would have "
+                    f"failed later, about something else")
         return 1
+    docker.ensure_docker()
+    resolved = resolve_tag(cfg, tag)
     rc = build_image(cfg, resolved, root)
     if rc != 0:
         log.error(f"docker build failed (rc={rc}); {reference(cfg, resolved)} was not built "

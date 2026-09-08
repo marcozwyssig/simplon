@@ -56,6 +56,10 @@ def _product(tmp_path, monkeypatch):
     (tmp_path / "Dockerfile").write_text("FROM busybox:1.36\n", encoding="utf-8")
     (tmp_path / "docker").mkdir()
     (tmp_path / "docker" / "worker.Dockerfile").write_text("FROM busybox:1.36\n", encoding="utf-8")
+    # `worker` declares `context: services/worker`, and until si#74 this fixture never created it: three
+    # tests here built an image whose declared context was not on the disk and asserted that docker was
+    # handed the path anyway. That is si#74's finding sitting inside the kernel's own suite.
+    (tmp_path / "services" / "worker").mkdir(parents=True)
     # The gate itself has its own tests (test_docker.py); here it is neutralised so a host without
     # docker still runs this suite - the one test that asserts it DIES restores it deliberately.
     monkeypatch.setattr(docker, "ensure_docker", lambda: None)
@@ -427,6 +431,85 @@ def test_a_missing_dockerfile_is_named_before_docker_is_started(cli, _no_provena
     # assert
     assert rc == 1
     assert cli.argv_starting("docker", "build") == []
+
+
+def test_a_missing_dockerfile_says_which_of_the_two_declared_paths_is_gone(cli, _no_provenance,
+                                                                            _product, capsys):
+    """si#74: `dockerfile:` and the context path can each go stale on their own, and which one did is the
+    whole content of the answer. The finding that opened the ticket is exactly this - a Dockerfile that
+    moved from the product root into `deploy/` (ac#28) - and a message that only said "the build failed"
+    would have left the reader guessing between two lines of the manifest.
+    """
+    # arrange: the context is fine, the Dockerfile is not
+    (_product / "Dockerfile").unlink()
+
+    # act
+    rc = image.build(name="app", tag="1.0")
+
+    # assert: red, nothing built, and the message names the key that is wrong and not the other one
+    assert rc == 1
+    assert cli.argv_starting("docker", "build") == []
+    err = capsys.readouterr().err
+    assert "dockerfile: Dockerfile" in err
+    assert "context:" not in err
+
+
+def test_a_missing_context_is_caught_too_and_named_as_the_context(cli, _no_provenance, _product, capsys):
+    """The half si#74 found missing. Before it, a context pointing at nothing reached `docker build` and
+    came back as a tar error about a path, from a tool that had no idea a manifest existed."""
+    # arrange: the Dockerfile is fine, the context directory is not
+    shutil.rmtree(_product / "services" / "worker")
+
+    # act
+    rc = image.build(name="worker")
+
+    # assert
+    assert rc == 1
+    assert cli.argv_starting("docker", "build") == []
+    err = capsys.readouterr().err
+    assert "context: services/worker" in err
+    assert "dockerfile:" not in err
+
+
+def test_both_paths_gone_are_both_named_rather_than_the_first_one(cli, _no_provenance, _product, capsys):
+    """A message that stopped at the first fault would send the reader round twice. Both keys can be
+    stale at once - that is what a directory move does - so both are reported in one answer."""
+    # arrange
+    (_product / "docker" / "worker.Dockerfile").unlink()
+    shutil.rmtree(_product / "services" / "worker")
+
+    # act
+    rc = image.build(name="worker")
+
+    # assert
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "dockerfile: docker/worker.Dockerfile" in err
+    assert "context: services/worker" in err
+    assert "two paths that do not exist" in err
+
+
+def test_a_declared_path_that_is_gone_is_answered_without_docker_on_the_host(monkeypatch, _no_provenance,
+                                                                            _product, capsys):
+    """The ORDER, which is the other half of the si#74 decision. The check used to sit after
+    `ensure_docker`, so on a host with no docker the answer to "my manifest points at nothing" was "you
+    have no docker" - a true statement about the wrong question, and the kernel's own recurring defect.
+
+    Contrast `test_a_missing_docker_kills_the_build_rather_than_hinting` below: with the paths intact,
+    a missing docker still dies. Only a broken declaration overtakes it.
+    """
+    # arrange: the real gate, no docker anywhere, and a Dockerfile that is not there
+    monkeypatch.setattr(docker, "ensure_docker", _REAL_ENSURE_DOCKER)
+    monkeypatch.setattr(docker.shutil, "which", lambda name: None)
+    monkeypatch.setenv(docker.DOCKER_BOOTSTRAP_ENV, "0")
+    (_product / "Dockerfile").unlink()
+
+    # act: rc rather than SystemExit is the assertion - the docker gate never ran
+    rc = image.build(name="app", tag="1.0")
+
+    # assert
+    assert rc == 1
+    assert "dockerfile: Dockerfile" in capsys.readouterr().err
 
 
 def test_a_failing_build_hands_back_dockers_own_rc(monkeypatch, _no_provenance):
