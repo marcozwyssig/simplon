@@ -34,12 +34,17 @@ support:
     ci-privileges: { task: "support:ci-privileges" }
 ```
 
-### Also in this range: a design, and nothing built from it yet (si#95)
+### Also in this range: a design and its plan, and nothing built from either (si#95, si#96)
 
 The spec for `toolchain:run` and the uniform build across Java, C++, .NET and Python landed in this
-range as a document. **Nothing in 0.8.0 implements it** - it is in `docs/superpowers/specs/` to be read
-and argued with before code exists. The number appears here because the merge is in the range, and this
-paragraph is what keeps it from reading as a shipped change.
+range as a document, and its implementation plan behind it. **Nothing in 0.8.0 implements either** -
+they are in `docs/superpowers/specs/` and `docs/superpowers/plans/`, to be read and argued with before
+code exists.
+
+Both numbers are here because their MERGES are in the range, and this paragraph is what keeps them from
+reading as shipped changes. Worth noting for si#89: neither number appears in a single authored commit
+subject - they come only from GitHub's automatic `Merge pull request #NN` line, so the guard is asking
+for notes about pull requests rather than about work.
 
 ### The CI privileges of a host, as a task that refuses unless it is root (si#92, si#93)
 
