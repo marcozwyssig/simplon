@@ -183,6 +183,36 @@ and still returns `0` is a runner whose green means nothing. And a runner that w
 `passed` or `failed` and **no invented stage** - the kernel does not guess a setup failure out of a
 non-zero number, because a guessed one is the same false statement pointing the other way.
 
+### The variable is a path, and it is always set
+
+`SIMPLON_SETUP_FAILED` is exported before **every** gate the kernel calls, red or green, and removed
+again afterwards. Its presence therefore says nothing: `[ -n "$SIMPLON_SETUP_FAILED" ]` is true on every
+run of every gate, and a runner that reads it as a flag has read a question as an answer. What carries
+the claim is the **file**. The kernel deletes it on the way in - so a marker left by an earlier run can
+never be read as this one's verdict - and only a runner that writes it has said anything at all.
+
+The name is the one part of this seam that reads like a boolean while holding a slot to write into. It
+stays as it is: it is in a released version and on this page, and a rename would break a documented seam
+to buy what this paragraph buys. **Write the file; do not test the variable.**
+
+Which also means your runner need not be Python. The variable is inherited by whatever the gate spawns,
+so a shell or a Gradle wrapper says the same thing the same way:
+
+```bash
+./gradlew --no-daemon integrationTest
+rc=$?
+if [ "$rc" -ne 0 ] && ! ls build/junit-xml/TEST-*.xml >/dev/null 2>&1; then
+    printf 'gradle build (:test never ran)\n' > "$SIMPLON_SETUP_FAILED"
+fi
+exit "$rc"
+```
+
+**And a gate that writes nothing stays silent - the kernel does not offer this seam at run time.** The
+sentence a red `impl:` gate prints already says what the kernel does not know; appending *and here is
+how you could tell me* would put an advertisement in the log line, the stamp and the archive's
+Environment widget, on every red run, for a reader who is usually a CI system. The place to find this is
+a page, and this is the page.
+
 ## Order, and who clears
 
 The `gates:` list is a list because **order is meaning**: the gates run in the order they are declared,
