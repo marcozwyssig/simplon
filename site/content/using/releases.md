@@ -10,6 +10,159 @@ writing their notes now would mean reconstructing them from memory, and a
 reconstructed record reads exactly like a real one. The [release
 procedure](../releasing/) explains how a version comes into being.
 
+## 0.6.0
+
+Seven merges. The theme, if there is one, is ownership: a test run learns which
+results are its own, an image declaration is checked against the tree it points
+into, and two rules the kernel had been carrying were measured and one of them
+struck.
+
+### Before you bump
+
+**A test run now owns its results directory, and your report may count fewer
+tests than it used to** (si#70, si#69). `test report` merged whatever stood in
+the declared merge sources, and those sources are the *product's* directories — a
+Gradle build's JUnit XML, an npm reporter's output — which no `results: clear` on
+either kind of gate has ever touched. Measured: a build that stopped in
+`:compileJava` shipped an archive reading `{"failed":0,"passed":3,"total":3}`,
+decoded from a file 66 seconds older than the run that shipped it. The step now
+knows when the run began; files written before that are left where they are and
+**named in the line**, with the reason. The same run now reports
+`{"passed":0,"total":0}`. If your numbers drop after the bump, that is the defect
+leaving, not arriving — and `test report` on its own, which has no run behind it,
+still merges everything present, because that is its documented job.
+
+Alongside it, `wrote_results` no longer infers ownership from the gate verdicts
+(si#69): reaching the clearing step *is* the ownership, and deriving the same
+fact a second way from the outcome had already been wrong once.
+
+**`results: clear` is now accepted on an `impl:` gate** (si#61). 0.5.0 recorded
+this as a measurement and left it: a product with no pytest anywhere in it could
+not write a taxonomy that loads, and the way out was a pytest gate containing
+`assert True`, a 29 MB suite venv, and an archive that counted four tests for a
+product that has three. **No new key was invented.** `results` was refused on an
+`impl:` gate because it was ineffective there, and the ineffective half is what
+got repaired — the `impl:` branch now honours the clear. It is the one key that
+means the same thing on both kinds of gate, because it is not a statement about
+what a gate writes but about whose run the directory belongs to. Migration: none.
+Both manifests carrying a `suites:` section open with a pytest gate, so nothing
+changes for them, no refusal was added or removed, and the [rules
+page](../../building/rules/) is untouched.
+
+**`build:image` refuses a declaration that points at nothing, before it asks for
+docker** (si#74). Both `dockerfile:` and `context:` are checked against the
+product root, the message says *which* of the two moved, and it is asked before
+`ensure_docker` — so "my manifest points into thin air" no longer gets "you have
+no docker" for an answer on a machine without one. The finding came from a real
+product whose Dockerfile had moved into `deploy/` with nothing in the kernel
+noticing; the kernel's own test fixtures then turned out to carry the same defect,
+three of them building an image with a context that never existed.
+
+**A nested group with a namesake member is refused** (si#60). `support.git` with
+a member called `git` and a sibling beside it does not assemble: the taxonomy
+matches on the last segment while the assembly looks the spec up under the full
+dotted path, and the result was `KeyError: 'support.git'` — a stack trace where a
+diagnosis belongs. The refusal names both halves and both ways out: rename the
+member, or move the group to the top level, where the two names are the same
+string. The capability was deliberately *not* built: measured over this kernel's
+manifest and the five in `surface.CONSUMERS`, zero of six declare such a group,
+so what a product needs is to be told where the floor is.
+
+**A task you declare and no command places now loads** (si#53).
+`check_every_task_is_used` is gone. It was the one expression rule that exempted
+the kernel from itself, and measuring the exemption is what ended it: it would
+have refused 14 of the kernel's own 22 catalogue tasks, it was the only refusal
+with no measured cause in ticket, commit or docstring, and across all six
+reachable manifests it had never refused anything. A catalogue is an offer, and a
+product may now write one too. **The price is recorded rather than implied:** a
+product that moves a command onto a catalogue coordinate and leaves its own body
+standing beside it now loses that body *silently* — the manifest loads, the
+catalogue body runs, and the product's own is reachable from nowhere. Two
+assertions hold that loss as a characterisation, and the narrower diagnosis that
+would find the case again without forbidding the offer is proposed and not built
+(si#81).
+
+**Group help text changes** (si#75). `catalogue.yaml` has declared a description
+per group since it was written and nothing ever rendered it; the CLI built
+`"release commands. Environment-agnostic (no env)."` out of the group name
+instead. Measured across the catalogue and all six manifests: eight group paths,
+all eight carrying a `help:`, and 33 of 40 rendered sub-apps showing the invented
+sentence.
+
+```
+before   build commands. Environment-agnostic (no env).
+after    Produce the artefacts. Environment-agnostic (no env).
+```
+
+**Prepended, not replaced**, and that was decided against the real texts:
+replacing takes from `deploy --help` the only line saying the group does not run
+without an environment token, and no `help:` carries that half.
+
+**`docs:site` writes `build/hugo-cache/`** (si#27) — the kernel's convention,
+under the same `build/` your `clean` and `.gitignore` already cover.
+
+### A site build no longer needs the network
+
+si#27 asked for `hugo mod get` to be made conditional and called that the likely
+answer. **The premise is refuted, and the measurement is why.** With the fetch
+skipped entirely and no host-side cache, the build still dies at `git ls-remote`,
+because the build resolves the theme module itself — and the condition would never
+have touched FlexSearch and mermaid, which Hextra pulls through
+`resources.GetRemote` while rendering. A persistent cache fixes both; the
+condition fixes neither. So there is no condition: it bought 0.9 s and would have
+paid with a build that, on a wrongly answered question, renders against the old
+theme and says nothing.
+
+The proof is a build with **no network**, not a faster one: every container run
+with `--network none`, rc 0, 26 pages, diagram rendered. The same run against the
+previous kernel exits 1 at `git ls-remote`. Three pages that said an offline build
+was impossible now say what it costs instead — a fresh checkout, a `clean`, and a
+moved pin each need the network once.
+
+### Also
+
+- **`verdict.exit_code` is applied only where its precondition is carried**
+  (si#71). The 128+n translation belongs to a child process's wait status; it was
+  being applied to every gate's rc, including an `impl:` gate's, which is a Python
+  callable's return value and names no signal however negative it is. Harmless in
+  every case measured — and a docstring and a use that said different things,
+  which is how the next reader widens the wrong one.
+
+### Documentation
+
+**A complete Java use case** (si#26), the other half of the pair 0.5.0 opened:
+[Delivering a Java product](../case-java/). Nine of its thirteen steps were
+driven rather than derived, including `build docs` with docToolchain producing
+HTML and PDF — the step the Python chapter says outright it never saw. Three are
+derived and one does not exist. The three number series come out of the archive
+rather than out of prose, and the interesting one is the third:
+
+```
+green             rc 0   passed 3, total 3    verdict passed
+one test broken   rc 1   failed 1, passed 2   verdict failed
+compiler error    rc 1   passed 0, total 0    verdict setup-failed
+```
+
+Three tests, not four — the difference si#61 made, in one number.
+
+**The site's own numbers are counted and its links resolved** (si#66, si#67).
+Three pages counted the examples and all three were wrong — eight sections
+described as "seven", "Seven" and "six" — so the counts are built from the source
+rather than typed, along with five other unchecked numbers. And there is a link
+checker: 84 internal links across 17 pages, none of them dead, with every anchor
+checked against the target page's headings. Hugo renders a dead relative link
+without complaining, and a dead `menu.pageRef` builds rc 0 with no warning at all
+— measured, which is why the checker exists.
+
+### About these notes
+
+The section above 0.4.0 used to be checked only for *existing*. si#82 measured
+what that permitted — 0.5.0 described two of its fourteen changes and was green —
+and `tests/test_releases_page.py` now holds each section against the merges in
+its own range: every ticket number merged into a release has to appear in that
+release's section. Not the wording, which no tool can derive; the completeness,
+which it can.
+
 ## 0.5.0
 
 Fourteen changes went into this tag. This section named two of them for the first
