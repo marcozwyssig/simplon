@@ -39,18 +39,6 @@ def _cd_panel(product: str) -> str:
     return f"CD / env-first ({product} <env> <group> <cmd>, default dev)"
 
 
-def _group_help(group: str, product: str, *, env_first: bool) -> str:
-    """One group's `--help` blurb.
-
-    A nested group is named by its OWN segment and addressed by its PATH: `support.git` reads "git
-    commands." and is typed `<product> support git <cmd>`. Using the dotted path for either would put a
-    string on screen that nobody can type (netctl#1444, plan 5).
-    """
-    label, addressed = group.rpartition(".")[2], group.replace(".", " ")
-    return f"{label} commands. " + (f"Env-first: `{product} <env> {addressed} <cmd>` (default dev)."
-                                    if env_first else "Environment-agnostic (no env).")
-
-
 class _Param(NamedTuple):
     name: str
     literal: str | None      # None for a REQUIRED parameter: it must not gain a default
@@ -216,12 +204,14 @@ def render(manifest: Manifest, *, source: str, product: str,
         var = "_g_" + signatures.identifier(group.replace(".", "_"), where=f"group `{group}`")
         apps[group] = var
         env_first = tax.group_requires_env(group)
-        help_text = _group_help(group, product, env_first=env_first)
+        node = tax.resolve_path(group)
+        help_text = clitaxonomy.group_help(group, product, env_first=env_first,
+                                           declared=node.help if node else "")
         if group not in manifest.groups:
             # An ANCESTOR node: declared in the taxonomy, holding subgroups rather than members of its
             # own (`support` above `support.git`). It still needs a sub-app for its children to hang
-            # from. Its blurb follows the same shape every other group's does; the `taxonomy:` block's
-            # own `help:` is not carried on TaxonomyNode today, which is a gap step 7 has to close.
+            # from, and it renders its OWN `help:` like any other group - the gap this branch used to
+            # record ("not carried on TaxonomyNode today") is closed by si#75.
             body.append(f"{var} = typer.Typer(add_completion=False, no_args_is_help=True, "
                         f"help={help_text!r})")
         elif tax.is_group_default_command(group):
