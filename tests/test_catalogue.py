@@ -347,20 +347,20 @@ env_groups: []
         manifest.load(text)
 
 
-def test_a_products_own_body_left_behind_by_a_coordinate_placement_now_loads_silently():
-    """CHARACTERISATION, and it records a LOSS rather than a capability (si#53).
+def test_a_products_own_body_left_behind_by_a_coordinate_placement_is_named():
+    """The loss si#53 pinned as a characterisation, now NAMED (si#81).
 
-    Until si#53 this was a load error: `check_every_task_is_used` refused a `tasks:` entry no command
-    instantiated, and this case - a product moving a command onto a catalogue coordinate and leaving its
-    own body behind next to the new placement - is the mistake that refusal actually caught. The owner
-    struck the rule as an expression rule with no measured cause; these two tests are the cause nobody
-    had looked at, because they are in a suite rather than in a ticket, a commit message or a docstring.
+    THE HISTORY, because the assertion below is the third state of this test and the middle one is the
+    interesting one. Until si#53 this was a load error: `check_every_task_is_used` refused a `tasks:`
+    entry no command instantiated. si#53 struck that rule - it was the one expression rule the kernel
+    did not apply to itself, and it forbade a product what the kernel does throughout its own catalogue:
+    treating a catalogue as an OFFER. The case below is what the deletion cost, and it was pinned here
+    as a characterisation of the SILENCE rather than deleted with the rule.
 
-    So the case is pinned as it now behaves, and it behaves silently: the manifest loads, `git commit`
-    runs the CATALOGUE's body, and the product's own `nullary` - the half still being maintained - is
-    reachable from nowhere and reported by nothing. That is the shape this repository hunts, and it is
-    named here so that it cannot be rediscovered as a surprise. si#53 carries the narrower diagnosis
-    that would catch it again without forbidding a catalogue-as-offer; it is proposed there, not built.
+    si#81 is the narrower diagnosis: the product's own body stands beside a command OF THE SAME NAME
+    that runs the catalogue's `vcs:commit`, so the name is taken and the body written here is dead in
+    the tree. That is a half-finished move, never an offer - and the offer stays legal, which is the
+    assertion in `test_a_declared_task_no_command_places_is_accepted` and in the sibling below.
     """
     # arrange: the product's own `commit` beside a command that places the catalogue's `vcs:commit`
     text = """
@@ -374,22 +374,17 @@ groups:
 env_groups: []
 """
 
-    # act
-    loaded = _loaded(text)
-
-    # assert: it loads, and the body that runs is the CATALOGUE's
-    assert loaded.groups == {"git": ("commit",)}
-    assert loaded.commands["git"]["commit"].impl == "simplon.test_impls:no_context"
-
-    # assert: which is the loss, stated as an assertion rather than as prose - the product's own body is
-    # in the manifest that loaded and is instantiated by nothing in it
-    placed = {spec.impl for members in loaded.commands.values() for spec in members.values()}
-    assert "simplon.test_impls:nullary" not in placed
+    # act / assert: it is refused, and the message names the dead body rather than only the rule
+    with pytest.raises(ValueError) as exc:
+        _loaded(text)
+    assert "task 'commit' is declared under `tasks:` and instantiated by no command" in str(exc.value)
+    assert "simplon.test_impls:nullary" in str(exc.value)
+    assert "simplon.test_impls:no_context" in str(exc.value)
 
 
-def test_a_products_own_definition_landing_on_an_existing_groups_entry_now_loads_silently():
+def test_a_products_own_definition_landing_on_an_existing_groups_entry_is_named():
     """The same loss, seen from the other side: two product tasks, one command, and the one the command
-    does not name is dropped without a word. Pinned for the same reason as the case above."""
+    does not name used to be dropped without a word. Named by the same diagnosis (si#81)."""
     # arrange
     text = """
 tasks:
@@ -405,14 +400,41 @@ groups:
 env_groups: []
 """
 
-    # act
-    loaded = manifest.load(text)
+    # act / assert
+    with pytest.raises(ValueError) as exc:
+        manifest.load(text)
+    assert "task 'disk-guard' is declared under `tasks:` and instantiated by no command" in str(exc.value)
+    assert "simplon.test_impls:nullary" in str(exc.value)
 
-    # assert: the command resolves to the task it names, and the namesake declaration is gone
-    assert loaded.groups == {"support": ("disk-guard",)}
-    assert loaded.commands["support"]["disk-guard"].impl == "simplon.test_impls:no_context"
-    placed = {spec.impl for members in loaded.commands.values() for spec in members.values()}
-    assert "simplon.test_impls:nullary" not in placed
+
+def test_a_declared_task_whose_name_no_command_took_is_an_offer_and_still_loads():
+    """The other half of si#81, and the half that decides whether the rule is narrow or merely renamed.
+
+    An unplaced task whose name NOTHING has taken is exactly what si#53 made legal, and the diagnosis
+    above must not reach it. Stated here, next to the two cases it borders on, because a refusal is only
+    as narrow as the assertion that holds its edge - `test_a_declared_task_no_command_places_is_accepted`
+    holds the same edge without a catalogue, and a rule broad enough to catch an offer has to break both.
+    """
+    # arrange: `push` is declared and placed nowhere; no command anywhere is called `push`
+    text = """
+tasks:
+  commit: { impl: "simplon.test_impls:nullary", help: "The product's own commit." }
+  push: { impl: "simplon.test_impls:no_context", help: "Declared and not placed - an offer." }
+
+groups:
+  git:
+    commands:
+      commit: { task: "commit" }
+env_groups: []
+"""
+
+    # act
+    loaded = _loaded(text)
+
+    # assert: it loads, the placed task runs the product's body, and the offer simply is not a command
+    assert loaded.groups == {"git": ("commit",)}
+    assert loaded.commands["git"]["commit"].impl == "simplon.test_impls:nullary"
+    assert "push" not in loaded.commands["git"]
 
 
 # --- the catalogue owns the tree's SHAPE (netctl#1444, spec step 7) -------------------------------------

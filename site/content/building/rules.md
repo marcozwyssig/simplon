@@ -52,9 +52,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 105 | nothing - the declaration had no working meaning |
+| diagnosis | 106 | nothing - the declaration had no working meaning |
 | expression rule | 22 | something it could otherwise have said |
-| **all load-time refusals** | **127** | |
+| **all load-time refusals** | **128** | |
 
 A **load-time refusal** is one raised on the way from the manifest to a decision, with no tool consulted
 in between. Refusals that happen later - a task whose tool is missing, a build the daemon rejected - are a
@@ -110,6 +110,16 @@ anybody believes twice, so it was struck rather than kept with a number beside i
 
 The row stays, at zero, and the suite goes red if it ever leaves zero without an argument. A
 self-exemption is not automatically wrong; an unexamined one is.
+
+**Striking it cost something, and the price was paid rather than argued away.** A product that moves a
+command onto a catalogue coordinate and leaves its own `tasks:` entry standing beside the new placement
+loses that body *silently*: the manifest loads, the catalogue's body runs under the name, and the half
+still being maintained is reachable from nowhere. That was pinned as a characterisation - a test that
+records the silence - and it is now a **diagnosis** instead, one that names only the case the old rule
+was actually catching: a declared task whose name a command has already taken for a different body. A
+declared task nobody names at all is still an offer and still loads, which is the difference between the
+two rules and the reason the second one is not the first one under a new name. Measured over all six
+reachable manifests before it was built: **zero** would be refused by either.
 
 ### Before you add the next one
 
