@@ -232,9 +232,58 @@ generalised against a second case, not the first.
 - Is `analyse` the right command name, against `lint`, `check`, `static`? The table above uses `analyse`
   because it covers type checking and bug patterns without claiming either.
 
-## Verification this design implies
+## 8. Tests
 
-- The task's argv assembly is PURE and unit-tested, like `gradle_argv` is today: assembles, runs nothing.
-- The appending rule gets a test with an empty and a non-empty caller argv.
-- `pinned_image()` refusal is already covered; the new path must go through it.
-- A product-level proof: netctl's CI green with `build compile` replacing `./netctl.sh unit-java`.
+Written first, red before green, in this repository's AAA shape. The list is part of the design because
+several of these are the whole reason a piece is shaped the way it is.
+
+**`toolchain:run` - argv assembly (pure, runs nothing, like `gradle_argv` today):**
+
+- the assembled argv carries the pinned image, the bind mount, the workdir and `--user` with the calling
+  uid/gid;
+- an unpinned image is refused before docker is asked - through `pinned_image()`, not a second check;
+- caller argv is APPENDED to the manifest argv; with an empty caller argv the line is byte-for-byte what
+  the manifest declares;
+- `caches:` become `-v <product>-<volume>-<instance>:<path>`, and a second instance gets different
+  volumes (the netctl#453 property, now the kernel's);
+- `env:` reaches the container and nothing else does - no implicit inheritance;
+- an optional `--network` appears only when it is given.
+
+**Profiles and `support:toolchain` (section 1b/1c):**
+
+- scaffolding a language writes the EXPANDED form into the manifest, and the manifest then loads;
+- scaffolding twice changes nothing the second time (idempotent);
+- a command the product has hand-edited is NOT clobbered - the scaffolder refuses and says which one;
+- an unknown language is refused by name, listing the profiles that exist;
+- the profile table is data: a test asserts every profile produces a manifest that loads, so a broken
+  profile cannot ship.
+
+**The environment-coupling rule (section 3):** a product whose `analyse` command names a different image
+than its `compile` command is a finding. Whether that is a refusal or a warning is an open question - a
+refusal costs the product that deliberately analyses in a leaner image.
+
+**Product-level proof:** netctl's CI green with `build compile` in place of `./netctl.sh unit-java`,
+including a run where the caller appends a flag.
+
+## 9. Documentation, which here is a GATE and not a follow-up
+
+Adding a coordinate to `catalogue.yaml` turns the suite RED until the pages carry it. Measured on
+2026-09-08 while adding `support:ci-privileges`: seven tests went red at once, across
+`test_phases_chapter.py`, `test_why_chapter.py` and `test_refusal_census.py`, because those pages COUNT
+the catalogue rather than describe it from memory.
+
+So the work includes, and the assertion messages state the order - page first, then the number:
+
+- `site/content/building/phases.md`: the overview table's count for the namespace, the section's own list,
+  and the summary sentence ("Twenty-six coordinates: sixteen carrying a placement, ten free to be filed");
+- `site/content/building/rules.md`: the catalogue size;
+- `site/content/using/why.md`: the kinds-of-work table, which must cover every coordinate exactly once;
+- `tests/test_phases_chapter.py`'s own literal count, which its assertion tells you to change LAST.
+
+Beyond the mechanically-enforced pages, this design needs prose that nothing counts:
+
+- a `using/` page for the uniform build - the command table, what a product declares, and what it gets;
+- the release notes section, which the release gate refuses to tag without (si#89 tracks lifting that
+  guard into the kernel, so other products get it too);
+- `README` or getting-started: the one-line "scaffold a toolchain" path, because a capability nobody can
+  find is a capability nobody has.
