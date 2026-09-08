@@ -843,6 +843,47 @@ def test_report_doesNotAnnounceAParentSuiteForAJunitXmlThatCannotCarryOne(monkey
     assert (tmp_path / "test/reports/allure-results/TEST-demo.CalculatorTest.xml").is_file()
 
 
+def _badge(out, phrase):
+    """The colour the line carrying `phrase` was logged with - `log.ok` is green, `log.warn` yellow."""
+    line = next(l for l in out.splitlines() if phrase in l)
+    return {"\033[1;32m": "ok", "\033[1;33m": "warn"}.get(line[:7], line[:7])
+
+
+def test_report_doesNotWearTheOkBadge_whenTheDeclaredParentSuiteReachedNothing(monkeypatch, tmp_path,
+                                                                              capsys, runner):
+    # arrange: si#79. The manifest declares `parent_suite: Java`, the runner writes JUnit XML, and allure
+    # cannot be told a parentSuite for one - measured five ways against the pinned image. The run used to
+    # report OK, so a product learned that its declared grouping had done nothing only by missing a level
+    # in the Suites tree afterwards
+    src = tmp_path / "build/junit-xml"
+    src.mkdir(parents=True)
+    (src / "TEST-demo.CalculatorTest.xml").write_text("<testsuite/>", encoding="utf-8")
+
+    # act
+    out = _report_lines(monkeypatch, tmp_path, capsys, merge=["build/junit-xml"])
+
+    # assert: the badge, and the reason on the same line
+    assert _badge(out, "per-module results") == "warn"
+    assert "parentSuite=Java reached nothing" in out
+    assert "Merge *-result.json to group a module, or drop the key" in out
+
+
+def test_report_keepsTheOkBadge_whenTheParentSuiteActuallyReachedSomething(monkeypatch, tmp_path, capsys,
+                                                                          runner):
+    # arrange: the same warning fired on a merge that DID tag would turn every pytest product's green run
+    # yellow, which is the diagnosis being too broad rather than absent
+    src = tmp_path / "mod/build/allure-results"
+    src.mkdir(parents=True)
+    (src / "a-result.json").write_text('{"name": "t", "labels": []}', encoding="utf-8")
+
+    # act
+    out = _report_lines(monkeypatch, tmp_path, capsys, merge=["mod/build/allure-results"])
+
+    # assert
+    assert _badge(out, "per-module results") == "ok"
+    assert "reached nothing" not in out
+
+
 def test_report_rendersAFilteredRunUnderItsOwnPrefix_soItCannotPassAsTheCanonicalArchive(monkeypatch, tmp_path, runner):
     # arrange
     _register(monkeypatch, tmp_path, _data())
