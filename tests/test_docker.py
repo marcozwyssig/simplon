@@ -231,6 +231,38 @@ def test_bootstrap_installs_the_engine_when_privileged(monkeypatch, tmp_path):
     assert installed == [[]]
 
 
+def test_the_engine_install_puts_the_invoking_user_in_the_docker_group(monkeypatch):
+    # arrange (si#87): a non-root caller with sudo. get.docker.com creates the `docker` group but puts
+    # nobody in it, and a long-lived service - a CI runner agent - inherits its groups at START, so the
+    # membership has to exist as part of the install rather than on ensure_docker's failure path.
+    from simplon.run import Result as R
+    calls = []
+    monkeypatch.setattr(docker, "run", lambda argv, **kw: calls.append(argv) or R(rc=0, out="", err=""))
+    monkeypatch.setattr(docker, "_invoking_user", lambda: "runner")
+
+    # act
+    docker._install_engine(["sudo", "-n"])
+
+    # assert: the group exists and the caller is in it, both under the same privilege the install used
+    assert ["sudo", "-n", "groupadd", "-f", "docker"] in calls
+    assert ["sudo", "-n", "usermod", "-aG", "docker", "runner"] in calls
+
+
+def test_the_engine_install_does_not_put_root_in_the_docker_group(monkeypatch):
+    # arrange: already root - an empty prefix is what _sudo_prefix returns there. root reaches the socket
+    # by being root, so a membership would be noise in a group whose whole purpose is non-root access.
+    from simplon.run import Result as R
+    calls = []
+    monkeypatch.setattr(docker, "run", lambda argv, **kw: calls.append(argv) or R(rc=0, out="", err=""))
+    monkeypatch.setattr(docker, "_invoking_user", lambda: "root")
+
+    # act
+    docker._install_engine([])
+
+    # assert
+    assert not [c for c in calls if "usermod" in c]
+
+
 def test_bootstrap_selffixes_socket_access_when_daemon_unreachable_with_privileges(monkeypatch, tmp_path):
     # arrange: CLI present, daemon dead until the socket grant; socket exists but is unwritable
     from simplon.run import Result as R
