@@ -317,14 +317,13 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
                                     _command_callback(mf, group, group, mf.spec_for(group, group),
                                                       step_context))
         else:
-            # A nested group is named by its OWN segment and addressed by its PATH: `support.git` reads
-            # "git commands." and is typed `<product> support git <cmd>`. Either spelled as the dotted
-            # path would put a string on screen that nobody can type (netctl#1444, plan 5).
-            label, addressed = group.rpartition(".")[2], group.replace(".", " ")
+            # The node's DECLARED `help:` where it has one, the synthesized "<label> commands." where it
+            # has not, plus the addressing hint either way - `clitaxonomy.group_help`, which the generated
+            # module renders through as well so the two mechanisms cannot drift (si#75).
+            node = tax.resolve_path(group)
             ga = typer.Typer(add_completion=False, no_args_is_help=True,
-                             help=(f"{label} commands. " + ("Env-first: `" + product + " <env> "
-                                   + addressed + " <cmd>` (default dev)."
-                                   if env_first else "Environment-agnostic (no env).")))
+                             help=clitaxonomy.group_help(group, product, env_first=env_first,
+                                                         declared=node.help if node else ""))
         group_apps[group] = ga
 
     # A nested group hangs from its PARENT's sub-app under its LEAF name, not from the root under its
