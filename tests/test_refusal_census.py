@@ -140,6 +140,10 @@ CENSUS: dict[tuple[str, str], str] = {
     ("_validate_taxonomy", "stop_on_failure applies to an aggregate"): DIAGNOSIS,
     ("_validate_taxonomy", "keep_awake applies to an aggregate's plan"): DIAGNOSIS,
     ("_validate_taxonomy", "hidden has no effect on a group-default namesake"): DIAGNOSIS,
+    # si#60: a nested group-default group answered `KeyError` out of `cli.assemble`. The refused
+    # manifest produced no working product - it produced a stacktrace - so this is diagnosis, and
+    # the capability stays deliberately unbuilt.
+    ("_validate_taxonomy", "a NESTED group cannot have a group-default namesake"): DIAGNOSIS,
     ("_validate_taxonomy", "missing impl"): DIAGNOSIS,
     # An undocumented command is a working command. The kernel requires the sentence anyway.
     ("_validate_taxonomy", "missing help"): EXPRESSION,

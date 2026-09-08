@@ -760,6 +760,71 @@ groups:
     assert mf.spec_for("build", "jar").hidden is False
 
 
+def test_load_rejects_a_nested_group_default_namesake_because_the_cli_cannot_assemble_it():
+    """si#60, decided as DIAGNOSIS: say that it does not work, and where. The capability stays unbuilt.
+
+    The seam is a name mismatch across two readings of the same group. `is_group_default_command` matches
+    on a group's LEAF - `git` in `support.git` - and `cli.assemble` then asks `mf.spec_for(group, group)`
+    with the DOTTED path, which membership is never keyed by. Measured before this refusal existed, on a
+    manifest declaring `support.git` with a `git` member and one sibling: `KeyError: 'support.git'` out of
+    `assemble`, a stacktrace where a sentence belongs.
+
+    No reachable manifest declares such a group - this kernel's own and the five in `surface.CONSUMERS`,
+    zero of six - so a floor stated once is worth more than a feature nobody asked for.
+    """
+    # arrange: `support.git` is nested, has a `git` member and a sibling - the group-default shape
+    text = ("""
+tasks:
+  git: { impl: "m:f", help: "x" }
+  commit: { impl: "m:g", help: "y" }
+
+groups:
+  support:
+    groups:
+      git:
+        commands:
+          git: { task: "git" }
+          commit: { task: "commit" }
+""")
+
+    # act / assert: it names the group, the member, and both halves of the mismatch
+    with pytest.raises(ValueError) as exc:
+        manifest.load(text)
+    message = str(exc.value)
+    assert "a NESTED group cannot have a group-default namesake member" in message
+    assert "support.git" in message and "'git'" in message
+    assert "si#60" in message
+
+
+def test_load_allows_a_nested_group_whose_members_do_not_repeat_its_leaf():
+    """The other side of si#60, so the refusal above is a rule about ONE shape rather than about nesting.
+
+    Without this, a refusal that had swallowed every nested group would pass its own test: nothing in the
+    assertion above distinguishes "the namesake case is refused" from "nesting is refused".
+    """
+    # arrange: same nested group, no member repeating the leaf
+    text = ("""
+tasks:
+  commit: { impl: "m:f", help: "x" }
+  push: { impl: "m:g", help: "y" }
+
+groups:
+  support:
+    groups:
+      git:
+        commands:
+          commit: { task: "commit" }
+          push: { task: "push" }
+""")
+
+    # act
+    mf = manifest.load(text)
+
+    # assert: the nested group is there with both members, and neither is a default action
+    assert mf.groups["support.git"] == ("commit", "push")
+    assert mf.taxonomy().is_group_default_command("support.git") is False
+
+
 def test_load_rejects_hidden_on_a_group_default_namesake():
     # arrange: `build` is the group-default namesake of the multi-member `build` group (#592 D4) - it is
     # bound as the sub-app's default callback, never a listed subcommand or a separate flat command, so

@@ -52,9 +52,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 54 | nothing - the declaration had no working meaning |
+| diagnosis | 55 | nothing - the declaration had no working meaning |
 | expression rule | 16 | something it could otherwise have said |
-| **all load-time refusals** | **70** | |
+| **all load-time refusals** | **71** | |
 
 These are the refusals a **product manifest** can trip while loading. Refusals that happen later - a task
 whose tool is missing, an image without a pin - are a different population with a different cost, and are
@@ -68,13 +68,13 @@ naming it until somebody says which kind it is. A number typed onto a page is wr
 nobody checks it, and this repository has proved that twice.
 {{< /callout >}}
 
-**The total went from 55 to 71 without a single new rule being written.** The census started with the
-loader's two modules, and a manifest's test taxonomy - the `suites:` section - is refused somewhere else:
-in the task module that reads it, on the manifest's content alone, before any tool is consulted. Sixteen
-refusals were therefore outside a census whose entire purpose is that the sum cannot grow quietly. Fifteen
-of them are diagnosis; one costs a product something. Worth saying plainly, because the mechanism was
-correct and the *population* was not, which is the harder of the two mistakes to notice: a count that is
-computed rather than typed is still only a count of what you pointed it at.
+**Sixteen of these refusals joined the total without a single new rule being written.** The census
+started with the loader's two modules, and a manifest's test taxonomy - the `suites:` section - is refused
+somewhere else: in the task module that reads it, on the manifest's content alone, before any tool is
+consulted. Those sixteen were therefore outside a census whose entire purpose is that the sum cannot grow
+quietly. Fifteen of them are diagnosis; one costs a product something. Worth saying plainly, because the
+mechanism was correct and the *population* was not, which is the harder of the two mistakes to notice: a
+count that is computed rather than typed is still only a count of what you pointed it at.
 
 ### How far an expression rule reaches
 
