@@ -68,10 +68,14 @@ held to it too (`REACH_MERGED`), whether it is a statement about the seam betwee
 where "the kernel too" means nothing (`REACH_SEAM`), or whether the kernel deliberately exempted itself
 (`REACH_KERNEL_EXEMPT`).
 
-THERE IS NO SELF-EXEMPTION LEFT. There was one - `check_every_task_is_used` - and measuring it is what
-ended it: si#48 put the exemption at 14 of the kernel's own 22 catalogue tasks and si#53 struck the rule.
-`test_no_expression_rule_exempts_the_kernel_from_itself` now holds the zero, and goes red if a new
-exemption arrives without the argument the struck one never had.
+THERE IS NO SELF-EXEMPTION LEFT, AND SINCE si#83 THAT IS MEASURED RATHER THAN LABELLED. There was one -
+`check_every_task_is_used` - and si#53 struck it. The number si#48 published for it, 14 of the kernel's own
+22 catalogue tasks, does NOT survive si#83: the rule's signature was `(flat, product_tasks)` and the loader
+called it with exactly that, so the catalogue's coordinates were never handed to it and the exemption was
+measured over a set the rule had never looked at. Right count, wrong population, for the fourth time in this
+repository. `test_no_expression_rule_exempts_the_kernel_from_itself` still holds the zero over REACH, and
+the block above `test_every_merged_reach_expression_rule_ruled_on_the_kernels_own_declarations` is what now
+holds REACH itself against a run of the loader.
 
 RED WHEN THERE IS NOTHING. Every helper here raises rather than returning an empty result for a missing
 module, a missing heading or a missing table, and every count assertion is paired with the number of
@@ -85,6 +89,7 @@ import functools
 import re
 
 import pytest
+import yaml
 
 from simplon import catalogue as catalogue_mod
 
@@ -901,30 +906,318 @@ def test_only_expression_rules_carry_a_reach_and_all_of_them_do():
 def test_no_expression_rule_exempts_the_kernel_from_itself():
     """What is left of acceptance 3's finding after the owner acted on it.
 
-    There was exactly one self-exemption, `check_every_task_is_used`, and this suite used to measure its
-    SIZE - how many of the kernel's own catalogue tasks the rule would have refused if it ran over them.
-    The answer was 14 of 22, si#48 published it, and si#53 struck the rule: it was the only expression
-    rule with no measured cause in ticket, commit or docstring, and it forbade a product exactly what the
-    kernel does fourteen times over - treating a catalogue as an OFFER.
+    There was exactly one self-exemption, `check_every_task_is_used`, and si#53 struck it: it was the only
+    expression rule with no measured cause in ticket, commit or docstring, and over every reachable
+    manifest - this kernel's own and the five in `surface.CONSUMERS` - it had never refused anything.
+
+    This suite used to measure its SIZE as well, "14 of the kernel's own 22 catalogue tasks", and si#83
+    took that half of the argument away: the rule read `product_tasks` and was never handed a catalogue
+    coordinate, so the 14 was counted over a set the rule did not look at. The two reasons above stand
+    without it; the number does not, and it is gone rather than corrected.
 
     So the measurement becomes an assurance instead. Zero is not a vacuous number here: it is computed
     from REACH, which `test_only_expression_rules_carry_a_reach_and_all_of_them_do` holds against the
-    census, which is computed from the source. A new self-exemption goes red here and has to bring the
-    argument the struck one never had.
+    census, which is computed from the source - and REACH itself is held against a run of the loader by
+    `test_every_merged_reach_expression_rule_ruled_on_the_kernels_own_declarations`, which is the check
+    that would have caught the struck rule reading only the product's half. A new self-exemption goes red
+    here and has to bring the argument the struck one never had.
     """
     # arrange
     exempt = sorted(key for key, reach in REACH.items() if reach == REACH_KERNEL_EXEMPT)
 
     # act / assert
     assert exempt == [], (
-        "an expression rule exempts the kernel from itself. si#53 struck the only one there was, for "
-        "the reason its docstring could not answer: a rule the kernel would have to break fourteen "
-        "times in its own catalogue is not a rule anybody believes twice. Say why this one is "
-        f"different, in the ticket: {exempt}")
+        "an expression rule exempts the kernel from itself. si#53 struck the only one there was, for the "
+        "reason its docstring could not answer: it forbade a product exactly what the kernel's own "
+        "catalogue does - carrying a task as an OFFER - and it had never refused anything in any "
+        f"reachable manifest. Say why this one is different, in the ticket: {exempt}")
 
     # assert: and there really were expression rules to rule on, so the emptiness above is a finding
     assert len(REACH) > 0
     assert set(REACH.values()) == {REACH_MERGED, REACH_SEAM}
+
+
+# --- and "the kernel too" is now MEASURED rather than labelled (si#83) ------------------------------------
+#
+# si#83 is the fourth wrongly chosen set in this repository, and it is the one that had been LOAD-BEARING.
+# The struck rule's signature was `check_every_task_is_used(flat, product_tasks)`, and the loader called it
+# with exactly that: the merged tree, and the PRODUCT's `tasks:` block. The catalogue's own coordinates were
+# never handed to it. So si#48's "14 of the kernel's own 22 catalogue tasks" was measured over a set the
+# rule had never looked at - the number was computed correctly and the population was the wrong one, for the
+# fourth time after si#48 (grep count against the load path), si#61 (sixteen refusals outside the census)
+# and si#53 (six manifests, not seven).
+#
+# The number is gone from the argument, and the sentence it was evidence for - "no expression rule exempts
+# the kernel" - is re-measured here rather than re-typed. REACH above is a hand-written label, and a label
+# is the exact shape of thing si#83 is about. What follows is the measurement behind it:
+#
+#     LOAD THE KERNEL'S OWN MANIFEST AGAINST THE REAL CATALOGUE, RECORD WHAT EACH RULE-BEARING FUNCTION
+#     WAS HANDED, AND ASK WHETHER THE KERNEL'S OWN DECLARATIONS WERE IN IT.
+#
+# The kernel's own declarations are the coordinates the CATALOGUE's tree places and the kernel's manifest
+# never names - what is in the merged tree because the platform put it there, not because this product asked
+# for it. That is precisely the material `check_every_task_is_used` was denied, so a rule denied it today is
+# an exemption of the same shape, whatever its label says.
+#
+# WHAT IT FOUND, on this tree: the catalogue holds 25 coordinates and places 9 of them; all 9 are the
+# kernel's own half, and all 9 reach every merged-reach rule on the tree path. Exactly two rule-bearing
+# functions were not handed them - `treeform.check_no_old_form` and
+# `manifest._enforce_the_catalogue_owns_the_groups` - and every expression rule in both is already labelled
+# REACH_SEAM. The hand-written labels and the measurement agree, which is what makes the zero above a
+# finding rather than a claim.
+#
+# WHAT IT CANNOT SAY, recorded rather than left to be discovered: this measures the TREE path only, because
+# that is the only place a platform half exists at all. The section readers take a manifest document and no
+# catalogue - `test_a_section_rule_has_no_kernel_half_to_withhold` derives that from their signatures - so
+# there is nothing there for a rule to be denied.
+
+#: The two modules on the merge path, where a manifest has a platform half and a product half.
+TREE_MODULES = ("manifest", "treeform")
+
+#: The two expression rules pydantic runs, and why they need naming instead of wrapping. Both are
+#: validators on `_ManifestModel` - a field validator and a model validator - so no expression in the
+#: loader calls either, and the population they rule on is whatever `model_validate` was handed.
+#: `test_the_rules_pydantic_runs_are_reached_through_the_model` holds that: a call site appearing for
+#: either name turns this entry from a description into a stale one.
+THROUGH_THE_MODEL = ("_single_dashed_letter", "_validate_taxonomy")
+
+#: The entry point those two are reached through.
+MODEL_ENTRY = "model_validate"
+
+
+def _catalogue_placements(node: dict) -> set[str]:
+    """Every coordinate a catalogue tree node and its descendants place, as `<namespace>:<name>`."""
+    found = {str(spec["task"]) for spec in (node.get("commands") or {}).values()
+             if isinstance(spec, dict) and spec.get("task")}
+    for child in (node.get("groups") or {}).values():
+        found |= _catalogue_placements(child)
+    return found
+
+
+@functools.lru_cache(maxsize=None)
+def _the_kernels_own_coordinates() -> tuple[str, ...]:
+    """The coordinates that are in the merged tree because the CATALOGUE placed them.
+
+    Derived from both files rather than typed, and the subtraction is the whole point: a coordinate the
+    kernel's own manifest also names would be in the tree either way, so finding one proves nothing about
+    whether a rule was handed the platform's half. Raises rather than returning an empty tuple - a catalogue
+    that placed nothing would make every assertion below hold over no evidence at all.
+    """
+    cat = catalogue_mod.load()
+    placed: set[str] = set()
+    for node in (getattr(cat, "groups", {}) or {}).values():
+        placed |= _catalogue_placements(node)
+    document = yaml.safe_load((ROOT / "simplon.yaml").read_text(encoding="utf-8")) or {}
+    own: set[str] = set()
+    for node in (document.get("groups") or {}).values():
+        own |= _catalogue_placements(node)
+    coordinates = placed - own
+    if not coordinates:
+        raise ValueError(
+            "the catalogue places no coordinate the kernel's own manifest does not also name, so there is "
+            "no platform half to measure a rule's reach against - the derivation is broken, not the kernel")
+    return tuple(sorted(coordinates))
+
+
+@functools.lru_cache(maxsize=None)
+def _the_kernels_own_half() -> tuple[str, ...]:
+    """Those coordinates AND the impls they resolve to, because the tree carries one before `resolve` and
+    the other after it, and a rule sits on each side."""
+    tasks = getattr(catalogue_mod.load(), "tasks", {}) or {}
+    marks = set(_the_kernels_own_coordinates())
+    for coordinate in _the_kernels_own_coordinates():
+        impl = str((tasks.get(coordinate) or {}).get("impl", ""))
+        if impl:
+            marks.add(impl)
+    return tuple(sorted(marks))
+
+
+def _rule_bearing_functions() -> set[str]:
+    """The tree-path functions that carry an expression rule, read off CENSUS rather than listed."""
+    return {function for (module, function, _), kind in CENSUS.items()
+            if kind == EXPRESSION and module in TREE_MODULES}
+
+
+def _populations(monkeypatch) -> dict[str, list[str]]:
+    """What every rule-bearing function on the tree path was handed, loading the kernel's own manifest.
+
+    Records the FIRST positional argument, which is the population each of these functions rules on -
+    `flat`, `merged`, the command spec, the document. The distinction matters at exactly one site:
+    `check_no_old_form(data, catalogue_groups)` is HANDED the catalogue's tree as reference data while
+    ruling on the product's document, so recording every argument would report a reach it does not have.
+
+    Recorded as `repr` AT CALL TIME, not as the object: `_resolve_one` pops the `task:` key out of the spec
+    it is given, so a reference kept and read afterwards shows an empty-handed rule that was in fact handed
+    the coordinate. That was measured here, and reading it late is what turned it into a false exemption.
+    """
+    from simplon.orchestrator import manifest as manifest_mod
+    from simplon.orchestrator.model import treeform
+
+    seen: dict[str, list[str]] = {}
+
+    def record(module, name: str) -> None:
+        original = getattr(module, name)
+
+        def wrapper(*args, **kwargs):
+            seen.setdefault(name, []).append(repr(args[0]) if args else "")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(module, name, wrapper)
+
+    for name in sorted(_rule_bearing_functions()):
+        for module in (treeform, manifest_mod):
+            if hasattr(module, name):
+                record(module, name)
+                break
+
+    original_validate = manifest_mod._ManifestModel.model_validate
+
+    def validate(data, *args, **kwargs):
+        seen.setdefault(MODEL_ENTRY, []).append(repr(data))
+        return original_validate(data, *args, **kwargs)
+
+    monkeypatch.setattr(manifest_mod._ManifestModel, MODEL_ENTRY, validate)
+    manifest_mod.load((ROOT / "simplon.yaml").read_text(encoding="utf-8"), catalogue=catalogue_mod.load())
+    return seen
+
+
+def _entry_for(function: str) -> str:
+    """Where a rule's population is observed: the function itself, or the model pydantic runs it from."""
+    return MODEL_ENTRY if function in THROUGH_THE_MODEL else function
+
+
+def _was_handed_the_kernels_half(seen: dict[str, list[str]], function: str) -> bool:
+    """True iff any call of this rule's entry point carried a coordinate only the catalogue placed."""
+    calls = seen.get(_entry_for(function))
+    if calls is None:
+        raise ValueError(
+            f"'{function}' carries an expression rule and was never called while the kernel loaded its own "
+            f"manifest - the recorder is broken, or the rule is no longer on the load path")
+    return any(mark in call for call in calls for mark in _the_kernels_own_half())
+
+
+def test_the_rules_pydantic_runs_are_reached_through_the_model():
+    """THROUGH_THE_MODEL is a description of the source, so it is held against the source.
+
+    Both names are validators nothing calls by name; if one grew a call site, its population would be that
+    call's argument and not the model's, and every reach measured for it below would be measuring the wrong
+    value while staying green.
+    """
+    # arrange
+    source = (SRC / "orchestrator" / "manifest.py").read_text(encoding="utf-8")
+
+    # act / assert
+    for name in THROUGH_THE_MODEL:
+        called = [node for node in ast.walk(ast.parse(source))
+                  if isinstance(node, ast.Call)
+                  and (getattr(node.func, "id", "") == name or getattr(node.func, "attr", "") == name)]
+        assert called == [], (
+            f"'{name}' now has a call site in the loader, so pydantic is no longer the only thing that "
+            f"runs it - record where its population comes from instead of reading it off the model")
+        assert f"def {name}(" in source, f"'{name}' is not defined in manifest.py any more"
+
+
+def test_every_merged_reach_expression_rule_ruled_on_the_kernels_own_declarations(monkeypatch):
+    """si#83, and the assertion that replaces a number nobody could have measured.
+
+    REACH_MERGED says "the kernel is held to it too". Until now that was a hand-written word beside each
+    rule, and the one rule that did NOT hold it was found out by reading its signature rather than by any
+    check - after its exemption had been measured, published and quoted, over a set it never received.
+
+    This runs the kernel's own manifest through the real catalogue and asks each rule what it was actually
+    handed. A rule labelled REACH_MERGED whose population carries none of the catalogue's own placements is
+    an exemption with a merged label on it, which is the exact defect si#83 reports one level up.
+    """
+    # arrange
+    seen = _populations(monkeypatch)
+    merged = sorted({function for (module, function, _), reach in REACH.items()
+                     if reach == REACH_MERGED and module in TREE_MODULES})
+
+    # act
+    denied = [function for function in merged if not _was_handed_the_kernels_half(seen, function)]
+
+    # assert
+    assert denied == [], (
+        "an expression rule is labelled REACH_MERGED and was never handed the kernel's own declarations. "
+        "That is the shape of `check_every_task_is_used`, which read only `product_tasks` and was still "
+        f"believed to hold the kernel: {denied}. Hand it the merged tree, or say REACH_SEAM and why")
+
+    # assert: and there was a kernel half to be handed, and rules to hand it to - a catalogue that placed
+    # nothing, or a census with no merged-reach tree rule, would satisfy the line above over nothing
+    assert len(merged) > 0
+    assert len(_the_kernels_own_half()) > 0
+
+
+def test_the_only_tree_rules_not_handed_the_kernels_half_are_the_seam_statements(monkeypatch):
+    """The other direction, and the one that keeps the paragraph on `building/rules.md` honest.
+
+    Two rule-bearing functions on the tree path never see the catalogue's own placements:
+    `treeform.check_no_old_form`, which rules on the product's document and is merely SHOWN the catalogue so
+    its rewrite can print `override: true`, and `manifest._enforce_the_catalogue_owns_the_groups`, which is
+    handed the group NAMES and not the placements under them. Every expression rule in both is a statement
+    about the platform/product seam, and the census already says so.
+
+    Without this, relabelling a seam rule REACH_MERGED would be free - and REACH is exactly the kind of
+    hand-written word si#83 is about.
+    """
+    # arrange
+    seen = _populations(monkeypatch)
+
+    # act
+    without = sorted(function for function in _rule_bearing_functions()
+                     if not _was_handed_the_kernels_half(seen, function))
+
+    # assert: every expression rule they carry is a seam statement
+    for function in without:
+        reaches = {reach for (module, name, _), reach in REACH.items() if name == function}
+        assert reaches == {REACH_SEAM}, (
+            f"'{function}' was never handed the kernel's own declarations, and it carries a rule that "
+            f"claims to hold the kernel anyway: {sorted(reaches)}")
+
+    # assert: and some rule WAS denied it, so the loop above ruled on something. A run in which every
+    # function saw the kernel's half would pass it without executing once - which is how a check like this
+    # comes to protect nothing.
+    assert without, (
+        "no rule-bearing function was denied the kernel's own declarations. Either the merge changed or "
+        "the recorder is - the seam rules cannot see the catalogue's placements and this used to name two")
+    assert len(without) < len(_rule_bearing_functions())
+
+
+def test_a_section_rule_has_no_kernel_half_to_withhold():
+    """Why the measurement above is the whole answer even though it walks the tree path only.
+
+    The other expression rules live in section readers - `site:`, `workflows:`, `nexus:`, `suites:`, the
+    image pin. Those take a manifest document and nothing else: there is no catalogue argument, so there is
+    no platform half a rule could be handed or denied. That is derived from their signatures rather than
+    asserted, so a section reader that grows one turns this red and its reach has to be measured like the
+    tree's.
+    """
+    # arrange: the functions carrying an expression rule OUTSIDE the merge path
+    functions = {(module, function) for (module, function, _), kind in CENSUS.items()
+                 if kind == EXPRESSION and module not in TREE_MODULES}
+    platform_words = ("catalogue", "platform", "kernel")
+
+    # act
+    carrying: list[str] = []
+    ruled = 0
+    for dotted in _kernel_modules():
+        module = _module(dotted)
+        for stem, function in functions:
+            if dotted.rsplit(".", 1)[-1] != stem:
+                continue
+            for node in module.funcs.get(function, ()):
+                ruled += 1
+                names = [arg.arg for arg in node.args.args + node.args.kwonlyargs]
+                if any(word in name for name in names for word in platform_words):
+                    carrying.append(f"{dotted}.{function}({', '.join(names)})")
+
+    # assert
+    assert carrying == [], (
+        "a section rule now takes the platform's half as well as the product's, so 'the kernel is held to "
+        f"it too' is a measurable claim there and is no longer measured: {carrying}")
+
+    # assert: and it looked at the section rules rather than at nothing
+    assert ruled >= len(functions) > 0
 
 
 def test_the_kernels_own_manifest_violates_none_of_its_own_expression_rules():
@@ -1026,6 +1319,35 @@ def test_the_page_prints_the_reach_of_the_expression_rules():
 
     # assert: and the three account for every expression rule, so a rule cannot fall out of the table
     assert sum(printed.values()) == _counts()[EXPRESSION]
+
+
+def test_the_page_prints_the_catalogues_own_size_and_what_it_places():
+    """si#83's two numbers, held for the reason si#83 exists.
+
+    The number this pair replaced - 14 of 22 - was typed onto this page, into `CLAUDE.md` and into the
+    commit that struck the rule, and nothing anywhere read it back. These two are read back: the size of
+    the catalogue and how much of it the catalogue's own tree places are both computed from
+    `catalogue.yaml` and `simplon.yaml`, so a coordinate added tomorrow makes the page wrong and the suite
+    red on the same day.
+    """
+    # arrange
+    body = " ".join(_text().split())
+
+    # act
+    printed = re.search(r"catalogue holds \*\*(\d+)\*\* coordinates and its own tree places "
+                        r"\*\*(\d+)\*\* of them", body)
+
+    # assert
+    assert printed, "the chapter no longer states the catalogue's size and what it places"
+    assert int(printed.group(1)) == len(getattr(catalogue_mod.load(), "tasks", {}) or {}), (
+        f"the chapter says the catalogue holds {printed.group(1)} coordinates; catalogue.yaml has "
+        f"{len(getattr(catalogue_mod.load(), 'tasks', {}) or {})}")
+    assert int(printed.group(2)) == len(_the_kernels_own_coordinates()), (
+        f"the chapter says the catalogue's tree places {printed.group(2)} of them; it places "
+        f"{len(_the_kernels_own_coordinates())} the kernel's own manifest does not name")
+
+    # assert: and the second is a real subset of the first, so the pair says something
+    assert 0 < len(_the_kernels_own_coordinates()) < len(getattr(catalogue_mod.load(), "tasks", {}) or {})
 
 
 def test_the_page_states_the_three_quality_goals_and_the_three_kinds():
