@@ -18,6 +18,89 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.7.1
+
+Seven merges, and they have one thing in common worth saying first: **six of the
+seven were found while doing something else and reported instead of quietly
+repaired.** Four came out of driving the Java use case (#26), one out of fixing
+a neighbouring ticket, one out of a consumer's migration. That is the habit this
+kernel is trying to keep, and this release is what a week of it looks like.
+
+### Before you bump
+
+**`parent_suite:` no longer passes silently where it does nothing** (#79).
+`report.merge` accepted the key and tagged nothing when the source was JUnit XML
+- only Allure raw results (`*-result.json`) were ever tagged. A Java product
+therefore declared a key that had no effect, and nothing said so. If your
+product sets `parent_suite:` on a JUnit-XML suite, you were not getting what you
+wrote.
+
+**`docs:render` no longer runs as root** (#78). In the usual CI order it made the
+next Gradle run impossible: the render wrote root-owned files into the tree, and
+the build after it could not touch them. The uid is now read off the TREE rather
+than set, so the render writes as whoever owns what it is writing into.
+
+**`SETUP_MARKER_ENV` is advertised** (#80). Since #59 a product-owned runner may
+report that its SETUP fell over - the run then says `setup-failed` with
+`ran = False` instead of `failed`, which is the honest distinction between "the
+suite ran and was red" and "there never was a suite". It was reachable and
+undocumented, so no product reached it by default.
+
+### The docker group membership belongs to the install (#87)
+
+`_grant_socket_access` did two things of very different durability under one
+name: `usermod -aG docker` is durable but takes effect only in a NEW session,
+while the `setfacl` / `chmod 666` on the socket is transient and gone when the
+daemon recreates it. Because the ACL works instantly, nothing ever revealed that
+the membership had not reached a long-lived caller at all - a process inherits
+its groups at start, so a service already running never gets it. And the whole
+block sat behind `if not _daemon_reachable()`, on the failure path, so on a host
+whose socket happened to be permissive it never ran.
+
+Measured on three CI hosts that ran green for months and then failed at three
+unrelated moments with no commit in common: `getent group docker` answered
+`docker:x:991:` - the group exists and is EMPTY. `get.docker.com` creates it and
+puts nobody in it, so a freshly installed host locks out every non-root caller.
+
+The membership is now established by `_install_engine`, the one moment privilege
+is known to be present and the state is being created from scratch, and
+`_grant_socket_access` still calls it so an older host gets it too. root is
+skipped - it reaches the socket by being root.
+
+**What a product still has to do itself**, because the kernel cannot: grant the
+passwordless sudo (the seed privilege the kernel needs in order to be allowed to
+do anything), and, if it provisions a long-lived service, set the membership
+before that service starts. A job-time call never reaches an agent that is
+already running.
+
+### The refusal says what re-applying costs (#56)
+
+Found by a consumer migrating to 0.4.0, and it is this project's own defect class
+in a tool built against it. The refusal for an old-form manifest prints a
+complete rewrite - correct, loaded in one pass since #42, and carrying **zero
+comments**, because it is generated from the parsed manifest. Applied, the
+migration is green and the reasoning is gone. The refusal now says how many
+comment lines re-applying it would throw away, so the choice is made with the
+price visible instead of after it.
+
+### The group description reaches the generated reference (#77)
+
+Found while fixing #75 and reported rather than repaired along the way. #75 got
+the group description from `catalogue.yaml` onto the screen - `--help` says
+*"Produce the artefacts."* instead of *"build commands."*. The generated command
+reference still showed the old text: a third surface of the same taxonomy that
+nobody had counted. The surfaces are counted now, and the description reaches all
+of them.
+
+### The self-exemption was measured against a population that never saw the rule (#83)
+
+The fourth wrongly chosen population in this repository, and it concerns a number
+that has been quoted repeatedly. The struck rule `check_every_task_is_used` read
+only `product_tasks` - so the exemption granted in #48 was justified against a
+set the rule never examined. The reach of an expression rule is now MEASURED
+rather than labelled, which is the same move this repository has made four times
+and, on the evidence, will make again.
+
 ## 0.7.0
 
 One merge, and both halves of it are the same observation: a value every product
