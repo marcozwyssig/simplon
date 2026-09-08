@@ -365,3 +365,11 @@ tasks:
   tasks:catalogue:
     impl: simplon.tasks.tasks:catalogue
     help: "List the task coordinates the delivery kernel offers, marking the namespaces this product's commands reach."
+
+  # --- toolchain: a pinned image over the product tree (si#95) -----------------------------------------
+  # A FAMILY, not a placement: si#34 would confine `build:toolchain` to `build`, and ctest / dotnet test /
+  # gradle test belong under `test`. Declared and not placed, because a product with no compiled
+  # toolchain should not receive the command with the kernel.
+  toolchain:run:
+    impl: simplon.tasks.toolchain:run_toolchain
+    help: "Run a pinned toolchain image over the product tree, as the calling user."

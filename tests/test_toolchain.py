@@ -136,3 +136,24 @@ def test_the_network_appears_only_when_it_is_given(monkeypatch):
     # assert
     assert "--network" not in without
     assert ["--network", "scratch-net"] == with_net[3:5]   # right after `docker run --rm`
+
+
+def test_the_executor_runs_the_assembled_line_and_returns_its_rc(monkeypatch, tmp_path):
+    # arrange: the product context and the instance are the two values the executor READS, so they are
+    # stood in for here the way every other task test does it (tests/test_docker.py's fixture).
+    from simplon import context
+    from simplon.run import Result
+    monkeypatch.setattr(context, "_current",
+                        context.ProductContext("netctl", tmp_path, tmp_path / "netctl.yaml"))
+    monkeypatch.setattr(toolchain.labinstance, "resolve", lambda *a, **k: "dev")
+    seen = []
+    monkeypatch.setattr(toolchain, "run",
+                        lambda a, **kw: seen.append(list(a)) or Result(rc=3, out="", err=""))
+    monkeypatch.setattr(toolchain, "argv", lambda *a, **k: ["docker", "run", "--rm", "img", "cmd"])
+
+    # act
+    rc = toolchain.run_toolchain({"image": "img:1", "argv": ["cmd"]}, where="build.compile", extra=[])
+
+    # assert: thin - it executes what argv decided, and hands the real rc back
+    assert seen == [["docker", "run", "--rm", "img", "cmd"]]
+    assert rc == 3

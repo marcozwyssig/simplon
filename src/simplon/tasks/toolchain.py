@@ -18,7 +18,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from simplon import docker, log
+from simplon import context, docker, labinstance, log
+from simplon.run import run
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,20 @@ def argv(cfg: Toolchain, root: Path, product: str, instance: str,
             "-v", f"{root}:{cfg.workdir}", "-w", cfg.workdir,
             *volumes, *env,
             cfg.image, *cfg.argv, *extra]
+
+
+def run_toolchain(body: Mapping[str, object], where: str, extra: list[str],
+                  network: str | None = None) -> int:
+    """Run one toolchain invocation. Thin: `declared` decides what is legal, `argv` decides the line.
+
+    `network` is the one runtime value a manifest cannot supply - a scratch docker network exists only at
+    call time - and it is passed through untouched. Everything else about the run is manifest data.
+    """
+    cfg = declared(body, where)
+    ctx = context.current()
+    line = argv(cfg, root=ctx.root, product=ctx.name, instance=labinstance.resolve(),
+                extra=extra, network=network)
+    return run(line, capture=False).rc
 
 
 def _pinned(image: str, where: str) -> str:
