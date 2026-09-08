@@ -12,13 +12,16 @@ procedure](../releasing/) explains how a version comes into being.
 
 ## 0.5.0
 
-Two changes, and they pull in opposite directions: one adds a way to hand
-something over, the other takes four import paths away.
+Fourteen changes went into this tag. This section named two of them for the first
+weeks of its life, because it was written from the pull request the tag was cut
+through rather than from the range the tag covers — si#82 measured that gap, and
+the twelve below come from `git log v0.4.0..v0.5.0` rather than from anybody's
+memory of the release.
 
 ### Before you bump
 
-**Four modules that 0.4.0 announced as moved are gone.** If your product still
-imports one of the old paths, it now fails with `ModuleNotFoundError` rather
+**Four modules that 0.4.0 announced as moved are gone** (si#73). If your product
+still imports one of the old paths, it now fails with `ModuleNotFoundError` rather
 than warning. The fix is the right-hand column:
 
 | Gone | Import instead |
@@ -42,10 +45,77 @@ asbundle reads `from delivery import images` — a different kernel that ships a
 module of the same name — and biz-cockpit had already migrated. See
 [Surface](../../building/surface/) for why re-measuring beats remembering.
 
+**A killed run is a fifth outcome, and it leaves a different exit code**
+(si#55). A run a signal ended used to be reported as `failed` with `ran = True` —
+"the suite ran and reported failures", said about a suite whose output was empty.
+It has its own outcome now: `killed`, `ran = False`, carrying the signal's *name*
+rather than a negative number, because SIGTERM tells a reader something and `-15`
+does not. Two things a product may notice. `simplon.verdict.Verdict` has a fifth
+member, so anything that enumerates the four gets one more. And the exit code
+changed: `sys.exit(-15)` reached the shell as 241, two numbers for one event and
+neither of them saying "ended by a signal", where a killed gate now exits
+`128 + n` — 143 for SIGTERM, the number a shell already writes into `$?` for the
+same child. Measured end to end, and applied narrowly: the translation is derived
+from a child process's wait status only, never from an arbitrary return value.
+
+**Every product gains a `support completion` command** (si#58). It is *placed*
+rather than offered, so it appears in your CLI whether you asked for it or not.
+It clears the bar `support install` is placed on — it reads no manifest section
+beyond the command tree every manifest already carries, it publishes nothing, and
+it writes only under the product's own root — and the argument that settles it is
+what the thing is: a completion you have to know about in order to ask for it is a
+completion nobody has, because pressing TAB is the thing that does not work yet.
+It writes `completions/<product>.bash`, and `--check` reports drift and writes
+nothing, which is what makes committing the file worth anything. Generated rather
+than switched on: Typer's own `--install-completion` runs the program on every
+TAB, measured here at 340–360 ms, against 0.16 ms for the generated function.
+
+**A scaffolded file's line endings now follow the file, not the machine**
+(si#57). `bootstrap.write` used the *scaffolding* host's `os.linesep`, so two
+machines scaffolding the same product produced 74 bytes of difference, and a
+product scaffolded on Linux handed Windows users an LF `.cmd` built from five
+multi-line `if` blocks. The endings are now decided per file by its extension —
+CRLF for `.cmd`, LF for everything else. Nothing under you changes on the bump:
+`simplon init` still refuses to overwrite an existing file, so a product that
+wants the corrected bytes re-scaffolds with `--force`. The two halves are not
+equally well evidenced and the code says so: the shell half is reproduced here (a
+CRLF shim does not launch on this host at all — the kernel reads `bash\r` as the
+interpreter name), while the `cmd.exe` half is this repository's standing claim,
+carried in its `.gitattributes`, with no Windows machine behind it.
+
+**An `impl:` gate now says less about your product, and that is the fix**
+(si#65, si#59). A gate that hands the work to the product's own runner used to
+get the default explanation — "the suite ran and reported failures" — and it got
+it unchanged where Gradle had stopped in `:compileJava`, with nothing compiled,
+no test run and no XML written. All three records claimed a green 1/1 table. The
+line now reads:
+
+```
+unit: failed (rc 1) - the product's own runner returned this rc; the kernel did
+                      not run a suite here and cannot say whether one ran at all
+```
+
+If anything of yours matches on the old sentence, it is gone. What the kernel
+does *not* do is invent a level it has no basis for: a runner that says nothing
+still gets `passed`/`failed` and no third state. A runner that *can* say more now
+has a way to, because the setup marker is no longer pytest-only by placement — a
+Gradle build that knows `:test` never ran writes it, and the run reports
+`setup-failed (gradle build (:test never ran), rc 1)` with `ran = False`.
+
+**Your orchestrator did not move** (si#24). The kernel moved *its own* to
+`deploy/orchestrator`, using the `--orch-dir` it has offered since 0.1.9 rather
+than any new capability — the same movement as pinning its own images: the kernel
+submitting to what it already sells. No product directory relocates and no default
+changed; `simplon init` still scaffolds `orchestrator/`. What did change is the
+launcher it writes: a shim whose orchestrator directory is missing now fails
+loudly and names the path, where before `python3 -m venv` created the very
+directory the launcher was looking for and pip failed afterwards without naming
+one.
+
 ### New
 
-**`release:asset` attaches declared files to a GitHub release.** The other half
-of `release:artifact`: that one publishes a directory to a registry, where a
+**`release:asset` attaches declared files to a GitHub release** (si#72). The other
+half of `release:artifact`: that one publishes a directory to a registry, where a
 consuming pipeline pulls it with its own token; this one puts files on a release
 page, where a person downloads them. A product declares an `assets:` section and
 pins one with `with: { name: ... }`, the same shape `release:artifact` uses.
@@ -69,6 +139,83 @@ editor where it has a terminal and refuses where it does not.
 
 Which of the two a product offers is a question about its audience — and about
 what its licence lets it hand out. Neither is placed; both are offered.
+
+**Workflows come out of the manifest** (si#40). The manifest's second output:
+`support:workflows` renders a product's `.github/workflows/*.yml` from a
+`workflows:` section, so a renamed command breaks generation instead of leaving a
+workflow calling something that is gone, and `--check` reports drift and returns
+1. It is *offered* rather than placed, because it reads a manifest section and a
+product without one would get a command that dies on its first line:
+
+```yaml
+groups:
+  support:
+    commands:
+      workflows: { task: "support:workflows", help: "Regenerate the CI workflows." }
+```
+
+Three decisions are worth knowing before you declare it. Unknown keys at workflow
+and job level are **carried through** rather than refused — measured against
+sixteen real workflows, refusing them would have made eleven of the sixteen
+inexpressible without the kernel ever needing an opinion about one of those keys;
+a *step* is the exception, because it has exactly one body. `command:` is that
+body rather than the whole step, which is what makes 34 of 41 real steps
+expressible at all. And `handwritten: "<why>"` is how a file declines to be
+generated: a file in the directory that nothing names is reported with rc 1, and
+so is a `handwritten:` entry whose file has since disappeared — a name with
+nothing behind it fails the same way an unowned file does, by looking accounted
+for.
+
+### Fixed — five findings, every one of them from running a real Java product
+
+si#26's Java half was driven rather than described, and the drive produced five
+defects sitting in one seam. Two are the `impl:` gate sentence above (si#65,
+si#59). The other three:
+
+- **si#63** — an exception inside the report step left `test-verdict.json` saying
+  `passed` while the run ended red. The durable record was the thing that lied,
+  which is the worst place for this defect to sit.
+- **si#64** — the merge line announced its *intention*: "per-module results merged
+  (parentSuite=X)" was printed when JUnit XML meant nothing was tagged, and again
+  when the source directory was not there at all, and both times it read the same.
+- **si#62** — `report.merge` raised `IsADirectoryError` on Gradle's standard
+  layout, at `test-results/test/binary`. Settled by measurement rather than
+  argument: an allure results directory is read *flat* — `aaa-result.json` plus
+  `sub/bbb-result.json` yields `total: 1` — so recursive copying was moving bytes
+  the renderer ignores, and skipping is the only true answer.
+
+The capability that was already there was not taken along with the fix: JUnit XML
+still arrives on Gradle's default layout without the detour.
+
+### Measured, and deliberately not fixed here
+
+**A test taxonomy with no pytest anywhere in it did not load** (si#61). Measured
+against a real Java product: both spellings of the `suites:` section were refused,
+and the way out was to ship a pytest gate containing `assert True`, a 29 MB suite
+venv, and an archive that counted four tests for a product that has three. The
+finding was recorded rather than patched, and it was classified twice before it
+was believed: it is *diagnosis*, not an expression rule — without a clearing gate
+nothing ever empties the results directory, and a stale result file survives the
+whole run. What was actually missing was a word, not a rule, and that word ships
+in 0.6.0.
+
+Filing it turned up the larger finding. The two refusals stood in **no population
+at all**: the refusal census counted two modules, and `tasks/testrun.py` was not
+one of them — sixteen load-time refusals outside a census whose entire purpose is
+that the sum cannot grow quietly. All sixteen were classified: fifteen diagnosis,
+one expression rule. See [Rules](../../building/rules/) for the live split.
+
+### Documentation
+
+**A complete Python use case** (si#26), from `simplon init` to a deployed local
+host: [Delivering a Python product](../case-python/). Every step carries one of
+three labels — `run`, `derived`, `does not exist yet` — and the ratio is stated
+rather than implied: eleven of fourteen steps were driven here, two are derived,
+and one does not exist and names the open ticket instead of inventing a step. The
+chapter is held against the product by `tests/test_case_python_chapter.py`: the
+commands against the assembled command tree, the coordinates against the
+catalogue, the five outcomes against `simplon.verdict.Verdict`, and every version
+it names against `git tag`.
 
 ## 0.4.0
 
