@@ -69,7 +69,6 @@ import re
 import pytest
 
 from simplon import catalogue as catalogue_mod
-from simplon.orchestrator.model import treeform
 
 from conftest import ROOT
 
@@ -182,8 +181,6 @@ CENSUS: dict[tuple[str, str], str] = {
     ("_resolve_one", "names no task"): DIAGNOSIS,
     ("_resolve_one", "with `with:` and also declares `params:`"): DIAGNOSIS,
     ("check_no_old_form", "is written in the flat command form"): EXPRESSION,
-    # The one the kernel does not apply to itself - see REACH and the measurement below.
-    ("check_every_task_is_used", "is declared and no command instantiates it"): EXPRESSION,
     ("check_coordinate_placement", "places the coordinate"): EXPRESSION,
     ("check_env_groups", "shape_is_the_platforms"): EXPRESSION,
 
@@ -252,7 +249,6 @@ REACH: dict[tuple[str, str], str] = {
     ("_resolve_one", "declares `impl:`"): REACH_MERGED,
     ("_resolve_one", "declares both `task:` and `depends_on:`"): REACH_MERGED,
     ("check_no_old_form", "is written in the flat command form"): REACH_SEAM,
-    ("check_every_task_is_used", "is declared and no command instantiates it"): REACH_KERNEL_EXEMPT,
     ("check_coordinate_placement", "places the coordinate"): REACH_MERGED,
     ("check_env_groups", "shape_is_the_platforms"): REACH_SEAM,
     # The `suites:` section is not part of the merged tree at all - it is product data end to end - so
@@ -449,37 +445,36 @@ def test_only_expression_rules_carry_a_reach_and_all_of_them_do():
     assert len(expression) > 0
 
 
-# --- the one self-exemption, measured --------------------------------------------------------------------
+# --- no expression rule exempts the kernel any more (si#53) ----------------------------------------------
 
 
-def test_the_one_self_exemption_is_real_and_its_size_is_measured():
-    """Acceptance 3's finding, seen red rather than asserted.
+def test_no_expression_rule_exempts_the_kernel_from_itself():
+    """What is left of acceptance 3's finding after the owner acted on it.
 
-    `check_every_task_is_used` is the only expression rule the kernel does not apply to itself: its
-    docstring says "Scoped to the PRODUCT on purpose", because the kernel's `tasks:` is an OFFER and
-    deliberately declares more than its own `groups:` places. That reasoning is sound and it is not
-    what this test doubts. What was never written down is the SIZE of the exemption - how many of the
-    kernel's own declarations the rule would refuse if it ran over them - and a self-exemption whose
-    size nobody has stated is exactly the kind of thing this ticket exists to name.
+    There was exactly one self-exemption, `check_every_task_is_used`, and this suite used to measure its
+    SIZE - how many of the kernel's own catalogue tasks the rule would have refused if it ran over them.
+    The answer was 14 of 22, si#48 published it, and si#53 struck the rule: it was the only expression
+    rule with no measured cause in ticket, commit or docstring, and it forbade a product exactly what the
+    kernel does fourteen times over - treating a catalogue as an OFFER.
 
-    So the rule is run over the catalogue's own tree and tasks, and it is required to refuse. If a later
-    catalogue places everything it declares, this goes red and the exemption can simply go.
+    So the measurement becomes an assurance instead. Zero is not a vacuous number here: it is computed
+    from REACH, which `test_only_expression_rules_carry_a_reach_and_all_of_them_do` holds against the
+    census, which is computed from the source. A new self-exemption goes red here and has to bring the
+    argument the struck one never had.
     """
-    # arrange: the catalogue's own tree, lowered the way `load()` lowers a merged one
-    catalogue = catalogue_mod.load()
-    flat = treeform.lower(catalogue.groups)[1]
-    placed = {str(spec.get("task")) for members in flat.values()
-              for spec in members.values() if spec.get("task")}
-    unplaced = sorted(name for name in catalogue.tasks if name not in placed)
+    # arrange
+    exempt = sorted(key for key, reach in REACH.items() if reach == REACH_KERNEL_EXEMPT)
 
-    # act / assert: the rule really does refuse the kernel's own material
-    with pytest.raises(ValueError, match="no command instantiates"):
-        treeform.check_every_task_is_used(flat, dict(catalogue.tasks))
+    # act / assert
+    assert exempt == [], (
+        "an expression rule exempts the kernel from itself. si#53 struck the only one there was, for "
+        "the reason its docstring could not answer: a rule the kernel would have to break fourteen "
+        "times in its own catalogue is not a rule anybody believes twice. Say why this one is "
+        f"different, in the ticket: {exempt}")
 
-    # assert: and the exemption is worth this much, paired with the total it is measured against
-    assert len(unplaced) > 0
-    assert len(unplaced) < len(catalogue.tasks)
-    assert len(placed) + len(unplaced) == len(catalogue.tasks)
+    # assert: and there really were expression rules to rule on, so the emptiness above is a finding
+    assert len(REACH) > 0
+    assert set(REACH.values()) == {REACH_MERGED, REACH_SEAM}
 
 
 def test_the_kernels_own_manifest_violates_none_of_its_own_expression_rules():
@@ -572,7 +567,7 @@ def test_the_page_prints_the_reach_of_the_expression_rules():
     expected = _reach_counts()
 
     # act
-    printed = _published_counts("### How far the seventeen reach", "| reach |")
+    printed = _published_counts("### How far an expression rule reaches", "| reach |")
 
     # assert
     assert printed["the kernel is held to it too"] == expected[REACH_MERGED]

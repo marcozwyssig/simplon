@@ -57,11 +57,14 @@ does it exempt the kernel from what it asks of a product? Measured in #48 and
 again in #61, and **the split is on `building/rules.md`, not here** — every
 count this paragraph used to carry has gone stale, the last two within a day of
 being typed. Most expression rules bind the kernel with the product; a few sit
-exactly on the platform/product seam; and exactly **one exempts the kernel** —
-`check_every_task_is_used`, which would reject most of the kernel's own
-catalogue tasks — `test_the_one_self_exemption_is_real_and_its_size_is_measured`
-computes how many. An exemption is not automatically wrong. An unexamined one
-is.
+exactly on the platform/product seam; and **none exempts the kernel** any more.
+There was one, `check_every_task_is_used`, and si#53 struck it — measuring the
+exemption is what ended it. The rule would have refused 14 of the kernel's own
+22 catalogue tasks, it was the only expression rule with no measured cause in
+ticket, commit or docstring, and over every reachable manifest — this kernel's own
+and the five in `surface.CONSUMERS` — it had never refused anything. An exemption is not automatically wrong. An unexamined one is
+— and examining this one is what showed there was nothing left to defend.
+`test_no_expression_rule_exempts_the_kernel_from_itself` holds the zero.
 
 ## Before building an expression rule, answer these
 
