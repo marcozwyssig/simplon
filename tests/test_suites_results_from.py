@@ -254,6 +254,9 @@ def test_an_impl_gate_contributes_the_same_way_without_the_product_writing_the_m
     _product(monkeypatch, tmp_path)
     gate = testrun.Gate(name="unit", impl="test_suites_results_from:writes_results",
                         results="clear", results_from=WROTE_INTO)
+    # An impl gate's hook is called with NO arguments, and this body's `into` is a parameter rather than
+    # a constant so the same body can also stand in for a runner that writes nothing. So the ref is
+    # resolved to a call that pins it, which is what a product's own zero-argument body would hold.
     monkeypatch.setattr(testrun, "resolve_ref",
                         lambda ref, where: (lambda: writes_results(rc=0, into=WROTE_INTO)))
 
