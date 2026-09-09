@@ -45,14 +45,15 @@ from simplon import fetch
 fetch.download("https://example.test/tool.tgz", Path("build/tools/tool.tgz"), label="tool")
 ```
 
-It refuses anything but https - before the socket opens, and again after redirects, because urllib
-follows those and a redirect is a second URL nobody vetted. It times out, so a server that accepts the
-connection and never answers fails instead of hanging your command forever. It writes to a temporary
-name in the destination directory and renames on success, so an interrupted download never leaves a
-file a later run reads as cached. It compares what arrived against what was announced, because
-`HTTPResponse.read` on a truncated body returns nothing and raises nothing. And it reports differently
-depending on who is reading: one line repainted in a terminal, one line and a rare heartbeat in a log,
-never a carriage return into CI.
+It refuses anything but https on **every hop** of a redirect chain, not only the URL you asked for and
+the URL that answered: urllib follows the middle of a chain by its own rule, which admits `http` and
+`ftp`, so `https` to `http` to `https` used to pass both of those checks with one hop in the clear. It
+times out, so a server that accepts the connection and never answers fails instead of hanging your
+command forever. It writes to a temporary name in the destination directory and renames on success, so
+an interrupted download never leaves a file a later run reads as cached. It compares what arrived
+against what was announced, because `HTTPResponse.read` on a truncated body returns nothing and raises
+nothing. And it reports differently depending on who is reading: one line repainted in a terminal, two
+lines and a rare heartbeat in a log, never a carriage return into CI.
 
 ### What `simplon/tasks/` is, stated carefully
 

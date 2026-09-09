@@ -46,6 +46,10 @@ from simplon import fetch
 #: The handler spends it in eight slices with a pause between them, so a transfer takes ~0.4s and the
 #: 0.1s repaint interval produces several paints rather than exactly one.
 BODY = b"simplon-" * 32_000        # 256000 bytes
+
+#: Where a redirecting path sends the caller next. Filled by the test that needs the hop, because the
+#: ports only exist once the server fixtures have run.
+ROUTES: dict = {}
 SLICES = 8
 PAUSE_S = 0.05
 
@@ -90,6 +94,14 @@ class _Handler(BaseHTTPRequestHandler):
             self.wfile.write(BODY[:len(BODY) // 2])
             self.wfile.flush()
             self.close_connection = True
+        elif self.path in ROUTES:
+            # A redirect to wherever a test has pointed this path. The handlers are shared classes and
+            # the ports are only known once the fixtures have run, so where a hop leads is data rather
+            # than something written into the handler.
+            self.send_response(302)
+            self.send_header("Location", ROUTES[self.path])
+            self.send_header("Content-Length", "0")
+            self.end_headers()
         elif self.path == "/blackhole":
             # Accepts, answers nothing. Bounded so a broken test cannot wedge the suite for a minute.
             time.sleep(20)
@@ -134,6 +146,31 @@ def _certificate(directory: Path) -> tuple[Path, Path]:
                                           serialization.PrivateFormat.PKCS8,
                                           serialization.NoEncryption()))
     return certificate, private
+
+
+class _CleartextHandler(BaseHTTPRequestHandler):
+    """A plaintext hop that sends the chain back to https - the middle of the attack, in miniature."""
+
+    def do_GET(self):                                    # noqa: N802
+        self.send_response(302)
+        self.send_header("Location", ROUTES.get("cleartext-onward", "https://localhost/whole"))
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture(scope="module")
+def cleartext():
+    """A real `http://` server, so the middle hop is genuinely in the clear rather than simulated."""
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _CleartextHandler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{httpd.server_address[1]}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
 
 
 @pytest.fixture(scope="module")
@@ -375,6 +412,83 @@ def test_only_https_is_ever_fetched(url, tmp_path):
         fetch.download(url, tmp_path / "f.bin")
 
     assert list(tmp_path.iterdir()) == [], "a refused download still created a file"
+
+
+# --- every hop of a redirect, not the first and the last ------------------------------------------
+#
+# The headers below are how the servers are told where to send the chain next: the handlers are shared
+# module-level classes and the ports are only known at fixture time, so the URL travels with the
+# request instead of being baked into the handler.
+
+
+def test_an_ordinary_https_redirect_is_still_followed(base, tmp_path, monkeypatch):
+    """The guard below must not become "refuse every redirect". The oras release asset IS one - GitHub
+    redirecting to objects.githubusercontent.com - and it is one of the three call sites."""
+    # arrange
+    monkeypatch.setitem(ROUTES, "/hop", f"{base}/whole")
+
+    # act
+    with _capture(tty=False):
+        fetch.download(f"{base}/hop", tmp_path / "f.bin")
+
+    # assert
+    assert (tmp_path / "f.bin").read_bytes() == BODY
+
+
+def test_a_redirect_chain_may_not_pass_through_cleartext(base, cleartext, tmp_path, monkeypatch):
+    """THE HOLE REVIEW FOUND, and the reason this file has a plaintext server in it.
+
+    Checking the URL that was asked for and the URL that answered leaves the MIDDLE of the chain
+    unchecked, and urllib's own rule there is not this module's: it admits `http`, `ftp` and even an
+    empty scheme, and follows the whole thing before a caller sees anything. This chain starts on
+    https and ENDS on https, so both checks passed while one hop travelled in the clear - and whoever
+    is on the path for that hop writes the Location of the next one. What these call sites then do
+    with what arrives is `chmod 0755` and run it.
+    """
+    # arrange: https -> http -> https, all three real
+    monkeypatch.setitem(ROUTES, "/hop", f"{cleartext}/onward")
+    monkeypatch.setitem(ROUTES, "cleartext-onward", f"{base}/whole")
+
+    # act / assert
+    with pytest.raises(fetch.DownloadError, match="https"):
+        with _capture(tty=False):
+            fetch.download(f"{base}/hop", tmp_path / "f.bin")
+
+    assert list(tmp_path.iterdir()) == []
+
+
+# --- what a CI log actually costs ------------------------------------------------------------------
+
+
+def test_a_short_download_costs_a_log_two_lines(base, tmp_path):
+    """The claim the module docstring makes, held to a count.
+
+    Its first draft said ONE line and nothing disagreed - the opening paint happens before the
+    throttle can suppress anything, so there were always two. Two is the right number (the opening
+    line is where the size is), and now it is the number that is written down.
+    """
+    # act
+    with _capture(tty=False) as shown:
+        fetch.download(f"{base}/whole", tmp_path / "f.bin")
+
+    # assert
+    assert len([line for line in shown.text.split("\n") if line.strip()]) == 2, repr(shown.text)
+
+
+def test_a_long_download_leaves_a_heartbeat_between_those_two(base, tmp_path, monkeypatch):
+    """And the other half: a log is not left silent for the length of a 20-minute transfer. The
+    interval is a module constant precisely so this can be driven without the function growing a
+    parameter nobody asked for."""
+    # arrange
+    monkeypatch.setattr(fetch, "_LOG_INTERVAL_S", 0.05)
+
+    # act
+    with _capture(tty=False) as shown:
+        fetch.download(f"{base}/whole", tmp_path / "f.bin")
+
+    # assert
+    assert len([line for line in shown.text.split("\n") if line.strip()]) > 2, repr(shown.text)
+    assert "\r" not in shown.text, "the heartbeat is still ordinary log lines"
 
 
 # --- the arithmetic, which is the only part worth a unit test -------------------------------------

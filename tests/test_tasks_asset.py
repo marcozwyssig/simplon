@@ -108,7 +108,7 @@ def test_an_upload_that_failed_is_not_reported_as_a_publication(gh):
     """
     gh.replies["upload"] = run.Result(rc=1, out="", err="HTTP 422: validation failed")
 
-    with pytest.raises(RuntimeError, match=r"0\.4\.149.*1"):
+    with pytest.raises(RuntimeError, match=r"0\.4\.149.*gh exited 1\b"):
         asset.publish(name="bundle", tag="0.4.149")
 
 

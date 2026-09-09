@@ -11,8 +11,11 @@ WHAT IT REFUSES, AND WHY THAT IS THE INTERESTING PART. `urlretrieve` opens `file
 without comment. Two of the three call sites carried a `# noqa: S310` with a comment arguing that their
 URL was a pinned https asset, which was true of those three URLs and is a property of the CALL SITE
 rather than of the code - it says nothing at all about the next caller. Here the argument is made once,
-in code, for everybody: anything but https is refused, before a socket is opened, and again after
-redirects, because urllib follows those and a redirect is a second URL nobody vetted.
+in code, for everybody: anything but https is refused, before a socket is opened, and on EVERY HOP of a
+redirect chain. The last part is a review correction. The first draft checked the URL asked for and the
+URL that answered, which leaves the middle of a chain to urllib's rule rather than to this one - and
+urllib's admits `http`, `ftp` and an empty scheme, so `https -> http -> https` passed both checks with
+one hop travelling in the clear.
 
 THE THREE OTHER THINGS `urlretrieve` DOES NOT DO.
 
@@ -64,7 +67,8 @@ _CHUNK = 64 * 1024
 
 #: How often the two output modes are allowed to say something. A terminal repaints ten times a second
 #: because that is what looks alive; a log gets a line every ten seconds, so a download that finishes
-#: inside that budget puts exactly ONE line in a CI log and a long one leaves a heartbeat.
+#: inside that budget puts TWO lines in a CI log - the opening one, which carries the size, and the
+#: closing one - and a long one adds a heartbeat per interval between them.
 _TTY_REPAINT_S = 0.1
 _LOG_INTERVAL_S = 10.0
 
@@ -160,7 +164,9 @@ class _Progress:
     often than in a terminal, and a bar repainting into a GitHub Actions log is either thousands of
     lines or an unreadable smear. Degrading to silence is not the answer either - that would settle the
     ticket's complaint by making it true everywhere - so a pipe gets a heartbeat instead, rare enough
-    that a short download costs a log exactly one line.
+    that a short download costs a log two lines and no more: the opening one, which is where the size
+    is, and the closing one. Counted by a test, because the first draft of this paragraph said ONE and
+    nothing disagreed with it.
     """
 
     def __init__(self, label: str, total: int | None, started: float) -> None:
@@ -215,6 +221,40 @@ class _Progress:
 # --- the download ----------------------------------------------------------------------------------
 
 
+class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    """urllib's redirect handler, with the scheme rule applied to EVERY hop.
+
+    Checking the URL that was asked for and the URL that answered leaves the MIDDLE of a redirect chain
+    unchecked, and urllib's own rule there is not this module's: `HTTPRedirectHandler.http_error_302`
+    admits `http`, `ftp` and even an empty scheme, and follows the whole chain before a caller sees
+    anything at all. So `https -> http -> https` was accepted, and the check on `response.url` passed
+    because the chain ended where it was supposed to. Whoever is on the path for the cleartext hop
+    writes the `Location` of the next one, and what these three call sites do with what arrives is
+    `chmod 0755` and run it, or hand it to the venv's own interpreter.
+
+    Found in review, after this module had claimed in three places to have vetted the redirect - which
+    was true of the last hop only.
+    """
+
+    def redirect_request(self, req: Any, fp: Any, code: int, msg: str,
+                         headers: Any, newurl: str) -> Any:
+        _refuse_other_schemes(newurl, after_redirect=True)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _opener() -> urllib.request.OpenerDirector:
+    """An opener carrying that handler. `urllib.request.urlopen` would use the default one, whose
+    redirect handler is exactly what is being replaced.
+
+    Built per call rather than once at import, and that is not tidiness. `HTTPSHandler.__init__`
+    creates its SSL context eagerly, so an opener built at import freezes whatever certificate
+    authorities were configured at import - a process that sets `SSL_CERT_FILE` afterwards, which is
+    how a corporate proxy's CA usually arrives, would be ignored. Building one costs a few objects;
+    a download costs a network round trip.
+    """
+    return urllib.request.build_opener(_HttpsOnlyRedirects)
+
+
 def _refuse_other_schemes(url: str, *, after_redirect: bool = False) -> None:
     scheme = urlsplit(url).scheme.lower()
     if scheme in ALLOWED_SCHEMES:
@@ -227,7 +267,7 @@ def _refuse_other_schemes(url: str, *, after_redirect: bool = False) -> None:
         f"the same for every caller rather than an argument in a comment beside each of them.")
 
 
-def _announced_length(response: Any) -> int | None:
+def _announced_length(response: http.client.HTTPResponse) -> int | None:
     """How many bytes are coming, or None when nobody can know.
 
     A `Content-Length` beside a `Content-Encoding` is the interesting case: the number is right there
@@ -272,13 +312,13 @@ def download(url: str, dest: str | Path, *, label: str = "",
     handle, temporary = tempfile.mkstemp(dir=dest.parent, prefix=f"{dest.name}.", suffix=".part")
     started = time.monotonic()
     progress: _Progress | None = None
+    received = 0
     try:
         with os.fdopen(handle, "wb") as sink:
-            with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310 - see above
+            with _opener().open(url, timeout=timeout) as response:
                 _refuse_other_schemes(response.url, after_redirect=True)
                 total = _announced_length(response)
                 progress = _Progress(name, total, started)
-                received = 0
                 progress.step(received, time.monotonic())
                 while True:
                     chunk = response.read(_CHUNK)
@@ -293,14 +333,23 @@ def download(url: str, dest: str | Path, *, label: str = "",
                 f"A truncated body is not an error urllib reports - the read simply ends - so this is "
                 f"the check between a short download and a file the next run would treat as cached.")
         os.replace(temporary, dest)
-        progress.done(received, time.monotonic())
-        return dest
     except DownloadError:
         raise
-    except (OSError, http.client.HTTPException) as failure:
+    except (OSError, http.client.HTTPException, ValueError) as failure:
+        # ValueError is not decoration. `https://` plus a 300-character host is a syntactically fine
+        # URL that urllib rejects with a UnicodeEncodeError out of the idna codec - which is a
+        # ValueError and neither of the other two, so it escaped this function unwrapped, past a
+        # docstring promising it could not. Found in review.
         raise DownloadError(f"could not download {url}: "
                             f"{type(failure).__name__}: {failure}") from failure
     finally:
         if progress is not None:
             progress.close()
         Path(temporary).unlink(missing_ok=True)
+
+    # OUTSIDE the wrapping, deliberately. The file is in place by the time this runs, so an exception
+    # from the closing line - a broken stdout is an OSError - would otherwise be re-raised as "could
+    # not download" about a download that had already succeeded.
+    if progress is not None:
+        progress.done(received, time.monotonic())
+    return dest
