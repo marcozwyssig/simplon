@@ -59,11 +59,22 @@ groups:
       unit:    {{ task: toolchain, with: {{ rc: {unit_rc}, tag: "unit", marker: "{marker}" }}, help: "ctest." }}
       loose:   {{ task: strict, help: "Nothing pinned at all." }}
       framed:  {{ task: framed, help: "A body whose default is a typer declaration." }}
+      typo:    {{ task: toolchain, with: {{ rc: 0, tagg: "unit" }}, help: "A `with:` key with a typo in it." }}
       all:     {{ depends_on: ["compile"], help: "Plans other commands, runs none of its own." }}
   test:
     commands:
       unit: {{ task: gate, with: {{ name: "unit" }}, help: "The gate itself." }}
 """
+
+
+@pytest.fixture(autouse=True)
+def _calls():
+    """`test_impls.CALLS` is a module-level list, so the isolation has to be structural rather than a
+    line every arrange has to remember. Cleared on both sides: a test that leaves entries behind must not
+    reach the next one, and one that inherits them must not read them as its own."""
+    test_impls.CALLS.clear()
+    yield
+    test_impls.CALLS.clear()
 
 
 def _product(monkeypatch, tmp_path, *, compile_rc=0, unit_rc=0, marker=""):
@@ -73,7 +84,6 @@ def _product(monkeypatch, tmp_path, *, compile_rc=0, unit_rc=0, marker=""):
         encoding="utf-8")
     monkeypatch.setattr(context, "_current",
                         ProductContext("cppdemo", tmp_path, tmp_path / "cppdemo.yaml"))
-    test_impls.CALLS.clear()
 
 
 def _section(*gates, **overrides):
@@ -403,3 +413,22 @@ def test_a_typer_declaration_standing_in_for_a_default_is_refused_rather_than_pa
     # assert: named, and the body never saw the sentinel
     assert "needs deep" in str(refused.value), str(refused.value)
     assert not [call for call in test_impls.CALLS if call[0] == "framed_body"]
+
+
+def test_a_with_key_that_names_no_parameter_is_refused_the_way_the_cli_refuses_it(monkeypatch, tmp_path):
+    """The refusal `simplon.cli._bound` makes, made here too, because this call claims to be that one
+    minus the command line. A mistyped `with:` key is the likeliest error in a manifest whose author
+    writes no Python, and it must not arrive as a TypeError from three frames down."""
+    # arrange: `tagg:` for `tag:`
+    _product(monkeypatch, tmp_path)
+    gate = testrun.Gate(name="unit", command="build typo", results="clear")
+
+    # act
+    with pytest.raises(ValueError) as refused:
+        testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert: the command, the key and what the body DOES take
+    said = str(refused.value)
+    assert "'build typo' pins tagg" in said, said
+    assert "it takes: marker, rc, tag" in said, f"the refusal does not say what the body takes: {said}"
+    assert not test_impls.CALLS, "the body ran with a key it does not take"

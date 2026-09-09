@@ -160,11 +160,16 @@ What is refused, and only when the gate actually runs, because deciding it needs
 > 'suites.gates.unit.command': 'build all' plans other commands and runs no body of its own, so there is
 > no single rc for a gate to report - name one of the commands it plans
 
+> 'suites.gates.unit.command': 'build unit' pins imag with `with:`, which
+> simplon.tasks.toolchain:run_toolchain does not take (it takes: argv, env, image, network, workdir)
+
 > 'suites.gates.unit.command': 'build unit' needs image, which its `with:` does not pin - a gate has no
 > command line to supply them on, so pin them there
 
-The last one is the whole calling convention in a refusal: a gate runs a command with what the manifest
-pinned and nothing else, because there is no command line for anything to arrive on. A body that takes a
+The last two are the whole calling convention in a refusal, and they are the pair
+`simplon.cli._bound` already makes: a gate runs a command with what the manifest pinned and nothing
+else, so a key that names no parameter and a parameter that no key names are both refused by name rather
+than arriving as a `TypeError` three frames down. A body that takes a
 CLI context is refused for the harder version of the same reason - and that is also what stops a gate
 naming the command it is invoked as.
 

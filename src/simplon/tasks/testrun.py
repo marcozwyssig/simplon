@@ -438,7 +438,7 @@ def _command(path: str, where: str) -> Callable[[], int]:
     """
     where = f"'{SECTION}.{where}'"
     commands = context.current().manifest().commands
-    group, _, name = path.partition(" ")
+    group, _, name = path.strip().partition(" ")
     spec = commands.get(group, {}).get(name.strip())
     if spec is None:
         known = ", ".join(sorted(f"{g} {n}" for g, members in commands.items() for n in members))
@@ -453,12 +453,22 @@ def _command(path: str, where: str) -> Callable[[], int]:
         raise ValueError(f"{where}: '{path}' takes a CLI context, which a gate has none of to give it - "
                          f"only a command the kernel can call with its pinned `with:` alone can back a "
                          f"gate")
+    bindable = signatures.bindable(body)
+    # THE SAME REFUSAL `simplon.cli._bound` MAKES, and it is here because this function claims to be that
+    # call minus the command line. A `with:` key naming no parameter of the body is the likeliest typo in
+    # a manifest whose author writes no Python at all, and without this it arrives as a bare TypeError
+    # from three frames down - naming neither the command nor the key nor the block to edit.
+    unknown = sorted(set(pinned) - {p.name for p in bindable})
+    if unknown:
+        raise ValueError(f"{where}: '{path}' pins {', '.join(unknown)} with `with:`, which "
+                         f"{spec.impl} does not take (it takes: "
+                         f"{', '.join(sorted(p.name for p in bindable)) or 'none'})")
     # A `typer.Option(...)` DEFAULT IS NOT A VALUE, and that is the second half of "minus the command
     # line". Typer resolves such a default into the value behind it; a direct call does not, so an
     # unpinned parameter declared that way would reach the body as an `OptionInfo` OBJECT - a wrong value
     # passed silently, which is worse than the refusal. Two products still write bodies in that shape, so
     # this is a case that exists rather than one imagined for it.
-    missing = [p.name for p in signatures.bindable(body) if p.name not in pinned
+    missing = [p.name for p in bindable if p.name not in pinned
                and (p.required or isinstance(p.default, typer.models.ParameterInfo))]
     if missing:
         raise ValueError(f"{where}: '{path}' needs {', '.join(missing)}, which its `with:` does not pin - "
