@@ -27,6 +27,7 @@ import datetime
 import fcntl
 import os
 import pty
+import re
 import ssl
 import struct
 import sys
@@ -249,15 +250,25 @@ def test_the_harness_reports_a_terminal_as_a_terminal_and_a_pipe_as_a_pipe():
 
 
 def test_a_terminal_gets_one_line_repainted_rather_than_a_page_of_them(base, tmp_path):
-    """The terminal half. A bar is only a bar if it paints over itself."""
+    """The terminal half. A bar is only a bar if it paints over itself, MORE THAN ONCE, with a
+    different number each time.
+
+    Counting carriage returns alone was the first version of this and it was weaker than it looked:
+    the closing `clear_line` writes one of its own, so a bar that painted exactly once and then
+    finished would have passed a `>= 2` count while being no bar at all. What is asserted instead is
+    the property with no way to fake it - several paints, several distinct percentages, and still only
+    one line on the screen.
+    """
     # act
     with _capture(tty=True) as shown:
         fetch.download(f"{base}/whole", tmp_path / "f.bin")
 
     # assert
     text = shown.text
-    assert text.count("\r") >= 2, f"nothing was repainted, so this is not a bar: {text!r}"
-    assert "%" in text, "a terminal was not told how far along it is"
+    assert text.count("==>") >= 3, f"the bar painted fewer than three times: {text!r}"
+    assert text.count("\r") >= text.count("==>"), "a paint left the cursor where the next one starts"
+    advanced = set(re.findall(r"(\d+)%", text))
+    assert len(advanced) >= 2, f"the bar never advanced; it showed {sorted(advanced)}: {text!r}"
     assert len([line for line in text.split("\n") if line.strip()]) <= 2, (
         f"a terminal got more than the bar line and the line that closes it: {text!r}")
     assert (tmp_path / "f.bin").read_bytes() == BODY
