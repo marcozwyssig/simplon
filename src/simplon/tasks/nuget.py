@@ -302,9 +302,8 @@ def publish(name: str = "", tag: str = "") -> int:
     Two container runs rather than one shell line, because a shell line is a third quoting layer between
     the manifest and the tool, and the rc of a pipeline is not the rc of the command that failed.
     """
+    registry, pinned, project = _for_container(name)
     spec = _declared(name)
-    registry = _github_registry(spec, name)
-    (image, project) = _required(spec, name, "image", "project")
     source_name = str(spec.get("source_name", "") or DEFAULT_SOURCE)
 
     resolved = tag or str(spec.get("tag", "") or "")
@@ -313,17 +312,11 @@ def publish(name: str = "", tag: str = "") -> int:
             f"artifact '{name}' has no tag: declare `tag:` in the `{SECTION}:` section for a constant "
             f"one, or pass --tag for a version that is only known after a build")
 
-    pinned = docker.pinned_image(image, f"artifact '{name}'",
-                                 hint="a published package names the SDK it was built with")
-
     root = context.current().root
+    _config_or_refuse(root, source_name)
     if not (root / project).is_file():
         raise ValueError(f"nothing to pack: {project} does not exist under the product root. the "
                          f"project is the product's, not this task's")
-    if not (root / CONFIG_NAME).is_file():
-        raise ValueError(
-            f"no {CONFIG_NAME} at the product root, so the push has no source called '{source_name}' and "
-            f"no credential to reach it with. Write one first: `build:nuget-config`")
 
     docker.ensure_docker()
     (root / PACK_DIR).mkdir(parents=True, exist_ok=True)
@@ -348,4 +341,68 @@ def publish(name: str = "", tag: str = "") -> int:
         return rc
 
     log.ok(f"published {resolved} to {index_url(registry)}")
+    return 0
+
+
+# --- consuming ----------------------------------------------------------------------------------------
+
+def _for_container(name: str) -> tuple[str, str, str]:
+    """The three things both container commands need: registry, pinned image, project. Refuses by key.
+
+    Shared by `publish` and `restore` because the refusals are the ones a product hits FIRST, and two
+    copies of them are two wordings a reader would have to learn.
+    """
+    spec = _declared(name)
+    registry = _github_registry(spec, name)
+    (image, project) = _required(spec, name, "image", "project")
+    pinned = docker.pinned_image(image, f"artifact '{name}'",
+                                 hint="a published package names the SDK it was built with")
+    return registry, pinned, project
+
+
+def _config_or_refuse(root: Path, source_name: str) -> None:
+    """The generated config has to be there, and the message names the command that writes it.
+
+    Without it there is no source called `<source_name>` and no credential to reach it with, and what
+    NuGet says instead is that a package could not be found - a sentence about the package, in a failure
+    about the configuration.
+    """
+    if not (root / CONFIG_NAME).is_file():
+        raise ValueError(
+            f"no {CONFIG_NAME} at the product root, so there is no source called '{source_name}' and no "
+            f"credential to reach it with. Write one first: `build:nuget-config`")
+
+
+def restore(name: str = "") -> int:
+    """Restore the project `name` declares, with the credential the container needs.
+
+    A COORDINATE OF ITS OWN rather than a `toolchain:run` command, and the reason is si#105's rule
+    rather than a preference: a toolchain command's environment is what the manifest names and nothing
+    else, and a token is exactly what a manifest may not name. So the consuming half of si#127 needs a
+    runner that can put a secret into a container, and a product cannot declare one.
+    """
+    registry, pinned, project = _for_container(name)
+    spec = _declared(name)
+    source_name = str(spec.get("source_name", "") or DEFAULT_SOURCE)
+
+    root = context.current().root
+    _config_or_refuse(root, source_name)
+    if not (root / project).is_file():
+        raise ValueError(f"nothing to restore: {project} does not exist under the product root")
+
+    docker.ensure_docker()
+    (root / CLI_HOME).mkdir(parents=True, exist_ok=True)
+
+    with _env_file(githubpackages.token()) as env_file:
+        log.info(f"restoring {project} against {index_url(registry)}")
+        rc = stream(docker_argv(pinned, root, env_file, ["dotnet", "restore", project]))
+
+    if rc != 0:
+        log.error(f"dotnet restore {project} failed (rc={rc}; see output above)\n"
+                  "if the feed refused it rather than the network, the usual cause is a token without "
+                  "the package scopes - `read:packages` is the one a CONSUMER needs:\n"
+                  + githubpackages.scope_advice())
+        return rc
+
+    log.ok(f"restored {project} from {index_url(registry)}")
     return 0
