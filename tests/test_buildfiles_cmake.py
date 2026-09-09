@@ -230,3 +230,33 @@ def test_an_include_path_holding_a_space_stays_one_argument():
     # assert
     assert ('target_include_directories(net PRIVATE '
             '"${CMAKE_SOURCE_DIR}/vendor/asio 1.30/include")') in text
+
+
+def test_a_co_located_test_rendered_before_its_library_still_links_it():
+    """Targets are sorted by NAME, and `_test` does not sort last: `n_test` precedes `net`, so a
+    co-located unit test can be written into the file ahead of the library it links.
+
+    THAT IS LEGAL AND IT WAS MEASURED RATHER THAN ASSUMED (silkeh/clang:19, 2026-09-09). CMake requires
+    the target being MODIFIED to exist - `n_test` does - and resolves the names in the list at generate
+    time, so a library defined further down the same file is found, and its PUBLIC include directory
+    reaches the test's compile as well. The rendered tree above configured, compiled and passed its
+    ctest case in that order.
+
+    It is pinned here because the alternative repair is the tempting one: sorting libraries first would
+    look tidier, churn every generated file, and defend against nothing.
+    """
+    # arrange
+    targets = [
+        buildfiles.Target(name="n_test", kind="test", directory=Path("src/net"),
+                          sources=[Path("src/net/n_test.cpp")], depends=["net"],
+                          level=buildfiles.UNIT_LEVEL),
+        buildfiles.Target(name="net", kind="static", directory=Path("src/net"),
+                          sources=[Path("src/net/net.cpp")]),
+    ]
+
+    # act
+    text = buildfiles.render_cmake(targets, Path("src/net"))
+
+    # assert
+    assert text.index("add_executable(n_test") < text.index("add_library(net STATIC")
+    assert "target_link_libraries(n_test PRIVATE net)" in text
