@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import sys
 from datetime import datetime
+from typing import Iterable
 
 from . import steps as steps_module
 from .steps import (STATE_ICON, Emit, Pipeline, Row, Step, StepState, abort_after, build_rows,
@@ -50,6 +51,7 @@ from rich.text import Text  # noqa: E402
 from textual import work  # noqa: E402
 from textual.binding import Binding  # noqa: E402
 from textual.app import App, ComposeResult, SystemCommand  # noqa: E402
+from textual.screen import Screen  # noqa: E402
 from textual.containers import Horizontal  # noqa: E402
 from textual.widgets import Footer, Header, Input, RichLog, Static, Tree  # noqa: E402
 
@@ -685,7 +687,7 @@ class _StepApp(App):
 
     # ---------------------------------------------------------------- the command palette (item 9)
 
-    def get_system_commands(self, screen):
+    def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
         """Every action this runner has, discoverable without a key (si#148 item 9, ctrl+p).
 
         `yield from super()` FIRST and deliberately: Textual's own commands come with the palette, and two
