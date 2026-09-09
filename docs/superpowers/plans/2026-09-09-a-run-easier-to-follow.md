@@ -84,7 +84,7 @@ answering it while the operator reads something else, which is strictly more tha
 follow mode answers it only for an operator who has not navigated away, and navigating away is the case
 that produced the complaint. Both are built, the bar first.
 
-**The bar is a pure function of the pipeline plus a `now`.** `steps.status_line(pipeline, now)` returns
+**The bar is a pure function of the DISPLAY TREE plus a `now`.** `steps.status_line(root, now)` returns
 plain text; `tui.py` writes it into a `Static`. That keeps the whole of the item testable without a
 terminal, keeps the wall clock out of the assertion (the `now` is the caller's), and keeps the widget
 dumb. The same choice is what makes item 2 provable without a sleep: the elapsed value travels
@@ -103,7 +103,7 @@ each of the four cases says something:
 - *the run is over* - the verdict, because that is the last thing an operator reads before pressing `q`,
   and the run's total elapsed.
 
-**The bar's shape survives si#147.** `steps.running_steps(pipeline)` returns a TUPLE and the left half
+**The bar's shape survives si#147.** `steps.running_rows(root)` returns a TUPLE and the left half
 renders up to two names plus a `+k more` tail. Nothing here supports parallel execution; what it does is
 avoid a widget that would have to be rebuilt to show two names. One sentence in the docstring says so.
 
@@ -192,26 +192,27 @@ footer slot on it.
 
 ## Task 1: the pure half of the status bar (item 8) and the live elapsed (item 2)
 
-**Files:** `src/simplon/orchestrator/steps.py`, `tests/test_orchestrator_rows.py`
+**Files:** `src/simplon/orchestrator/steps.py`, `tests/test_orchestrator_status.py` (a new file rather than
+`test_orchestrator_rows.py`, whose docstring scopes it to the display TREE - the bar is not that)
 
-- [ ] 1.1 Write failing tests for `Row.elapsed(now)`: a finished row answers its duration; a RUNNING row
+- [x] 1.1 Write failing tests for `Row.elapsed(now)`: a finished row answers its duration; a RUNNING row
       answers `now - started_at`; a PENDING row and a SKIPPED row answer `None`; a running AGGREGATE
       answers `now - <its first child's start>`. Watch them fail on `AttributeError`.
-- [ ] 1.2 Implement `Row.elapsed(now: float) -> float | None`. It delegates to `duration` when there is
+- [x] 1.2 Implement `Row.elapsed(now: float) -> float | None`. It delegates to `duration` when there is
       one and never invents a zero, for the reason `duration`'s docstring gives.
-- [ ] 1.3 Write failing tests for `RunSummary` / `summarise(pipeline)`: counts per state, and a `counts`
+- [x] 1.3 Write failing tests for `RunSummary` / `summarise(root)`: counts per state, and a `counts`
       text that omits the zero categories.
-- [ ] 1.4 Implement them.
-- [ ] 1.5 Write failing tests for `running_steps(pipeline) -> tuple[Step, ...]`: empty before the run,
+- [x] 1.4 Implement them.
+- [x] 1.5 Write failing tests for `running_rows(root) -> tuple[Row, ...]`: empty before the run,
       one entry while a step runs, TWO entries when two steps are RUNNING (the si#147 shape, constructed
       by hand - nothing runs them in parallel).
-- [ ] 1.6 Implement it.
-- [ ] 1.7 Write failing tests for `status_line(pipeline, now)`, one per state: waiting, running (carries
+- [x] 1.6 Implement it.
+- [x] 1.7 Write failing tests for `status_line(root, now)`, one per state: waiting, running (carries
       the dotted identity, the elapsed with its `…`, the counts and the run elapsed), the gap (`last:`),
       done-green (the verdict), done-red (the verdict, the failure count, the skipped count). Plus: a step
       whose `command` is an argv is rendered by its LABEL, and three running steps render as two names
       plus `+1 more`.
-- [ ] 1.8 Implement `status_line`.
+- [x] 1.8 Implement `status_line`.
 
 **Verify:** `pytest tests/test_orchestrator_rows.py` green; no sleep anywhere; `mypy` clean.
 
