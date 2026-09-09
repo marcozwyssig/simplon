@@ -141,7 +141,13 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
     # has no tree they could read - and neither takes a parameter, because the root and the product name
     # come from the ProductContext and the one thing a directory cannot show is read from the product's
     # own `build: targets:` section.
-    assert sorted(cat.namespace("build")) == ["cmake-files", "dotnet-solution", "image"]
+    # `conan-cache`, `nuget-config` and `nuget-restore` (si#127/si#128) are the newest, and all three are
+    # the CONSUMING half of a publishing pair: a package nobody can resolve has not been handed over. Two
+    # of them exist as coordinates rather than as `toolchain:run` commands for a reason a product cannot
+    # work around - a toolchain command's environment is what the manifest names and nothing else
+    # (si#105), and a token is exactly what a manifest may not name.
+    assert sorted(cat.namespace("build")) == ["cmake-files", "conan-cache", "dotnet-solution", "image",
+                                              "nuget-config", "nuget-restore"]
     # `release:tag` (#32) is the newest, and the odd one out in its own namespace: `artifact` and `image`
     # publish what a build produced and both read a manifest section, while `tag` publishes NOTHING - it
     # cuts the name the release is made under and pushes it, which is what makes the workflows run at
@@ -149,7 +155,12 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
     # `release:asset` is the newest, and it pairs with `artifact` rather than adding a category: both
     # publish what a build produced, one to a registry a pipeline pulls from and one to a page a person
     # downloads from. A product may declare either, both or neither.
-    assert sorted(cat.namespace("release")) == ["artifact", "asset", "image", "tag"]
+    # `conan` and `nuget` (si#128/si#127) are the newest, and they are two different answers to one
+    # question. NuGet is a registry GitHub actually serves, so `release:nuget` publishes to it. There is
+    # no Conan registry in GitHub Packages at all, so `release:conan` is a TRANSPORT over the OCI
+    # artifact `release:artifact` already knows how to move - an exact tag pulled and restored, with no
+    # remote resolution.
+    assert sorted(cat.namespace("release")) == ["artifact", "asset", "conan", "image", "nuget", "tag"]
 
 
 def test_the_two_image_coordinates_reach_the_generated_reference():

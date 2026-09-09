@@ -69,6 +69,36 @@ One thing to know before adopting the CMake half: `add_subdirectory` puts a targ
 own directory, so an executable declared in `src/<name>/` lands at `build/src/<name>/<name>` and not at
 `build/<name>`. A `deploy up` command that runs the binary has to name that path.
 
+### A product can hand a package over, and a second one can take it (si#127, si#128)
+
+Both languages could compile in 0.10.0's uniform build and neither could give the result to anybody.
+Five coordinates close that, and they are two different answers because GitHub Packages gives two
+different answers.
+
+**NuGet is an ordinary registry.** `release:nuget` packs the declared project and pushes it to
+`nuget.pkg.github.com/<owner>`; `build:nuget-config` writes the `nuget.config` a consumer restores
+through, and `build:nuget-restore` runs that restore with the credential the feed wants. All three read
+the manifest's existing `artifacts:` section - there is no new top-level key.
+
+**The generated `nuget.config` is meant to be committed and holds no token.** What it holds is
+`%GITHUB_TOKEN%`, which NuGet expands from the environment when it reads the file. The resolved token
+reaches the container as a `--env-file` created 0600 and deleted in a `finally`, never as
+`-e NAME=VALUE`, and never on a command line: measured, a push against a source that already carries
+credentials needs no `--api-key` at all.
+
+**Conan is not a registry there, and the docs say so in as many words.** GitHub Packages serves npm,
+RubyGems, Maven, Gradle, NuGet and Docker/Container - and no Conan. So `release:conan` is a
+**transport**: `conan cache save` writes an archive, the coordinate moves it into a registry as an
+ordinary OCI artifact, and `build:conan-cache` pulls that exact tag back for the product's own
+`conan cache restore`. No remote resolution, no version ranges, no graph solved remotely. Whether Conan
+could do better by itself was measured rather than looked up: `conan remote add` in Conan 2.32.0 accepts
+one remote type, `local-recipes-index`.
+
+The whole loop was driven end to end rather than asserted over an argv - published, then resolved from a
+second project, and for Conan restored into an empty cache and built against. [Handing a package
+over](../handing-a-package-over/) is the chapter. Nothing to do: five declared coordinates, and a
+product that declares none of them is unchanged.
+
 ### The help screen names the simplon that is answering (si#125)
 
 `<product> --help` rendered byte for byte the same screen whether the kernel behind it was a released
@@ -89,6 +119,15 @@ path. Every half degrades to a phrase instead of raising - a help screen that fa
 could not introspect itself is worse than one that says *unknown* - and a product that declares its own
 epilog keeps it, with the kernel's line below it. Top-level app only, and no `--version` flag comes with
 it. Nothing to do.
+
+### The design behind the language cluster, as a document (si#131)
+
+A merge that ships no code and is named here because the notes name every ticket merged into the range,
+not every ticket that changed behaviour. `docs/superpowers/specs/2026-09-09-the-language-cluster-design.md`
+records the four decisions eight tickets share - no new top-level manifest section, the location names
+the test level, a gate may name where its results landed, and `simplon init` defaults rather than
+decrees - together with the proof each of the eight owes. si#131 itself, the C++ target model, is not in
+this release; the document is what decided its shape. Nothing to do.
 
 ### Before you bump
 

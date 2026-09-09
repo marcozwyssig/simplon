@@ -136,9 +136,9 @@ the number that says whether a rib is filled:
 
 | namespace | kind | tasks in the catalogue today |
 |---|---|---|
-| `build` | phase, agnostic | 3 |
+| `build` | phase, agnostic | 6 |
 | `test` | phase, agnostic | 4 |
-| `release` | phase, agnostic | 4 |
+| `release` | phase, agnostic | 6 |
 | `deploy` | phase, env-first | 0 |
 | `monitor` | phase, env-first | 0 |
 | `support` | not a phase | 8 |
@@ -147,7 +147,7 @@ the number that says whether a rib is filled:
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Thirty coordinates: nineteen carrying a placement, eleven free to be filed. The numbers in this sentence, in that
+Thirty-five coordinates: twenty-four carrying a placement, eleven free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -171,18 +171,23 @@ it - or **placed**, written into the tree for everybody. The bar a placed comman
 *Produce the artefacts.* Whatever a product ships: a wheel, a container image, a bundle, a generated
 site.
 
-**In the catalogue today: 3 tasks.**
+**In the catalogue today: 6 tasks.**
 
 - `build:cmake-files`
+- `build:conan-cache`
 - `build:dotnet-solution`
 - `build:image`
+- `build:nuget-config`
+- `build:nuget-restore`
 
-**What a product brings itself.** The artefact, and the source tree the other two read. There are two
-things the kernel knows how to build for you: a container image, and the build files a C++ or a .NET
-product hands to its compiler. Everything past that is a body in the product's own `tasks:`, because
-"build" means something different in every language. Each of the three reads something the product
-brings - `build:image` an `images:` section, the two generators a tree of sources - which is why all
-three are offered rather than placed: declared for everybody, `build:image` would die on its first
+**What a product brings itself.** The artefact, and the source tree the two generators read. There are
+three things the kernel knows how to build for you: a container image, the build files a C++ or a .NET
+product hands to its compiler, and - since si#127 and si#128 - the half of a package handover that
+happens on the CONSUMING side. Everything past that is a body in the product's own `tasks:`, because
+"build" means something different in every language. Each of the six reads something the product
+brings - `build:image` an `images:` section, the two generators a tree of sources, the other three an
+`artifacts:` entry - which is why all
+six are offered rather than placed: declared for everybody, `build:image` would die on its first
 line in a product with no Dockerfile, and a generator would write a CMake project for a product with
 no C++ in it.
 
@@ -229,15 +234,17 @@ are two commands over one template. That mechanism is in [Test levels](../test-l
 *Publish them.* The point where a mistake stops being local: a tag can be deleted but not un-seen, and a
 pushed image is somebody else's dependency by the time you notice.
 
-**In the catalogue today: 4 tasks.**
+**In the catalogue today: 6 tasks.**
 
 - `release:artifact`
 - `release:asset`
+- `release:conan`
 - `release:image`
+- `release:nuget`
 - `release:tag`
 
 **What a product brings itself.** An `artifacts:`, `assets:` or `images:` section, and - for
-`release:tag` - a workflow that a tag actually triggers. All four are **offered** rather than placed, and `release:tag`
+`release:tag` - a workflow that a tag actually triggers. All six are **offered** rather than placed, and `release:tag`
 is the case that fixed that bar: it is the one `release:` task that reads no product data at all, so it
 came closest to being handed to everybody, and it is still not - because it **publishes**, and a
 misfire is public and cannot be taken back.
@@ -249,6 +256,15 @@ licence lets it hand out - never one the kernel answers for it.
 
 `release:image` is worth reading as a rule rather than a task. It pushes *and then asks the registry
 whether the tag is there*, because a push nobody verifies is the same defect as a report nobody reads.
+
+`release:nuget` and `release:conan` are two different answers to one question, and the difference is not
+this kernel's taste - it is what GitHub Packages serves. NuGet is a registry it has, so `release:nuget`
+packs a project and pushes it to `nuget.pkg.github.com`, and `build:nuget-config` and
+`build:nuget-restore` are the consuming half. **There is no Conan registry in GitHub Packages at all**,
+so `release:conan` is a *transport*: `conan cache save` writes an archive, this moves that archive into
+the registry as an ordinary OCI artifact, and `build:conan-cache` pulls the exact tag back for the
+product's own `conan cache restore`. No dependency graph is solved remotely and no version range is
+resolved - that distinction is spelled out in [Handing a package over](../../using/handing-a-package-over/).
 
 ### `deploy`
 
