@@ -2,6 +2,36 @@
 containerlab, curl, git) goes through `run()`, which returns the REAL exit code instead of relying on
 bash's implicit `$?`/`&&` chaining - the class of footgun (#95: `modprobe` without `-a` returning rc 0)
 that motivated netctl #102. It also gives the Textual TUI one place to stream per-step output from.
+
+WHEN TO CAPTURE, decided once here rather than per call site (si#143).
+
+    Capture (`run`, the default) when the CALLER INSPECTS the output and reports its own verdict.
+    Do not capture (`stream`) when the step's whole content is a transfer somebody is waiting on.
+
+The second half is the one that goes wrong quietly, because capturing never fails - it only makes a
+long step silent, and silence looks the same as speed until somebody is four minutes into it wondering
+whether the process is alive. This kernel uploads no bytes itself: every upload is `oras push`,
+`gh release upload`, `docker push` or `dotnet nuget push`, so the tool's own reporting is the ONLY
+thing there is, and capturing it leaves the user with nothing while the tool talks to a string.
+
+There is a second reason, and it is the one that rules out the clever middle - `run_stream` below, which
+looks like it would give live output AND a captured reason. It gives neither, measured on one child
+that prints `a  17%\r` and then `b 100%\n`:
+
+    run_stream   the child reports PIPE, and the caller receives ['a  17%', 'b 100%']
+    stream       the child reports TTY,  and the caller receives b'a  17%\rb 100%\n'
+
+Two things go at once. Line iteration eats the carriage return, so a repaint arrives as separate lines -
+a bar becomes a page. And the child is looking at a pipe, which is what every tool that renders progress
+checks before deciding whether to render any. `capture=False` inherits the real descriptors, and that is
+the only arrangement in which the tool is even asked.
+
+The two halves sit four lines apart in `simplon/tasks/asset.py`, which is where the rule is easiest to
+read. `gh release create` is captured, because `_already_there()` reads "already exists" out of the text
+to tell a lost race from a real failure - a verdict nothing else can reach. `gh release upload` is not,
+because nobody reads its text and everybody waits for its bytes. A failure there says the rc and points
+at the output directly above it, the way `tasks/image.py` and `tasks/nuget.py` already do; quoting text
+the kernel no longer holds would be the trade this rule exists to avoid, one silence for another.
 """
 from __future__ import annotations
 

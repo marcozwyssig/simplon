@@ -5,6 +5,10 @@ create the release if nobody made it yet, replace an asset that is already there
 why they are three argv lists here and not a GitHub client in the kernel's dependencies. AAA throughout;
 nothing uploads anything.
 """
+import os
+import stat
+from contextlib import contextmanager
+
 import pytest
 
 from simplon import run
@@ -95,11 +99,124 @@ def test_a_create_that_failed_for_any_other_reason_attaches_nothing(gh):
 
 def test_an_upload_that_failed_is_not_reported_as_a_publication(gh):
     """`gh` returns non-zero on a half-written asset, and a task that only ever returned 0 would turn
-    that into a green release with nothing in it."""
+    that into a green release with nothing in it.
+
+    The message no longer quotes `gh`, because si#143 stopped capturing it - so what is asserted here
+    is the property this test always protected: the failure is raised, and it names the release and the
+    exit code. Where the REASON goes is the next test's subject, and it is a stronger claim than a
+    quoted string ever was.
+    """
     gh.replies["upload"] = run.Result(rc=1, out="", err="HTTP 422: validation failed")
 
-    with pytest.raises(RuntimeError, match="422"):
+    with pytest.raises(RuntimeError, match=r"0\.4\.149.*1"):
         asset.publish(name="bundle", tag="0.4.149")
+
+
+# --- si#143: the tool's own progress has to reach the user ------------------------------------------
+#
+# These two do not use the `gh` fixture. It replaces `run.run`, which is exactly the seam under test:
+# what is being asked is whether a REAL child process's output reaches a REAL file descriptor, and a
+# double at that seam can only answer whether the argv was right. So a fake `gh` goes on PATH instead
+# and the descriptors are redirected at the OS level, which is the only place the answer lives.
+
+
+_UPLOAD_SAYS = "uploading demo_linux.zip"
+_FAILURE_SAYS = "HTTP 422: your asset was refused"
+
+
+def _exactly_what_arrived(path):
+    """The bytes, not `read_text`. Text mode applies universal-newline translation, so a real carriage
+    return - the whole thing a repainting tool emits - is handed back as `\\n` and the assertion that
+    it survived passes over a file where it did not. Found by watching this test fail for that reason.
+    """
+    return path.read_bytes().decode("utf-8")
+
+
+@contextmanager
+def _descriptors_into(path):
+    """Run the block with the process's fd 1 and fd 2 pointing at `path`, the way a terminal or a CI
+    log would receive them - a child inherits descriptors, not `sys.stdout`."""
+    sink = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    kept = (os.dup(1), os.dup(2))
+    os.dup2(sink, 1)
+    os.dup2(sink, 2)
+    try:
+        yield
+    finally:
+        os.dup2(kept[0], 1)
+        os.dup2(kept[1], 2)
+        for handle in (*kept, sink):
+            os.close(handle)
+
+
+def _gh_on_path(directory, monkeypatch, *, upload_rc):
+    """A real, executable `gh` that talks the way a transfer tool talks."""
+    binaries = directory / "fake-bin"
+    binaries.mkdir(exist_ok=True)
+    script = binaries / "gh"
+    script.write_text(
+        "#!/bin/sh\n"
+        'if [ "$2" = "upload" ]; then\n'
+        f'  printf "{_UPLOAD_SAYS}  17%%\\r"\n'
+        f'  printf "{_UPLOAD_SAYS} 100%%\\n"\n'
+        f'  [ {upload_rc} -eq 0 ] || echo "{_FAILURE_SAYS}" >&2\n'
+        f"  exit {upload_rc}\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    monkeypatch.setenv("PATH", f"{binaries}{os.pathsep}{os.environ['PATH']}")
+    return binaries
+
+
+def test_the_upload_tools_own_progress_reaches_the_user_rather_than_a_variable(_product, monkeypatch):
+    """si#143's one concrete defect. `gh release upload` went through `run.run`, whose default is
+    `capture=True`, so an asset upload was exactly the long silent wait this pair of tickets exists to
+    remove: the tool knew how far along it was and the kernel put that in a string nobody read.
+
+    Driven rather than asserted on a `capture=` keyword: a real child writes to a real descriptor, and
+    the question is whether the bytes are there afterwards.
+    """
+    # arrange
+    _gh_on_path(_product, monkeypatch, upload_rc=0)
+    seen = _product / "what-the-user-saw.txt"
+
+    # act
+    with _descriptors_into(seen):
+        rc = asset.publish(name="bundle", tag="0.4.149")
+
+    # assert
+    text = _exactly_what_arrived(seen)
+    assert rc == 0
+    assert _UPLOAD_SAYS in text, f"the upload tool's own progress was swallowed: {text!r}"
+    assert "\r" in text, "gh's repaint reached the user rewritten rather than as it was written"
+
+
+def test_a_failed_upload_still_says_what_went_wrong(_product, monkeypatch):
+    """The trade this must NOT make. A step that stops capturing can also stop reporting WHY it failed,
+    which would answer one silence with another.
+
+    Both halves are asserted, because either alone is satisfiable by a defect: `gh`'s own reason is on
+    the descriptors the user is reading, and the raise names the release and the exit code so a caller
+    that only has the exception still knows which step died.
+    """
+    # arrange
+    _gh_on_path(_product, monkeypatch, upload_rc=1)
+    seen = _product / "what-the-user-saw.txt"
+
+    # act
+    with _descriptors_into(seen):
+        try:
+            asset.publish(name="bundle", tag="0.4.149")
+            raised = None
+        except RuntimeError as failure:
+            raised = str(failure)
+
+    # assert
+    text = _exactly_what_arrived(seen)
+    assert raised is not None, "a failed upload was reported as a publication"
+    assert _FAILURE_SAYS in text, f"gh's reason reached nobody: {text!r}"
+    assert "0.4.149" in raised and "1" in raised, raised
 
 
 def test_a_source_that_matches_nothing_is_named_before_the_release_is_touched(gh, _product):
