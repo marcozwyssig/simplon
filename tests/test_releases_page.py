@@ -165,6 +165,11 @@ COMPLETE_FROM = (0, 5, 0)
 #: this rule will never ask for it. That is a floor on what the notes must say, not a claim that it is
 #: the ceiling.
 _TICKET = re.compile(r"(?:si)?#(\d+)\b")
+#: The subject GitHub composes when a pull request is merged from its web interface (si#103). The number
+#: in it is the PULL REQUEST's, which is a statement about the vorgang and not about the work - and when
+#: the notes PR is merged that way it names ITSELF, which no notes could have anticipated. So this
+#: subject is not read for tickets; the commits it brought in are read instead.
+_GITHUB_PR_MERGE = re.compile(r"Merge pull request #\d+ from \S+")
 _BRANCH = re.compile(r"\bsi(\d+)-")
 
 #: The subject GitHub composes for the merge it builds itself - two full hashes and not one word more
@@ -206,10 +211,36 @@ def merge_subjects(start: str, end: str) -> list[str]:
     scaffolding a `pull_request` run is built on, gone the moment the pull request closes - so it belongs
     in no release range's population at all, and asking it for a ticket made every pull request red.
     """
-    out = subprocess.run(["git", "log", "--merges", "--format=%s", f"{start}..{end}"],
+    out = subprocess.run(["git", "log", "--merges", "--format=%H\t%s", f"{start}..{end}"],
                          cwd=ROOT, capture_output=True, text=True, check=True)
-    return [line.strip() for line in out.stdout.splitlines()
-            if line.strip() and not is_githubs_own_merge(line.strip())]
+    merges = []
+    for line in out.stdout.splitlines():
+        sha, _, subject = line.partition("\t")
+        if subject.strip() and not is_githubs_own_merge(subject.strip()):
+            merges.append((sha, subject.strip()))
+    return merges
+
+
+def tickets_of(sha: str, subject: str) -> set[int]:
+    """The tickets a merge NAMES, reading one level down when GitHub wrote the subject (si#103).
+
+    An authored merge subject is a statement about the work, and it is read as one. GitHub's
+    `Merge pull request #N from <branch>` is not: the number in it is the pull request's, so a notes PR
+    merged that way names ITSELF and nothing could have anticipated it - v0.8.0 failed on exactly that,
+    and no follow-up PR could have fixed it, because it would have brought its own number too.
+
+    The assurance does not weaken. What the author wrote is still required; it is simply looked for where
+    the author wrote it, which for a web-interface merge is the commits the merge brought in.
+    """
+    if not _GITHUB_PR_MERGE.fullmatch(subject):
+        return tickets_in(subject)
+    out = subprocess.run(["git", "log", "--no-merges", "--format=%s", f"{sha}^1..{sha}^2"],
+                         cwd=ROOT, capture_output=True, text=True, check=True)
+    written = {n for line in out.stdout.splitlines() for n in tickets_in(line)}
+    # The author's statement if there is one, else the only number there is. The fallback keeps the older
+    # ranges honest - several merges from before the convention name nothing in their commits either, and
+    # dropping them would excuse work rather than describe it.
+    return written or tickets_in(subject)
 
 
 def sections() -> dict[tuple[int, ...], str]:
@@ -263,7 +294,7 @@ def test_every_merge_in_a_documented_range_names_its_ticket():
 
     # act
     silent = {rng: subject for rng in ranges.values()
-              for subject in merge_subjects(*rng) if not tickets_in(subject)}
+              for sha, subject in merge_subjects(*rng) if not tickets_of(sha, subject)}
     counted = sum(len(merge_subjects(*rng)) for rng in ranges.values())
 
     # assert
@@ -274,6 +305,37 @@ def test_every_merge_in_a_documented_range_names_its_ticket():
         "them: " + "; ".join(f"{rng[0]}..{rng[1]}: {subject!r}" for rng, subject in silent.items())
         + ". A merge subject is where a release range says what it carries - write the number into it "
           "(`#42`, `si#42`, or a `si42-` branch name), or this file cannot see the change at all")
+
+
+def test_a_web_merge_is_read_from_the_commits_it_brought_not_from_its_pr_number(tmp_path):
+    """si#103: the catch-22 that stopped v0.8.0, and could not have been fixed by another pull request.
+
+    A pull request merged from GitHub's web interface gets the subject `Merge pull request #N from ...`.
+    The number there is the PULL REQUEST's, so the release-notes PR names ITSELF - and no notes could
+    have anticipated their own merge. A follow-up PR would have brought its own number too; the regress
+    has no floor. So a subject GitHub composed is not read as a statement, and the commits it brought in
+    are read instead.
+    """
+    # arrange: a real merge in this repository's own history, made from the web interface
+    subject = "Merge pull request #94 from marcozwyssig/docs/92-the-0-8-0-notes"
+
+    # act / assert: it is GitHub's wording, so the subject itself is not the source
+    assert _GITHUB_PR_MERGE.fullmatch(subject)
+    assert 94 in tickets_in(subject), "the PR number IS in the subject - that is exactly the problem"
+
+
+def test_an_authored_merge_subject_is_still_read_as_written():
+    """The assurance does not weaken: what a person wrote is still what the range is measured against."""
+    # arrange / act / assert
+    assert tickets_of("HEAD", "merge: die Gruppenmitgliedschaft gehoert zum Install (#87)") == {87}
+    assert not _GITHUB_PR_MERGE.fullmatch("merge: something a person wrote (#87)")
+
+
+def test_a_web_merge_whose_commits_name_nothing_falls_back_to_its_number():
+    """Several merges from before the convention name nothing in their commits either. Dropping them
+    would EXCUSE work rather than describe it, so the number in the subject is the floor."""
+    # arrange / act / assert: the fallback is what keeps the pre-convention ranges honest
+    assert tickets_in("Merge pull request #72 from marcozwyssig/feat/release-asset") == {72}
 
 
 def test_githubs_own_ephemeral_merge_is_not_counted_as_silent():
@@ -342,7 +404,7 @@ def test_every_ticket_merged_into_a_release_is_named_in_its_section():
     # act
     gaps = {}
     for version, (start, end) in under_test.items():
-        merged = {number for s in merge_subjects(start, end) for number in tickets_in(s)}
+        merged = {number for sha, subj in merge_subjects(start, end) for number in tickets_of(sha, subj)}
         named = tickets_in(body[version])
         if merged - named:
             gaps[version] = (sorted(merged - named), start, end, len(merged))
@@ -406,7 +468,7 @@ def test_the_excused_section_really_is_the_one_that_could_not_pass():
     """
     # arrange
     start, end = ranges_under_test()[FLOOR]
-    merged = {number for s in merge_subjects(start, end) for number in tickets_in(s)}
+    merged = {number for sha, subj in merge_subjects(start, end) for number in tickets_of(sha, subj)}
     named = tickets_in(sections()[FLOOR])
 
     # assert
