@@ -188,6 +188,20 @@ class Gate:
     what a gate writes - an `impl` gate writes nothing the kernel can see - but about whose run the
     results dir belongs to, and that question has the same answer whoever runs the tests. It used to be
     refused on an `impl` gate, which left a product whose only runner is its own unable to say it at all.
+
+    `results_from` IS THE SECOND SUCH KEY (si#133), and it names the directory THIS GATE'S OWN RUNNER
+    wrote its results into - a `ctest --output-junit` file, a Gradle build's JUnit XML, a `dotnet test`
+    TRX. The merge behind it is not new: `allure.merge_results` has been technology-agnostic since it was
+    written, and a product reached it by writing an `impl:` gate that called it in Python. That is the
+    whole finding - the capability was real, undeclared, and reachable only by writing the Python the
+    manifest exists to avoid.
+
+    IT IS LEGAL ON EVERY KIND, for `results`' own reason and not by omission. The mechanism does not vary
+    with the kind: a directory is merged and the contribution is checked. A pytest gate rarely wants it,
+    because the kernel already points `--alluredir` at the shared results dir, but wanting it rarely is
+    not the same as being unable to say it, and a refusal here would be a rule with no measured defect
+    behind it - `rules.md`'s own sorting question, would the refused manifest have produced a working
+    product, answers yes.
     """
 
     name: str
@@ -195,6 +209,7 @@ class Gate:
     impl: str = ""
     command: str = ""
     results: str = APPEND
+    results_from: str = ""
     junit: str = ""
     args: bool = False
     precondition: str = ""
@@ -299,7 +314,8 @@ def _gate(body: object, where: str) -> Gate:
     junit = _str(body, "junit", where)
     if suite and not junit:
         raise ValueError(f"{where}: a pytest gate must declare its own 'junit' file name")
-    return Gate(name=name, suite=suite, impl=impl, command=command, results=results, junit=junit,
+    return Gate(name=name, suite=suite, impl=impl, command=command, results=results,
+                results_from=_str(body, "results_from", where), junit=junit,
                 args=bool(body.get("args", False)),
                 precondition=_str(body, "precondition", where),
                 preamble=_str(body, "preamble", where),
