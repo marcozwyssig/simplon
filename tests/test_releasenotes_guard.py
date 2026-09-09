@@ -64,11 +64,17 @@ releases:
 """
 
 
-def _product(root: Path, page: str, manifest: str = MANIFEST) -> None:
-    """Register the repository as the current product, with `page` as its release notes."""
+def _product(monkeypatch, root: Path, page: str, manifest: str = MANIFEST) -> None:
+    """Register the repository as the current product, with `page` as its release notes.
+
+    Through `monkeypatch` rather than `set_current`: the latter is a module global and would leak this
+    test's product into the next one. pytest reverts a monkeypatched attribute at the end of the test
+    that set it, which is the shape `tests/test_tasks_artifact.py` already uses.
+    """
     (root / "notes.md").write_text(page, encoding="utf-8")
     (root / "sample.yaml").write_text(manifest, encoding="utf-8")
-    context.set_current(context.ProductContext("sample", root, root / "sample.yaml"))
+    monkeypatch.setattr(context, "_current",
+                        context.ProductContext("sample", root, root / "sample.yaml"))
 
 
 def _complete_release(tmp_path: Path) -> Path:
@@ -104,12 +110,12 @@ Prose written before the rule, naming no numbers at all.
 
 # --- green: the shape a correct page has ---------------------------------------------------------------
 
-def test_a_page_that_names_every_merged_ticket_passes(tmp_path, capsys):
+def test_a_page_that_names_every_merged_ticket_passes(tmp_path, capsys, monkeypatch):
     """The baseline the reds below are measured against: without it, a red proves only that the gate is
     broken."""
     # arrange
     root = _complete_release(tmp_path)
-    _product(root, COMPLETE_PAGE)
+    _product(monkeypatch, root, COMPLETE_PAGE)
 
     # act
     rc = releasenotes.check()
@@ -122,7 +128,7 @@ def test_a_page_that_names_every_merged_ticket_passes(tmp_path, capsys):
 
 # --- red: the failure si#82 was raised for, produced by breaking the page -------------------------------
 
-def test_a_ticket_merged_into_a_release_and_missing_from_its_section_is_refused(tmp_path, capsys):
+def test_a_ticket_merged_into_a_release_and_missing_from_its_section_is_refused(tmp_path, capsys, monkeypatch):
     """THE PROOF si#89 IS WORTH. The repository carries a merge for si#41 and the 0.5.0 section does not
     name it, so the section describes less than the release it names - which is exactly the failure that
     shipped once here, a section describing the pull request it was written in rather than the tag.
@@ -132,7 +138,7 @@ def test_a_ticket_merged_into_a_release_and_missing_from_its_section_is_refused(
     """
     # arrange: the correct page with ONE number taken out of it
     root = _complete_release(tmp_path)
-    _product(root, COMPLETE_PAGE.replace("si#40 brought the workflows and si#41 the thing.",
+    _product(monkeypatch, root, COMPLETE_PAGE.replace("si#40 brought the workflows and si#41 the thing.",
                                          "si#40 brought the workflows."))
 
     # act
@@ -145,12 +151,12 @@ def test_a_ticket_merged_into_a_release_and_missing_from_its_section_is_refused(
     assert "missing: si#41" in said
 
 
-def test_a_tagged_release_with_no_section_at_all_is_refused(tmp_path, capsys):
+def test_a_tagged_release_with_no_section_at_all_is_refused(tmp_path, capsys, monkeypatch):
     """The failure the guard was built for first: a version is tagged, published, and never written up.
     Silent today, and silent forever - nothing else in a repository notices."""
     # arrange
     root = _complete_release(tmp_path)
-    _product(root, COMPLETE_PAGE.replace("## 0.5.0", "## 0.5.1"))
+    _product(monkeypatch, root, COMPLETE_PAGE.replace("## 0.5.0", "## 0.5.1"))
 
     # act
     rc = releasenotes.check()
@@ -161,7 +167,7 @@ def test_a_tagged_release_with_no_section_at_all_is_refused(tmp_path, capsys):
     assert "released but not on the page: v0.5.0" in said
 
 
-def test_a_section_for_a_version_nobody_can_install_is_refused(tmp_path, capsys):
+def test_a_section_for_a_version_nobody_can_install_is_refused(tmp_path, capsys, monkeypatch):
     """A section for a version that carries no tag is a promise about a release nobody can install.
 
     With ONE exception, and it is the workflow rather than a loophole: the notes for a release are
@@ -171,7 +177,7 @@ def test_a_section_for_a_version_nobody_can_install_is_refused(tmp_path, capsys)
     """
     # arrange: a second section above every tag, beside the prepared one
     root = _complete_release(tmp_path)
-    _product(root, COMPLETE_PAGE.replace("## 0.6.0", "## 0.7.0\n\nAnother one, si#61.\n\n## 0.6.0"))
+    _product(monkeypatch, root, COMPLETE_PAGE.replace("## 0.6.0", "## 0.7.0\n\nAnother one, si#61.\n\n## 0.6.0"))
 
     # act
     rc = releasenotes.check()
@@ -184,7 +190,7 @@ def test_a_section_for_a_version_nobody_can_install_is_refused(tmp_path, capsys)
                              "the legitimate one and 0.7.0 is the promise nobody can install"
 
 
-def test_a_merge_that_names_no_ticket_is_refused_before_completeness_is_judged(tmp_path, capsys):
+def test_a_merge_that_names_no_ticket_is_refused_before_completeness_is_judged(tmp_path, capsys, monkeypatch):
     """The precondition the completeness rule rests on, held as its own verdict rather than assumed.
 
     A rule reading merge subjects is worth exactly what those subjects say. A merge that names nothing is
@@ -194,7 +200,7 @@ def test_a_merge_that_names_no_ticket_is_refused_before_completeness_is_judged(t
     # arrange
     root = _complete_release(tmp_path)
     _merge(root, "aufraeumen", ["chore: tidy up"], "merge: aufraeumen")
-    _product(root, COMPLETE_PAGE)
+    _product(monkeypatch, root, COMPLETE_PAGE)
 
     # act
     rc = releasenotes.check()
@@ -207,7 +213,7 @@ def test_a_merge_that_names_no_ticket_is_refused_before_completeness_is_judged(t
     assert "write the number into it" in said
 
 
-def test_a_section_below_the_completeness_floor_is_not_held_to_naming_its_tickets(tmp_path, capsys):
+def test_a_section_below_the_completeness_floor_is_not_held_to_naming_its_tickets(tmp_path, capsys, monkeypatch):
     """The exemption, and it is the GAP between the two declared floors rather than a list.
 
     0.4.0's notes here predate the rule and name no number at all. An exemption list would be the thing
@@ -221,7 +227,7 @@ def test_a_section_below_the_completeness_floor_is_not_held_to_naming_its_ticket
     _git(root, "tag", "v0.4.0")
     _merge(root, "si40-workflows", ["feat(#40): the workflows"], "merge: si40-workflows")
     _git(root, "tag", "v0.5.0")
-    _product(root, """---
+    _product(monkeypatch, root, """---
 title: "Releases"
 ---
 
@@ -247,7 +253,7 @@ Prose written before the rule, naming no numbers at all.
 
 # --- si#103: the self-reference, accepted ---------------------------------------------------------------
 
-def test_a_notes_pull_request_naming_its_own_number_is_accepted(tmp_path, capsys):
+def test_a_notes_pull_request_naming_its_own_number_is_accepted(tmp_path, capsys, monkeypatch):
     """THE PROOF si#103 IS WORTH, and the case that stopped a release outright.
 
     The notes for 0.6.0 are written on a branch for si#61 and merged from GitHub's web interface, so the
@@ -266,7 +272,7 @@ def test_a_notes_pull_request_naming_its_own_number_is_accepted(tmp_path, capsys
     _git(root, "tag", "v0.5.0")
     _merge(root, "docs/61-the-0-6-0-notes", ["docs(#61): the 0.6.0 notes"],
            "Merge pull request #62 from marcozwyssig/docs/61-the-0-6-0-notes")
-    _product(root, COMPLETE_PAGE)
+    _product(monkeypatch, root, COMPLETE_PAGE)
 
     # act
     rc = releasenotes.check()
@@ -277,7 +283,7 @@ def test_a_notes_pull_request_naming_its_own_number_is_accepted(tmp_path, capsys
     assert "62" not in said.out.split("HEAD is")[0], "the PR number is not what the section is asked for"
 
 
-def test_the_same_pull_request_still_has_to_name_the_ticket_its_commits_do(tmp_path, capsys):
+def test_the_same_pull_request_still_has_to_name_the_ticket_its_commits_do(tmp_path, capsys, monkeypatch):
     """The assurance si#103 must not spend. What the author WROTE is still required - it is simply looked
     for where the author wrote it. Take si#61 out of the section and the same merge goes red."""
     # arrange: the identical repository, with the ticket removed from the prepared section
@@ -287,7 +293,7 @@ def test_the_same_pull_request_still_has_to_name_the_ticket_its_commits_do(tmp_p
     _git(root, "tag", "v0.5.0")
     _merge(root, "docs/61-the-0-6-0-notes", ["docs(#61): the 0.6.0 notes"],
            "Merge pull request #62 from marcozwyssig/docs/61-the-0-6-0-notes")
-    _product(root, COMPLETE_PAGE.replace("The release being prepared, and it carries si#61.",
+    _product(monkeypatch, root, COMPLETE_PAGE.replace("The release being prepared, and it carries si#61.",
                                          "The release being prepared."))
 
     # act
@@ -301,7 +307,7 @@ def test_the_same_pull_request_still_has_to_name_the_ticket_its_commits_do(tmp_p
 
 # --- the range, made legible ----------------------------------------------------------------------------
 
-def test_every_run_says_what_head_resolved_to_and_which_range_each_section_answers_for(tmp_path, capsys):
+def test_every_run_says_what_head_resolved_to_and_which_range_each_section_answers_for(tmp_path, capsys, monkeypatch):
     """The half that was missing when this guard fired twice in one evening and surprised people twice.
 
     The range is `<last tag>..HEAD` of the STATE being checked, and which state that is depends on the
@@ -311,7 +317,7 @@ def test_every_run_says_what_head_resolved_to_and_which_range_each_section_answe
     """
     # arrange
     root = _complete_release(tmp_path)
-    _product(root, COMPLETE_PAGE)
+    _product(monkeypatch, root, COMPLETE_PAGE)
 
     # act
     releasenotes.check()
@@ -323,7 +329,7 @@ def test_every_run_says_what_head_resolved_to_and_which_range_each_section_answe
     assert "v0.6.0     v0.5.0..HEAD" in said
 
 
-def test_githubs_own_merge_at_head_is_named_as_the_pull_request_checkout(tmp_path, capsys):
+def test_githubs_own_merge_at_head_is_named_as_the_pull_request_checkout(tmp_path, capsys, monkeypatch):
     """The exact surprise, reproduced: a `pull_request` run's HEAD is GitHub's merge of the branch with
     the base, so the range is the branch AS MERGED and carries whatever the base gained meanwhile. That
     sentence is printed instead of left for somebody to reconstruct from a red."""
@@ -332,7 +338,7 @@ def test_githubs_own_merge_at_head_is_named_as_the_pull_request_checkout(tmp_pat
     left = _git(root, "rev-parse", "HEAD").strip()
     _merge(root, "pull-62", ["feat(#61): more of the census"],
            f"Merge {'a' * 40} into {left}")
-    _product(root, COMPLETE_PAGE)
+    _product(monkeypatch, root, COMPLETE_PAGE)
 
     # act
     releasenotes.check()
@@ -345,7 +351,7 @@ def test_githubs_own_merge_at_head_is_named_as_the_pull_request_checkout(tmp_pat
 
 # --- the gate that ruled on nothing ----------------------------------------------------------------------
 
-def test_a_run_that_ruled_on_nothing_is_red_rather_than_green(tmp_path, capsys):
+def test_a_run_that_ruled_on_nothing_is_red_rather_than_green(tmp_path, capsys, monkeypatch):
     """The defect this repository hunts most, in the one place a release-notes gate would hide it well.
 
     A floor above every release leaves the gate with nothing to measure, and a green there is a report
@@ -353,7 +359,7 @@ def test_a_run_that_ruled_on_nothing_is_red_rather_than_green(tmp_path, capsys):
     """
     # arrange: a floor above every tag this repository carries
     root = _complete_release(tmp_path)
-    _product(root, COMPLETE_PAGE, manifest=MANIFEST.replace('from: "0.4.0"', 'from: "9.0.0"')
+    _product(monkeypatch, root, COMPLETE_PAGE, manifest=MANIFEST.replace('from: "0.4.0"', 'from: "9.0.0"')
                                                   .replace('complete_from: "0.5.0"', 'complete_from: "9.0.0"'))
 
     # act
@@ -366,7 +372,7 @@ def test_a_run_that_ruled_on_nothing_is_red_rather_than_green(tmp_path, capsys):
     assert "9.0.0" in said
 
 
-def test_a_checkout_with_no_tags_is_diagnosed_as_the_checkout_and_not_as_the_page(tmp_path, capsys):
+def test_a_checkout_with_no_tags_is_diagnosed_as_the_checkout_and_not_as_the_page(tmp_path, capsys, monkeypatch):
     """A red that names the wrong cause costs more than no red at all, and this is where one was found.
 
     With no tag in the checkout, the rule about sections that promise an uninstallable version fires on
@@ -377,7 +383,7 @@ def test_a_checkout_with_no_tags_is_diagnosed_as_the_checkout_and_not_as_the_pag
     # arrange: a real repository, real merges, real page - and no tags
     root = _repo(tmp_path)
     _merge(root, "si40-workflows", ["feat(#40): the workflows"], "merge: si40-workflows")
-    _product(root, COMPLETE_PAGE)
+    _product(monkeypatch, root, COMPLETE_PAGE)
 
     # act
     rc = releasenotes.check()
@@ -391,12 +397,12 @@ def test_a_checkout_with_no_tags_is_diagnosed_as_the_checkout_and_not_as_the_pag
         "the page must not be blamed for what the checkout did not fetch"
 
 
-def test_a_missing_page_is_refused_by_the_path_the_manifest_named(tmp_path, capsys):
+def test_a_missing_page_is_refused_by_the_path_the_manifest_named(tmp_path, capsys, monkeypatch):
     """The manifest says where the notes live, so a page that is not there is a broken declaration, and
     the message names the path rather than the mistake."""
     # arrange
     root = _complete_release(tmp_path)
-    _product(root, COMPLETE_PAGE)
+    _product(monkeypatch, root, COMPLETE_PAGE)
     (root / "notes.md").unlink()
 
     # act
@@ -408,14 +414,14 @@ def test_a_missing_page_is_refused_by_the_path_the_manifest_named(tmp_path, caps
     assert "notes.md" in said and "does not exist" in said
 
 
-def test_a_checkout_git_cannot_read_is_a_failure_and_not_an_empty_answer(tmp_path, capsys):
+def test_a_checkout_git_cannot_read_is_a_failure_and_not_an_empty_answer(tmp_path, capsys, monkeypatch):
     """`git tag` in a directory that is no repository exits non-zero, and an empty answer there would
     read as "no releases" - a broken checkout coming out green. So it is a refusal with git's own words
     in it."""
     # arrange: a product tree that is not a git repository
     root = tmp_path / "product"
     root.mkdir()
-    _product(root, COMPLETE_PAGE)
+    _product(monkeypatch, root, COMPLETE_PAGE)
 
     # act
     rc = releasenotes.check()
@@ -426,11 +432,11 @@ def test_a_checkout_git_cannot_read_is_a_failure_and_not_an_empty_answer(tmp_pat
     assert "git tag" in said
 
 
-def test_a_manifest_without_the_section_stops_the_gate_before_it_touches_git(tmp_path, capsys):
+def test_a_manifest_without_the_section_stops_the_gate_before_it_touches_git(tmp_path, capsys, monkeypatch):
     """A product that placed the command and declared nothing is told which three values it owes."""
     # arrange
     root = _complete_release(tmp_path)
-    _product(root, COMPLETE_PAGE, manifest="product: sample\n")
+    _product(monkeypatch, root, COMPLETE_PAGE, manifest="product: sample\n")
 
     # act
     rc = releasenotes.check()

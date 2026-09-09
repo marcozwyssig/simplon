@@ -66,9 +66,16 @@ def _merge(root: Path, branch: str, subjects: list[str], merge_subject: str) -> 
     return _git(root, "rev-parse", "HEAD").strip()
 
 
-def _manifest(root: Path, body: str) -> None:
+def _manifest(monkeypatch, root: Path, body: str) -> None:
+    """Register the tree as the process' product, through `monkeypatch` rather than `set_current`.
+
+    `set_current` is a module global and would leak the product built for one test into the next; pytest
+    reverts a monkeypatched attribute at the end of the test that set it. Same shape as
+    `tests/test_tasks_artifact.py` and `tests/test_buildfiles_e2e.py`.
+    """
     (root / "sample.yaml").write_text(body, encoding="utf-8")
-    context.set_current(context.ProductContext("sample", root, root / "sample.yaml"))
+    monkeypatch.setattr(context, "_current",
+                        context.ProductContext("sample", root, root / "sample.yaml"))
 
 
 THREE_KEYS = """
@@ -82,11 +89,11 @@ releases:
 
 # --- the product's declaration ----------------------------------------------------------------------
 
-def test_the_three_declared_values_are_read_back_as_the_product_wrote_them(tmp_path):
+def test_the_three_declared_values_are_read_back_as_the_product_wrote_them(tmp_path, monkeypatch):
     """The whole of what a product says, and the whole of what the kernel may know about it."""
     # arrange
     root = _repo(tmp_path)
-    _manifest(root, THREE_KEYS)
+    _manifest(monkeypatch, root, THREE_KEYS)
 
     # act
     spec = releasenotes.declared()
@@ -98,7 +105,7 @@ def test_the_three_declared_values_are_read_back_as_the_product_wrote_them(tmp_p
     assert spec.complete_from == (0, 5, 0)
 
 
-def test_a_manifest_with_no_releases_section_is_refused_naming_the_three_keys(tmp_path, capsys):
+def test_a_manifest_with_no_releases_section_is_refused_naming_the_three_keys(tmp_path, capsys, monkeypatch):
     """A product that placed the command and declared nothing gets a sentence, not a traceback.
 
     The refusal is at RUN time rather than at load, deliberately: the section is read inside the body,
@@ -107,7 +114,7 @@ def test_a_manifest_with_no_releases_section_is_refused_naming_the_three_keys(tm
     """
     # arrange
     root = _repo(tmp_path)
-    _manifest(root, "product: sample\n")
+    _manifest(monkeypatch, root, "product: sample\n")
 
     # act
     spec = releasenotes.declared()
@@ -121,11 +128,11 @@ def test_a_manifest_with_no_releases_section_is_refused_naming_the_three_keys(tm
 
 
 @pytest.mark.parametrize("missing", ["page", "from", "complete_from"])
-def test_each_missing_key_is_refused_by_its_own_name(tmp_path, capsys, missing):
+def test_each_missing_key_is_refused_by_its_own_name(tmp_path, capsys, monkeypatch, missing):
     """Three values and three refusals: "something is wrong with your manifest" is not a diagnosis."""
     # arrange
     root = _repo(tmp_path)
-    _manifest(root, "\n".join(line for line in THREE_KEYS.splitlines()
+    _manifest(monkeypatch, root, "\n".join(line for line in THREE_KEYS.splitlines()
                               if not line.strip().startswith(f"{missing}:")))
 
     # act
@@ -138,7 +145,8 @@ def test_each_missing_key_is_refused_by_its_own_name(tmp_path, capsys, missing):
 
 
 @pytest.mark.parametrize("value", ["0.4", "v0.4.0", "latest", "0.4.0.1", ""])
-def test_a_floor_that_is_not_a_three_part_version_is_refused_with_the_value_in_it(tmp_path, capsys, value):
+def test_a_floor_that_is_not_a_three_part_version_is_refused_with_the_value_in_it(tmp_path, capsys,
+                                                                                    monkeypatch, value):
     """`from:` is a VERSION, spelled the way the page spells its headings - not the tag, not a range.
 
     `v0.4.0` is refused too, and that is the interesting one: the tag carries the `v`, the heading does
@@ -146,7 +154,7 @@ def test_a_floor_that_is_not_a_three_part_version_is_refused_with_the_value_in_i
     """
     # arrange
     root = _repo(tmp_path)
-    _manifest(root, THREE_KEYS.replace('from: "0.4.0"', f'from: "{value}"'))
+    _manifest(monkeypatch, root, THREE_KEYS.replace('from: "0.4.0"', f'from: "{value}"'))
 
     # act
     spec = releasenotes.declared()
@@ -159,12 +167,12 @@ def test_a_floor_that_is_not_a_three_part_version_is_refused_with_the_value_in_i
     assert (value in said) if value else True
 
 
-def test_a_completeness_floor_below_the_notes_floor_is_refused(tmp_path, capsys):
+def test_a_completeness_floor_below_the_notes_floor_is_refused(tmp_path, capsys, monkeypatch):
     """It would excuse nothing and mean nothing: a section below `from` is not required to exist at all,
     so requiring it to be COMPLETE is a statement about a section the same manifest says may be absent."""
     # arrange
     root = _repo(tmp_path)
-    _manifest(root, THREE_KEYS.replace('complete_from: "0.5.0"', 'complete_from: "0.3.0"'))
+    _manifest(monkeypatch, root, THREE_KEYS.replace('complete_from: "0.5.0"', 'complete_from: "0.3.0"'))
 
     # act
     spec = releasenotes.declared()
@@ -176,13 +184,13 @@ def test_a_completeness_floor_below_the_notes_floor_is_refused(tmp_path, capsys)
     assert "complete_from" in said and "0.3.0" in said and "0.4.0" in said
 
 
-def test_the_two_floors_may_be_equal_and_then_nothing_is_excused(tmp_path):
+def test_the_two_floors_may_be_equal_and_then_nothing_is_excused(tmp_path, monkeypatch):
     """A product adopting the guard from its first release excuses nothing, and says so by writing the
     same number twice. The excused set is the GAP between the two floors, so an empty gap is the normal
     state rather than a special case - which is the reason there is no exemption LIST to grow quietly."""
     # arrange
     root = _repo(tmp_path)
-    _manifest(root, THREE_KEYS.replace('complete_from: "0.5.0"', 'complete_from: "0.4.0"'))
+    _manifest(monkeypatch, root, THREE_KEYS.replace('complete_from: "0.5.0"', 'complete_from: "0.4.0"'))
 
     # act
     spec = releasenotes.declared()
@@ -193,12 +201,12 @@ def test_the_two_floors_may_be_equal_and_then_nothing_is_excused(tmp_path):
 
 
 @pytest.mark.parametrize("page", ["/etc/passwd", "../outside/notes.md"])
-def test_a_page_outside_the_product_root_is_refused(tmp_path, capsys, page):
+def test_a_page_outside_the_product_root_is_refused(tmp_path, capsys, monkeypatch, page):
     """The path is only ever READ, so this is diagnosis rather than protection: a manifest naming a file
     outside its own checkout as its release notes is broken, and saying so costs a product nothing."""
     # arrange
     root = _repo(tmp_path)
-    _manifest(root, THREE_KEYS.replace('page: "notes.md"', f'page: "{page}"'))
+    _manifest(monkeypatch, root, THREE_KEYS.replace('page: "notes.md"', f'page: "{page}"'))
 
     # act
     spec = releasenotes.declared()

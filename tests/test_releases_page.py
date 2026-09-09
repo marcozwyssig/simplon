@@ -48,19 +48,21 @@ from conftest import ROOT
 PAGE = ROOT / "site" / "content" / "using" / "releases.md"
 
 
-def _declared() -> releasenotes.Declared:
+def _declared(monkeypatch) -> releasenotes.Declared:
     """simplon's own `releases:` section, read the way the gate reads it.
 
-    Registering the context here rather than at import keeps this file from deciding the process' product
-    for every other test module that shares the session.
+    Through `monkeypatch` rather than `set_current`, which is a module global: registering simplon as the
+    process' product for the rest of the session would decide it for every other test module that shares
+    it. pytest reverts the attribute at the end of the test that set it.
     """
-    context.set_current(context.ProductContext("simplon", ROOT, ROOT / "simplon.yaml"))
+    monkeypatch.setattr(context, "_current",
+                        context.ProductContext("simplon", ROOT, ROOT / "simplon.yaml"))
     spec = releasenotes.declared()
     assert spec is not None, "simplon.yaml's own `releases:` section must load - the gate reads it too"
     return spec
 
 
-def test_the_page_states_the_floor_the_manifest_holds_it_to():
+def test_the_page_states_the_floor_the_manifest_holds_it_to(monkeypatch):
     """The floor lives in two places - `simplon.yaml` and the page's own prose - so it is pinned here.
 
     Without this, moving the floor in the manifest alone would quietly excuse a missing section while the
@@ -76,7 +78,7 @@ def test_the_page_states_the_floor_the_manifest_holds_it_to():
     one somebody wrote ABOUT the rule - the same reading its neighbour below already used.
     """
     # arrange
-    floor = releasenotes.spell(_declared().first)
+    floor = releasenotes.spell(_declared(monkeypatch).first)
 
     # act
     intro = PAGE.read_text(encoding="utf-8").split("\n## ", 1)[0]
@@ -87,7 +89,7 @@ def test_the_page_states_the_floor_the_manifest_holds_it_to():
         f"the floor simplon.yaml holds it to")
 
 
-def test_the_page_says_from_which_release_every_ticket_is_named():
+def test_the_page_says_from_which_release_every_ticket_is_named(monkeypatch):
     """The completeness boundary lives in two places too, and the same argument pins it.
 
     Read out of the INTRODUCTION rather than the whole page, and that is what makes it an assertion:
@@ -96,7 +98,7 @@ def test_the_page_says_from_which_release_every_ticket_is_named():
     one somebody wrote about the rule.
     """
     # arrange
-    boundary = releasenotes.spell(_declared().complete_from)
+    boundary = releasenotes.spell(_declared(monkeypatch).complete_from)
 
     # act
     intro = PAGE.read_text(encoding="utf-8").split("\n## ", 1)[0]
@@ -107,7 +109,7 @@ def test_the_page_says_from_which_release_every_ticket_is_named():
         f"listed, because that is the boundary simplon.yaml holds it to")
 
 
-def test_exactly_one_section_is_excused_from_completeness():
+def test_exactly_one_section_is_excused_from_completeness(monkeypatch):
     """Half of what pays for the gap between the two floors: the exemption may not grow.
 
     An exemption's real cost is not the case it was written for, it is the second case somebody adds to
@@ -120,7 +122,7 @@ def test_exactly_one_section_is_excused_from_completeness():
     and a kernel rule pinning one would be simplon's history imposed on everybody.
     """
     # arrange
-    spec = _declared()
+    spec = _declared(monkeypatch)
     documented = releasenotes.documented_versions(PAGE.read_text(encoding="utf-8"))
 
     # act
@@ -135,7 +137,7 @@ def test_exactly_one_section_is_excused_from_completeness():
         f"wrote up")
 
 
-def test_the_excused_section_really_is_the_one_that_could_not_pass():
+def test_the_excused_section_really_is_the_one_that_could_not_pass(monkeypatch):
     """The other half, and the reason the exemption is not simply a hole.
 
     An exemption is worth nothing if the thing it excuses would have passed anyway - it then guards
@@ -147,7 +149,7 @@ def test_the_excused_section_really_is_the_one_that_could_not_pass():
     be a tag" is required, in its own assertion, to really never have been cut.
     """
     # arrange
-    spec = _declared()
+    spec = _declared(monkeypatch)
     body = PAGE.read_text(encoding="utf-8")
     start, end = releasenotes.ranges_under_test(ROOT, body, spec.first)[spec.first]
 
