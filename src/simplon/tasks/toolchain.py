@@ -11,12 +11,36 @@ empty tag and the literal `latest` are refused THERE, with its wording, and this
 diagnosis across to the way a command refuses - `log.die`, which is how the two other faults in
 `declared` end. It raises `ValueError` because its other callers validate manifests at import; a command
 body that let that escape would exit through a traceback instead of a diagnosis.
+
+WHY `scaffold` SPLICES TEXT INSTEAD OF REWRITING THE FILE (si#110). It used to read the manifest with
+`yaml.safe_load` and write it back with `yaml.safe_dump`, and a round trip through a plain loader keeps
+no comment and no flow style: measured on a manifest `simplon init` had just written, 42 comment lines
+at column 0 went to 0, and every `{ task: x }` collapsed to block style, so the diff was the whole file.
+That spends exactly the argument scaffolding is chosen for - the product reads its own build in its own
+file, which is what makes a review of it possible (si#95) - because a manifest without its explanations
+is not a file anybody reads.
+
+A round-trip-preserving loader (`ruamel.yaml`) would fix it and was rejected: every dependency in this
+kernel is a constraint on every consumer forever (see pyproject's argued bounds), and a second YAML
+implementation for ONE command is a large one. The splice reads the file as TEXT, finds
+`groups:` -> `build:` -> `commands:`, and inserts the new commands after the last line already in that
+block. Nothing it did not write is re-serialised, so comments, flow style, key order and blank lines
+survive by construction rather than by a writer's care.
+
+The cost is that a splice can fail to find its place, and the answer to that is a REFUSAL rather than a
+guess: an unrecognised shape prints the block to paste and leaves the file untouched. Two things keep
+that honest - the shape is located by indentation only (no reflow, no reindent of anything existing),
+and the result is PARSED BACK and compared against what the old loader-based path would have produced
+before a single byte is written. A splice that would change anything but the commands it adds never
+reaches the disk.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NoReturn
 
 import typer
 import yaml
@@ -206,6 +230,11 @@ def scaffold(language: str, version: str) -> int:
     scaffolder that silently overwrites a hand-edited build is worse than no scaffolder: the edit was
     somebody's decision, and this command cannot tell a deliberate one from a stale one.
 
+    AND NEVER REWRITES THE FILE (si#110). The new commands are SPLICED IN as text; every other byte of
+    the manifest - comments first among them - is the byte that was there before. The module head
+    carries why that is a text splice and not a round-trip-preserving YAML library, and what happens to
+    a manifest whose shape the splice cannot read.
+
     `version` IS DECLARED AND NOT A `**params` BAG (si#105). Every profile's image is a template carrying
     `{version}`, and `simplon.signatures.bindable` drops a VAR_KEYWORD parameter - so the value a
     command supplied was accepted by the loader, never reached this body, and every language raised
@@ -213,19 +242,197 @@ def scaffold(language: str, version: str) -> int:
     """
     prof = profiles.profile(language, version=version)
     path = _manifest_path()
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    commands = data.setdefault("groups", {}).setdefault("build", {}).setdefault("commands", {})
+    text = path.read_text(encoding="utf-8")
+    declared = _declared_build_commands(text)
     written, kept = [], []
+    additions: dict[str, object] = {}
     for name, body in prof.commands.items():
-        if name in commands:
+        if name in declared:
             kept.append(name)
             continue
-        commands[name] = {"task": "toolchain:run", "with": {"image": prof.image, **body}}
+        additions[name] = {"task": "toolchain:run", "with": {"image": prof.image, **body}}
         written.append(name)
-    if written:
-        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    if additions:
+        path.write_text(_spliced(text, additions, path.name), encoding="utf-8")
     log.ok(f"{language}: wrote {len(written)} command(s)"
            + (f" - {', '.join(written)}" if written else ", nothing was missing"))
     for name in kept:
         log.info(f"kept your own '{name}' - scaffolding never overwrites an edited command")
     return 0
+
+
+# --- the splice (si#110): text in, text out, and nothing re-serialised that was not written here ---
+
+#: One `key:` line of a block mapping. The key charset is what a command/group name may be; anything
+#: else on the line lands in `rest`, which is how a flow value (`groups: { ... }`) is recognised rather
+#: than walked into.
+_KEY = re.compile(r"^(?P<indent> *)(?P<key>[A-Za-z0-9_][A-Za-z0-9_.-]*):(?P<rest>.*)$")
+
+
+def _declared_build_commands(text: str) -> Mapping[str, object]:
+    """The command names already under `groups: build: commands:`, read through the ordinary loader.
+
+    READING is what a plain loader is good at, and the never-clobber rule needs nothing more than the
+    names. Only the WRITE goes through the splice.
+    """
+    data = yaml.safe_load(text) or {}
+    node: object = data
+    for key in ("groups", "build", "commands"):
+        if not isinstance(node, Mapping):
+            return {}
+        node = node.get(key)
+    return node if isinstance(node, Mapping) else {}
+
+
+def _spliced(text: str, additions: Mapping[str, object], where: str) -> str:
+    """`text` with the new commands inserted under its build group, or a refusal that writes nothing.
+
+    The verification at the end is the reason this can be trusted with somebody's manifest: the spliced
+    text is parsed back and compared against the data the old loader-based path would have produced. A
+    shape that fooled the line scanner therefore ends as a diagnosis, never as a corrupted file.
+    """
+    raw = text.splitlines(keepends=True)
+    lines = [line.rstrip("\r\n") for line in raw]
+    place = _place(lines)
+    if place is None:
+        _refuse(where, additions, indent=6)
+    commands_at, empty_flow, insert_at, indent = place
+    out = list(raw)
+    if empty_flow:
+        # `commands: {}` says "no commands" in flow style, and block entries cannot follow it. Dropping
+        # the `{}` is the one existing byte this function touches, and it changes no data.
+        out[commands_at] = lines[commands_at].split(":", 1)[0] + ":" + _newline(raw, commands_at)
+    newline = _newline(raw, insert_at - 1)
+    if not newline:  # the file ended without one; the appended block needs the line closed first
+        out[insert_at - 1] = out[insert_at - 1] + "\n"
+        newline = "\n"
+    block = _entries(additions, indent)
+    out[insert_at:insert_at] = [line + newline for line in block]
+    spliced = "".join(out)
+    if not _same_data(spliced, text, additions):
+        _refuse(where, additions, indent=indent)
+    return spliced
+
+
+def _place(lines: list[str]) -> tuple[int, bool, int, int] | None:
+    """Where the new commands go: (the `commands:` line, whether it holds an empty `{}`, the line to
+    insert before, the indent to write them at). None when the shape is not the one this can splice."""
+    groups = _find(lines, "groups", 0, len(lines), 0)
+    if groups is None or groups[1]:
+        return None
+    _, groups_end = _extent(lines, groups[0] + 1, 0, len(lines))
+    group_indent = _child_indent(lines, groups[0] + 1, groups_end)
+    if group_indent is None:
+        return None
+    build = _find(lines, "build", groups[0] + 1, groups_end, group_indent)
+    if build is None or build[1]:
+        return None
+    _, build_end = _extent(lines, build[0] + 1, group_indent, groups_end)
+    key_indent = _child_indent(lines, build[0] + 1, build_end)
+    if key_indent is None:
+        return None
+    commands = _find(lines, "commands", build[0] + 1, build_end, key_indent)
+    if commands is None or commands[1] not in ("", "{}"):
+        return None
+    insert_at, commands_end = _extent(lines, commands[0] + 1, key_indent, build_end)
+    entry_indent = _child_indent(lines, commands[0] + 1, commands_end)
+    if entry_indent is None:  # nothing in there yet, so the block's own step decides
+        entry_indent = key_indent + 2
+    return commands[0], commands[1] == "{}", insert_at, entry_indent
+
+
+def _find(lines: list[str], key: str, start: int, end: int, indent: int) -> tuple[int, str] | None:
+    """The line index of `key:` at exactly `indent` within [start, end), and what stands after its colon
+    (empty when it opens a block, so a caller can tell a block from a flow value)."""
+    for i in range(start, end):
+        if _skippable(lines[i]):
+            continue
+        match = _KEY.match(lines[i])
+        if match and len(match["indent"]) == indent and match["key"] == key:
+            value = match["rest"].strip()
+            return i, "" if value.startswith("#") else value
+    return None
+
+
+def _extent(lines: list[str], start: int, indent: int, limit: int) -> tuple[int, int]:
+    """(insert-before, end) of the block whose children are indented deeper than `indent`.
+
+    The two differ on purpose. `end` closes the block; the insertion point is one past the last line
+    that carries DATA, so a trailing comment introducing the next sibling keeps the sibling it belongs
+    to instead of ending up under the commands spliced in above it.
+    """
+    insert_at = end = start
+    for i in range(start, limit):
+        if not lines[i].strip():
+            continue
+        if _line_indent(lines[i]) <= indent:
+            break
+        end = i + 1
+        if not lines[i].lstrip().startswith("#"):
+            insert_at = i + 1
+    return insert_at, end
+
+
+def _child_indent(lines: list[str], start: int, end: int) -> int | None:
+    """The indent the block's own entries are written at, taken from the first one; None when empty."""
+    for i in range(start, end):
+        if not _skippable(lines[i]):
+            return _line_indent(lines[i])
+    return None
+
+
+def _skippable(line: str) -> bool:
+    return not line.strip() or line.lstrip().startswith("#")
+
+
+def _line_indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def _newline(raw: list[str], index: int) -> str:
+    """The line terminator line `index` actually carries - CRLF stays CRLF, and a last line without one
+    is reported as such rather than silently gaining a newline this function did not intend."""
+    line = raw[index]
+    return line[len(line.rstrip("\r\n")):]
+
+
+def _entries(additions: Mapping[str, object], indent: int) -> list[str]:
+    """The commands as manifest text, one block each, indented to sit under `commands:`.
+
+    THE SHAPE IS `safe_dump`'s, unchanged, and deliberately so: si#110 is about not destroying what
+    somebody else wrote, and the block this writes is its own. What that block should look like is
+    si#105's question, and answering it here would put a second change in a diff whose whole claim is
+    that nothing but the addition moved (`test_case_cpp_chapter` pins the current shape).
+    """
+    out: list[str] = []
+    for name, body in additions.items():
+        dumped = yaml.safe_dump({name: body}, sort_keys=False, width=96)
+        out += [" " * indent + line if line else line for line in dumped.rstrip("\n").split("\n")]
+    return out
+
+
+def _same_data(spliced: str, text: str, additions: Mapping[str, object]) -> bool:
+    """Does the spliced file carry EXACTLY the original data plus the added commands, and nothing else?"""
+    try:
+        got = yaml.safe_load(spliced)
+    except yaml.YAMLError:
+        return False
+    want = yaml.safe_load(text) or {}
+    groups = want.get("groups") or {}
+    build = groups.get("build") or {}
+    build["commands"] = {**(build.get("commands") or {}), **additions}
+    groups["build"] = build
+    want["groups"] = groups
+    return bool(got == want)
+
+
+def _refuse(where: str, additions: Mapping[str, object], indent: int) -> NoReturn:
+    """Say where the block was meant to go, hand over the block, and change nothing.
+
+    A shape the splice does not recognise is a manifest somebody wrote by hand in a way this scanner
+    cannot read - not a licence to guess. What a reader can act on is the text itself, so it is printed.
+    """
+    log.info(f"{where}: no `groups:` -> `build:` -> `commands:` block mapping to splice into. "
+             f"Paste this under your build group's `commands:`:")
+    print("\n".join(_entries(additions, indent)))
+    log.die(f"{where} was left unchanged - a scaffolder that guessed at the shape would corrupt it.")
