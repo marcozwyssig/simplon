@@ -608,8 +608,13 @@ class _StepApp(App):
             self.notify("no failure in this run", timeout=3)
             return
         cursor = self._cursor_row()
-        here = next((i for i in range(len(self.pipeline.steps))
-                     if self._chain_rows.get(i, (None,))[-1] is cursor), -1)
+        # -1 when the cursor is on an aggregate, on nothing, or on a row the filter has taken away, so
+        # the walk starts at the first failure. `cursor is not None` is not defensive noise: without it a
+        # missing chain answers `(None,)[-1]`, which would MATCH a null cursor and silently pin `here` to
+        # step 0.
+        here = -1 if cursor is None else next(
+            (i for i in range(len(self.pipeline.steps))
+             if self._chain_rows.get(i, ()) and self._chain_rows[i][-1] is cursor), -1)
         target = next((i for i in failed if i > here), failed[0])
         chain = self._chain_nodes.get(target, ())
         if not chain:
