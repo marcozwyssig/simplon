@@ -167,7 +167,7 @@ for the `_declared()` shape a manifest section is read with.
 
 ### Task 2: the product's declaration - the `releases:` section
 
-**Files:** `src/simplon/tasks/releasenotes.py` (new), `tests/test_releasenotes_declared.py` (new)
+**Files:** `src/simplon/tasks/releasenotes.py` (new), `tests/test_tasks_releasenotes.py` (new)
 
 **Interfaces produced:** `Declared(page: Path, first: tuple[int, ...], complete_from: tuple[int, ...])`,
 `declared() -> Declared | None`, `_version(str) -> tuple[int, ...] | None`.
@@ -194,7 +194,7 @@ for the `_declared()` shape a manifest section is read with.
 
 ### Task 3: the mechanism, over a real repository
 
-**Files:** `src/simplon/tasks/releasenotes.py`, `tests/test_releasenotes_mechanism.py` (new)
+**Files:** `src/simplon/tasks/releasenotes.py`, `tests/test_tasks_releasenotes.py`
 
 **Interfaces produced:** `released_versions(root)`, `sections(text)`, `documented_versions(text)`,
 `tickets_in(text)`, `is_githubs_own_merge(subject)`, `merges_in(root, start, end)`,
@@ -223,7 +223,7 @@ part, and re-deriving them is how they get lost.
 
 ### Task 4: the four verdicts, and the range that says what HEAD is
 
-**Files:** `src/simplon/tasks/releasenotes.py`, `tests/test_releasenotes_verdict.py` (new)
+**Files:** `src/simplon/tasks/releasenotes.py`, `tests/test_releasenotes_guard.py` (new)
 
 **Interfaces produced:** `check() -> int`, `_head_note(root) -> str`.
 
