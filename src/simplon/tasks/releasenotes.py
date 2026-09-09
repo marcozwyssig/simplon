@@ -356,15 +356,44 @@ def _assess(root: Path, spec: Declared) -> int:
 
     released = released_versions(root)
     documented = documented_versions(body)
+
+    # A CHECKOUT WITH NO TAGS IS NOT A PAGE PROBLEM, and saying so is the difference between a red that
+    # helps and a red that misleads. Without this the rules below blame the page for documenting versions
+    # that "carry no tag" - which is true of every section, and true because `git tag` answered nothing.
+    # A shallow clone or one fetched without tags does exactly that, and it is the ordinary CI default:
+    # `actions/checkout` fetches one commit and no tags unless the workflow asks for the history.
+    if not released:
+        log.error(
+            f"this checkout carries no `vX.Y.Z` tag at all, so there is no released version to measure "
+            f"{spec.page.name} against. That is a fact about the CHECKOUT rather than about the page: a "
+            f"shallow clone, or one fetched without tags, answers `git tag` with nothing. Fetch the full "
+            f"history (`fetch-depth: 0` on actions/checkout) - or, if this product really has cut no "
+            f"release yet, it has nothing for this gate to guard and should not place it yet")
+        return 1
+
     log.info(f"{spec.page.name}: {len(documented)} documented, {len(released)} tagged, notes from "
              f"{spell(spec.first)}, complete from {spell(spec.complete_from)}")
     log.info(head_note(root))
 
     findings: list[str] = []
     ruled = 0
+    scope = [version for version in released if version >= spec.first]
+    ranges = ranges_under_test(root, body, spec.first)
+
+    # RED WHEN THERE IS NOTHING, because a gate that ruled on nothing passes exactly like one that ruled
+    # on fifty - this repository's most-hunted defect, and a release-notes gate is a place it would hide
+    # well. The two populations that MATTER are asked for: the releases held to having a section, and the
+    # ranges held to naming their tickets. Rule 2 below is deliberately not counted here - it rules on a
+    # page's own headings and would keep this branch quiet while nothing about any RELEASE was checked.
+    if not scope and not ranges:
+        log.error(
+            f"this gate ruled on NOTHING and is therefore not reporting a pass. No release at or above "
+            f"{spell(spec.first)} carries a tag here (the highest is {tag_of(released[-1])}) and no "
+            f"documented section has a measurable range. Either `from:` is above every release this "
+            f"product has cut, or the page's headings are not spelled `## X.Y.Z`")
+        return 1
 
     # 1. A release at or above the floor with no section at all.
-    scope = [version for version in released if version >= spec.first]
     ruled += len(scope)
     absent = [version for version in scope if version not in documented]
     if absent:
@@ -389,7 +418,7 @@ def _assess(root: Path, spec: Declared) -> int:
     #   and what HEAD resolved to are the two facts that make a red legible, and a run that prints them
     #   only on failure teaches nobody why a green run was green either.
     body_of = sections(body)
-    for version, (start, end) in sorted(ranges_under_test(root, body, spec.first).items()):
+    for version, (start, end) in sorted(ranges.items()):
         merges = merges_in(root, start, end)
         silent = [subject for sha, subject in merges if not tickets_of(root, sha, subject)]
         merged = {number for sha, subject in merges for number in tickets_of(root, sha, subject)}
@@ -411,18 +440,6 @@ def _assess(root: Path, spec: Declared) -> int:
                 f"the {tag_of(version)} section names {len(merged) - len(missing)} of the {len(merged)} "
                 f"tickets merged into {start}..{end}; missing: "
                 + ", ".join("si#" + str(number) for number in missing))
-
-    # RED WHEN THERE IS NOTHING, because a gate that ruled on nothing passes exactly like one that ruled
-    # on fifty. That is this repository's most-hunted defect, and a release-notes gate is a place it
-    # would hide well: a floor above every tag, a page whose headings stopped matching, a checkout with
-    # no tags fetched, and the run says OK.
-    if not ruled:
-        log.error(
-            f"this gate ruled on NOTHING and is therefore not reporting a pass. No release at or above "
-            f"{spell(spec.first)} carries a tag here and no documented section has a measurable range. "
-            f"Either the floor is above every release this product has cut, or the checkout has no tags "
-            f"(a shallow or tag-less clone does that), or the page's headings are not `## X.Y.Z`")
-        return 1
 
     if findings:
         for finding in findings:
