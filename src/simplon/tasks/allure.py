@@ -28,6 +28,7 @@ import os
 import shutil
 from dataclasses import dataclass
 from datetime import datetime
+from xml.etree import ElementTree
 
 from simplon import docker, log
 from simplon.run import run
@@ -59,6 +60,57 @@ def integration_pytest_argv(py: str, results: str, junit: str, extra: list[str])
     return [py, "-m", "pytest", f"--alluredir={results}", f"--junit-xml={junit}", *extra]
 
 
+#: The document shapes this module can count TEST CASES in, as `<root tag>: <the element that is one
+#: case>`. Measured against real files rather than read off a schema: ctest's and gradle's JUnit XML and
+#: `JunitXml.TestLogger`'s all root at `testsuite`/`testsuites` and hold `testcase`; xunit's own XML roots
+#: at `assemblies` and holds `test`; a `dotnet test --logger trx` file roots at a namespaced `TestRun` and
+#: holds `UnitTestResult` (1 result, 1 `TestMethod`, measured on the .NET 9 SDK image).
+#:
+#: A CLOSED TABLE WITH AN OPEN DEFAULT, and that is the whole design of `_cases_in`. Allure reads more
+#: formats than this kernel will ever know, so a document whose root is not in here is UNCOUNTABLE rather
+#: than empty. Calling a level empty because the kernel could not parse its evidence would be a false red
+#: invented by the checker - the same defect as the false green, pointing the other way.
+COUNTABLE: dict[str, str] = {"testsuite": "testcase", "testsuites": "testcase",
+                             "assemblies": "test", "TestRun": "UnitTestResult"}
+
+
+def _tag(element: ElementTree.Element) -> str:
+    """An element's local name. TRX is namespaced (`{http://microsoft.com/schemas/.../2010}TestRun`) and
+    the JUnit family is not, so the namespace is dropped rather than matched: this module cares which
+    element it is looking at, and one of the two writers happening to declare a namespace is not a
+    difference in the answer."""
+    return element.tag.rsplit("}", 1)[-1]
+
+
+def _cases_in(path: str) -> int | None:
+    """How many TEST CASES a merged file carries, or None when the kernel cannot tell (si#133).
+
+    THE TRAP THIS EXISTS FOR, measured rather than argued. `ctest -L <a label nothing carries>` exits 0,
+    prints `No tests were found!!!` and - asked for `--output-junit` - WRITES A FILE: a suite element
+    carrying `tests="0"` and no case at all. So "a file arrived" is not the same question as "this level
+    produced evidence", and a check that counts files is green over a level with nothing in it. Same
+    shape for `dotnet test --filter` over a filter that matches nothing.
+
+    None is not zero and the difference is the point. Zero means the kernel READ the file and there is
+    nothing in it; None means it does not know the format, and an unknown format counts as a
+    contribution. The alternative - treating what it cannot parse as empty - would fail a level whose
+    results are perfectly good the day a product adopts a reporter this table has not met.
+
+    A file this module cannot open or cannot parse is None for the same reason: a parse hiccup is not
+    evidence of an empty test run, and a checker that turns one into a red level has invented a finding.
+    """
+    if not path.lower().endswith((".xml", ".trx")):
+        return None
+    try:
+        root = ElementTree.parse(path).getroot()
+    except (ElementTree.ParseError, OSError):
+        return None
+    case = COUNTABLE.get(_tag(root))
+    if case is None:
+        return None
+    return sum(1 for element in root.iter() if _tag(element) == case)
+
+
 @dataclass(frozen=True)
 class Merge:
     """What one merge actually DID, so its caller can report a result instead of an intention (#64).
@@ -85,11 +137,35 @@ class Merge:
     missing: tuple[str, ...] = ()
     skipped_dirs: tuple[str, ...] = ()
     stale: tuple[str, ...] = ()
+    cases: int = 0
+    uncounted: int = 0
 
     @property
     def files(self) -> int:
         """Every entry this merge handled, however it handled it."""
         return self.tagged + self.already_labelled + self.copied + self.environments
+
+    @property
+    def contributed(self) -> bool:
+        """Whether this merge brought EVIDENCE - at least one test case, or one file whose format the
+        kernel cannot count and therefore trusts (si#133).
+
+        Not `empty`, and the two questions are a file apart in one direction and a case apart in the
+        other. `empty` asks whether the merge did anything at all, which is the report step's question. A
+        GATE asks whether the LEVEL produced evidence, and two things satisfy the first and not the
+        second:
+
+          * an `environment.properties` on its own. It is the run's own verdict travelling beside the
+            results, not a result. An allure-native runner writes one, so a build that falls over after
+            writing it and before writing a single result would otherwise report green;
+          * a results file carrying no case. `ctest -L <a label nothing carries>` exits 0, says `No tests
+            were found!!!` and writes a `<testsuite tests="0"/>`, which is a file arriving and an archive
+            with nothing in it.
+
+        `uncounted` is what keeps this from being a rule that fails good levels: a format the kernel
+        cannot read counts as a contribution, because allure reads more than this kernel knows.
+        """
+        return bool(self.cases or self.uncounted)
 
     @property
     def empty(self) -> bool:
@@ -128,7 +204,22 @@ class Merge:
         said = f"merged {self.files} file{'' if self.files == 1 else 's'} from {where}: " + ", ".join(parts)
         if self.missing:
             said += f"; missing: {', '.join(self.missing)}"
-        return said + self._stale + self._dirs + self._unreached
+        return said + self._stale + self._dirs + self._unreached + self._caseless
+
+    @property
+    def _caseless(self) -> str:
+        """The files arrived and NOT ONE OF THEM HOLDS A TEST CASE (si#133).
+
+        The sentence a reader needs at the moment it happens, because the log above it is reassuring:
+        `ctest -L <a label nothing carries>` prints `No tests were found!!!` and exits 0, and a reader who
+        meets that line has to be told that the gate is not fooled by it. Said only where the kernel could
+        actually read the files - an uncountable format is trusted, so there is nothing to report.
+        """
+        if self.cases or self.uncounted or not (self.tagged + self.already_labelled + self.copied):
+            return ""
+        counted = self.tagged + self.already_labelled + self.copied
+        return (f"; not one of the {counted} file{'' if counted == 1 else 's'} merged holds a test case "
+                f"- a runner whose selection matched nothing writes exactly this and exits 0")
 
     @property
     def unreached(self) -> bool:
@@ -241,6 +332,9 @@ def merge_results(dst: str, srcs: list[str], *, parent_suite: str = "Unit",
     """
     os.makedirs(dst, exist_ok=True)
     tagged = labelled = copied = environments = 0
+    # WHAT ARRIVED, as against how many files did (si#133). `_cases_in`'s docstring carries the case this
+    # counts for; the accumulation is here because this is the only loop that sees each merged file.
+    cases = uncounted = 0
     present: list[str] = []
     missing: list[str] = []
     dirs: list[str] = []
@@ -287,6 +381,9 @@ def merge_results(dst: str, srcs: list[str], *, parent_suite: str = "Unit",
                 stale.append(f)
                 continue
             if base.endswith("-result.json"):
+                # One allure raw result file IS one case, by the format's own construction, so this one
+                # is counted without opening a second question about it.
+                cases += 1
                 with open(f, encoding="utf-8") as fh:
                     r = json.load(fh)
                 labels = r.setdefault("labels", [])
@@ -321,11 +418,16 @@ def merge_results(dst: str, srcs: list[str], *, parent_suite: str = "Unit",
                 write_environment(dst, {**incoming, **existing})
                 environments += 1
             else:
+                found = _cases_in(f)
+                if found is None:
+                    uncounted += 1
+                else:
+                    cases += found
                 shutil.copy(f, os.path.join(dst, base))
                 copied += 1
     return Merge(parent_suite=parent_suite, tagged=tagged, already_labelled=labelled, copied=copied,
                  environments=environments, present=tuple(present), missing=tuple(missing),
-                 skipped_dirs=tuple(dirs), stale=tuple(stale))
+                 skipped_dirs=tuple(dirs), stale=tuple(stale), cases=cases, uncounted=uncounted)
 
 
 #: Allure's own convention: a `key=value` file in the RESULTS dir, rendered as the report's Environment

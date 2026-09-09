@@ -206,9 +206,103 @@ It still writes nothing into that directory. That is a different statement, and 
 that let the kernel invent a result for a runner it cannot see would have moved this defect rather than
 removed it.
 
-If your non-pytest runner produces allure results of its own, hand them to the report step through
-`report.merge` instead. That is what that list is for: result directories other steps already wrote,
-copied in and tagged with a parent suite so the merged archive groups them.
+If your non-pytest runner produces results of its own - allure's or anything allure reads - name the
+directory it wrote them into on the gate, with `results_from:`. That is the next section.
+
+### Where your runner put its results
+
+A gate may name the directory its own runner wrote results into
+([simplon#133](https://github.com/marcozwyssig/simplon/issues/133)):
+
+```yaml
+gates:
+  - name: "unit"
+    command: "build unit"                # or impl:, or suite:
+    results_from: "build/test-results"   # where THIS level's runner wrote
+    results: "clear"
+```
+
+After the runner has run, the kernel merges that directory into this run's Allure results and renders it
+with everything else. Nothing about the merge is new - `simplon.tasks.allure.merge_results` has been
+technology-agnostic since it was written, and a product reached it by writing a task body in Python that
+called it. **That was the gap: the capability was real, undeclared, and reachable only by writing the
+Python the manifest exists to avoid.**
+
+`results` and `results_from` are two different statements and it is worth reading them together once.
+`results: clear` says *whose run this directory belongs to*; `results_from:` says *where this level's
+results came from*. The first is about ownership, the second about a source, and a gate commonly carries
+both.
+
+**It is legal on every kind**, for the reason `results:` is: the mechanism does not vary - a directory is
+merged and the contribution is checked - so there is nothing to refuse on one kind and allow on another.
+A `suite:` gate rarely wants it, because the kernel already points `--alluredir` at the shared results
+directory, but rarely wanting something is not the same as being unable to say it.
+
+**What the report reads, measured rather than assumed.** Raw Allure `*-result.json`, JUnit XML and a
+`dotnet test` TRX file all render out of ONE results directory, with no conversion and no second
+directory. Driven on 2026-09-09 against the kernel's pinned `allure-docker-service:2.44.0`: two results
+from `pytest --alluredir`, three from `ctest --output-junit` and one from `dotnet test --logger trx`,
+merged together, rendered as `total: 6` across three suites. The image ships a `junit-xml`, an `xunit-xml`
+and a `trx` plugin beside the Allure reader.
+
+Two details from the same measurement, because they change what you should expect:
+
+- **ctest names its suite `(empty)`.** `ctest --output-junit` writes `<testsuite name="(empty)">`, so its
+  cases arrive under a suite of that name. `parent_suite:` cannot improve it - it acts on Allure raw
+  results only, which is [what the merge will not do to your
+  files](#what-the-merge-reports-and-what-it-will-not-do-to-your-files);
+- **the .NET SDK image ships a TRX logger and no JUnit one.**
+  `dotnet test --logger "trx;LogFileName=results.trx"` needs no `PackageReference` at all; `--logger
+  junit` answers `Could not find a test logger with AssemblyQualifiedName, URI or FriendlyName 'junit'`
+  and exits 1. So a .NET level reaches the report through TRX, or through a `JunitXml.TestLogger`
+  reference it adds itself.
+
+#### A level that contributed nothing is red
+
+This is the half the key exists for. **An Allure report rendered with a level missing looks exactly like
+one where the level passed**, so a gate that declared where its results land and produced none of them is
+red, whatever its runner's exit code says:
+
+> unit: failed (rc 1) - 'build/test-results' contributed no results to this run (nothing merged: 0 of 1
+> declared source dirs present, missing: …/build/test-results) - and an Allure report rendered with a
+> level missing looks exactly like one where that level passed, which is why an exit code of 0 is not
+> enough here
+
+The commonest way to meet it is not a broken runner. The kernel's own C++ profile runs
+`ctest --test-dir build --output-on-failure`, which prints `100% tests passed, 0 tests failed out of 3`
+and writes **no results file**: declare `results_from:` without adding `--output-junit` to the command and
+you get exactly the line above. That pair is driven in `tests/test_suites_results_from_e2e.py`, with the
+archive read back out of its own embedded data.
+
+**And a file arriving is not the same as a level having run.** `ctest -L <a label nothing carries>`
+exits **0**, prints `No tests were found!!!` and - asked for `--output-junit` - writes a perfectly
+well-formed file with `tests="0"` in it. `dotnet test --filter` over a filter that matches nothing does
+the same. A check that counted files would be green over that, so the kernel counts **test cases**:
+
+> unit: failed (rc 1) - 'build/test-results' contributed no results to this run (merged 1 file from 1 of
+> 1 declared source dirs: 1 copied unchanged, carrying no parentSuite; not one of the 1 file merged holds
+> a test case - a runner whose selection matched nothing writes exactly this and exits 0) - …
+
+It counts them in the shapes it demonstrably meets - the JUnit family, xunit's own XML, and TRX - and **a
+format it cannot read counts as a contribution**. Allure reads more formats than this kernel knows about,
+and calling a level empty because the kernel could not parse its evidence would be a false red invented
+by the checker, which is the same defect pointing the other way.
+
+**And the results have to be this run's.** Nothing on the kernel's side of the seam ever empties a
+product's own results directory, so the merge is given the instant the gate's runner started and leaves
+anything older where it is - si#70's rule, at gate scope. A runner that wrote nothing therefore does not
+quietly contribute last week's results, and the line says which case it is:
+
+> unit: failed (rc 1) - 'build/test-results' contributed no results to this run (nothing merged: 1 of 1
+> declared source dirs present; 1 file older than this run left behind, as it is the previous run's
+> (…/build/test-results/ctest.xml)) - …
+
+Nothing is harvested for a gate that never ran its body - a failed `precondition`, a failed `preamble`, or
+a runner that dropped the setup marker. In all three the run learned nothing about the product, and
+merging whatever was lying in the directory would invent evidence.
+
+`report.merge` is unchanged and still there: it is the section-level list of directories **other steps**
+wrote, merged at the end. A directory a gate names in `results_from:` does not need repeating in it.
 
 ### What the kernel says about your runner, and what only you can say
 
@@ -501,8 +595,11 @@ runtime condition to limp along with, and the error lists what *is* declared:
 2. Put it in `gates:` **in the position it should run in**. If it must run first, it is the one that
    carries `results: clear`, and the previous first gate stops carrying it.
 3. A `suite:` gate needs its own `junit:` file name; an `impl:` gate must not declare one.
-4. Give it a `preamble:` if it needs the environment prepared, and a `precondition:` if it should abort
+4. If the level's runner writes results of its own, name that directory with `results_from:` - and run it
+   once with the results absent, because a level that contributes nothing must go red rather than render
+   as a gap that looks like a pass.
+5. Give it a `preamble:` if it needs the environment prepared, and a `precondition:` if it should abort
    early rather than fail slowly. Both return an `int` on every path.
-5. Place the command: `{ task: "test:gate", with: { name: "<the gate name>" }, help: "..." }`.
-6. Run it once on purpose against something broken, and check that the exit code is not 0. A gate is only
+6. Place the command: `{ task: "test:gate", with: { name: "<the gate name>" }, help: "..." }`.
+7. Run it once on purpose against something broken, and check that the exit code is not 0. A gate is only
    worth having if it can go red.

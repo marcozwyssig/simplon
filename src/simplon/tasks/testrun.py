@@ -53,6 +53,17 @@ rc is `SETUP_FAILED`, and THE BODY NEVER RUNS - the rule a pytest gate's preambl
 is the true sentence here as well. The suite did not run, so the run learned nothing about the product.
 `tests/test_suites_command_gate.py` pins it.
 
+AND A GATE OF ANY KIND MAY SAY WHERE ITS RUNNER PUT ITS RESULTS (si#133). `results_from:` names a
+directory the product's own runner wrote into - a `ctest --output-junit` file, a Gradle build's JUnit
+XML, a `dotnet test` TRX - and the kernel merges it into this run's allure results after the runner has
+run. The merge is `allure.merge_results`, which has been technology-agnostic since it was written; what
+was missing was a way to reach it from a manifest rather than from a Python body, and a product that
+wrote that body is the only reason anything but pytest was ever in a report. Two halves make it honest:
+the staleness cutoff is the GATE'S OWN start, because nothing on this side of the seam empties a
+product's results directory and a runner that wrote nothing would otherwise contribute the last run's
+files; and a runner that exits 0 having contributed NOTHING is red, because an archive rendered with a
+level missing looks exactly like one where the level passed.
+
 Its `precondition:` is a command too, for the reason the kind exists at all: a product with no Python in
 it must not have to write a Python body in order to reach a hook - that is the si#61 trap one level
 across. The SECTION-level precondition stays a ref; it belongs to no gate and therefore to no kind.
@@ -159,6 +170,21 @@ IMPL_DETAIL = ("the product's own runner returned this rc; the kernel did not ru
 COMMAND_DETAIL = ("'{command}' returned this rc; the kernel ran a command here, not a suite, and cannot "
                   "say whether one ran at all")
 
+#: The rc a gate gets when its runner exited 0 and contributed no results at all (si#133). The generic
+#: failure code for the reason `SETUP_FAILED_RC` carries it: the kernel has no better one to offer, and
+#: the alternative - passing the runner's 0 on - is a red record with a green exit, which `GateVerdict`
+#: refuses outright.
+NO_RESULTS_RC = 1
+
+#: What that gate says, and the whole of si#133's trap in one sentence. It names the directory the gate
+#: declared and carries the merge's OWN line, because "the directory is not there", "it holds nothing"
+#: and "everything in it is older than this run" are three different findings and only `Merge` can tell
+#: them apart. The stamp is what a reader consults a week later, so the distinction has to be in the
+#: record and not only in the log.
+NO_RESULTS_DETAIL = ("'{source}' contributed no results to this run ({merge}) - and an Allure report "
+                     "rendered with a level missing looks exactly like one where that level passed, "
+                     "which is why an exit code of 0 is not enough here")
+
 #: What a command gate's failed SETUP says, and the whole of si#106 in one sentence. The default wording
 #: for `SETUP_FAILED` - "the suite never ran" - is true and says nothing about why it matters here, so the
 #: record names both commands and the failure mode the pairing exists to remove.
@@ -188,6 +214,20 @@ class Gate:
     what a gate writes - an `impl` gate writes nothing the kernel can see - but about whose run the
     results dir belongs to, and that question has the same answer whoever runs the tests. It used to be
     refused on an `impl` gate, which left a product whose only runner is its own unable to say it at all.
+
+    `results_from` IS THE SECOND SUCH KEY (si#133), and it names the directory THIS GATE'S OWN RUNNER
+    wrote its results into - a `ctest --output-junit` file, a Gradle build's JUnit XML, a `dotnet test`
+    TRX. The merge behind it is not new: `allure.merge_results` has been technology-agnostic since it was
+    written, and a product reached it by writing an `impl:` gate that called it in Python. That is the
+    whole finding - the capability was real, undeclared, and reachable only by writing the Python the
+    manifest exists to avoid.
+
+    IT IS LEGAL ON EVERY KIND, for `results`' own reason and not by omission. The mechanism does not vary
+    with the kind: a directory is merged and the contribution is checked. A pytest gate rarely wants it,
+    because the kernel already points `--alluredir` at the shared results dir, but wanting it rarely is
+    not the same as being unable to say it, and a refusal here would be a rule with no measured defect
+    behind it - `rules.md`'s own sorting question, would the refused manifest have produced a working
+    product, answers yes.
     """
 
     name: str
@@ -195,6 +235,7 @@ class Gate:
     impl: str = ""
     command: str = ""
     results: str = APPEND
+    results_from: str = ""
     junit: str = ""
     args: bool = False
     precondition: str = ""
@@ -299,7 +340,8 @@ def _gate(body: object, where: str) -> Gate:
     junit = _str(body, "junit", where)
     if suite and not junit:
         raise ValueError(f"{where}: a pytest gate must declare its own 'junit' file name")
-    return Gate(name=name, suite=suite, impl=impl, command=command, results=results, junit=junit,
+    return Gate(name=name, suite=suite, impl=impl, command=command, results=results,
+                results_from=_str(body, "results_from", where), junit=junit,
                 args=bool(body.get("args", False)),
                 precondition=_str(body, "precondition", where),
                 preamble=_str(body, "preamble", where),
@@ -548,6 +590,98 @@ def _clear_results(results: str, reports: str) -> None:
     os.makedirs(results, exist_ok=True)
 
 
+def _say_merge(merged: allure.Merge, label: str = "per-module results") -> None:
+    """Report what a merge DID (#64), in the one place that decides how loudly.
+
+    Two callers now merge - a gate harvesting what its own runner wrote (si#133) and the report step
+    merging the section's declared sources - and the rule for when the result is a warning rather than
+    an OK is the same rule in both: a missing source, an empty one, one holding only the previous run's
+    files, or a parent suite that reached nothing are all findings, and a merge that did what it says is
+    not. Two call sites answering that separately are two answers waiting to disagree.
+
+    `label` is what parts them on the terminal. The report step's wording is `per-module results` and
+    stays so - it is quoted on two documentation pages and pinned by a test - but a run of three gates
+    would otherwise print that same anonymous sentence three times before the report step said it a
+    fourth, and a reader could not tell which level each one was about. A gate names itself.
+    """
+    (log.warn if merged.missing or merged.empty or merged.stale or merged.unreached
+     else log.ok)(f"{label}: {merged.line}")
+
+
+def _harvested(gv: GateVerdict, gate: Gate, cfg: Suites, results: str, since: float) -> GateVerdict:
+    """Merge what THIS gate's runner wrote into this run's results, and refuse a green gate that
+    contributed nothing (si#133).
+
+    THE CAPABILITY IS NOT NEW AND THAT IS THE FINDING. `allure.merge_results` has been
+    technology-agnostic since it was written - its own docstring names a Gradle build's JUnit XML and an
+    npm reporter's output - and a product reached it by writing an `impl:` gate that called it in Python.
+    So the gap si#133 closes is not a merge, it is a declarative way to reach one: `results_from:` names
+    the directory and the kernel does the call the product used to write.
+
+    THE CUTOFF IS THE GATE'S OWN, and without it this would ship si#70's defect back. `since` is the
+    instant the runner started, not the instant the run started: nothing on the kernel's side of the seam
+    ever empties a product's own results directory, so a runner that wrote nothing this time would
+    otherwise contribute the LAST run's results and the gate would go green over them. `merge_results`
+    leaves an older file where it is and NAMES it, which is what lets the line below say "the previous
+    run's" rather than "empty" - two findings a reader acts on differently.
+
+    A GREEN RUNNER THAT CONTRIBUTED NOTHING IS RED, and that is the whole point of the key rather than a
+    safety net around it. An Allure report rendered with a level missing looks exactly like one where the
+    level passed, so a gate that declared where its results land and produced none of them has told the
+    run nothing, whatever its exit code says. `FAILED` with an explicit `detail` rather than a sixth
+    outcome: the five answer "what did the gate learn about the product", this is a statement about the
+    STEP, and that is the idiom the report step's own render failure already uses.
+
+    A RUNNER THAT WAS ALREADY RED KEEPS ITS OWN SENTENCE. Its partial results still travel - a failing
+    `ctest` writes the cases that ran, and those are this run's evidence - but the rc is the fact that
+    explains the gate, and replacing "'build unit' returned this rc" with a sentence about a directory
+    would send a reader looking for a misdeclared path.
+
+    Called only where the runner actually RAN. A failed precondition touched nothing, a failed preamble
+    means the body never started, and a runner that dropped the setup marker said its own preparation
+    broke: in all three the run learned nothing about the product, and harvesting there would invent
+    evidence out of whatever was lying in the directory.
+
+    It also settles OWNERSHIP, and the reason is at the return below: a gate that filled the results dir
+    owns it, whether or not it also cleared it.
+    """
+    if not gate.results_from:
+        return gv
+    source = str(context.current().root / gate.results_from)
+    merged = allure.merge_results(results, [source], parent_suite=cfg.parent_suite, not_before=since)
+    _say_merge(merged, f"{gate.name} results")
+    # `Merge.contributed` AND NOT `Merge.empty`, and the two differ by one file in one direction and one
+    # test case in the other. `empty` asks whether the merge did anything at all, which is the report
+    # step's question; this asks whether the LEVEL produced evidence - so an `environment.properties` on
+    # its own is not one, and neither is a results file carrying no case, which is what a runner whose
+    # selection matched nothing writes before exiting 0.
+    if not merged.contributed:
+        if gv.verdict is Verdict.PASSED:
+            return replace(gv, verdict=Verdict.FAILED, rc=NO_RESULTS_RC,
+                           detail=NO_RESULTS_DETAIL.format(source=gate.results_from,
+                                                           merge=merged.line))
+        return gv
+    # AND THE GATE OWNS THE DIRECTORY IT FILLED (si#69). That property used to be `gate.clears` on this
+    # branch, on the reasoning its own docstring gives: an APPENDING gate whose runner is the product's
+    # own "takes nothing, writes nothing and leaves the dir exactly as it found it". A gate that names
+    # `results_from:` writes into it, so the reasoning no longer reaches this case - and `owns_results`
+    # is what decides whether the run's verdict may be written into the archive standing there. Left as
+    # it was, a run made only of appending harvesting gates would fill an archive with this run's results
+    # and leave the PREVIOUS run's verdict inside it.
+    return replace(gv, owned_results=True)
+
+
+def _started() -> float:
+    """Now, floored to the whole second - the cutoff a merge is handed (si#70).
+
+    Some filesystems carry mtime at one- or two-second granularity, so an instant taken mid-second can
+    read a file the runner really did write as older than the run. Erring early keeps at most a second of
+    the previous run's leavings; erring late silently drops a genuine result, and only one of those two
+    is recoverable by a reader.
+    """
+    return float(int(time.time()))
+
+
 def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
                 earlier: tuple[GateVerdict, ...] = ()) -> GateVerdict:
     """Run ONE gate and say not only whether it was red but whether it was red ABOUT anything (#30).
@@ -654,6 +788,7 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
                                        detail=SETUP_COMMAND_DETAIL.format(setup=gate.preamble,
                                                                           command=gate.command),
                                        owned_results=gate.clears)
+            since = _started()
             rc = runner()
             stage = _reported_stage(marker)
         if stage:
@@ -663,12 +798,14 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
             return GateVerdict(gate.name, Verdict.SETUP_FAILED, rc or SETUP_FAILED_RC, stage,
                                owned_results=gate.clears)
         if rc == 0:
-            return GateVerdict(gate.name, Verdict.PASSED, rc, owned_results=gate.clears)
+            return _harvested(GateVerdict(gate.name, Verdict.PASSED, rc, owned_results=gate.clears),
+                              gate, cfg, results, since)
         # The kernel knows one more thing about a command than about a callable - WHICH command, by the
         # name a person types - so it says that instead of borrowing the impl gate's sentence (#65).
-        return GateVerdict(gate.name, Verdict.FAILED, rc, owned_results=gate.clears,
-                           detail=IMPL_DETAIL if gate.impl
-                           else COMMAND_DETAIL.format(command=gate.command))
+        return _harvested(GateVerdict(gate.name, Verdict.FAILED, rc, owned_results=gate.clears,
+                                      detail=IMPL_DETAIL if gate.impl
+                                      else COMMAND_DETAIL.format(command=gate.command)),
+                          gate, cfg, results, since)
 
     log.info(gate.announce or f"{gate.name} gate: {gate.suite} against the running lab")
     suite_dir = str(context.current().root / gate.suite)
@@ -686,6 +823,7 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
                 return _written(GateVerdict(gate.name, Verdict.SETUP_FAILED, rc, verdict.PREAMBLE),
                                 results, earlier, filtered)
         # cwd is the level's own python root so its conftest.py loads and the subjects below it collect.
+        since = _started()
         rc = run(allure.integration_pytest_argv(py, results, junit, extra),
                  capture=False, cwd=suite_dir).rc
         stage = _reported_stage(marker)
@@ -712,7 +850,12 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
         return _written(GateVerdict(gate.name, Verdict.SETUP_FAILED, rc or SETUP_FAILED_RC, stage),
                         results, earlier, filtered)
     log.ok(f"{gate.name} results written to {results}")
-    return _written(GateVerdict(gate.name, verdict.of_subprocess(rc), rc), results, earlier, filtered)
+    # AFTER the two checks above, deliberately: a suite that was shot reported nothing and a suite whose
+    # own setup broke never ran, so neither has results to be judged on and both would meet an empty
+    # directory that says nothing about them.
+    return _written(_harvested(GateVerdict(gate.name, verdict.of_subprocess(rc), rc),
+                               gate, cfg, results, since),
+                    results, earlier, filtered)
 
 
 def _written(gv: GateVerdict, results: str, earlier: tuple[GateVerdict, ...], filtered: bool) -> GateVerdict:
@@ -814,8 +957,7 @@ def report(cfg: Suites | None = None, *, filtered: bool = False, run: RunVerdict
         # whose runner writes JUnit XML declared a grouping the archive does not have - and the run said
         # OK. `Merge.unreached` is the only thing that can tell that apart from a merge that had nothing
         # to tag, and `Merge._unreached` carries the reason, measured against allure itself.
-        (log.warn if merged.missing or merged.empty or merged.stale or merged.unreached
-         else log.ok)(f"per-module results: {merged.line}")
+        _say_merge(merged)
     log.ok(f"allure results written to {results}")
     render = allure.render_report(_reports_dir(cfg), results,
                                   prefix="allure-filtered" if filtered else "allure")
@@ -853,12 +995,10 @@ def accept(extra: list[str], cfg: Suites | None = None) -> int:
     # file like every other exploratory run, or the abort of a one-test hunt overwrites the canonical
     # record of the last full run.
     filtered = bool(extra)
-    # WHEN THIS RUN BEGAN (si#70), taken before any gate does anything and floored to the whole second.
-    # The report step merges the product's own result dirs, which nothing on this side of the seam ever
-    # empties, so without this instant it merges whatever the LAST run left there. Floored because some
-    # filesystems carry mtime at one- or two-second granularity: erring early keeps at most a second of
-    # the previous run's leavings, erring late silently drops a result this run really did write.
-    started = float(int(time.time()))
+    # WHEN THIS RUN BEGAN (si#70), taken before any gate does anything. The report step merges the
+    # product's own result dirs, which nothing on this side of the seam ever empties, so without this
+    # instant it merges whatever the LAST run left there. `_started` carries the flooring and its reason.
+    started = _started()
     if cfg.precondition:
         rc = _hook(cfg.precondition, "precondition")()
         if rc != 0:
