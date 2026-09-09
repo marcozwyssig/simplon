@@ -97,6 +97,10 @@ def test_the_advice_names_the_command_that_grants_the_scopes():
 
 @pytest.mark.parametrize("registry,expected", [
     ("ghcr.io/owner", True), ("ghcr.io", True), ("GHCR.IO/Owner", True),
+    # si#127: GitHub serves NuGet packages from a different host than OCI artifacts, and the same
+    # credential is the one that reaches both - so the check widens rather than being bypassed.
+    ("nuget.pkg.github.com/owner", True), ("NUGET.PKG.GITHUB.COM/Owner", True),
+    ("nuget.pkg.github.com.evil.example/owner", False),
     ("registry.example.com/team", False), ("ghcr.io.evil.example/owner", False),
     ("localhost:5000", False), ("docker.io/library", False)])
 def test_only_githubs_own_registry_may_receive_a_github_token(registry, expected):

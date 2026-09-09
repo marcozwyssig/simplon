@@ -39,6 +39,13 @@ from simplon import log, oras, run
 # The scopes `gh auth login` does not request, and every package operation needs.
 PACKAGE_SCOPES: tuple = ("read:packages", "write:packages")
 
+# The hosts that ARE GitHub Packages, and therefore the only ones this module's credential may be sent
+# to. A set rather than one string since si#127, because GitHub does not serve every package kind from
+# one name: OCI artifacts and container images live on ghcr.io, NuGet packages on nuget.pkg.github.com.
+# One credential reaches both, so the check WIDENS by a row rather than a caller opting out of it - and
+# an opt-out is exactly the second token story this module exists to prevent.
+GITHUB_PACKAGE_HOSTS: frozenset = frozenset({"ghcr.io", "nuget.pkg.github.com"})
+
 
 class PackageError(RuntimeError):
     """A package operation failed. The message is written to be acted on, not just read."""
@@ -104,8 +111,11 @@ def is_github_packages(registry: str) -> bool:
     the resulting 401 answered with `gh auth refresh` - advice that means nothing there. This module's
     own head records a token that leaked into a repository's history; posting one to whatever host a YAML
     file happens to name is the same mistake by a longer route.
+
+    Membership, never a prefix or a suffix: `ghcr.io.evil.example` and `nuget.pkg.github.com.evil.example`
+    are hosts somebody else owns, and either test would hand them the token.
     """
-    return registry_host(registry).lower() == "ghcr.io"
+    return registry_host(registry).lower() in GITHUB_PACKAGE_HOSTS
 
 
 def _login(command: Sequence[str], registry: str, username: str) -> None:
