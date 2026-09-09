@@ -456,3 +456,43 @@ def test_a_pytest_gate_that_contributed_nothing_from_the_directory_it_named_is_r
 
     # assert
     assert gv.verdict is Verdict.FAILED and "contributed no results" in gv.line, gv.line
+
+
+# --- a harvesting gate owns the dir it filled ---------------------------------------------------------
+
+
+def test_an_appending_gate_that_contributed_results_owns_them(monkeypatch, tmp_path):
+    """si#69's property, which this key changes the answer to. `owned_results` says whether the gate
+    took the run's results dir - cleared it, filled it, or both - and it decides whether the run's
+    verdict may be written into the archive standing there. Its docstring's reasoning was that an
+    APPENDING gate whose runner is the product's own 'takes nothing, writes nothing and leaves the dir
+    exactly as it found it'. A gate that names `results_from:` writes into it, so a run made only of
+    such gates would otherwise fill an archive with this run's results and leave the PREVIOUS run's
+    verdict standing in it."""
+    # arrange: appending, not clearing, and its runner writes
+    _product(monkeypatch, tmp_path)
+    gate = testrun.Gate(name="unit", command="build unit", results="append",
+                        results_from=WROTE_INTO)
+
+    # act
+    gv = testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert
+    assert gv.owned_results, "a gate that filled the results dir reported owning nothing"
+    assert _merged(tmp_path) == ["ctest-junit.xml"]
+
+
+def test_an_appending_gate_that_contributed_nothing_owns_nothing(monkeypatch, tmp_path):
+    """The other side of the same fact, and it is not symmetry for its own sake: a gate that neither
+    cleared nor filled the directory has no claim on the archive standing in it, and saying otherwise
+    would let a run that wrote nothing restate its verdict over a run that did."""
+    # arrange
+    _product(monkeypatch, tmp_path, into="")
+    gate = testrun.Gate(name="unit", command="build unit", results="append",
+                        results_from=WROTE_INTO)
+
+    # act
+    gv = testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert
+    assert gv.verdict is Verdict.FAILED and not gv.owned_results

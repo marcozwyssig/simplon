@@ -625,16 +625,29 @@ def _harvested(gv: GateVerdict, gate: Gate, cfg: Suites, results: str, since: fl
     means the body never started, and a runner that dropped the setup marker said its own preparation
     broke: in all three the run learned nothing about the product, and harvesting there would invent
     evidence out of whatever was lying in the directory.
+
+    It also settles OWNERSHIP, and the reason is at the return below: a gate that filled the results dir
+    owns it, whether or not it also cleared it.
     """
     if not gate.results_from:
         return gv
     source = str(context.current().root / gate.results_from)
     merged = allure.merge_results(results, [source], parent_suite=cfg.parent_suite, not_before=since)
     _say_merge(merged)
-    if merged.empty and gv.verdict is Verdict.PASSED:
-        return replace(gv, verdict=Verdict.FAILED, rc=NO_RESULTS_RC,
-                       detail=NO_RESULTS_DETAIL.format(source=gate.results_from, merge=merged.line))
-    return gv
+    if merged.empty:
+        if gv.verdict is Verdict.PASSED:
+            return replace(gv, verdict=Verdict.FAILED, rc=NO_RESULTS_RC,
+                           detail=NO_RESULTS_DETAIL.format(source=gate.results_from,
+                                                           merge=merged.line))
+        return gv
+    # AND THE GATE OWNS THE DIRECTORY IT FILLED (si#69). That property used to be `gate.clears` on this
+    # branch, on the reasoning its own docstring gives: an APPENDING gate whose runner is the product's
+    # own "takes nothing, writes nothing and leaves the dir exactly as it found it". A gate that names
+    # `results_from:` writes into it, so the reasoning no longer reaches this case - and `owns_results`
+    # is what decides whether the run's verdict may be written into the archive standing there. Left as
+    # it was, a run made only of appending harvesting gates would fill an archive with this run's results
+    # and leave the PREVIOUS run's verdict inside it.
+    return replace(gv, owned_results=True)
 
 
 def _started() -> float:
