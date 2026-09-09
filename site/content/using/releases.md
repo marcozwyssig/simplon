@@ -34,6 +34,49 @@ support:
     ci-privileges: { task: "support:ci-privileges" }
 ```
 
+### The uniform build: one task, four languages (si#95, si#99, si#100, si#101)
+
+The largest thing in this release, and the shape it took is the argument for it.
+
+**`toolchain:run`** runs a pinned image over the product tree, as the calling user, with named caches. It
+is the half of a build that is identical in every language: Java, C++, .NET and Python differ in which
+image runs and which argv it is handed, not in how a container is wired to a source tree. It is a
+FAMILY rather than a placement, because a toolchain is needed by `build` AND `test` - ctest, dotnet test
+and gradle test all belong under the latter.
+
+**`support:toolchain`** writes a language's ready-made configuration into the product's manifest:
+
+```
+./<product>.sh support toolchain cpp
+```
+
+lands `configure`, `compile`, `unit` and `analyse`, each a `toolchain:run` command with a pinned
+`silkeh/clang:19`. A product declares its parameters and receives the rest.
+
+**Scaffolded, not resolved at run time**, and that is a safety property rather than a convenience. A
+profile read while a build runs would let a kernel release change what that build does - the same class
+as an unpinned image, one level up. Written into the manifest, the product owns what it runs from then
+on, and this kernel's table can move without moving anybody's build.
+
+**It never clobbers.** A command that already exists is left as it is and named. The edit was somebody's
+decision, and the scaffolder cannot tell a deliberate one from a stale one.
+
+Both coordinates are DECLARED and not placed, so nothing appears in a product's CLI until the product
+asks for it.
+
+### The release guard could not see GitHub's own merge (si#97, si#98)
+
+A defect in this repository's own gate, and it had been red on every pull request for as long as the
+rule existed. `test_every_merge_in_a_documented_range_names_its_ticket` asks that every merge in a
+release range names a ticket in its subject. CI runs `on: [push, pull_request]`, and the `pull_request`
+event checks out `refs/pull/N/merge` - an ephemeral merge GitHub composes, whose subject is exactly
+`Merge <40 hex> into <40 hex>`, with no ticket and no way for an author to add one.
+
+So every PR carried one permanently red check that had nothing to do with its content. The fix skips
+that one subject and only that one: a full match on the machine format, so a real merge whose author
+forgot the number is still caught, and one that prefixes GitHub's wording to disguise itself is not
+excused.
+
 ### Also in this range: a design and its plan, and nothing built from either (si#95, si#96)
 
 The spec for `toolchain:run` and the uniform build across Java, C++, .NET and Python landed in this
