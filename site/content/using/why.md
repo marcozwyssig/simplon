@@ -154,7 +154,7 @@ by the kind of work instead of by the phase it runs in:
 | testing | pytest, mypy, Allure | `test:gate`, `test:accept`, `test:report`, `test:typecheck-python` |
 | documentation | Hugo, docToolchain, the assembled command line itself | `docs:site`, `docs:render`, `docs:reference` |
 | packaging and publishing | `docker`, `oras`, `gh` | `build:image`, `release:image`, `release:artifact`, `release:asset` |
-| the machine and its services | `oras`, `docker compose`, `claude`, `sudo`/`usermod` - and nothing at all for `support:environments`, which only reads the manifest | `support:install`, `support:nexus`, `support:claude-plugins`, `support:environments`, `support:ci-privileges` |
+| the machine and its services | `oras`, `docker compose`, `claude`, `sudo`/`usermod`, a pinned toolchain image - and nothing at all for `support:environments`, which only reads the manifest | `support:install`, `support:nexus`, `support:claude-plugins`, `support:environments`, `support:ci-privileges`, `toolchain:run` |
 | the manifest itself | nothing external | `tasks:generate`, `tasks:catalogue`, `support:workflows`, `support:completion` |
 
 Six kinds of work, and the middle column barely intersects. Every one of them is reached through
