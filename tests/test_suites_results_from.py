@@ -230,6 +230,22 @@ def test_a_command_gate_whose_runner_wrote_results_contributes_them_and_passes(m
         f"the declared results never reached the run: {_merged(tmp_path)}")
 
 
+def test_the_merge_line_a_gate_prints_names_the_gate(monkeypatch, tmp_path, capsys):
+    """A run of three harvesting gates prints three merge lines before the report step prints a fourth,
+    and the report step's wording is anonymous by design (it is quoted on two pages and pinned). So a
+    gate says which level the sentence is about, or a reader cannot tell them apart."""
+    # arrange
+    _product(monkeypatch, tmp_path)
+    gate = testrun.Gate(name="unit", command="build unit", results="clear",
+                        results_from=WROTE_INTO)
+
+    # act
+    testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert
+    assert "unit results: merged 1 file" in capsys.readouterr().out
+
+
 def test_an_impl_gate_contributes_the_same_way_without_the_product_writing_the_merge(monkeypatch,
                                                                                      tmp_path):
     """The hand-wiring being replaced. javademo's `impl:` body runs gradle and then calls

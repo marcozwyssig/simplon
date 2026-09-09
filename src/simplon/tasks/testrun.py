@@ -579,7 +579,7 @@ def _clear_results(results: str, reports: str) -> None:
     os.makedirs(results, exist_ok=True)
 
 
-def _say_merge(merged: allure.Merge) -> None:
+def _say_merge(merged: allure.Merge, label: str = "per-module results") -> None:
     """Report what a merge DID (#64), in the one place that decides how loudly.
 
     Two callers now merge - a gate harvesting what its own runner wrote (si#133) and the report step
@@ -587,9 +587,14 @@ def _say_merge(merged: allure.Merge) -> None:
     an OK is the same rule in both: a missing source, an empty one, one holding only the previous run's
     files, or a parent suite that reached nothing are all findings, and a merge that did what it says is
     not. Two call sites answering that separately are two answers waiting to disagree.
+
+    `label` is what parts them on the terminal. The report step's wording is `per-module results` and
+    stays so - it is quoted on two documentation pages and pinned by a test - but a run of three gates
+    would otherwise print that same anonymous sentence three times before the report step said it a
+    fourth, and a reader could not tell which level each one was about. A gate names itself.
     """
     (log.warn if merged.missing or merged.empty or merged.stale or merged.unreached
-     else log.ok)(f"per-module results: {merged.line}")
+     else log.ok)(f"{label}: {merged.line}")
 
 
 def _harvested(gv: GateVerdict, gate: Gate, cfg: Suites, results: str, since: float) -> GateVerdict:
@@ -633,7 +638,7 @@ def _harvested(gv: GateVerdict, gate: Gate, cfg: Suites, results: str, since: fl
         return gv
     source = str(context.current().root / gate.results_from)
     merged = allure.merge_results(results, [source], parent_suite=cfg.parent_suite, not_before=since)
-    _say_merge(merged)
+    _say_merge(merged, f"{gate.name} results")
     if merged.empty:
         if gv.verdict is Verdict.PASSED:
             return replace(gv, verdict=Verdict.FAILED, rc=NO_RESULTS_RC,
