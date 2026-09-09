@@ -19,8 +19,9 @@ tasks:
 
 groups:
   # All three sit under `build`, which is where `support:toolchain` writes them - not under `test`,
-  # which is where the design's own command table puts `unit` and `analyse`. The placement is the
-  # scaffolder's, so it is kept rather than corrected on the page.
+  # which is where the design's own command table put `unit` and `analyse`. si#111 settled that in the
+  # scaffolder's favour: `build` holds the raw toolchain invocations, which return the container's rc
+  # and no verdict, and `test` holds the gates that turn one of them INTO a verdict (si#106).
   #
   # `body:`/`where:`/`extra:` is the ONE shape that assembles today (si#105). The design writes
   # `image:`/`workdir:`/`argv:` directly under `with:`, and so does the scaffolder; the loader accepts

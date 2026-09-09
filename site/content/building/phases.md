@@ -364,6 +364,22 @@ where half its callers live.
 product owns it from then on. Scaffolded rather than resolved at run time, so a kernel release can never
 change how a product builds.
 
+**And it writes every one of them under `build`** (si#111), including `unit` and `analyse`, which the
+si#95 design's own command table had put at `test unit` and `test analyse`. The split the kernel keeps is
+not build-versus-test by subject matter but **rc versus verdict**: a `toolchain:run` command runs a
+pinned image over the tree and hands back the container's exit code, and that is all it does, while a
+gate under `test` turns one of those commands into a verdict with a setup marker and an archive
+([Test levels](../test-levels/#a-gate-may-name-a-command-in-your-own-tree)). Filing the bare `ctest` at
+`test unit` would stand a number with no verdict beside a verdict under one group, and the number is
+exactly the one that reports last week's binaries as a full green suite. `toolchain:run` remains a
+family for the reason above and not for this one: a product may file it anywhere it needs, and the C++
+use case files the very same coordinate under `deploy up` to run the binary it compiled.
+
+**Read the exit code against 0, never against 1.** The kernel returns what the container returned and
+interprets nothing, and the tools disagree about what failure is worth: a failing `ctest` run exits **8**,
+`dotnet format --verify-no-changes` exits **2** on a formatting fault, `gradle test` and `mypy` exit 1.
+A CI step or a gate that compares to `1` reads two of those four as a pass.
+
 **What a command declares is what the impl takes.** The `with:` block's keys - `image`, `workdir`,
 `argv`, `env`, `caches` - are the body's parameters one for one, because that is how the loader binds a
 `with:` block at all (si#105). Pin every one a command uses: an unpinned parameter is rendered as a real
