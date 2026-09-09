@@ -36,11 +36,27 @@ subdirectory instead of at the repo root, so pass `--dir .` whenever the repo
 is already the product. After that the generated `myctl.sh` carries itself, and
 a later `simplon init` refreshes it.
 
-The orchestrator block -- the directory holding `.venv`, `requirements.txt` and
-`src/python/` -- lands in `orchestrator/` by default. A product whose own
-structure reserves the repo root passes `--orch-dir`:
+The product name is **optional** inside a git repository named after the
+product, where the whole command is:
 
-    simplon init myctl --dir . --orch-dir deploy/provision/orchestrator
+    simplon init
+
+The name is read from the repository -- the `origin` remote's repository name,
+or the working tree's root directory name when there is no remote yet -- and
+the run prints which of the two it used. The argument still wins, because a
+repository can be called `tooling` or hold two products at once. A name that
+cannot be a product name is refused with the argument named as the fix rather
+than mangled into one, and a directory with no `.git` is told what it is
+missing. With the name read from the repository and no `--dir`, the skeleton
+lands at the repository ROOT, since reading the name from the repository is
+already the statement that the repository is the product.
+
+The orchestrator block -- the directory holding `.venv`, `requirements.txt` and
+`src/python/` -- lands in `deploy/provision/orchestrator` by default, which is
+where every product that adopted Simplon put it by hand. A product that owns
+its repo root moves it back up with `--orch-dir`:
+
+    simplon init myctl --dir . --orch-dir orchestrator
 
 The value has to be a plain relative path under the target; an absolute one, or
 one containing `..`, is refused rather than scaffolded somewhere unexpected. It
@@ -48,6 +64,19 @@ moves the whole block together -- both launchers' `LAUNCH_ORCH_DIR` and every
 path derived from it -- so nothing needs a hand-edit afterwards. Pass the same
 flag on a later refresh: `--force` overwrites the launchers, so an edit made by
 hand does not survive one.
+
+It writes nine files:
+
+    myctl.sh                                               the entry point (bash)
+    myctl.cmd                                              the same entry point for cmd.exe
+    myctl.yaml                                             the starter manifest
+    deploy/provision/orchestrator/requirements.txt         the host-venv deps, kernel pinned by version
+    deploy/provision/orchestrator/src/python/orchestrator/
+        __init__.py                                        the product package
+        __main__.py                                        `python -m orchestrator` entry
+        cli.py                                             the composition root
+        paths.py                                           the product-context wiring
+        environments.py                                    the environment provider
 
 The Python package stays `orchestrator` wherever the block sits: it is an
 identifier resolved on `PYTHONPATH`, which the launcher points at
@@ -65,9 +94,11 @@ feels it first.
 
 It sits under `deploy/` rather than at the repo root, and that is the same
 `--orch-dir` any other product passes: Simplon scaffolded its own launchers
-with it. The default is still `orchestrator/` -- what moved is Simplon's tree,
-not the default it hands out. A kernel that offers a parameter and then keeps
-the one placement it made configurable is not using what it ships.
+with it. The kernel's block is one level shallower than the default a product
+gets, because it has no `provision/` layer to sit under; what the two share is
+that the repo root is not the block's home, which is exactly what the default
+now says. A kernel that offers a parameter and then keeps the one placement it
+made configurable is not using what it ships.
 
 ## Why a gate is red
 
