@@ -54,6 +54,7 @@ TWO FACTS INHERITED FROM si#102, both of which cost a measurement there:
 from __future__ import annotations
 
 import os
+import re
 import stat
 import tempfile
 from collections.abc import Iterator
@@ -85,6 +86,12 @@ CLI_HOME = "build/dotnet-home"
 #: The default name the generated config gives GitHub's feed. A manifest may choose another with
 #: `source_name:`; both halves read the same key, so the push and the restore cannot disagree.
 DEFAULT_SOURCE = "github"
+
+#: What a source name may be. It becomes an XML ELEMENT NAME in `packageSourceCredentials`, not an
+#: attribute value, so escaping is not available to it: a space or a bracket produces a file NuGet
+#: cannot parse, and the error a reader gets then is about XML rather than about the key they typed.
+#: The pattern is XML's own NCName narrowed to ASCII, which is every name anybody would actually write.
+SOURCE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")
 
 
 def _declared(name: str) -> dict:
@@ -121,6 +128,24 @@ def _required(spec: dict, name: str, *keys: str) -> list[str]:
     return values
 
 
+def _without_a_scheme(registry: str) -> str:
+    """`registry` with its trailing slashes gone, refusing a scheme by name. Pure.
+
+    CALLED FROM THE CHECK AND FROM THE URL, and the order is the whole reason it exists as a function:
+    `_github_registry` runs FIRST, and `githubpackages.registry_host` splits on `/` - so without this,
+    `https://nuget.pkg.github.com/owner` was refused as "not GitHub Packages" (the host it read was
+    `https:`), which is a message about the wrong thing entirely and sends the reader to the wrong key.
+    """
+    bare = registry.strip("/")
+    if "://" in bare:
+        raise ValueError(
+            f"registry '{registry}' carries a scheme: write it the way every other `registry:` in a "
+            f"manifest is written, without the scheme - `{bare.split('://', 1)[-1]}`. The credential "
+            f"check reads this value as a host, and a scheme makes it read `{bare.split(':', 1)[0]}:` "
+            f"as one")
+    return bare
+
+
 def index_url(registry: str) -> str:
     """`nuget.pkg.github.com/owner` -> `https://nuget.pkg.github.com/owner/index.json`. Pure.
 
@@ -129,11 +154,13 @@ def index_url(registry: str) -> str:
     second key holding the URL would be the copy that drifts, and the drift would send a token to
     whatever the copy said.
 
-    A scheme is accepted and dropped because a manifest author will write one - the URL they know is the
-    one with `https://` in it - and refusing that would be pedantry about a value this function is
-    normalising anyway.
+    A SCHEME IS REFUSED rather than dropped, and that is a correction: dropping it here left the two
+    functions disagreeing about what a registry string is. `githubpackages.registry_host` splits on `/`
+    and reads `https:` as the host, so `_github_registry` - which runs FIRST - already refused
+    `https://nuget.pkg.github.com/owner` as "not GitHub Packages", a message about the wrong thing
+    entirely. One spelling for `registry:` across the kernel, and a refusal that names the key.
     """
-    bare = registry.split("://", 1)[-1].strip("/")
+    bare = _without_a_scheme(registry)
     if "/" not in bare:
         raise ValueError(
             f"registry '{registry}' names no owner: GitHub's NuGet feed is per account, so the value has "
@@ -143,8 +170,11 @@ def index_url(registry: str) -> str:
 
 
 def owner(registry: str) -> str:
-    """The account a feed belongs to: `owner` out of `nuget.pkg.github.com/owner`. Pure."""
-    return registry.split("://", 1)[-1].strip("/").split("/", 1)[1]
+    """The account a feed belongs to: `owner` out of `nuget.pkg.github.com/owner`. Pure.
+
+    Called only after `index_url` has ruled on the same string, which is what makes the index safe.
+    """
+    return registry.strip("/").split("/", 1)[1]
 
 
 def config_text(source_name: str, url: str, user: str) -> str:
@@ -178,6 +208,22 @@ def config_text(source_name: str, url: str, user: str) -> str:
         "</configuration>\n")
 
 
+def _source_name(spec: dict, name: str) -> str:
+    """The name the config gives the feed, refused unless it can be an XML element.
+
+    Read here rather than in three task bodies, because a name the publish accepted and the config
+    rejected would be a transport whose two ends do not meet - `--source github` against a file that
+    never declared one.
+    """
+    chosen = str(spec.get("source_name", "") or DEFAULT_SOURCE)
+    if not SOURCE_NAME.fullmatch(chosen):
+        raise ValueError(
+            f"artifact '{name}' declares `source_name: {chosen!r}`, which cannot be an XML element "
+            f"name. It becomes one in the generated {CONFIG_NAME}, so it has to start with a letter or "
+            f"an underscore and carry only letters, digits, `_`, `-` and `.`")
+    return chosen
+
+
 def _github_registry(spec: dict, name: str) -> str:
     """The registry, refused unless it is GitHub's own.
 
@@ -187,6 +233,7 @@ def _github_registry(spec: dict, name: str) -> str:
     its own config; the kernel does not generate one it cannot vouch for.
     """
     (registry,) = _required(spec, name, "registry")
+    _without_a_scheme(registry)
     if not githubpackages.is_github_packages(registry):
         raise ValueError(
             f"artifact '{name}' names registry '{registry}', which is not GitHub Packages "
@@ -204,7 +251,7 @@ def config(name: str = "") -> int:
     """
     spec = _declared(name)
     registry = _github_registry(spec, name)
-    source_name = str(spec.get("source_name", "") or DEFAULT_SOURCE)
+    source_name = _source_name(spec, name)
 
     root = context.current().root
     target = root / CONFIG_NAME
@@ -226,7 +273,7 @@ WORKDIR = "/work"
 
 
 @contextmanager
-def _env_file(token: str) -> "Iterator[Path]":
+def _env_file(token: str) -> Iterator[Path]:
     """A 0600 file holding `GITHUB_TOKEN=<token>`, gone by the time this returns.
 
     WHY A FILE AND NOT `-e NAME=VALUE`. `docker run -e GITHUB_TOKEN=ghp_...` puts the credential in the
@@ -304,7 +351,7 @@ def publish(name: str = "", tag: str = "") -> int:
     """
     registry, pinned, project = _for_container(name)
     spec = _declared(name)
-    source_name = str(spec.get("source_name", "") or DEFAULT_SOURCE)
+    source_name = _source_name(spec, name)
 
     resolved = tag or str(spec.get("tag", "") or "")
     if not resolved:
@@ -383,7 +430,7 @@ def restore(name: str = "") -> int:
     """
     registry, pinned, project = _for_container(name)
     spec = _declared(name)
-    source_name = str(spec.get("source_name", "") or DEFAULT_SOURCE)
+    source_name = _source_name(spec, name)
 
     root = context.current().root
     _config_or_refuse(root, source_name)

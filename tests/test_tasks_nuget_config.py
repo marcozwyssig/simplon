@@ -28,6 +28,11 @@ artifacts:
     image: mcr.microsoft.com/dotnet/sdk:9.0
     project: src/Core/Core.csproj
     source_name: house
+  badname:
+    registry: nuget.pkg.github.com/marcozwyssig
+    image: mcr.microsoft.com/dotnet/sdk:9.0
+    project: src/Core/Core.csproj
+    source_name: "my feed <oops>"
   elsewhere:
     registry: nuget.example.com/team
     image: mcr.microsoft.com/dotnet/sdk:9.0
@@ -52,12 +57,31 @@ def _product(tmp_path, monkeypatch):
 @pytest.mark.parametrize("registry,expected", [
     ("nuget.pkg.github.com/marcozwyssig", "https://nuget.pkg.github.com/marcozwyssig/index.json"),
     ("nuget.pkg.github.com/owner/", "https://nuget.pkg.github.com/owner/index.json"),
-    ("https://nuget.pkg.github.com/owner", "https://nuget.pkg.github.com/owner/index.json"),
 ])
 def test_the_index_url_is_derived_from_the_registry_the_credential_check_reads(registry, expected):
     """One spelling of `registry:` for both the check and the URL. Two keys would be two sources for one
     fact, and the one that drifts is the one nothing reads back."""
     assert nuget.index_url(registry) == expected
+
+
+def test_a_registry_written_with_a_scheme_is_refused_and_told_how_to_spell_it():
+    """One spelling of `registry:` across the kernel, and this is the caller that would otherwise have
+    two. `githubpackages.registry_host` splits on `/` and would read `https:` as the host, so a
+    scheme-prefixed value is refused as "not GitHub Packages" BEFORE any URL is built - a message about
+    the wrong thing entirely. Refusing it here says which key to edit and what to write in it."""
+    with pytest.raises(ValueError, match="without the scheme"):
+        nuget.index_url("https://nuget.pkg.github.com/owner")
+
+
+def test_a_scheme_is_refused_by_the_task_too_and_not_only_by_the_helper(_product, monkeypatch):
+    """The helper is not the seam a product meets; the command is."""
+    import yaml
+    manifest = yaml.safe_load((_product / "demo.yaml").read_text(encoding="utf-8"))
+    manifest["artifacts"]["corelib"]["registry"] = "https://nuget.pkg.github.com/marcozwyssig"
+    (_product / "demo.yaml").write_text(yaml.safe_dump(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="without the scheme"):
+        nuget.config(name="corelib")
 
 
 def test_a_registry_naming_no_owner_is_refused_rather_than_producing_half_a_url():
@@ -148,3 +172,11 @@ def test_an_undeclared_artefact_lists_the_ones_that_are(_product):
 def test_without_a_name_it_says_how_to_pin_one(_product):
     with pytest.raises(ValueError, match="with:"):
         nuget.config()
+
+
+def test_a_source_name_that_cannot_be_an_xml_element_is_refused_by_name(_product):
+    """`source_name:` becomes an ELEMENT NAME in `packageSourceCredentials`, not an attribute value, so
+    escaping is not available to it: a space or a bracket produces a file NuGet cannot parse, and the
+    error a reader then gets is about XML rather than about the manifest key they typed."""
+    with pytest.raises(ValueError, match="source_name"):
+        nuget.config(name="badname")
