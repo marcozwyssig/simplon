@@ -341,16 +341,22 @@ def test_the_kind_of_work_with_no_catalogue_task_is_still_the_empty_one():
 
 
 def test_the_bodies_the_page_says_reach_no_external_tool_really_do_not():
-    """The middle column is mostly editorial (see the file head), but two of its claims are absolute and
-    therefore checkable: `tasks:generate`/`tasks:catalogue` shell out to nothing, and neither does
+    """The middle column is mostly editorial (see the file head), but three of its claims are absolute
+    and therefore checkable: `tasks:generate`/`tasks:catalogue` shell out to nothing, neither does
     `support:environments` - which review found missing from that row's tool list, where it had been
-    filed under `oras`/`docker compose`/`claude` and reaches none of them.
+    filed under `oras`/`docker compose`/`claude` and reaches none of them - and neither do the two
+    build-file generators si#102 added to the same row.
+
+    The generators are the reason the row is no longer called *the manifest itself*: they read a source
+    tree. What kept them in the row is exactly the claim held here - they render a file from a
+    declaration and reach nothing to do it - so a generator that grew a `run` call would have to move
+    rows, and this is what says so.
 
     A negative claim is the kind most worth holding, because nothing about a passing suite would ever
     contradict it on its own.
     """
-    # arrange: the bodies behind the three coordinates the page says reach nothing
-    modules = ("simplon.tasks.tasks", "simplon.tasks.env")
+    # arrange: the bodies behind the coordinates the page says reach nothing
+    modules = ("simplon.tasks.tasks", "simplon.tasks.env", "simplon.tasks.buildfiles")
 
     # act
     shelling = {}

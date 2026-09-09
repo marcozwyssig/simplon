@@ -155,13 +155,21 @@ by the kind of work instead of by the phase it runs in:
 | documentation | Hugo, docToolchain, the assembled command line itself | `docs:site`, `docs:render`, `docs:reference` |
 | packaging and publishing | `docker`, `oras`, `gh` | `build:image`, `release:image`, `release:artifact`, `release:asset` |
 | the machine and its services | `oras`, `docker compose`, `claude`, `sudo`/`usermod`, a pinned toolchain image - and nothing at all for `support:environments`, which only reads the manifest | `support:install`, `support:nexus`, `support:claude-plugins`, `support:environments`, `support:ci-privileges`, `support:toolchain`, `toolchain:run` |
-| the manifest itself | nothing external | `tasks:generate`, `tasks:catalogue`, `support:workflows`, `support:completion` |
+| the declarations themselves | nothing external | `tasks:generate`, `tasks:catalogue`, `support:workflows`, `support:completion`, `build:cmake-files`, `build:dotnet-solution` |
 
 Six kinds of work, and the middle column barely intersects. Every one of them is reached through
 `build`, `test`, `release`, `deploy`, `monitor`, `support` and nothing else. That is the claim the fixed
 verb list is worth making - not that five verbs are elegant, but that they are the only thing six
 unrelated toolchains can all be addressed by at once. Take the list apart per team and you have not
 gained expressiveness; you have lost the one word that meant the same thing in all six places.
+
+The last row was called *the manifest itself* until si#102 put two generators in it, and widening the
+name is the honest half of that change. `build:cmake-files` and `build:dotnet-solution` read a source
+tree rather than a manifest, so the old name would have been wrong about them - but the work is the
+same work as the four beside them. Each takes something the product has already declared - a manifest,
+a command tree, a directory of sources - and renders a file the product then commits, reaching no
+external tool at all to do it. That is why the row's middle column can say *nothing external* and be
+held to it by the suite rather than believed.
 
 The two ways of grouping cut the same coordinates differently, and the difference is the point rather
 than an untidiness. `release:tag` is version-control work that happens in the release phase;
