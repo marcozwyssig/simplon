@@ -120,6 +120,15 @@ could not introspect itself is worse than one that says *unknown* - and a produc
 epilog keeps it, with the kernel's line below it. Top-level app only, and no `--version` flag comes with
 it. Nothing to do.
 
+### The design behind the language cluster, as a document (si#131)
+
+A merge that ships no code and is named here because the notes name every ticket merged into the range,
+not every ticket that changed behaviour. `docs/superpowers/specs/2026-09-09-the-language-cluster-design.md`
+records the four decisions eight tickets share - no new top-level manifest section, the location names
+the test level, a gate may name where its results landed, and `simplon init` defaults rather than
+decrees - together with the proof each of the eight owes. si#131 itself, the C++ target model, is not in
+this release; the document is what decided its shape. Nothing to do.
+
 ### Before you bump
 
 **The scaffolder no longer empties your manifest of its comments** (si#110). `support toolchain` read
