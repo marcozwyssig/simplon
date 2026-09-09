@@ -48,9 +48,12 @@ take.
 
 The line that does hold inside `simplon/tasks/` is **named versus unnamed**: a module some catalogue
 coordinate points its `impl:` at is reachable, by coordinate first and by import where a composition
-root has reason to. A module in there that **no** coordinate names is innards — `allure` and `gitops`
-today — and nothing outside the directory imports either. That split is derived from `catalogue.yaml`,
-not declared, so it cannot drift.
+root has reason to. A module in there that **no** coordinate names is innards — `allure`, `gitops` and
+`profiles` today — and nothing outside the directory imports either. `profiles` is the newest of the
+three and the clearest case of the rule: it is the language table `support:toolchain` reads while
+writing a ready-made configuration into a product's manifest, so it is reached through that coordinate
+and never named by one of its own. That split is derived from `catalogue.yaml`, not declared, so it
+cannot drift.
 
 There is a second half, and it is the one that cost a review its afternoon:
 
