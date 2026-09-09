@@ -141,13 +141,13 @@ the number that says whether a rib is filled:
 | `release` | phase, agnostic | 4 |
 | `deploy` | phase, env-first | 0 |
 | `monitor` | phase, env-first | 0 |
-| `support` | not a phase | 7 |
+| `support` | not a phase | 8 |
 | `vcs` | family | 5 |
 | `docs` | family | 3 |
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Twenty-seven coordinates: sixteen carrying a placement, eleven free to be filed. The numbers in this sentence, in that
+Twenty-eight coordinates: seventeen carrying a placement, eleven free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -250,7 +250,7 @@ environment.
 
 *Host preflight, environment introspection and host tooling.* Not a phase - the group the five stand on.
 
-**In the catalogue today: 7 tasks.**
+**In the catalogue today: 8 tasks.**
 
 - `support:install`
 - `support:nexus`
@@ -259,6 +259,7 @@ environment.
 - `support:workflows`
 - `support:completion`
 - `support:ci-privileges`
+- `support:toolchain`
 
 **What a product brings itself.** Nothing, for `support:install` and `support:completion` - they are the
 two tasks here the catalogue **places**, so every product gets `support install` and `support completion`
@@ -266,6 +267,11 @@ without asking. One touches the machine and reads no manifest at all; the other 
 shell completion out of the command tree every manifest already has, and a completion that has to be
 asked for is a completion nobody has. Four of the rest each read a section (`nexus:`, `claude:`,
 `environments:`, `workflows:`) and are therefore offered.
+
+`support:toolchain` is offered for a third reason again (si#95): it reads no section, and it could be
+placed - but it WRITES the product's own manifest, and a command that edits the file a product is defined
+by should be one the product asked for. What it writes is a language's ready-made build, so that a
+product declares its parameters and receives the rest.
 
 `support:ci-privileges` is the one that is offered for a different reason (si#92). It reads no section at
 all, so by the test above it could be placed - and it deliberately is not, because it grants

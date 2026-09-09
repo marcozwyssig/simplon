@@ -18,7 +18,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import yaml
+
 from simplon import context, docker, labinstance, log
+from simplon.tasks import profiles
 from simplon.run import run
 
 
@@ -144,3 +147,41 @@ def _caches(raw: object, where: str) -> list[Cache]:
             raise SystemExit(1)
         out.append(Cache(volume=str(entry["volume"]), path=str(entry["path"])))
     return out
+
+
+def _manifest_path() -> Path:
+    """The product's own manifest. A function rather than a constant, so a test can point it at a
+    tmp_path - the same seam `context.current()` gives every other task."""
+    return context.current().manifest_path
+
+
+def scaffold(language: str, **params: str) -> int:
+    """Write a language's ready-made toolchain commands into THIS product's manifest (si#95).
+
+    SCAFFOLDED, NOT RESOLVED AT RUN TIME, and that is the safety property rather than a convenience. A
+    profile read while a build runs would let a kernel release change what that build does - the same
+    class as an unpinned image, one level up. Written into the manifest, the product owns what it runs
+    from here on, and the kernel's table can move without moving anybody's build.
+
+    NEVER CLOBBERS. A command that already exists is left exactly as it is and NAMED, because a
+    scaffolder that silently overwrites a hand-edited build is worse than no scaffolder: the edit was
+    somebody's decision, and this command cannot tell a deliberate one from a stale one.
+    """
+    prof = profiles.profile(language, **params)
+    path = _manifest_path()
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    commands = data.setdefault("groups", {}).setdefault("build", {}).setdefault("commands", {})
+    written, kept = [], []
+    for name, body in prof.commands.items():
+        if name in commands:
+            kept.append(name)
+            continue
+        commands[name] = {"task": "toolchain:run", "with": {"image": prof.image, **body}}
+        written.append(name)
+    if written:
+        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    log.ok(f"{language}: wrote {len(written)} command(s)"
+           + (f" - {', '.join(written)}" if written else ", nothing was missing"))
+    for name in kept:
+        log.info(f"kept your own '{name}' - scaffolding never overwrites an edited command")
+    return 0
