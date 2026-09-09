@@ -167,6 +167,12 @@ COMPLETE_FROM = (0, 5, 0)
 _TICKET = re.compile(r"(?:si)?#(\d+)\b")
 _BRANCH = re.compile(r"\bsi(\d+)-")
 
+#: The subject GitHub composes for the merge it builds itself - two full hashes and not one word more
+#: (si#97). It is matched in that EXACT machine format on purpose: a subject a person wrote is a subject a
+#: person can put the number into, so a short hash, a branch name, or anything past the second hash is
+#: still held to the rule.
+_GITHUB_MERGE = re.compile(r"Merge [0-9a-f]{40} into [0-9a-f]{40}")
+
 
 def _tag(version: tuple[int, ...]) -> str:
     """`(0, 5, 0)` -> `v0.5.0`, the spelling `git` knows this version by."""
@@ -178,16 +184,32 @@ def tickets_in(subject: str) -> set[int]:
     return {int(n) for n in _TICKET.findall(subject)} | {int(n) for n in _BRANCH.findall(subject)}
 
 
+def is_githubs_own_merge(subject: str) -> bool:
+    """True for the ephemeral merge GitHub builds for a `pull_request` run, and for nothing else.
+
+    CI runs `on: [push, pull_request]`, and the `pull_request` event checks out `refs/pull/N/merge`: a
+    commit GitHub creates on the fly to test the branch against the base, which exists on no branch and is
+    never pushed. It is `HEAD` in that checkout, so it lands inside the prepared release's range, and its
+    subject is written by GitHub - there is no author to ask for a ticket and no place to write one.
+    """
+    return _GITHUB_MERGE.fullmatch(subject) is not None
+
+
 def merge_subjects(start: str, end: str) -> list[str]:
     """The subject line of every merge commit in `start..end`, newest first.
 
     MERGES AND NOT COMMITS, because a merge is the unit a release is assembled from here: work happens on
     a branch and arrives in one commit whose subject says which ticket arrived. Counting commits instead
     would count a branch's internal history, which nobody promised to describe.
+
+    GitHub's own ephemeral merge is dropped (si#97). It is not a change this release carries - it is the
+    scaffolding a `pull_request` run is built on, gone the moment the pull request closes - so it belongs
+    in no release range's population at all, and asking it for a ticket made every pull request red.
     """
     out = subprocess.run(["git", "log", "--merges", "--format=%s", f"{start}..{end}"],
                          cwd=ROOT, capture_output=True, text=True, check=True)
-    return [line.strip() for line in out.stdout.splitlines() if line.strip()]
+    return [line.strip() for line in out.stdout.splitlines()
+            if line.strip() and not is_githubs_own_merge(line.strip())]
 
 
 def sections() -> dict[tuple[int, ...], str]:
@@ -252,6 +274,55 @@ def test_every_merge_in_a_documented_range_names_its_ticket():
         "them: " + "; ".join(f"{rng[0]}..{rng[1]}: {subject!r}" for rng, subject in silent.items())
         + ". A merge subject is where a release range says what it carries - write the number into it "
           "(`#42`, `si#42`, or a `si42-` branch name), or this file cannot see the change at all")
+
+
+def test_githubs_own_ephemeral_merge_is_not_counted_as_silent():
+    """The one merge in a range that no author wrote and no author can fix (si#97).
+
+    CI runs `on: [push, pull_request]`, and the `pull_request` event checks out `refs/pull/N/merge` - a
+    merge commit GitHub creates on the fly to test the branch against the base. It is `HEAD` there, so it
+    falls inside the prepared release's range; its subject is machine-written and carries no ticket. The
+    rule above therefore failed on EVERY pull request, for the one commit its author could not touch.
+    """
+    # arrange
+    subject = ("Merge 528027af46caeab8a57bad0e9f8ce41852b67599 into "
+               "d128e1bcba34a7f6d4f9c5dd24cd37fbcd116d38")
+
+    # act
+    skipped = is_githubs_own_merge(subject)
+
+    # assert
+    assert not tickets_in(subject), "the premise: this subject names nothing, so the rule would fail on it"
+    assert skipped, "GitHub's ephemeral merge is not a merge this repository wrote, so it cannot be asked "\
+                    "for a ticket - and no author can put one into it"
+
+
+def test_a_real_merge_that_names_no_ticket_is_still_counted_as_silent():
+    """The assurance the skip must not spend, held as its own assertion.
+
+    The whole worth of the rule above is that a merge landing without a number is caught. So the skip is
+    the EXACT machine format and nothing near it: a short hash, a branch name, or any word past the
+    second hash means a human wrote the subject, and a human can write the number in.
+    """
+    # arrange
+    written_by_a_human = [
+        "Merge branch 'main' into aufraeumen",
+        "merge: aufraeumen",
+        "Merge 528027a into d128e1b",
+        ("Merge 528027af46caeab8a57bad0e9f8ce41852b67599 into "
+         "d128e1bcba34a7f6d4f9c5dd24cd37fbcd116d38 (manual)"),
+        ("Merge 528027af46caeab8a57bad0e9f8ce41852b67599 into "
+         "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"),
+    ]
+
+    # act
+    skipped = [subject for subject in written_by_a_human if is_githubs_own_merge(subject)]
+
+    # assert
+    assert not any(tickets_in(subject) for subject in written_by_a_human), \
+        "the premise: none of these names a ticket, so each one is a merge the rule has to catch"
+    assert not skipped, ("these subjects were written by a person and name no ticket, so the rule must "
+                         "still fail on them: " + "; ".join(repr(s) for s in skipped))
 
 
 def test_every_ticket_merged_into_a_release_is_named_in_its_section():
