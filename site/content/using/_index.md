@@ -21,5 +21,6 @@ the other half is [Building on Simplon](../building/).
   {{< card link="case-cpp/" title="A C++ product, end to end" subtitle="The same loop again with no task body at all: four commands, one coordinate, one pinned clang image - and the four steps between that promise and a product that can use it." >}}
   {{< card link="case-dotnet/" title="A .NET product, end to end" subtitle="The same loop again, with no task body for the build at all: one pinned SDK image, the kernel's own argv - and the four places that path does not reach yet." >}}
   {{< card link="releasing/" title="Cutting a release" subtitle="One command. Why the tag *is* the version, why it pushes one tag and not all of them, what the guard refuses - and why a push to `main` publishes nothing." >}}
+  {{< card link="handing-a-package-over/" title="Handing a package over" subtitle="Publishing a NuGet library so a second product resolves it - and why the Conan half is a transport rather than a remote, with the measurement that settles it." >}}
   {{< card link="commands/" title="Command reference" subtitle="Generated from the assembled application on every build." >}}
 {{< /cards >}}
