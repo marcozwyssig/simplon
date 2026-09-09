@@ -328,6 +328,35 @@ tasks:
   build:dotnet-solution:
     impl: simplon.tasks.buildfiles:dotnet
     help: "Write this product's .sln and .csproj files from its source tree."
+  # The CONSUMING halves of si#127 and si#128 - a coordinate each, because publishing alone is half a
+  # feature and a package nobody can resolve has not been handed over.
+  #
+  # `build:nuget-config` writes the product's nuget.config from the same `artifacts:` entry
+  # `release:nuget` pushes with, so the source name and the feed URL cannot disagree between the two
+  # halves. The file it writes is COMMITTED and holds no credential: measured, NuGet expands `%VAR%` in
+  # a ClearTextPassword on Linux, so what is in the file is the variable's NAME. si#127 states that as
+  # the part to get right.
+  build:nuget-config:
+    impl: simplon.tasks.nuget:config
+    help: "Write the product's nuget.config naming the GitHub feed (no credential in it)."
+    params:
+      name: { help: "the artifact whose registry the config names (normally pinned with `with:`)" }
+  # A COORDINATE RATHER THAN A `toolchain:run` COMMAND, and si#105's rule is why: a toolchain command's
+  # environment is what the manifest names and nothing else, and a token is exactly what a manifest may
+  # not name. So a product cannot declare this one, which is what makes it the kernel's.
+  build:nuget-restore:
+    impl: simplon.tasks.nuget:restore
+    help: "Restore the declared project inside the SDK image, with the credential the feed needs."
+    params:
+      name: { help: "the artifact whose project and feed to restore (normally pinned with `with:`)" }
+  # The pull half of si#128's transport. It moves a FILE and knows nothing about conan: the product runs
+  # `conan cache restore <path>` itself, through its own toolchain command, against its own cache.
+  build:conan-cache:
+    impl: simplon.tasks.conan:fetch
+    help: "Fetch a published Conan cache archive so a build can restore it."
+    params:
+      name: { help: "the artifact to fetch (normally pinned per command with `with:`)" }
+      tag:  { help: "the exact tag to fetch - there is no resolution, so it is named in full" }
 
   # --- release: what a product hands over --------------------------------------------------------------
   # A TASK, not a placed command: it needs an `artifacts:` section naming the registry, the package, the
@@ -354,6 +383,36 @@ tasks:
     params:
       name: { help: "the asset to publish (normally pinned per command with `with:`)" }
       tag:  { help: "the release to attach to, for a version only known after a build" }
+  # si#127. The .NET half of the uniform build could compile a library and had no way to hand it over.
+  # A TASK for the same reason `release:artifact` is one: it needs an `artifacts:` entry naming the
+  # registry, the SDK image, the project and the tag, so a command declared here would die on its first
+  # line in a product that publishes nothing.
+  #
+  # THE TOKEN NEVER REACHES A COMMAND LINE, and that is measured rather than careful: an api key alone
+  # does not authenticate against a feed that wants an Authorization header, the `<apikeys>` config
+  # section cannot hold one on Linux at all, and a push against a source that already carries
+  # credentials needs no key. See src/simplon/tasks/nuget.py for the transcripts.
+  release:nuget:
+    impl: simplon.tasks.nuget:publish
+    help: "Pack the declared project and push it to GitHub's NuGet feed."
+    params:
+      name: { help: "the artifact to publish (normally pinned per command with `with:`)" }
+      tag:  { help: "the package version to publish, for one only known after a build" }
+  # si#128, and the comment is the ticket's own warning: GitHub Packages has NO Conan registry - the
+  # kinds it serves are npm, RubyGems, Maven, Gradle, NuGet and Docker/Container. So this is a
+  # TRANSPORT, not a remote. `conan cache save` writes a .tgz, this moves it into the registry as an OCI
+  # artifact, and the consumer pulls that exact tag and runs `conan cache restore`. There is no `conan
+  # install` resolution against the registry, no version range and no graph solved remotely.
+  #
+  # Conan not speaking an OCI remote itself was MEASURED, because the whole design rests on it:
+  # `conan remote add` in Conan 2.32.0 accepts one remote type, `local-recipes-index`. A second value in
+  # that list is what reopens this.
+  release:conan:
+    impl: simplon.tasks.conan:publish
+    help: "Publish a Conan cache archive to a registry as an OCI artifact (a transport, not a remote)."
+    params:
+      name: { help: "the artifact to publish (normally pinned per command with `with:`)" }
+      tag:  { help: "the tag to publish under, for a version only known after a build" }
   # The image's other half: log in, push, and READ BACK that the registry has the tag. That last step is
   # the reason this is a kernel task at all - a push nobody verifies is the same defect as a report
   # nobody reads, and this project has shipped it twice (see src/simplon/tasks/image.py).
