@@ -64,7 +64,32 @@ decision, and the scaffolder cannot tell a deliberate one from a stale one.
 Both coordinates are DECLARED and not placed, so nothing appears in a product's CLI until the product
 asks for it.
 
-### The release guard could not see GitHub's own merge (si#97, si#98)
+### The release guard asked for notes about pull requests (si#97, si#98, si#103)
+
+Two defects in this repository's own gate, found by trying to cut this release four times.
+
+**The first was red on every pull request** and had been for as long as the rule existed.
+`test_every_merge_in_a_documented_range_names_its_ticket` asks that every merge in a release range names
+a ticket. CI runs `on: [push, pull_request]`, and the `pull_request` event checks out
+`refs/pull/N/merge` - an ephemeral merge GitHub composes, whose subject is exactly
+`Merge <40 hex> into <40 hex>`, with no ticket and no way for an author to add one. So every PR carried
+one permanently red check that had nothing to do with its content.
+
+**The second was a catch-22 and stopped this very release.** A pull request merged from the web interface
+gets `Merge pull request #N from <branch>`, so the PR carrying the release notes named ITSELF - and no
+notes can anticipate their own merge. A follow-up PR would have brought its own number too; the regress
+had no floor.
+
+Both rest on one distinction. An **authored** merge subject is a statement about the WORK; GitHub's
+wording is a statement about the VORGANG. The guard now reads the first as written, and for the second
+reads the commits that merge BROUGHT IN, which is where the author put the number. The unit stays the
+merge; only the place the statement is looked for moves one level down. With a floor: several merges
+from before the convention name nothing in their commits either, and dropping those would excuse work
+rather than describe it, so the subject's number remains the fallback.
+
+**What a product has to do about it:** name the ticket in the COMMIT, not only in the pull request
+title. `docs(#42): ...` rather than `docs: ...`. That is this repository's own convention already, and
+it is now the thing the guard reads.
 
 A defect in this repository's own gate, and it had been red on every pull request for as long as the
 rule existed. `test_every_merge_in_a_documented_range_names_its_ticket` asks that every merge in a
