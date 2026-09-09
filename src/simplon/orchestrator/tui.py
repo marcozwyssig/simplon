@@ -26,7 +26,6 @@ def run_pipeline(pipeline: Pipeline) -> int:
     Returns the overall exit code (0 iff every step passed)."""
     if not sys.stdout.isatty():
         return run_headless(pipeline)     # which writes its own transcript
-    started = datetime.now()
     try:
         app = _StepApp(pipeline)
     except Exception:  # noqa: BLE001 - any Textual import/construct issue -> safe fallback
@@ -34,7 +33,7 @@ def run_pipeline(pipeline: Pipeline) -> int:
     app.run()
     # AFTER the app, not from `_on_done`: quitting is a normal way for `App.run` to return, and a run the
     # operator stopped half way through is exactly the one whose record is worth keeping (si#148 item 3).
-    write_run_transcript(pipeline, started)
+    write_run_transcript(pipeline, app.started)
     # The TUI's screen - and with it the details pane that held the reason - is gone the moment the app
     # exits. The same block a CI log gets is therefore printed onto the terminal the operator is left
     # looking at (#49). A run with no failure prints nothing here, so a green run is not one line longer.
@@ -46,9 +45,11 @@ def run_pipeline(pipeline: Pipeline) -> int:
 # Textual is imported lazily inside the class module-load so that `from .tui import run_pipeline` does
 # not hard-require Textual on the headless path (run_pipeline's isatty check returns before this is
 # touched in CI). The import sits at module top but the headless fallback in cli.py catches ImportError.
+from rich.style import Style  # noqa: E402
+from rich.text import Text  # noqa: E402
 from textual import work  # noqa: E402
 from textual.binding import Binding  # noqa: E402
-from textual.app import App, ComposeResult  # noqa: E402
+from textual.app import App, ComposeResult, SystemCommand  # noqa: E402
 from textual.containers import Horizontal  # noqa: E402
 from textual.widgets import Footer, Header, Input, RichLog, Static, Tree  # noqa: E402
 
@@ -61,6 +62,35 @@ from textual.widgets.tree import TreeNode  # noqa: E402
 #: than spending a colour on the absence of news. The per-ROW mapping, which does have to separate all
 #: five, is `_STATE_STYLE`.
 _BAR_CLASS = {StepState.RUNNING: "-running", StepState.OK: "-ok", StepState.FAILED: "-failed"}
+
+
+def _state_styles(theme) -> dict[StepState, Style]:
+    """Each state's style, built from the THEME's own variables (si#148 item 7) - `$success`, `$warning`,
+    `$error` - so the result follows the terminal and Textual's own light/dark handling instead of
+    fighting it, and follows the theme the operator picks in the command palette.
+
+    FIVE STATES AND THREE COLOURS, and the mapping is an argument rather than a preference:
+
+      - OK is green and FAILED is red, which need no defending. FAILED is also BOLD, because the item's
+        whole point is a failure findable at a glance in a tree of forty, and red alone in a column of
+        forty short rows is not a glance.
+      - RUNNING takes the yellow. Amber means "in flight, outcome unknown", and the running row is the
+        one an operator hunts for while the run is live - it is the only row whose state will change.
+      - SKIPPED takes the same yellow one brightness down. It is the same *unknown outcome* - the step
+        did not run and never will - and dimming it keeps it from competing for attention with the
+        FAILURE that caused it, which is what the reader actually has to find.
+      - PENDING gets no colour at all, only dim. Nothing has happened there; a colour would spend a
+        reader's attention on the rows carrying no information, and in a fresh 40-step plan that is all
+        of them.
+
+    ADDITIVE, NEVER SOLE. `STATE_ICON` is untouched and every row keeps its glyph, so a reader with a
+    colour vision deficiency, a terminal with a broken palette and a saved log all keep working.
+    """
+    return {StepState.OK: Style(color=theme.success),
+            StepState.FAILED: Style(color=theme.error, bold=True),
+            StepState.RUNNING: Style(color=theme.warning),
+            StepState.SKIPPED: Style(color=theme.warning, dim=True),
+            StepState.PENDING: Style(dim=True)}
 
 
 class _StepApp(App):
@@ -98,6 +128,10 @@ class _StepApp(App):
     def __init__(self, pipeline: Pipeline) -> None:
         super().__init__()
         self.pipeline = pipeline
+        # When this run began, in WALL time, for the transcript header - the app is the one object that
+        # exists for exactly the run's lifetime, so `run_pipeline` and the `ctrl+p` action read the same
+        # instant instead of each taking their own.
+        self.started = datetime.now()
         self.title = pipeline.name
         self.rows = build_rows(pipeline)
         # Per step index, the chain of rows (and their tree nodes) from the ROOT down to that step's own
@@ -148,7 +182,7 @@ class _StepApp(App):
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal():
-            yield Tree(self._label(self.rows), id="steps")
+            yield Tree(self._styled(self.rows), id="steps")
             # auto_scroll OFF, and the sticky bottom is `_on_line`'s job instead (si#148 item 6).
             # Measured out of `RichLog.write`: the `auto_scroll` branch calls `scroll_end` on EVERY write
             # without ever asking where the reader is, so one emitted line threw a reader who had
@@ -239,6 +273,16 @@ class _StepApp(App):
             shown = ""
         return f"{STATE_ICON[row.state]} {row.label}{shown}"
 
+    def _styled(self, row: Row) -> Text:
+        """`_label`'s text, wearing its state's colour - the ONE place a row acquires one (si#148 item 7).
+
+        The split is the constraint, not an implementation detail. `_label` stays a plain `str`, so
+        `_painted` keeps comparing CONTENT and a repaint is still suppressed when the text did not change;
+        `_row` keeps handing a test something it can assert; and the shared `STATE_ICON` vocabulary that
+        `render_tree` and the run transcript also render can never pick up markup, because neither of them
+        passes through here."""
+        return Text(self._label(row), style=_state_styles(self.current_theme)[row.state])
+
     def _mount_tree(self) -> None:
         """Mount the display tree, fully expanded, and record the row chain of EVERY step, the root's own
         included.
@@ -267,9 +311,10 @@ class _StepApp(App):
         self._chain_nodes.clear()
         self._chain_rows.clear()
         tree.root.data = self.rows
-        # No `set_label` for the root: the widget was constructed with this text and `Tree.clear()`
-        # carries the current label onto the new root it builds, so writing it again would be the one
-        # redundant write `_painted` exists to prevent.
+        # No `set_label` for the root here: the widget is CONSTRUCTED with this text (see `compose`) and
+        # `Tree.clear()` carries the current label onto the new root it builds, so writing it again would
+        # be the one redundant write `_painted` exists to prevent. A theme change goes through
+        # `_repaint_everything`, which clears `_painted` and therefore does write it.
         self._painted[id(self.rows)] = self._label(self.rows)
         index_of_step = {id(step): i for i, step in enumerate(self.pipeline.steps)}
 
@@ -286,9 +331,8 @@ class _StepApp(App):
             for child in row.children:
                 if not self._kept(child):
                     continue
-                label = self._label(child)
-                self._painted[id(child)] = label
-                node = parent.add(label, data=child, expand=True)
+                self._painted[id(child)] = self._label(child)
+                node = parent.add(self._styled(child), data=child, expand=True)
                 chain_nodes, chain_rows = nodes + (node,), rows + (child,)
                 record(child, chain_nodes, chain_rows)
                 attach(node, child, chain_nodes, chain_rows)
@@ -331,7 +375,7 @@ class _StepApp(App):
             label = self._label(row)
             if self._painted.get(id(row)) != label:
                 self._painted[id(row)] = label
-                node.set_label(label)
+                node.set_label(self._styled(row))
 
     # ---------------------------------------------------------------- the right pane
 
@@ -602,23 +646,76 @@ class _StepApp(App):
             self._tree().focus()
 
     def _set_filter(self, needle: str) -> None:
-        """Apply a filter and rebuild the left pane, keeping the cursor on the row it was on when that row
-        survives - and putting it somewhere real when it does not, because a pane with no cursor has
-        nothing to show on the right."""
+        """Apply a filter and rebuild the left pane, keeping the cursor where it was."""
         if needle == self._filter:
             return
         self._filter = needle
+        self._repaint_everything()
+
+    def _repaint_everything(self) -> None:
+        """Rebuild the left pane, keeping the cursor on the row it was on when that row survives - and
+        putting it somewhere real when it does not, because a pane with no cursor has nothing to show on
+        the right.
+
+        Two callers, and both are RARE by construction: a filter going up or down, and an operator picking
+        a theme. Neither is on the per-second path, which is why a full rebuild is the affordable answer
+        to both - a `TreeNode` cannot be hidden and its style cannot be changed without rewriting its
+        label, so each of them is a rewrite of every row either way."""
         was = self._cursor_row()
+        self._painted.clear()      # a theme change alters no TEXT, so the content guard has to be lifted
         self._mount_tree()
-        tree = self._tree()
         target = next((nodes[-1] for index, nodes in self._chain_nodes.items()
                        if self._chain_rows[index][-1] is was), None)
         if target is not None:
             self._expected_row = was
-            tree.move_cursor(target)
+            self._tree().move_cursor(target)
         row = self._cursor_row()
         if row is not None:
             self._show_details(row)
+
+    def watch_theme(self, theme: str) -> None:
+        """Repaint when the operator picks another theme in the command palette.
+
+        The styles are read from `current_theme` at write time, so nothing about them is stale - but a
+        `TreeNode` holds the `Text` it was last given, and no row's TEXT changes when a theme does. Hence
+        the repaint, and hence `_repaint_everything` clearing `_painted` before it: the content guard
+        would otherwise correctly suppress every single write."""
+        if self.is_running and self._chain_nodes:
+            self._repaint_everything()
+
+    # ---------------------------------------------------------------- the command palette (item 9)
+
+    def get_system_commands(self, screen):
+        """Every action this runner has, discoverable without a key (si#148 item 9, ctrl+p).
+
+        `yield from super()` FIRST and deliberately: Textual's own commands come with the palette, and two
+        of them answer questions this ticket raised. `Theme` is the honest answer to a terminal whose
+        palette makes our green unreadable - the operator picks another one and `watch_theme` repaints.
+        `Keys` opens a panel with help for the focused widget and a summary of the bindings, which is why
+        this change adds no F1 of its own: `_step_header` already renders the manifest's `help:` for the
+        step on screen, and a second door to a panel Textual already opens would cost a footer slot for
+        nothing.
+        """
+        yield from super().get_system_commands(screen)
+        yield SystemCommand("Follow the running step",
+                            "Move the cursor to each step as it starts", self.action_follow)
+        yield SystemCommand("Next failure", "Jump to the next failed step, wrapping",
+                            self.action_next_failure)
+        yield SystemCommand("Filter the plan", "Show only the rows matching a substring",
+                            self.action_filter)
+        yield SystemCommand("Copy this step's output", "To the clipboard", self.action_copy_details)
+        yield SystemCommand("Save this step's output", "To a file under build/logs/",
+                            self.action_save_details)
+        yield SystemCommand("Transcript of this run",
+                            "Write build/logs/run-transcript.log now, without waiting for the end",
+                            self.action_save_transcript)
+
+    def action_save_transcript(self) -> None:
+        """Write the run transcript NOW. It is written again when the app exits; what this adds is the
+        long run somebody wants to report on while it is still going."""
+        path = write_run_transcript(self.pipeline, self.started)
+        self.notify(f"transcript written to {path}" if path
+                    else "nowhere to write a transcript to (no product context)", timeout=5)
 
     # ---------------------------------------------------------------- the runner
 

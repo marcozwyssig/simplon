@@ -1035,3 +1035,162 @@ def test_the_scroll_position_survives_a_trip_to_another_row_and_back():
     found, back = asyncio.run(scenario())
     assert found == 42, found
     assert back == found, f"the reader's place must survive the round trip, was {found}, came back {back}"
+
+
+# --- state as colour, additively (si#148 item 7) ------------------------------------------------------
+
+def _node_style(app, index: int):
+    """The Rich style the LEFT pane really rendered step `index`'s row with."""
+    return app._chain_nodes[index][-1].label.style
+
+
+def test_a_failed_row_is_red_and_bold_so_it_is_findable_in_a_tree_of_forty():
+    async def scenario():
+        app = _StepApp(_planned_pipeline({"compile": 1}))
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            return _node_style(app, 1), app.current_theme.error
+
+    style, error = asyncio.run(scenario())
+    assert style.color is not None and style.color.name.lower() == error.lower(), style
+    assert style.bold, "bold as well as red - finding one row among forty is the whole item"
+
+
+def test_a_passing_row_is_green_and_a_pending_one_is_merely_dim(monkeypatch):
+    import threading
+
+    release = threading.Event()
+    pipeline = _blocking_pipeline(release)
+
+    async def scenario():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            while pipeline.steps[0].state != StepState.RUNNING:
+                await pilot.pause(0.02)
+            running, pending = _node_style(app, 0), _node_style(app, 1)
+            release.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            return running, pending, _node_style(app, 0), app.current_theme
+
+    running, pending, done, theme = asyncio.run(scenario())
+    assert running.color is not None and running.color.name.lower() == theme.warning.lower()
+    assert pending.color is None and pending.dim, "nothing has happened; a colour here spends attention"
+    assert done.color is not None and done.color.name.lower() == theme.success.lower()
+
+
+def test_the_glyphs_stay_so_a_colour_is_never_the_only_channel():
+    """A state that is only a colour is invisible to a reader with a colour vision deficiency, to a
+    terminal with a broken palette and to a log file."""
+    async def scenario():
+        app = _StepApp(_planned_pipeline({"compile": 1}))
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            return _rows(app)
+
+    rows = asyncio.run(scenario())
+    assert any(row.startswith("✗ ") for row in rows), rows
+    assert any(row.startswith("✓ ") for row in rows), rows
+
+
+def test_the_plain_text_paths_carry_no_markup_at_all():
+    """The other half, and it is the one that would go wrong silently: `STATE_ICON` is shared with the
+    HEADLESS renderer, and the run transcript is a file somebody attaches to a ticket. Colour belongs
+    where the widget is rendered, never in the shared label helper."""
+    from simplon.orchestrator.steps import build_rows, render_tree, transcript
+
+    # arrange
+    pipeline = _planned_pipeline({"compile": 1})
+    steps_mod.run_headless(pipeline, verbose=False)
+    # act
+    text = "\n".join(render_tree(build_rows(pipeline)) + transcript(pipeline, header=[]))
+    # assert
+    assert "\x1b" not in text, "no ANSI escape reaches a CI log or a transcript"
+    assert "[bold" not in text and "[/" not in text, "no rich markup either"
+
+
+def test_a_row_label_stays_a_plain_string_so_painted_can_still_compare_it():
+    """`_refresh_row` writes a node only when the text really changed, and it compares what `_label`
+    returned. Comparing objects instead of content would repaint every row on every tick, or none."""
+    app = _StepApp(_planned_pipeline())
+    label = app._label(app.rows)
+    assert isinstance(label, str), type(label)
+
+
+def test_changing_the_theme_repaints_the_rows_in_the_new_themes_colours():
+    async def scenario():
+        app = _StepApp(_planned_pipeline({"compile": 1}))
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            before = _node_style(app, 1).color.name
+            # A theme of the test's own, not one of Textual's: several built-in themes happen to share
+            # an error colour (textual-light and textual-dark are both #ba3c5b), so a swap between them
+            # would assert nothing at all.
+            from textual.theme import Theme
+            app.register_theme(Theme(name="probe", primary="#112233", error="#ff00ff",
+                                     success="#00ff00", warning="#ffaa00"))
+            app.theme = "probe"
+            await pilot.pause()
+            return before, _node_style(app, 1).color.name, app.current_theme.error
+
+    before, after, error = asyncio.run(scenario())
+    assert after.lower() == error.lower(), (after, error)
+    assert after != before, "the whole point of reading the theme is that it follows the theme"
+
+
+# --- the command palette (si#148 item 9) --------------------------------------------------------------
+
+def test_every_action_this_runner_has_is_in_the_command_palette():
+    """A footer holds about five bindings before it becomes noise. The palette is where somebody FINDS
+    an action instead of remembering a key."""
+    async def scenario():
+        app = _StepApp(_planned_pipeline())
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            return [command.title for command in app.get_system_commands(app.screen)]
+
+    titles = asyncio.run(scenario())
+    for wanted in ("Follow", "Next failure", "Filter", "Copy", "Save", "Transcript"):
+        assert any(wanted in title for title in titles), (wanted, titles)
+
+
+def test_the_theme_picker_comes_free_with_the_palette():
+    """Textual's own system commands are kept, so the answer to a terminal whose palette makes our green
+    unreadable costs nothing: the operator picks another theme and the rows follow it."""
+    async def scenario():
+        app = _StepApp(_planned_pipeline())
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            return [command.title for command in app.get_system_commands(app.screen)]
+
+    titles = asyncio.run(scenario())
+    assert "Theme" in titles, titles
+
+
+def test_the_palette_can_write_the_transcript_before_the_run_is_over(tmp_path, monkeypatch):
+    from simplon import context
+    from simplon.context import ProductContext
+
+    monkeypatch.setattr(context, "_current", ProductContext("cleon", tmp_path, tmp_path / "cleon.yaml"))
+
+    async def scenario():
+        app = _StepApp(_planned_pipeline({"compile": 1}))
+        notes: list[str] = []
+        app.notify = lambda message, **kw: notes.append(message)
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            app.action_save_transcript()
+            await pilot.pause()
+            return notes
+
+    notes = asyncio.run(scenario())
+    written = tmp_path / "build" / "logs" / "run-transcript.log"
+    assert written.is_file(), notes
+    assert "✗ build.compile" in written.read_text(encoding="utf-8")

@@ -298,16 +298,16 @@ reason first.
 
 **Files:** `src/simplon/orchestrator/tui.py`, `tests/test_orchestrator_tui.py`
 
-- [ ] 6.1 Failing test: query the rendered tree and assert a FAILED row's label carries the theme's error
+- [x] 6.1 Failing test: query the rendered tree and assert a FAILED row's label carries the theme's error
       colour and a bold style, an OK row the success colour, a PENDING row no colour.
-- [ ] 6.2 Failing test, the other half: `render_tree` (headless) and the transcript carry NO markup and no
+- [x] 6.2 Failing test, the other half: `render_tree` (headless) and the transcript carry NO markup and no
       escape for the same pipeline.
-- [ ] 6.3 Implement `_styled(row)` off `self.current_theme`, applied at `Tree.add` / `set_label`, with
+- [x] 6.3 Implement `_styled(row)` off `self.current_theme`, applied at `Tree.add` / `set_label`, with
       `_label` still returning `str` so `_painted` compares content.
-- [ ] 6.4 Failing test: changing the theme repaints the rows in the new theme's colours.
-- [ ] 6.5 Implement the theme watcher.
-- [ ] 6.6 Failing test: the command palette lists every action this change adds.
-- [ ] 6.7 Implement `get_system_commands`.
+- [x] 6.4 Failing test: changing the theme repaints the rows in the new theme's colours.
+- [x] 6.5 Implement the theme watcher.
+- [x] 6.6 Failing test: the command palette lists every action this change adds.
+- [x] 6.7 Implement `get_system_commands`.
 
 **Verify:** `pytest tests/test_orchestrator_tui.py` green; both halves of 6.2 asserted.
 
