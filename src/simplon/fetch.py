@@ -170,6 +170,7 @@ class _Progress:
         self.terminal = sys.stdout.isatty()
         self.painted: float | None = None
         self.tick = 0
+        self.closed = False
 
     def _width(self) -> int:
         if not self.terminal:
@@ -191,10 +192,21 @@ class _Progress:
         else:
             log.info(line)
 
+    def close(self) -> None:
+        """Leave the terminal line ready for whatever prints next, on EVERY path out.
+
+        The failure path is why this is not simply the first line of `done`. A paint leaves the cursor
+        at column one with the bar still standing to the right of it, so the exception message a caller
+        prints lands ON the remains of a progress bar and is legible up to the point the bar is longer.
+        A download that failed is exactly the moment its message has to be readable.
+        """
+        if self.terminal and not self.closed:
+            log.clear_line()
+        self.closed = True
+
     def done(self, received: int, now: float) -> None:
         """The one line both modes end on, and the only line a fast download in CI produces."""
-        if self.terminal:
-            log.clear_line()
+        self.close()
         elapsed = now - self.started
         rate = received / elapsed if elapsed > 0 else 0.0
         log.ok(f"{self.label}  {human_bytes(received)} in {elapsed:.1f}s ({human_rate(rate)})")
@@ -259,6 +271,7 @@ def download(url: str, dest: str | Path, *, label: str = "",
     # directory, so the rename at the end is a rename rather than a copy across filesystems.
     handle, temporary = tempfile.mkstemp(dir=dest.parent, prefix=f"{dest.name}.", suffix=".part")
     started = time.monotonic()
+    progress: _Progress | None = None
     try:
         with os.fdopen(handle, "wb") as sink:
             with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310 - see above
@@ -288,4 +301,6 @@ def download(url: str, dest: str | Path, *, label: str = "",
         raise DownloadError(f"could not download {url}: "
                             f"{type(failure).__name__}: {failure}") from failure
     finally:
+        if progress is not None:
+            progress.close()
         Path(temporary).unlink(missing_ok=True)

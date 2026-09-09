@@ -326,12 +326,18 @@ def test_a_body_that_stops_halfway_leaves_nothing_at_all_behind(base, tmp_path):
     # arrange
     dest = tmp_path / "docker.tgz"
 
-    # act / assert
-    with pytest.raises(fetch.DownloadError):
-        fetch.download(f"{base}/half", dest)
+    # act
+    with _capture(tty=True) as shown:
+        with pytest.raises(fetch.DownloadError):
+            fetch.download(f"{base}/half", dest)
 
+    # assert
     assert not dest.exists(), "a partial file is sitting under the name a cache check looks for"
     assert list(tmp_path.iterdir()) == [], "a temporary file was left behind"
+    # A third claim, about the moment a message matters most: a paint leaves the cursor at column one
+    # with the bar still standing to its right, so a failure that did not close the line would have its
+    # reason printed ON the remains of a progress bar.
+    assert shown.text.endswith("\r\033[K"), f"the bar was left on the screen: {shown.text!r}"
 
 
 def test_a_server_that_accepts_and_never_answers_fails_instead_of_hanging(base, tmp_path):
