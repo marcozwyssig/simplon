@@ -282,3 +282,28 @@ def test_a_run_that_was_never_started_still_writes_a_transcript(tmp_path):
     text = written.read_text(encoding="utf-8")
     assert "· build.install" in text
     assert "verdict:" in text
+
+
+def test_a_transcript_that_cannot_be_composed_costs_the_file_and_never_the_run(monkeypatch, capsys):
+    """The guard is round the WHOLE composition, and one frame's difference is the point.
+
+    `steplog.write_run` catches OSError, which is all that WRITING can raise. Everything before it -
+    the header, the `STATE_ICON` lookups, the `abort_after` traversal, `failure_report` - is rendering,
+    and a rendering fault there used to propagate out of `run_headless` and `run_pipeline`. It would take
+    the process down before the exit code was returned and before the failure summary was printed, on
+    exactly the red run the artefact exists for: a file meant to explain a failure replacing the
+    explanation with its own traceback.
+    """
+    # arrange: the rendering raises, the way a future StepState missing from STATE_ICON would
+    def explode(*_args, **_kwargs):
+        raise KeyError("a state nobody added an icon for")
+
+    monkeypatch.setattr(steps_mod, "transcript", explode)
+    pipeline = _pipeline({"install": 1})
+
+    # act
+    rc = run_headless(pipeline, verbose=False)
+
+    # assert: the RUN still returns its verdict, and the loss is named once
+    assert rc == 1
+    assert "the run transcript could not be composed" in capsys.readouterr().out

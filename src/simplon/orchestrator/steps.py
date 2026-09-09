@@ -878,8 +878,26 @@ def write_run_transcript(pipeline: Pipeline, started: datetime) -> Path | None:
     The TUI's caller writes it AFTER `App.run()` returns rather than from `_on_done`, so a run the
     operator quit half way through still leaves a record of what did happen. That is why the body above
     has a branch for a step that was neither run nor skipped.
+
+    THE GUARD IS ROUND THE WHOLE COMPOSITION, not just the file write, and one frame's difference is the
+    entire point. `steplog.write_run` catches `OSError` because that is the only thing WRITING can raise;
+    everything before it - `run_header`, and `transcript` with its `STATE_ICON` lookups, its `abort_after`
+    traversal and its `failure_report` - is rendering, and a rendering fault there propagates out of
+    `run_headless` and `run_pipeline`. It would then take the process down BEFORE the exit code is
+    returned and before the failure summary is printed, on exactly the red run this artefact exists for:
+    a file meant to explain a failure would instead replace the explanation with its own traceback.
+    A courtesy that raises is a defect, and the courtesy is the whole call, not its last line.
+
+    The cost is stated rather than hidden: a bug in the rendering leaves no transcript, and says so once
+    where an unguarded version would announce it loudly. That is the same trade `steplog.write` already
+    makes, and it goes the same way - the RUN's verdict is what a caller came for.
     """
-    return steplog.write_run("\n".join(transcript(pipeline, steplog.run_header(pipeline.name, started))))
+    try:
+        text = "\n".join(transcript(pipeline, steplog.run_header(pipeline.name, started)))
+    except Exception as exc:  # noqa: BLE001 - see the paragraph above; nothing here may cost a run
+        log.warn(f"{pipeline.name}: the run transcript could not be composed ({exc})")
+        return None
+    return steplog.write_run(text)
 
 
 def render_tree(root: Row, indent: str = "  ") -> list[str]:
@@ -1008,11 +1026,13 @@ def run_headless(pipeline: Pipeline, verbose: bool | None = None) -> int:
         # been. A green run reaches none of this (#49).
         for line in failure_report(pipeline):
             print(line, flush=True)
+    # ONE call for both outcomes: what goes into the transcript does not depend on the verdict, and the
+    # verdict lines below are the last thing a reader sees either way.
+    write_run_transcript(pipeline, started)
+    if failures:
         tail = f", {skipped} skipped" if skipped else ""
-        write_run_transcript(pipeline, started)
         log.warn(f"{pipeline.name}: {failures}/{len(pipeline.steps)} step(s) failed{tail}")
         return 1
-    write_run_transcript(pipeline, started)
     log.ok(f"{pipeline.name}: all {len(pipeline.steps)} steps passed")
     return 0
 

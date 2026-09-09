@@ -584,6 +584,21 @@ def _blocking_pipeline(release: "threading.Event") -> Pipeline:
     return Pipeline("prep", steps, False, tree, tree.path)
 
 
+async def _until_running(pilot, pipeline: Pipeline, tries: int = 250) -> None:
+    """Wait for the worker thread to enter the first step - BOUNDED, and failing with a sentence rather
+    than hanging.
+
+    An unbounded `while` here would turn a future regression that stalls the worker into a CI timeout with
+    no diagnosis attached, which is the same defect class as a green verdict that lies: the test would
+    stop saying anything at all. 250 x 20ms is five seconds, two orders of magnitude above what this
+    actually takes, and it is a ceiling rather than a delay - nothing waits for it in the normal case."""
+    for _ in range(tries):
+        if pipeline.steps[0].state == StepState.RUNNING:
+            return
+        await pilot.pause(0.02)
+    raise AssertionError(f"the worker never entered step 0; it is {pipeline.steps[0].state}")
+
+
 def test_the_bar_names_the_running_step_while_the_cursor_is_somewhere_else(monkeypatch):
     """THE feature. Both panes follow the cursor, so an operator who navigated away had nothing left that
     said what was running - which is the question asked immediately before someone presses Ctrl-C."""
@@ -598,8 +613,7 @@ def test_the_bar_names_the_running_step_while_the_cursor_is_somewhere_else(monke
         app = _StepApp(pipeline)
         async with app.run_test() as pilot:
             await pilot.pause()
-            while pipeline.steps[0].state != StepState.RUNNING:
-                await pilot.pause(0.02)
+            await _until_running(pilot, pipeline)
             # arrange: the operator navigates AWAY from the running step, to the root
             _focus_line(app, 0)
             clock.at = 12.0
@@ -676,8 +690,7 @@ def test_the_running_rows_own_label_counts_up_without_the_test_sleeping(monkeypa
         app = _StepApp(pipeline)
         async with app.run_test() as pilot:
             await pilot.pause()
-            while pipeline.steps[0].state != StepState.RUNNING:
-                await pilot.pause(0.02)
+            await _until_running(pilot, pipeline)
             before = app._row(0)
             clock.at = 12.0
             app._tick()
@@ -776,8 +789,7 @@ def test_navigating_by_hand_switches_following_off():
         async with app.run_test() as pilot:
             await pilot.pause()
             # mid-run, so there is somewhere below the cursor to navigate TO
-            while pipeline.steps[0].state != StepState.RUNNING:
-                await pilot.pause(0.02)
+            await _until_running(pilot, pipeline)
             before = app._follow
             await pilot.press("down")
             await pilot.pause()
@@ -801,8 +813,7 @@ def test_the_follow_key_switches_it_back_on_and_the_cursor_jumps_to_what_is_runn
         app = _StepApp(pipeline)
         async with app.run_test() as pilot:
             await pilot.pause()
-            while pipeline.steps[0].state != StepState.RUNNING:
-                await pilot.pause(0.02)
+            await _until_running(pilot, pipeline)
             _focus_line(app, 0)                  # the operator navigates away, following stops
             await pilot.pause()
             off = app._follow
@@ -917,8 +928,7 @@ def test_a_run_keeps_painting_through_a_filter_that_hides_the_running_row(monkey
         app = _StepApp(pipeline)
         async with app.run_test() as pilot:
             await pilot.pause()
-            while pipeline.steps[0].state != StepState.RUNNING:
-                await pilot.pause(0.02)
+            await _until_running(pilot, pipeline)
             await pilot.press("/")
             await pilot.press(*"zzz")             # hides everything, the running step included
             await pilot.pause()
@@ -1067,8 +1077,7 @@ def test_a_passing_row_is_green_and_a_pending_one_is_merely_dim(monkeypatch):
         app = _StepApp(pipeline)
         async with app.run_test() as pilot:
             await pilot.pause()
-            while pipeline.steps[0].state != StepState.RUNNING:
-                await pilot.pause(0.02)
+            await _until_running(pilot, pipeline)
             running, pending = _node_style(app, 0), _node_style(app, 1)
             release.set()
             await app.workers.wait_for_complete()

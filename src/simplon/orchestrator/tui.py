@@ -52,6 +52,7 @@ from textual import work  # noqa: E402
 from textual.binding import Binding  # noqa: E402
 from textual.app import App, ComposeResult, SystemCommand  # noqa: E402
 from textual.screen import Screen  # noqa: E402
+from textual.theme import Theme  # noqa: E402
 from textual.containers import Horizontal  # noqa: E402
 from textual.widgets import Footer, Header, Input, RichLog, Static, Tree  # noqa: E402
 
@@ -66,7 +67,7 @@ from textual.widgets.tree import TreeNode  # noqa: E402
 _BAR_CLASS = {StepState.RUNNING: "-running", StepState.OK: "-ok", StepState.FAILED: "-failed"}
 
 
-def _state_styles(theme) -> dict[StepState, Style]:
+def _state_styles(theme: Theme) -> dict[StepState, Style]:
     """Each state's style, built from the THEME's own variables (si#148 item 7) - `$success`, `$warning`,
     `$error` - so the result follows the terminal and Textual's own light/dark handling instead of
     fighting it, and follows the theme the operator picks in the command palette.
@@ -217,7 +218,15 @@ class _StepApp(App):
         """One beat of the two live counters: the bar, and the label of every row that is RUNNING.
 
         The row counters are refreshed through `_refresh_row`, so an ancestor whose own elapsed changed is
-        repainted with the leaf and a row whose text did not change is not written again."""
+        repainted with the leaf and a row whose text did not change is not written again.
+
+        IT READS WORKER-THREAD STATE WITHOUT A HANDSHAKE, and that is worth naming because it is the one
+        reader here that has none. Every other main-thread reader of `Step.state` / `started_at` runs
+        inside a callback the worker itself scheduled through `call_from_thread`, so the message queue
+        gives it an ordering. This one is on a timer. It is safe because each of those is a single
+        attribute and CPython's GIL makes such a read atomic - the worst case is a value one tick stale,
+        which the next tick corrects, and never a torn read. If this ever runs on a free-threaded
+        interpreter, that argument is the one to revisit."""
         for index, step in enumerate(self.pipeline.steps):
             if step.state == StepState.RUNNING:
                 self._refresh_row(index)
