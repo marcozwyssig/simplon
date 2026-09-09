@@ -176,12 +176,12 @@ footer slot on it.
 
 ## Automated verification
 
-- [ ] `./simplon.sh test all` - 2730 passed on `origin/main` before this work, with 4 known failures
+- [x] `./simplon.sh test all` - 2730 passed on `origin/main` before this work, with 4 known failures
       (3 in `test_tasks_docs.py`, which this box produces by running as root, and
       `test_releases_page.py::test_every_ticket_merged_into_a_release_is_named_in_its_section`). No new
       failure, and the new tests counted in.
-- [ ] `./simplon.sh test typecheck-python` - clean, as it was before (84 source files).
-- [ ] Every new test drives `App.run_test()` and asserts what a pane or the bar CONTAINS. No test sleeps.
+- [x] `./simplon.sh test typecheck-python` - clean, as it was before (84 source files).
+- [x] Every new test drives `App.run_test()` and asserts what a pane or the bar CONTAINS. No test sleeps.
 
 ## Manual verification
 
@@ -317,6 +317,6 @@ reason first.
 
 - [x] 7.1 Test: every new binding appears in the footer.
 - [x] 7.2 Extend `examples.md` section 3 with the keys, the bar and the transcript.
-- [ ] 7.3 `./simplon.sh test all` and `./simplon.sh test typecheck-python`; compare against the baseline.
-- [ ] 7.4 Dispatch `python-reviewer` on the diff; act on what it finds.
-- [ ] 7.5 Open the PR against `main`, no labels, and update the ticket body with items 7-9.
+- [x] 7.3 `./simplon.sh test all` and `./simplon.sh test typecheck-python`; compare against the baseline.
+- [x] 7.4 Dispatch `python-reviewer` on the diff; act on what it finds.
+- [x] 7.5 Open the PR against `main`, no labels, and update the ticket body with items 7-9.
