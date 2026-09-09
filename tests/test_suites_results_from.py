@@ -17,15 +17,48 @@ archive, because a directory of hand-written files cannot say whether allure wou
 
 AAA throughout.
 """
+import contextlib
+import os
 import textwrap
+from types import SimpleNamespace
 
 import pytest
 
 from simplon import context, test_impls
 from simplon.context import ProductContext
 from simplon.tasks import testrun
+from simplon.verdict import Verdict
 
 RESULTS = testrun.RESULTS
+
+#: What a runner writes. Real ctest output rather than an invented shape: `ctest --output-junit` was run
+#: against a three-test CMake project in `silkeh/clang:19` while this file was written, and this is what
+#: came back, `name="(empty)"` included. A fixture that says `<testsuite name="unit">` would be a nicer
+#: file than the one the tool actually produces, and the point of the merge is what the tool produces.
+CTEST_JUNIT = """<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="(empty)" tests="1" failures="0" disabled="0" skipped="0" time="0">
+\t<testcase name="AddsTwoNumbers" classname="AddsTwoNumbers" time="0.001" status="run"/>
+</testsuite>
+"""
+
+
+def writes_results(rc: int = 0, into: str = "", name: str = "ctest-junit.xml") -> int:
+    """A body standing in for a toolchain command that WRITES ITS RESULTS and returns an rc.
+
+    `simplon.test_impls.pinned_rc` cannot do this half: it returns a pinned rc and records the call, and
+    giving it a fourth parameter would change the `it takes: marker, rc, tag` refusal
+    `test_suites_command_gate.py` pins. So this file keeps its own body, the way that file keeps
+    `framed_body` - a local body is cheaper than a shared one that two suites then have to agree about.
+
+    An empty `into` writes NOTHING, which is the case the whole feature is about: a runner that exits 0
+    having produced no results at all.
+    """
+    if into:
+        directory = context.current().root / into
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / name).write_text(CTEST_JUNIT, encoding="utf-8")
+    test_impls.CALLS.append(("writes_results", into, rc))
+    return rc
 
 #: The same C++ product `test_suites_command_gate.py` uses, trimmed to what this file needs: one body,
 #: two commands over it, and a gate command. Its manifest is real and is read off the disk, because a
@@ -34,16 +67,22 @@ MANIFEST = """
 product: cppdemo
 tasks:
   toolchain: {{ impl: "simplon.test_impls:pinned_rc", help: "Run a pinned toolchain image." }}
+  writer:    {{ impl: "test_suites_results_from:writes_results", help: "A runner that writes results." }}
   gate:      {{ impl: "simplon.tasks.testrun:gate", help: "Run a declared level.", passthrough_args: true }}
 groups:
   build:
     commands:
       compile: {{ task: toolchain, with: {{ rc: {compile_rc}, tag: "compile" }}, help: "Compile." }}
-      unit:    {{ task: toolchain, with: {{ rc: {unit_rc}, tag: "unit", marker: "{marker}" }}, help: "ctest." }}
+      marked:  {{ task: toolchain, with: {{ rc: 0, tag: "marked", marker: "{marker}" }}, help: "ctest." }}
+      unit:    {{ task: writer, with: {{ rc: {unit_rc}, into: "{into}" }}, help: "ctest." }}
   test:
     commands:
       unit: {{ task: gate, with: {{ name: "unit" }}, help: "The gate itself." }}
 """
+
+#: Where the product's runner is told to write, and what its gate then declares. One constant, because a
+#: test in which the two differ by a typo would be measuring the typo.
+WROTE_INTO = "build/test-results"
 
 
 @pytest.fixture(autouse=True)
@@ -55,10 +94,11 @@ def _calls():
     test_impls.CALLS.clear()
 
 
-def _product(monkeypatch, tmp_path, *, compile_rc=0, unit_rc=0, marker=""):
+def _product(monkeypatch, tmp_path, *, compile_rc=0, unit_rc=0, marker="", into=WROTE_INTO):
     """A product rooted at `tmp_path` whose manifest declares the two toolchain commands."""
     (tmp_path / "cppdemo.yaml").write_text(
-        textwrap.dedent(MANIFEST.format(compile_rc=compile_rc, unit_rc=unit_rc, marker=marker)),
+        textwrap.dedent(MANIFEST.format(compile_rc=compile_rc, unit_rc=unit_rc, marker=marker,
+                                        into=into)),
         encoding="utf-8")
     monkeypatch.setattr(context, "_current",
                         ProductContext("cppdemo", tmp_path, tmp_path / "cppdemo.yaml"))
@@ -151,3 +191,268 @@ def test_a_gate_that_names_nothing_carries_the_empty_string():
 
     # assert
     assert cfg.gates[0].results_from == ""
+
+
+def _cfg(*gates, merge=()):
+    return testrun.Suites(reports="build/reports", filtered_results=f"{RESULTS}-filtered",
+                          gates=gates, merge=tuple(merge), parent_suite="Cpp")
+
+
+def _results_dir(tmp_path):
+    return tmp_path / "build" / "reports" / RESULTS
+
+
+def _merged(tmp_path):
+    """The file names this run's results dir holds, minus the environment allure writes itself."""
+    directory = _results_dir(tmp_path)
+    if not directory.is_dir():
+        return []
+    return sorted(p.name for p in directory.iterdir() if p.name != "environment.properties")
+
+
+# --- the level contributes ---------------------------------------------------------------------------
+
+
+def test_a_command_gate_whose_runner_wrote_results_contributes_them_and_passes(monkeypatch, tmp_path):
+    """The shape the ticket asks for, end to end minus the render: the product's own runner writes JUnit
+    XML where it likes, the gate says where that is, and the file is in this run's results."""
+    # arrange
+    _product(monkeypatch, tmp_path)
+    gate = testrun.Gate(name="unit", command="build unit", results="clear",
+                        results_from=WROTE_INTO)
+
+    # act
+    gv = testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert: green, and the level really is in the archive's inputs
+    assert gv.verdict is Verdict.PASSED, gv.line
+    assert _merged(tmp_path) == ["ctest-junit.xml"], (
+        f"the declared results never reached the run: {_merged(tmp_path)}")
+
+
+def test_an_impl_gate_contributes_the_same_way_without_the_product_writing_the_merge(monkeypatch,
+                                                                                     tmp_path):
+    """The hand-wiring being replaced. javademo's `impl:` body runs gradle and then calls
+    `merge_results` itself; declaring `results_from:` is that call, said in the manifest."""
+    # arrange
+    _product(monkeypatch, tmp_path)
+    gate = testrun.Gate(name="unit", impl="test_suites_results_from:writes_results",
+                        results="clear", results_from=WROTE_INTO)
+    monkeypatch.setattr(testrun, "resolve_ref",
+                        lambda ref, where: (lambda: writes_results(rc=0, into=WROTE_INTO)))
+
+    # act
+    gv = testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert
+    assert gv.verdict is Verdict.PASSED, gv.line
+    assert _merged(tmp_path) == ["ctest-junit.xml"]
+
+
+# --- the red this feature is made of -----------------------------------------------------------------
+
+
+def test_a_green_runner_that_contributed_no_results_is_not_a_green_gate(monkeypatch, tmp_path):
+    """THE DEFECT THIS TICKET IS ABOUT. An Allure report rendered with a level MISSING looks exactly
+    like one where the level passed, so a gate that declared where its results land and contributed
+    none of them must not report green - whatever its runner's exit code says."""
+    # arrange: the command exits 0 and writes nothing at all
+    _product(monkeypatch, tmp_path, into="")
+    gate = testrun.Gate(name="unit", command="build unit", results="clear",
+                        results_from=WROTE_INTO)
+
+    # act
+    gv = testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert
+    assert gv.verdict is Verdict.FAILED, f"a level that contributed nothing reported {gv.line}"
+    assert gv.rc != 0, "a red record with a green exit is the confusion the verdict module is against"
+    assert WROTE_INTO in gv.line, f"the line does not name the directory that was empty: {gv.line}"
+    assert "contributed no results" in gv.line, gv.line
+
+
+def test_a_directory_holding_only_the_previous_runs_results_is_the_same_red(monkeypatch, tmp_path):
+    """si#70's cutoff, at gate scope, and it is what stops this feature shipping the defect it fixes.
+    Nothing on the kernel's side of the seam ever empties a product's own results directory, so a runner
+    that wrote nothing would otherwise contribute the LAST run's results and the gate would go green
+    over them."""
+    # arrange: yesterday's results are lying in the declared directory, and this run writes none
+    _product(monkeypatch, tmp_path, into="")
+    stale = tmp_path / WROTE_INTO
+    stale.mkdir(parents=True)
+    (stale / "ctest-junit.xml").write_text(CTEST_JUNIT, encoding="utf-8")
+    os.utime(stale / "ctest-junit.xml", (0, 0))
+    gate = testrun.Gate(name="unit", command="build unit", results="clear",
+                        results_from=WROTE_INTO)
+
+    # act
+    gv = testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert: red, the file stayed where it was, and the line says WHY rather than "empty"
+    assert gv.verdict is Verdict.FAILED, gv.line
+    assert "the previous run's" in gv.line, gv.line
+    assert _merged(tmp_path) == [], "the previous run's results were presented as this run's"
+
+
+# --- a runner that was already red keeps its own sentence --------------------------------------------
+
+
+def test_a_red_runner_keeps_its_own_rc_and_its_own_sentence_and_its_results_still_travel(monkeypatch,
+                                                                                        tmp_path):
+    """The rc is the primary fact when there is one. A failing `ctest` writes results for the cases that
+    ran, and those belong in the archive; what must NOT happen is the record replacing "'build unit'
+    returned this rc" with a sentence about a directory."""
+    # arrange: the command is red AND wrote its results
+    _product(monkeypatch, tmp_path, unit_rc=8)
+    gate = testrun.Gate(name="unit", command="build unit", results="clear",
+                        results_from=WROTE_INTO)
+
+    # act
+    gv = testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert
+    assert gv.verdict is Verdict.FAILED and gv.rc == 8
+    assert "'build unit' returned this rc" in gv.line, gv.line
+    assert _merged(tmp_path) == ["ctest-junit.xml"], "a red level's own results did not reach the report"
+
+
+def test_a_red_runner_that_wrote_nothing_still_reports_the_rc_it_returned(monkeypatch, tmp_path):
+    """Both facts are true and only one of them is the cause. A reader who is told "the level
+    contributed nothing" about a command that exited 8 goes looking for a misdeclared path."""
+    # arrange
+    _product(monkeypatch, tmp_path, unit_rc=8, into="")
+    gate = testrun.Gate(name="unit", command="build unit", results="clear",
+                        results_from=WROTE_INTO)
+
+    # act
+    gv = testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert
+    assert gv.rc == 8 and "'build unit' returned this rc" in gv.line, gv.line
+
+
+# --- nothing is harvested for a gate that never ran its body -----------------------------------------
+
+
+def test_a_failed_preamble_merges_nothing_because_the_body_never_ran(monkeypatch, tmp_path):
+    """si#106's rule, and harvesting would undo it: the build failed, the test command never ran, and
+    whatever is lying in its results directory is by definition not this run's."""
+    # arrange: the compile is red, and the last run's results are still in the declared directory
+    _product(monkeypatch, tmp_path, compile_rc=2)
+    (tmp_path / WROTE_INTO).mkdir(parents=True)
+    (tmp_path / WROTE_INTO / "ctest-junit.xml").write_text(CTEST_JUNIT, encoding="utf-8")
+    gate = testrun.Gate(name="unit", command="build unit", preamble="build compile", results="clear",
+                        results_from=WROTE_INTO)
+
+    # act
+    gv = testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert
+    assert gv.verdict is Verdict.SETUP_FAILED, gv.line
+    assert _merged(tmp_path) == [], "a gate whose body never ran contributed results anyway"
+
+
+def test_a_failed_precondition_merges_nothing_and_leaves_the_previous_archive(monkeypatch, tmp_path):
+    """NOT_RUN touches nothing at all - that is the whole of the outcome - and a harvest would be the
+    one thing it touched."""
+    # arrange
+    _product(monkeypatch, tmp_path, compile_rc=1)
+    _results_dir(tmp_path).mkdir(parents=True)
+    (_results_dir(tmp_path) / "from-the-last-run.json").write_text("{}", encoding="utf-8")
+    (tmp_path / WROTE_INTO).mkdir(parents=True)
+    (tmp_path / WROTE_INTO / "ctest-junit.xml").write_text(CTEST_JUNIT, encoding="utf-8")
+    gate = testrun.Gate(name="unit", command="build unit", precondition="build compile",
+                        results="clear", results_from=WROTE_INTO)
+
+    # act
+    gv = testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert
+    assert gv.verdict is Verdict.NOT_RUN
+    assert _merged(tmp_path) == ["from-the-last-run.json"]
+
+
+def test_a_runner_that_said_its_own_setup_broke_is_not_judged_on_its_results(monkeypatch, tmp_path):
+    """The marker is the runner's claim about a run that did not happen, and it wins over the rc (#59).
+    A level that then also reported "contributed nothing" would be answering a question nobody asked."""
+    # arrange: the command exits 0, writes no results, and drops the marker
+    _product(monkeypatch, tmp_path, marker="the container never started")
+    gate = testrun.Gate(name="unit", command="build marked", results="clear",
+                        results_from=WROTE_INTO)
+
+    # act
+    gv = testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert
+    assert gv.verdict is Verdict.SETUP_FAILED and gv.stage == "the container never started", gv.line
+    assert _merged(tmp_path) == []
+
+
+# --- a gate that says nothing is untouched ------------------------------------------------------------
+
+
+def test_a_gate_that_declares_no_results_from_behaves_exactly_as_it_did(monkeypatch, tmp_path):
+    """The feature acts on the DECLARATION and on nothing else. A runner that writes results into a
+    directory the gate never named contributes nothing, and that is not an error: it is a product that
+    has not asked for this yet."""
+    # arrange: the runner writes, the gate says nothing
+    _product(monkeypatch, tmp_path)
+    gate = testrun.Gate(name="unit", command="build unit", results="clear")
+
+    # act
+    gv = testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert
+    assert gv.verdict is Verdict.PASSED
+    assert _merged(tmp_path) == []
+
+
+# --- the pytest branch harvests too -------------------------------------------------------------------
+
+
+def test_a_pytest_gate_harvests_what_its_own_run_wrote_elsewhere(monkeypatch, tmp_path):
+    """The key is legal on every kind, so the branch that runs pytest has to honour it as well. The
+    subprocess seam is stubbed here and driven for real in the e2e file: what is under test is that the
+    harvest is reached on this branch, not that pytest works."""
+    # arrange: a pytest gate whose child writes a result file into the declared directory
+    _product(monkeypatch, tmp_path)
+    (tmp_path / "test" / "unit").mkdir(parents=True)
+
+    def fake_pytest(argv, **kwargs):
+        writes_results(rc=0, into=WROTE_INTO)
+        return SimpleNamespace(rc=0)
+
+    monkeypatch.setattr(testrun, "keep_awake", contextlib.nullcontext)
+    monkeypatch.setattr(testrun.pyvenv, "venv_python_pip",
+                        lambda d: (os.path.join(d, ".venv/bin/python"), "pip"))
+    monkeypatch.setattr(testrun, "run", fake_pytest)
+    gate = testrun.Gate(name="unit", suite="test/unit", junit="junit-unit.xml", results="clear",
+                        results_from=WROTE_INTO)
+
+    # act
+    gv = testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert
+    assert gv.verdict is Verdict.PASSED, gv.line
+    assert _merged(tmp_path) == ["ctest-junit.xml"]
+
+
+def test_a_pytest_gate_that_contributed_nothing_from_the_directory_it_named_is_red(monkeypatch,
+                                                                                   tmp_path):
+    """Same branch, the other half. A green pytest run does not excuse a declared directory that is
+    empty; the level said where its results land and none arrived."""
+    # arrange
+    _product(monkeypatch, tmp_path)
+    (tmp_path / "test" / "unit").mkdir(parents=True)
+    monkeypatch.setattr(testrun, "keep_awake", contextlib.nullcontext)
+    monkeypatch.setattr(testrun.pyvenv, "venv_python_pip",
+                        lambda d: (os.path.join(d, ".venv/bin/python"), "pip"))
+    monkeypatch.setattr(testrun, "run", lambda argv, **kwargs: SimpleNamespace(rc=0))
+    gate = testrun.Gate(name="unit", suite="test/unit", junit="junit-unit.xml", results="clear",
+                        results_from=WROTE_INTO)
+
+    # act
+    gv = testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert
+    assert gv.verdict is Verdict.FAILED and "contributed no results" in gv.line, gv.line

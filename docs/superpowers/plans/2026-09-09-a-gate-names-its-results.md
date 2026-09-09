@@ -175,6 +175,12 @@ actually arrive"; do not write a second one.
 
 ---
 
+> **Executed as one task with Task 3, and the reason is a test rule rather than convenience.** The
+> honest tests for the harvest go through `assess_gate` - that is the seam a product reaches, and it is
+> where the "did the body actually run" cases live. Writing helper-level tests first and then rewriting
+> them against `assess_gate` would have pinned the helper's signature rather than the behaviour, which is
+> the shape of proof this ticket's own design section 6 rules out.
+
 ### Task 3: wire it into `assess_gate`
 
 **Files:** `src/simplon/tasks/testrun.py`, `tests/test_suites_results_from.py`
