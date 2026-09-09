@@ -751,6 +751,29 @@ def test_accept_givesTheExtraArgsOnlyToTheGateThatDeclaresThem_andQuarantinesThe
     assert ran == [("system", ["-k", "one"], True), ("acceptance-dataplane", [], True), ("report", [], True)]
 
 
+# --- the cutoff a gate hands the merge (si#70) ------------------------------------------------------------
+
+
+def test_started_floorsTheCutoffToTheWholeSecond(monkeypatch):
+    """The floor is the whole reason si#70's cutoff is safe to hand out, and nothing asserted it (si#86).
+
+    Two different things put a result this run really wrote on the wrong side of a cutoff taken
+    mid-second. A filesystem carrying mtime at one- or two-second granularity truncates the file
+    backwards, past the cutoff. And even where mtime is nanosecond-exact, the instant this process reads
+    and the instant the kernel stamps an inode with are two reads of CLOCK_REALTIME taken in different
+    places, which are not ordered with respect to each other: measured at up to 7047 ns apart, the wrong
+    way round, across a CPU migration between the two.
+
+    Flooring costs at most a second of the previous run's leavings, which the merge line then names.
+    Not flooring drops a genuine result in silence, and only one of those two is recoverable by a reader.
+    """
+    # arrange: a run that began 937 ms into its second
+    monkeypatch.setattr(testrun, "time", SimpleNamespace(time=lambda: 1_700_000_000.937))
+
+    # act / assert: the cutoff is that second, not that instant
+    assert testrun._started() == 1_700_000_000.0
+
+
 # --- the report step --------------------------------------------------------------------------------------
 
 
