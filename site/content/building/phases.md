@@ -360,9 +360,18 @@ only be placed under that group, and a toolchain is needed by `build` AND `test`
 where half its callers live.
 
 **What a product brings itself.** The image, the argv and the caches - or rather, it does not type them:
-`support toolchain <language>` writes a ready-made configuration into the manifest, and the product owns
-it from then on. Scaffolded rather than resolved at run time, so a kernel release can never change how a
-product builds.
+`support toolchain <language> <version>` writes a ready-made configuration into the manifest, and the
+product owns it from then on. Scaffolded rather than resolved at run time, so a kernel release can never
+change how a product builds.
+
+**What a command declares is what the impl takes.** The `with:` block's keys - `image`, `workdir`,
+`argv`, `env`, `caches` - are the body's parameters one for one, because that is how the loader binds a
+`with:` block at all (si#105). Pin every one a command uses: an unpinned parameter is rendered as a real
+option, so a command that leaves `env:` out grows a real `--env` - and no profile pins `env:` or
+`caches:`, so a scaffolded command carries both until the product writes them. A value typed into one of
+those is refused by the same gate that reads the manifest, naming the command, rather than crashing
+inside the body. What the caller types after the command name is APPENDED to the manifest's argv, and an
+empty tail changes the line by not one byte.
 
 ## Where to go next
 

@@ -3,7 +3,7 @@
 WHY A TEST AND NOT PROOFREADING. `site/content/using/case-cpp.md` walks one delivery loop with a product
 that writes no build body at all: four commands, one catalogue coordinate, one pinned image. Everything
 load-bearing on that page is a fact stated twice - the argv the kernel's C++ profile carries, the command
-names the product's manifest assembles, the docker line `toolchain.argv` builds, the refusals the loader
+names the product's manifest assembles, the docker line `toolchain.docker_argv` builds, the refusals the loader
 and the image gate raise word for word, and a table of its own rows. The Java and Python chapters already
 measured what an unwatched copy does, five times over; this suite is the same construction for the third
 case.
@@ -29,7 +29,7 @@ WHAT THE CHAPTER PROMISES ITS READER, and therefore what has to be held:
   * THE REFUSALS. Four quoted messages - the missing profile parameter, the assembly refusal that makes
     the scaffolded form unusable, the image pin gate, and clang-tidy's own - and the first three are
     BUILT here from the code that raises them rather than remembered.
-  * THE DOCKER LINE. Assembled by `toolchain.argv` from the fixture's own `with:` block.
+  * THE DOCKER LINE. Assembled by `toolchain.docker_argv` from the fixture's own `with:` block.
   * THE THREE RUNS. Nothing here can prove a measurement and nothing tries. What it CAN prove is that the
     three rows are arithmetically coherent with ctest's own summary line, that they agree with the suite
     size the chapter states one screen higher, and that one of them is the run where a tree that does not
@@ -531,14 +531,16 @@ def test_the_missing_profile_parameter_the_chapter_shows_is_the_one_the_profile_
     assert missing == "version"
 
 
-def test_the_assembly_refusal_the_chapter_quotes_is_the_loaders_own(tmp_path, monkeypatch):
-    """The load-bearing refusal on the page: the manifest the scaffolder writes LOADS and does not
-    ASSEMBLE, so a product that followed the design would find out at the first command rather than at
-    the scaffold.
+def test_the_scaffolded_manifest_now_assembles_and_the_chapter_says_so(tmp_path, monkeypatch):
+    """WAS `test_the_assembly_refusal_the_chapter_quotes_is_the_loaders_own`, and the rewrite is the
+    point rather than the maintenance (si#105).
 
-    Built end to end here - scaffold, load, assemble - because that is the only construction that proves
-    the two halves disagree. A retyped message would keep the page green through exactly the fix that
-    makes it false.
+    The refusal this used to build - the manifest the scaffolder writes LOADS and does not ASSEMBLE - was
+    the load-bearing defect on the page, and si#105 fixed it by making `toolchain:run` take the
+    manifest's keys as its parameters. So the same end-to-end construction stands (scaffold, load,
+    assemble) and the expectation is inverted: nothing raises. The page keeps the quoted refusal as the
+    dated record of what cppdemo met, which is why the assertion below ALSO demands the note that says it
+    is closed - a page carrying only the old message would read as a live warning about nothing.
     """
     # arrange
     manifest = tmp_path / "cppdemo.yaml"
@@ -547,18 +549,13 @@ def test_the_assembly_refusal_the_chapter_quotes_is_the_loaders_own(tmp_path, mo
     toolchain.scaffold(LANGUAGE, version=VERSION)
     parsed = manifest_mod.load(manifest.read_text(encoding="utf-8"), catalogue=catalogue_mod.load())
 
-    # act
-    with pytest.raises(ValueError) as raised:
-        cli_mod.assemble(typer.Typer(), parsed, product="cppdemo")
+    # act: the shape the scaffolder writes, through the binder that used to refuse it
+    cli_mod.assemble(typer.Typer(), parsed, product="cppdemo")
 
-    # assert
-    assert _flat(str(raised.value)) in _flat(_text()), (
-        f"the chapter does not quote the refusal a scaffolded manifest really gets:\n  {raised.value}")
-
-    # assert: and it really names the three keys the profile writes, which is the diagnosis the reader
-    # needs in order to write the shape that does assemble
-    for key in ("image", "workdir", "argv"):
-        assert key in str(raised.value)
+    # assert: the chapter no longer leaves that refusal standing as the present tense
+    assert "Since this walk" in _flat(_text()), (
+        "the chapter still shows the assembly refusal with nothing saying si#105 closed it")
+    assert "issues/105" in _text(), "the note that closes those rows names no ticket"
 
 
 def test_the_pin_refusal_the_chapter_quotes_is_the_gates_own_message(monkeypatch):
@@ -599,8 +596,9 @@ def test_the_docker_line_the_chapter_shows_is_the_one_the_kernel_assembles():
     assert root, "the chapter prints no docker line to compare"
 
     # act
-    line = " ".join(toolchain.argv(toolchain.declared(body, "build compile"),
-                                   root=root.group(1), product="cppdemo", instance="dev", extra=[]))
+    line = " ".join(toolchain.docker_argv(toolchain.declared(body, "build compile"),
+                                          root=root.group(1), product="cppdemo", instance="dev",
+                                          extra=[]))
 
     # assert
     generic = re.sub(r"--user \d+:\d+", "--user <uid>:<gid>", line)

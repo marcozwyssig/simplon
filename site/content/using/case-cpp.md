@@ -200,6 +200,20 @@ instance:
   max_id_len: 2
 ```
 
+{{< callout type="info" >}}
+**Since this walk: [simplon#105](https://github.com/marcozwyssig/simplon/issues/105) is closed.** All
+three faces above were fixed on 2026-09-09 and driven end to end on a throwaway product the same day:
+`support toolchain cpp 19` takes the version as a declared parameter, `toolchain:run` takes the
+manifest's keys - `image`, `workdir`, `argv`, `env`, `caches` - as its own parameters, so the flat block
+the scaffolder writes assembles unchanged, and the lab instance is resolved only where a cache volume
+needs one. The caller's argv reaches the tool again too (`build compile --verbose`).
+
+The transcripts and the table above are left standing as the record of what cppdemo met on the date they
+were measured - which is what makes this chapter evidence rather than documentation. What a product
+writes TODAY is the block without `body:`, `where:` and `extra:`; the nesting below is the workaround
+that was necessary before the fix.
+{{< /callout >}}
+
 ## build
 
 One command, one container, and the kernel does not know what CMake is.

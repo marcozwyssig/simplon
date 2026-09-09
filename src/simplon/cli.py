@@ -172,6 +172,25 @@ def _declaration(name: str, param, presentation) -> object:
     return typer.Option(default, *form.decls, **kwargs)
 
 
+def _annotation(param: signatures.Parameter) -> object:
+    """The annotation Typer may see for `param` - the body's own, or NOTHING where the kernel cannot
+    render it (si#105).
+
+    The generated module has always dropped such an annotation: `signatures.annotation` answers None for
+    anything outside the narrow set it may write into source, and `option_decl` then emits a bare
+    `name=default`. `assemble` handed Typer the raw annotation instead, and the two mechanisms therefore
+    did not agree - which is the one thing this pair is written not to do. The disagreement is not
+    cosmetic: Typer raises `RuntimeError: Type not yet supported: dict[str, str]` while BUILDING the
+    command, so a body with a mapping parameter that a command leaves unpinned assembled into a CLI that
+    could not be constructed at all, while the same body in a generated module worked.
+
+    An unrenderable parameter is not lost - `with:` still binds it, which is how such a parameter is
+    meant to be supplied. Left on the command line it renders exactly as the generated module renders
+    it, as a text option, and the body's own validation refuses whatever text a caller puts there.
+    """
+    return param.annotation if signatures.annotation(param) is not None else inspect.Parameter.empty
+
+
 def _bound(fn: Callable[..., object], spec: manifest.CommandSpec,
            *, where: str) -> Callable[..., object]:
     """`fn` as a Typer callback: the manifest's `params:` applied, its `with:` pinned, its return value
@@ -195,8 +214,12 @@ def _bound(fn: Callable[..., object], spec: manifest.CommandSpec,
     keep = [p for p in sig.parameters.values()
             if p.name not in pinned and not (p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD))]
     by_name = {p.name: p for p in params}
+    stripped = {p.name for p in keep
+                if p.name in by_name and _annotation(by_name[p.name]) is inspect.Parameter.empty
+                and p.annotation is not inspect.Parameter.empty}
     new_params = [
-        p.replace(default=_declaration(p.name, by_name[p.name], presentation.get(p.name)))
+        p.replace(annotation=_annotation(by_name[p.name]),
+                  default=_declaration(p.name, by_name[p.name], presentation.get(p.name)))
         if p.name in by_name else p
         for p in keep
     ]
@@ -219,6 +242,15 @@ def _bound(fn: Callable[..., object], spec: manifest.CommandSpec,
     callback = cast(_Introspectable, _wrapped)
     callback.__doc__ = _docstring(spec, fn)
     callback.__signature__ = sig.replace(parameters=new_params)
+    # `__annotations__` has to be corrected TOO, not just the signature (si#105). Typer reads a
+    # parameter's type from `get_type_hints()` and only falls back to the signature, and
+    # `functools.wraps` copied the body's whole annotation dict onto this wrapper - so an annotation
+    # dropped from the signature above came straight back in through that door and Typer raised on it
+    # anyway. Only the dropped names are removed; every other annotation, the return one included, is
+    # left exactly as `wraps` copied it.
+    if stripped:
+        callback.__annotations__ = {name: ann for name, ann in callback.__annotations__.items()
+                                    if name not in stripped}
     return callback
 
 

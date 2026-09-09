@@ -73,5 +73,18 @@ def test_an_unknown_language_is_refused_before_anything_is_written(manifest, mon
 
     # act / assert
     with pytest.raises(RuntimeError):
-        toolchain.scaffold("cobol")
+        toolchain.scaffold("cobol", "1")
     assert manifest.read_text() == before
+
+
+def test_the_version_is_a_parameter_a_command_can_actually_carry(manifest):
+    # arrange: `simplon.signatures.bindable` DROPS a VAR_KEYWORD parameter, so a `**params` body was
+    # handed nothing at all - the loader accepted `with: { version: ... }` and discarded it, and every
+    # language then raised `KeyError: 'version'` on the profile's first line (si#105)
+    from simplon import signatures
+
+    # act
+    names = [p.name for p in signatures.bindable(toolchain.scaffold)]
+
+    # assert: what the CLI can carry is exactly what the body declares
+    assert names == ["language", "version"]

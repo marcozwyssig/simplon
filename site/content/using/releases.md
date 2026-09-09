@@ -47,7 +47,7 @@ and gradle test all belong under the latter.
 **`support:toolchain`** writes a language's ready-made configuration into the product's manifest:
 
 ```
-./<product>.sh support toolchain cpp
+./<product>.sh support toolchain cpp 19
 ```
 
 lands `configure`, `compile`, `unit` and `analyse`, each a `toolchain:run` command with a pinned
