@@ -17,6 +17,14 @@ si#24 added the third consumer of this parameter, and it is the kernel itself: s
 under `deploy/orchestrator` now, so the flag is no longer something the kernel offers and declines to
 use. Its own placement is held in `test_own_orch_block.py`; what belongs HERE is the depth, which is why
 the two subprocess tests at the foot of this module run at five levels as well as six.
+
+si#130 then moved the DEFAULT to `deploy/provision/orchestrator`, and that changes what this module has
+to be careful about. Every test here used to prove the flag by passing the nested path; the moment that
+path became the default, each of those would pass with `--orch-dir` deleted. So the values are split by
+what they are evidence FOR: `SHORT` is what the flag moves the block TO (a value the default does not
+produce), `NESTED` is the default itself, and `OWN` is what the two sweeps use, because neither of the
+other two can be swept for - each is a suffix or a prefix of the other and the sweep would flag a
+correct render or miss a wrong one.
 """
 import os
 import subprocess
@@ -40,10 +48,15 @@ def _run_generated(pkg_src, argv, *, code=None):
             else [sys.executable, "-m", "orchestrator", *argv])
     return subprocess.run(args, env=env, capture_output=True, text=True)
 
-# biz-cockpit's real layout, and the reason this parameter exists: `src/` is the product, build and
-# delivery mechanics live under `deploy/`. Nested on purpose - a one-segment dir would let a
-# separator bug through, and the cmd shim needs backslashes.
-NESTED = "deploy/provision/orchestrator"
+# biz-cockpit's real layout, the reason this parameter exists, and since si#130 the DEFAULT: `src/` is
+# the product, build and delivery mechanics live under `deploy/`. Nested on purpose - a one-segment dir
+# would let a separator bug through, and the cmd shim needs backslashes.
+NESTED = bootstrap.DEFAULT_ORCH_DIR
+
+# The old default, and now the alternative: a product that owns its repository root passes this. It is
+# what the FLAG is proved with, because it is a value the default does not produce - a test that moves
+# the block to where the default already puts it would pass with `--orch-dir` deleted.
+SHORT = "orchestrator"
 
 # The kernel's OWN block dir (si#24). It is here, beside biz-cockpit's, because the depth is the thing
 # under test and this one is a third value: `orchestrator` is four levels above the package, `deploy/
@@ -77,8 +90,8 @@ def _unprefixed_pkg_paths(text: str, orch_dir: str) -> list[str]:
 # --- the file set moves ---------------------------------------------------------------------------
 
 def test_orch_dir_moves_the_whole_block_in_the_file_set():
-    # arrange / act
-    rendered = bootstrap.render("democtl", orch_dir=NESTED)
+    # arrange / act: SHORT, not the default - see the module docstring
+    rendered = bootstrap.render("democtl", orch_dir=SHORT)
 
     # assert: requirements and the package wiring all land under the chosen dir, the manifest and the
     # two launchers stay at the root where the shim contract puts them
@@ -86,24 +99,24 @@ def test_orch_dir_moves_the_whole_block_in_the_file_set():
         "democtl.sh",
         "democtl.cmd",
         "democtl.yaml",
-        f"{NESTED}/requirements.txt",
-        f"{NESTED}/src/python/orchestrator/__init__.py",
-        f"{NESTED}/src/python/orchestrator/__main__.py",
-        f"{NESTED}/src/python/orchestrator/cli.py",
-        f"{NESTED}/src/python/orchestrator/paths.py",
-        f"{NESTED}/src/python/orchestrator/environments.py",
+        f"{SHORT}/requirements.txt",
+        f"{SHORT}/src/python/orchestrator/__init__.py",
+        f"{SHORT}/src/python/orchestrator/__main__.py",
+        f"{SHORT}/src/python/orchestrator/cli.py",
+        f"{SHORT}/src/python/orchestrator/paths.py",
+        f"{SHORT}/src/python/orchestrator/environments.py",
     }
 
 
 def test_write_lands_the_block_on_disk_under_the_chosen_dir(tmp_path):
     # arrange / act
-    written = bootstrap.write("democtl", tmp_path, orch_dir=NESTED)
+    written = bootstrap.write("democtl", tmp_path, orch_dir=SHORT)
 
     # assert
     on_disk = {p.relative_to(tmp_path).as_posix() for p in written}
-    assert f"{NESTED}/requirements.txt" in on_disk
-    assert f"{NESTED}/src/python/orchestrator/cli.py" in on_disk
-    assert not (tmp_path / "orchestrator").exists(), "the default block dir was written anyway"
+    assert f"{SHORT}/requirements.txt" in on_disk
+    assert f"{SHORT}/src/python/orchestrator/cli.py" in on_disk
+    assert not (tmp_path / "deploy").exists(), "the default block dir was written anyway"
     assert (tmp_path / "democtl.sh").stat().st_mode & 0o111, "the shim lost its exec bit"
 
 
@@ -111,13 +124,13 @@ def test_write_lands_the_block_on_disk_under_the_chosen_dir(tmp_path):
 
 def test_the_sh_shim_points_every_derived_path_at_the_chosen_dir():
     # arrange / act
-    sh = bootstrap.render("democtl", orch_dir=NESTED)["democtl.sh"]
+    sh = bootstrap.render("democtl", orch_dir=SHORT)["democtl.sh"]
 
     # assert: the one assignment that decides the rest
-    assert f'LAUNCH_ORCH_DIR="$ROOT/{NESTED}"' in sh
+    assert f'LAUNCH_ORCH_DIR="$ROOT/{SHORT}"' in sh
 
-    # assert: and nothing still reaches for the root-level default
-    assert '$ROOT/orchestrator"' not in sh, "the shim still points at the default block dir"
+    # assert: and nothing still reaches for the default the flag was passed to escape
+    assert f'$ROOT/{NESTED}"' not in sh, "the shim still points at the default block dir"
 
     # assert: the venv, the requirements file and PYTHONPATH DERIVE from the variable rather than
     # spelling a path of their own - a half-parametrised shim only breaks on a fresh host
@@ -130,8 +143,11 @@ def test_the_sh_shim_points_every_derived_path_at_the_chosen_dir():
 
 
 def test_the_cmd_shim_spells_the_chosen_dir_with_windows_separators():
-    # arrange / act
-    cmd = bootstrap.render("democtl", orch_dir=NESTED)["democtl.cmd"]
+    """Taken at the DEFAULT since si#130, which is the one render that ticket names as never exercised:
+    until the default moved it was a single segment with no separator in it at all, so the whole
+    backslash conversion only ever ran for somebody who passed the flag."""
+    # arrange / act: no flag - this IS the default now
+    cmd = bootstrap.render("democtl")["democtl.cmd"]
 
     # assert: cmd.exe needs backslashes. A nested dir carried over verbatim gives
     # `%LAUNCH_ROOT%\deploy/provision/orchestrator`, which is the kind of path that half-works
@@ -153,22 +169,25 @@ def test_no_generated_file_still_names_the_default_block_path():
     `LAUNCH_ORCH_DIR` was never the only place - the generated cli.py tells the reader which file to
     edit, and it spelled the default path out in full.
     """
-    # arrange / act
-    rendered = bootstrap.render("democtl", orch_dir=NESTED)
+    # arrange / act: OWN, and the choice is forced. The sweep asks whether every package path hangs off
+    # the chosen dir, so the chosen dir must not be a suffix of a wrong answer: sweeping at SHORT would
+    # accept a leftover `deploy/provision/orchestrator/src/python/...`, and sweeping at NESTED would
+    # accept nothing else BECAUSE it is the default, which is a check that cannot fail either way.
+    rendered = bootstrap.render("democtl", orch_dir=OWN)
 
     # assert
     for rel, content in rendered.items():
-        stray = _unprefixed_pkg_paths(content, NESTED)
+        stray = _unprefixed_pkg_paths(content, OWN)
         assert stray == [], f"{rel} spells a package path outside the chosen block dir: {stray}"
 
 
 def test_next_steps_points_at_the_chosen_dir(tmp_path):
-    # arrange / act
-    steps = bootstrap.next_steps("democtl", tmp_path, orch_dir=NESTED)
+    # arrange / act: OWN, for the reason the sweep above states
+    steps = bootstrap.next_steps("democtl", tmp_path, orch_dir=OWN)
 
     # assert: the guidance names the file the user actually has to open
-    assert f"{NESTED}/src/python/orchestrator/cli.py" in steps
-    assert _unprefixed_pkg_paths(steps, NESTED) == []
+    assert f"{OWN}/src/python/orchestrator/cli.py" in steps
+    assert _unprefixed_pkg_paths(steps, OWN) == []
 
 
 # --- the path is checked, loudly -------------------------------------------------------------------
@@ -213,38 +232,54 @@ def test_a_refused_path_writes_nothing(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
-# --- backwards compatibility: the default is exactly what it was -------------------------------------
+# --- the default is where products actually put the block (si#130) -----------------------------------
+
+def test_the_default_block_dir_is_the_one_products_actually_use():
+    """si#130: `orchestrator/` at the target root was one consumer's layout and no consumer's practice.
+
+    netctl passes `deploy/provision/orchestrator`, biz-cockpit passes it, and the kernel's own block
+    sits a level shallower under `deploy/`. Nobody ran the old default, so a reader of
+    getting-started.md learned the layout twice: once as shown, once as corrected.
+    """
+    # arrange / act
+    rendered = bootstrap.render("democtl")
+
+    # assert: no flag at all lands the block where the products put it, and nothing at the root
+    assert f"{NESTED}/requirements.txt" in rendered
+    assert "orchestrator/requirements.txt" not in rendered
+
 
 def test_the_default_is_byte_identical_to_passing_it_explicitly():
-    # arrange / act
+    # arrange / act: the value spelled out, not read off the constant - a default that agreed only with
+    # itself would pass this module while naming anything at all
     implicit = bootstrap.render("democtl")
-    explicit = bootstrap.render("democtl", orch_dir="orchestrator")
+    explicit = bootstrap.render("democtl", orch_dir="deploy/provision/orchestrator")
 
-    # assert: same paths, same bytes - the parameter's default IS the old behaviour, not a near miss
+    # assert
     assert implicit == explicit
 
 
-def test_the_default_still_writes_the_root_level_block(tmp_path):
+def test_the_default_writes_the_nested_block_and_nothing_at_the_root(tmp_path):
     # arrange / act
     bootstrap.write("democtl", tmp_path)
 
-    # assert: an `init` with no new flag is the scaffold it always was
-    assert (tmp_path / "orchestrator" / "requirements.txt").is_file()
-    assert (tmp_path / "orchestrator" / "src" / "python" / "orchestrator" / "cli.py").is_file()
-    assert f'LAUNCH_ORCH_DIR="$ROOT/orchestrator"' in (tmp_path / "democtl.sh").read_text()
-    assert 'set "LAUNCH_ORCH_DIR=%LAUNCH_ROOT%\\orchestrator"' in (tmp_path / "democtl.cmd").read_text()
+    # assert: an `init` with no flag now writes the layout every real product hand-passed
+    assert (tmp_path / NESTED / "requirements.txt").is_file()
+    assert (tmp_path / NESTED / "src" / "python" / "orchestrator" / "cli.py").is_file()
+    assert not (tmp_path / "orchestrator").exists(), "the old root-level block was written anyway"
+    assert f'LAUNCH_ORCH_DIR="$ROOT/{NESTED}"' in (tmp_path / "democtl.sh").read_text()
 
 
 # --- the CLI surface --------------------------------------------------------------------------------
 
 def test_init_accepts_the_flag_and_scaffolds_there(tmp_path, capsys):
     # arrange / act
-    rc = bootstrap.main(["init", "democtl", "--dir", str(tmp_path), "--orch-dir", NESTED])
+    rc = bootstrap.main(["init", "democtl", "--dir", str(tmp_path), "--orch-dir", SHORT])
 
     # assert
     assert rc == 0
-    assert (tmp_path / NESTED / "requirements.txt").is_file()
-    assert not (tmp_path / "orchestrator").exists()
+    assert (tmp_path / SHORT / "requirements.txt").is_file()
+    assert not (tmp_path / "deploy").exists()
 
 
 def test_init_refuses_a_bad_orch_dir_with_a_message_and_no_traceback(tmp_path, capsys):

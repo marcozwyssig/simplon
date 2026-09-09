@@ -30,10 +30,10 @@ It renders, mirroring the shape netctl's own `netctl.yaml` + `netctl.sh` use but
                                                      found by walking up to the manifest marker, not a depth
         environments.py                              the EnvironmentProvider (its three product values)
 
-`<orch-dir>` is `orchestrator` unless `--orch-dir` says otherwise (#4). It is the block LAUNCH_ORCH_DIR
-points at, and both shims derive their venv, their requirements file and PYTHONPATH from that one variable,
-so the whole block moves together. The package name stays `orchestrator` under any layout - it is an
-identifier on PYTHONPATH, not a location.
+`<orch-dir>` is `deploy/provision/orchestrator` unless `--orch-dir` says otherwise (#4, si#130). It is the
+block LAUNCH_ORCH_DIR points at, and both shims derive their venv, their requirements file and PYTHONPATH
+from that one variable, so the whole block moves together. The package name stays `orchestrator` under any
+layout - it is an identifier on PYTHONPATH, not a location.
 
 The generated manifest VALIDATES through `simplon.orchestrator.manifest.load`; the generated `paths.py`
 registers a `ProductContext` exactly as netctl's adapter does, so the new product has a working,
@@ -85,12 +85,22 @@ _PRODUCT_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
 # The generated product package is always `orchestrator` (LAUNCH_MODULE), mirroring netctl. The BLOCK DIR
 # below it is LAUNCH_ORCH_DIR: it holds `.venv`, `requirements.txt` and `src/python/`, and it is the part
-# that MOVES (#4). Two of the three consumers keep it at `deploy/provision/orchestrator` because their own
-# structure rule reserves the repo root, so the location is a parameter with `orchestrator` as the default,
-# not a decree. The package NAME does not move with it: it is an identifier resolved on PYTHONPATH, which
-# the shim points at `$LAUNCH_ORCH_DIR/src/python` wherever that is. `paths.py` finds the repo root by
-# walking up to the manifest marker (netctl#737), so a deeper block dir needs no hand-edit either.
-_ORCH_DIR = "orchestrator"
+# that MOVES (#4). The package NAME does not move with it: it is an identifier resolved on PYTHONPATH,
+# which the shim points at `$LAUNCH_ORCH_DIR/src/python` wherever that is. `paths.py` finds the repo root
+# by walking up to the manifest marker (netctl#737), so a deeper block dir needs no hand-edit either.
+#
+# THE DEFAULT IS WHERE THE BLOCK ACTUALLY GOES (si#130), and it did not used to be. `orchestrator/` at the
+# target root was the layout this scaffolder grew up in and nobody else's practice: netctl passes
+# `deploy/provision/orchestrator`, biz-cockpit passes it, and si#24 moved the kernel's own block under
+# `deploy/` too, because each of their structure rules reserves the repository root. So the old default
+# was a shape every consumer corrected on the command line, and the page that documented it taught the
+# layout twice - once as shown, once as corrected four lines below.
+#
+# It is still a PARAMETER and not a decree, and the alternative simply changed sides: a product that owns
+# its repository root now passes `--orch-dir orchestrator`, which is the mirror image of what every
+# product passed before. Nothing existing moves - every current consumer already states the value it
+# wants, and this changes what a NEW scaffold does.
+DEFAULT_ORCH_DIR = "deploy/provision/orchestrator"
 
 # The Windows drive prefix (`C:`, `c:/...`): absolute, and neither the leading-slash nor the `..` check
 # would catch it on its own.
@@ -139,8 +149,9 @@ def validate_orch_dir(value: str) -> str:
     rule and its reasoning live in `validate_relative_dir`; this names the value and the good example."""
     return validate_relative_dir(
         value, "orchestrator directory",
-        f"give a plain relative path under the scaffold target, e.g. {_ORCH_DIR!r} (the default) "
-        f"or 'deploy/provision/orchestrator'; the Windows shim gets its backslashes written for it",
+        f"give a plain relative path under the scaffold target, e.g. {DEFAULT_ORCH_DIR!r} (the default) "
+        f"or 'orchestrator' for a product that owns its repository root; the Windows shim gets its "
+        f"backslashes written for it",
         inside="the target directory")
 
 
@@ -598,15 +609,16 @@ def _templates(name: str, orch_dir: str) -> dict[str, str]:
     }
 
 
-def render(name: str, *, orch_dir: str = _ORCH_DIR) -> dict[str, str]:
+def render(name: str, *, orch_dir: str = DEFAULT_ORCH_DIR) -> dict[str, str]:
     """PURE: the product skeleton as a {relative POSIX path -> file content} map, with @@PRODUCT@@,
     @@ENV_VAR@@, @@PKG_DIR@@ and @@KERNEL_PIN@@ substituted. No I/O, no yaml/pydantic import - so a test can validate the
     rendered manifest through the real loader and assert the exact file set without a filesystem or the
     product's deps.
 
     `orch_dir` moves the whole block: the requirements file, the package source, both shims' LAUNCH_ORCH_DIR
-    and the one place the generated cli.py tells the reader which file to edit. Defaults to `orchestrator`,
-    and that default renders byte-for-byte what it always did."""
+    and the one place the generated cli.py tells the reader which file to edit. Defaults to
+    `deploy/provision/orchestrator` (si#130), which is where every consumer of this scaffolder already put
+    it by hand; a product that owns its repository root passes `orchestrator`."""
     product = validate_product_name(name)
     block = validate_orch_dir(orch_dir)
     env_var = env_var_name(product)
@@ -668,7 +680,7 @@ def newline_for(rel: str) -> str:
     return CRLF if rel.endswith(_BATCH_SUFFIXES) else LF
 
 
-def write(name: str, target: Path, *, force: bool = False, orch_dir: str = _ORCH_DIR) -> list[Path]:
+def write(name: str, target: Path, *, force: bool = False, orch_dir: str = DEFAULT_ORCH_DIR) -> list[Path]:
     """Render the skeleton and write it under ``target``, returning the written paths (sorted). Creates parent
     dirs; sets the shim executable (0o755). Refuses to overwrite an existing file unless ``force`` - a fresh
     scaffold must never silently clobber a hand-edited manifest or shim - raising FileExistsError listing the
@@ -698,7 +710,7 @@ def write(name: str, target: Path, *, force: bool = False, orch_dir: str = _ORCH
     return sorted(written)
 
 
-def next_steps(name: str, target: Path, *, orch_dir: str = _ORCH_DIR) -> str:
+def next_steps(name: str, target: Path, *, orch_dir: str = DEFAULT_ORCH_DIR) -> str:
     """The post-scaffold guidance printed after a successful write: nothing to vendor, just run the CLI -
     the launcher provisions its own venv and installs the pinned kernel from PyPI on first run."""
     product = validate_product_name(name)
@@ -742,12 +754,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("product", help="the product slug (lowercase; letters, digits, hyphens), e.g. 'fooctl'")
     parser.add_argument("--dir", dest="directory", default=None,
                         help="target directory (default: ./<product>); use '.' to scaffold in place")
-    parser.add_argument("--orch-dir", dest="orch_dir", default=_ORCH_DIR,
+    parser.add_argument("--orch-dir", dest="orch_dir", default=DEFAULT_ORCH_DIR,
                         help=("where the orchestrator block goes, relative to the target: it holds .venv, "
-                              "requirements.txt and src/python/ (default: %(default)s). A product whose "
-                              "structure reserves the repo root passes e.g. 'deploy/provision/orchestrator'. "
-                              "Pass it again on a later re-run: --force overwrites the shim, so hand-editing "
-                              "the generated one does not survive."))
+                              "requirements.txt and src/python/ (default: %(default)s, which is where "
+                              "every product puts it). A product that owns its repository root passes "
+                              "'orchestrator'. Pass it again on a later re-run: --force overwrites the "
+                              "shim, so hand-editing the generated one does not survive."))
     parser.add_argument("--force", action="store_true",
                         help="overwrite existing files instead of refusing")
     args = parser.parse_args(argv)

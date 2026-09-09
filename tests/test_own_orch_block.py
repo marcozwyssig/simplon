@@ -6,9 +6,13 @@ the one consumer the old default happened to suit, which is the shape si#47 and 
 kernel that offers something and exempts itself from it. So the block moved to `deploy/orchestrator`, and
 what these tests hold is that it moved as a USE of `--orch-dir` rather than as a hand-edit beside it.
 
-WHAT IS NOT HELD HERE, deliberately. The DEFAULT is untouched: `simplon init` with no flag still writes
-`orchestrator/` at the target root, and `test_init_orch_dir.py` holds that byte-for-byte. This move is
-simplon's own tree, not a new instruction to anybody else's.
+WHAT IS NOT HELD HERE, deliberately. The DEFAULT belongs next door, in `test_init_orch_dir.py`. When this
+file was written the default was `orchestrator/` at the target root and this move was simplon's own tree
+rather than an instruction to anybody else's; si#130 has since moved the default to
+`deploy/provision/orchestrator`, which is a level DEEPER than the kernel's own block. That is not a
+contradiction and it is worth saying why: the kernel keeps `deploy/orchestrator` because it has no
+`provision/` layer to sit under, and what both placements have in common - that the repository root is
+not the block's home - is exactly what si#130 made the default.
 
 The DEPTH belongs next door too (`test_init_orch_dir.py`): `deploy/orchestrator` puts the generated
 package five directories below the root where the default puts it four, and the marker walk is what
@@ -27,9 +31,9 @@ OWN_ORCH_DIR = "deploy/orchestrator"
 
 #: The files that CONFIGURE this repository, as opposed to the pages that describe how a product is
 #: scaffolded. The distinction is the whole reason this is a list and not a sweep of the tree: the README
-#: and the site legitimately spell `orchestrator/` all over, because that is still where a scaffolded
-#: product's block lands. These files are about THIS tree, and a root-level block path in one of them is
-#: a leftover.
+#: and the site spell `orchestrator/` as the last segment of every block path they show, and since si#130
+#: what they show is a scaffolded product's real default. `test_getting_started_scaffold.py` sweeps those
+#: two pages for the same leftover; these files are about THIS tree.
 CONFIGURES_THIS_REPO = ["simplon.sh", "simplon.cmd", "mypy.ini", "simplon.yaml"]
 
 

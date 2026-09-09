@@ -46,16 +46,23 @@ def _run_generated(pkg_src: Path, argv: list[str], *, code: str | None = None) -
             else [sys.executable, "-m", "orchestrator", *argv])
     return subprocess.run(args, env=env, capture_output=True, text=True)
 
+#: The block dir a scaffold with no `--orch-dir` writes (si#130). Read off the constant rather than
+#: retyped, because every path below hangs off it and the value is stated once, in `bootstrap`.
+BLOCK = bootstrap.DEFAULT_ORCH_DIR
+
+#: The generated package's directory under that block - `<block>/src/python/orchestrator`.
+PKG = bootstrap.pkg_dir_for(BLOCK)
+
 _EXPECTED_FILES = {
     "fooctl.sh",
     "fooctl.cmd",
     "fooctl.yaml",
-    "orchestrator/requirements.txt",
-    "orchestrator/src/python/orchestrator/__init__.py",
-    "orchestrator/src/python/orchestrator/__main__.py",
-    "orchestrator/src/python/orchestrator/cli.py",
-    "orchestrator/src/python/orchestrator/paths.py",
-    "orchestrator/src/python/orchestrator/environments.py",
+    f"{BLOCK}/requirements.txt",
+    f"{PKG}/__init__.py",
+    f"{PKG}/__main__.py",
+    f"{PKG}/cli.py",
+    f"{PKG}/paths.py",
+    f"{PKG}/environments.py",
 }
 
 
@@ -136,8 +143,8 @@ def test_render_substitutes_the_product_into_the_shim_and_the_wiring():
 
     # assert: the product name is threaded through the shim params and the ProductContext wiring
     assert "LAUNCH_PRODUCT=fooctl" in rendered["fooctl.sh"]
-    assert 'context.bootstrap("fooctl"' in rendered["orchestrator/src/python/orchestrator/paths.py"]
-    env_src = rendered["orchestrator/src/python/orchestrator/environments.py"]
+    assert 'context.bootstrap("fooctl"' in rendered[f"{PKG}/paths.py"]
+    env_src = rendered[f"{PKG}/environments.py"]
     assert 'ENV_VAR = "FOOCTL_ENV"' in env_src
     assert 'shim="./fooctl.sh"' in env_src
 
@@ -231,7 +238,7 @@ def test_next_steps_names_the_product_and_the_target_but_no_submodule(tmp_path):
 
 def test_requirements_pin_the_kernel_by_version_and_do_not_repin_its_deps():
     # arrange / act
-    req = bootstrap.render("fooctl")["orchestrator/requirements.txt"]
+    req = bootstrap.render("fooctl")[f"{BLOCK}/requirements.txt"]
 
     # assert: the kernel is a version-pinned ordinary dependency, not a -r include
     assert re.search(r"^simplon==\d+\.\d+\.\d+", req, re.M), req
@@ -244,7 +251,7 @@ def test_requirements_pin_the_kernel_by_version_and_do_not_repin_its_deps():
 def test_requirements_kernel_pin_matches_the_released_kernel_this_one_descends_from(tmp_path):
     # arrange: a real scaffold on disk
     bootstrap.write("fooctl", tmp_path)
-    req_file = tmp_path / "orchestrator" / "requirements.txt"
+    req_file = tmp_path / BLOCK / "requirements.txt"
 
     # act: pull the pinned version out of the written file
     text = req_file.read_text(encoding="utf-8")
@@ -357,7 +364,7 @@ def test_a_kernel_with_no_derivable_version_fails_the_CLI_loudly_and_leaves_noth
 
 def test_the_scaffolded_pin_is_a_plain_release_whatever_this_kernel_calls_itself():
     # arrange / act: the pin as it is actually rendered, from whatever version this checkout produces
-    req = bootstrap.render("fooctl")["orchestrator/requirements.txt"]
+    req = bootstrap.render("fooctl")[f"{BLOCK}/requirements.txt"]
     pinned = re.search(r"^simplon==(\S+)", req, re.M).group(1)
 
     # assert: three final numbers and nothing else - no `.dev`, no `.post`, no local `+...` segment
@@ -402,7 +409,7 @@ def test_scaffolded_aggregate_actually_runs_through_the_shared_runner(tmp_path):
     )
 
     # act
-    res = _run_generated(tmp_path / "orchestrator" / "src" / "python", [], code=probe)
+    res = _run_generated(tmp_path / BLOCK / "src" / "python", [], code=probe)
 
     # assert: the `all` command ran its dependency plan through run_command (leaves build -> up)
     assert res.returncode == 0, res.stderr
@@ -438,7 +445,7 @@ def test_scaffolded_aggregate_keeps_the_plan_tree_and_with_it_every_stop_scope(t
     )
 
     # act
-    res = _run_generated(tmp_path / "orchestrator" / "src" / "python", [], code=probe)
+    res = _run_generated(tmp_path / BLOCK / "src" / "python", [], code=probe)
 
     # assert: each step names its planned leaf's dotted path, so the kernel keeps the tree it was given
     assert res.returncode == 0, res.stderr
@@ -448,9 +455,11 @@ def test_scaffolded_aggregate_keeps_the_plan_tree_and_with_it_every_stop_scope(t
 # --- gap #737-3: root detection is a marker-walk, robust to relocating the orchestrator dir -----------
 
 def test_root_detection_survives_relocating_the_orchestrator_dir(tmp_path):
-    # arrange: scaffold, then RELOCATE the orchestrator package deep (as netctl did to deploy/provision/…),
-    # leaving the manifest at the repo root - the exact layout change that forced netctl's parents[6] edit
-    bootstrap.write("fooctl", tmp_path)
+    # arrange: scaffold at the SHORT layout, then RELOCATE the orchestrator package deep (as netctl did to
+    # deploy/provision/…), leaving the manifest at the repo root - the exact layout change that forced
+    # netctl's parents[6] edit. The starting point is passed explicitly since si#130: the deep layout is
+    # the default now, so a scaffold with no flag has nowhere left to be relocated TO.
+    bootstrap.write("fooctl", tmp_path, orch_dir="orchestrator")
     relocated = tmp_path / "deploy" / "provision" / "orchestrator"
     relocated.parent.mkdir(parents=True)
     (tmp_path / "orchestrator").rename(relocated)
@@ -472,7 +481,7 @@ def test_generated_cli_help_runs_end_to_end(tmp_path):
 
     # act: boot the assembled CLI headless - this resolves every manifest impl and binds the `all`
     # aggregate at assembly
-    res = _run_generated(tmp_path / "orchestrator" / "src" / "python", ["help"])
+    res = _run_generated(tmp_path / BLOCK / "src" / "python", ["help"])
 
     # assert: help renders and exits clean, so a freshly-scaffolded product's `./<name>.sh help` works
     assert res.returncode == 0, res.stderr
