@@ -451,8 +451,9 @@ def _model(product: context.ProductContext) -> list[Target]:
     if not targets:
         log.die(f"{product.name}: nothing to build under {product.root} - a target is a `src/<name>/` "
                 f"directory holding {', '.join(SOURCE_SUFFIXES)} sources, or a "
-                f"`tests/<name>{TEST_SUFFIX}.<ext>` file. Nothing was written: an empty project would "
-                f"have been committed and would have compiled.")
+                f"`tests/<name>{TEST_SUFFIX}.<ext>` file. Nothing was written, because an empty "
+                f"project is the worst answer available here: it configures cleanly, produces nothing, "
+                f"and is then committed.")
         raise SystemExit(1)
     return targets
 
