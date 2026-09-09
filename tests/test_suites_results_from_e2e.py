@@ -144,6 +144,22 @@ def ctest_writing_junit() -> int:
     return _in_image([*CPP.commands["unit"]["argv"], "--output-junit", f"/src/{WROTE_INTO}/ctest.xml"])
 
 
+def ctest_selecting_a_label_nothing_carries() -> int:
+    """ctest asked for `--output-junit` AND for a label no test in this project has.
+
+    The trap one layer past the empty directory, measured in `silkeh/clang:19` on 2026-09-09: this exits
+    **0**, prints `No tests were found!!!`, and WRITES THE FILE - a suite element carrying `tests="0"`
+    and no case in it. So a check that counts files is satisfied and the level reports green with nothing
+    in the archive.
+
+    It matters now rather than in principle: si#131 gives the generated CMake tree real ctest LABELS, so
+    `ctest -L unit` becomes the ordinary way a level selects, and a label that does not match is one typo
+    away.
+    """
+    return _in_image([*CPP.commands["unit"]["argv"], "-L", "no-test-here-carries-this",
+                      "--output-junit", f"/src/{WROTE_INTO}/ctest.xml"])
+
+
 def ctest_as_the_profile_runs_it() -> int:
     """ctest EXACTLY as the kernel's own cpp profile declares it - and it writes no results file at all.
 
@@ -298,3 +314,33 @@ def test_a_command_gate_cannot_name_a_toolchain_run_command_yet(monkeypatch, tmp
 
     # assert
     assert "takes a CLI context" in str(refused.value), str(refused.value)
+
+
+@needs_docker
+def test_a_level_whose_runner_selected_nothing_is_red_even_though_it_wrote_a_file(monkeypatch, tmp_path):
+    """THE SAME RED ONE LAYER LATER, and it is the half a file-counting check would miss.
+
+    `ctest -L <a label nothing carries>` is not a broken runner: it exits 0, says `No tests were found!!!`
+    and writes a perfectly well-formed JUnit file with `tests="0"` in it. A reader meeting that line in a
+    log needs to know the gate is not fooled by it, and this is where that is true rather than intended.
+    """
+    # arrange
+    root = _product(monkeypatch, tmp_path)
+    assert compile_it() == 0
+    cfg = _cfg()
+    gate = testrun.Gate(name="unit",
+                        impl="test_suites_results_from_e2e:ctest_selecting_a_label_nothing_carries",
+                        results="clear", results_from=WROTE_INTO)
+
+    # act
+    gv = testrun.assess_gate(gate, cfg, [], filtered=False)
+    testrun.report(cfg)
+
+    # assert: the file really did arrive, and the level is red anyway
+    assert (root / WROTE_INTO / "ctest.xml").is_file(), (
+        "ctest wrote no file at all, so this test is measuring the empty-directory case instead")
+    assert gv.verdict is Verdict.FAILED, f"a file with no case in it counted as results: {gv.line}"
+    assert "holds a test case" in gv.line, gv.line
+    archive = _archive(root / "build" / "reports")
+    assert _cases(archive) == set()
+    assert _embedded(archive, "widgets/summary.json")["statistic"]["total"] == 0

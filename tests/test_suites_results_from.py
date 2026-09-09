@@ -42,6 +42,33 @@ CTEST_JUNIT = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
+#: What ctest writes when the selection matched nothing. The EXACT bytes, measured on 2026-09-09 in
+#: `silkeh/clang:19`: `ctest --test-dir build -L <a label nothing carries> --output-junit <path>` prints
+#: `No tests were found!!!`, exits 0, and writes this - a suite element with `tests="0"` and no case in
+#: it. A file arrived, and the report it reaches has nothing in it.
+EMPTY_CTEST_JUNIT = """<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="(empty)"
+\ttests="0"
+\tfailures="0"
+\tdisabled="0"
+\tskipped="0"
+\thostname=""
+\ttime="0"
+\ttimestamp="2026-09-09T20:00:39"/>
+"""
+
+
+def writes_empty_results(into: str = "") -> int:
+    """A runner that exits 0 and writes a results file carrying no test case - `ctest -L` over a label
+    nothing carries, and the same shape `dotnet test --filter` produces when the filter matches nothing.
+    """
+    directory = context.current().root / into
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "ctest-junit.xml").write_text(EMPTY_CTEST_JUNIT, encoding="utf-8")
+    test_impls.CALLS.append(("writes_empty_results", into, 0))
+    return 0
+
+
 def writes_results(rc: int = 0, into: str = "", name: str = "ctest-junit.xml") -> int:
     """A body standing in for a toolchain command that WRITES ITS RESULTS and returns an rc.
 
@@ -68,6 +95,7 @@ product: cppdemo
 tasks:
   toolchain: {{ impl: "simplon.test_impls:pinned_rc", help: "Run a pinned toolchain image." }}
   writer:    {{ impl: "test_suites_results_from:writes_results", help: "A runner that writes results." }}
+  hollow:    {{ impl: "test_suites_results_from:writes_empty_results", help: "A runner that selects nothing." }}
   gate:      {{ impl: "simplon.tasks.testrun:gate", help: "Run a declared level.", passthrough_args: true }}
 groups:
   build:
@@ -75,6 +103,7 @@ groups:
       compile: {{ task: toolchain, with: {{ rc: {compile_rc}, tag: "compile" }}, help: "Compile." }}
       marked:  {{ task: toolchain, with: {{ rc: 0, tag: "marked", marker: "{marker}" }}, help: "ctest." }}
       unit:    {{ task: writer, with: {{ rc: {unit_rc}, into: "{into}" }}, help: "ctest." }}
+      hollow:  {{ task: hollow, with: {{ into: "{into}" }}, help: "ctest over a label nothing carries." }}
   test:
     commands:
       unit: {{ task: gate, with: {{ name: "unit" }}, help: "The gate itself." }}
@@ -540,3 +569,49 @@ def test_an_environment_file_on_its_own_is_not_a_contribution(monkeypatch, tmp_p
     # assert
     assert gv.verdict is Verdict.FAILED, f"an environment file counted as a level's results: {gv.line}"
     assert "contributed no results" in gv.line, gv.line
+
+
+def test_a_results_file_carrying_no_test_case_is_not_a_contribution(monkeypatch, tmp_path):
+    """THE TRAP ONE STEP LATER, and it is reachable rather than theoretical: `ctest -L <a label nothing
+    carries>` exits 0, prints `No tests were found!!!` and - with `--output-junit` - writes a suite
+    element with `tests="0"`.
+
+    A file arrives, so a check that counts FILES is satisfied and the level reports green with not one
+    case in the archive. That is the same green-over-nothing the empty directory produces, one layer up,
+    and it has to be closed the same way or the key only catches the easier half.
+    """
+    # arrange: the runner exits 0 and writes a results file with nothing in it
+    _product(monkeypatch, tmp_path)
+    gate = testrun.Gate(name="unit", command="build hollow", results="clear",
+                        results_from=WROTE_INTO)
+
+    # act
+    gv = testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert
+    assert gv.verdict is Verdict.FAILED, f"a file with no test case in it counted as results: {gv.line}"
+    assert "contributed no results" in gv.line, gv.line
+    assert "holds a test case" in gv.line, f"the line does not say what was wrong with the file: {gv.line}"
+
+
+def test_a_format_the_kernel_cannot_count_is_trusted_rather_than_refused(monkeypatch, tmp_path):
+    """The rule that keeps the check above from becoming a table of formats with a failure mode.
+
+    The kernel counts cases in the shapes it demonstrably meets - the JUnit family, xunit's own XML and
+    TRX - and a file it cannot read is a CONTRIBUTION, not an emptiness. Allure reads more formats than
+    this kernel knows about, and calling a level empty because the kernel could not parse its evidence
+    would be a false red invented by the checker, which is the same defect pointing the other way.
+    """
+    # arrange: a results file in no format the kernel knows
+    _product(monkeypatch, tmp_path, into="")
+    source = tmp_path / WROTE_INTO
+    source.mkdir(parents=True)
+    (source / "results.ndjson").write_text('{"name": "a case", "ok": true}\n', encoding="utf-8")
+    gate = testrun.Gate(name="unit", command="build unit", results="clear",
+                        results_from=WROTE_INTO)
+
+    # act
+    gv = testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert
+    assert gv.verdict is Verdict.PASSED, f"a format the kernel cannot read was called empty: {gv.line}"

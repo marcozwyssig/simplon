@@ -650,10 +650,12 @@ def _harvested(gv: GateVerdict, gate: Gate, cfg: Suites, results: str, since: fl
     source = str(context.current().root / gate.results_from)
     merged = allure.merge_results(results, [source], parent_suite=cfg.parent_suite, not_before=since)
     _say_merge(merged, f"{gate.name} results")
-    # `Merge.results` AND NOT `Merge.empty`, and the difference is one file. `empty` asks whether the
-    # merge did anything at all, which is the report step's question; this one asks whether the LEVEL
-    # produced evidence, and an `environment.properties` travelling with the results is not evidence.
-    if not merged.results:
+    # `Merge.contributed` AND NOT `Merge.empty`, and the two differ by one file in one direction and one
+    # test case in the other. `empty` asks whether the merge did anything at all, which is the report
+    # step's question; this asks whether the LEVEL produced evidence - so an `environment.properties` on
+    # its own is not one, and neither is a results file carrying no case, which is what a runner whose
+    # selection matched nothing writes before exiting 0.
+    if not merged.contributed:
         if gv.verdict is Verdict.PASSED:
             return replace(gv, verdict=Verdict.FAILED, rc=NO_RESULTS_RC,
                            detail=NO_RESULTS_DETAIL.format(source=gate.results_from,

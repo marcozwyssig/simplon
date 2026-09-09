@@ -274,6 +274,20 @@ and writes **no results file**: declare `results_from:` without adding `--output
 you get exactly the line above. That pair is driven in `tests/test_suites_results_from_e2e.py`, with the
 archive read back out of its own embedded data.
 
+**And a file arriving is not the same as a level having run.** `ctest -L <a label nothing carries>`
+exits **0**, prints `No tests were found!!!` and - asked for `--output-junit` - writes a perfectly
+well-formed file with `tests="0"` in it. `dotnet test --filter` over a filter that matches nothing does
+the same. A check that counted files would be green over that, so the kernel counts **test cases**:
+
+> unit: failed (rc 1) - 'build/test-results' contributed no results to this run (merged 1 file from 1 of
+> 1 declared source dirs: 1 copied unchanged, carrying no parentSuite; not one of the 1 file merged holds
+> a test case - a runner whose selection matched nothing writes exactly this and exits 0) - …
+
+It counts them in the shapes it demonstrably meets - the JUnit family, xunit's own XML, and TRX - and **a
+format it cannot read counts as a contribution**. Allure reads more formats than this kernel knows about,
+and calling a level empty because the kernel could not parse its evidence would be a false red invented
+by the checker, which is the same defect pointing the other way.
+
 **And the results have to be this run's.** Nothing on the kernel's side of the seam ever empties a
 product's own results directory, so the merge is given the instant the gate's runner started and leaves
 anything older where it is - si#70's rule, at gate scope. A runner that wrote nothing therefore does not
