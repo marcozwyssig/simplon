@@ -18,6 +18,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import typer
 import yaml
 
 from simplon import context, docker, labinstance, log
@@ -70,9 +71,13 @@ def declared(body: Mapping[str, object], where: str) -> Toolchain:
     )
 
 
-def argv(cfg: Toolchain, root: Path, product: str, instance: str,
-         extra: list[str], network: str | None = None) -> list[str]:
+def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
+                extra: list[str], network: str | None = None) -> list[str]:
     """The full docker argv for one toolchain invocation. PURE: it assembles, it runs nothing.
+
+    NAMED `docker_argv` SINCE si#105, and the rename is the loader's doing rather than taste: `argv:` is
+    a key of the manifest block, so `run_toolchain` now takes a parameter called `argv` and a module
+    function of that name would be shadowed inside the one body that has to call it.
 
     Pure for the reason `gradle_argv` is pure in netctl: the decisions here - which volume, whose uid,
     what order - are exactly what a test should be able to read without a docker daemon in the room.
@@ -99,17 +104,43 @@ def argv(cfg: Toolchain, root: Path, product: str, instance: str,
             cfg.image, *cfg.argv, *extra]
 
 
-def run_toolchain(body: Mapping[str, object], where: str, extra: list[str],
-                  network: str | None = None) -> int:
-    """Run one toolchain invocation. Thin: `declared` decides what is legal, `argv` decides the line.
+def run_toolchain(ctx: typer.Context, image: str = "", argv: list[str] | None = None,
+                  workdir: str = "/work", env: dict[str, str] | None = None,
+                  caches: list[dict[str, str]] | None = None, network: str | None = None,
+                  extra: list[str] | None = None) -> int:
+    """Run one toolchain invocation. Thin: `declared` decides what is legal, `docker_argv` decides the line.
+
+    THE PARAMETERS ARE THE MANIFEST'S KEYS, one for one, and that is a correction rather than a style
+    (si#105). The loader binds a `with:` block to the impl's PARAMETERS, so a body taking an opaque
+    `body` mapping made the design's own section 1 block unassemblable - `image`, `workdir` and `argv`
+    were refused as parameters the impl does not take, and `support toolchain` therefore wrote a manifest
+    that could not be loaded. Naming them here is what makes the declared shape the shape that runs.
+
+    PIN THEM ALL. `simplon.cli`/`taskgen` render every NON-PINNED parameter as a real option, so a
+    command that leaves `env:` out of its `with:` block grows a stray `--env` a caller can set to
+    nonsense - the same cost `simplon.tasks.testrun:gate` documents for its unpinned `--name`.
 
     `network` is the one runtime value a manifest cannot supply - a scratch docker network exists only at
-    call time - and it is passed through untouched. Everything else about the run is manifest data.
+    call time - and it is passed through untouched. `extra` is the caller's own tail, declared in the
+    catalogue as a variadic positional (`argument: true`) and paired there with `passthrough_args: true`
+    so a flag reaches it instead of being refused as an unknown option: without both halves the appending
+    rule the whole design rests on has no command line at all.
+
+    `ctx` is here for the DIAGNOSIS and for nothing else. It is recognised by name, never rendered as a
+    CLI parameter, and it carries the one thing the values cannot: which command the broken `with:` block
+    was read from.
     """
-    cfg = declared(body, where)
-    ctx = context.current()
-    line = argv(cfg, root=ctx.root, product=ctx.name, instance=labinstance.resolve(),
-                extra=extra, network=network)
+    where = ctx.command_path or "toolchain:run"
+    cfg = declared({"image": image, "argv": list(argv or []), "workdir": workdir,
+                    "env": dict(env or {}), "caches": list(caches or [])}, where)
+    product = context.current()
+    # The instance is resolved WHERE it is needed and not one line earlier (si#105): it is read from the
+    # product's `instance:` section, `simplon init` writes no such section, and resolving it up front
+    # meant every toolchain command in every fresh product died on a section that has nothing to do with
+    # it. A cache volume still carries the id, because that is the one thing that actually needs one.
+    instance = labinstance.resolve() if cfg.caches else ""
+    line = docker_argv(cfg, root=product.root, product=product.name, instance=instance,
+                       extra=list(extra or []), network=network)
     return run(line, capture=False).rc
 
 
@@ -155,7 +186,7 @@ def _manifest_path() -> Path:
     return context.current().manifest_path
 
 
-def scaffold(language: str, **params: str) -> int:
+def scaffold(language: str, version: str) -> int:
     """Write a language's ready-made toolchain commands into THIS product's manifest (si#95).
 
     SCAFFOLDED, NOT RESOLVED AT RUN TIME, and that is the safety property rather than a convenience. A
@@ -166,8 +197,13 @@ def scaffold(language: str, **params: str) -> int:
     NEVER CLOBBERS. A command that already exists is left exactly as it is and NAMED, because a
     scaffolder that silently overwrites a hand-edited build is worse than no scaffolder: the edit was
     somebody's decision, and this command cannot tell a deliberate one from a stale one.
+
+    `version` IS DECLARED AND NOT A `**params` BAG (si#105). Every profile's image is a template carrying
+    `{version}`, and `simplon.signatures.bindable` drops a VAR_KEYWORD parameter - so the value a
+    command supplied was accepted by the loader, never reached this body, and every language raised
+    `KeyError: 'version'` on the first line. A parameter the CLI can carry has to be a parameter.
     """
-    prof = profiles.profile(language, **params)
+    prof = profiles.profile(language, version=version)
     path = _manifest_path()
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     commands = data.setdefault("groups", {}).setdefault("build", {}).setdefault("commands", {})

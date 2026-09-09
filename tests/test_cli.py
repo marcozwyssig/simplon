@@ -1036,3 +1036,42 @@ def test_a_group_default_groups_blurb_stays_its_namesake_members_help():
         assert blurb == "Build every image, unit gates first.", blurb
     finally:
         sys.modules.pop("demo_impls", None)
+
+
+# --- an annotation the kernel cannot render (si#105) ---------------------------------------------------
+
+def test_an_annotation_the_generator_cannot_write_is_dropped_rather_than_handed_to_typer():
+    """`simplon.taskgen` has always emitted a bare `name=default` for a parameter whose annotation falls
+    outside `signatures._ANNOTATIONS`/`_COMPOSITES`; `assemble` handed Typer the raw one, and Typer
+    raises `RuntimeError: Type not yet supported: dict[str, str]` while BUILDING the command. So the same
+    body assembled in one mechanism and could not be constructed at all in the other, which is the one
+    thing this pair exists not to do. `with:` still binds such a parameter - that is how it is meant to
+    be supplied - and left on the command line it renders as the text option the generated module
+    renders."""
+    # arrange
+    mod = types.ModuleType("annot_impls")
+
+    def mapped(image: str = "", env: dict[str, str] | None = None):
+        return 0
+
+    mod.mapped = mapped
+    sys.modules["annot_impls"] = mod
+    text = ('product: demo\n'
+            'tasks:\n'
+            '  mapped: { impl: "annot_impls:mapped", help: "A body with a mapping parameter." }\n'
+            'groups:\n'
+            '  build:\n'
+            '    commands:\n'
+            '      mapped: { task: "mapped" }\n')
+    try:
+        app = typer.Typer(add_completion=False, no_args_is_help=True, help="demo root")
+        cli.assemble(app, manifest.load(text), product="demo")
+
+        # act
+        result = CliRunner().invoke(app, ["build", "mapped", "--help"])
+
+        # assert
+        assert result.exit_code == 0, result.output
+        assert "--env" in result.output
+    finally:
+        del sys.modules["annot_impls"]

@@ -379,7 +379,20 @@ tasks:
     help: "Write a ready-made toolchain configuration for a language into this product's manifest."
     params:
       language: { help: "java | cpp | dotnet | python", argument: true }
+      # DECLARED, because every profile's image is a template carrying `{version}` and a `**kwargs` body
+      # never receives what a command supplies (si#105): `signatures.bindable` drops a VAR_KEYWORD
+      # parameter, so the value was accepted at load and silently discarded. A product either types it
+      # (`support toolchain cpp 19`) or pins it (`with: { version: "19" }`) - both reach the body only
+      # because the parameter exists.
+      version: { help: "the toolchain version the image is pinned to (e.g. 25, 19, 9.0, 3.12)", argument: true }
 
   toolchain:run:
     impl: simplon.tasks.toolchain:run_toolchain
     help: "Run a pinned toolchain image over the product tree, as the calling user."
+    # BOTH HALVES OF THE APPENDING RULE, and neither is enough alone (si#105). `extra` is the variadic
+    # positional the caller's tail lands in - without it Click answers `Got unexpected extra argument`;
+    # `passthrough_args` is what lets a FLAG reach that positional instead of being refused as an unknown
+    # option. The manifest's argv still comes first, and an empty tail changes the line by not one byte.
+    passthrough_args: true
+    params:
+      extra: { help: "appended to the manifest's argv, verbatim", argument: true }

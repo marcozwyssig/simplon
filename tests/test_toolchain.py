@@ -6,8 +6,15 @@ import pytest
 from simplon.tasks import toolchain
 
 
-def _boom(msg, *a, **k):
+def _boom(msg="boom", *a, **k):
     raise RuntimeError(msg)
+
+
+class _Ctx:
+    """The one thing `run_toolchain` reads off its `typer.Context`: which command it was invoked as."""
+
+    def __init__(self, command_path: str) -> None:
+        self.command_path = command_path
 
 
 def test_a_declaration_becomes_a_toolchain(monkeypatch):
@@ -65,7 +72,7 @@ def test_the_argv_mounts_the_tree_and_runs_as_the_caller(monkeypatch):
     monkeypatch.setattr(toolchain.docker, "user_args", lambda: ["--user", "1000:1000"])
 
     # act
-    line = toolchain.argv(_cfg(), root=Path("/repo"), product="netctl", instance="dev", extra=[])
+    line = toolchain.docker_argv(_cfg(), root=Path("/repo"), product="netctl", instance="dev", extra=[])
 
     # assert: the bind mount, the workdir, and the uid that owns whatever the run writes
     assert "--user" in line and "1000:1000" in line
@@ -78,8 +85,8 @@ def test_the_caller_argv_is_APPENDED_to_the_manifest_argv(monkeypatch):
     monkeypatch.setattr(toolchain.docker, "user_args", lambda: [])
 
     # act
-    line = toolchain.argv(_cfg(), root=Path("/repo"), product="netctl", instance="dev",
-                          extra=["--rerun-tasks"])
+    line = toolchain.docker_argv(_cfg(), root=Path("/repo"), product="netctl", instance="dev",
+                                 extra=["--rerun-tasks"])
 
     # assert: netctl#1091's promise - the full vocabulary survives - on top of a pinned default
     assert line[-3:] == ["gradle", "build", "--rerun-tasks"]
@@ -90,8 +97,8 @@ def test_an_empty_caller_argv_changes_nothing(monkeypatch):
     monkeypatch.setattr(toolchain.docker, "user_args", lambda: [])
 
     # act
-    a = toolchain.argv(_cfg(), root=Path("/repo"), product="netctl", instance="dev", extra=[])
-    b = toolchain.argv(_cfg(), root=Path("/repo"), product="netctl", instance="dev", extra=[])
+    a = toolchain.docker_argv(_cfg(), root=Path("/repo"), product="netctl", instance="dev", extra=[])
+    b = toolchain.docker_argv(_cfg(), root=Path("/repo"), product="netctl", instance="dev", extra=[])
 
     # assert
     assert a == b and a[-2:] == ["gradle", "build"]
@@ -103,8 +110,8 @@ def test_cache_volumes_carry_the_product_and_the_instance(monkeypatch):
     cfg = _cfg(caches=[{"volume": "gradle-cache", "path": "/home/gradle/.gradle"}])
 
     # act
-    dev = toolchain.argv(cfg, root=Path("/repo"), product="netctl", instance="dev", extra=[])
-    a1 = toolchain.argv(cfg, root=Path("/repo"), product="netctl", instance="a1", extra=[])
+    dev = toolchain.docker_argv(cfg, root=Path("/repo"), product="netctl", instance="dev", extra=[])
+    a1 = toolchain.docker_argv(cfg, root=Path("/repo"), product="netctl", instance="a1", extra=[])
 
     # assert
     assert "netctl-gradle-cache-dev:/home/gradle/.gradle" in dev
@@ -117,7 +124,7 @@ def test_env_reaches_the_container_and_nothing_else_does(monkeypatch):
     cfg = _cfg(env={"GRADLE_USER_HOME": "/home/gradle/.gradle"})
 
     # act
-    line = toolchain.argv(cfg, root=Path("/repo"), product="netctl", instance="dev", extra=[])
+    line = toolchain.docker_argv(cfg, root=Path("/repo"), product="netctl", instance="dev", extra=[])
 
     # assert: no implicit inheritance - what the manifest names, and only that
     assert "GRADLE_USER_HOME=/home/gradle/.gradle" in line
@@ -129,9 +136,9 @@ def test_the_network_appears_only_when_it_is_given(monkeypatch):
     monkeypatch.setattr(toolchain.docker, "user_args", lambda: [])
 
     # act
-    without = toolchain.argv(_cfg(), root=Path("/repo"), product="netctl", instance="dev", extra=[])
-    with_net = toolchain.argv(_cfg(), root=Path("/repo"), product="netctl", instance="dev", extra=[],
-                              network="scratch-net")
+    without = toolchain.docker_argv(_cfg(), root=Path("/repo"), product="netctl", instance="dev", extra=[])
+    with_net = toolchain.docker_argv(_cfg(), root=Path("/repo"), product="netctl", instance="dev",
+                                     extra=[], network="scratch-net")
 
     # assert
     assert "--network" not in without
@@ -139,21 +146,70 @@ def test_the_network_appears_only_when_it_is_given(monkeypatch):
 
 
 def test_the_executor_runs_the_assembled_line_and_returns_its_rc(monkeypatch, tmp_path):
-    # arrange: the product context and the instance are the two values the executor READS, so they are
-    # stood in for here the way every other task test does it (tests/test_docker.py's fixture).
+    # arrange: the product context is the one value the executor READS, so it is stood in for here the
+    # way every other task test does it (tests/test_docker.py's fixture). The manifest keys arrive as
+    # PARAMETERS since si#105 - that is what makes the design's `with:` block bindable at all.
     from simplon import context
     from simplon.run import Result
     monkeypatch.setattr(context, "_current",
                         context.ProductContext("netctl", tmp_path, tmp_path / "netctl.yaml"))
-    monkeypatch.setattr(toolchain.labinstance, "resolve", lambda *a, **k: "dev")
     seen = []
     monkeypatch.setattr(toolchain, "run",
                         lambda a, **kw: seen.append(list(a)) or Result(rc=3, out="", err=""))
-    monkeypatch.setattr(toolchain, "argv", lambda *a, **k: ["docker", "run", "--rm", "img", "cmd"])
+    monkeypatch.setattr(toolchain, "docker_argv", lambda *a, **k: ["docker", "run", "--rm", "img", "cmd"])
 
     # act
-    rc = toolchain.run_toolchain({"image": "img:1", "argv": ["cmd"]}, where="build.compile", extra=[])
+    rc = toolchain.run_toolchain(_Ctx("netctl build compile"), image="img:1", argv=["cmd"])
 
-    # assert: thin - it executes what argv decided, and hands the real rc back
+    # assert: thin - it executes what docker_argv decided, and hands the real rc back
     assert seen == [["docker", "run", "--rm", "img", "cmd"]]
     assert rc == 3
+
+
+def test_a_command_with_no_cache_never_asks_for_the_instance_section(monkeypatch, tmp_path):
+    # arrange: `simplon init` writes no `instance:` section, so resolving one up front killed every
+    # toolchain command in every fresh product (si#105 defect 4)
+    from simplon import context
+    from simplon.run import Result
+    monkeypatch.setattr(context, "_current",
+                        context.ProductContext("netctl", tmp_path, tmp_path / "netctl.yaml"))
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: [])
+    monkeypatch.setattr(toolchain, "run", lambda a, **kw: Result(rc=0, out="", err=""))
+    monkeypatch.setattr(toolchain.labinstance, "resolve", _boom)
+
+    # act / assert: the resolve is not reached at all, which is the only proof that it is not required
+    assert toolchain.run_toolchain(_Ctx("netctl build compile"), image="img:1", argv=["cmd"]) == 0
+
+
+def test_a_command_WITH_a_cache_still_resolves_the_instance(monkeypatch, tmp_path):
+    # arrange: moving the resolve behind the caches must not quietly drop the netctl#453 property
+    from simplon import context
+    from simplon.run import Result
+    monkeypatch.setattr(context, "_current",
+                        context.ProductContext("netctl", tmp_path, tmp_path / "netctl.yaml"))
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: [])
+    monkeypatch.setattr(toolchain.labinstance, "resolve", lambda *a, **k: "a1")
+    seen = []
+    monkeypatch.setattr(toolchain, "run",
+                        lambda a, **kw: seen.append(list(a)) or Result(rc=0, out="", err=""))
+
+    # act
+    toolchain.run_toolchain(_Ctx("netctl build compile"), image="img:1", argv=["cmd"],
+                            caches=[{"volume": "gradle-cache", "path": "/cache"}])
+
+    # assert
+    assert "netctl-gradle-cache-a1:/cache" in seen[0]
+
+
+def test_the_refusal_names_the_command_the_block_was_read_from(monkeypatch, tmp_path):
+    # arrange: `ctx` is in the signature for exactly this - the values cannot say which command they came
+    # from, and "somewhere a toolchain command has no image" is not a diagnosis
+    from simplon import context
+    monkeypatch.setattr(context, "_current",
+                        context.ProductContext("netctl", tmp_path, tmp_path / "netctl.yaml"))
+    monkeypatch.setattr(toolchain.log, "die", _boom)
+
+    # act / assert
+    with pytest.raises(RuntimeError) as e:
+        toolchain.run_toolchain(_Ctx("netctl build compile"), argv=["cmd"])
+    assert "netctl build compile" in str(e.value)
