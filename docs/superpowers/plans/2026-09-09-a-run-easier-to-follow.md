@@ -264,18 +264,18 @@ clock fixture already covers the new label branch).
 
 **Files:** `src/simplon/orchestrator/tui.py`, `tests/test_orchestrator_tui.py`
 
-- [ ] 4.1 Failing test: start a step, assert the cursor moved to it; move the cursor by hand, assert it
+- [x] 4.1 Failing test: start a step, assert the cursor moved to it; move the cursor by hand, assert it
       stops following the next step; press `f`, assert it follows again.
-- [ ] 4.2 Implement follow mode with a `_moving` guard around the programmatic `move_cursor`, so a
+- [x] 4.2 Implement follow mode with a `_moving` guard around the programmatic `move_cursor`, so a
       `NodeHighlighted` the app caused is not mistaken for manual navigation.
-- [ ] 4.3 Failing test: a run with failures scattered among passes; press `n` repeatedly and assert where
+- [x] 4.3 Failing test: a run with failures scattered among passes; press `n` repeatedly and assert where
       the cursor lands each time, including the wrap.
-- [ ] 4.4 Implement `action_next_failure`.
-- [ ] 4.5 Failing test: press `/`, type a substring, assert exactly which rows remain (matching rows and
+- [x] 4.4 Implement `action_next_failure`.
+- [x] 4.5 Failing test: press `/`, type a substring, assert exactly which rows remain (matching rows and
       the ancestors that carry them, nothing else); press escape, assert the full tree is back and the
       cursor is on a sensible row.
-- [ ] 4.6 Implement the filter by remounting the tree through `_mount_tree(keep=...)`.
-- [ ] 4.7 Test: the run keeps painting correctly THROUGH a filter - refresh a row while a filter hides it
+- [x] 4.6 Implement the filter by remounting the tree through `_mount_tree(keep=...)`.
+- [x] 4.7 Test: the run keeps painting correctly THROUGH a filter - refresh a row while a filter hides it
       and assert nothing raises and the row is right when the filter clears.
 
 **Verify:** `pytest tests/test_orchestrator_tui.py` green.

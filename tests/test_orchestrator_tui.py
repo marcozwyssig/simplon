@@ -250,8 +250,14 @@ def test_the_tree_auto_focuses_the_first_failure_when_the_run_is_done():
     assert "compile ran" in rendered
 
 
-def test_the_tree_leaves_the_cursor_on_the_root_when_nothing_failed():
-    """The negative case: auto-focus is for failures, not a cursor that wanders on every green run."""
+def test_the_tree_does_not_jump_anywhere_when_nothing_failed():
+    """The negative case: auto-focus is for FAILURES, and `_on_done` must not move the cursor on a green
+    run.
+
+    si#148 changed where a green run leaves the cursor, and this test moved with it rather than being
+    weakened. Follow mode takes the cursor to each step as it starts, so a run nobody touched ends on the
+    LAST step - which is `_follow_to`'s doing and not `_on_done`'s. What is asserted is therefore that the
+    cursor is where following left it, and not on some failure that does not exist."""
     # arrange
     pipeline = _planned_pipeline()
 
@@ -261,13 +267,14 @@ def test_the_tree_leaves_the_cursor_on_the_root_when_nothing_failed():
             await app.workers.wait_for_complete()
             await pilot.pause()
             from textual.widgets import Tree
-            return str(app.query_one("#steps", Tree).cursor_node.label)
+            return str(app.query_one("#steps", Tree).cursor_node.label), app._follow
 
     # act
-    label = asyncio.run(_drive())
+    label, following = asyncio.run(_drive())
 
     # assert
-    assert "deploy.bringup" in label
+    assert following is True, "nobody touched this run, so it never stopped following itself"
+    assert "deploy.up" in label, "the last step to run, which is where following left it"
 
 
 def test_a_row_whose_text_did_not_change_is_not_written_again(monkeypatch):
@@ -728,3 +735,216 @@ def test_the_tui_path_leaves_the_same_transcript_behind(tmp_path, monkeypatch):
     text = written.read_text(encoding="utf-8")
     assert "=== simplon run transcript: bringup ===" in text
     assert "✗ build.compile  rc 1" in text
+
+
+# --- follow mode (si#148 item 1) ----------------------------------------------------------------------
+
+def test_the_cursor_follows_each_step_as_it_starts():
+    """`on_mount` showed the root and the cursor stayed wherever it was, so an operator who touched
+    nothing watched an aggregate listing while the interesting output went past unseen - `_on_line` only
+    writes a live line when that step's own row is highlighted."""
+    seen: list[str] = []
+
+    async def scenario():
+        pipeline = _planned_pipeline()
+        app = _StepApp(pipeline)
+        original = app._follow_to
+
+        def record(index: int) -> None:
+            original(index)
+            row = app._cursor_row()
+            if row is not None:
+                seen.append(row.label)
+
+        app._follow_to = record
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+    asyncio.run(scenario())
+    assert seen == ["build.install", "build.compile", "deploy.up"], seen
+
+
+def test_navigating_by_hand_switches_following_off():
+    import threading
+
+    release = threading.Event()
+    pipeline = _blocking_pipeline(release)
+
+    async def scenario():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # mid-run, so there is somewhere below the cursor to navigate TO
+            while pipeline.steps[0].state != StepState.RUNNING:
+                await pilot.pause(0.02)
+            before = app._follow
+            await pilot.press("down")
+            await pilot.pause()
+            after = app._follow
+            release.set()
+            await app.workers.wait_for_complete()
+            return before, after
+
+    before, after = asyncio.run(scenario())
+    assert before is True, "a run nobody has touched follows itself"
+    assert after is False, "the moment the operator navigates, the app stops moving the cursor"
+
+
+def test_the_follow_key_switches_it_back_on_and_the_cursor_jumps_to_what_is_running(monkeypatch):
+    import threading
+
+    release = threading.Event()
+    pipeline = _blocking_pipeline(release)
+
+    async def scenario():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            while pipeline.steps[0].state != StepState.RUNNING:
+                await pilot.pause(0.02)
+            _focus_line(app, 0)                  # the operator navigates away, following stops
+            await pilot.pause()
+            off = app._follow
+            await pilot.press("f")               # ... and asks for it back
+            await pilot.pause()
+            on, row = app._follow, app._cursor_row()
+            release.set()
+            await app.workers.wait_for_complete()
+            return off, on, row
+
+    off, on, row = asyncio.run(scenario())
+    assert off is False
+    assert on is True
+    assert row is not None and row.label == "build.install", \
+        "resuming follow does not wait for the next step - it goes to what is running now"
+
+
+# --- finding a failure in a tree of forty (si#148 item 5) ---------------------------------------------
+
+def _scattered_pipeline() -> Pipeline:
+    """Failures among passes, which is the shape the ticket describes: scanning icons is the only way to
+    find them today."""
+    return _planned_pipeline({"install": 1, "up": 1})
+
+
+def test_n_walks_the_failures_and_wraps():
+    async def scenario():
+        app = _StepApp(_scattered_pipeline())
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            _focus_line(app, 0)                       # start from the root, deliberately
+            await pilot.pause()
+            landed = []
+            for _ in range(3):
+                await pilot.press("n")
+                await pilot.pause()
+                row = app._cursor_row()
+                landed.append(row.label if row is not None else None)
+            return landed
+
+    landed = asyncio.run(scenario())
+    assert landed == ["build.install", "deploy.up", "build.install"], landed
+
+
+def test_n_on_a_green_run_says_so_rather_than_moving_the_cursor_somewhere_arbitrary():
+    async def scenario():
+        app = _StepApp(_planned_pipeline())
+        notes: list[str] = []
+        app.notify = lambda message, **kw: notes.append(message)
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            _focus_line(app, 0)
+            await pilot.press("n")
+            await pilot.pause()
+            row = app._cursor_row()
+            return notes, row
+
+    notes, row = asyncio.run(scenario())
+    assert any("no failure" in note for note in notes), notes
+    assert row is not None and row.label == "deploy.bringup", "the cursor stayed where it was"
+
+
+def test_slash_filters_the_tree_to_the_matching_rows_and_the_rows_that_carry_them():
+    async def scenario():
+        app = _StepApp(_planned_pipeline())
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.press("/")
+            await pilot.press(*"compile")
+            await pilot.pause()
+            filtered = _rows(app)
+            await pilot.press("/")                # toggles the box shut and clears the filter
+            await pilot.pause()
+            return filtered, _rows(app)
+
+    filtered, restored = asyncio.run(scenario())
+    # the match, plus the ancestors that carry it, and nothing else
+    assert [row.split(" ", 1)[1].split("  ")[0] for row in filtered] == \
+        ["deploy.bringup", "build.prep", "build.compile"], filtered
+    assert len(restored) == 5, restored
+
+
+def test_a_filter_that_matches_nothing_leaves_the_root_rather_than_an_empty_pane():
+    async def scenario():
+        app = _StepApp(_planned_pipeline())
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.press("/")
+            await pilot.press(*"zzz")
+            await pilot.pause()
+            return _rows(app), app._cursor_row()
+
+    rows, cursor = asyncio.run(scenario())
+    assert len(rows) == 1, rows
+    assert cursor is not None, "a pane with no cursor has nothing to show on the right"
+
+
+def test_a_run_keeps_painting_through_a_filter_that_hides_the_running_row(monkeypatch):
+    """The filter remounts the tree, so a step finishing while a filter is up finds no node of its own.
+    Five readers already tolerate a missing chain by design (`_mount_tree`); this asserts the filter does
+    not turn that tolerance into a wrong row."""
+    import threading
+
+    release = threading.Event()
+    pipeline = _blocking_pipeline(release)
+
+    async def scenario():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            while pipeline.steps[0].state != StepState.RUNNING:
+                await pilot.pause(0.02)
+            await pilot.press("/")
+            await pilot.press(*"zzz")             # hides everything, the running step included
+            await pilot.pause()
+            release.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.press("/")                # clear it again
+            await pilot.pause()
+            return _rows(app)
+
+    rows = asyncio.run(scenario())
+    assert any("✓ build.install" in row for row in rows), rows
+
+
+def test_every_new_key_is_in_the_footer():
+    """A binding nobody can discover is a binding nobody uses. Asserted against what the footer really
+    renders - `Screen.active_bindings` filtered by `show` - rather than against the BINDINGS literal,
+    which says what was declared and not what a reader can see."""
+    async def scenario():
+        app = _StepApp(_planned_pipeline())
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            return {key for key, active in app.screen.active_bindings.items()
+                    if active.binding.show}
+
+    shown = asyncio.run(scenario())
+    # `slash` is Textual's own name for the key; what the footer renders is the description beside it.
+    assert {"f", "n", "slash"} <= shown, shown

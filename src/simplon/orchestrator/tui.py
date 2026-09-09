@@ -47,9 +47,10 @@ def run_pipeline(pipeline: Pipeline) -> int:
 # not hard-require Textual on the headless path (run_pipeline's isatty check returns before this is
 # touched in CI). The import sits at module top but the headless fallback in cli.py catches ImportError.
 from textual import work  # noqa: E402
+from textual.binding import Binding  # noqa: E402
 from textual.app import App, ComposeResult  # noqa: E402
 from textual.containers import Horizontal  # noqa: E402
-from textual.widgets import Footer, Header, RichLog, Static, Tree  # noqa: E402
+from textual.widgets import Footer, Header, Input, RichLog, Static, Tree  # noqa: E402
 
 from simplon import steplog  # noqa: E402
 from textual.widgets.tree import TreeNode  # noqa: E402
@@ -68,6 +69,7 @@ class _StepApp(App):
     CSS = """
     #steps { width: 38%; border-right: solid $primary; }
     #details { width: 1fr; padding: 0 1; }
+    #filter { height: 3; }
     #status { height: 1; padding: 0 1; background: $panel; color: $foreground; }
     #status.-running { color: $warning; }
     #status.-ok { color: $success; }
@@ -78,7 +80,19 @@ class _StepApp(App):
     # output is on screen and cannot be marked, copied or quoted anywhere. The way out has to come from
     # inside the app: `c` to the clipboard, `s` to a file for when the clipboard cannot be reached (an
     # SSH session whose terminal does not speak OSC 52, or a log someone wants to attach to a ticket).
+    #
+    # `f`, `n` and `/` are si#148's three, and the footer is where they are discoverable at all. It is
+    # also close to full at eight entries, which is why the command palette (ctrl+p) carries the same
+    # actions with a sentence each: a footer is a reminder for someone who already knows, a palette is
+    # how somebody finds out.
     BINDINGS = [("q", "quit", "Quit"), ("up", "cursor_up", "Up"), ("down", "cursor_down", "Down"),
+                ("f", "follow", "Follow"), ("n", "next_failure", "Next failure"),
+                # PRIORITY, so `/` closes the filter box it opened instead of being typed into it. The
+                # cost is that a filter cannot contain a literal `/`, and it is nothing: what the filter
+                # matches are ROW identities, which are dotted command paths and prose labels. The gain
+                # is that the toggle is one key and one footer entry rather than two - the footer is the
+                # only place a key is discoverable and it is already full.
+                Binding("/", "filter", "Filter", priority=True),
                 ("c", "copy_details", "Copy"), ("s", "save_details", "Save")]
 
     def __init__(self, pipeline: Pipeline) -> None:
@@ -104,17 +118,40 @@ class _StepApp(App):
         # first leaf to the last. Writing only real changes takes the measured dirty-line marks of such a
         # plan from 978 to 120 and the label writes from 102 to 44, at an unchanged frame count.
         self._painted: dict[int, str] = {}
+        # FOLLOW MODE (si#148 item 1): while true, each step that starts takes the cursor with it. On by
+        # default, because a run nobody has touched should show what it is doing rather than an aggregate
+        # listing - and off the moment the operator navigates, because a cursor that keeps being taken
+        # away is worse than one that never moves.
+        self._follow = True
+        # The ROW this app last moved the cursor to. A remembered target rather than a flag around
+        # `move_cursor`, because Textual POSTS `NodeHighlighted` instead of calling the handler: a guard
+        # set and cleared around the call is long gone by the time the handler runs, and every one of the
+        # app's own moves would then read as the operator navigating.
+        #
+        # A ROW and not a TreeNode, which is not a detail: `Tree.clear()` builds a NEW root object, so the
+        # `/` filter's remount replaces every node in the pane while the `Row` objects are reused. Held by
+        # node, the token stopped matching the moment a filter went up - measured, and it switched follow
+        # mode off on the app's own repaint.
+        self._expected_row: Row | None = None
+        # The substring the left pane is filtered by, "" for no filter (si#148 item 5).
+        self._filter = ""
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal():
             yield Tree(self._label(self.rows), id="steps")
             yield RichLog(id="details", wrap=True, highlight=False, markup=False)
+        yield Input(placeholder="filter the plan (/ again to clear)", id="filter")
         yield Static(id="status")
         yield Footer()
 
     def on_mount(self) -> None:
+        self.query_one("#filter", Input).display = False
         self._mount_tree()
+        # The tree keeps the focus, explicitly. Adding the filter box put a second focusable widget on
+        # the screen, and with it the `up`/`down`/`c`/`s` keys reached a hidden Input instead of the pane
+        # they belong to - measured as two `down` presses that moved nothing.
+        self._tree().focus()
         self._show_details(self.rows)
         self._repaint_status()
         # ONE second, and the interval exists for two readers at once: the running row's own counter and
@@ -199,9 +236,27 @@ class _StepApp(App):
         chains reached through `children` left that pipeline with no chain at all, and five call sites
         (`_refresh_row`, `_begin_details`, `_on_line`, `_maybe_refresh_details`, `_on_done`) then no-opped
         in silence: the row stayed on its pending dot and the pane said "running" over a step that had
-        already exited 0. Five readers tolerating a missing chain was the defect, not the contract."""
+        already exited 0. Five readers tolerating a missing chain was the defect, not the contract.
+
+        SINCE si#148 IT ALSO REMOUNTS. A Textual `TreeNode` cannot be hidden - measured against the pinned
+        8.2.8, whose node surface carries no `display` and no `visible` - so the `/` filter has no way to
+        mask rows in place and rebuilds the pane instead. That is affordable precisely because this method
+        already derives everything (the nodes, the chains, the `_painted` baseline) from `self.rows` in
+        one pass, and because the `Row` objects are REUSED: `_painted`'s `id(row)` keys survive the
+        rebuild and are re-primed here with each row's current text, so a filter cannot leave a row
+        showing a state it has since left.
+
+        A row hidden by a filter simply has no chain, which is the state the five readers above already
+        handle by design - and the RUN goes on painting into a pane that is not showing it, so clearing
+        the filter mid-run shows the truth rather than a snapshot from when it went up."""
         tree = self._tree()
+        tree.clear()
+        self._chain_nodes.clear()
+        self._chain_rows.clear()
         tree.root.data = self.rows
+        # No `set_label` for the root: the widget was constructed with this text and `Tree.clear()`
+        # carries the current label onto the new root it builds, so writing it again would be the one
+        # redundant write `_painted` exists to prevent.
         self._painted[id(self.rows)] = self._label(self.rows)
         index_of_step = {id(step): i for i, step in enumerate(self.pipeline.steps)}
 
@@ -216,6 +271,8 @@ class _StepApp(App):
         def attach(parent: TreeNode, row: Row, nodes: tuple[TreeNode, ...],
                    rows: tuple[Row, ...]) -> None:
             for child in row.children:
+                if not self._kept(child):
+                    continue
                 label = self._label(child)
                 self._painted[id(child)] = label
                 node = parent.add(label, data=child, expand=True)
@@ -226,6 +283,24 @@ class _StepApp(App):
         record(self.rows, (tree.root,), (self.rows,))
         attach(tree.root, self.rows, (tree.root,), (self.rows,))
         tree.root.expand_all()
+        # `Tree.clear()` leaves `cursor_node` pointing into the tree it just discarded, so the cursor is
+        # put back on the rebuilt root here. Without it the pane has a cursor line and no cursor NODE,
+        # and every reader that starts from `_cursor_row` - the details pane, `c`, `s`, `n` - answers
+        # None over a tree that is plainly on screen.
+        tree.move_cursor(tree.root)
+        # The root is where the cursor starts and Textual announces that as an ordinary highlight. Naming
+        # it here keeps `on_tree_node_highlighted` from reading the app's OWN opening frame as the
+        # operator navigating, which would switch follow mode off before the first step had run.
+        self._expected_row = self.rows
+
+    def _kept(self, row: Row) -> bool:
+        """Whether `row` survives the current filter: it matches, or something under it does (si#148 item
+        5). An ancestor is kept because it CARRIES a match - a filtered pane that dropped the path to what
+        it found would be a flat list, and the shape is the left pane's whole value."""
+        if not self._filter:
+            return True
+        needle = self._filter.lower()
+        return needle in row.label.lower() or any(self._kept(child) for child in row.children)
 
     def _tree(self) -> Tree:
         return self.query_one("#steps", Tree)
@@ -377,8 +452,123 @@ class _StepApp(App):
             self._show_details(cursor)
 
     def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
-        if event.node.data is not None:
-            self._show_details(event.node.data)
+        row = event.node.data
+        if row is None:
+            # A node carrying no Row: the pane's opening frame, before `_mount_tree` has put the root row
+            # on it, and any node left over from a tree a remount discarded. Neither is the operator and
+            # neither has anything to show, so both are ignored rather than read as navigation - which is
+            # what switched follow mode off before the first step had run.
+            return
+        if row is not self._expected_row:
+            # Anything the app did not ask for is the operator: a key, a click, `n`. Following stops,
+            # because a cursor that keeps being taken away from where somebody put it is worse than one
+            # that never moves. The target is NOT cleared on a match, deliberately: one move can announce
+            # itself more than once (a remount posts a highlight of its own), and a one-shot token turned
+            # the second announcement into a phantom keypress.
+            self._follow = False
+        self._show_details(row)
+
+    # ---------------------------------------------------------------- following, finding, filtering
+
+    def _follow_to(self, index: int) -> None:
+        """Take the cursor to step `index`'s row, if following is on and that row is on screen.
+
+        A row hidden by the current filter has no chain, so this is a no-op for it rather than a jump to
+        something else - the operator filtered it away on purpose, and the bar goes on naming it."""
+        if not self._follow:
+            return
+        chain = self._chain_nodes.get(index, ())
+        if not chain:
+            return
+        tree = self._tree()
+        if tree.cursor_node is chain[-1]:
+            return
+        self._expected_row = self._chain_rows[index][-1]
+        tree.move_cursor(chain[-1])
+
+    def action_follow(self) -> None:
+        """Resume following, and go straight to what is running rather than waiting for the next step -
+        an operator asking to follow a run is asking about the step in flight, not the one after it."""
+        self._follow = True
+        running = next((i for i, step in enumerate(self.pipeline.steps)
+                        if step.state == StepState.RUNNING), None)
+        if running is not None:
+            self._follow_to(running)
+        self.notify("following the running step", timeout=3)
+
+    def action_next_failure(self) -> None:
+        """The cursor to the next FAILED step after this one, wrapping (si#148 item 5).
+
+        Three failures among forty steps and the only way to find them was to scan the icons. It walks the
+        EXECUTION order rather than the visible rows, so it is the same walk whatever the tree is
+        filtered to - and a failure the filter is hiding is still reachable, which is the behaviour that
+        keeps `/` and `n` from cancelling each other out.
+
+        A green run notifies instead of moving. Moving the cursor somewhere arbitrary to signal "nothing
+        found" is how a UI answers a question it was not asked.
+        """
+        failed = [i for i, step in enumerate(self.pipeline.steps) if step.state == StepState.FAILED]
+        if not failed:
+            self.notify("no failure in this run", timeout=3)
+            return
+        cursor = self._cursor_row()
+        here = next((i for i in range(len(self.pipeline.steps))
+                     if self._chain_rows.get(i, (None,))[-1] is cursor), -1)
+        target = next((i for i in failed if i > here), failed[0])
+        chain = self._chain_nodes.get(target, ())
+        if not chain:
+            # It is hidden by the filter. Showing it means dropping the filter, which is what the operator
+            # asked for by pressing `n` - the alternative is a key that silently does nothing.
+            self._set_filter("")
+            chain = self._chain_nodes.get(target, ())
+        if chain:
+            self._tree().move_cursor(chain[-1])
+
+    def action_filter(self) -> None:
+        """`/` opens the filter box, and `/` again closes it AND clears the filter.
+
+        A toggle rather than a separate escape binding, deliberately: the footer is the only place a key
+        is discoverable and it is already at eight entries, so a second key for "undo the last one" is a
+        line of footer spent on a reflex the same key can carry."""
+        box = self.query_one("#filter", Input)
+        if box.display:
+            box.display = False
+            box.value = ""
+            self._set_filter("")
+            self._tree().focus()
+            return
+        box.display = True
+        box.focus()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "filter":
+            self._set_filter(event.value)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter leaves the filter in place and gives the tree the cursor back - the operator has found
+        what they were looking for and now wants to move around inside it."""
+        if event.input.id == "filter":
+            event.input.display = False
+            self._tree().focus()
+
+    def _set_filter(self, needle: str) -> None:
+        """Apply a filter and rebuild the left pane, keeping the cursor on the row it was on when that row
+        survives - and putting it somewhere real when it does not, because a pane with no cursor has
+        nothing to show on the right."""
+        if needle == self._filter:
+            return
+        self._filter = needle
+        was = self._cursor_row()
+        self._mount_tree()
+        tree = self._tree()
+        target = next((nodes[-1] for index, nodes in self._chain_nodes.items()
+                       if self._chain_rows[index][-1] is was), None)
+        if target is not None:
+            self._expected_row = was
+            tree.move_cursor(target)
+        row = self._cursor_row()
+        if row is not None:
+            self._show_details(row)
 
     # ---------------------------------------------------------------- the runner
 
@@ -400,6 +590,9 @@ class _StepApp(App):
             # counter that started after them would under-report every step by that much. `Step.run` sets
             # it again from the same clock, which is idempotent to within those microseconds.
             self.call_from_thread(self._refresh_row, i)             # -> RUNNING shown
+            self.call_from_thread(self._follow_to, i)   # BEFORE the pane: `_begin_details` decides what to
+            # write from where the cursor IS, so moving it first is what makes the pane open on the step
+            # that just started instead of redrawing the aggregate the operator was left looking at.
             self.call_from_thread(self._begin_details, i)
             self.call_from_thread(self._repaint_status)
             # stream lines live into the details pane (only rendered when this step is highlighted)
@@ -421,6 +614,7 @@ class _StepApp(App):
         # auto-focus the first failed step's details, if any
         for i, step in enumerate(self.pipeline.steps):
             if step.state == StepState.FAILED and i in self._chain_nodes:
+                self._expected_row = self._chain_rows[i][-1]     # the app's own move, not the operator's
                 self._tree().move_cursor(self._chain_nodes[i][-1])
                 self._show_details(self._chain_rows[i][-1])
                 break
