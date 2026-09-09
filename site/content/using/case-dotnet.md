@@ -264,24 +264,27 @@ Now put a type error in the product instead, so the build never reaches a test:
 | one assertion broken | 1 | `Failed: 1, Passed: 2, Skipped: 0, Total: 3` |
 | a type error in the product | 1 | no test ran at all: `error CS0029`, and the run says nothing else |
 
-**Read the rc column.** The two failures are indistinguishable from outside, and unlike the Java chapter
-nothing here can tell them apart - because nothing here is a *gate*. A gate takes `suite:` (a pytest root
-the kernel runs) or `impl:` (a product callable the kernel calls for its rc), and a `toolchain:run`
-command is neither. So this product gets:
-
-- no verdict vocabulary. The five outcomes are
-  [the Python chapter's table](../case-python/#test), and this run reaches none of them;
-- no `setup-failed`, and no setup marker to reach it with. The kernel exports `SIMPLON_SETUP_FAILED`
-  before every gate, and there is no gate;
-- no Allure results, no merge, no archive.
+**Read the rc column.** The two failures are indistinguishable from outside, and nothing in the run
+above can tell them apart - because nothing in it is a *gate*. `build unit` is a command: it runs
+`dotnet test` in the pinned SDK image and hands back a number, and a number is all a caller gets. No
+verdict vocabulary (the five outcomes are [the Python chapter's table](../case-python/#test)), no
+`setup-failed` and no setup marker to reach it with, no Allure results, no merge, no archive.
 
 The Java product paid one task body and got all three -
 [an `impl:` gate is opaque, and says so](../../building/test-levels/#an-impl-gate-is-opaque-and-says-so)
-is where that trade is written down. This one paid nothing and got an exit code.
-[simplon#106](https://github.com/marcozwyssig/simplon/issues/106) is where the choice between
-"a gate may name a command", "`toolchain:run` gains a gate entry point" and "write the one-line body
-after all" is open. Whichever it is, the design's claim that a product writes no body of its own holds
-for the build and does not yet hold for the test.
+is where that trade is written down. **This product pays nothing and gets the same, by naming the
+command it already has** ([simplon#106](https://github.com/marcozwyssig/simplon/issues/106)). A gate
+declares `command:` - a command in this product's own tree, `build unit` as it is typed - and
+`preamble:` for the build that has to succeed first, and the third row above then stops at the compile
+as `setup-failed` instead of arriving as the same `rc 1` the second row carries. The gate resolves that
+command the way the CLI does, the body its `task:` names with its own `with:` pinned, so the image and
+the argv stay declared once and the verdict is about the line a person runs.
+
+**This product declares no `suites:` section**, and the runs above are what it does without one: the
+measurement is what two commands do when nobody pairs them. Closing it costs one manifest section and no
+Python, so the design's claim that a product writes no body of its own reaches the test phase too -
+[Test levels](../../building/test-levels/#a-gate-may-name-a-command-in-your-own-tree) carries the block
+and the rules.
 
 ### analyse, and the one rule it obeys
 
