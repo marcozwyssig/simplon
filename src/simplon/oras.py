@@ -27,12 +27,11 @@ from __future__ import annotations
 import platform
 import shutil
 import tarfile
-import urllib.request
 import zipfile
 from pathlib import Path
 from typing import Callable
 
-from simplon import log, tools
+from simplon import fetch, log, tools
 from simplon.run import run
 
 # Pinned release; bump deliberately. The tag carries no host in it - one version, every platform.
@@ -122,7 +121,7 @@ def _fetch_release(dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     archive = dest.parent / f"oras-download{'.zip' if url.endswith('.zip') else '.tgz'}"
     try:
-        urllib.request.urlretrieve(url, archive)  # noqa: S310 - a pinned https release asset
+        fetch.download(url, archive, label=f"oras {ORAS_VERSION}")
         member = dest.name
         if url.endswith(".zip"):
             with zipfile.ZipFile(archive) as zf:

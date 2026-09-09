@@ -22,10 +22,10 @@ import platform
 import re
 import shutil
 import tarfile
-import urllib.request
 from pathlib import Path
 
 from simplon import context
+from simplon import fetch
 from simplon import log
 from simplon import tools
 from simplon.run import run
@@ -68,8 +68,8 @@ def _fetch_static_cli(dest: Path) -> None:
     log.info(f"docker missing; fetching the static docker CLI {DOCKER_CLI_VERSION} "
              f"(client only, no root; the daemon must come from the host's socket)")
     dest.parent.mkdir(parents=True, exist_ok=True)
-    bundle = dest.parent / "docker.tgz.part"
-    urllib.request.urlretrieve(url, bundle)
+    bundle = dest.parent / "docker.tgz"
+    fetch.download(url, bundle, label=f"docker CLI {DOCKER_CLI_VERSION}")
     try:
         with tarfile.open(bundle) as tar:
             member = tar.getmember("docker/docker")

@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import os
 import shutil
-import urllib.request
 from pathlib import Path
 
+from simplon import fetch
 from simplon import log
 from simplon.run import run
 
@@ -32,7 +32,7 @@ def ensure_venv(venv: Path) -> Path:
         log.info(f"python3 lacks ensurepip; bootstrapping pip into {venv.name} via get-pip.py")
         run(["python3", "-m", "venv", "--without-pip", str(venv)])
         script = venv / "get-pip.py"
-        urllib.request.urlretrieve(GET_PIP_URL, script)
+        fetch.download(GET_PIP_URL, script, label="get-pip.py")
         run([str(venv / "bin" / "python"), str(script), "-q"])
         script.unlink(missing_ok=True)
     if not os.access(pip, os.X_OK):

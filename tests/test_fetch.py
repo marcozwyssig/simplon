@@ -370,6 +370,16 @@ def test_a_server_that_over_sends_cannot_produce_a_hundred_and_one_percent():
     assert "100%" in line and "101%" not in line
 
 
+def test_all_but_the_last_bytes_is_not_a_hundred_percent():
+    """Measured on the real 87.3 MB docker bundle, where a rounded percentage said `100%` beside
+    `87.0 MB/87.3 MB`. An outcome that cannot tell "nearly" from "done" is the defect this repository
+    hunts, and a bar is not exempt from it because it is only a display."""
+    line = fetch.render("x", received=99_600, total=100_000, elapsed=1.0, width=200, tick=0)
+
+    assert "100%" not in line
+    assert " 99%" in line
+
+
 def test_an_unknown_total_produces_no_percentage_and_no_bar():
     line = fetch.render("x", received=120, total=None, elapsed=1.0, width=200, tick=0)
 

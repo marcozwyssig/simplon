@@ -138,7 +138,10 @@ def render(label: str, received: int, total: int | None, elapsed: float, width: 
         if bar:
             filled = int(share * _BAR_CELLS)
             parts.append(f"[{'#' * filled}{'-' * (_BAR_CELLS - filled)}]")
-        parts.append(f"{share * 100:3.0f}%")
+        # FLOORED, not rounded. Measured on the real 87.3 MB docker bundle: `%3.0f` printed
+        # `100%  87.0 MB/87.3 MB`, which says finished while 300 kB are still coming. A percentage
+        # that cannot tell "nearly" from "done" is the defect this repository hunts, in miniature.
+        parts.append(f"{int(share * 100):3d}%")
         parts.append(f" {human_bytes(received)}/{human_bytes(total)}")
     else:
         if bar:
