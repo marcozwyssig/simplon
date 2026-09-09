@@ -18,6 +18,72 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.10.0
+
+**A C++ or a .NET product stops writing its build files by hand.** 0.9.0 gave every product one pinned
+toolchain and one uniform way to run it over its tree; this release produces the files that toolchain
+compiles. The two halves meet in the tree and nowhere else - two coordinates, no new subsystem.
+
+A minor rather than a patch: two catalogue coordinates are a surface, not a repair.
+
+### Two coordinates that write a product's build files (si#102)
+
+`build:cmake-files` writes one `CMakeLists.txt` per source directory plus the root file that adds them.
+`build:dotnet-solution` writes the `.sln` and one `.csproj` per project. Both are **declared, not
+placed** - a product without the language never sees the command, and a product whose build outgrows the
+shapes below keeps its hand-written files and declares neither. Nothing degrades; it does what every
+product does today.
+
+**The tree is the declaration, and the manifest is only the exception.** `src/<name>/` holding sources
+is a library, one holding a `main.cpp` or a `Program.cs` is an executable, each `tests/<name>_test.cpp`
+is one ctest case, and a directory under `tests/` is a test project. The one thing a directory cannot
+show is what a target depends on:
+
+```yaml
+build:
+  targets:
+    net: { depends: [core], include: [vendor/asio/include] }
+```
+
+Guessing that from include paths was considered and refused - it reads a preprocessor approximately, and
+an approximate answer in a build file fails at link time, in a message about symbols rather than about
+the manifest. A `targets:` key naming no target is refused by name, with the targets that do exist
+listed, because a typo there is otherwise silent and silently does nothing.
+
+**What they write is committed, so it has to be deterministic.** Every list is sorted, and a solution's
+GUIDs are derived with `uuid5` from the project's path relative to the product root rather than
+generated: a `uuid4` would put a new GUID into the diff on every run and make the committed decision
+unusable within a week. Each file carries a two-sentence `DO NOT EDIT` header, and the generator
+overwrites without asking - deliberately the opposite of `support:toolchain`'s never-clobber rule,
+because a manifest is a product's own statement and a `CMakeLists.txt` is a rendering of one. Reverting
+a statement would be wrong; reverting a rendering is the point.
+
+**Driven, not asserted, and that is why 0.9.0 exists at all.** `tests/test_buildfiles_e2e.py` generates
+a real tree, runs `configure`, `compile` and `ctest` in the profile's own `silkeh/clang:19`, executes
+the binary, and does the same for `dotnet build` in `mcr.microsoft.com/dotnet/sdk:9.0`. It earned its
+place on the first run: the .NET half targeted `net8.0`, which BUILDS in a 9.0 SDK image because the
+targeting pack is restored from NuGet, and then refuses to run - `You must install or update .NET to run
+this application`, rc 150. It targets the framework the SDK image carries now.
+
+One thing to know before adopting the CMake half: `add_subdirectory` puts a target's output under its
+own directory, so an executable declared in `src/<name>/` lands at `build/src/<name>/<name>` and not at
+`build/<name>`. A `deploy up` command that runs the binary has to name that path.
+
+### Before you bump
+
+**The scaffolder no longer empties your manifest of its comments** (si#110). `support toolchain` read
+the file with `yaml.safe_load` and wrote it back with `safe_dump`, so on a freshly scaffolded manifest
+forty-two comment lines became zero and every flow mapping was expanded to block style. It splices its
+commands into the text now, and everything you wrote survives. Nothing to do beyond bumping.
+
+**The C++ `analyse` profile analyses something, and can go red** (si#111). `clang-tidy -p build` takes
+its sources as positional arguments and named none, so the entry refused every run it was ever given.
+It is `run-clang-tidy -p build -quiet -warnings-as-errors=*` now, which reads the compile database
+`configure` already wrote and walks it. The last flag is what makes the command a check rather than a
+report: clang-tidy reports its findings as warnings and exits 0 without it, so `analyse` was green on
+every tree. Re-run `support toolchain cpp <version>` to pick the new argv up, or edit the one line in
+your manifest - the scaffolder never overwrites a command you already have.
+
 ## 0.9.0
 
 **0.8.0 shipped a uniform build that no product could drive.** This is the release that can, and the
