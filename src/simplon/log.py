@@ -34,6 +34,35 @@ def warn(msg: str) -> None:
     print(f"\033[1;33m[{_ts()}]   !\033[0m {msg}", flush=True)
 
 
+#: How many visible columns the `[HH:MM:SS] ==> ` prefix spends before a message starts. Published
+#: rather than counted at the call site, because a caller that has to FIT a line inside a terminal
+#: (`simplon.fetch`'s progress bar) needs the number, and a second place where the format is spelled
+#: out is the shape this repository has gone wrong on repeatedly.
+PREFIX_WIDTH = len("[HH:MM:SS] ==> ")
+
+
+def inplace(msg: str) -> None:
+    """`info`'s line, repainted OVER ITSELF: same prefix, no newline, cursor back at column one.
+
+    For the one kind of step whose whole content is a number changing - bytes arriving, seconds spent.
+    `\\033[K` erases whatever a previous, longer paint left standing to the right; `\\r` puts the cursor
+    where the next paint has to start.
+
+    It is for a TERMINAL, and the CALLER decides that rather than this function, because the caller is
+    the one who knows whether it will paint once or two hundred times. Into a pipe this produces either
+    one unreadable smear or thousands of lines, which is why `simplon.fetch` asks `isatty()` first and
+    reaches for `info` when the answer is no.
+    """
+    print(f"\033[1;34m[{_ts()}] ==>\033[0m {msg}\033[K\r", end="", flush=True)
+
+
+def clear_line() -> None:
+    """Leave the terminal's current line empty, so what prints next is not overprinted onto the remains
+    of a longer `inplace` paint. The alternative is a closing line with somebody else's tail hanging
+    off the end of it."""
+    print("\r\033[K", end="", flush=True)
+
+
 def error(msg: str) -> None:
     """A real failure, on STDERR - louder than `warn` (which goes to stdout for the merely notable) and
     without `die`'s exit, so the caller keeps control of the exit code."""
