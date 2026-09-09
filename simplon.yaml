@@ -89,6 +89,15 @@ groups:
       # same installed set the kernel runs against), and the roots stated by the config rather than on the
       # argv.
       typecheck-python: { task: "test:typecheck-python" }
+      # The release-notes guard (si#89), on the kernel that ships it. It lived in
+      # `tests/test_releases_page.py` until si#89 - which guarded simplon and nothing else, so every
+      # product consuming this catalogue could tag, publish and never write a word. The mechanism is the
+      # kernel's now; what stayed here is the DATA, in the `releases:` section below, and simplon's own
+      # house rules about its own page, in `tests/test_releases_page.py`.
+      #
+      # No `with:` - there is nothing to pin. All three values are the product's data and reach the body
+      # through the manifest, which is the whole shape of the ticket.
+      release-notes: { task: "test:release-notes" }
   release:
     commands:
       # The release itself (#32). Simplon cuts its own releases with the command it ships, for the same
@@ -143,6 +152,26 @@ site:
   base_url: "https://marcozwyssig.github.io/simplon/"
   theme: "github.com/imfing/hextra@v0.12.3"
 
+# The release notes' three values (si#89), and there is nothing else the kernel may know about them.
+#
+# `page` is where they live; `from` is the first release that must have a section at all; `complete_from`
+# is the first section that must name every ticket merged into its range. The gap between the two floors
+# IS the excused set, and here it is exactly one release: 0.4.0's notes were written before the rule and
+# name no number anywhere. Retro-fitting them would mean deciding, a release later, which paragraph each
+# of fifteen numbers belongs beside - and two of them have no paragraph at all, so it would mean writing
+# new prose about a released version from the outside. That is reconstruction, which is the objection the
+# page's own floor paragraph raises against writing the older releases up at all.
+#
+# The exemption is PAID FOR rather than merely declared, and not here: `tests/test_releases_page.py` pins
+# the excused population at one and requires it to be genuinely incomplete, so the day somebody writes
+# those numbers in, the suite says to move `complete_from` down and delete the exemption. Those are
+# simplon's own house rules about simplon's own page, which is exactly why they did not move into the
+# kernel with the mechanism.
+releases:
+  page: "site/content/using/releases.md"
+  from: "0.4.0"
+  complete_from: "0.5.0"
+
 # The workflow declarations (si#40). "One source, two outputs" has stood in
 # src/simplon/orchestrator/manifest.py since it was written: the same manifest assembles the runtime CLI,
 # and - this is that second output - the CI workflows.
@@ -194,6 +223,22 @@ workflows:
               way is the fix. What it checks and what it excuses is stated in mypy.ini, not here.
             command: test typecheck-python
           - command: build wheel
+          - note: |
+              The release-notes guard (si#89), and it is LAST on purpose. A gate that fails early
+              hides everything behind it, and this one rules on prose rather than on code: a
+              release section still to be written must not stop a reader from seeing whether the
+              suite, the type gate and the wheel are green. It is a real gate all the same - a
+              tagged release nobody wrote up is a failure this repository has already shipped once.
+
+              Its range is `<last tag>..HEAD` of whatever this run checked out, so it says
+              different things under the two triggers this workflow declares, and both are
+              correct: a `push` to main has the merge that just landed in range, and a
+              `pull_request` run checks out `refs/pull/N/merge` - the branch AS MERGED with the
+              base - so a branch green on its own tip goes red when the base moves. The command
+              prints what HEAD resolved to on every run, which is what makes that legible instead
+              of surprising. `fetch-depth: 0` above is a precondition for it too: with no tags
+              there is no released version to measure the page against.
+            command: test release-notes
 
   # DECLARED HAND-WRITTEN, which is a decision and not a gap - si#40 asked for exactly this to be an
   # explained possibility rather than an emergency exit. The generator carries comments, so prose is not

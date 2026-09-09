@@ -22,7 +22,7 @@ _simplon_nodes() {
     case "$1" in
         '') _simplon_reply=('build' 'test' 'release' 'support') ;;
         'build') _simplon_reply=('wheel' 'reference' 'site' 'docs') ;;
-        'test') _simplon_reply=('all' 'typecheck-python') ;;
+        'test') _simplon_reply=('all' 'typecheck-python' 'release-notes') ;;
         'release') _simplon_reply=('tag') ;;
         'support') _simplon_reply=('git' 'tasks' 'install' 'completion' 'doctor' 'workflows') ;;
         'support.git') _simplon_reply=('commit' 'push' 'prune-branches' 'submodules' 'auth-scopes') ;;

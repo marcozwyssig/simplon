@@ -345,6 +345,12 @@ def check() -> int:
         return 1
 
 
+def _plural(count: int, noun: str) -> str:
+    """`1 merge` rather than `1 merges`. A report is read by people, and this one is read while somebody
+    is already annoyed at it."""
+    return f"{count} {noun}" + ("" if count == 1 else "s")
+
+
 def _assess(root: Path, spec: Declared) -> int:
     """The four verdicts over one product, separated from `check` so the manifest and the git failures
     are handled once, at the seam, rather than in the middle of the rule."""
@@ -426,7 +432,8 @@ def _assess(root: Path, spec: Declared) -> int:
         held = version >= spec.complete_from
         missing = sorted(merged - named) if held else []
         ruled += len(merges)
-        log.info(f"  {tag_of(version):<10} {start}..{end}  {len(merges)} merges, {len(merged)} tickets, "
+        log.info(f"  {tag_of(version):<10} {start}..{end}  {_plural(len(merges), 'merge')}, "
+                 f"{_plural(len(merged), 'ticket')}, "
                  + (f"{len(merged & named)} named" if held else "not held to completeness"))
         if silent:
             findings.append(
