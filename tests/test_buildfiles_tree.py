@@ -118,3 +118,41 @@ def test_a_target_directory_is_relative_to_the_root_so_the_model_travels(tmp_pat
     # assert
     assert target.directory == Path("src/core")
     assert target.sources == [Path("src/core/a.cpp")]
+
+
+def test_a_dotnet_test_directory_becomes_one_test_target(tmp_path):
+    # arrange: the .NET half of the spec's table - a DIRECTORY under tests/ is one test project, where
+    # the C++ half makes one target per file
+    root = _tree(tmp_path, "src/Core/A.cs", "tests/CoreTests/ATest.cs", "tests/CoreTests/BTest.cs")
+
+    # act
+    targets = {t.name: t for t in buildfiles.read_tree(root, {})}
+
+    # assert
+    assert targets["CoreTests"].kind == "test"
+    assert targets["CoreTests"].directory == Path("tests/CoreTests")
+    assert [p.name for p in targets["CoreTests"].sources] == ["ATest.cs", "BTest.cs"]
+
+
+def test_a_malformed_depends_is_refused_rather_than_stringified(tmp_path, monkeypatch):
+    # arrange: `depends: {core: yes}` is a typo, and turning it into one dependency named
+    # "{'core': True}" writes that into a committed build file instead of saying so
+    monkeypatch.setattr(buildfiles.log, "die",
+                        lambda m, *a, **k: (_ for _ in ()).throw(RuntimeError(m)))
+    root = _tree(tmp_path, "src/core/a.cpp", "src/net/b.cpp")
+
+    # act / assert
+    with pytest.raises(RuntimeError) as e:
+        buildfiles.read_tree(root, {"net": {"depends": {"core": True}}})
+    assert "net" in str(e.value) and "depends" in str(e.value)
+
+
+def test_a_refusal_stops_rather_than_falling_through(tmp_path, monkeypatch):
+    # arrange: `log.die` exits, and the line after it must not assume otherwise - a fall-through here
+    # ends in a KeyError where the reader was promised a diagnosis
+    monkeypatch.setattr(buildfiles.log, "die", lambda m, *a, **k: None)
+    root = _tree(tmp_path, "src/core/a.cpp")
+
+    # act / assert
+    with pytest.raises(SystemExit):
+        buildfiles.read_tree(root, {"nett": {"depends": ["core"]}})

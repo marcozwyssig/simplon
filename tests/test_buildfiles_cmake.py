@@ -70,14 +70,6 @@ def test_a_declared_dependency_becomes_a_link_line():
     assert "target_link_libraries(net PRIVATE core)" in text
 
 
-def test_a_declared_include_becomes_an_include_line():
-    # act
-    text = _files()[Path("/product/src/net/CMakeLists.txt")]
-
-    # assert
-    assert "target_include_directories(net PRIVATE vendor/asio/include)" in text
-
-
 def test_a_target_with_no_dependency_links_nothing():
     # act: the tree does not show a dependency, so none is invented (spec section 2)
     text = _files()[Path("/product/src/core/CMakeLists.txt")]
@@ -136,3 +128,25 @@ def test_every_file_ends_with_exactly_one_newline():
     # act / assert: a tail that grows with the number of targets is whitespace in a review
     for path, text in _files().items():
         assert text.endswith("\n") and not text.endswith("\n\n"), path
+
+
+def test_a_declared_include_is_anchored_at_the_product_root():
+    # arrange: `include: [vendor/asio/include]` names a directory at the ROOT (spec section 2), but the
+    # line lands in src/net/CMakeLists.txt, where CMake resolves a relative path against
+    # CMAKE_CURRENT_SOURCE_DIR - so the bare string would point at src/net/vendor/asio/include
+    text = _files()[Path("/product/src/net/CMakeLists.txt")]
+
+    # act / assert
+    assert "target_include_directories(net PRIVATE ${CMAKE_SOURCE_DIR}/vendor/asio/include)" in text
+
+
+def test_an_absolute_include_is_left_alone():
+    # arrange: a product naming a path outside its own tree means it
+    targets = [buildfiles.Target(name="net", kind="library", directory=Path("src/net"),
+                                 sources=[Path("src/net/b.cpp")], include=["/opt/vendor/include"])]
+
+    # act
+    text = buildfiles.render_cmake(targets, Path("src/net"))
+
+    # assert
+    assert "target_include_directories(net PRIVATE /opt/vendor/include)" in text

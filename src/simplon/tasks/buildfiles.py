@@ -89,19 +89,36 @@ def _library_targets(root: Path) -> list[Target]:
 
 
 def _test_targets(root: Path) -> list[Target]:
-    """One target per `tests/<name>_test.<ext>` file. A test is its own executable and its own ctest
-    case, so the file is the unit here where a directory is the unit above."""
+    """The test targets, and the two spellings are the design's own table rather than a choice here.
+
+    A `tests/<name>_test.<ext>` FILE is one target: a C++ test is its own executable and its own ctest
+    case. A DIRECTORY under `tests/` is one target too: a .NET test project is a directory of `.cs`
+    files, and one project per file is not a shape that language has.
+    """
     tests = root / "tests"
     if not tests.is_dir():
         return []
-    return [Target(name=source.stem, kind="test", directory=tests.relative_to(root),
-                   sources=[source.relative_to(root)])
-            for source in _sources(tests) if source.stem.endswith(TEST_SUFFIX)]
+    out = [Target(name=source.stem, kind="test", directory=tests.relative_to(root),
+                  sources=[source.relative_to(root)])
+           for source in _sources(tests) if source.stem.endswith(TEST_SUFFIX)]
+    for directory in sorted(p for p in tests.iterdir() if p.is_dir()):
+        sources = _sources(directory)
+        if sources:
+            out.append(Target(name=directory.name, kind="test",
+                              directory=directory.relative_to(root),
+                              sources=[p.relative_to(root) for p in sources]))
+    return out
 
 
 def _sources(directory: Path) -> list[Path]:
-    """The source files directly in `directory`, sorted. Sorted HERE rather than at every caller, so no
-    renderer can be the one that forgot."""
+    """The source files DIRECTLY in `directory`, sorted. Sorted here rather than at every caller, so no
+    renderer can be the one that forgot.
+
+    A file one level deeper - `src/core/detail/x.cpp` - is not read and not reported. Reading it would
+    need the nested naming rule the design does not state (see `_library_targets`), and reporting it
+    would refuse a layout that is legal in both languages. It is named here so it is a documented edge
+    rather than a discovered one.
+    """
     return sorted(p for p in directory.iterdir()
                   if p.is_file() and p.suffix in SOURCE_SUFFIXES)
 
@@ -117,23 +134,35 @@ def _overridden(targets: list[Target], overrides: Mapping[str, Mapping[str, obje
     if unknown:
         log.die(f"`targets:` names {', '.join(unknown)}, which the tree does not hold - "
                 f"this product's targets are {', '.join(sorted(known)) or '(none)'}")
+        # The `raise` is not dead code, it is the shape `toolchain.declared` keeps for the same reason:
+        # a refusal has to be a hard stop even if `log.die` ever stops being one, because the line below
+        # assumes the key is known and would end in a KeyError where a diagnosis was promised.
+        raise SystemExit(1)
     by_name = {t.name: t for t in targets}
     for name, body in overrides.items():
         target = by_name[name]
         by_name[name] = Target(name=target.name, kind=target.kind, directory=target.directory,
                                sources=target.sources,
-                               depends=_names(body.get("depends")),
-                               include=_names(body.get("include")))
+                               depends=_names(body.get("depends"), name, "depends"),
+                               include=_names(body.get("include"), name, "include"))
     return [by_name[t.name] for t in targets]
 
 
-def _names(raw: object) -> list[str]:
+def _names(raw: object, target: str, key: str) -> list[str]:
     """A `depends:`/`include:` list, in the order the manifest states it - that order is the product's
-    own statement, and for a linker it can matter."""
+    own statement, and for a linker it can matter.
+
+    A value that is not a list is REFUSED rather than stringified. `depends: {core: yes}` is a typo, and
+    turning it into one dependency named `{'core': True}` would write that into a committed build file
+    and fail at link time, in a message about symbols rather than about the manifest - which is the
+    whole reason this key exists (see the module head).
+    """
     if raw is None:
         return []
     if isinstance(raw, str) or not isinstance(raw, Sequence):
-        return [str(raw)]
+        log.die(f"`targets: {target}: {key}:` must be a list of names, got "
+                f"{type(raw).__name__} - a single name is written as a one-entry list")
+        raise SystemExit(1)
     return [str(item) for item in raw]
 
 
@@ -156,7 +185,7 @@ HEADER = (
 
 #: The same two sentences for a file that is XML. A `.csproj` is parsed as XML before it is anything
 #: else, so a `#` line in front of `<Project>` is not a comment there, it is a broken build.
-XML_HEADER = "".join(f"<!-- {line.lstrip('# ')} -->\n" for line in HEADER.splitlines())
+XML_HEADER = "".join(f"<!-- {line.removeprefix('# ')} -->\n" for line in HEADER.splitlines())
 
 #: The floor the generated projects require. Stated once, as a constant, rather than derived from the
 #: toolchain image: the design's section 5 puts per-configuration knobs out of scope, and a product that
@@ -195,6 +224,21 @@ def _render_root(targets: list[Target], project: str) -> str:
     return _text(lines)
 
 
+def _include(path: str) -> str:
+    """One include path, anchored where the manifest meant it.
+
+    `include: [vendor/asio/include]` names a directory at the PRODUCT ROOT, and the line carrying it
+    lands in `src/<target>/CMakeLists.txt`, where CMake resolves a relative path against
+    `CMAKE_CURRENT_SOURCE_DIR` - so the bare string would point at `src/<target>/vendor/asio/include`
+    and the compile would fail on a header the manifest correctly named. The .NET half solves the same
+    problem in `_reference`; this is that fix on this side.
+
+    An absolute path and one that is already a CMake variable are left alone: a product that writes
+    either of those means it.
+    """
+    return path if path.startswith(("/", "$")) else f"${{CMAKE_SOURCE_DIR}}/{path}"
+
+
 def _text(lines: list[str]) -> str:
     """The lines as a file: exactly one trailing newline, whatever separators the blocks left behind.
     A file whose tail depends on how many targets it holds would put whitespace into a review."""
@@ -223,7 +267,8 @@ def _render_target(target: Target) -> list[str]:
     if target.depends:
         lines.append(f"target_link_libraries({target.name} PRIVATE {' '.join(target.depends)})")
     if target.include:
-        lines.append(f"target_include_directories({target.name} PRIVATE {' '.join(target.include)})")
+        anchored = " ".join(_include(path) for path in target.include)
+        lines.append(f"target_include_directories({target.name} PRIVATE {anchored})")
     if target.kind == "test":
         lines.append(f"add_test(NAME {target.name} COMMAND {target.name})")
     return [*lines, ""]
