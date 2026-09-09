@@ -289,8 +289,14 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("testrun", "_str", "is required"): DIAGNOSIS,
     ("testrun", "_str", "must be a non-empty string"): DIAGNOSIS,
     ("testrun", "_gate", "each gate must be a mapping"): DIAGNOSIS,
+    # Both of these WIDENED with si#106's third gate kind and neither is a new refusal: a gate still
+    # declares exactly one kind - `command:` is now one of the three it may be - and the opacity lock
+    # still refuses the keys that do nothing on a gate the kernel runs for an rc alone. The one thing
+    # that moved is `preamble`, which is inert on an `impl:` gate and MEANS something on a `command:`
+    # one (the build that must succeed before the test command may run), so it is refused only where it
+    # is still inert. The census key follows the message rather than the other way round.
     ("testrun", "_gate", "declare exactly one of 'suite'"): DIAGNOSIS,
-    ("testrun", "_gate", "an 'impl' gate cannot declare"): DIAGNOSIS,
+    ("testrun", "_gate", "gate cannot declare"): DIAGNOSIS,
     ("testrun", "_gate", "'results' must be"): DIAGNOSIS,
     # A pytest gate with no `junit:` is not refused for tidiness: the name is spliced into the argv, and
     # an empty one leaves `--junit-xml=` pointing at the reports DIRECTORY. Measured beside the two above.

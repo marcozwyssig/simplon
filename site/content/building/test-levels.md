@@ -63,14 +63,14 @@ and otherwise defaults to `allure-results-filtered`; what it is for is
 
 ## `suite:` against `impl:` - and this is how you attach Gradle
 
-Every gate declares **exactly one** of two keys, and the choice is the whole answer to "how do I run
+Every gate declares **exactly one** of three keys, and the choice is the whole answer to "how do I run
 something that is not pytest".
 
-| | `suite:` | `impl:` |
-|---|---|---|
-| what it names | a pytest root, relative to the product | a `module:function` the kernel calls |
-| who owns the argv | the kernel | you |
-| what the kernel does | makes the level's venv, clears or appends the shared results, runs pytest with the allure and junit flags, streams it | calls it, takes its return value as the exit code, and nothing else |
+| | `suite:` | `impl:` | `command:` |
+|---|---|---|---|
+| what it names | a pytest root, relative to the product | a `module:function` the kernel calls | a command in your own tree, as you type it |
+| who owns the argv | the kernel | you | your manifest, once, in that command |
+| what the kernel does | makes the level's venv, clears or appends the shared results, runs pytest with the allure and junit flags, streams it | calls it, takes its return value as the exit code, and nothing else | runs it the way the CLI runs it - its `task:`'s body with its own `with:` pinned - and takes the exit code, and nothing else |
 
 A `suite:` gate is the case where the kernel knows the runner. It builds the argv itself -
 `<python> -m pytest --alluredir=<results> --junit-xml=<junit> <extra>` - runs it with the level's own
@@ -102,10 +102,71 @@ gates:
 The kernel sequences that level with the others, honours the section-level precondition ahead of it, and
 folds its return code into the run's verdict. What it does not do is pretend to understand it.
 
-Declaring both keys, or neither, is refused rather than guessed at:
+Declaring two of them, or none, is refused rather than guessed at:
 
-> sample.yaml: 'suites.gates[0]' ('unit'): declare exactly one of 'suite' (a pytest root) or 'impl' (a
-> product-owned runner), not both and not neither
+> sample.yaml: 'suites.gates[0]' ('unit'): declare exactly one of 'suite' (a pytest root), 'impl' (a
+> product-owned runner) or 'command' (a command in this product's own tree), not several and not none
+
+### A gate may name a command in your own tree
+
+`impl:` asks for a Python body, and a product whose test runner is a containerised toolchain has none to
+offer. `ctest`, `dotnet test` and `gradle test` reach it through `toolchain:run`, which makes them
+**commands**: declared once in the manifest with the image, the argv and the caches pinned, and typed as
+`./cppdemo.sh build unit`. A gate names that command
+([simplon#106](https://github.com/marcozwyssig/simplon/issues/106)):
+
+```yaml
+gates:
+  - name: "unit"
+    command: "build unit"          # what a person types, and what the gate reports on
+    preamble: "build compile"      # the build that has to succeed first
+    results: "clear"
+```
+
+The kernel resolves it the way the CLI does - the body the command's `task:` names, called with that
+command's own `with:` pinned - so the image and the argv are stated **once** and the verdict is about the
+command a person actually runs. Nothing is copied into the `suites:` section, so there is nothing there
+to drift.
+
+**And `preamble:` is why this is a gate kind rather than a convenience.** Measured on a C++ product:
+
+```text
+$ ./cppdemo.sh build compile        # a deliberate type error
+error: cannot initialize a variable of type 'int' with an lvalue of type 'const char *'
+rc 2
+$ ./cppdemo.sh build unit           # ctest, over the binaries the failed compile did not replace
+100% tests passed, 0 tests failed out of 3
+rc 0
+```
+
+Three passing tests reported for a product that does not compile, and nothing could see the pair, because
+neither half was a gate. Named as a gate's setup, the build runs first and a non-zero return code ends
+the level **before the test command runs at all**:
+
+> unit: setup failed (preamble 'build compile', rc 2) - 'build compile' failed, so 'build unit' never
+> ran - which is what naming it here is for: a test command over the artefacts a failed build left
+> standing reports the last good result and calls it green
+
+That is the rule a pytest gate's preamble has always had, and it is the true sentence here too: the tests
+did not run, so the run has learned nothing about the product. A gate's `precondition:` names a command
+on a command gate as well - a product with no Python in it must not have to write a Python body in order
+to reach a hook.
+
+What is refused, and only when the gate actually runs, because deciding it needs the parsed manifest:
+
+> 'suites.gates.unit.command': 'build ctest' is not a command in this product's tree (declared: build
+> compile, build unit)
+
+> 'suites.gates.unit.command': 'build all' plans other commands and runs no body of its own, so there is
+> no single rc for a gate to report - name one of the commands it plans
+
+> 'suites.gates.unit.command': 'build unit' needs image, which its `with:` does not pin - a gate has no
+> command line to supply them on, so pin them there
+
+The last one is the whole calling convention in a refusal: a gate runs a command with what the manifest
+pinned and nothing else, because there is no command line for anything to arrive on. A body that takes a
+CLI context is refused for the harder version of the same reason - and that is also what stops a gate
+naming the command it is invoked as.
 
 ### An `impl:` gate is opaque, and says so
 
@@ -114,6 +175,9 @@ one, and declaring them **fails** rather than being quietly dropped:
 
 > sample.yaml: 'suites.gates[2]' ('ui'): an 'impl' gate cannot declare 'junit', 'args' - the kernel only
 > calls its runner for the rc
+
+A `command:` gate is opaque in the same way and shares two of those three. `preamble` is the key that
+parts them: inert on an `impl:` gate, and the point of the kind on a `command:` one.
 
 `results` used to be on that list, and taking it off is worth the sentence. The argument for refusing it
 was real: an `impl:` gate carrying `results: clear` satisfied the "exactly one gate clears" rule below
@@ -271,7 +335,9 @@ that does not look like one is the thing this whole section is built to prevent.
 
 ## Hooks: precondition, preamble, and the one rule that governs them
 
-Three keys name a `module:function` the kernel resolves exactly the way it resolves a command's `impl:`:
+Three keys name a `module:function` the kernel resolves exactly the way it resolves a command's `impl:`
+- except on a `command:` gate, where the gate's own two name a **command** instead, for the reason that
+kind exists at all:
 
 - `precondition` on the **section** - a fail-fast health verdict, run once before any suite work. A
   non-zero return aborts the run in seconds instead of wasting the whole collection, and nothing has been

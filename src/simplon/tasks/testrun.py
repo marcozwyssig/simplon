@@ -36,6 +36,27 @@ therefore reports that gate in terms of the rc AND SAYS SO (#65) rather than bor
 for a suite it ran itself, and it opens the same setup marker to it as to a pytest gate (#59), so a runner
 that knows its own preparation fell over has somewhere to say it.
 
+A GATE MAY ALSO NAME A COMMAND IN THE PRODUCT'S OWN TREE (si#106), and that is the third kind. A product
+whose test runner is a containerised toolchain - `ctest`, `dotnet test`, `gradle test`, reached through
+`toolchain:run` - has no Python body to point an `impl:` at. What it has is a COMMAND, declared once in
+its manifest with the image, the argv and the caches pinned. `command: "build unit"` names that command,
+and the kernel runs it the way the CLI runs it: the impl the command's `task:` resolves to, called with
+the command's own `with:` pinned. So the gate reports on the command a person actually types, and the two
+cannot come to mean different things.
+
+THE WRONG GREEN THAT MADE IT A KIND RATHER THAN A CONVENIENCE. Measured on a C++ product (si#113's
+chapter): `build compile` exited 2 on a type error, and `build unit` then reported `100% tests passed, 0
+tests failed out of 3` - ctest over the binaries the failed compile had not replaced. Three passing tests
+for a product that does not compile, and nothing in the kernel could see the pair, because neither half
+was a gate. So a command gate's `preamble:` names a command too: the setup runs first, a non-zero setup
+rc is `SETUP_FAILED`, and THE BODY NEVER RUNS - the rule a pytest gate's preamble has always had, which
+is the true sentence here as well. The suite did not run, so the run learned nothing about the product.
+`tests/test_suites_command_gate.py` pins it.
+
+Its `precondition:` is a command too, for the reason the kind exists at all: a product with no Python in
+it must not have to write a Python body in order to reach a hook - that is the si#61 trap one level
+across. The SECTION-level precondition stays a ref; it belongs to no gate and therefore to no kind.
+
 EXPLORATORY RUNS (netctl#1406). A gate that declares `args: true` forwards the command's passthrough args
 to pytest, which is what makes `<product> test system -k <expr>` - a ~60s answer instead of a ~24min gate -
 possible at all. Such a run is by definition PARTIAL, so it must never write into the shared results dir:
@@ -56,7 +77,7 @@ from typing import Callable
 
 import typer
 
-from simplon import context, log, pyvenv, verdict
+from simplon import context, log, pyvenv, signatures, verdict
 from simplon.tasks import allure
 from simplon.awake import keep_awake
 from simplon.orchestrator.manifest import resolve_ref
@@ -130,17 +151,40 @@ SETUP_FAILED_RC = 1
 IMPL_DETAIL = ("the product's own runner returned this rc; the kernel did not run a suite here and "
                "cannot say whether one ran at all")
 
+#: The same sentence for a COMMAND gate (si#106), naming the command instead of "the product's own
+#: runner". It is a separate string rather than a reuse because the kernel knows one more thing here than
+#: it does about an `impl:` gate - WHICH command it ran, by the name a person types - and #65's rule is
+#: that the record states what was observed. A reader who meets `failed (rc 2)` in a stamp a week later
+#: can run that line themselves.
+COMMAND_DETAIL = ("'{command}' returned this rc; the kernel ran a command here, not a suite, and cannot "
+                  "say whether one ran at all")
+
+#: What a command gate's failed SETUP says, and the whole of si#106 in one sentence. The default wording
+#: for `SETUP_FAILED` - "the suite never ran" - is true and says nothing about why it matters here, so the
+#: record names both commands and the failure mode the pairing exists to remove.
+SETUP_COMMAND_DETAIL = ("'{setup}' failed, so '{command}' never ran - which is what naming it here is "
+                        "for: a test command over the artefacts a failed build left standing reports the "
+                        "last good result and calls it green")
+
 
 @dataclass(frozen=True)
 class Gate:
     """One test level, as the product's manifest declares it.
 
-    Either `suite` (a pytest root the kernel runs) or `impl` (a product-owned runner the kernel calls for
-    its rc) is set, never both. `results` says whether this gate CLEARS the shared results dir or APPENDS
-    into it - the whole of the clear-versus-append rule, held as data. `args` marks the ONE gate a run's
-    passthrough pytest args belong to.
+    Exactly one of `suite` (a pytest root the kernel runs), `impl` (a product-owned runner the kernel
+    calls for its rc) or `command` (a command in the product's own tree the kernel runs for its rc,
+    si#106) is set. `results` says whether this gate CLEARS the shared results dir or APPENDS into it -
+    the whole of the clear-versus-append rule, held as data. `args` marks the ONE gate a run's passthrough
+    pytest args belong to.
 
-    `results` IS THE ONE KEY THAT MEANS THE SAME THING ON BOTH KINDS (si#61). It is not a statement about
+    `preamble` AND `precondition` NAME A COMMAND ON A COMMAND GATE, and a "module:function" ref on the
+    other two kinds. Not an ambiguity to resolve at the value: the gate's KIND decides, and the kind is
+    the whole statement being made. A product whose runner is a containerised toolchain has no Python
+    body to point at - if its hooks had to be refs, it would write Python it otherwise does not have,
+    purely to satisfy the kernel, which is the si#61 trap one level across. Nothing is lost the other
+    way either: any body IS reachable as a command, since declaring one is a single manifest line.
+
+    `results` IS THE ONE KEY THAT MEANS THE SAME THING ON EVERY KIND (si#61). It is not a statement about
     what a gate writes - an `impl` gate writes nothing the kernel can see - but about whose run the
     results dir belongs to, and that question has the same answer whoever runs the tests. It used to be
     refused on an `impl` gate, which left a product whose only runner is its own unable to say it at all.
@@ -149,6 +193,7 @@ class Gate:
     name: str
     suite: str = ""
     impl: str = ""
+    command: str = ""
     results: str = APPEND
     junit: str = ""
     args: bool = False
@@ -195,17 +240,26 @@ def _str(body: Mapping, key: str, where: str, *, required: bool = False) -> str:
 
 
 def _gate(body: object, where: str) -> Gate:
-    """One validated gate entry. Every rule names the offending key, and the suite-XOR-impl lock is checked
-    here so a half-declared level fails at load time rather than as a confusing empty pytest run."""
+    """One validated gate entry. Every rule names the offending key, and the exactly-one-kind lock is
+    checked here so a half-declared level fails at load time rather than as a confusing empty pytest run.
+
+    WHAT IS NOT CHECKED HERE, said so the asymmetry is a decision rather than an oversight (si#106): that
+    a `command:` gate names a command the product's tree actually holds. Deciding it needs the PARSED
+    manifest, and this function is handed the raw section; the same is true of every `impl:` and hook ref,
+    which resolve when the gate runs. So the whole diagnosis about a command - does it exist, does it run
+    a body of its own, can the gate supply its parameters - lives in `_command` at run time, in one place,
+    rather than half here and half there."""
     if not isinstance(body, Mapping):
         raise ValueError(f"{where}: each gate must be a mapping")
     name = _str(body, "name", where, required=True)
     where = f"{where} ('{name}')"
     suite, impl = _str(body, "suite", where), _str(body, "impl", where)
-    if bool(suite) == bool(impl):
-        raise ValueError(f"{where}: declare exactly one of 'suite' (a pytest root) or 'impl' "
-                         f"(a product-owned runner), not both and not neither")
-    if impl:
+    command = _str(body, "command", where)
+    if len([kind for kind in (suite, impl, command) if kind]) != 1:
+        raise ValueError(f"{where}: declare exactly one of 'suite' (a pytest root), 'impl' "
+                         f"(a product-owned runner) or 'command' (a command in this product's own "
+                         f"tree), not several and not none")
+    if impl or command:
         # An `impl:` gate is opaque: the kernel calls the product's runner for its rc and learns nothing
         # else, so it takes no pytest args, has no junit file of the kernel's making and gets no preamble.
         # Declaring any of those on it must FAIL rather than be dropped.
@@ -226,9 +280,18 @@ def _gate(body: object, where: str) -> Gate:
         # still writes nothing into that dir; that is a different statement, and `test_suites_impl_only`
         # keeps it pinned, because a fix that let the kernel invent a result for a runner it cannot see
         # would have moved this defect rather than removed it.
-        stray = [key for key in ("junit", "args", "preamble") if key in body]
+        #
+        # A `command:` GATE IS OPAQUE IN THE SAME WAY AND SHARES THE LOCK (si#106) - the kernel runs a
+        # command for its rc and sees no more of it than it sees of a callable. `preamble` is the one
+        # key that parts them: on a command gate it MEANS something (the build that has to succeed before
+        # the test command may run, which is the whole of si#106), so it is refused only where it is
+        # still inert.
+        kind, article = ("impl", "an") if impl else ("command", "a")
+        inert = ("junit", "args", "preamble") if impl else ("junit", "args")
+        stray = [key for key in inert if key in body]
         if stray:
-            raise ValueError(f"{where}: an 'impl' gate cannot declare {', '.join(repr(k) for k in stray)} "
+            raise ValueError(f"{where}: {article} '{kind}' gate cannot declare "
+                             f"{', '.join(repr(k) for k in stray)} "
                              f"- the kernel only calls its runner for the rc")
     results = _str(body, "results", where) or APPEND
     if results not in (CLEAR, APPEND):
@@ -236,7 +299,7 @@ def _gate(body: object, where: str) -> Gate:
     junit = _str(body, "junit", where)
     if suite and not junit:
         raise ValueError(f"{where}: a pytest gate must declare its own 'junit' file name")
-    return Gate(name=name, suite=suite, impl=impl, results=results, junit=junit,
+    return Gate(name=name, suite=suite, impl=impl, command=command, results=results, junit=junit,
                 args=bool(body.get("args", False)),
                 precondition=_str(body, "precondition", where),
                 preamble=_str(body, "preamble", where),
@@ -341,6 +404,72 @@ def _hook(ref: str, where: str) -> Callable[..., int]:
     return call
 
 
+def _setup(gate: Gate, ref: str, stage: str) -> Callable[[], int]:
+    """One of a gate's setup hooks, resolved BY THE GATE'S KIND (si#106).
+
+    A command gate's hooks are commands and every other gate's are "module:function" refs, and the choice
+    is made here rather than at each of the three call sites, for the reason `_hook`'s own docstring
+    gives: a hook is a hook whether it is a precondition or a preamble, and two call sites that answer
+    this question separately are two answers waiting to disagree.
+    """
+    at = f"gates.{gate.name}.{stage}"
+    return _command(ref, at) if gate.command else _hook(ref, at)
+
+
+def _command(path: str, where: str) -> Callable[[], int]:
+    """A command in the PRODUCT'S OWN TREE as a callable that yields an exit code (si#106).
+
+    `path` is what a person types after the launcher - `build unit` - and it is resolved the way the CLI
+    resolves it: the command's `task:` names a body, the command's `with:` pins that body's parameters,
+    and the gate calls it with those and nothing else. That is the point of naming a command rather than
+    copying its declaration into the gate: the image, the argv and the caches are stated once, so the
+    verdict is about the command a person runs and cannot come to be about a different one.
+
+    IT IS THE CLI'S CALL MINUS THE COMMAND LINE, which is where the last refusal comes from. A parameter
+    the manifest does not pin is one the CLI would ask for on the command line, and a gate has no command
+    line to put it on; so a required parameter left unpinned is refused by name, pointing at `with:`. A
+    body that takes a CLI CONTEXT is refused for the harder version of the same reason - the gate has no
+    Click context to hand it, and cannot invent one. That refusal is also what stops the obvious loop: the
+    command a gate is invoked as is `test:gate` itself, whose body takes the context.
+
+    Refused at RUN time rather than at load, deliberately, and `_gate` says why: this needs the parsed
+    manifest, so the whole diagnosis about a command lives here in one place instead of half here and
+    half in a loader that cannot see it.
+    """
+    where = f"'{SECTION}.{where}'"
+    commands = context.current().manifest().commands
+    group, _, name = path.partition(" ")
+    spec = commands.get(group, {}).get(name.strip())
+    if spec is None:
+        known = ", ".join(sorted(f"{g} {n}" for g, members in commands.items() for n in members))
+        raise ValueError(f"{where}: '{path}' is not a command in this product's tree "
+                         f"(declared: {known or 'none'})")
+    if not spec.impl:
+        raise ValueError(f"{where}: '{path}' plans other commands and runs no body of its own, so there "
+                         f"is no single rc for a gate to report - name one of the commands it plans")
+    body = resolve_ref(spec.impl, f"{where} ('{path}')")
+    pinned = dict(spec.with_ or {})
+    if signatures.takes_context(body):
+        raise ValueError(f"{where}: '{path}' takes a CLI context, which a gate has none of to give it - "
+                         f"only a command the kernel can call with its pinned `with:` alone can back a "
+                         f"gate")
+    # A `typer.Option(...)` DEFAULT IS NOT A VALUE, and that is the second half of "minus the command
+    # line". Typer resolves such a default into the value behind it; a direct call does not, so an
+    # unpinned parameter declared that way would reach the body as an `OptionInfo` OBJECT - a wrong value
+    # passed silently, which is worse than the refusal. Two products still write bodies in that shape, so
+    # this is a case that exists rather than one imagined for it.
+    missing = [p.name for p in signatures.bindable(body) if p.name not in pinned
+               and (p.required or isinstance(p.default, typer.models.ParameterInfo))]
+    if missing:
+        raise ValueError(f"{where}: '{path}' needs {', '.join(missing)}, which its `with:` does not pin - "
+                         f"a gate has no command line to supply them on, so pin them there")
+
+    def call() -> int:
+        return _verdict(body(**pinned))
+
+    return call
+
+
 def _reports_dir(cfg: Suites) -> str:
     return str(context.current().root / cfg.reports)
 
@@ -432,6 +561,11 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
     its rc and nothing else, so it has no honest basis for saying more than passed/failed about it - not
     even the signal reading above, since that rc never passed through a wait status.
 
+    A `command:` GATE TAKES THAT SAME BRANCH (si#106) and is opaque in the same way - the kernel runs a
+    command and takes a number back. What it gains is a SETUP it can sequence: the `preamble:` command
+    runs first and a non-zero rc ends the gate as `SETUP_FAILED` with the body never run, which is the
+    only thing that stops a test command reporting the artefacts of a failed build as a pass.
+
     THAT OPACITY IS THE REASON FOR `IMPL_DETAIL`, NOT AN EXCUSE FOR THE OLD SENTENCE (#65). The reasoning
     above is right and the consequence drawn from it was not: from "the kernel does not know" the kernel
     concluded that it might say the default, and the default is "the suite ran and reported failures" -
@@ -457,12 +591,15 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
     it protects. Empty for a gate invoked on its own, which is then the whole run.
     """
     if gate.precondition:
-        rc = _hook(gate.precondition, f"gates.{gate.name}.precondition")()
+        # A COMMAND GATE'S HOOKS ARE COMMANDS (si#106). The kind decides how a ref is read, because the
+        # kind is the statement: a product whose runner is a containerised toolchain has no Python body
+        # to point a hook at, and requiring one would make it write Python it otherwise does not have.
+        rc = _setup(gate, gate.precondition, "precondition")()
         if rc != 0:
             return GateVerdict(gate.name, Verdict.NOT_RUN, rc, verdict.PRECONDITION)
     reports = _reports_dir(cfg)
     results = results_dir(cfg, filtered=filtered)
-    if gate.impl:
+    if gate.impl or gate.command:
         # THE CLEAR IS HONOURED HERE TOO (si#61), and that is the whole of the fix. It used to be
         # unreachable on this branch and refused at load in consequence, which left a product whose only
         # runner is its own with no way to say that its run OWNS the results dir - the clear could hang
@@ -478,6 +615,14 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
         # so a run made only of those owns no archive to state its verdict in. That distinction used to
         # be unreachable because such a taxonomy could not load, and the property that stood in for it
         # said True for a run whose results dir was empty.
+        #
+        # EVERYTHING IS RESOLVED BEFORE ANYTHING IS TOUCHED (si#106). A gate's runner and its setup are
+        # named in the manifest and resolved when the gate runs, so a stale ref or a mistyped command is
+        # discovered HERE - and a gate that clears would otherwise have deleted the last real run's
+        # archive on the way to raising about a typo. Nothing is emptied for a gate that cannot start.
+        setup = _setup(gate, gate.preamble, "preamble") if gate.preamble else None
+        runner = (_hook(gate.impl, f"gates.{gate.name}.impl") if gate.impl
+                  else _command(gate.command, f"gates.{gate.name}.command"))
         if gate.clears:
             _clear_results(results, reports)
         # NOT `verdict.of_subprocess`: this rc is a Python callable's return value, not a child's wait
@@ -487,7 +632,19 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
         # The marker window is the product's, not the kernel's: it is opened, and what comes out of it is
         # whatever the runner chose to write. Nothing is read if nothing is written.
         with _setup_marker(reports) as marker:
-            rc = _hook(gate.impl, f"gates.{gate.name}.impl")()
+            if setup is not None:
+                # THE HALF si#106 IS ABOUT, and it is a COMMAND GATE'S ONLY (an impl gate is still
+                # refused the key at load, where it is inert). The build the test command needs runs
+                # first, and a non-zero rc ends the gate HERE: the body never runs, so a `ctest` can
+                # never report the binaries a failed compile left standing as three passing tests.
+                rc = setup()
+                if rc != 0:
+                    return GateVerdict(gate.name, Verdict.SETUP_FAILED, rc,
+                                       f"{verdict.PREAMBLE} '{gate.preamble}'",
+                                       detail=SETUP_COMMAND_DETAIL.format(setup=gate.preamble,
+                                                                          command=gate.command),
+                                       owned_results=gate.clears)
+            rc = runner()
             stage = _reported_stage(marker)
         if stage:
             # The runner's own claim wins over its rc, including over a green one - the same precedence a
@@ -497,7 +654,11 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
                                owned_results=gate.clears)
         if rc == 0:
             return GateVerdict(gate.name, Verdict.PASSED, rc, owned_results=gate.clears)
-        return GateVerdict(gate.name, Verdict.FAILED, rc, detail=IMPL_DETAIL, owned_results=gate.clears)
+        # The kernel knows one more thing about a command than about a callable - WHICH command, by the
+        # name a person types - so it says that instead of borrowing the impl gate's sentence (#65).
+        return GateVerdict(gate.name, Verdict.FAILED, rc, owned_results=gate.clears,
+                           detail=IMPL_DETAIL if gate.impl
+                           else COMMAND_DETAIL.format(command=gate.command))
 
     log.info(gate.announce or f"{gate.name} gate: {gate.suite} against the running lab")
     suite_dir = str(context.current().root / gate.suite)
@@ -510,7 +671,7 @@ def assess_gate(gate: Gate, cfg: Suites, extra: list[str], *, filtered: bool,
     junit = os.path.join(reports, f"{os.path.splitext(gate.junit)[0]}-filtered.xml" if filtered else gate.junit)
     with _setup_marker(reports) as marker, keep_awake():
         if gate.preamble:
-            rc = _hook(gate.preamble, f"gates.{gate.name}.preamble")()
+            rc = _setup(gate, gate.preamble, "preamble")()
             if rc != 0:
                 return _written(GateVerdict(gate.name, Verdict.SETUP_FAILED, rc, verdict.PREAMBLE),
                                 results, earlier, filtered)

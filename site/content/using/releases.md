@@ -64,6 +64,39 @@ decision, and the scaffolder cannot tell a deliberate one from a stale one.
 Both coordinates are DECLARED and not placed, so nothing appears in a product's CLI until the product
 asks for it.
 
+### A gate may be backed by a command, so a containerised runner gets a verdict (si#106)
+
+The uniform build above buys a product the COMMAND and, until this, lost the VERDICT. A gate took a
+pytest root (`suite:`) or a product callable (`impl:`); a `toolchain:run` command is neither, so a
+product whose test runner is `ctest`, `dotnet test` or `gradle test` got an exit code and nothing else -
+no `setup-failed`, no setup marker, no allure results, no archive.
+
+A gate may now name a command in the product's own tree, and its two hooks name commands too:
+
+```yaml
+gates:
+  - name: "unit"
+    command: "build unit"          # what a person types, and what the gate reports on
+    preamble: "build compile"      # the build that has to succeed first
+    results: "clear"
+```
+
+**The `preamble:` line is why this is a kind and not a convenience.** Measured on a C++ product:
+`build compile` exited 2 on a type error, and `build unit` then reported `100% tests passed, 0 tests
+failed out of 3` - ctest over the binaries the failed compile had not replaced. Three passing tests for a
+product that does not compile, and nothing could see the pair, because neither half was a gate. Named as
+a gate's setup, a non-zero build ends the level as `setup-failed` and the test command never runs.
+
+The command is resolved the way the CLI resolves it - the body its `task:` names, with its own `with:`
+pinned - so the image and the argv are declared once, in the command, and the verdict is about the
+command a person actually types.
+
+**What a product has to do about it: nothing.** `command:` is a third alternative beside `suite:` and
+`impl:`, both of which mean exactly what they did. Two load-time refusals are worded differently (the
+exactly-one-kind lock now offers three, and the opacity lock names the kind it is refusing), and no
+refusal was added or removed. The [test levels chapter](../../building/test-levels/) carries the whole
+of it.
+
 ### The release guard asked for notes about pull requests (si#97, si#98, si#103)
 
 Two defects in this repository's own gate, found by trying to cut this release four times.
