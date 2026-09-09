@@ -220,6 +220,21 @@ It is not a .NET quirk: all four profiles carry the same template, so the comman
 language it offers. `dotnetdemo`'s manifest was therefore written by hand - to the letter of what the
 scaffolder would have produced, which is why the page can still claim the argv are the kernel's.
 
+{{< callout type="info" >}}
+**Since this walk: [simplon#105](https://github.com/marcozwyssig/simplon/issues/105) is closed.** All
+four faces above were fixed on 2026-09-09. `toolchain:run` takes the manifest's keys - `image`,
+`workdir`, `argv`, `env`, `caches` - as its own parameters, so the design's flat block assembles and the
+`body:`/`where:`/`extra:` nesting this product carries is no longer needed. `extra` is a variadic
+positional paired with `passthrough_args`, so `build compile -v` reaches the tool instead of being
+refused. `support toolchain dotnet 9.0` takes the version. And the lab instance is resolved only where a
+cache volume needs one, so a scaffolded product needs no `instance:` section.
+
+The transcripts and the table above are left standing as the record of what dotnetdemo met on the date
+they were measured. They were not re-driven for the fix - the C++ chapter's walk was - so what is claimed
+here is the kernel's behaviour, held by `tests/test_case_dotnet_chapter.py` against the code, not a
+second .NET run.
+{{< /callout >}}
+
 ## test
 
 **There is no `test` group in this product, and that is the honest headline of the section.**

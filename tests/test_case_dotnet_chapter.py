@@ -525,12 +525,17 @@ def test_the_pin_refusal_the_chapter_quotes_is_the_gates_own_message():
         f"the chapter quotes:\n  {shown}\nthe gate says:\n  {_flat(str(raised.value))}")
 
 
-def test_the_with_refusal_the_chapter_quotes_is_the_binders_own_message():
-    """The chapter's central correction, and the one nobody would find by reading. The design and the
-    scaffolder both write `image:`/`workdir:`/`argv:` directly under `with:`; `manifest.load` accepts
-    that and `simplon.cli.assemble` then refuses it. Both halves are executed here - the design's shape
-    is assembled for real and the resulting message is compared with the page - so a kernel that started
-    accepting the shape would turn this red rather than leave the chapter warning about nothing.
+def test_the_design_shape_the_chapter_says_is_refused_now_assembles():
+    """WAS `test_the_with_refusal_the_chapter_quotes_is_the_binders_own_message`, and its own docstring
+    asked for this rewrite: "a kernel that started accepting the shape would turn this red rather than
+    leave the chapter warning about nothing." si#105 is that kernel.
+
+    The chapter's central correction was that the design and the scaffolder both write
+    `image:`/`workdir:`/`argv:` directly under `with:`, `manifest.load` accepts it and
+    `simplon.cli.assemble` then refuses it. `toolchain:run` takes the manifest's keys as its parameters
+    now, so the same construction is executed and the expectation is inverted: the design's shape
+    assembles. The page keeps the quoted refusal as the dated record of what dotnetdemo met, so the
+    assertion below ALSO demands the note that says it is closed.
     """
     # arrange
     body = _build_commands()["compile"]["with"]["body"]
@@ -541,17 +546,13 @@ def test_the_with_refusal_the_chapter_quotes_is_the_binders_own_message():
     quoted = [block for block in _blocks("text") if "the impl does not take" in block]
     assert len(quoted) == 1, f"the chapter shows {len(quoted)} binder refusals; it argues from one"
 
-    # act
-    with pytest.raises(ValueError) as raised:
-        simplon_cli.assemble(typer.Typer(), parsed, product="dotnetdemo")
+    # act: the design's own section 1 block, through the binder that used to refuse it
+    simplon_cli.assemble(typer.Typer(), parsed, product="dotnetdemo")
 
-    # assert
-    assert _flat(str(raised.value)) in _flat(quoted[0]), (
-        f"the chapter quotes:\n  {_flat(quoted[0])}\nthe binder says:\n  {_flat(str(raised.value))}")
-
-    # assert: and the shape the product really uses is the one that survives that binder
-    assert "body" in _build_commands()["compile"]["with"], (
-        "the fixture no longer nests the toolchain under `body:`, so the chapter's correction is stale")
+    # assert: the chapter no longer leaves that refusal standing as the present tense
+    assert "Since this walk" in _flat(_text()), (
+        "the chapter still shows the binder refusal with nothing saying si#105 closed it")
+    assert "issues/105" in _text(), "the note that closes those rows names no ticket"
 
 
 def test_the_missing_instance_refusal_the_chapter_quotes_is_the_kernels_own():
@@ -604,14 +605,14 @@ def test_the_scaffolder_failure_the_chapter_quotes_is_the_one_the_profile_raises
 def test_the_docker_line_the_chapter_describes_is_the_one_the_kernel_assembles():
     """The chapter's `build` section says what the product gets for its four manifest lines: the pinned
     image, the tree bind-mounted at the workdir, the caller's own uid, and the argv unchanged. That is
-    `toolchain.argv`, which is pure, so it is assembled here rather than described from memory."""
+    `toolchain.docker_argv`, which is pure, so it is assembled here rather than described from memory."""
     # arrange
     body = _build_commands()["compile"]["with"]["body"]
     cfg = toolchain.declared(body, "build compile")
 
     # act
-    line = toolchain.argv(cfg, root=Path("/home/dev/dotnetdemo"), product="dotnetdemo",
-                          instance="dev", extra=[])
+    line = toolchain.docker_argv(cfg, root=Path("/home/dev/dotnetdemo"), product="dotnetdemo",
+                                 instance="dev", extra=[])
 
     # assert: every element the chapter promises is really there
     assert line[:3] == ["docker", "run", "--rm"]
