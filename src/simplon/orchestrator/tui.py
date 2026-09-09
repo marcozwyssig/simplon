@@ -135,12 +135,25 @@ class _StepApp(App):
         self._expected_row: Row | None = None
         # The substring the left pane is filtered by, "" for no filter (si#148 item 5).
         self._filter = ""
+        # Where the reader was in each row's output, by row identity (si#148 item 6). `_show_details`
+        # clears the pane and rewrites it, so somebody who found a place in a long step's output, looked
+        # elsewhere and came back had to find it again. Kept per ROW rather than per pane, because the
+        # question is "where was I in THIS step".
+        self._scroll_at: dict[int, int] = {}
+        # Which row the pane is currently rendering, so the offset above can be saved for the row being
+        # LEFT. The cursor has already moved by the time a highlight arrives, so the pane has to remember
+        # what it was showing itself.
+        self._showing: Row | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal():
             yield Tree(self._label(self.rows), id="steps")
-            yield RichLog(id="details", wrap=True, highlight=False, markup=False)
+            # auto_scroll OFF, and the sticky bottom is `_on_line`'s job instead (si#148 item 6).
+            # Measured out of `RichLog.write`: the `auto_scroll` branch calls `scroll_end` on EVERY write
+            # without ever asking where the reader is, so one emitted line threw a reader who had
+            # scrolled to line 10 down to line 182. Following a running step by reading it was impossible.
+            yield RichLog(id="details", wrap=True, highlight=False, markup=False, auto_scroll=False)
         yield Input(placeholder="filter the plan (/ again to clear)", id="filter")
         yield Static(id="status")
         yield Footer()
@@ -384,8 +397,28 @@ class _StepApp(App):
         self.notify(f"saved to {path}" if path else "nowhere to save to (no product context)", timeout=5)
 
     def _show_details(self, row: Row) -> None:
+        """Render `row` into the right pane, remembering where the reader was in the row being LEFT and
+        restoring where they were in the row being entered (si#148 item 6).
+
+        A row never visited before opens at the BOTTOM, which is deliberate and is what the pane did
+        before: a step's output ends with the thing that decided it - the traceback's last frame, `Found
+        3 errors`, `BUILD SUCCESSFUL` - and that is what a reader opening a finished step wants first.
+        What changes is only that a place somebody found is not thrown away when they look elsewhere."""
         rlog = self.query_one("#details", RichLog)
+        if self._showing is not None and self._showing is not row:
+            self._scroll_at[id(self._showing)] = int(rlog.scroll_offset.y)
+        self._showing = row
         rlog.clear()
+        self._render_details(rlog, row)
+        remembered = self._scroll_at.get(id(row))
+        if remembered is None:
+            rlog.scroll_end(animate=False)
+        else:
+            rlog.scroll_to(y=remembered, animate=False)
+
+    def _render_details(self, rlog: RichLog, row: Row) -> None:
+        """Write `row` into an ALREADY CLEARED pane. Split out of `_show_details` so the scroll bookkeeping
+        wraps every branch of it, including the early return a leaf takes."""
         step = row.step
         if step is not None:
             rlog.write(f"{self._step_header(step)}\n")
@@ -422,16 +455,33 @@ class _StepApp(App):
         if cursor is chain[-1]:
             rlog = self.query_one("#details", RichLog)
             rlog.clear()
+            # A step that is STARTING has no place a reader could have found yet, so any offset kept for
+            # this row belongs to a previous rendering of it and would drop the reader into the middle of
+            # a pane holding one line (si#148 item 6).
+            self._showing = cursor
+            self._scroll_at.pop(id(cursor), None)
             step = self.pipeline.steps[i]
             rlog.write(f"{self._step_header(step)}\n")
         else:
             self._show_details(cursor)
 
     def _on_line(self, i: int, line: str) -> None:
-        """A streamed output line: append it live only if its own step's row is the highlighted one."""
+        """A streamed output line: append it live only if its own step's row is the highlighted one.
+
+        A STICKY BOTTOM rather than Textual's `auto_scroll` (si#148 item 6): where the reader was BEFORE
+        the write decides where they are after it. At the bottom means "watching the tail", and the tail
+        is what has to keep arriving; anywhere else means "reading", and a reader must not be moved.
+
+        `auto_scroll` cannot express that - its branch in `RichLog.write` is unconditional - which is why
+        the widget is constructed with it off. See `compose` for the measurement."""
         chain = self._chain_rows.get(i, ())
-        if chain and self._cursor_row() is chain[-1]:
-            self.query_one("#details", RichLog).write(line)
+        if not (chain and self._cursor_row() is chain[-1]):
+            return
+        rlog = self.query_one("#details", RichLog)
+        following_the_tail = rlog.is_vertical_scroll_end
+        rlog.write(line, scroll_end=False)
+        if following_the_tail:
+            rlog.scroll_end(animate=False)
 
     def _emitter(self, i: int) -> Emit:
         """Step `i`'s live-line callback.

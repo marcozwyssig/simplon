@@ -284,12 +284,12 @@ clock fixture already covers the new label branch).
 
 **Files:** `src/simplon/orchestrator/tui.py`, `tests/test_orchestrator_tui.py`
 
-- [ ] 5.1 Failing test that PROVES measurement (a) on the widget: write enough lines to scroll, scroll up,
+- [x] 5.1 Failing test that PROVES measurement (a) on the widget: write enough lines to scroll, scroll up,
       write one more line, assert the offset did not move. Watch it fail against today's `auto_scroll`.
-- [ ] 5.2 Implement the sticky bottom: `auto_scroll=False` on the `RichLog`, and `_on_line` captures
+- [x] 5.2 Implement the sticky bottom: `auto_scroll=False` on the `RichLog`, and `_on_line` captures
       `is_vertical_scroll_end` before the write and calls `scroll_end` only when the reader was there.
-- [ ] 5.3 Failing test: scroll the pane, switch rows, switch back, assert the position survived.
-- [ ] 5.4 Implement the per-row scroll memory, keyed by `id(row)`, saved when leaving a row.
+- [x] 5.3 Failing test: scroll the pane, switch rows, switch back, assert the position survived.
+- [x] 5.4 Implement the per-row scroll memory, keyed by `id(row)`, saved when leaving a row.
 
 **Verify:** `pytest tests/test_orchestrator_tui.py` green, including 5.1 which was red for the right
 reason first.

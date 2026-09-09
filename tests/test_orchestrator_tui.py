@@ -948,3 +948,90 @@ def test_every_new_key_is_in_the_footer():
     shown = asyncio.run(scenario())
     # `slash` is Textual's own name for the key; what the footer renders is the description beside it.
     assert {"f", "n", "slash"} <= shown, shown
+
+
+# --- the details pane's scroll (si#148 item 6) --------------------------------------------------------
+
+def _long_output_pipeline() -> Pipeline:
+    """Two steps, each printing far more than a pane can hold, so there is somewhere to scroll TO."""
+    tree = manifest_load(_NESTED_MANIFEST).plan_tree_for("prep")
+    steps = [Step(label=leaf.name, command=leaf.path,
+                  action=lambda name=leaf.name: Outcome(
+                      rc=0, output="\n".join(f"{name} line {n}" for n in range(200))))
+             for leaf in tree.leaves()]
+    return Pipeline("prep", steps, False, tree, tree.path)
+
+
+def _details_log(app):
+    from textual.widgets import RichLog
+    return app.query_one("#details", RichLog)
+
+
+def test_a_reader_who_scrolled_up_is_not_yanked_back_by_the_next_line():
+    """MEASURED first, from `RichLog.write`: `auto_scroll` defaults to True and its `scroll_end` branch is
+    unconditional - it never asks where the reader is. So every line a running step emitted pulled a
+    reader who had scrolled up back to the bottom, and following a running step by READING it was
+    impossible. This test was red against that before the fix."""
+    async def scenario():
+        app = _StepApp(_long_output_pipeline())
+        async with app.run_test(size=(100, 24)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            _focus_line(app, 1)                       # build.install, with 200 lines behind it
+            await pilot.pause()
+            log = _details_log(app)
+            log.scroll_to(y=10, animate=False)
+            await pilot.pause()
+            before = log.scroll_offset.y
+            app._on_line(0, "a line arriving while the reader is elsewhere")
+            await pilot.pause()
+            return before, log.scroll_offset.y
+
+    before, after = asyncio.run(scenario())
+    assert before == 10, f"the test itself has to have scrolled, got {before}"
+    assert after == before, "a line must not move a reader who is not at the bottom"
+
+
+def test_a_reader_who_is_at_the_bottom_keeps_being_carried_along():
+    """The other half, and the reason this is a sticky bottom rather than auto_scroll switched off: an
+    operator watching the tail of a running step must go on seeing the tail."""
+    async def scenario():
+        app = _StepApp(_long_output_pipeline())
+        async with app.run_test(size=(100, 24)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            _focus_line(app, 1)
+            await pilot.pause()
+            log = _details_log(app)
+            log.scroll_end(animate=False)
+            await pilot.pause()
+            app._on_line(0, "the newest line")
+            await pilot.pause()
+            return log.is_vertical_scroll_end
+
+    assert asyncio.run(scenario()) is True
+
+
+def test_the_scroll_position_survives_a_trip_to_another_row_and_back():
+    """`_show_details` clears the pane and rewrites it, so somebody who found a place in a long step's
+    output, looked elsewhere and came back had to find it again."""
+    async def scenario():
+        app = _StepApp(_long_output_pipeline())
+        async with app.run_test(size=(100, 24)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            _focus_line(app, 1)                       # build.install
+            await pilot.pause()
+            log = _details_log(app)
+            log.scroll_to(y=42, animate=False)
+            await pilot.pause()
+            found = log.scroll_offset.y
+            _focus_line(app, 2)                       # build.compile - a different row entirely
+            await pilot.pause()
+            _focus_line(app, 1)                       # ... and back
+            await pilot.pause()
+            return found, _details_log(app).scroll_offset.y
+
+    found, back = asyncio.run(scenario())
+    assert found == 42, found
+    assert back == found, f"the reader's place must survive the round trip, was {found}, came back {back}"
