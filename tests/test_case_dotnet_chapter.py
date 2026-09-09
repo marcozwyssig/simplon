@@ -626,18 +626,21 @@ def test_the_docker_line_the_chapter_describes_is_the_one_the_kernel_assembles()
     assert not cfg.caches and not cfg.env
 
 
-def test_a_toolchain_command_is_not_something_a_gate_can_name():
-    """The chapter's `test` section rests on this and says so: a gate takes `suite:` or `impl:`, and a
-    `toolchain:run` command is neither, so this product's `build unit` returns an rc and never a verdict.
-    Read off the `Gate` value object rather than asserted in prose, because the day a third kind is added
-    the chapter's whole section is wrong."""
+def test_a_toolchain_command_is_something_a_gate_can_name():
+    """The chapter's `test` section rested on the opposite of this and said so - a gate took `suite:` or
+    `impl:`, a `toolchain:run` command was neither, and this product's `build unit` returned an rc and
+    never a verdict. si#106 added the third kind, so the section now shows the block that closes it, and
+    what has to be read off the value object is that the block would load: a gate really does take a
+    `command:`, which is the only thing making the section's answer more than prose."""
     # arrange
     kinds = {name for name in Gate.__dataclass_fields__ if name in ("suite", "impl", "command")}
 
     # act / assert
-    assert kinds == {"suite", "impl"}, (
-        f"`Gate` now accepts {sorted(kinds)}; the chapter's `test` section says a gate takes exactly "
-        f"`suite:` or `impl:`, and si#106 is where that changes")
+    assert kinds == {"suite", "impl", "command"}, (
+        f"`Gate` accepts {sorted(kinds)}; the chapter's `test` section says a gate takes `suite:`, "
+        f"`impl:` or `command:` - the third is si#106's answer and the section is written on it")
+    assert "`command:`" in _text() and "`preamble:`" in _text(), (
+        "the chapter no longer names the two keys that close si#106 for this product")
 
     # assert: and the product really declares no taxonomy, so the page is describing its own product
     assert "suites" not in _fixture_data(), (

@@ -333,18 +333,24 @@ last week's answer.
 The Java chapter has the same hazard and an answer for it. Its gate is an `impl:` - a callable the kernel
 runs for a verdict - so the kernel exports a marker path in `SIMPLON_SETUP_FAILED` before it, the runner
 writes the stage that broke into it, and the report comes out `setup-failed` and empty rather than
-plausible. **A `toolchain:run` command cannot use any of that**, because a gate names a `suite:` or an
-`impl:` and there is no key for a command. So a C++ product on this kernel today has a build that runs
-and a test phase that cannot say anything: no verdict, no Allure results, no archive, and a `test accept`
-it cannot declare.
+plausible. A `toolchain:run` command has no callable to point at - and it does not need one, because it
+is a **command**, and a gate may name a command in the product's own tree
+([simplon#106](https://github.com/marcozwyssig/simplon/issues/106)). A gate whose `command:` is the
+ctest command above and whose `preamble:` is the compile stops on the third row *at the compile*: the
+verdict is `setup-failed`, ctest is never asked about last week's binaries, and the archive says the
+build fell over rather than that three tests passed. Nothing is copied out of the `build` commands - the
+image, the argv and the caches stay declared once, where they already are.
 
-Which of the three shapes closes that - a gate that may name a command, a second entry point on
-`toolchain:run`, or a product that writes the one-line `impl:` the Java product writes after all - is
-open in [simplon#106](https://github.com/marcozwyssig/simplon/issues/106). The third answer is worth
-naming out loud, because it is the honest limit of the claim this chapter opens with: a product that
-writes no body for its BUILD may still have to write one for its TEST.
+**The three runs above were measured before that key existed**, and they are still exactly what the two
+commands do when they are run bare. That is the point of the third row rather than an artefact of it: the
+pairing is what a gate adds, and two commands nobody paired report the last good result.
 
-What a gate is, what a level is and how a non-pytest runner attaches are all in
+`cppdemo` declares no `suites:` section, so what is above is what it does today; the block that closes
+the gap is three keys in one section and no Python, which leaves the claim this chapter opens with
+standing in the test phase as well as in the build.
+
+What a gate is, what a level is and how a
+[command backs one](../../building/test-levels/#a-gate-may-name-a-command-in-your-own-tree) are all in
 [Test levels](../../building/test-levels/); the five outcomes a gate can report, and which two of them
 are statements about the product, are in [the Python chapter's `test` section](../case-python/#test).
 

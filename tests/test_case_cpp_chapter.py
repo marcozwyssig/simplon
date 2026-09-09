@@ -661,23 +661,24 @@ def test_the_three_runs_agree_with_each_other_and_with_the_suite_the_chapter_sho
 
 
 def test_the_gate_keys_the_chapter_names_are_the_ones_a_gate_really_takes():
-    """The `test` section's claim is a negative one - a gate can name a suite or an impl, and there is no
-    key for a COMMAND, so a `toolchain:run` build has no way into a verdict. A negative claim is the kind
-    that rots silently the moment somebody adds the key, so it is read off the value object."""
+    """The `test` section used to make a NEGATIVE claim - a gate can name a suite or an impl, and there
+    is no key for a COMMAND, so a `toolchain:run` build has no way into a verdict - and it was read off
+    the value object precisely because such a claim rots the moment somebody adds the key. si#106 added
+    it, the section now shows the answer instead of the gap, and this holds the same join the other way
+    round: every key the section's yaml block spells is a key a gate really takes."""
     # arrange
     keys = {field.name for field in dataclasses.fields(Gate)}
     body = _text()
 
     # act / assert
     assert keys, "the gate declares no field at all, so this test is ruling on nothing"
-    for key in ("suite", "impl"):
-        assert key in keys, f"a gate no longer takes '{key}'; the chapter says it does"
+    for key in ("suite", "impl", "command", "preamble"):
+        assert key in keys, f"a gate no longer takes '{key}'; the chapter's section rests on it"
+    # The three the section itself spells: the Java answer it compares against, and the two this
+    # product's answer is made of. `suite:` is held above as a field only - the section names pytest
+    # nowhere, and demanding the word would be this file writing the chapter.
+    for key in ("impl", "command", "preamble"):
         assert f"`{key}:`" in body, f"the chapter does not name the '{key}:' key a gate takes"
-
-    # assert: and the key whose absence the chapter argues from is still absent
-    assert "command" not in keys, (
-        "a gate now takes a `command:` key, so si#106 is answered and this chapter's `test` section is "
-        "describing a gap that has been closed")
 
 
 # --- the counts it takes from somewhere else -----------------------------------------------------------
