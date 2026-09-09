@@ -1,0 +1,91 @@
+# dotnetdemo - a .NET product, delivered by Simplon.
+#
+# There is NO task body for the build. `compile`, `unit` and `analyse` are `toolchain:run` commands:
+# one pinned SDK image, one argv each, and the kernel runs them over this tree. That is the whole
+# contrast with `case_java_manifest.yaml`, whose product hand-writes `impl: orchestrator.gradle:build`
+# because `toolchain:run` did not exist when it was written.
+#
+# The three argv are not this file's invention either: they are `simplon.tasks.profiles.PROFILES`'
+# `dotnet` entry, and `tests/test_case_dotnet_chapter.py` compares them with it rather than reading
+# them. What IS this file's own is the SHAPE around them - see the `body:` note below.
+product: dotnetdemo
+
+# The two bodies that remain are the deployment ones, and they are about a RUNTIME image rather than a
+# toolchain: what ships is the published app, and the thing that runs it is not the thing that made it.
+tasks:
+  up:      { impl: "orchestrator.deploy:up",   help: "Run the published app on the local host (si#5: there is no further target)." }
+  down:    { impl: "orchestrator.cli:down",    help: "Tear the deployment down (placeholder)." }
+  status:  { impl: "orchestrator.cli:status",  help: "Report what is running in the target environment (placeholder)." }
+
+groups:
+  # All three sit under `build`, which is where `support:toolchain` writes them - not under `test`,
+  # which is where the design's own command table puts `unit` and `analyse`. The placement is the
+  # scaffolder's, so it is kept rather than corrected on the page.
+  #
+  # `body:`/`where:`/`extra:` is the ONE shape that assembles today (si#105). The design writes
+  # `image:`/`workdir:`/`argv:` directly under `with:`, and so does the scaffolder; the loader accepts
+  # that and `simplon.cli.assemble` then refuses it, naming the three keys `toolchain:run` does not
+  # take. Pinning `extra: []` is the price: a pinned parameter is off the command line entirely, so the
+  # design's "manifest first, caller appends" rule does not survive this shape.
+  build:
+    commands:
+      compile:
+        task: "toolchain:run"
+        help: "Compile in the containerised toolchain."
+        with:
+          body:
+            image: "mcr.microsoft.com/dotnet/sdk:9.0"
+            workdir: /src
+            argv: ["dotnet", "build"]
+          where: "build compile"
+          extra: []
+      unit:
+        task: "toolchain:run"
+        help: "Run the unit tests in the containerised toolchain."
+        with:
+          body:
+            image: "mcr.microsoft.com/dotnet/sdk:9.0"
+            workdir: /src
+            argv: ["dotnet", "test"]
+          where: "build unit"
+          extra: []
+      # The analyse step names the SAME image as the compile step, which is the design's section 3 rule:
+      # a checker that cannot see what the compiler saw is analysing a program nobody builds.
+      analyse:
+        task: "toolchain:run"
+        help: "Check the formatting in the containerised toolchain."
+        with:
+          body:
+            image: "mcr.microsoft.com/dotnet/sdk:9.0"
+            workdir: /src
+            argv: ["dotnet", "format", "--verify-no-changes"]
+          where: "build analyse"
+          extra: []
+  release:
+    commands:
+      tag: { task: "release:tag" }
+  deploy:
+    commands:
+      up:   { task: up }
+      down: { task: down }
+  monitor:
+    commands:
+      status: { task: status }
+  support:
+    commands:
+      install:   { task: "support:install" }
+      # Declared, and it raises `KeyError: 'version'` on every language (si#105). It is here because the
+      # chapter shows that refusal; a product that could not reach the command at all could not show it.
+      toolchain: { task: "support:toolchain" }
+
+# NOT optional, and nothing writes it: `toolchain:run` resolves the lab instance for its cache-volume
+# names BEFORE it looks at whether the command declares a cache, so a product scaffolded by
+# `simplon init` dies on the first toolchain command it runs (si#105).
+instance:
+  env_var: DOTNETDEMO_INSTANCE
+  default: dev
+  max_id_len: 2
+
+default: dev
+environments:
+  dev: { backend: local, description: "Local development environment (the default)." }
