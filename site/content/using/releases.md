@@ -69,6 +69,27 @@ One thing to know before adopting the CMake half: `add_subdirectory` puts a targ
 own directory, so an executable declared in `src/<name>/` lands at `build/src/<name>/<name>` and not at
 `build/<name>`. A `deploy up` command that runs the binary has to name that path.
 
+### The help screen names the simplon that is answering (si#125)
+
+`<product> --help` rendered byte for byte the same screen whether the kernel behind it was a released
+wheel from PyPI, an editable checkout on the same machine, or a version pinned two releases ago. Both
+facts existed the whole time - `simplon.__version__`, and `importlib.metadata` knows the distribution -
+and neither was ever printed. The root app's epilog now carries one line under the command panels:
+
+```text
+assembled by simplon 0.9.0.post1.dev8+g4b69283dc.d20260909 (editable install, /tmp/wt-125/src/simplon)
+assembled by simplon 0.9.0.post1.dev8+g4b69283dc.d20260909 (/tmp/wheelvenv/lib/python3.13/site-packages/simplon)
+assembled by simplon 0.0.0.dev0+unknown (no installed distribution, /tmp/bare2/simplon)
+```
+
+It reads *assembled by* rather than a bare version because the line sits under the **product's** own
+commands, where a number alone would be read as the product's. The editable marker comes from PEP 610
+`direct_url.json`, which is what pip records for `pip install -e`, rather than from the shape of the
+path. Every half degrades to a phrase instead of raising - a help screen that fails because the tool
+could not introspect itself is worse than one that says *unknown* - and a product that declares its own
+epilog keeps it, with the kernel's line below it. Top-level app only, and no `--version` flag comes with
+it. Nothing to do.
+
 ### Before you bump
 
 **The scaffolder no longer empties your manifest of its comments** (si#110). `support toolchain` read
