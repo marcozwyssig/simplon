@@ -53,9 +53,16 @@ TWO FACTS INHERITED FROM si#102, both of which cost a measurement there:
 """
 from __future__ import annotations
 
+import os
+import stat
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
 from xml.sax.saxutils import quoteattr
 
-from simplon import context, githubpackages, log
+from simplon import context, docker, githubpackages, log
+from simplon.run import stream
 
 #: The manifest section this module reads. `artifacts:` rather than a new top-level key, per design
 #: section 2: a registry, a package and a scope are the same three facts whatever the ecosystem, and a
@@ -204,4 +211,141 @@ def config(name: str = "") -> int:
     target.write_text(config_text(source_name, index_url(registry), owner(registry)), encoding="utf-8")
     log.ok(f"wrote {CONFIG_NAME} naming '{source_name}' -> {index_url(registry)} "
            f"(the credential is %{TOKEN_VAR}%, read from the environment, never from this file)")
+    return 0
+
+
+# --- publishing ---------------------------------------------------------------------------------------
+
+#: Where the packed .nupkg lands inside the container. Under `build/` because that is what a product
+#: gitignores, and the same directory the second command reads it back from - the two are one fact.
+PACK_DIR = "build/nuget"
+
+#: The container's view of the product tree. `/work`, the same mount point `toolchain:run` uses, so a
+#: path printed by one command means the same thing in the other.
+WORKDIR = "/work"
+
+
+@contextmanager
+def _env_file(token: str) -> "Iterator[Path]":
+    """A 0600 file holding `GITHUB_TOKEN=<token>`, gone by the time this returns.
+
+    WHY A FILE AND NOT `-e NAME=VALUE`. `docker run -e GITHUB_TOKEN=ghp_...` puts the credential in the
+    docker CLI's own argv, which `ps` shows to every user on the machine and `docker inspect` keeps in
+    the container's config for as long as it exists. `githubpackages` states the rule for `oras login`
+    and `docker login`, where the answer is stdin; docker offers no stdin for an environment, so the
+    answer here is a file that only its owner can read and that does not outlive the call.
+
+    `delete=False` plus a `finally`, rather than an open handle: docker has to open the path itself, and
+    on a crashed run the deletion still has to happen - which is the case the `finally` is for.
+    """
+    handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".env", delete=False)
+    path = Path(handle.name)
+    try:
+        os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+        handle.write(f"{TOKEN_VAR}={token}\n")
+        handle.close()
+        yield path
+    finally:
+        handle.close()
+        path.unlink(missing_ok=True)
+
+
+def docker_argv(image: str, root: Path, env_file: Path, argv: list[str]) -> list[str]:
+    """The container line for one dotnet invocation. PURE: it assembles, it runs nothing.
+
+    Pure for the reason `toolchain.docker_argv` is pure: the decisions here - whose uid, which mount,
+    where dotnet may write, how the credential arrives - are exactly what a test should be able to read
+    without a docker daemon in the room.
+
+    NOT `toolchain.docker_argv`, and that is a decision rather than a missed reuse. That function takes a
+    `Toolchain` built out of a manifest `with:` block, whose environment is "the environment the manifest
+    names, and nothing else - no implicit inheritance from the caller"; a secret is precisely what a
+    manifest may not name, so it has no `--env-file`. Widening it would put a credential into the one
+    shape si#105 wrote to keep declarations reviewable.
+    """
+    return ["docker", "run", "--rm",
+            *docker.user_args(),
+            "-v", f"{root}:{WORKDIR}", "-w", WORKDIR,
+            "--env-file", str(env_file),
+            "-e", f"DOTNET_CLI_HOME={WORKDIR}/{CLI_HOME}",
+            "-e", "DOTNET_CLI_TELEMETRY_OPTOUT=1", "-e", "DOTNET_NOLOGO=1",
+            image, *argv]
+
+
+def pack_argv(project: str, version: str) -> list[str]:
+    """`dotnet pack`, with the version the tag names. Pure.
+
+    `-p:PackageVersion=` rather than an edit to the .csproj: the version is a property of the RELEASE,
+    and a number checked into a project file is a number two people can pick at once - the argument
+    `release:tag` is built on, one level down.
+    """
+    return ["dotnet", "pack", project, "-c", "Release", "-o", f"{WORKDIR}/{PACK_DIR}",
+            f"-p:PackageVersion={version}"]
+
+
+def push_argv(source_name: str) -> list[str]:
+    """`dotnet nuget push`, with NO api key. Pure.
+
+    MEASURED, and the module head carries the transcript: `--api-key` alone does not authenticate
+    against a feed that wants an Authorization header (401), the `<apikeys>` config section cannot hold
+    one on Linux at all, and a push against a source that carries credentials needs none. So the one
+    element that would have had to be a secret is not there, and the warning NuGet prints about it
+    ("No API Key was provided") is the sound of the design working.
+    """
+    return ["dotnet", "nuget", "push", f"{WORKDIR}/{PACK_DIR}/*.nupkg",
+            "--source", source_name, "--skip-duplicate"]
+
+
+def publish(name: str = "", tag: str = "") -> int:
+    """Pack the project `name` declares and push it to the GitHub feed `name` names.
+
+    Two container runs rather than one shell line, because a shell line is a third quoting layer between
+    the manifest and the tool, and the rc of a pipeline is not the rc of the command that failed.
+    """
+    spec = _declared(name)
+    registry = _github_registry(spec, name)
+    (image, project) = _required(spec, name, "image", "project")
+    source_name = str(spec.get("source_name", "") or DEFAULT_SOURCE)
+
+    resolved = tag or str(spec.get("tag", "") or "")
+    if not resolved:
+        raise ValueError(
+            f"artifact '{name}' has no tag: declare `tag:` in the `{SECTION}:` section for a constant "
+            f"one, or pass --tag for a version that is only known after a build")
+
+    pinned = docker.pinned_image(image, f"artifact '{name}'",
+                                 hint="a published package names the SDK it was built with")
+
+    root = context.current().root
+    if not (root / project).is_file():
+        raise ValueError(f"nothing to pack: {project} does not exist under the product root. the "
+                         f"project is the product's, not this task's")
+    if not (root / CONFIG_NAME).is_file():
+        raise ValueError(
+            f"no {CONFIG_NAME} at the product root, so the push has no source called '{source_name}' and "
+            f"no credential to reach it with. Write one first: `build:nuget-config`")
+
+    docker.ensure_docker()
+    (root / PACK_DIR).mkdir(parents=True, exist_ok=True)
+    (root / CLI_HOME).mkdir(parents=True, exist_ok=True)
+
+    with _env_file(githubpackages.token()) as env_file:
+        log.info(f"packing {project} as {resolved}")
+        rc = stream(docker_argv(pinned, root, env_file, pack_argv(project, resolved)))
+        if rc != 0:
+            log.error(f"dotnet pack {project} failed (rc={rc}; see output above)")
+            return rc
+
+        log.info(f"pushing {resolved} to {index_url(registry)}")
+        rc = stream(docker_argv(pinned, root, env_file, push_argv(source_name)))
+
+    if rc != 0:
+        # The scope advice is a HINT tied to a host and a condition, never appended to every failure -
+        # image.py's rule, and the reason is that a push fails on a full disk and a dead network too.
+        log.error(f"dotnet nuget push to {registry} failed (rc={rc}; see output above)\n"
+                  "if the registry refused it rather than the network, the usual cause is a token "
+                  "without the package scopes:\n" + githubpackages.scope_advice())
+        return rc
+
+    log.ok(f"published {resolved} to {index_url(registry)}")
     return 0
