@@ -22,6 +22,8 @@ assertion about the output be a string comparison rather than a directory walk.
 """
 from __future__ import annotations
 
+import posixpath
+import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -225,3 +227,120 @@ def _render_target(target: Target) -> list[str]:
     if target.kind == "test":
         lines.append(f"add_test(NAME {target.name} COMMAND {target.name})")
     return [*lines, ""]
+
+
+# --- the .NET solution, rendered (spec sections 2 and 4) ---------------------------------------------
+
+#: The namespace every project GUID is derived under, `uuid5(NAMESPACE_DNS, "buildfiles.simplon")`,
+#: written out as the constant it has to be: the whole property is that the same project path yields the
+#: same GUID on every machine and every run, and a namespace computed at import would still be stable
+#: only as long as nobody edits the string it is computed from. Changing this value renumbers every
+#: project in every product, so it is a breaking change and not a detail.
+GUID_NAMESPACE = uuid.UUID("b41d069f-c5c2-5976-bbc6-ed79c621125d")
+
+#: MICROSOFT'S, NOT OURS. The project TYPE GUID of an SDK-style C# project is a fixed constant published
+#: by Microsoft; it identifies the KIND of project and is the same in every solution file in the world.
+#: It is quoted here rather than derived for exactly that reason.
+CSHARP_PROJECT_TYPE = "{9A19103F-16F7-4668-BE54-9A1E7A4F7556}"
+
+#: The framework the generated projects target. One constant, because the design's section 5 puts
+#: per-configuration knobs out of scope; a product that needs another one is the ticket that turns this
+#: into a manifest key.
+TARGET_FRAMEWORK = "net8.0"
+
+#: The configurations the solution offers. Sorted, and stated once: these rows are the bulk of a
+#: solution file (24 of them in the two-project measurement the design quotes) and are the reason
+#: generating one is worth it at all.
+CONFIGURATIONS = ("Debug|Any CPU", "Release|Any CPU")
+
+
+def project_guid(project_path: str) -> str:
+    """The GUID of one project, DERIVED from its path relative to the product root and never generated.
+
+    `uuid5` over a fixed namespace, so the same project yields the same GUID on every machine and every
+    run. A `uuid4` would put a new GUID into the diff on every run and make the committed-output
+    decision unusable within a week. Upper case without braces - the sln adds the braces at the two
+    places that want them.
+    """
+    return str(uuid.uuid5(GUID_NAMESPACE, project_path)).upper()
+
+
+def dotnet_files(targets: list[Target], root: Path, product: str) -> dict[Path, str]:
+    """The `.sln` and every `.csproj`, keyed by where they land. PURE, like the CMake half.
+
+    Paths inside the files use forward slashes on every platform. MSBuild and Visual Studio both read
+    them, and one spelling is what makes the bytes identical no matter which machine ran the generator.
+    """
+    projects = {t.name: _project_path(t) for t in targets}
+    files = {root / f"{product}.sln": _render_solution(targets)}
+    for target in sorted(targets, key=lambda t: t.name):
+        files[root / _project_path(target)] = _render_csproj(target, projects)
+    return files
+
+
+def _project_path(target: Target) -> Path:
+    """Where a target's project file lives, relative to the product root - which is also the string its
+    GUID is derived from, so the two can never disagree."""
+    return target.directory / f"{target.name}.csproj"
+
+
+def _render_csproj(target: Target, projects: Mapping[str, Path]) -> str:
+    """One SDK-style project. A dependency becomes a `ProjectReference` and nothing else does: the
+    design's section 5 keeps package references, multi-targeting and property groups out of scope."""
+    lines = [XML_HEADER, '<Project Sdk="Microsoft.NET.Sdk">', "", "  <PropertyGroup>"]
+    if target.kind == "executable":
+        lines.append("    <OutputType>Exe</OutputType>")
+    lines.append(f"    <TargetFramework>{TARGET_FRAMEWORK}</TargetFramework>")
+    if target.kind == "test":
+        # The one property that makes `dotnet test` recognise the project. The test SDK's package
+        # reference is out of scope (section 5), so this states the intent the tree already shows.
+        lines.append("    <IsTestProject>true</IsTestProject>")
+    lines += ["  </PropertyGroup>"]
+    if target.depends:
+        lines += ["", "  <ItemGroup>"]
+        lines += [f'    <ProjectReference Include="{_reference(target, projects[name])}" />'
+                  for name in target.depends]
+        lines += ["  </ItemGroup>"]
+    lines += ["", "</Project>"]
+    return _text(lines)
+
+
+def _reference(target: Target, dependency: Path) -> str:
+    """The path from one project to the project it references, relative and in forward slashes.
+
+    `posixpath.relpath` rather than `os.path.relpath`: both paths are model values in posix spelling,
+    and a generator run on Windows must not put backslashes into a file a Linux checkout then reads.
+    It is pure arithmetic on two strings and touches no filesystem.
+    """
+    return posixpath.relpath(dependency.as_posix(), target.directory.as_posix())
+
+
+def _render_solution(targets: list[Target]) -> str:
+    """The solution: the file's own opening lines, the header, one row per project, and the matrix.
+
+    THE HEADER IS NOT FIRST HERE, and that is the one place the "starts with the header" rule bends. A
+    solution file is parsed by its opening line - `Microsoft Visual Studio Solution File, Format Version`
+    - and a comment in front of it is read as a MISSING header rather than as a comment. So the two
+    sentences sit exactly where every other `#` comment in a `.sln` sits, one line further down.
+    """
+    ordered = sorted(targets, key=lambda t: t.name)
+    lines = ["Microsoft Visual Studio Solution File, Format Version 12.00",
+             "# Visual Studio Version 17",
+             HEADER.rstrip("\n")]
+    for target in ordered:
+        path = _project_path(target).as_posix()
+        lines += [f'Project("{CSHARP_PROJECT_TYPE}") = "{target.name}", "{path}", '
+                  f'"{{{project_guid(path)}}}"',
+                  "EndProject"]
+    lines += ["Global",
+              "\tGlobalSection(SolutionConfigurationPlatforms) = preSolution"]
+    lines += [f"\t\t{config} = {config}" for config in sorted(CONFIGURATIONS)]
+    lines += ["\tEndGlobalSection",
+              "\tGlobalSection(ProjectConfigurationPlatforms) = postSolution"]
+    for target in ordered:
+        guid = f"{{{project_guid(_project_path(target).as_posix())}}}"
+        for config in sorted(CONFIGURATIONS):
+            lines += [f"\t\t{guid}.{config}.ActiveCfg = {config}",
+                      f"\t\t{guid}.{config}.Build.0 = {config}"]
+    lines += ["\tEndGlobalSection", "EndGlobal"]
+    return _text(lines)

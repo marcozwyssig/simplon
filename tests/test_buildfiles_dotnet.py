@@ -1,0 +1,157 @@
+"""si#102: the solution rendered with GUIDs derived from the path, never generated.
+
+The determinism test is first, and that is the order the design asks for: the decision to COMMIT the
+generated files is what makes it load-bearing, and a `uuid4` here would put a new GUID in the diff on
+every run and make that decision unusable within a week.
+"""
+from pathlib import Path
+
+from simplon.tasks import buildfiles
+
+
+def test_a_guid_is_derived_from_the_path_so_two_runs_agree():
+    # arrange / act
+    a = buildfiles.project_guid("src/Core/Core.csproj")
+    b = buildfiles.project_guid("src/Core/Core.csproj")
+    other = buildfiles.project_guid("src/Net/Net.csproj")
+
+    # assert: uuid4 here would put a new GUID in the diff on every run, and the committed decision
+    # (spec section 4) would be unusable within a week
+    assert a == b
+    assert a != other
+    assert a == a.upper() and a.count("-") == 4
+
+
+def _targets():
+    return [
+        buildfiles.Target(name="App", kind="executable", directory=Path("src/App"),
+                          sources=[Path("src/App/Program.cs")]),
+        buildfiles.Target(name="Core", kind="library", directory=Path("src/Core"),
+                          sources=[Path("src/Core/A.cs")]),
+        buildfiles.Target(name="Net", kind="library", directory=Path("src/Net"),
+                          sources=[Path("src/Net/B.cs")], depends=["Core"]),
+    ]
+
+
+def _files(root=Path("/product")):
+    return buildfiles.dotnet_files(_targets(), root, "demo")
+
+
+def test_there_is_one_csproj_per_target_directory_and_one_solution():
+    # act
+    paths = sorted(_files())
+
+    # assert
+    assert paths == [Path("/product/demo.sln"),
+                     Path("/product/src/App/App.csproj"),
+                     Path("/product/src/Core/Core.csproj"),
+                     Path("/product/src/Net/Net.csproj")]
+
+
+def test_the_solution_names_every_project_sorted():
+    # act
+    text = _files()[Path("/product/demo.sln")]
+
+    # assert
+    named = [ln.split('"')[3] for ln in text.splitlines() if ln.startswith("Project(")]
+    assert named == ["App", "Core", "Net"]
+
+
+def test_a_project_row_carries_the_guid_the_path_derives():
+    # arrange
+    guid = buildfiles.project_guid("src/Core/Core.csproj")
+
+    # act
+    text = _files()[Path("/product/demo.sln")]
+
+    # assert
+    assert f'"Core", "src/Core/Core.csproj", "{{{guid}}}"' in text
+
+
+def test_the_project_type_guid_is_microsofts_fixed_constant():
+    # act / assert: not derived, not invented - it is the C# SDK project type and Microsoft owns it
+    text = _files()[Path("/product/demo.sln")]
+    assert text.count('Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}")') == 3
+
+
+def test_the_configuration_matrix_rows_are_sorted():
+    # act
+    text = _files()[Path("/product/demo.sln")]
+
+    # assert: four rows per project, in one order, so the diff moves only when a project does
+    rows = [ln.strip() for ln in text.splitlines() if ".ActiveCfg" in ln or ".Build.0" in ln]
+    assert rows == sorted(rows)
+    assert len(rows) == 12
+
+
+def test_a_declared_dependency_becomes_a_project_reference():
+    # act
+    text = _files()[Path("/product/src/Net/Net.csproj")]
+
+    # assert
+    assert '<ProjectReference Include="../Core/Core.csproj" />' in text
+
+
+def test_a_target_with_no_dependency_references_nothing():
+    # act: the tree does not show a dependency, so none is invented (spec section 2)
+    text = _files()[Path("/product/src/Core/Core.csproj")]
+
+    # assert
+    assert "ProjectReference" not in text
+
+
+def test_an_executable_says_so_and_a_library_does_not():
+    # act
+    files = _files()
+
+    # assert
+    assert "<OutputType>Exe</OutputType>" in files[Path("/product/src/App/App.csproj")]
+    assert "OutputType" not in files[Path("/product/src/Core/Core.csproj")]
+
+
+def test_every_generated_file_carries_the_header():
+    # act / assert: the csproj carries the XML spelling of it, because a `#` line in front of
+    # `<Project>` is not a comment in XML, it is a broken build
+    files = _files()
+    assert files[Path("/product/demo.sln")].count(buildfiles.HEADER) == 1
+    for path, text in files.items():
+        if path.suffix == ".csproj":
+            assert text.startswith(buildfiles.XML_HEADER), path
+
+
+def test_the_solution_still_opens_with_the_line_visual_studio_looks_for():
+    # act / assert: the header sits where every other comment in a .sln sits, because the parser reads
+    # the format line first and a `#` in front of it is a missing header rather than a comment
+    text = _files()[Path("/product/demo.sln")]
+    assert text.startswith("Microsoft Visual Studio Solution File, Format Version 12.00\n")
+
+
+def test_the_two_headers_carry_the_same_two_sentences():
+    # act / assert: one wording, two comment syntaxes
+    plain = [ln.lstrip("# ") for ln in buildfiles.HEADER.splitlines()]
+    xml = [ln[len("<!-- "):-len(" -->")] for ln in buildfiles.XML_HEADER.splitlines()]
+    assert plain == xml
+
+
+def test_generating_twice_is_byte_identical():
+    # act / assert: the assertion the committed decision rests on (spec section 4)
+    assert _files() == _files()
+
+
+def test_two_roots_produce_the_same_bytes():
+    # arrange / act: the same product checked out twice, in two places
+    here = buildfiles.dotnet_files(_targets(), Path("/one/product"), "demo")
+    there = buildfiles.dotnet_files(_targets(), Path("/two/product"), "demo")
+
+    # assert
+    assert [t for _, t in sorted(here.items())] == [t for _, t in sorted(there.items())]
+
+
+def test_two_projects_never_share_a_guid():
+    # act
+    text = _files()[Path("/product/demo.sln")]
+
+    # assert
+    guids = {buildfiles.project_guid(f"src/{n}/{n}.csproj") for n in ("App", "Core", "Net")}
+    assert len(guids) == 3
+    assert all(guid in text for guid in guids)
