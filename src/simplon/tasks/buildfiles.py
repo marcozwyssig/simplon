@@ -298,7 +298,17 @@ CSHARP_PROJECT_TYPE = "{9A19103F-16F7-4668-BE54-9A1E7A4F7556}"
 #: The framework the generated projects target. One constant, because the design's section 5 puts
 #: per-configuration knobs out of scope; a product that needs another one is the ticket that turns this
 #: into a manifest key.
-TARGET_FRAMEWORK = "net8.0"
+#:
+#: THE NUMBER IS THE ONE THE KERNEL'S OWN TOOLCHAIN SHIPS, and it is a measurement rather than a
+#: preference (si#102, task 5). The first cut said `net8.0`, a version this kernel names nowhere else:
+#: `profiles.PROFILES["dotnet"]` runs `mcr.microsoft.com/dotnet/sdk:{version}` and the .NET chapter
+#: pins 9.0. Driven end to end in that image, a `net8.0` project BUILDS - the SDK restores an 8.0
+#: targeting pack from NuGet and reports `Build succeeded` - and then does not run:
+#: `dotnet E2eDemo.dll` answers `You must install or update .NET to run this application ... The
+#: following frameworks were found: 9.0.20`, rc 150. A generated project whose output cannot run in
+#: the image that compiled it is si#102's own failure one level down, so the default is the framework
+#: the SDK image carries rather than one chosen for it.
+TARGET_FRAMEWORK = "net9.0"
 
 #: The configurations the solution offers. Sorted, and stated once: these rows are the bulk of a
 #: solution file (24 of them in the two-project measurement the design quotes) and are the reason
