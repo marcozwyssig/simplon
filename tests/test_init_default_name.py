@@ -51,6 +51,11 @@ def _repo(path: Path, *, origin: str | None = None) -> Path:
     ("file:///srv/git/netctl.git", "netctl"),
     ("/srv/git/netctl.git", "netctl"),
     ("../sibling/netctl", "netctl"),
+    # A remote pointing straight AT the git directory, which is an ordinary local remote. Removing the
+    # `.git` suffix re-exposes the separator in front of it, and stripping the slash only once left an
+    # empty name - a refusal that quotes '' and explains nothing.
+    ("/srv/git/netctl/.git", "netctl"),
+    ("https://host/acme/netctl/.git", "netctl"),
 ])
 def test_the_repository_name_is_parsed_out_of_every_url_shape_git_accepts(url, expected):
     # arrange / act / assert: `.git` and a trailing slash belong to the URL, not to the name, and the
@@ -63,6 +68,77 @@ def test_the_url_parser_repairs_nothing_beyond_the_urls_own_punctuation():
     # validation below is what refuses it. Repairing here would hide which of the two decided
     assert bootstrap.repository_name_from_url("https://github.com/acme/Ops%20Tools.git") == "Ops%20Tools"
     assert bootstrap.repository_name_from_url("git@host:acme/my.ctl.git") == "my.ctl"
+
+
+# --- the URL is quoted back to the user, so it must not carry a token -------------------------------
+
+
+@pytest.mark.parametrize(("url", "expected"), [
+    # GitLab CI writes exactly this into every job's checkout, and the token is live for the job's life
+    ("https://gitlab-ci-token:NOT-A-REAL-TOKEN@gitlab.com/acme/labctl.git",
+     "https://***@gitlab.com/acme/labctl.git"),
+    # a PAT-based HTTPS clone somebody made by hand
+    ("https://oauth2:NOT-A-REAL-TOKEN@gitlab.com/acme/labctl.git", "https://***@gitlab.com/acme/labctl.git"),
+    # a bare username is not a secret, and a rule that decided which halves of a userinfo field are safe
+    # would be a rule that can be wrong
+    ("https://marco@github.com/acme/labctl.git", "https://***@github.com/acme/labctl.git"),
+    # the scp-like form's `git@` is the ordinary shape of an SSH remote and is left alone
+    ("git@github.com:acme/labctl.git", "git@github.com:acme/labctl.git"),
+    ("https://github.com/acme/labctl.git", "https://github.com/acme/labctl.git"),
+])
+def test_a_remote_urls_credentials_are_replaced_before_it_is_printed(url, expected):
+    # arrange / act / assert: replaced rather than deleted, so the printed URL is visibly not the one in
+    # .git/config instead of quietly differing from it
+    assert bootstrap.redact_url(url) == expected
+
+
+def test_a_token_in_the_origin_url_never_reaches_the_message(tmp_path):
+    """The URL is the answer to "where did this name come from", so it is quoted back - and a remote URL
+    is one of the places a token routinely lives. Printed verbatim it lands in terminal scrollback and,
+    far worse, in a CI log that outlives the job."""
+    # arrange
+    repo = _repo(tmp_path / "checkout",
+                 origin="https://gitlab-ci-token:NOT-A-REAL-TOKEN@gitlab.com/acme/labctl.git")
+
+    # act
+    found = bootstrap.repository_default(repo)
+
+    # assert: the name still comes from the remote, and the secret does not come with it
+    assert found.name == "labctl"
+    assert "SECRET" not in found.source, found.source
+    assert "gitlab-ci-token" not in found.source, found.source
+    assert "gitlab.com/acme/labctl.git" in found.source, found.source
+
+
+def test_a_token_in_the_origin_url_never_reaches_the_run_output(tmp_path, monkeypatch, capsys):
+    # arrange: the same fact where it actually escapes - the note `main` prints on a defaulted run
+    repo = _repo(tmp_path / "checkout",
+                 origin="https://oauth2:NOT-A-REAL-TOKEN@gitlab.com/acme/labctl.git")
+    monkeypatch.chdir(repo)
+
+    # act
+    rc = bootstrap.main(["init"])
+
+    # assert
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "SECRET" not in captured.err + captured.out
+
+
+def test_a_token_does_not_escape_through_the_refusal_either(tmp_path, monkeypatch, capsys):
+    # arrange: the OTHER path the source string is printed on - an illegal name quotes where it read it
+    repo = _repo(tmp_path / "checkout",
+                 origin="https://oauth2:NOT-A-REAL-TOKEN@gitlab.com/acme/Ops%20Tools.git")
+    monkeypatch.chdir(repo)
+
+    # act
+    rc = bootstrap.main(["init"])
+
+    # assert
+    assert rc == 2
+    captured = capsys.readouterr()
+    assert "SECRET" not in captured.err + captured.out
+    assert "simplon init <product>" in captured.err
 
 
 # --- which name: origin first, the working tree second ----------------------------------------------
@@ -182,6 +258,36 @@ def test_a_bare_repository_is_refused_rather_than_scaffolded_into_the_current_di
     with pytest.raises(ValueError) as excinfo:
         bootstrap.repository_default(bare)
     assert "simplon init <product>" in str(excinfo.value)
+
+
+def test_git_vanishing_between_the_two_calls_is_still_a_message_and_not_a_traceback(
+        tmp_path, monkeypatch, capsys):
+    """`_git` states that OSError is the call site's to answer, and there are TWO call sites. A guard on
+    only the first leaves the second able to traceback out of `simplon init`, which is the one thing
+    `main` promises never happens."""
+    # arrange: git answers the root and is gone by the time the remote is asked for
+    repo = _repo(tmp_path / "labctl")
+    monkeypatch.chdir(repo)
+    real = bootstrap.run
+    calls = []
+
+    def _vanishing(argv, **kwargs):
+        calls.append(argv)
+        if len(calls) > 1:
+            raise FileNotFoundError(2, "No such file or directory: 'git'")
+        return real(argv, **kwargs)
+
+    monkeypatch.setattr(bootstrap, "run", _vanishing)
+
+    # act
+    rc = bootstrap.main(["init"])
+
+    # assert
+    assert len(calls) == 2, calls
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "git is not on PATH" in err, err
+    assert "simplon init <product>" in err, err
 
 
 def test_git_answering_with_nothing_is_the_same_as_not_answering(tmp_path, monkeypatch):

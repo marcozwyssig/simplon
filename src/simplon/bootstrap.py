@@ -203,11 +203,38 @@ def repository_name_from_url(url: str) -> str:
 
     The split is on `/` AND `:` because git accepts the scp-like `git@host:acme/netctl.git`, where the
     last path separator before the name may be a colon.
+
+    The slash is stripped AGAIN after `.git` comes off, and that is not belt-and-braces: a remote
+    pointing straight at a git directory, `/srv/git/netctl/.git`, is an ordinary local remote, and
+    removing the suffix re-exposes the separator in front of it. Stripping once left an empty name and a
+    refusal quoting `''`, which names the value and explains nothing.
     """
     trimmed = url.strip().rstrip("/")
     if trimmed.endswith(".git"):
-        trimmed = trimmed[:-len(".git")]
+        trimmed = trimmed[:-len(".git")].rstrip("/")
     return re.split(r"[/:]", trimmed)[-1]
+
+
+#: The `user[:password]@` between a URL's scheme and its host. Anchored on `//` so the scp-like
+#: `git@github.com:acme/netctl.git` is left alone: that `git@` is the ordinary shape of an SSH remote and
+#: carries no secret, while `https://oauth2:TOKEN@host/...` carries one in every character after the colon.
+_URL_CREDENTIALS_RE = re.compile(r"(?<=//)[^/@]+@")
+
+
+def redact_url(url: str) -> str:
+    """`url` with any embedded credentials replaced by `***@`, for printing.
+
+    The remote URL is quoted back to the user - it is the answer to "where did this name come from" - and
+    a remote URL is one of the places a token routinely lives. GitLab CI writes
+    `https://gitlab-ci-token:<job token>@gitlab.com/...` into every job's checkout, and a PAT-based HTTPS
+    clone looks the same. Printing that verbatim puts a live credential into terminal scrollback and, far
+    worse, into a CI log that outlives the job.
+
+    Replaced rather than deleted, so the printed URL is visibly not the one in `.git/config` instead of
+    silently differing from it. A bare `user@` goes too: it is not a secret, but a rule that has to decide
+    which halves of a userinfo field are safe would be a rule that can be wrong.
+    """
+    return _URL_CREDENTIALS_RE.sub("***@", url)
 
 
 def _git(args: list[str], *, cwd: Path) -> str | None:
@@ -248,23 +275,32 @@ def repository_default(start: Path) -> RepositoryDefault:
     the argument still wins, and a repository whose name cannot BE a product name is refused with the
     argument named rather than mangled into something that half works.
     """
+    # ONE try over BOTH calls. `_git` states that OSError is the call site's to answer, and a guard on
+    # only the first would leave the second able to traceback out of `simplon init` - which is exactly
+    # what `main` promises never happens. The window is small (git on PATH for one call and gone for the
+    # next) and the cost of closing it is an indent.
     try:
         toplevel = _git(["rev-parse", "--show-toplevel"], cwd=start)
+        if toplevel is None:
+            raise ValueError(
+                f"no product name was given and {start} is not inside a git repository, so there is no "
+                f"repository name to read; run it inside one, or {_NAME_THE_ARGUMENT}")
+        root = Path(toplevel).resolve()
+        url = _git(["remote", "get-url", "origin"], cwd=root)
     except OSError:
         raise ValueError(
             f"no product name was given and git is not on PATH, so the repository's name cannot be "
             f"read; install git or {_NAME_THE_ARGUMENT}") from None
-    if toplevel is None:
-        raise ValueError(
-            f"no product name was given and {start} is not inside a git repository, so there is no "
-            f"repository name to read; run it inside one, or {_NAME_THE_ARGUMENT}")
 
-    root = Path(toplevel).resolve()
-    url = _git(["remote", "get-url", "origin"], cwd=root)
     if url:
-        raw, source = repository_name_from_url(url), f"the 'origin' remote ({url})"
+        # Redacted, and never the raw string: this URL is printed back to the user and to whatever log is
+        # capturing the run. See `redact_url`.
+        raw, source = repository_name_from_url(url), f"the 'origin' remote ({redact_url(url)})"
     else:
-        raw, source = root.name, f"the working tree at {root}, which has no 'origin' remote"
+        # "No URL" rather than "no remote": `_git` gives the same nothing for a missing remote and for one
+        # configured with a blank url, and a message that picked one of the two would be wrong about the
+        # other.
+        raw, source = root.name, f"the working tree at {root}, which has no 'origin' remote URL"
 
     try:
         name = validate_product_name(raw)
