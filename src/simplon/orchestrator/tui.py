@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import sys
 
+from . import steps as steps_module
 from .steps import (STATE_ICON, Emit, Pipeline, Row, Step, StepState, abort_after, build_rows,
-                    failure_report, format_duration, omitted_note, overall_rc, run_headless)
+                    failure_report, format_duration, omitted_note, overall_rc, run_headless,
+                    status_line)
 
 
 def run_pipeline(pipeline: Pipeline) -> int:
@@ -42,10 +44,17 @@ def run_pipeline(pipeline: Pipeline) -> int:
 from textual import work  # noqa: E402
 from textual.app import App, ComposeResult  # noqa: E402
 from textual.containers import Horizontal  # noqa: E402
-from textual.widgets import Footer, Header, RichLog, Tree  # noqa: E402
+from textual.widgets import Footer, Header, RichLog, Static, Tree  # noqa: E402
 
 from simplon import steplog  # noqa: E402
 from textual.widgets.tree import TreeNode  # noqa: E402
+
+#: The bar's colour, by the RUN's derived state. Three classes for five states, and the two that are
+#: missing are deliberate: the bar is one line and its job is the run, so PENDING (nothing has happened)
+#: and SKIPPED (a run in which nothing ran at all) leave it in the theme's ordinary foreground rather
+#: than spending a colour on the absence of news. The per-ROW mapping, which does have to separate all
+#: five, is `_STATE_STYLE`.
+_BAR_CLASS = {StepState.RUNNING: "-running", StepState.OK: "-ok", StepState.FAILED: "-failed"}
 
 
 class _StepApp(App):
@@ -54,6 +63,10 @@ class _StepApp(App):
     CSS = """
     #steps { width: 38%; border-right: solid $primary; }
     #details { width: 1fr; padding: 0 1; }
+    #status { height: 1; padding: 0 1; background: $panel; color: $foreground; }
+    #status.-running { color: $warning; }
+    #status.-ok { color: $success; }
+    #status.-failed { color: $error; }
     """
     # `c` and `s` are not conveniences. A Textual app puts the terminal in raw mode and turns on mouse
     # reporting so it can handle clicks itself, which switches OFF the terminal's own selection - the
@@ -92,12 +105,42 @@ class _StepApp(App):
         with Horizontal():
             yield Tree(self._label(self.rows), id="steps")
             yield RichLog(id="details", wrap=True, highlight=False, markup=False)
+        yield Static(id="status")
         yield Footer()
 
     def on_mount(self) -> None:
         self._mount_tree()
         self._show_details(self.rows)
+        self._repaint_status()
+        # ONE second, and the interval exists for two readers at once: the running row's own counter and
+        # the bar's. Both answer "is this compiling or is it hung", which is asked in whole seconds and
+        # never in tenths, and a faster beat would repaint forty rows for a number that did not change.
+        # `_painted` suppresses the rows whose text is unchanged, so a tick costs one label write per
+        # running chain rather than one per row.
+        self.set_interval(1.0, self._tick)
         self._run_steps()
+
+    # ---------------------------------------------------------------- the bottom bar (si#148 item 8)
+
+    def _tick(self) -> None:
+        """One beat of the two live counters: the bar, and the label of every row that is RUNNING.
+
+        The row counters are refreshed through `_refresh_row`, so an ancestor whose own elapsed changed is
+        repainted with the leaf and a row whose text did not change is not written again."""
+        for index, step in enumerate(self.pipeline.steps):
+            if step.state == StepState.RUNNING:
+                self._refresh_row(index)
+        self._repaint_status()
+
+    def _repaint_status(self) -> None:
+        """Write the bar. The TEXT is `steps.status_line`, computed over the display tree and the clock -
+        pure, plain, and asserted without a terminal; this method only places it and colours the whole line
+        by the run's derived state, which is the additive half of item 7 for a widget that has no glyph of
+        its own."""
+        bar = self.query_one("#status", Static)
+        bar.update(status_line(self.rows, steps_module.clock()))
+        state = self.rows.state
+        bar.set_classes([_BAR_CLASS.get(state, "")] if state in _BAR_CLASS else [])
 
     # ---------------------------------------------------------------- the left pane
 
@@ -110,9 +153,35 @@ class _StepApp(App):
 
         Since #52 a row that RAN also carries its duration - one column, appended, so the pane gains no
         line. A row that did NOT run carries none: `⊘ deploy.up` stays bare, because `0.0s` there would
-        claim the step finished instantly instead of never starting."""
+        claim the step finished instantly instead of never starting.
+
+        Since si#148 a row that IS RUNNING carries a live counter in the same column, spelled `12.0s…`.
+        The trailing ellipsis is one character and it is the whole difference between a step that took
+        twelve seconds and one that has taken twelve so far and may take sixty more - without it the two
+        rows are byte-identical and the column would answer a question it was not asked. The gap this
+        closes: a running row carried NOTHING at all, so "compiling for three minutes" and "hung" looked
+        the same, which is the question asked immediately before someone presses Ctrl-C.
+
+        The live counter is a LEAF's only, and the restriction is not a shortcut. An aggregate's duration
+        is its SPAN and `Row.duration` defines it only once everything under it is over, so a growing
+        number there would be a second quantity in the same column - and the run's own elapsed, which is
+        what an aggregate's live span would approximate, is on the bar already. It is also the expensive
+        one: `TreeNode.set_label` marks every VISIBLE line of that node's subtree dirty, so a ticking ROOT
+        would repaint the whole pane once a second, which is precisely the cost `_painted` exists to
+        avoid. A ticking leaf writes one label and its ancestors are suppressed as unchanged.
+
+        It returns a plain `str`, and that is load-bearing rather than incidental (si#148 item 7): the
+        colour is applied where the widget is written, so `_painted` goes on comparing CONTENT, `_row`
+        goes on handing a test text it can assert, and neither the headless `render_tree` nor the run
+        transcript can ever acquire markup from here."""
         duration = row.duration
-        shown = f"  {format_duration(duration)}" if duration is not None else ""
+        if duration is not None:
+            shown = f"  {format_duration(duration)}"
+        elif row.is_leaf and row.state == StepState.RUNNING:
+            elapsed = row.elapsed(steps_module.clock())
+            shown = f"  {format_duration(elapsed)}…" if elapsed is not None else ""
+        else:
+            shown = ""
         return f"{STATE_ICON[row.state]} {row.label}{shown}"
 
     def _mount_tree(self) -> None:
@@ -315,14 +384,21 @@ class _StepApp(App):
                 step.state = StepState.SKIPPED                      # its subtree stopped: do not run it
                 self.call_from_thread(self._refresh_row, i)
                 self.call_from_thread(self._maybe_refresh_details, i)   # -> the pane names the scope
+                self.call_from_thread(self._repaint_status)
                 continue
             step.state = StepState.RUNNING
+            step.started_at = steps_module.clock()   # so the bar and the row count from HERE, not from
+            # the moment `Step.run` is reached: `_begin_details` and a repaint sit between the two, and a
+            # counter that started after them would under-report every step by that much. `Step.run` sets
+            # it again from the same clock, which is idempotent to within those microseconds.
             self.call_from_thread(self._refresh_row, i)             # -> RUNNING shown
             self.call_from_thread(self._begin_details, i)
+            self.call_from_thread(self._repaint_status)
             # stream lines live into the details pane (only rendered when this step is highlighted)
             outcome = step.run(self._emitter(i))
             self.call_from_thread(self._refresh_row, i)             # -> OK/FAILED
             self.call_from_thread(self._maybe_refresh_details, i)
+            self.call_from_thread(self._repaint_status)
             if not outcome.ok:
                 abort = abort_after(self.pipeline, i)
                 aborted |= abort.indices
@@ -333,6 +409,7 @@ class _StepApp(App):
     def _on_done(self) -> None:
         rc = overall_rc(self.pipeline)
         self.sub_title = "done - all passed" if rc == 0 else "done - failures (press q)"
+        self._repaint_status()
         # auto-focus the first failed step's details, if any
         for i, step in enumerate(self.pipeline.steps):
             if step.state == StepState.FAILED and i in self._chain_nodes:

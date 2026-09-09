@@ -540,3 +540,160 @@ def test_s_writes_the_focused_steps_output_and_says_where():
     saved, notes = asyncio.run(scenario())
     assert len(saved) == 1
     assert any("/tmp/x.log" in note for note in notes)
+
+
+# --- the bottom bar: what is ACTIVE, whatever the cursor is doing (si#148 items 2 and 8) -------------
+
+def _status(app) -> str:
+    from textual.widgets import Static
+    return str(app.query_one("#status", Static).content)
+
+
+class _Clock:
+    """A clock the TEST holds and moves, so an elapsed counter is asserted at a stated instant instead of
+    watched with a sleep - `simplon.tasks.allure.report_filename`'s injectable `now`, one layer down."""
+
+    def __init__(self) -> None:
+        self.at = 0.0
+
+    def __call__(self) -> float:
+        return self.at
+
+
+def _blocking_pipeline(release: "threading.Event") -> Pipeline:
+    """A two-leaf plan whose FIRST step blocks until the test lets it go, so the run can be observed
+    mid-flight rather than after the fact."""
+    tree = manifest_load(_NESTED_MANIFEST).plan_tree_for("prep")
+    steps = []
+    for index, leaf in enumerate(tree.leaves()):
+        if index == 0:
+            def action(event=release) -> Outcome:
+                event.wait(5.0)
+                return Outcome(rc=0, output="held")
+        else:
+            def action() -> Outcome:                      # type: ignore[misc]
+                return Outcome(rc=0, output="ran")
+        steps.append(Step(label=leaf.name, command=leaf.path, action=action))
+    return Pipeline("prep", steps, False, tree, tree.path)
+
+
+def test_the_bar_names_the_running_step_while_the_cursor_is_somewhere_else(monkeypatch):
+    """THE feature. Both panes follow the cursor, so an operator who navigated away had nothing left that
+    said what was running - which is the question asked immediately before someone presses Ctrl-C."""
+    import threading
+
+    clock = _Clock()
+    monkeypatch.setattr(steps_mod, "clock", clock)
+    release = threading.Event()
+    pipeline = _blocking_pipeline(release)
+
+    async def scenario():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            while pipeline.steps[0].state != StepState.RUNNING:
+                await pilot.pause(0.02)
+            # arrange: the operator navigates AWAY from the running step, to the root
+            _focus_line(app, 0)
+            clock.at = 12.0
+            app._tick()
+            await pilot.pause()
+            shown = _status(app)
+            cursor = app._cursor_row()
+            release.set()
+            await app.workers.wait_for_complete()
+            return shown, cursor
+
+    # act
+    shown, cursor = asyncio.run(scenario())
+
+    # assert: the cursor really is elsewhere - on the root aggregate, not on the running leaf - and the
+    # bar answers anyway
+    assert cursor is not None and cursor.label == "build.prep"
+    assert "build.install" in shown, f"the bar must name the running step, got: {shown}"
+    assert "12.0s…" in shown, f"the bar must say how long it has been running, got: {shown}"
+    assert "run 12.0s" in shown, f"the bar must carry the RUN's own clock too, got: {shown}"
+
+
+def test_the_bar_carries_the_verdict_once_the_run_is_over():
+    async def scenario():
+        app = _StepApp(_planned_pipeline({"compile": 1}))
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            return _status(app)
+
+    shown = asyncio.run(scenario())
+    assert "1 of 3 steps failed" in shown, shown
+
+
+def test_the_bar_is_never_blank_not_even_before_the_first_step(monkeypatch):
+    """A bar that empties reads as a broken widget, and `on_mount` paints before the worker thread has
+    entered the first step."""
+    import threading
+
+    release = threading.Event()
+    pipeline = _blocking_pipeline(release)
+
+    async def scenario():
+        app = _StepApp(pipeline)
+        shown_at_mount: list[str] = []
+        original = app._repaint_status
+
+        def record() -> None:
+            original()
+            shown_at_mount.append(_status(app))
+
+        app._repaint_status = record
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            release.set()
+            await app.workers.wait_for_complete()
+            return shown_at_mount
+
+    shown = asyncio.run(scenario())
+    assert shown and all(line.strip() for line in shown), shown
+
+
+def test_the_running_rows_own_label_counts_up_without_the_test_sleeping(monkeypatch):
+    """si#148 item 2: while a step runs its row carried nothing at all, so 'compiling for three minutes'
+    and 'hung' looked identical. The counter is driven by the injected clock, never by a sleep."""
+    import threading
+
+    clock = _Clock()
+    monkeypatch.setattr(steps_mod, "clock", clock)
+    release = threading.Event()
+    pipeline = _blocking_pipeline(release)
+
+    async def scenario():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            while pipeline.steps[0].state != StepState.RUNNING:
+                await pilot.pause(0.02)
+            before = app._row(0)
+            clock.at = 12.0
+            app._tick()
+            await pilot.pause()
+            after = app._row(0)
+            release.set()
+            await app.workers.wait_for_complete()
+            return before, after
+
+    before, after = asyncio.run(scenario())
+    assert before == "▶ build.install  <0.1s…", before
+    assert after == "▶ build.install  12.0s…", after
+    assert "…" in after, "a running row's number must not be readable as a finished one"
+
+
+def test_the_bar_follows_the_runs_state_in_its_css_class():
+    async def scenario():
+        app = _StepApp(_planned_pipeline({"compile": 1}))
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            from textual.widgets import Static
+            return set(app.query_one("#status", Static).classes)
+
+    classes = asyncio.run(scenario())
+    assert "-failed" in classes, classes

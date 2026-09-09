@@ -220,18 +220,18 @@ footer slot on it.
 
 **Files:** `src/simplon/orchestrator/tui.py`, `tests/test_orchestrator_tui.py`
 
-- [ ] 2.1 Failing test: run a pipeline whose first step blocks on an event the test sets, move the cursor
+- [x] 2.1 Failing test: run a pipeline whose first step blocks on an event the test sets, move the cursor
       to a DIFFERENT row entirely, and assert the bar still names the running step and its elapsed time.
       This assertion is the feature.
-- [ ] 2.2 Failing test: after the run, the bar carries the verdict.
-- [ ] 2.3 Implement: a `Static#status` docked above the `Footer`, repainted from `steps.status_line` by
+- [x] 2.2 Failing test: after the run, the bar carries the verdict.
+- [x] 2.3 Implement: a `Static#status` docked above the `Footer`, repainted from `steps.status_line` by
       `_repaint_status()`, called on mount, on every step transition, and from a `set_interval(1.0, ...)`
       tick.
-- [ ] 2.4 Failing test for the ticking ROW label: freeze `steps_mod.clock` at 0, start a step, advance the
+- [x] 2.4 Failing test for the ticking ROW label: freeze `steps_mod.clock` at 0, start a step, advance the
       frozen clock to 12.0, call the tick, assert the row reads `12.0s…`. No sleep.
-- [ ] 2.5 Implement `_label`'s running branch via `Row.elapsed(clock())`.
-- [ ] 2.6 Failing test: the bar's CSS class follows the run's derived state (`-running`, `-failed`, `-ok`).
-- [ ] 2.7 Implement the class swap.
+- [x] 2.5 Implement `_label`'s running branch via `Row.elapsed(clock())`.
+- [x] 2.6 Failing test: the bar's CSS class follows the run's derived state (`-running`, `-failed`, `-ok`).
+- [x] 2.7 Implement the class swap.
 
 **Verify:** `pytest tests/test_orchestrator_tui.py` green; the existing TUI tests still green (the frozen
 clock fixture already covers the new label branch).
