@@ -23,8 +23,8 @@ a `command:` gate CANNOT name a `toolchain:run` command today, because `run_tool
 is a `typer.Context` and `_command` refuses any body that takes one. si#106's own tests all resolve to
 `simplon.test_impls:pinned_rc`, a body with no context, so nothing caught it, and both case chapters
 promise the shape without having driven it. `test_a_command_gate_cannot_name_a_toolchain_run_command_yet`
-pins that measurement; it is a defect in si#106 and NOT in this ticket, and it is why the drive uses the
-kind a product can actually run today - which is also javademo's real shape.
+pins that measurement; it is si#136, a defect in si#106 and NOT in this ticket, and it is why the drive
+uses the kind a product can actually run today - which is also javademo's real shape.
 
 WHY THE SKIP IS ON DOCKER AND NOTHING ELSE - the rule `tests/test_buildfiles_e2e.py` states: the tool is
 what is being measured, so its absence is a skip and everything else is a failure. A missing image is not
@@ -283,10 +283,10 @@ def test_a_command_gate_cannot_name_a_toolchain_run_command_yet(monkeypatch, tmp
     instead, which takes no context, so nothing measured the real coordinate; `case-cpp.md` and
     `case-dotnet.md` both promise the shape and neither drove it.
 
-    This test states what happens TODAY. It is a defect in si#106 rather than in si#133, it needs a
-    decision this ticket is not the place for (what context, if any, a gate hands a body, and how the
-    loop stays refused), and the day it is fixed this test is what tells whoever fixed it that the record
-    here has to change.
+    This test states what happens TODAY, and si#136 carries the finding. It is a defect in si#106 rather
+    than in si#133, it needs a decision this ticket is not the place for (what context, if any, a gate
+    hands a body, and how the loop stays refused), and the day it is fixed this test is what tells
+    whoever fixed it that the record here has to change.
     """
     # arrange: the manifest a real C++ product writes, and a gate that names its test command
     _product(monkeypatch, tmp_path)
