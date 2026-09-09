@@ -19,6 +19,7 @@ the other half is [Building on Simplon](../building/).
   {{< card link="case-python/" title="A Python product, end to end" subtitle="One loop, two real products, all five verbs - and a label on every step saying whether anybody has driven it." >}}
   {{< card link="case-java/" title="A Java product, end to end" subtitle="The same loop with no Python in the product at all: Gradle in Docker, JUnit XML in the Allure report, and a label on every step." >}}
   {{< card link="case-cpp/" title="A C++ product, end to end" subtitle="The same loop again with no task body at all: four commands, one coordinate, one pinned clang image - and the four steps between that promise and a product that can use it." >}}
+  {{< card link="case-dotnet/" title="A .NET product, end to end" subtitle="The same loop again, with no task body for the build at all: one pinned SDK image, the kernel's own argv - and the four places that path does not reach yet." >}}
   {{< card link="releasing/" title="Cutting a release" subtitle="One command. Why the tag *is* the version, why it pushes one tag and not all of them, what the guard refuses - and why a push to `main` publishes nothing." >}}
   {{< card link="commands/" title="Command reference" subtitle="Generated from the assembled application on every build." >}}
 {{< /cards >}}
