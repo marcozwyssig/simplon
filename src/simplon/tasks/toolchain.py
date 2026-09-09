@@ -117,8 +117,11 @@ def run_toolchain(ctx: typer.Context, image: str = "", argv: list[str] | None = 
     that could not be loaded. Naming them here is what makes the declared shape the shape that runs.
 
     PIN THEM ALL. `simplon.cli`/`taskgen` render every NON-PINNED parameter as a real option, so a
-    command that leaves `env:` out of its `with:` block grows a stray `--env` a caller can set to
-    nonsense - the same cost `simplon.tasks.testrun:gate` documents for its unpinned `--name`.
+    command that leaves `env:` out of its `with:` block grows a real `--env` - the same cost
+    `simplon.tasks.testrun:gate` documents for its unpinned `--name`, and no profile pins `env:` or
+    `caches:`, so every scaffolded command carries both. What a caller then types there is a MAPPING
+    key's worth of text, which is why every value goes to `declared` untouched: those two options have
+    to be refused by the gate, in the command's name, rather than crash inside a coercion.
 
     `network` is the one runtime value a manifest cannot supply - a scratch docker network exists only at
     call time - and it is passed through untouched. `extra` is the caller's own tail, declared in the
@@ -131,8 +134,13 @@ def run_toolchain(ctx: typer.Context, image: str = "", argv: list[str] | None = 
     was read from.
     """
     where = ctx.command_path or "toolchain:run"
-    cfg = declared({"image": image, "argv": list(argv or []), "workdir": workdir,
-                    "env": dict(env or {}), "caches": list(caches or [])}, where)
+    # HANDED OVER RAW, not coerced on the way in, and that is not tidiness. `declared` is the gate that
+    # decides what is legal and refuses in a command's voice; a `dict(env)` here would meet a stray
+    # `--env foo` FIRST and hand the caller `ValueError: dictionary update sequence element #0 has
+    # length 1` - a traceback where the module head promises a diagnosis. `_env` and `_caches` take
+    # `object` for exactly this reason, None included.
+    cfg = declared({"image": image, "argv": argv, "workdir": workdir,
+                    "env": env, "caches": caches}, where)
     product = context.current()
     # The instance is resolved WHERE it is needed and not one line earlier (si#105): it is read from the
     # product's `instance:` section, `simplon init` writes no such section, and resolving it up front

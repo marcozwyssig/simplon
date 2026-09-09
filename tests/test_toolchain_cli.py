@@ -9,8 +9,6 @@ drives the result with Typer's runner.
 
 AAA; the name states the behaviour under test.
 """
-import textwrap
-
 import pytest
 import typer
 import yaml
@@ -252,3 +250,36 @@ def test_what_the_scaffolder_writes_is_a_manifest_that_then_LOADS_and_RUNS(produ
     assert result.exit_code == 0, result.output
     assert docker_lines[0][-4:] == ["cmake", "--build", "build", "-j"]
     assert "silkeh/clang:19" in docker_lines[0]
+
+
+# --- an UNPINNED key is still a real option, so it must refuse the way the gate refuses -------------
+
+def test_a_stray_env_on_the_command_line_is_refused_and_not_a_traceback(product, docker_lines):
+    # arrange: no profile pins `env:`, so every scaffolded command carries a real `--env` (the price of
+    # binding the manifest's keys as parameters). It has to end in the gate's refusal like everything
+    # else - a body that coerces the value first hands the caller a raw ValueError instead
+    _write(product, _COMPILE)
+
+    # act
+    result = CliRunner().invoke(_app(product), ["build", "compile", "--env", "foo"])
+
+    # assert: refused by name, nothing run, and no exception escaping to the terminal
+    assert result.exit_code != 0
+    assert docker_lines == []
+    assert isinstance(result.exception, SystemExit)
+    assert "env" in result.output
+
+
+def test_a_stray_caches_on_the_command_line_is_refused_the_same_way(product, docker_lines):
+    # arrange: the second unpinned key, and it must fail like the first rather than in its own dialect
+    _write(product, _COMPILE)
+
+    # act
+    result = CliRunner().invoke(_app(product), ["build", "compile", "--caches", "bar"])
+
+    # assert: the shape it wanted, not a report about one CHARACTER of the string it was handed - a
+    # coerced value reached `_caches` as a sequence of letters and the refusal then named 'b'
+    assert result.exit_code != 0
+    assert docker_lines == []
+    assert isinstance(result.exception, SystemExit)
+    assert "must be a list of" in result.output
