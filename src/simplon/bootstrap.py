@@ -7,7 +7,7 @@ minimal, valid product skeleton and prints the next steps, after which the new p
 
 Run it standalone (with `simplon` installed, e.g. `pip install simplon`)::
 
-    simplon init <product> [--dir DIR] [--orch-dir DIR] [--force]
+    simplon init [<product>] [--dir DIR] [--orch-dir DIR] [--force]
 
 `python -m simplon.bootstrap <product> ...` keeps working for anyone who has it in muscle memory, but
 the console script is the entry point the README documents.
@@ -30,10 +30,10 @@ It renders, mirroring the shape netctl's own `netctl.yaml` + `netctl.sh` use but
                                                      found by walking up to the manifest marker, not a depth
         environments.py                              the EnvironmentProvider (its three product values)
 
-`<orch-dir>` is `orchestrator` unless `--orch-dir` says otherwise (#4). It is the block LAUNCH_ORCH_DIR
-points at, and both shims derive their venv, their requirements file and PYTHONPATH from that one variable,
-so the whole block moves together. The package name stays `orchestrator` under any layout - it is an
-identifier on PYTHONPATH, not a location.
+`<orch-dir>` is `deploy/provision/orchestrator` unless `--orch-dir` says otherwise (#4, si#130). It is the
+block LAUNCH_ORCH_DIR points at, and both shims derive their venv, their requirements file and PYTHONPATH
+from that one variable, so the whole block moves together. The package name stays `orchestrator` under any
+layout - it is an identifier on PYTHONPATH, not a location.
 
 The generated manifest VALIDATES through `simplon.orchestrator.manifest.load`; the generated `paths.py`
 registers a `ProductContext` exactly as netctl's adapter does, so the new product has a working,
@@ -73,10 +73,12 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
 
 import simplon
+from simplon.run import run
 
 # A product name is a lowercase slug: it becomes the shim/manifest filename, the manifest `product:` label,
 # the LAUNCH_PRODUCT diagnostic token and the `<PRODUCT>_ENV` variable stem. The package itself is the FIXED
@@ -85,12 +87,22 @@ _PRODUCT_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
 # The generated product package is always `orchestrator` (LAUNCH_MODULE), mirroring netctl. The BLOCK DIR
 # below it is LAUNCH_ORCH_DIR: it holds `.venv`, `requirements.txt` and `src/python/`, and it is the part
-# that MOVES (#4). Two of the three consumers keep it at `deploy/provision/orchestrator` because their own
-# structure rule reserves the repo root, so the location is a parameter with `orchestrator` as the default,
-# not a decree. The package NAME does not move with it: it is an identifier resolved on PYTHONPATH, which
-# the shim points at `$LAUNCH_ORCH_DIR/src/python` wherever that is. `paths.py` finds the repo root by
-# walking up to the manifest marker (netctl#737), so a deeper block dir needs no hand-edit either.
-_ORCH_DIR = "orchestrator"
+# that MOVES (#4). The package NAME does not move with it: it is an identifier resolved on PYTHONPATH,
+# which the shim points at `$LAUNCH_ORCH_DIR/src/python` wherever that is. `paths.py` finds the repo root
+# by walking up to the manifest marker (netctl#737), so a deeper block dir needs no hand-edit either.
+#
+# THE DEFAULT IS WHERE THE BLOCK ACTUALLY GOES (si#130), and it did not used to be. `orchestrator/` at the
+# target root was the layout this scaffolder grew up in and nobody else's practice: netctl passes
+# `deploy/provision/orchestrator`, biz-cockpit passes it, and si#24 moved the kernel's own block under
+# `deploy/` too, because each of their structure rules reserves the repository root. So the old default
+# was a shape every consumer corrected on the command line, and the page that documented it taught the
+# layout twice - once as shown, once as corrected four lines below.
+#
+# It is still a PARAMETER and not a decree, and the alternative simply changed sides: a product that owns
+# its repository root now passes `--orch-dir orchestrator`, which is the mirror image of what every
+# product passed before. Nothing existing moves - every current consumer already states the value it
+# wants, and this changes what a NEW scaffold does.
+DEFAULT_ORCH_DIR = "deploy/provision/orchestrator"
 
 # The Windows drive prefix (`C:`, `c:/...`): absolute, and neither the leading-slash nor the `..` check
 # would catch it on its own.
@@ -139,8 +151,9 @@ def validate_orch_dir(value: str) -> str:
     rule and its reasoning live in `validate_relative_dir`; this names the value and the good example."""
     return validate_relative_dir(
         value, "orchestrator directory",
-        f"give a plain relative path under the scaffold target, e.g. {_ORCH_DIR!r} (the default) "
-        f"or 'deploy/provision/orchestrator'; the Windows shim gets its backslashes written for it",
+        f"give a plain relative path under the scaffold target, e.g. {DEFAULT_ORCH_DIR!r} (the default) "
+        f"or 'orchestrator' for a product that owns its repository root; the Windows shim gets its "
+        f"backslashes written for it",
         inside="the target directory")
 
 
@@ -153,6 +166,151 @@ def validate_product_name(name: str) -> str:
             f"product name {name!r} is invalid; use a lowercase slug matching {_PRODUCT_RE.pattern} "
             f"(a letter, then letters/digits/hyphens), e.g. 'fooctl'")
     return trimmed
+
+
+#: The way out of every refusal below, spelled once. Each of them has the SAME fix - name the product
+#: yourself - and a message that only says what went wrong leaves a first-time user with a broken command
+#: and no next move.
+_NAME_THE_ARGUMENT = ("give the name as the argument instead: `simplon init <product>` "
+                      "(a lowercase slug: a letter, then letters, digits and hyphens, e.g. 'fooctl')")
+
+
+@dataclass(frozen=True)
+class RepositoryDefault:
+    """What the repository a `simplon init` runs in says the product should be called, and where it is.
+
+    `source` is carried rather than reconstructed because the run PRINTS it: two defaults fall out of one
+    omitted argument (the name, and with it the target directory), and a user who did not type either has
+    to be told which repository was read and where the skeleton went.
+    """
+
+    #: The product name, already through `validate_product_name`.
+    name: str
+    #: Where it was read from, in words, for the note the CLI prints.
+    source: str
+    #: The repository's working-tree root - the scaffold target a defaulted name implies.
+    root: Path
+
+
+def repository_name_from_url(url: str) -> str:
+    """The repository name a remote URL spells, with the URL's own punctuation dropped and NOTHING else.
+
+    A trailing `/` and a trailing `.git` belong to the URL rather than to the name, so removing them is
+    parsing. Everything after that is handed on untouched, `Ops%20Tools` and `my.ctl` included, and
+    `validate_product_name` is what refuses them - which is the point: a name repaired here would be
+    repaired silently and by the wrong layer, and the caller could no longer tell whether the repository
+    really is called that.
+
+    The split is on `/` AND `:` because git accepts the scp-like `git@host:acme/netctl.git`, where the
+    last path separator before the name may be a colon.
+
+    The slash is stripped AGAIN after `.git` comes off, and that is not belt-and-braces: a remote
+    pointing straight at a git directory, `/srv/git/netctl/.git`, is an ordinary local remote, and
+    removing the suffix re-exposes the separator in front of it. Stripping once left an empty name and a
+    refusal quoting `''`, which names the value and explains nothing.
+    """
+    trimmed = url.strip().rstrip("/")
+    if trimmed.endswith(".git"):
+        trimmed = trimmed[:-len(".git")].rstrip("/")
+    return re.split(r"[/:]", trimmed)[-1]
+
+
+#: The `user[:password]@` between a URL's scheme and its host. Anchored on `//` so the scp-like
+#: `git@github.com:acme/netctl.git` is left alone: that `git@` is the ordinary shape of an SSH remote and
+#: carries no secret, while `https://oauth2:TOKEN@host/...` carries one in every character after the colon.
+_URL_CREDENTIALS_RE = re.compile(r"(?<=//)[^/@]+@")
+
+
+def redact_url(url: str) -> str:
+    """`url` with any embedded credentials replaced by `***@`, for printing.
+
+    The remote URL is quoted back to the user - it is the answer to "where did this name come from" - and
+    a remote URL is one of the places a token routinely lives. GitLab CI writes
+    `https://gitlab-ci-token:<job token>@gitlab.com/...` into every job's checkout, and a PAT-based HTTPS
+    clone looks the same. Printing that verbatim puts a live credential into terminal scrollback and, far
+    worse, into a CI log that outlives the job.
+
+    Replaced rather than deleted, so the printed URL is visibly not the one in `.git/config` instead of
+    silently differing from it. A bare `user@` goes too: it is not a secret, but a rule that has to decide
+    which halves of a userinfo field are safe would be a rule that can be wrong.
+    """
+    return _URL_CREDENTIALS_RE.sub("***@", url)
+
+
+def _git(args: list[str], *, cwd: Path) -> str | None:
+    """One read-only git call from `cwd`: its trimmed stdout, or None when git had no answer to give.
+
+    NO ANSWER COVERS BOTH A NON-ZERO RC AND AN EMPTY STDOUT, and collapsing them is the point rather than
+    a shortcut. This is the ambiguity CLAUDE.md hunts, and the callers below are exactly where it would
+    bite: an empty `--show-toplevel` would become `Path("")`, which resolves to the CURRENT directory, so
+    a repository that could not name its own root would scaffold into wherever the command was typed and
+    call it a success. Every caller here wants a non-empty string or nothing, and there is no third
+    meaning for either of them to carry.
+
+    OSError (no git on PATH at all) is deliberately NOT caught: it is a different condition and gets its
+    own sentence at the call site.
+    """
+    result = run(["git", "-C", str(cwd), *args])
+    return (result.out.strip() or None) if result.ok else None
+
+
+def repository_default(start: Path) -> RepositoryDefault:
+    """The product name the repository containing `start` implies, or ValueError naming the fix (si#129).
+
+    WHICH NAME, and why the remote wins. The `origin` remote's repository name and the working tree's
+    root directory name disagree the moment somebody clones into a differently named folder, and the
+    remote is the one that survives it: `git clone .../netctl.git myproject` makes the directory an
+    accident of one machine while the remote still carries the name the product is published under. A
+    linked git worktree is the same case from the other side - its basename is `agent-3f2a` and the
+    product is still netctl. So the remote is the primary and the working tree is the FALLBACK rather
+    than a competitor: a repository with no remote yet is the ordinary state of a brand-new product, and
+    failing there would refuse the one case this default exists for.
+
+    The fallback reads `git rev-parse --show-toplevel`, not `start.name`. Running the command from a
+    subdirectory would otherwise name the product after the subdirectory, silently.
+
+    A DEFAULT, NEVER A DECREE, and si#102 is the fresh counter-example: its generator derived a CMake
+    target from `root.name` and got the product name wrong, because a directory is named for where it
+    sits and not for what it is. A repository can be `tooling`, or a monorepo holding two products. So
+    the argument still wins, and a repository whose name cannot BE a product name is refused with the
+    argument named rather than mangled into something that half works.
+    """
+    # ONE try over BOTH calls. `_git` states that OSError is the call site's to answer, and a guard on
+    # only the first would leave the second able to traceback out of `simplon init` - which is exactly
+    # what `main` promises never happens. The window is small (git on PATH for one call and gone for the
+    # next) and the cost of closing it is an indent.
+    try:
+        toplevel = _git(["rev-parse", "--show-toplevel"], cwd=start)
+        if toplevel is None:
+            raise ValueError(
+                f"no product name was given and {start} is not inside a git repository, so there is no "
+                f"repository name to read; run it inside one, or {_NAME_THE_ARGUMENT}")
+        root = Path(toplevel).resolve()
+        url = _git(["remote", "get-url", "origin"], cwd=root)
+    except OSError:
+        raise ValueError(
+            f"no product name was given and git is not on PATH, so the repository's name cannot be "
+            f"read; install git or {_NAME_THE_ARGUMENT}") from None
+
+    if url:
+        # Redacted, and never the raw string: this URL is printed back to the user and to whatever log is
+        # capturing the run. See `redact_url`.
+        raw, source = repository_name_from_url(url), f"the 'origin' remote ({redact_url(url)})"
+    else:
+        # "No URL" rather than "no remote": `_git` gives the same nothing for a missing remote and for one
+        # configured with a blank url, and a message that picked one of the two would be wrong about the
+        # other.
+        raw, source = root.name, f"the working tree at {root}, which has no 'origin' remote URL"
+
+    try:
+        name = validate_product_name(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"{exc}. It was read from {source}, because no product name was given. It is not repaired "
+            f"here on purpose: the name becomes the launcher's filename, the manifest's filename, the "
+            f"package path and the <PRODUCT>_ENV variable stem, so a mangled one would name all four "
+            f"after something nobody chose. So {_NAME_THE_ARGUMENT}") from None
+    return RepositoryDefault(name=name, source=source, root=root)
 
 
 def env_var_name(name: str) -> str:
@@ -598,15 +756,16 @@ def _templates(name: str, orch_dir: str) -> dict[str, str]:
     }
 
 
-def render(name: str, *, orch_dir: str = _ORCH_DIR) -> dict[str, str]:
+def render(name: str, *, orch_dir: str = DEFAULT_ORCH_DIR) -> dict[str, str]:
     """PURE: the product skeleton as a {relative POSIX path -> file content} map, with @@PRODUCT@@,
     @@ENV_VAR@@, @@PKG_DIR@@ and @@KERNEL_PIN@@ substituted. No I/O, no yaml/pydantic import - so a test can validate the
     rendered manifest through the real loader and assert the exact file set without a filesystem or the
     product's deps.
 
     `orch_dir` moves the whole block: the requirements file, the package source, both shims' LAUNCH_ORCH_DIR
-    and the one place the generated cli.py tells the reader which file to edit. Defaults to `orchestrator`,
-    and that default renders byte-for-byte what it always did."""
+    and the one place the generated cli.py tells the reader which file to edit. Defaults to
+    `deploy/provision/orchestrator` (si#130), which is where every consumer of this scaffolder already put
+    it by hand; a product that owns its repository root passes `orchestrator`."""
     product = validate_product_name(name)
     block = validate_orch_dir(orch_dir)
     env_var = env_var_name(product)
@@ -668,7 +827,7 @@ def newline_for(rel: str) -> str:
     return CRLF if rel.endswith(_BATCH_SUFFIXES) else LF
 
 
-def write(name: str, target: Path, *, force: bool = False, orch_dir: str = _ORCH_DIR) -> list[Path]:
+def write(name: str, target: Path, *, force: bool = False, orch_dir: str = DEFAULT_ORCH_DIR) -> list[Path]:
     """Render the skeleton and write it under ``target``, returning the written paths (sorted). Creates parent
     dirs; sets the shim executable (0o755). Refuses to overwrite an existing file unless ``force`` - a fresh
     scaffold must never silently clobber a hand-edited manifest or shim - raising FileExistsError listing the
@@ -698,7 +857,7 @@ def write(name: str, target: Path, *, force: bool = False, orch_dir: str = _ORCH
     return sorted(written)
 
 
-def next_steps(name: str, target: Path, *, orch_dir: str = _ORCH_DIR) -> str:
+def next_steps(name: str, target: Path, *, orch_dir: str = DEFAULT_ORCH_DIR) -> str:
     """The post-scaffold guidance printed after a successful write: nothing to vendor, just run the CLI -
     the launcher provisions its own venv and installs the pinned kernel from PyPI on first run."""
     product = validate_product_name(name)
@@ -717,9 +876,28 @@ def next_steps(name: str, target: Path, *, orch_dir: str = _ORCH_DIR) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """`simplon init <product> [--dir DIR] [--orch-dir DIR] [--force]`: scaffold a product skeleton and
-    print the next steps. Returns 0 on success, 2 on a bad product name, a clobber conflict, or a kernel
-    whose version yields no pin a product could install (fail loud, no traceback)."""
+    """`simplon init [<product>] [--dir DIR] [--orch-dir DIR] [--force]`: scaffold a product skeleton and
+    print the next steps. Returns 0 on success, 2 on a bad product name, a directory with no repository
+    to read a name from, a clobber conflict, or a kernel whose version yields no pin a product could
+    install (fail loud, no traceback).
+
+    THE PRODUCT ARGUMENT IS OPTIONAL (si#129), and omitting it decides TWO things, which is why neither
+    of them is silent:
+
+        name given, --dir given      the argument, and --dir. Unchanged.
+        name given, no --dir         the argument, and `./<name>/`. Unchanged.
+        name defaulted, --dir given  the repository's name, and --dir.
+        name defaulted, no --dir     the repository's name, and the REPOSITORY ROOT.
+
+    The last row is the only new placement, and it is not a second default falling out of the first by
+    accident. Reading the name from the repository IS the statement that the repository is the product,
+    so `./<repo>/` inside that same repository contradicts the fact just used to name it - and it would
+    put the launcher one directory below the manifest marker its own `paths.py` walks up to. The run
+    prints the name it read, where it read it and where the skeleton is going.
+
+    The name is read from the repository the command RUNS in, never from `--dir`. One rule rather than
+    two: with `--dir .`, which is the case this default is for, the two are the same directory anyway.
+    """
     # `simplon init <name>` reads like a command; the bare product name as the first argument read like a
     # typo. The old call pattern stays valid, so `python -m simplon.bootstrap <name>` keeps working.
     if argv is None:
@@ -727,10 +905,12 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] == "init":
         argv = argv[1:]
     elif not argv:
-        # A bare `simplon` must name the one thing it can do. argparse alone would only complain about a
-        # missing `product`, which tells a first-time user nothing about the subcommand they omitted.
-        print("simplon: nothing to do. The one command is `simplon init <product> [--dir DIR] "
-              "[--orch-dir DIR] [--force]`; "
+        # A bare `simplon` must name the one thing it can do, and since si#129 that is no longer something
+        # argparse could say for us: `product` is optional now, so `simplon` with no argv at all would
+        # otherwise scaffold whatever repository the shell happened to be sitting in. `simplon init` with
+        # nothing after it is a legal command; `simplon` alone is not, and the two must not collapse.
+        print("simplon: nothing to do. The one command is `simplon init [<product>] [--dir DIR] "
+              "[--orch-dir DIR] [--force]`, and the product name is optional inside a git repository; "
               "use `simplon init --help` for the options.", file=sys.stderr)
         return 2
 
@@ -739,27 +919,53 @@ def main(argv: list[str] | None = None) -> int:
         # `python -m simplon.bootstrap <product>` still works, it is just no longer what we advertise.
         prog="simplon init",
         description="Scaffold a fresh product onto the delivery orchestrator (netctl#651 strand 4).")
-    parser.add_argument("product", help="the product slug (lowercase; letters, digits, hyphens), e.g. 'fooctl'")
+    parser.add_argument("product", nargs="?", default=None,
+                        help=("the product slug (lowercase; letters, digits, hyphens), e.g. 'fooctl'. "
+                              "OPTIONAL: with no argument it is read from the git repository you are "
+                              "standing in - the 'origin' remote's repository name, or the working "
+                              "tree's root directory name when there is no remote - and the skeleton "
+                              "then lands at the repository root rather than in a subdirectory"))
     parser.add_argument("--dir", dest="directory", default=None,
-                        help="target directory (default: ./<product>); use '.' to scaffold in place")
-    parser.add_argument("--orch-dir", dest="orch_dir", default=_ORCH_DIR,
+                        help=("target directory (default: ./<product>, or the repository root when the "
+                              "product name was read from the repository); use '.' to scaffold in place"))
+    parser.add_argument("--orch-dir", dest="orch_dir", default=DEFAULT_ORCH_DIR,
                         help=("where the orchestrator block goes, relative to the target: it holds .venv, "
-                              "requirements.txt and src/python/ (default: %(default)s). A product whose "
-                              "structure reserves the repo root passes e.g. 'deploy/provision/orchestrator'. "
-                              "Pass it again on a later re-run: --force overwrites the shim, so hand-editing "
-                              "the generated one does not survive."))
+                              "requirements.txt and src/python/ (default: %(default)s, which is where "
+                              "every product puts it). A product that owns its repository root passes "
+                              "'orchestrator'. Pass it again on a later re-run: --force overwrites the "
+                              "shim, so hand-editing the generated one does not survive."))
     parser.add_argument("--force", action="store_true",
                         help="overwrite existing files instead of refusing")
     args = parser.parse_args(argv)
 
+    # Both defaults are resolved before anything is written, and both can refuse: a directory that is not
+    # a repository has no name to give, and a repository whose name is not a legal product name is a
+    # refusal rather than a repair. See this function's docstring for the four cases.
+    found: RepositoryDefault | None = None
     try:
-        product = validate_product_name(args.product)
+        if args.product is None:
+            found = repository_default(Path.cwd())
+            product, implied_target = found.name, found.root
+        else:
+            product = validate_product_name(args.product)
+            implied_target = Path.cwd() / product
         orch_dir = validate_orch_dir(args.orch_dir)
     except ValueError as exc:
         print(f"simplon init: {exc}", file=sys.stderr)
         return 2
 
-    target = Path(args.directory).resolve() if args.directory else (Path.cwd() / product)
+    target = Path(args.directory).resolve() if args.directory else implied_target
+    if found is not None:
+        # Nothing that was DECIDED for the user stays unsaid. The name first, with the source, because a
+        # repository can be named for where it sits rather than for what it is; then the target, because
+        # the omitted argument moved that too.
+        print(f"simplon init: no product name given, so it is {product!r}, read from {found.source}",
+              file=sys.stderr)
+        if args.directory is None:
+            print(f"simplon init: the repository is the product, so the skeleton lands at {target} "
+                  f"rather than in a subdirectory (pass --dir to change that)", file=sys.stderr)
+        else:
+            print(f"simplon init: writing it to {target}, as --dir asks", file=sys.stderr)
     try:
         write(product, target, force=args.force, orch_dir=orch_dir)
     except (FileExistsError, ValueError) as exc:

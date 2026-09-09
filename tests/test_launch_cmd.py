@@ -77,7 +77,8 @@ def test_every_other_scaffolded_file_stays_lf_because_it_is_read_on_the_host_tha
     # Assert: the shim, the manifest, the requirements and the generated python - a CRLF one of these is
     # the same defect pointing the other way, and it is the direction that breaks on THIS host
     lf_only = {rel: blob for rel, blob in files.items() if not rel.endswith(".cmd")}
-    assert set(lf_only) >= {"democtl.sh", "democtl.yaml", "orchestrator/requirements.txt"}
+    block = bootstrap.DEFAULT_ORCH_DIR.replace("/", os.sep)
+    assert set(lf_only) >= {"democtl.sh", "democtl.yaml", f"{block}{os.sep}requirements.txt"}
     assert [rel for rel, blob in lf_only.items() if b"\r" in blob] == []
 
 
@@ -104,7 +105,7 @@ def test_the_line_ending_is_chosen_by_extension_rather_than_by_the_scaffolding_h
     # to be answered in
     assert bootstrap.newline_for("democtl.cmd") == "\r\n"
     assert bootstrap.newline_for("democtl.sh") == "\n"
-    assert bootstrap.newline_for("orchestrator/src/python/orchestrator/cli.py") == "\n"
+    assert bootstrap.newline_for(f"{bootstrap.DEFAULT_ORCH_DIR}/src/python/orchestrator/cli.py") == "\n"
 
 
 def test_the_kernels_own_launcher_on_disk_matches_what_a_scaffold_would_now_write(tmp_path):

@@ -41,18 +41,20 @@ PROBE = (
 # manifest.load + catalogue.load - the entry point netctl's defect was reproduced through), from inside
 # the scaffolded product so `orchestrator.cli`'s impls resolve. Run with the product dir as cwd.
 _GENERATE_CLI = (
-    "import sys; sys.path.insert(0, 'orchestrator/src/python');"
+    "import sys; sys.path.insert(0, 'deploy/provision/orchestrator/src/python');"
     "from simplon import taskgen, catalogue;"
     "from simplon.orchestrator import manifest;"
     "text = open('demo.yaml', encoding='utf-8').read();"
     "m = manifest.load(text, catalogue=catalogue.load());"
     "src = taskgen.render(m, source='demo.yaml', product='demo');"
-    "open('orchestrator/src/python/orchestrator/_generated_cli.py', 'w', encoding='utf-8').write(src)"
+    "open('deploy/provision/orchestrator/src/python/orchestrator/_generated_cli.py', 'w', "
+    "encoding='utf-8').write(src)"
 )
 
 # The minimal config simplon.tasks.typecheck.check() requires of a real product (mypy resolves its
 # source roots against the CURRENT directory, hence `files`, not against the config's own location).
-_MYPY_INI = "[mypy]\nfiles = orchestrator/src/python\nmypy_path = orchestrator/src/python\n"
+_MYPY_INI = ("[mypy]\nfiles = deploy/provision/orchestrator/src/python\n"
+             "mypy_path = deploy/provision/orchestrator/src/python\n")
 
 
 def _build_wheel(tmp_path_factory) -> Path:
@@ -230,7 +232,8 @@ def test_a_product_scaffolded_by_the_installed_kernel_pins_an_installable_kernel
     # act
     out = subprocess.run([str(exe), "init", "demo", "--dir", str(product)], capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
-    text = (product / "orchestrator" / "requirements.txt").read_text(encoding="utf-8")
+    text = (product / "deploy" / "provision" / "orchestrator" / "requirements.txt").read_text(
+        encoding="utf-8")
     pinned = re.search(r"^simplon==(\S+)", text, re.M).group(1)
 
     # assert: a plain release, and specifically the last one that was actually cut - identical to the

@@ -10,6 +10,10 @@ from simplon import bootstrap
 
 VARS = ("LAUNCH_PRODUCT", "LAUNCH_ROOT", "LAUNCH_ORCH_DIR", "LAUNCH_MODULE")
 
+#: Where a scaffold with no `--orch-dir` puts the block (si#130), read off the constant rather than
+#: retyped here.
+BLOCK = bootstrap.DEFAULT_ORCH_DIR
+
 
 def test_both_shims_declare_the_same_contract(tmp_path):
     bootstrap.write("democtl", tmp_path)
@@ -40,7 +44,7 @@ def test_no_shim_reaches_for_a_submodule(tmp_path):
 
 def test_requirements_pin_the_kernel_by_version(tmp_path):
     bootstrap.write("democtl", tmp_path)
-    req = (tmp_path / "orchestrator" / "requirements.txt").read_text()
+    req = (tmp_path / BLOCK / "requirements.txt").read_text()
     assert re.search(r"^simplon==\d+\.\d+\.\d+", req, re.M), req
     assert "-r " not in req, "the kernel is a dependency now, not an include"
 

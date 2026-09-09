@@ -25,30 +25,55 @@ write its launcher with. Break it once, by hand:
 or install Simplon into any environment and run `simplon init myctl --dir .` inside the product
 repository. After that the generated launcher carries itself, and a later `simplon init` refreshes it.
 
+### The name is a default, not a decree
+
+Inside a git repository that is already named after the product, the name is **optional** and there is
+nothing left to type:
+
+    simplon init
+
+It is read from the repository: the `origin` remote's repository name, or the working tree's root
+directory name when there is no remote yet. The remote wins because it is the half that survives a clone
+into a differently named folder, and the run prints which of the two it used.
+
+The argument still wins whenever it is given, and that is the point of having one. A repository can be
+called `tooling`, or hold two products at once; a directory is named for where it sits, not for what it
+is.
+
+A repository whose name cannot *be* a product name is refused rather than repaired. `Ops Tools` and
+`my.ctl` would become a launcher filename, a manifest filename, a package path and a `<PRODUCT>_ENV`
+variable, so a quietly mangled one is wrong in four places at once - the message names the argument that
+fixes it. In a plain directory with no `.git` there is nothing to read, and `init` says so rather than
+failing further down.
+
 {{< callout type="warning" >}}
-Without `--dir .` the skeleton lands in a **new `./myctl/` subdirectory**, not at the repository root.
-Pass `--dir .` whenever the repository *is* the product.
+**The name also decides the directory.** With the name *given* and no `--dir`, the skeleton lands in a
+**new `./myctl/` subdirectory** - pass `--dir .` whenever the repository *is* the product. With the name
+*read from the repository*, the repository already is the product, so the skeleton lands at its **root**.
+`--dir` overrides both.
 {{< /callout >}}
 
 ### What it writes
 
-    myctl.sh                                     the entry point (bash)
-    myctl.cmd                                    the same entry point for cmd.exe
-    myctl.yaml                                   the starter manifest
-    orchestrator/requirements.txt                the host-venv deps, kernel pinned by version
-    orchestrator/src/python/orchestrator/
-        __init__.py                              the product package
-        __main__.py                              `python -m orchestrator` entry
-        cli.py                                   the composition root
-        paths.py                                 the product-context wiring
-        environments.py                          the environment provider
+    myctl.sh                                               the entry point (bash)
+    myctl.cmd                                              the same entry point for cmd.exe
+    myctl.yaml                                             the starter manifest
+    deploy/provision/orchestrator/requirements.txt         the host-venv deps, kernel pinned by version
+    deploy/provision/orchestrator/src/python/orchestrator/
+        __init__.py                                        the product package
+        __main__.py                                        `python -m orchestrator` entry
+        cli.py                                             the composition root
+        paths.py                                           the product-context wiring
+        environments.py                                    the environment provider
 
 Nine files, and only two of them are yours to edit day to day: `myctl.yaml` and `cli.py`.
 
-The `orchestrator/` block - the directory holding `.venv`, `requirements.txt` and `src/python/` - is a
-parameter, not a decree. A product whose own layout reserves the repository root moves the whole block:
+The block - the directory holding `.venv`, `requirements.txt` and `src/python/` - is a parameter, not a
+decree. `deploy/provision/orchestrator` is the default because it is where every product that adopted
+Simplon put it by hand: their own structure rules reserve the repository root. A product that owns its
+root moves the whole block back up to it:
 
-    simplon init myctl --dir . --orch-dir deploy/provision/orchestrator
+    simplon init myctl --dir . --orch-dir orchestrator
 
 The value must be a plain relative path under the target; an absolute one, or one containing `..`, is
 refused rather than scaffolded somewhere unexpected. Both launchers derive their virtual environment,
@@ -170,7 +195,7 @@ Now run something:
 
 ```text
 $ ./myctl.sh build
-[14:48:58] ==> myctl: build (placeholder) - wire me up in orchestrator/src/python/orchestrator/cli.py
+[14:48:58] ==> myctl: build (placeholder) - wire me up in deploy/provision/orchestrator/src/python/orchestrator/cli.py
 ```
 
 And try to run it against an environment:
@@ -214,7 +239,8 @@ Two files, and the division between them is the whole design:
 **`myctl.yaml`** - what commands exist, what they are called, which group they live in, what their
 options are named, which ones take an environment, what depends on what.
 
-**`orchestrator/cli.py`** - the callables the manifest's `tasks:` block points its `impl:` at. Replace
+**`deploy/provision/orchestrator/src/python/orchestrator/cli.py`** - the callables the manifest's
+`tasks:` block points its `impl:` at. Replace
 `build`/`check`/`up`/`down`/`status` with your own; keep them as module-level functions, because that is
 what `"orchestrator.cli:build"` means - import this module, get the attribute named after the colon.
 
