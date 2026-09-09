@@ -1194,3 +1194,41 @@ def test_the_palette_can_write_the_transcript_before_the_run_is_over(tmp_path, m
     written = tmp_path / "build" / "logs" / "run-transcript.log"
     assert written.is_file(), notes
     assert "✗ build.compile" in written.read_text(encoding="utf-8")
+
+
+def test_following_puts_the_live_lines_in_front_of_an_operator_who_touched_nothing():
+    """si#148 item 1's stated payoff, asserted rather than argued: `_on_line` writes a live line only when
+    that step's own row is highlighted (si#144 mechanism A), so an untouched run showed an aggregate
+    listing while the output went past unseen. With the cursor following the run, the common case is
+    covered - and mechanism A is still there for the operator who navigates away, which is what the bar
+    exists for."""
+    tree = manifest_load(_NESTED_MANIFEST).plan_tree_for("prep")
+
+    def streaming(emit):
+        emit("configure: checking for a C compiler")
+        emit("configure: yes")
+        return Outcome(rc=0, output="configure: checking for a C compiler\nconfigure: yes")
+
+    steps = [Step(label=leaf.name, command=leaf.path,
+                  stream=(streaming if index == 0 else lambda emit: Outcome(rc=0, output="")))
+             for index, leaf in enumerate(tree.leaves())]
+    pipeline = Pipeline("prep", steps, False, tree, tree.path)
+
+    seen: list[str] = []
+
+    async def scenario():
+        app = _StepApp(pipeline)
+        original = app._on_line
+
+        def record(index: int, line: str) -> None:
+            original(index, line)
+            seen.append(_details(app))
+
+        app._on_line = record
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+    asyncio.run(scenario())
+    assert seen, "no line was ever streamed - the test is not exercising the path"
+    assert "checking for a C compiler" in seen[-1], seen[-1]
