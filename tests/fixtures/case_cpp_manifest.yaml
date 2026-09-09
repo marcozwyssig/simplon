@@ -21,7 +21,7 @@ groups:
           body:
             image: "silkeh/clang:19"
             workdir: /src
-            argv: ["cmake", "-S", ".", "-B", "build"]
+            argv: ["cmake", "-S", ".", "-B", "build", "-DCMAKE_BUILD_TYPE=RelWithDebInfo"]
           where: "build configure"
           extra: []
       compile:

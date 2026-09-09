@@ -3,7 +3,11 @@
 WHY THE TREE IS THE DECLARATION AND THE MANIFEST IS THE EXCEPTION. A directory holding sources already
 says what it is: a library, or - when it holds a `main` - an executable. Repeating that in a manifest
 would be a second statement of the same fact, and the two would drift. So the tree is read, and the
-manifest carries the ONE thing a directory cannot show, which is what a target depends on.
+manifest carries only what a directory cannot show. That is now two things rather than one: what a
+target DEPENDS on, and whether a library wants an archive or a shared object (`kind:`, si#131). Where a
+source sits still decides everything else - a nested directory folds into the target above it, a
+`main.cpp` at a target's root makes it an executable, and a `<name>_test.<ext>` beside a unit is that
+unit's test rather than part of it (si#134).
 
 WHY A DEPENDENCY IS NEVER INFERRED FROM AN INCLUDE PATH. It was considered and rejected in the design: it
 reads a C++ preprocessor approximately, and an approximate answer in a build file is worse than a
@@ -39,7 +43,28 @@ SOURCE_SUFFIXES = (".cpp", ".cc", ".cxx", ".cs")
 MAIN_FILES = ("main.cpp", "Program.cs")
 
 #: A test target is one file, not a directory: `tests/<name>_test.<ext>` becomes the target `<name>_test`.
+#:
+#: ONE SPELLING, AND `test_<name>` IS DELIBERATELY NOT A SECOND ONE (si#134). Both are common in the
+#: wild, and carrying both would make `test_helpers.cpp` - the helper file a great many C++ projects
+#: have - a test target with no `main`, refused by the linker in a message about `_start`. A convention
+#: a product must follow belongs on the docs page as well as in this constant, and `case-cpp.md` states
+#: it.
 TEST_SUFFIX = "_test"
+
+#: The kinds a `targets: <name>: kind:` may name. `test` is NOT among them: where a file sits is what
+#: makes it a test, and a manifest turning one into a library would drop its `add_test` in silence.
+DECLARABLE_KINDS = ("executable", "shared", "static")
+
+#: The two kinds something can LINK, which is the one distinction the include visibility turns on.
+LIBRARY_KINDS = ("shared", "static")
+
+#: The level a co-located test carries, and the two a `tests/` subdirectory may name (si#134). THE
+#: LOCATION IS THE LEVEL: `src/<target>/<name>_test.<ext>` sits beside its unit, and `tests/` holds what
+#: is about the assembled product and has no single unit to sit beside. A reader has to be able to tell
+#: a level from a path without opening the file, which is why this is a rule about meaning rather than a
+#: convenience.
+UNIT_LEVEL = "unit"
+TEST_LEVELS = ("acceptance", "system")
 
 
 @dataclass(frozen=True)
@@ -48,6 +73,14 @@ class Target:
 
     `directory` and every entry of `sources` are relative to the product root, never absolute: an
     absolute path would put the machine that ran the generator into a committed file.
+
+    `directory` is the target's ROOT and not necessarily where each source sits: a nested directory
+    folds into the target above it (si#131), so `src/net/tcp/socket.cpp` is a source of `net` whose
+    directory is still `src/net`. That is what lets one `CMakeLists.txt` per target root carry a whole
+    subtree, and it is why every renderer takes a source relative to `directory` rather than to itself.
+
+    `level` is a test's LEVEL and is `None` on everything else - including on a test that sits directly
+    in `tests/`, which is the shape si#102 shipped and which names no level.
     """
 
     name: str
@@ -56,6 +89,7 @@ class Target:
     sources: list[Path] = field(default_factory=list)
     depends: list[str] = field(default_factory=list)
     include: list[str] = field(default_factory=list)
+    level: str | None = None
 
 
 def read_tree(root: Path, overrides: Mapping[str, Mapping[str, object]]) -> list[Target]:
@@ -100,42 +134,128 @@ def _unique(targets: list[Target]) -> None:
 
 
 def _library_targets(root: Path) -> list[Target]:
-    """The directories under `src/`, one target each. Direct children only - a nested layout needs a
-    naming rule the design does not state, and inventing one here would decide it by accident."""
+    """The directories under `src/`, one target each, WITH EVERYTHING BENEATH THEM (si#131).
+
+    A NESTED DIRECTORY IS NOT ITS OWN TARGET; its sources fold into the target above it. Three things
+    decided that, and the first is the one si#102 got wrong by accident. Making `src/net/tcp/` a target
+    needs an answer to what it is CALLED, and every answer is a new rule: `tcp` collides with
+    `src/util/tcp` in the flat namespace `_unique`, `_overridden`, `depends:`, `add_subdirectory` and
+    the `.csproj` GUID derivation all key on, and `net_tcp` or `net.tcp` are inventions this design has
+    no reason to choose between. Folding needs no name at all.
+
+    The second is that the .NET half already works this way and cannot be made to work the other way:
+    an SDK-style project globs `**/*.cs` beneath itself - `_render_csproj` emits no `<Compile>` items -
+    so a directory under a project directory is ALREADY part of that project whatever this model says.
+    One target per `src/<name>/` with recursive sources is the rule that reads the same tree twice.
+
+    The third is that only this default is escapable. A product that wants `src/net/tcp` to be its own
+    library writes `src/tcp/`; under the other rule a product that wants folding cannot ask for it.
+
+    A `_test`-suffixed source is LIFTED OUT rather than compiled in, which is si#134's whole subject -
+    see `_colocated_tests`.
+    """
     src = root / "src"
     if not src.is_dir():
         return []
     out: list[Target] = []
     for directory in sorted(p for p in src.iterdir() if p.is_dir()):
-        sources = _sources(directory)
-        if not sources:
-            continue
-        kind = "executable" if any((directory / m).is_file() for m in MAIN_FILES) else "library"
-        out.append(Target(name=directory.name, kind=kind,
-                          directory=directory.relative_to(root),
-                          sources=[p.relative_to(root) for p in sources]))
+        found = _tree_sources(directory)
+        sources = [p for p in found if not p.stem.endswith(TEST_SUFFIX)]
+        kind = ""
+        if sources:
+            _no_buried_main(directory, sources)
+            kind = "executable" if any((directory / m).is_file() for m in MAIN_FILES) else "static"
+            out.append(Target(name=directory.name, kind=kind,
+                              directory=directory.relative_to(root),
+                              sources=[p.relative_to(root) for p in sources]))
+        out += _colocated_tests(root, directory, kind)
     return out
 
 
-def _test_targets(root: Path) -> list[Target]:
-    """The test targets, and the two spellings are the design's own table rather than a choice here.
+def _colocated_tests(root: Path, directory: Path, kind: str) -> list[Target]:
+    """The unit tests that sit inside `directory`, each its own target rather than part of it (si#134).
 
-    A `tests/<name>_test.<ext>` FILE is one target: a C++ test is its own executable and its own ctest
-    case. A DIRECTORY under `tests/` is one target too: a .NET test project is a directory of `.cs`
-    files, and one project per file is not a shape that language has.
+    THIS IS THE DEFECT THE RULE EXISTS FOR, and it was not a missing feature. `_sources` returned every
+    source directly in a directory, so `src/net/net_test.cpp` was swept into the LIBRARY's source list
+    and compiled into it: the test's code, its `main` and whatever framework it links shipped inside the
+    artefact, and nothing in any run said a word - a static archive gives up a member only to resolve an
+    undefined symbol, and `main` is already defined by whoever links the archive, so the stray one is
+    never even reached. No assertion over generated text can see it either, which is why it survived
+    si#102's entire review and why `tests/test_buildfiles_e2e.py` reads `nm` over the archive.
+
+    THE DEPENDENCY IS DERIVED AND NOT DECLARED, which is the point of putting the test there. The test
+    sits INSIDE the library's directory, so the tree already says which library it tests and where its
+    header is; a `depends:`/`include:` pair in the manifest would be a second statement of a fact the
+    location makes. It is derived only for a LIBRARY, because CMake refuses `target_link_libraries`
+    against an executable - a unit test beside a `main.cpp` links nothing and says so by linking
+    nothing.
+    """
+    return [Target(name=source.stem, kind="test", directory=directory.relative_to(root),
+                   sources=[source.relative_to(root)], level=UNIT_LEVEL,
+                   depends=[directory.name] if kind in LIBRARY_KINDS else [])
+            for source in _tree_sources(directory) if source.stem.endswith(TEST_SUFFIX)]
+
+
+def _no_buried_main(directory: Path, sources: list[Path]) -> None:
+    """Refuse a `main` below a target's root, which folding would otherwise archive in silence.
+
+    `src/net/tools/main.cpp` folds into the library `net` under the rule above, and the result is a
+    static archive carrying a stray `main` that nothing ever complains about: the linker pulls an
+    archive member only to resolve an undefined symbol, and every program that links `net` has defined
+    `main` itself already. That is the same class of defect as si#134 one directory over - wrong,
+    silent, and inside a committed artefact - so it is refused where it is created rather than found
+    later with `nm`.
+
+    It forbids nothing a product could have shipped: an executable is a `src/<name>/` whose main sits at
+    its root, and the message says exactly that.
+    """
+    buried = [p for p in sources if p.name in MAIN_FILES and p.parent != directory]
+    if buried:
+        log.die(f"{buried[0].relative_to(directory.parent.parent).as_posix()} is a `main` below the "
+                f"target `{directory.name}`, and a nested directory folds into the target above it - "
+                f"so this would be compiled INTO the library, where a stray `main` is invisible. An "
+                f"executable is a `src/<name>/` holding its main at the root: move it to "
+                f"`src/{buried[0].parent.name}/`. Nothing was written.")
+        raise SystemExit(1)
+
+
+def _test_targets(root: Path) -> list[Target]:
+    """The test targets under `tests/`, and the LEVEL each one carries (si#134).
+
+    `tests/` holds two levels now - system and acceptance, which are about the assembled product and
+    have no single unit to sit beside - so the generator has to tell them apart, and a subdirectory
+    named for the level is how a product says which. Anything else directly under `tests/` keeps
+    exactly the meaning si#102 shipped and carries no level: refusing the shape cppdemo runs today, to
+    make a rule tidy, would break a product for nothing.
     """
     tests = root / "tests"
     if not tests.is_dir():
         return []
-    out = [Target(name=source.stem, kind="test", directory=tests.relative_to(root),
-                  sources=[source.relative_to(root)])
-           for source in _sources(tests) if source.stem.endswith(TEST_SUFFIX)]
-    for directory in sorted(p for p in tests.iterdir() if p.is_dir()):
-        sources = _sources(directory)
+    out: list[Target] = []
+    for directory, level in [(tests, None), *((tests / name, name) for name in TEST_LEVELS)]:
+        if directory.is_dir():
+            out += _at_level(root, directory, level)
+    return out
+
+
+def _at_level(root: Path, directory: Path, level: str | None) -> list[Target]:
+    """The two shapes `tests/` holds, at one level, and the two are the design's own table rather than
+    a choice here.
+
+    A `<name>_test.<ext>` FILE is one target: a C++ test is its own executable and its own ctest case.
+    A DIRECTORY is one target too: a .NET test project is a directory of `.cs` files, and one project
+    per file is not a shape that language has. A level directory holds both, so a .NET product can name
+    a level as well - which is what keeps this a rule about location rather than a C++ feature.
+    """
+    out = [Target(name=source.stem, kind="test", directory=directory.relative_to(root),
+                  sources=[source.relative_to(root)], level=level)
+           for source in _sources(directory) if source.stem.endswith(TEST_SUFFIX)]
+    for sub in sorted(p for p in directory.iterdir()
+                      if p.is_dir() and not (level is None and p.name in TEST_LEVELS)):
+        sources = _tree_sources(sub)
         if sources:
-            out.append(Target(name=directory.name, kind="test",
-                              directory=directory.relative_to(root),
-                              sources=[p.relative_to(root) for p in sources]))
+            out.append(Target(name=sub.name, kind="test", directory=sub.relative_to(root),
+                              sources=[p.relative_to(root) for p in sources], level=level))
     return out
 
 
@@ -143,12 +263,22 @@ def _sources(directory: Path) -> list[Path]:
     """The source files DIRECTLY in `directory`, sorted. Sorted here rather than at every caller, so no
     renderer can be the one that forgot.
 
-    A file one level deeper - `src/core/detail/x.cpp` - is not read and not reported. Reading it would
-    need the nested naming rule the design does not state (see `_library_targets`), and reporting it
-    would refuse a layout that is legal in both languages. It is named here so it is a documented edge
-    rather than a discovered one.
+    Direct children, because this answers the one question that is about a directory's own contents:
+    which `<name>_test.<ext>` FILES are targets in their own right. A directory that IS a target reads
+    its whole subtree instead - see `_tree_sources`.
     """
     return sorted(p for p in directory.iterdir()
+                  if p.is_file() and p.suffix in SOURCE_SUFFIXES)
+
+
+def _tree_sources(directory: Path) -> list[Path]:
+    """Every source BENEATH `directory`, at any depth, sorted - a target's whole subtree (si#131).
+
+    Sorted over the full relative path rather than over the filename, so `calculator.cpp` precedes
+    `detail/mul.cpp` on every machine. The generated files are committed and reviewed; a directory walk
+    is not an order, and `rglob` gives none at all.
+    """
+    return sorted(p for p in directory.rglob("*")
                   if p.is_file() and p.suffix in SOURCE_SUFFIXES)
 
 
@@ -174,11 +304,62 @@ def _overridden(targets: list[Target], overrides: Mapping[str, Mapping[str, obje
     by_name = {t.name: t for t in targets}
     for name, body in overrides.items():
         target = by_name[name]
-        by_name[name] = Target(name=target.name, kind=target.kind, directory=target.directory,
+        by_name[name] = Target(name=target.name, kind=_kind(body, target), directory=target.directory,
                                sources=target.sources,
-                               depends=_names(body.get("depends"), name, "depends"),
-                               include=_names(body.get("include"), name, "include"))
+                               depends=_merged(target.depends,
+                                               _names(body.get("depends"), name, "depends")),
+                               include=_names(body.get("include"), name, "include"),
+                               level=target.level)
     return [by_name[t.name] for t in targets]
+
+
+def _kind(body: Mapping[str, object], target: Target) -> str:
+    """A `kind:` entry, or the one the tree derived - the whole of si#131's second face.
+
+    A DIRECTORY CANNOT SHOW WHETHER IT WANTS AN ARCHIVE OR A SHARED OBJECT, which is exactly the shape
+    of thing this key exists for: `src/<name>/` holding sources says library, and nothing about it says
+    which of the two. Everything else stays derived - a `main` at the root still makes an executable -
+    because the tree does say that.
+
+    A value outside the three is refused rather than passed on, because it would reach `_render_target`
+    and select nothing: `add_library` and `add_executable` are the two constructs there are, and a
+    typo like `kind: dynamic` would otherwise be written into a committed file as one of them.
+
+    `kind:` on a TEST is refused for a different reason: where a file sits is what makes it a test, and
+    turning one into a library here would silently drop its `add_test` - the suite would shrink by one
+    case and every run would still be green.
+    """
+    raw = body.get("kind")
+    if raw is None:
+        return target.kind
+    if target.kind == "test":
+        log.die(f"`targets: {target.name}: kind:` cannot be declared for a test - where a file sits is "
+                f"what makes it one, and a test that became a library would lose its `add_test` and "
+                f"shrink the suite without a word. Move the file if it is not a test.")
+        raise SystemExit(1)
+    if raw not in DECLARABLE_KINDS:
+        log.die(f"`targets: {target.name}: kind:` is {raw!r}, which is no kind - a target is one of "
+                f"{', '.join(DECLARABLE_KINDS)}. A library defaults to `static`; `shared` is the one "
+                f"thing a directory of sources cannot show about itself.")
+        raise SystemExit(1)
+    return str(raw)
+
+
+def _merged(derived: list[str], declared: list[str]) -> list[str]:
+    """The tree's own dependencies first, then the manifest's - and the manifest ADDS rather than
+    replaces.
+
+    A co-located unit test gets its library from where it sits (`_colocated_tests`). If a `depends:`
+    block overwrote that, then declaring one extra dependency on such a test - a mocking library, a
+    second component it exercises - would silently unlink it from the very unit it tests, and the
+    failure would arrive as an undefined symbol rather than as anything about the manifest. Nothing is
+    lost the other way: a target the tree derived nothing for has an empty list here and reads exactly
+    as it did before.
+
+    Order is kept, and for a linker it can matter: the derived library comes first, the manifest's
+    entries after it in the order the product wrote them.
+    """
+    return [*derived, *[name for name in declared if name not in derived]]
 
 
 def _names(raw: object, target: str, key: str) -> list[str]:
@@ -306,19 +487,62 @@ def render_cmake(targets: list[Target], directory: Path) -> str:
     return _text(lines)
 
 
+#: How each kind is added, and the two library keywords are written OUT rather than left off (si#131).
+#: A bare `add_library(<name> <sources>)` follows `BUILD_SHARED_LIBS`, which nobody sets and which is
+#: therefore `OFF` - so every library was static, no product could have both, and the file said nothing
+#: about it either way. A generated file that states what it produces is also the only one a reviewer
+#: can check against what came out.
+ADD_TARGET = {
+    "static": "add_library({name} STATIC {sources})",
+    "shared": "add_library({name} SHARED {sources})",
+    "executable": "add_executable({name} {sources})",
+    "test": "add_executable({name} {sources})",
+}
+
+#: What a library EXPORTS: the directory its own CMakeLists.txt sits in, which is where its headers sit
+#: beside its sources. `CMAKE_CURRENT_SOURCE_DIR` rather than a path assembled from the model, because
+#: this line lands in that directory's own file and the two can then never disagree.
+OWN_DIRECTORY = '"${CMAKE_CURRENT_SOURCE_DIR}"'
+
+
 def _render_target(target: Target) -> list[str]:
-    """One target's lines. A library is added, an executable and a test are built, and a test is also
-    registered with ctest - which is the whole of what the design's table says (section 2)."""
+    """One target's lines: what it is, what it links, what it offers, and - for a test - its ctest case
+    and its level.
+
+    THE INCLUDE VISIBILITY IS ONE RULE AND NOT A KEYWORD PER LINE (si#131). A library EXPORTS its
+    include directories; an executable and a test keep theirs private, because nothing links either of
+    them and `PUBLIC` there says nothing to anybody. `PRIVATE` on a library was the defect: the
+    directory was used to compile the target and inherited by nothing, so a library whose headers no
+    consumer could find - not even one target over in the same project - was the only kind this
+    generator could produce.
+
+    HOW FAR THE EXPORT GOES: USABLE WITHIN THE GENERATED PROJECT, and that is a decision rather than a
+    first cut. There is no `install(TARGETS ... EXPORT ...)` and no generated package config, because an
+    export set with no importer is code written for a consumer that does not exist; the consumer that
+    will exist is si#128's registry. The consequence is named rather than left to be found: the exported
+    path is a bare source-tree directory and not `$<BUILD_INTERFACE:...>`, so `install(TARGETS)` will
+    refuse this target the day somebody adds one, and si#128 is the ticket that wraps it.
+
+    WINDOWS IS NAMED AND NOT SOLVED. A `SHARED` target here gets no `-fvisibility=hidden`, no
+    `__declspec(dllexport)` and no generated export header, so it links on Linux and does not link on
+    Windows. The kernel ships no Windows toolchain; this is the boundary, not an oversight.
+    """
     sources = " ".join(p.relative_to(target.directory).as_posix() for p in target.sources)
-    command = "add_library" if target.kind == "library" else "add_executable"
-    lines = [f"{command}({target.name} {sources})"]
+    lines = [ADD_TARGET[target.kind].format(name=target.name, sources=sources)]
     if target.depends:
         lines.append(f"target_link_libraries({target.name} PRIVATE {' '.join(target.depends)})")
-    if target.include:
-        anchored = " ".join(_include(path) for path in target.include)
-        lines.append(f"target_include_directories({target.name} PRIVATE {anchored})")
+    exports = target.kind in LIBRARY_KINDS
+    paths = ([OWN_DIRECTORY] if exports else []) + [_include(path) for path in target.include]
+    if paths:
+        visibility = "PUBLIC" if exports else "PRIVATE"
+        lines.append(f"target_include_directories({target.name} {visibility} {' '.join(paths)})")
     if target.kind == "test":
         lines.append(f"add_test(NAME {target.name} COMMAND {target.name})")
+        if target.level is not None:
+            # THE LEVEL BECOMES A LABEL, which is what makes it a fact about the build rather than a
+            # fact about a path: `ctest -L unit` really selects the unit tests, and si#133 has
+            # something to carry into a report. A level the tree does not state renders no line at all.
+            lines.append(f'set_tests_properties({target.name} PROPERTIES LABELS "{target.level}")')
     return [*lines, ""]
 
 
@@ -374,12 +598,39 @@ def dotnet_files(targets: list[Target], root: Path, product: str) -> dict[Path, 
     Paths inside the files use forward slashes on every platform. MSBuild and Visual Studio both read
     them, and one spelling is what makes the bytes identical no matter which machine ran the generator.
     """
+    _expressible(targets)
     projects = {t.name: _project_path(t) for t in targets}
     _referenced(targets, projects)
     files = {root / f"{product}.sln": _render_solution(targets)}
     for target in sorted(targets, key=lambda t: t.name):
         files[root / _project_path(target)] = _render_csproj(target, projects)
     return files
+
+
+def _expressible(targets: list[Target]) -> None:
+    """Refuse a co-located unit test on the .NET side, because there is nothing correct to generate.
+
+    THE C++ ANSWER DOES NOT PORT, AND THE REASON IS THE SDK'S GLOB RATHER THAN ITS PACKAGE REFERENCES.
+    A second `.csproj` in the library's own directory is not a shape MSBuild has, and an SDK-style
+    project compiles `**/*.cs` beneath itself - `_render_csproj` emits no `<Compile>` items at all - so
+    the test file lands INSIDE the library whatever this model says about it. That is si#134's defect
+    with no generated statement able to undo it: the only fixes are a `<Compile Remove=...>` in every
+    library, or the move this message names.
+
+    So it says so. The design's section 8 asked exactly this question and asked for a plain answer
+    rather than something that builds and is wrong, and a refusal at the seam is the plain answer: the
+    CMake half keeps the feature, the .NET half keeps the truth, and nobody discovers the difference
+    from a shipped assembly.
+    """
+    colocated = [t for t in sorted(targets, key=lambda t: t.name) if t.level == UNIT_LEVEL]
+    if colocated:
+        source = colocated[0].sources[0].as_posix()
+        log.die(f"{source} is a unit test inside a project directory, and .NET cannot express that: an "
+                f"SDK-style project compiles every `.cs` beneath itself, so this file is part of the "
+                f"library whatever the solution says - the test framework's references and its code "
+                f"ship inside the artefact. Move it to `tests/{colocated[0].name}/`. Nothing was "
+                f"written.")
+        raise SystemExit(1)
 
 
 def _referenced(targets: list[Target], projects: Mapping[str, Path]) -> None:
@@ -527,7 +778,8 @@ def _model(product: context.ProductContext) -> list[Target]:
     targets = read_tree(product.root, _declared_targets(product))
     if not targets:
         log.die(f"{product.name}: nothing to build under {product.root} - a target is a `src/<name>/` "
-                f"directory holding {', '.join(SOURCE_SUFFIXES)} sources, or a "
+                f"directory holding {', '.join(SOURCE_SUFFIXES)} sources at any depth, a "
+                f"`src/<name>/<unit>{TEST_SUFFIX}.<ext>` unit test beside the unit it tests, or a "
                 f"`tests/<name>{TEST_SUFFIX}.<ext>` file. Nothing was written, because an empty "
                 f"project is the worst answer available here: it configures cleanly, produces nothing, "
                 f"and is then committed.")
@@ -560,7 +812,7 @@ def _declared_targets(product: context.ProductContext) -> Mapping[str, Mapping[s
         return {}
     if not isinstance(declared, Mapping):
         log.die(f"{where}: `{SECTION}: {TARGETS_KEY}:` must be a mapping of target name to "
-                f"{{ depends: [...], include: [...] }}, got {type(declared).__name__}")
+                f"{{ kind: ..., depends: [...], include: [...] }}, got {type(declared).__name__}")
         raise SystemExit(1)
     for name, body in declared.items():
         if not isinstance(body, Mapping):

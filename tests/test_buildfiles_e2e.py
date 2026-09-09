@@ -64,8 +64,20 @@ needs_docker = pytest.mark.skipif(
 
 # --- the product this file builds ------------------------------------------------------------------
 
-#: A C++ product with all three shapes the design's table names: a library directory, an executable
-#: directory, and a test file. Small on purpose - what is under test is the build files, not the code.
+#: The symbol the co-located unit test defines and nothing else does. It is the whole of si#134's
+#: proof: a name that can only have come from `calculator_test.cpp`, looked for in `libcalculator.a`.
+#: `main` alone would not do - every test file has one, and so does every executable - so the check
+#: needs a symbol whose presence in the archive has exactly one explanation.
+UNIT_TEST_MARKER = "e2edemo_unit_test_marker"
+
+#: A C++ product carrying every shape this lane decides (si#131, si#134, si#132), and no more than
+#: that - what is under test is the build files, not the code:
+#:
+#:   * `src/calculator/` - a static library whose sources are NESTED one level down (`detail/mul.cpp`)
+#:     and whose unit test sits BESIDE it (`calculator_test.cpp`);
+#:   * `src/plugin/` - a second library, declared `kind: shared`;
+#:   * `src/e2edemo/` - the executable, which links both and repeats NO include path;
+#:   * `tests/system/` - a system-level test, so `ctest -L` has two levels to tell apart.
 CPP_SOURCES = {
     "src/calculator/calculator.h": (
         "#pragma once\n"
@@ -80,39 +92,88 @@ CPP_SOURCES = {
         "\n"
         "namespace demo {\n"
         "int add(int a, int b) { return a + b; }\n"
+        "}\n"
+    ),
+    # NESTED, and the only definition of `demo::mul` there is. A generator that reads direct children
+    # only does not compile this file, and the failure is an undefined symbol at link time rather than
+    # a missing file - which is si#131's first face, and is why the definition lives down here.
+    "src/calculator/detail/mul.cpp": (
+        '#include "../calculator.h"\n'
+        "\n"
+        "namespace demo {\n"
         "int mul(int a, int b) { return a * b; }\n"
         "}\n"
     ),
-    "src/e2edemo/main.cpp": (
+    # CO-LOCATED, beside the unit it tests, and it names neither a dependency nor an include path: it
+    # sits inside the library's own directory, so the tree already says both (si#134).
+    "src/calculator/calculator_test.cpp": (
         "#include <cstdio>\n"
         "\n"
         '#include "calculator.h"\n'
         "\n"
-        "int main() {\n"
-        '    std::printf("e2edemo: 2 + 3 = %d\\n", demo::add(2, 3));\n'
-        "    return 0;\n"
-        "}\n"
-    ),
-    "tests/calculator_test.cpp": (
-        "#include <cstdio>\n"
-        "\n"
-        '#include "calculator.h"\n'
+        f"int {UNIT_TEST_MARKER}() {{ return 7; }}\n"
         "\n"
         "int main() {\n"
+        f"    if ({UNIT_TEST_MARKER}() != 7) {{ return 1; }}\n"
         '    if (demo::add(2, 3) != 5) { std::puts("add: wrong"); return 1; }\n'
         '    if (demo::mul(4, 5) != 20) { std::puts("mul: wrong"); return 1; }\n'
         '    std::puts("calculator: 2 of 2");\n'
         "    return 0;\n"
         "}\n"
     ),
+    "src/plugin/plugin.h": (
+        "#pragma once\n"
+        "\n"
+        "namespace demo {\n"
+        "int twice(int a);\n"
+        "}\n"
+    ),
+    "src/plugin/plugin.cpp": (
+        '#include "plugin.h"\n'
+        "\n"
+        "namespace demo {\n"
+        "int twice(int a) { return 2 * a; }\n"
+        "}\n"
+    ),
+    "src/e2edemo/main.cpp": (
+        "#include <cstdio>\n"
+        "\n"
+        '#include "calculator.h"\n'
+        '#include "plugin.h"\n'
+        "\n"
+        "int main() {\n"
+        '    std::printf("e2edemo: 2 + 3 = %d\\n", demo::add(2, 3));\n'
+        '    std::printf("e2edemo: 2 * 4 = %d\\n", demo::twice(4));\n'
+        "    return 0;\n"
+        "}\n"
+    ),
+    "tests/system/smoke_test.cpp": (
+        "#include <cstdio>\n"
+        "\n"
+        '#include "calculator.h"\n'
+        "\n"
+        "int main() {\n"
+        '    if (demo::add(1, 1) != 2) { std::puts("smoke: wrong"); return 1; }\n'
+        '    std::puts("smoke: 1 of 1");\n'
+        "    return 0;\n"
+        "}\n"
+    ),
 }
 
-#: The one thing the tree cannot say. `main.cpp` and `calculator_test.cpp` both include a header that
-#: lives in the library's directory, so both targets need the dependency AND the include path - which
-#: is the whole of what `build: targets:` exists for.
+#: THE WHOLE OF WHAT THE TREE CANNOT SAY, and its shortness is itself the assertion (si#131).
+#:
+#: There is no `include:` key anywhere any more. si#102's version needed one on both targets that
+#: reached `calculator.h`, because the library's include directory was PRIVATE and therefore inherited
+#: by nothing. A library that EXPORTS its own directory makes every one of those entries a repetition
+#: of a fact the link already carries - so if any of these targets still needed one, the compile would
+#: say so, on the header the manifest no longer names.
+#:
+#: `kind: shared` is the other half: a directory of sources cannot show whether it wants an archive or
+#: a shared object, and this is the one word that says it.
 CPP_TARGETS = {
-    "e2edemo": {"depends": ["calculator"], "include": ["src/calculator"]},
-    "calculator_test": {"depends": ["calculator"], "include": ["src/calculator"]},
+    "e2edemo": {"depends": ["calculator", "plugin"]},
+    "plugin": {"kind": "shared"},
+    "smoke_test": {"depends": ["calculator"]},
 }
 
 #: The .NET product, in the shapes the same table names for that language: a class library directory,
@@ -255,6 +316,20 @@ def test_a_product_that_declares_the_coordinate_gets_a_command_that_takes_nothin
 # --- C++: generated, configured, compiled, tested, executed -----------------------------------------
 
 
+def _inspect(*argv_lines):
+    """Run a line of shell in the toolchain image over the built tree, for `file` and `nm`.
+
+    WHY A SHELL LINE AND NOT AN ARGV. What is being read here is not a tool's exit code, it is a tool's
+    OUTPUT, and several tools have to be asked about several files in one container. `silkeh/clang:19`
+    carries `file`, `nm`, `readelf` and `objdump` (probed, 2026-09-09), so the reading needs nothing
+    the compile did not already need.
+
+    The rc is returned like every other step's, because a `file` that could not open the artefact and a
+    `file` that answered are two different things and only the rc tells them apart.
+    """
+    return _in_image(CPP, ["bash", "-c", "; ".join(argv_lines)], where="build inspect")
+
+
 @needs_docker
 def test_the_generated_cmake_tree_configures_compiles_tests_and_runs(monkeypatch, tmp_path, capfd):
     """THE ONE THAT MAKES THE OTHER TWO SUITES MEAN SOMETHING. Everything up to here compares strings;
@@ -288,9 +363,105 @@ def test_the_generated_cmake_tree_configures_compiles_tests_and_runs(monkeypatch
     # assert: and each one really did the thing, rather than exiting 0 having done nothing
     assert "Build files have been written to" in output
     assert "Linking CXX static library libcalculator.a" in output
+    assert "Linking CXX shared library libplugin.so" in output
     assert "Linking CXX executable e2edemo" in output
-    assert "100% tests passed, 0 tests failed out of 1" in output
+    assert "100% tests passed, 0 tests failed out of 2" in output
     assert "e2edemo: 2 + 3 = 5" in output
+    # ... and the nested source really was compiled INTO the library it sits under (si#131). `mul` is
+    # defined nowhere else, so a generator reading direct children only fails the link above rather
+    # than this line - which is the point: the defect is not a missing file, it is a missing symbol.
+    assert "e2edemo: 2 * 4 = 8" in output
+
+
+@needs_docker
+def test_the_artefacts_the_generator_named_are_the_artefacts_that_came_out(monkeypatch, tmp_path,
+                                                                          capfd):
+    """si#131 and si#132, READ OFF THE PRODUCED FILES - which is the only place either claim is true.
+
+    THIS IS THE PROOF STANDARD AND NOT A SECOND OPINION. `add_library(plugin SHARED ...)` appears in
+    the generated text whether or not CMake produced a shared object, `-DCMAKE_BUILD_TYPE` appears in
+    an argv whether or not the compiler was given `-g`, and si#102's own review read both kinds of
+    string and saw nothing. So nothing here greps a CMakeLists: it builds, and then asks `file` and
+    `nm` what is on the disk.
+
+    THE DEBUG CHECK LOOKS FOR `with debug_info` AND DELIBERATELY NOT FOR `not stripped`. Measured in
+    this image on 2026-09-09: a build with NO build type at all is already `not stripped`, and gains
+    `with debug_info` only when one is set. An assertion on the first word would be green on exactly
+    the tree si#132 was opened about - a check that cannot fail, which is the defect this repository
+    spends most of its time hunting.
+    """
+    # arrange
+    _product(monkeypatch, tmp_path, "e2edemo", CPP_SOURCES, CPP_TARGETS)
+    assert buildfiles.cmake() == 0
+    capfd.readouterr()
+
+    # act
+    configured = _step(CPP, "configure")
+    compiled = _step(CPP, "compile")
+    read = _inspect(
+        "file build/src/plugin/libplugin.so",
+        "file build/src/calculator/libcalculator.a",
+        "file build/src/e2edemo/e2edemo",
+        "echo '--- symbols in the library archive ---'",
+        "nm build/src/calculator/libcalculator.a",
+    )
+    output = _drain(capfd)
+
+    # assert
+    assert (configured, compiled, read) == (0, 0, 0), output
+
+    # assert: the kind a target declared is the kind that came out (si#131)
+    assert "libplugin.so: ELF" in output and "shared object" in output, output
+    assert "libcalculator.a: current ar archive" in output, output
+
+    # assert: the run carried a build type, and the binary can be debugged (si#132)
+    assert "with debug_info" in output, output
+
+    # assert: THE si#134 DEFECT, which no string assertion over the generated text can see - the unit
+    # test sits INSIDE the library's directory, and its code must not be inside the library
+    symbols = output.split("--- symbols in the library archive ---", 1)[-1]
+    assert UNIT_TEST_MARKER not in symbols, symbols
+    assert "T main" not in symbols, symbols
+    # ... and the archive is not empty either, or the two lines above would hold over nothing
+    assert "T _ZN4demo3addEii" in symbols, symbols
+    assert "T _ZN4demo3mulEii" in symbols, symbols
+
+
+@needs_docker
+def test_a_level_is_a_label_ctest_can_select_on(monkeypatch, tmp_path, capfd):
+    """si#134's other half: `tests/` holds two levels now, so the generated build has to tell them
+    apart - and the place a level becomes a fact rather than a path is ctest's own label.
+
+    THE ASSERTION IS ON THE ACCOUNTING LINE AND NOT ON THE EXIT CODE, and that is measured rather than
+    careful: `ctest -L nosuchlabel` exits **0** and prints `No tests were found!!!`. A level check that
+    read the rc would be green for a label nothing carries, which is the same green-that-cannot-fail
+    the debug-symbol check above avoids one file over.
+    """
+    # arrange
+    _product(monkeypatch, tmp_path, "e2edemo", CPP_SOURCES, CPP_TARGETS)
+    assert buildfiles.cmake() == 0
+    capfd.readouterr()
+    assert _step(CPP, "configure") == 0
+    assert _step(CPP, "compile") == 0
+    capfd.readouterr()
+
+    # act
+    unit = _in_image(CPP, ["ctest", "--test-dir", "build", "-L", "unit", "--output-on-failure"],
+                     where="build unit")
+    unit_said = _drain(capfd)
+    system = _in_image(CPP, ["ctest", "--test-dir", "build", "-L", "system", "--output-on-failure"],
+                       where="build unit")
+    system_said = _drain(capfd)
+
+    # assert: each level ran, and ran ONE test - the count is what an empty selection cannot fake
+    assert (unit, system) == (0, 0), unit_said + system_said
+    assert "100% tests passed, 0 tests failed out of 1" in unit_said, unit_said
+    assert "100% tests passed, 0 tests failed out of 1" in system_said, system_said
+
+    # assert: and it ran the RIGHT one. Both halves, because a label that selected everything would
+    # satisfy the first assertion of each pair on a suite of one test per level
+    assert "calculator_test" in unit_said and "smoke_test" not in unit_said, unit_said
+    assert "smoke_test" in system_said and "calculator_test" not in system_said, system_said
 
 
 @needs_docker

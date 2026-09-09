@@ -42,6 +42,41 @@ def test_the_cpp_profile_compiles_tests_and_analyses():
     assert "run-clang-tidy" in prof.commands["analyse"]["argv"]
 
 
+def test_the_cpp_configure_command_asks_for_a_build_type_that_carries_symbols():
+    """si#132: with a single-config generator an EMPTY `CMAKE_BUILD_TYPE` means no optimisation and no
+    `-g` at all, so the binary si#102 compiled and ran carried no debug symbols. Nothing set it, and
+    the generated `CMakeLists.txt` deliberately does not - a committed `set(CMAKE_BUILD_TYPE ...)`
+    would decide it for every consumer of that tree forever. The RUN is where it belongs, and this
+    table is the run: `support:toolchain` scaffolds it into the product's own manifest.
+
+    Held as a property rather than as one literal: what matters is that a type is asked for and that
+    the one asked for carries debug information. `Release` would pass the first half and fail the
+    second, which is the whole reason the choice is written down.
+    """
+    # arrange / act
+    argv = profiles.profile("cpp", version="19").commands["configure"]["argv"]
+    asked = [word for word in argv if word.startswith("-DCMAKE_BUILD_TYPE=")]
+
+    # assert
+    assert asked, f"nothing asks for a build type, so the build has neither symbols nor -O: {argv}"
+    assert asked[0].split("=", 1)[1] in ("Debug", "RelWithDebInfo"), asked
+
+
+def test_the_cpp_compile_command_does_not_name_a_configuration_of_its_own():
+    """The other half of si#132, and the one that keeps the two commands from disagreeing.
+
+    `CMAKE_BUILD_TYPE` is a SINGLE-config generator's knob: the type is fixed at configure time and the
+    build step must not carry a second answer. Ninja Multi-Config and the Visual Studio generators are
+    the opposite - they ignore the cache variable and take `--config` on the build - so a profile
+    naming both would be right on neither.
+    """
+    # arrange / act
+    argv = profiles.profile("cpp", version="19").commands["compile"]["argv"]
+
+    # assert
+    assert "--config" not in argv, argv
+
+
 def test_the_cpp_analyse_command_names_the_sources_it_analyses():
     """si#111: `clang-tidy -p build` takes its sources as POSITIONAL arguments and was given none, so it
     refused every run with `no input files specified` (rc 1). Measured in `silkeh/clang:19` over a real
