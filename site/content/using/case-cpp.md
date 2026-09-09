@@ -71,7 +71,7 @@ Every such row carries the ticket where the decision is still open.
 | 6 | Run the ctest suite in the same image | `./cppdemo.sh build unit` | run | 2026-09-09 06:41:08, rc 0, three of three |
 | 7 | A failing C++ test arrives red | `./cppdemo.sh build unit` | run | 2026-09-09 06:41:38, rc 8; transcript below |
 | 8 | A tree that does not compile reports a full green suite | `./cppdemo.sh build unit` | run | 2026-09-09 06:41:47, compile rc 2 and unit rc 0; table below |
-| 9 | Static analysis over the compile database | `./cppdemo.sh build analyse` | run | 2026-09-09, rc 1: the profile's argv names no input file, [simplon#111](https://github.com/marcozwyssig/simplon/issues/111) |
+| 9 | Static analysis over the compile database | `./cppdemo.sh build analyse` | run | 2026-09-09, rc 1: the profile's argv named no input file; fixed and re-driven the same day, [simplon#111](https://github.com/marcozwyssig/simplon/issues/111) |
 | 10 | Append an argument to the pinned argv | `./cppdemo.sh build analyse src/calculator.cpp` | does not exist yet | rc 2, refused by the command line before docker was asked, [simplon#105](https://github.com/marcozwyssig/simplon/issues/105) |
 | 11 | A verdict and an Allure archive for the ctest run | `test:accept` | does not exist yet | a gate names a suite or an impl, never a command, [simplon#106](https://github.com/marcozwyssig/simplon/issues/106) |
 | 12 | Refuse a toolchain reference that is not pinned | `./cppdemo.sh build configure` | run | 2026-09-09 06:45:25, rc 1; message below |
@@ -99,7 +99,7 @@ calling user. What it carries per language is argv and paths, nothing callable. 
 | `configure` | `cmake -S . -B build` |
 | `compile` | `cmake --build build -j` |
 | `unit` | `ctest --test-dir build --output-on-failure` |
-| `analyse` | `clang-tidy -p build` |
+| `analyse` | `run-clang-tidy -p build -quiet -warnings-as-errors=*` |
 
 Those are the four cppdemo runs, unedited. The manifest entry for one of them is the whole of what the
 product writes about compiling C++:
@@ -271,12 +271,27 @@ $ ./cppdemo.sh build analyse src/calculator.cpp
 Got unexpected extra argument (src/calculator.cpp)
 ```
 
-That is row 10, and it is what makes row 9 a refusal rather than a pass: `clang-tidy -p build` names no
-source file, so the profile's `analyse` entry cannot analyse anything, and the mechanism that was
-supposed to complete it is the one that is missing. `run-clang-tidy -p build` is one word longer, ships
-in the same image and walks the compile database itself - measured on this product, three files out of
-three, rc 0. Which of the two the table should carry is
-[simplon#111](https://github.com/marcozwyssig/simplon/issues/111).
+That is row 10, and it is what made row 9 a refusal rather than a pass: `clang-tidy -p build` names no
+source file, so the profile's `analyse` entry could not analyse anything, and the mechanism that was
+supposed to complete it was the one that was missing.
+
+{{< callout type="info" >}}
+**Since this walk: [simplon#111](https://github.com/marcozwyssig/simplon/issues/111) is closed, and the
+argv in the table above is what the kernel carries today.** `run-clang-tidy` ships in the same image,
+reads the compile database `configure` already wrote and analyses everything the project really compiles -
+re-driven on a scaffolded product on 2026-09-09, **three files out of three, rc 0**.
+
+Two words go with it, and both are measurements rather than taste. `-quiet` drops the several-hundred-line
+dump of every enabled check the driver prints ahead of the run. `-warnings-as-errors=*` is what makes the
+command a check at all: on a deliberate null dereference the driver **prints**
+`clang-analyzer-core.NullDereference` and **still exits 0**, because clang-tidy reports its findings as
+warnings - so without the flag `analyse` is green on every tree, and a gate naming it is green forever.
+With it, that tree is rc 1 and a clean one is still rc 0.
+
+Row 10 is closed too, by si#105: `toolchain:run` now declares the variadic tail and
+`passthrough_args: true`, so `./cppdemo.sh build analyse <anything>` reaches the tool. The appending rule
+is no longer what `analyse` depends on, which is the point of the driver.
+{{< /callout >}}
 
 ## test
 

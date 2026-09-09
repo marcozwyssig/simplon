@@ -239,10 +239,19 @@ second .NET run.
 
 **There is no `test` group in this product, and that is the honest headline of the section.**
 
-Two separate things put it there. The first is placement: `support toolchain` writes all three commands
-under `build`, while the design's own command table promises `test unit` and `test analyse`. The
-placement is the scaffolder's, so it is kept here rather than corrected on the page - `toolchain:run` is
-a family and free to be filed anywhere, so both are legal and only one of them is what a product gets.
+Two separate things put it there. The first is placement, and
+[simplon#111](https://github.com/marcozwyssig/simplon/issues/111) settled it rather than leaving it
+open: `support toolchain` writes all three commands under `build`, the design's own command table
+promised `test unit` and `test analyse`, and **the scaffolder is the one that is right**.
+
+`build` is where a raw toolchain invocation belongs. It runs a pinned image over the tree and hands back
+the container's exit code, nothing else. `test` is where a *verdict* belongs, and since
+[simplon#106](https://github.com/marcozwyssig/simplon/issues/106) a gate may name a command in the
+product's own tree - so the shape a product ends on is `build unit` as the command and a `suites:` gate
+that names it, arriving as `test accept`. Filing the bare `dotnet test` at `test unit` would put a
+number with no verdict directly beside a verdict under one group, which is the trap the rest of this
+section is about. `toolchain:run` stays a family either way: the [C++ chapter](../case-cpp/) files the
+very same coordinate under `deploy up`.
 
 The second is the one that matters. Run the tests:
 

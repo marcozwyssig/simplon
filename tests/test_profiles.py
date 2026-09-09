@@ -39,7 +39,38 @@ def test_the_cpp_profile_compiles_tests_and_analyses():
     assert prof.image == "silkeh/clang:19"
     assert prof.commands["compile"]["argv"][:2] == ["cmake", "--build"]
     assert "ctest" in prof.commands["unit"]["argv"]
-    assert "clang-tidy" in prof.commands["analyse"]["argv"]
+    assert "run-clang-tidy" in prof.commands["analyse"]["argv"]
+
+
+def test_the_cpp_analyse_command_names_the_sources_it_analyses():
+    """si#111: `clang-tidy -p build` takes its sources as POSITIONAL arguments and was given none, so it
+    refused every run with `no input files specified` (rc 1). Measured in `silkeh/clang:19` over a real
+    CMake product: `run-clang-tidy -p build` walks the compile database itself - 3 files out of 3, rc 0.
+
+    Held as a rule rather than as a literal, because the property is what matters: the argv either names
+    an input or it names a driver that finds its own. Bare `clang-tidy` does neither.
+    """
+    # arrange / act
+    argv = profiles.profile("cpp", version="19").commands["analyse"]["argv"]
+
+    # assert: the driver, and the compile database it walks
+    assert argv[0] == "run-clang-tidy", f"a bare clang-tidy has no input to analyse: {argv}"
+    assert argv[1:3] == ["-p", "build"], argv
+
+
+def test_every_analyse_command_can_actually_fail():
+    """The verdict has to follow the step. Measured in the pinned images on 2026-09-09: `dotnet format
+    --verify-no-changes` exits 2 on a formatting fault and `mypy .` exits 1 on a type error, but
+    `run-clang-tidy` exits 0 with the finding printed - a clean null-dereference report and rc 0 - so an
+    analyse command without `-warnings-as-errors` is a check that cannot go red and a gate naming it is
+    green forever.
+    """
+    # arrange / act
+    argv = profiles.profile("cpp", version="19").commands["analyse"]["argv"]
+
+    # assert
+    assert "-warnings-as-errors=*" in argv, (
+        f"clang-tidy reports its findings as WARNINGS and still exits 0: {argv}")
 
 
 def test_the_other_three_languages_carry_their_own_toolchain():

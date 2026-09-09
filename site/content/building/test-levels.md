@@ -152,6 +152,11 @@ did not run, so the run has learned nothing about the product. A gate's `precond
 on a command gate as well - a product with no Python in it must not have to write a Python body in order
 to reach a hook.
 
+**The rc a command gate folds into its verdict is the container's own, and the tools disagree about it.**
+The kernel interprets nothing, so what reaches the verdict is whatever the tool chose: a failing `ctest`
+run exits **8**, `dotnet format --verify-no-changes` exits **2** on a formatting fault, `gradle test` and
+`mypy` exit 1. Non-zero is the whole rule; anything comparing to `1` reads two of those four as a pass.
+
 What is refused, and only when the gate actually runs, because deciding it needs the parsed manifest:
 
 > 'suites.gates.unit.command': 'build ctest' is not a command in this product's tree (declared: build

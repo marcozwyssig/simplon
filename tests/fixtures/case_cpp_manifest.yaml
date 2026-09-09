@@ -46,12 +46,12 @@ groups:
           extra: []
       analyse:
         task: "toolchain:run"
-        help: "Run clang-tidy over the compile database the configure step wrote."
+        help: "Run clang-tidy over every file in the compile database the configure step wrote."
         with:
           body:
             image: "silkeh/clang:19"
             workdir: /src
-            argv: ["clang-tidy", "-p", "build"]
+            argv: ["run-clang-tidy", "-p", "build", "-quiet", "-warnings-as-errors=*"]
           where: "build analyse"
           extra: []
   release:

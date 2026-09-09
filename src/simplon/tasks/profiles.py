@@ -45,13 +45,40 @@ PROFILES: dict[str, Profile] = {
         commands={
             "configure": {"workdir": "/src", "argv": ["cmake", "-S", ".", "-B", "build"]},
             "compile": {"workdir": "/src", "argv": ["cmake", "--build", "build", "-j"]},
+            # ctest EXITS 8, not 1, on a failed test - measured again on 2026-09-09: three cases, one
+            # broken, `67% tests passed, 1 tests failed out of 3`, rc 8. It reports its own error class
+            # in the exit code and the kernel passes the number through untouched, so anything that
+            # compares a toolchain command's rc to `1` rather than to `0` reads this run as a pass.
             "unit": {"workdir": "/src", "argv": ["ctest", "--test-dir", "build", "--output-on-failure"]},
-            "analyse": {"workdir": "/src", "argv": ["clang-tidy", "-p", "build"]},
+            # THE DRIVER, NOT THE CHECKER, and both of the extra words are measured rather than taste
+            # (si#111). `clang-tidy` takes its sources as POSITIONAL arguments, so `clang-tidy -p build`
+            # named none and refused every run it was ever given - `no input files specified`, rc 1, in
+            # both directions, because a caller appending one file would still analyse one file.
+            # `run-clang-tidy` ships in the same image, reads the compile database `configure` already
+            # wrote, and analyses everything the project really compiles: 3 files out of 3, rc 0.
+            #
+            # `-quiet` drops the several-hundred-line dump of every enabled check that the driver prints
+            # ahead of the run, and keeps the findings.
+            #
+            # `-warnings-as-errors=*` is what makes the command a CHECK. Measured on a deliberate null
+            # dereference: the driver PRINTS `clang-analyzer-core.NullDereference` and still exits 0,
+            # because clang-tidy reports findings as warnings - so without this flag `analyse` is green
+            # on every tree, and a gate naming it is green forever. With it, the same tree is rc 1 and a
+            # clean one is still rc 0. It is the C++ spelling of what `dotnet format
+            # --verify-no-changes` (rc 2) and `mypy .` (rc 1) do by themselves.
+            "analyse": {"workdir": "/src",
+                        "argv": ["run-clang-tidy", "-p", "build", "-quiet",
+                                 "-warnings-as-errors=*"]},
         },
     ),
     "java": Profile(
         image="gradle:jdk{version}",
         commands={
+            # DRIVEN AND LEFT AS IT IS (si#122): both commands run and both are green on a green tree,
+            # but `gradle build` depends on `check`, so `compile` runs the tests too and a broken
+            # assertion makes the COMPILE red - which is the distinction a gate's `preamble:` exists to
+            # draw. And there is no `analyse` here, because Java's checkers are Gradle plugins the
+            # product's own `build.gradle` has to apply rather than a word the kernel can put in an argv.
             "compile": {"workdir": "/work", "argv": ["gradle", "build", "--no-daemon", "--console=plain"]},
             "unit": {"workdir": "/work", "argv": ["gradle", "test", "--no-daemon", "--console=plain"]},
         },
@@ -61,11 +88,19 @@ PROFILES: dict[str, Profile] = {
         commands={
             "compile": {"workdir": "/src", "argv": ["dotnet", "build"]},
             "unit": {"workdir": "/src", "argv": ["dotnet", "test"]},
+            # `dotnet format --verify-no-changes` EXITS 2, not 1, on a formatting fault - measured
+            # again on 2026-09-09: two stray spaces, `error WHITESPACE: Fix whitespace formatting`,
+            # rc 2. Same rule as ctest's 8 above: compare to 0, never to 1.
             "analyse": {"workdir": "/src", "argv": ["dotnet", "format", "--verify-no-changes"]},
         },
     ),
     "python": Profile(
         image="python:{version}",
+        # DRIVEN AND BROKEN, and left for si#121 rather than guessed at here: the official `python:3.12`
+        # carries neither tool, so both commands exit 127 before the product is looked at. What the entry
+        # should say is the same kind of open question si#111 was - name a product-built image, install
+        # into a cache volume first, or drop the profile because Python's toolchain is a per-product set
+        # of wheels rather than a compiler.
         commands={
             "unit": {"workdir": "/src", "argv": ["pytest", "-q"]},
             "analyse": {"workdir": "/src", "argv": ["mypy", "."]},
