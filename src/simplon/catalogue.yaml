@@ -195,6 +195,27 @@ tasks:
       config:  { help: "path to the mypy configuration, relative to `workdir` (default mypy.ini)" }
       workdir: { help: "directory mypy runs in, relative to the product root (default: the root)" }
       python:  { help: "interpreter to run mypy with, relative to `workdir` (default: the host venv the CLI runs in)" }
+  # The release-notes guard (si#89, si#103). It was a test in this kernel's own `tests/` - which guarded
+  # this kernel and nothing else, so every product consuming the catalogue could tag, publish and never
+  # write a word, and nothing said anything. That is netctl#1280's rule exactly: an `impl:` belongs in the
+  # platform as soon as it needs no product knowledge, and this needs none. Which versions exist is
+  # `git tag`, which the page documents is its headings, what landed between two tags is `git log`.
+  #
+  # A `test:` NAMESPACE, so si#34 makes it a PLACEMENT: it may only sit under `test`, in every product.
+  # `release:` was the live alternative and is refused in the body's own docstring - the notes are written
+  # BEFORE the tag (si#3), so a guard that only speaks when `release tag` is typed speaks after every
+  # cheap chance to fix it has passed.
+  #
+  # DECLARED, NOT PLACED, by si#58's bar: it reads a `releases:` section naming the page and two version
+  # floors, so placed it would be a command that dies on its first line in every product that keeps no
+  # release notes. A product declares it the day it has a page; simplon does exactly that.
+  #
+  # NO `params:`, because there is nothing for a `with:` block to pin: all three values are the product's
+  # DATA and arrive through the manifest, and si#105's rule means a key here that no parameter answers to
+  # is refused at load anyway.
+  test:release-notes:
+    impl: simplon.tasks.releasenotes:check
+    help: "Check the product's releases page against the tags and merges its repository carries."
   test:report:
     impl: simplon.tasks.testrun:report_cmd
     help: "Merge the unit results into the shared Allure results and render the HTML archive."
