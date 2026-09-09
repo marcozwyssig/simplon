@@ -120,14 +120,84 @@ could not introspect itself is worse than one that says *unknown* - and a produc
 epilog keeps it, with the kernel's line below it. Top-level app only, and no `--version` flag comes with
 it. Nothing to do.
 
-### The design behind the language cluster, as a document (si#131)
+### The C++ model can say what a target IS (si#131, si#132, si#134)
 
-A merge that ships no code and is named here because the notes name every ticket merged into the range,
-not every ticket that changed behaviour. `docs/superpowers/specs/2026-09-09-the-language-cluster-design.md`
-records the four decisions eight tickets share - no new top-level manifest section, the location names
-the test level, a gate may name where its results landed, and `simplon init` defaults rather than
-decrees - together with the proof each of the eight owes. si#131 itself, the C++ target model, is not in
-this release; the document is what decided its shape. Nothing to do.
+0.10.0's generator read a tree and wrote build files; it could not be told what it was looking at. A
+directory one level down was invisible, a library was static because nothing said otherwise, an include
+path was `PRIVATE` so no consumer inherited it, and a co-located unit test was compiled INTO the library
+it tested. That last one shipped test code and its framework's symbols inside the artefact, and no run
+said a word about it.
+
+**A nested directory folds into its parent target.** The alternative - promoting it - has to invent a
+name, and every invented name collides in the flat namespace that `depends:`, `add_subdirectory` and the
+solution GUIDs already share. Folding invents nothing, matches what the .NET SDK's own glob does, and is
+the only default a product can escape by moving the directory.
+
+**The location names the test level.** `src/<target>/<name>_test.cpp` is a unit test and is lifted out
+of its library; `tests/` holds system and acceptance tests. Levels are ctest LABELS, so `ctest -L unit`
+really selects.
+
+**A build type, and no new key for it.** `support:toolchain` already scaffolds the profile into the
+product's manifest, so the argv IS the key - `RelWithDebInfo`, changeable where every other toolchain
+decision is made. Nothing is written into the generated `CMakeLists.txt`, because a committed
+`set(CMAKE_BUILD_TYPE ...)` would decide it for every consumer of that tree forever.
+
+The proof is at the artefact, not at the generated text: `file` distinguishes the shared object from the
+archive, `with debug_info` distinguishes a debug build from one without - and it is the only thing that
+does, because a build with NO build type is already `not stripped` and `nm` still lists its symbols. The
+archive is read to confirm it does not carry the test's object. Each of those was seen red first.
+
+**Nothing to do**, unless a product already relied on a nested directory being ignored.
+
+### A gate names where its results landed, and an empty level goes red (si#133)
+
+`allure.merge_results` was always technology-agnostic, and a product could reach it only by writing an
+`impl:` gate in Python. A gate now declares `results_from:`, naming the directory its own runner wrote
+results into, and the kernel merges it after the runner ran.
+
+**A level that contributed nothing is red.** That is the whole point: an Allure report rendered with a
+level missing looks exactly like one where the level passed. The kernel counts TEST CASES rather than
+files, because a runner whose selection matched nothing writes a file and exits 0 - `ctest -L
+<nothing>` does exactly that, and so does `dotnet test --filter` matching nothing.
+
+The counting table is closed and its default is open: a format the kernel cannot parse counts as a
+contribution rather than as an absence. Allure reads more formats than this kernel will ever know, and
+calling a level empty because the checker could not read its evidence is the same defect pointing the
+other way.
+
+Measured while building it: the pinned Allure image carries `junit-xml-plugin`, `xunit-xml-plugin` and
+`trx-plugin`, and raw allure-results JSON mixes with JUnit XML and TRX in one directory. The .NET SDK
+image ships the TRX logger and no JUnit logger.
+
+**Nothing to do.** A gate that declares no `results_from:` behaves exactly as before.
+
+### simplon init reads what the repository already knows (si#129, si#130)
+
+The product name argument is now OPTIONAL and defaults to the `origin` remote's repository name, falling
+back to the working tree's root directory name. The argument still wins. A name that cannot become a
+launcher filename and a shell token - `Ops Tools`, `my.ctl` - is REFUSED with the command that fixes it,
+never mangled into something that half works, and `init` outside a repository says so and names the
+argument rather than tracebacking.
+
+The orchestrator block's default is now `deploy/provision/orchestrator`, which is where every product
+that exists already puts it. `orchestrator/` remains available as `--orch-dir orchestrator`.
+
+**A credential leak fixed on the way.** The remote URL is quoted back to the user, and a URL is one of
+the places a token routinely lives: GitLab CI writes
+`https://gitlab-ci-token:<job token>@gitlab.com/...` into every job's checkout, so this would have
+printed a live token into every CI log. The whole userinfo field is replaced with `***`; a rule that
+tried to decide which halves of it are safe would be a rule that can be wrong.
+
+**Before you bump:** a new scaffold lands in a different directory than it did in 0.10.0. Existing
+products pass `--orch-dir` explicitly and are unaffected.
+
+### The design behind the language cluster, as a document (si#135)
+
+`docs/superpowers/specs/2026-09-09-the-language-cluster-design.md` records the four decisions eight
+tickets share - no new top-level manifest section, the location names the test level, a gate may name
+where its results landed, and `simplon init` defaults rather than decrees - together with the
+artefact-level proof each of the eight owes. Two of its own claims were disproved by the lanes that
+built against it and are corrected in place, which is the document working rather than failing.
 
 ### Before you bump
 
