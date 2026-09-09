@@ -6,6 +6,8 @@ every run and make that decision unusable within a week.
 """
 from pathlib import Path
 
+import pytest
+
 from simplon.tasks import buildfiles
 
 
@@ -155,3 +157,32 @@ def test_two_projects_never_share_a_guid():
     guids = {buildfiles.project_guid(f"src/{n}/{n}.csproj") for n in ("App", "Core", "Net")}
     assert len(guids) == 3
     assert all(guid in text for guid in guids)
+
+
+def test_a_dependency_naming_no_project_is_refused_rather_than_a_traceback(monkeypatch):
+    # arrange: `depends: [Coer]` is a typo of `Core`, and a `ProjectReference` is a PATH to a project -
+    # there is no path to one that does not exist. Before this it ended in `KeyError: 'Coer'` out of
+    # `_render_csproj`, a traceback out of the CLI where this module promises a diagnosis
+    monkeypatch.setattr(buildfiles.log, "die",
+                        lambda m, *a, **k: (_ for _ in ()).throw(RuntimeError(m)))
+    targets = [*_targets(),
+               buildfiles.Target(name="Web", kind="library", directory=Path("src/Web"),
+                                 sources=[Path("src/Web/C.cs")], depends=["Coer"])]
+
+    # act / assert: the target, the name it got wrong, and the projects that do exist
+    with pytest.raises(RuntimeError) as e:
+        buildfiles.dotnet_files(targets, Path("/product"), "demo")
+    assert "Web" in str(e.value) and "Coer" in str(e.value) and "Core" in str(e.value)
+
+
+def test_that_refusal_stops_rather_than_falling_through(monkeypatch):
+    # arrange: the rule every refusal in this module keeps - the line after `log.die` must not run on
+    # the assumption that it did not exit, or the KeyError comes back after the diagnosis
+    monkeypatch.setattr(buildfiles.log, "die", lambda m, *a, **k: None)
+    targets = [*_targets(),
+               buildfiles.Target(name="Web", kind="library", directory=Path("src/Web"),
+                                 sources=[Path("src/Web/C.cs")], depends=["Coer"])]
+
+    # act / assert
+    with pytest.raises(SystemExit):
+        buildfiles.dotnet_files(targets, Path("/product"), "demo")

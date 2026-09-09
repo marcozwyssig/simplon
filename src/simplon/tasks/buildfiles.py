@@ -275,8 +275,16 @@ def _include(path: str) -> str:
 
     An absolute path and one that is already a CMake variable are left alone: a product that writes
     either of those means it.
+
+    QUOTED, because CMake splits an UNQUOTED argument on whitespace and on `;`. A directory a real
+    filesystem allows - `Program Files`, a vendor drop carrying its version - would otherwise arrive as
+    two arguments naming two directories that do not exist, and the compile would fail on a header the
+    manifest named correctly, which is the very defect the anchoring above was added for. Quoting is
+    what a hand-written CMakeLists does and it forbids a product nothing: a path with no space renders
+    the same either way, and `${CMAKE_SOURCE_DIR}` still expands inside a quoted argument.
     """
-    return path if path.startswith(("/", "$")) else f"${{CMAKE_SOURCE_DIR}}/{path}"
+    anchored = path if path.startswith(("/", "$")) else f"${{CMAKE_SOURCE_DIR}}/{path}"
+    return f'"{anchored}"'
 
 
 def _text(lines: list[str]) -> str:
@@ -367,10 +375,36 @@ def dotnet_files(targets: list[Target], root: Path, product: str) -> dict[Path, 
     them, and one spelling is what makes the bytes identical no matter which machine ran the generator.
     """
     projects = {t.name: _project_path(t) for t in targets}
+    _referenced(targets, projects)
     files = {root / f"{product}.sln": _render_solution(targets)}
     for target in sorted(targets, key=lambda t: t.name):
         files[root / _project_path(target)] = _render_csproj(target, projects)
     return files
+
+
+def _referenced(targets: list[Target], projects: Mapping[str, Path]) -> None:
+    """Refuse a `depends:` entry that names no project, before a single file is rendered.
+
+    THE TWO HALVES DIVERGE HERE, and it is the two tools that divide them rather than a preference.
+    CMake's `target_link_libraries` takes a LIBRARY, and a name this generator does not know is a
+    legitimate thing to write there - `pthread`, `m`, a path to an archive the product ships - so the
+    CMake half passes an entry through and the design's own sentence about failing at link time is what
+    covers it. A `ProjectReference` cannot mean that: it is a PATH to a `.csproj`, and there is no path
+    to a project that does not exist.
+
+    Without this, `depends: [Coer]` reached `projects[name]` in `_render_csproj` and ended in
+    `KeyError: 'Coer'` - a traceback out of the CLI where this module promises a diagnosis, for what is
+    almost always a typo. So it is refused the way the typo one level up is refused: naming the target,
+    the name it got wrong, and the projects that do exist.
+    """
+    for target in sorted(targets, key=lambda t: t.name):
+        for name in target.depends:
+            if name not in projects:
+                log.die(f"`targets: {target.name}: depends:` names {name}, which is no project in "
+                        f"this tree - a .NET dependency is a ProjectReference and there is no path to "
+                        f"a project that does not exist. This product's projects are "
+                        f"{', '.join(sorted(projects)) or '(none)'}; nothing was written.")
+                raise SystemExit(1)
 
 
 def _project_path(target: Target) -> Path:

@@ -140,7 +140,7 @@ def test_a_declared_include_is_anchored_at_the_product_root():
     text = _files()[Path("/product/src/net/CMakeLists.txt")]
 
     # act / assert
-    assert "target_include_directories(net PRIVATE ${CMAKE_SOURCE_DIR}/vendor/asio/include)" in text
+    assert ('target_include_directories(net PRIVATE "${CMAKE_SOURCE_DIR}/vendor/asio/include")') in text
 
 
 def test_an_absolute_include_is_left_alone():
@@ -152,4 +152,21 @@ def test_an_absolute_include_is_left_alone():
     text = buildfiles.render_cmake(targets, Path("src/net"))
 
     # assert
-    assert "target_include_directories(net PRIVATE /opt/vendor/include)" in text
+    assert 'target_include_directories(net PRIVATE "/opt/vendor/include")' in text
+
+
+def test_an_include_path_holding_a_space_stays_one_argument():
+    # arrange: CMake splits an UNQUOTED argument on whitespace and on `;`, so a directory a real
+    # filesystem allows - "Program Files", a vendor drop with a space - would arrive as two arguments
+    # naming two directories that do not exist. Quoting is what a hand-written CMakeLists does, and it
+    # costs a product nothing it could otherwise have said
+    targets = [buildfiles.Target(name="net", kind="library", directory=Path("src/net"),
+                                 sources=[Path("src/net/b.cpp")],
+                                 include=["vendor/asio 1.30/include"])]
+
+    # act
+    text = buildfiles.render_cmake(targets, Path("src/net"))
+
+    # assert
+    assert ('target_include_directories(net PRIVATE '
+            '"${CMAKE_SOURCE_DIR}/vendor/asio 1.30/include")') in text
