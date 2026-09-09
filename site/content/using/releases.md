@@ -1,6 +1,6 @@
 ---
 title: "Releases"
-weight: 7
+weight: 8
 ---
 
 What each release changed, and what a product has to do about it.

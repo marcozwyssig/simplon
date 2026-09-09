@@ -1,0 +1,89 @@
+# cppdemo - a C++ product, delivered by Simplon (si#108).
+#
+# There is NO `tasks:` block. Every command below is an instance of a catalogue coordinate, and the
+# four that build the product are ONE coordinate - `toolchain:run` - differing only in the argv they
+# hand a pinned `silkeh/clang:19`. The product writes no build body of its own, in any language.
+#
+# This is the manifest the C++ chapter's transcripts were produced with, on 2026-09-09.
+product: cppdemo
+
+groups:
+  build:
+    commands:
+      # THE FOUR THE C++ PROFILE CARRIES (si#95), in the order they run. `body:`/`where:`/`extra:` are
+      # the parameter names `simplon.tasks.toolchain:run_toolchain` takes, and pinning them is the ONLY
+      # shape that assembles today - the flat `image:`/`workdir:`/`argv:` block the design writes and the
+      # scaffolder produces is refused at assembly (si#105).
+      configure:
+        task: "toolchain:run"
+        help: "Generate the build system into build/ (cmake -S . -B build)."
+        with:
+          body:
+            image: "silkeh/clang:19"
+            workdir: /src
+            argv: ["cmake", "-S", ".", "-B", "build"]
+          where: "build configure"
+          extra: []
+      compile:
+        task: "toolchain:run"
+        help: "Compile the product in the containerised toolchain."
+        with:
+          body:
+            image: "silkeh/clang:19"
+            workdir: /src
+            argv: ["cmake", "--build", "build", "-j"]
+          where: "build compile"
+          extra: []
+      unit:
+        task: "toolchain:run"
+        help: "Run the ctest suite in the same image the compile ran in."
+        with:
+          body:
+            image: "silkeh/clang:19"
+            workdir: /src
+            argv: ["ctest", "--test-dir", "build", "--output-on-failure"]
+          where: "build unit"
+          extra: []
+      analyse:
+        task: "toolchain:run"
+        help: "Run clang-tidy over the compile database the configure step wrote."
+        with:
+          body:
+            image: "silkeh/clang:19"
+            workdir: /src
+            argv: ["clang-tidy", "-p", "build"]
+          where: "build analyse"
+          extra: []
+  release:
+    commands:
+      tag: { task: "release:tag" }
+  deploy:
+    commands:
+      # The same coordinate again, filed under a different group - which is what makes `toolchain:run`
+      # a FAMILY rather than a placement (si#34).
+      up:
+        task: "toolchain:run"
+        help: "Run the compiled binary on this host (si#5: there is no further target)."
+        with:
+          body:
+            image: "silkeh/clang:19"
+            workdir: /src
+            argv: ["./build/cppdemo"]
+          where: "deploy up"
+          extra: []
+  support:
+    commands:
+      install: { task: "support:install" }
+      toolchain: { task: "support:toolchain" }
+
+default: dev
+environments:
+  dev: { backend: local, description: "Local development environment (the default)." }
+
+# Read by `toolchain:run` alone, and it is read even for a command that declares no caches at all
+# (si#105). `simplon init` writes no such section, so every product that adopts the uniform build has to
+# add one by hand today.
+instance:
+  env_var: CPPDEMO_INSTANCE
+  default: dev
+  max_id_len: 2
