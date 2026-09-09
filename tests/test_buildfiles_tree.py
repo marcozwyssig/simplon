@@ -216,6 +216,55 @@ def test_a_kind_declared_for_a_test_is_refused(tmp_path, monkeypatch):
     assert "net_test" in str(e.value) and "kind" in str(e.value)
 
 
+def test_a_library_kind_that_contradicts_a_main_at_the_root_is_refused(tmp_path, monkeypatch):
+    """The buried-main defect reached through the manifest instead of through a subdirectory.
+
+    `kind: static` on a directory that really holds a `main.cpp` renders `add_library(app STATIC
+    main.cpp)`, and the archive then carries a stray `main` that nothing ever complains about - a
+    static archive gives up a member only to resolve an undefined symbol, and whoever links it defined
+    `main` already. `_no_buried_main` refuses exactly this shape one function over; without this the
+    manifest was the way round it.
+    """
+    # arrange
+    monkeypatch.setattr(buildfiles.log, "die",
+                        lambda m, *a, **k: (_ for _ in ()).throw(RuntimeError(m)))
+    root = _tree(tmp_path, "src/app/main.cpp")
+
+    # act / assert
+    with pytest.raises(RuntimeError) as e:
+        buildfiles.read_tree(root, {"app": {"kind": "static"}})
+    assert "main.cpp" in str(e.value) and "app" in str(e.value)
+
+
+def test_an_executable_can_be_declared_where_the_main_is_not_called_main_cpp(tmp_path):
+    """The direction that is NOT a contradiction, and the reason `executable` is declarable at all: a
+    product whose `main` lives in `src/mytool/mytool.cpp` has no other way to say so, because
+    `MAIN_FILES` is the kernel's convention rather than the language's."""
+    # arrange
+    root = _tree(tmp_path, "src/mytool/mytool.cpp")
+
+    # act / assert
+    assert buildfiles.read_tree(root, {"mytool": {"kind": "executable"}})[0].kind == "executable"
+
+
+def test_two_co_located_tests_with_one_stem_are_refused_by_the_files_that_collided(
+        tmp_path, monkeypatch):
+    """Folding makes a target's DIRECTORY stop identifying it: two nested unit tests with the same stem
+    both belong to `src/net`, so a message naming the directory would say `src/net and src/net` and
+    point at the wrong fix. The fix is renaming a FILE, so the message names the files."""
+    # arrange
+    monkeypatch.setattr(buildfiles.log, "die",
+                        lambda m, *a, **k: (_ for _ in ()).throw(RuntimeError(m)))
+    root = _tree(tmp_path, "src/net/net.cpp",
+                 "src/net/tcp/socket_test.cpp", "src/net/udp/socket_test.cpp")
+
+    # act / assert
+    with pytest.raises(RuntimeError) as e:
+        buildfiles.read_tree(root, {})
+    assert "src/net/tcp/socket_test.cpp" in str(e.value)
+    assert "src/net/udp/socket_test.cpp" in str(e.value)
+
+
 def test_a_declared_dependency_adds_to_the_one_the_tree_derived(tmp_path):
     # arrange: a co-located test already links its library. If `depends:` REPLACED that, then naming
     # one extra dependency would silently unlink the test from the unit it tests, and the failure would

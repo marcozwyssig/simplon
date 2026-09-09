@@ -121,16 +121,33 @@ def _unique(targets: list[Target]) -> None:
 
     The refusal is diagnosis and costs no flexibility: it forbids nothing a product could have shipped.
     """
-    seen: dict[str, Path] = {}
+    seen: dict[str, str] = {}
     for target in targets:
         first = seen.get(target.name)
         if first is not None:
-            log.die(f"two directories both declare the target `{target.name}` - "
-                    f"{first.as_posix()} and {target.directory.as_posix()}. A target name is what "
+            log.die(f"two places both declare the target `{target.name}` - "
+                    f"{first} and {_origin(target)}. A target name is what "
                     f"CMake and the solution both key on, so one of the two has to be renamed; "
                     f"nothing was written.")
             raise SystemExit(1)
-        seen[target.name] = target.directory
+        seen[target.name] = _origin(target)
+
+
+def _origin(target: Target) -> str:
+    """Where a target came from, as a reader has to be told it in a refusal.
+
+    A TARGET'S DIRECTORY IS NOT ALWAYS WHAT IDENTIFIES IT, and si#131's folding is what made that true.
+    A co-located unit test's directory is the target ROOT it belongs to, not the subdirectory the file
+    sits in, so `src/net/tcp/socket_test.cpp` and `src/net/udp/socket_test.cpp` are two targets whose
+    directory is `src/net` twice - and a collision message naming `src/net and src/net` tells the
+    reader nothing and points at the wrong fix, which is renaming a FILE rather than a directory.
+
+    A target with exactly one source IS that file, so it is named by it; anything else is a directory
+    of sources and is named by the directory.
+    """
+    if len(target.sources) == 1:
+        return target.sources[0].as_posix()
+    return target.directory.as_posix()
 
 
 def _library_targets(root: Path) -> list[Target]:
@@ -274,9 +291,14 @@ def _sources(directory: Path) -> list[Path]:
 def _tree_sources(directory: Path) -> list[Path]:
     """Every source BENEATH `directory`, at any depth, sorted - a target's whole subtree (si#131).
 
-    Sorted over the full relative path rather than over the filename, so `calculator.cpp` precedes
+    Sorted over the whole path rather than over the filename, so `calculator.cpp` precedes
     `detail/mul.cpp` on every machine. The generated files are committed and reviewed; a directory walk
     is not an order, and `rglob` gives none at all.
+
+    The comparison is `Path`'s own, which is over the tuple of path PARTS and not over the joined
+    string - the two disagree at ties involving a separator (`ab/x` sorts before `ab-c/y` one way and
+    after it the other). What determinism needs is that every machine uses the SAME comparison, which
+    it does; the exact tie-break is not something a product should be told to rely on.
     """
     return sorted(p for p in directory.rglob("*")
                   if p.is_file() and p.suffix in SOURCE_SUFFIXES)
@@ -318,8 +340,18 @@ def _kind(body: Mapping[str, object], target: Target) -> str:
 
     A DIRECTORY CANNOT SHOW WHETHER IT WANTS AN ARCHIVE OR A SHARED OBJECT, which is exactly the shape
     of thing this key exists for: `src/<name>/` holding sources says library, and nothing about it says
-    which of the two. Everything else stays derived - a `main` at the root still makes an executable -
-    because the tree does say that.
+    which of the two. `executable` is declarable as well, for the one case the tree really cannot show
+    - a product whose `main` lives in `src/mytool/mytool.cpp` rather than in a file the kernel's
+    `MAIN_FILES` convention names - and that is the whole of si#131's "declare an application".
+
+    WHAT IS REFUSED IS A DECLARATION THAT CONTRADICTS THE TREE, and it is refused because the wrong way
+    round is silent. `kind: static` on a directory that really holds a `main.cpp` renders
+    `add_library(app STATIC main.cpp)`: an archive carrying a stray `main`, which nothing ever
+    complains about, because a static archive gives up a member only to resolve an undefined symbol and
+    whoever links it has defined `main` already. That is `_no_buried_main`'s defect reached through the
+    manifest instead of through a subdirectory, so it gets `_no_buried_main`'s answer. The other
+    direction is NOT refused: `kind: executable` on a directory with no main at all fails at link, on
+    `undefined reference to main`, which is loud and is the product's own statement being wrong.
 
     A value outside the three is refused rather than passed on, because it would reach `_render_target`
     and select nothing: `add_library` and `add_executable` are the two constructs there are, and a
@@ -328,6 +360,12 @@ def _kind(body: Mapping[str, object], target: Target) -> str:
     `kind:` on a TEST is refused for a different reason: where a file sits is what makes it a test, and
     turning one into a library here would silently drop its `add_test` - the suite would shrink by one
     case and every run would still be green.
+
+    ONE THING IS LEFT TO CMAKE AND IS NAMED RATHER THAN GUARDED: `kind: executable` on a library that
+    has a co-located unit test beside it. The test's derived link was computed from the tree, so it now
+    links a program, and CMake refuses that at configure with `Target "app" of type EXECUTABLE may not
+    be linked into another target` - which names both targets and is a better message than one written
+    here would be.
     """
     raw = body.get("kind")
     if raw is None:
@@ -336,6 +374,14 @@ def _kind(body: Mapping[str, object], target: Target) -> str:
         log.die(f"`targets: {target.name}: kind:` cannot be declared for a test - where a file sits is "
                 f"what makes it one, and a test that became a library would lose its `add_test` and "
                 f"shrink the suite without a word. Move the file if it is not a test.")
+        raise SystemExit(1)
+    if target.kind == "executable" and raw in LIBRARY_KINDS:
+        log.die(f"`targets: {target.name}: kind:` says {raw!r}, and the tree says executable - "
+                f"{', '.join(MAIN_FILES)} sits at the root of {target.directory.as_posix()}. Rendered "
+                f"as a library that would produce an archive carrying a stray `main`, which nothing "
+                f"ever complains about: a static archive gives up a member only to resolve an "
+                f"undefined symbol, and whoever links it defined `main` already. Move or rename the "
+                f"main file if this is a library.")
         raise SystemExit(1)
     if raw not in DECLARABLE_KINDS:
         log.die(f"`targets: {target.name}: kind:` is {raw!r}, which is no kind - a target is one of "
