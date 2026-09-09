@@ -111,7 +111,11 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
     # `build` is the newest namespace (#31): `build:image` produces a product's container image and
     # `release:image` publishes it, so the two halves of "this product ships a container" sit in the two
     # groups the five verbs put them in rather than in one command with a flag.
-    assert cat.namespaces() == ["build", "docs", "release", "support", "tasks", "test", "vcs"]
+    # `toolchain` is the newest (si#95): a FAMILY rather than a placement, because a containerised
+    # toolchain is needed by `build` AND by `test` - ctest, dotnet test and gradle test all belong under
+    # the latter, which `build:toolchain` would have forbidden.
+    assert cat.namespaces() == ["build", "docs", "release", "support", "tasks", "test", "toolchain",
+                                "vcs"]
     assert sorted(cat.namespace("vcs")) == ["auth-scopes", "commit", "prune-branches", "push",
                                             "submodules"]
     # `support:install` provisions the host tooling the kernel cannot work without (oras), and

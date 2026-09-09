@@ -309,7 +309,7 @@ def test_the_overview_table_lists_every_namespace_the_catalogue_has_and_no_other
 
     # assert: the six declared groups and the three families, exactly
     assert set(printed) == set(expected)
-    assert len(printed) == 9
+    assert len(printed) == 10
 
 
 def test_the_overview_counts_are_the_catalogues_own():
@@ -447,7 +447,7 @@ def test_every_catalogue_coordinate_appears_somewhere_on_the_page():
 
     # assert
     assert listed == set(cat.tasks)
-    assert len(listed) == 26, "the count moved - update the page, then this number"
+    assert len(listed) == 27, "the count moved - update the page, then this number"
 
 
 # --- the two empty ribs --------------------------------------------------------------------------------

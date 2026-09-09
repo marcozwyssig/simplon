@@ -145,8 +145,9 @@ the number that says whether a rib is filled:
 | `vcs` | family | 5 |
 | `docs` | family | 3 |
 | `tasks` | family | 2 |
+| `toolchain` | family | 1 |
 
-Twenty-six coordinates: sixteen carrying a placement, ten free to be filed. The numbers in this sentence, in that
+Twenty-seven coordinates: sixteen carrying a placement, eleven free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -336,6 +337,26 @@ of shipping would file `docs:site` under `release` and be just as right.
 The task machinery itself, and host tooling for whoever develops the product rather than a stage of the
 loop - which is why the catalogue places both under `support tasks` and not at the top level, where
 `tasks` would have claimed a very generic token beside `build` and `test`.
+
+### `toolchain`
+
+**In the catalogue today: 1 task.**
+
+- `toolchain:run`
+
+A pinned image run over the product tree, as the calling user, with named caches (si#95). It is the half
+of a build that is the same in every language: Java, C++, .NET and Python differ in which image runs and
+which argv it is handed, not in how a container is wired to a source tree.
+
+**A family rather than a placement, and that is load-bearing.** A coordinate opening with a group name may
+only be placed under that group, and a toolchain is needed by `build` AND `test` - `ctest`,
+`dotnet test` and `gradle test` all belong under the latter. `build:toolchain` would have been unusable
+where half its callers live.
+
+**What a product brings itself.** The image, the argv and the caches - or rather, it does not type them:
+`support toolchain <language>` writes a ready-made configuration into the manifest, and the product owns
+it from then on. Scaffolded rather than resolved at run time, so a kernel release can never change how a
+product builds.
 
 ## Where to go next
 
