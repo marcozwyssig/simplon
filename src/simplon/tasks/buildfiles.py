@@ -28,7 +28,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from simplon import log
+from simplon import context, log
 
 #: The extensions that make a directory a target. `.cs` is here because the same model feeds the .NET
 #: half - one tree read, two renderers - and not because a C++ product ever holds one.
@@ -196,13 +196,20 @@ CMAKE_VERSION = "3.20"
 # --- CMake, rendered (spec section 2) ----------------------------------------------------------------
 
 
-def cmake_files(targets: list[Target], root: Path) -> dict[Path, str]:
+def cmake_files(targets: list[Target], root: Path, product: str) -> dict[Path, str]:
     """Every CMakeLists.txt this product needs, keyed by where it lands.
 
     The keys carry `root`; the CONTENTS never do. That is what lets the same model render the same bytes
     on two machines whose checkouts sit in different places.
+
+    THE PROJECT IS NAMED AFTER THE PRODUCT AND NOT AFTER THE ROOT DIRECTORY, which is the same source
+    the .NET half names its solution from. `root.name` reads as the product's name right up to the point
+    where one checkout is not called what another one is - an agent worktree, a CI job that clones into
+    `work/`, a second clone beside the first - and then `project(...)` changes in a COMMITTED file for a
+    reason that has nothing to do with the product. The root then decides only where the files land,
+    which is what the paragraph above already claims.
     """
-    files = {root / "CMakeLists.txt": _render_root(targets, root.name)}
+    files = {root / "CMakeLists.txt": _render_root(targets, product)}
     for directory in sorted({t.directory for t in targets}):
         files[root / directory / "CMakeLists.txt"] = render_cmake(targets, directory)
     return files
@@ -389,3 +396,124 @@ def _render_solution(targets: list[Target]) -> str:
                       f"\t\t{guid}.{config}.Build.0 = {config}"]
     lines += ["\tEndGlobalSection", "EndGlobal"]
     return _text(lines)
+
+
+# --- the two coordinates, and the only two functions here that touch a disk (spec sections 1 and 3) ---
+
+#: The manifest section the `targets:` block lives under. A TOP-LEVEL `build:` section, beside `images:`
+#: and `artifacts:`, and NOT the `build` group: a product's command tree hangs off `groups:`, so the two
+#: names never meet, and the CLI engine ignores a section it does not model (`extra="ignore"`).
+SECTION = "build"
+
+#: The one key this kernel reads out of that section. Named as a constant because every refusal below
+#: quotes the path a reader has to edit, and a message pointing at a key spelled differently from the
+#: one that was looked up is worse than no message.
+TARGETS_KEY = "targets"
+
+
+def cmake() -> int:
+    """Write this product's CMakeLists.txt files from its source tree, replacing whatever is there.
+
+    NEITHER OF THESE TWO TAKES A PARAMETER, and that is the manifest's shape rather than an omission
+    (si#105). The loader binds a command's `with:` block to the impl's PARAMETERS one for one -
+    `simplon.cli._bound` refuses a key no parameter answers to, and `signatures.bindable` drops the
+    `**kwargs` that would have swallowed one silently - so every parameter written here is a promise
+    that a manifest may pin it, and every one a manifest pins has to be written here. Everything these
+    two need is already a statement the product makes elsewhere: its root and its name come from the
+    registered ProductContext, and the one thing a directory cannot show comes from the
+    `build: targets:` section. A parameter for either would be a second place to say the same thing,
+    which is exactly what the tree-first rule at the head of this module refuses.
+    """
+    product = context.current()
+    return _written(cmake_files(_model(product), product.root, product.name), product.root)
+
+
+def dotnet() -> int:
+    """Write this product's .sln and .csproj files from its source tree, replacing whatever is there.
+
+    The solution is named after the PRODUCT and every project after its directory, so the two names a
+    .NET developer sees are the two the product already carries. See `cmake` for why this takes nothing.
+    """
+    product = context.current()
+    return _written(dotnet_files(_model(product), product.root, product.name), product.root)
+
+
+def _model(product: context.ProductContext) -> list[Target]:
+    """This product's targets, or a refusal - never an empty list.
+
+    A tree with no target renders a project that configures, compiles nothing, and is then COMMITTED,
+    which is the worst of the three outcomes available: it is wrong, it is silent, and it is in the
+    repository where the next reader takes it for a statement somebody made. The cause is almost always
+    a layout the reader believes is already there, so the refusal says what was looked for rather than
+    that nothing was found.
+    """
+    targets = read_tree(product.root, _declared_targets(product))
+    if not targets:
+        log.die(f"{product.name}: nothing to build under {product.root} - a target is a `src/<name>/` "
+                f"directory holding {', '.join(SOURCE_SUFFIXES)} sources, or a "
+                f"`tests/<name>{TEST_SUFFIX}.<ext>` file. Nothing was written: an empty project would "
+                f"have been committed and would have compiled.")
+        raise SystemExit(1)
+    return targets
+
+
+def _declared_targets(product: context.ProductContext) -> Mapping[str, Mapping[str, object]]:
+    """The manifest's `build: targets:` block, in the shape `read_tree` is allowed to assume.
+
+    THE TREE IS THE DEFAULT AND THE MANIFEST IS THE EXCEPTION (si#102), so a product that declares
+    neither the section nor the block is the NORMAL case and gets an empty mapping rather than a
+    complaint. What is refused is a block of the wrong shape: `targets: { net: core }` is a plausible
+    typo for `net: { depends: [core] }`, and handed on it reaches `_overridden` as a string whose `.get`
+    does not exist - an AttributeError where this module promises a diagnosis.
+
+    The shape check lives here rather than in `read_tree` because this is the only function in the
+    module that touches a manifest at all; the renderers and the tree read stay unable to name one.
+    """
+    where = str(product.manifest_path)
+    section = product.manifest_data().get(SECTION)
+    if section is None:
+        return {}
+    if not isinstance(section, Mapping):
+        log.die(f"{where}: the `{SECTION}:` section must be a mapping holding `{TARGETS_KEY}:`, got "
+                f"{type(section).__name__}")
+        raise SystemExit(1)
+    declared = section.get(TARGETS_KEY)
+    if declared is None:
+        return {}
+    if not isinstance(declared, Mapping):
+        log.die(f"{where}: `{SECTION}: {TARGETS_KEY}:` must be a mapping of target name to "
+                f"{{ depends: [...], include: [...] }}, got {type(declared).__name__}")
+        raise SystemExit(1)
+    for name, body in declared.items():
+        if not isinstance(body, Mapping):
+            log.die(f"{where}: `{SECTION}: {TARGETS_KEY}: {name}:` must be a mapping, got "
+                    f"{type(body).__name__} - a dependency is written as "
+                    f"`{name}: {{ depends: [<name>] }}`")
+            raise SystemExit(1)
+    return {str(name): body for name, body in declared.items()}
+
+
+def _written(files: Mapping[Path, str], root: Path) -> int:
+    """Write every file, then NAME every file. Sorted, so two runs report in one order.
+
+    IT ALWAYS OVERWRITES, with no `--force` and no confirmation, and that is si#102's decision rather
+    than an unfinished one (spec section 2). A manifest is a product's own statement and `support
+    toolchain` never clobbers one; a CMakeLists.txt is a RENDERING of a statement, and reverting a
+    rendering is the whole point. A prompt would be asking somebody about a file this generator wrote.
+
+    The report is the other half of that decision. The run took an action nobody confirmed, so it says
+    which files carry it - relative to the product root, because an absolute path would name the machine
+    that ran the generator, which is exactly what the generated files themselves refuse to carry.
+
+    THE NEWLINE IS PINNED TO LF, because Python otherwise translates a line feed into the platform's
+    own line ending on write: the same model rendered on Windows would land as a CRLF file where a Linux
+    checkout wrote LF, which is a whole-file diff produced by nothing but the machine that ran the
+    generator, against output whose only value is that it is byte-identical between runs.
+    """
+    ordered = sorted(files)
+    for path in ordered:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(files[path], encoding="utf-8", newline="\n")
+    log.ok(f"wrote {len(ordered)} file(s): "
+           + ", ".join(path.relative_to(root).as_posix() for path in ordered))
+    return 0

@@ -23,8 +23,8 @@ def _targets():
     ]
 
 
-def _files(root=Path("/product")):
-    return buildfiles.cmake_files(_targets(), root)
+def _files(root=Path("/product"), product="product"):
+    return buildfiles.cmake_files(_targets(), root, product)
 
 
 def test_the_root_file_carries_the_minimum_version_and_the_project():
@@ -115,10 +115,13 @@ def test_rendering_the_same_targets_twice_returns_equal_strings():
 
 
 def test_two_runs_over_two_roots_render_the_same_bytes():
-    # arrange / act: two checkouts of one product, in two places. The root decides where the files LAND
-    # and what the project is CALLED; nothing else about it may reach the bytes.
-    here = buildfiles.cmake_files(_targets(), Path("/one/product"))
-    there = buildfiles.cmake_files(_targets(), Path("/two/product"))
+    # arrange / act: two checkouts of one product, in two places, and DELIBERATELY NOT CALLED THE SAME -
+    # an agent worktree, a CI job that clones into `work/`, a second clone beside the first. The root
+    # decides where the files land and nothing else about it may reach the bytes, which is why the
+    # project is named from the product rather than from `root.name`. With both roots called `product`
+    # this assertion held while the name still came from the directory.
+    here = buildfiles.cmake_files(_targets(), Path("/one/product"), "demo")
+    there = buildfiles.cmake_files(_targets(), Path("/elsewhere/product-worktree-2"), "demo")
 
     # assert
     assert [t for _, t in sorted(here.items())] == [t for _, t in sorted(there.items())]

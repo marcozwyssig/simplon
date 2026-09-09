@@ -40,7 +40,7 @@ The `NOT_LOAD_TIME` class list this docstring used to describe is GONE and its a
 them, because nothing reaches them from either seam. One exclusion is left, `_validation_message`'s
 funnel, and `test_the_only_excluded_raise_is_the_funnel_that_re_raises_the_model` holds it at exactly one.
 
-WHAT THE WALK CANNOT DO, said here rather than left to be discovered. Six modules read the manifest
+WHAT THE WALK CANNOT DO, said here rather than left to be discovered. Seven modules read the manifest
 document INLINE, in the middle of a task body, so the reading and the tool-running are one function and no
 static rule separates them. They are named in `READS_INLINE` with the reason - and which modules read the
 document is COMPUTED, so a new one that is in neither half turns
@@ -157,6 +157,10 @@ READS_INLINE = {
     "tasks.artifact": "`_declared(name)` reads its section inline and is the front half of a task body",
     "tasks.asset": "`_declared(name)`, same shape as tasks.artifact",
     "tasks.env": "`environments()` reads the document inline to answer a listing",
+    "tasks.buildfiles": "`_declared_targets(product)` fetches the document itself to read `build: "
+                        "targets:`, the same shape as tasks.artifact - and it refuses the way the rest "
+                        "of that module refuses, with `log.die`, so the walk would collect nothing from "
+                        "it even if it could follow it",
 }
 
 #: The funnel that re-raises a Pydantic error as the plain ValueError `load()` promises. It refuses

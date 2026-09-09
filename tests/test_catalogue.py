@@ -135,7 +135,13 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
     # tree and would catch it): both read an `images:` section naming the registry, the repository, the
     # Dockerfile and the build context, so a command declared in the catalogue's own `build:` group would
     # die on its first line in every product that ships no image.
-    assert sorted(cat.namespace("build")) == ["image"]
+    # `cmake-files` and `dotnet-solution` (si#102) are the newest, and they are the second half of si#95:
+    # `toolchain:run` runs a pinned compiler over a product tree, these two write the files that compiler
+    # reads. Declared and not placed by the same bar as `image` - a product written in neither language
+    # has no tree they could read - and neither takes a parameter, because the root and the product name
+    # come from the ProductContext and the one thing a directory cannot show is read from the product's
+    # own `build: targets:` section.
+    assert sorted(cat.namespace("build")) == ["cmake-files", "dotnet-solution", "image"]
     # `release:tag` (#32) is the newest, and the odd one out in its own namespace: `artifact` and `image`
     # publish what a build produced and both read a manifest section, while `tag` publishes NOTHING - it
     # cuts the name the release is made under and pushes it, which is what makes the workflows run at
