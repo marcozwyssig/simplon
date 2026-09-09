@@ -96,7 +96,7 @@ calling user. What it carries per language is argv and paths, nothing callable. 
 
 | command | what it runs in `silkeh/clang:19` |
 |---|---|
-| `configure` | `cmake -S . -B build` |
+| `configure` | `cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo` |
 | `compile` | `cmake --build build -j` |
 | `unit` | `ctest --test-dir build --output-on-failure` |
 | `analyse` | `run-clang-tidy -p build -quiet -warnings-as-errors=*` |
@@ -324,6 +324,92 @@ declared in `src/cppdemo/` lands at `build/src/cppdemo/cppdemo` and not at the `
 
 The table and the transcripts above are left standing as the record of what cppdemo met on the date they
 were measured.
+{{< /callout >}}
+
+{{< callout type="info" >}}
+**Since this walk, again: a target can say what it IS.** Driving the generator produced its own next
+three tickets, and two of them were one decision.
+[simplon#131](https://github.com/marcozwyssig/simplon/issues/131) asked whether a nested directory under
+`src/` is its own target, and [simplon#134](https://github.com/marcozwyssig/simplon/issues/134) asked
+where a unit test belongs - and the second answer depends on the first, so they were taken together.
+
+**A nested directory folds into the target above it.** `src/net/tcp/socket.cpp` is a source of `net`, at
+any depth, and there is no target called `tcp`. The other answer needs a name for it, and every name is
+an invention - `tcp` collides with `src/util/tcp` in the one namespace CMake, the solution and the
+`depends:` key all share. This one needs none, it is what the .NET SDK's `**/*.cs` glob already does
+whatever a solution file says, and it is the only one of the two a product can escape: a directory that
+wants to be its own library is written as `src/<name>/`. A `main` BELOW a target's root is refused rather
+than folded, because a static archive carrying a stray `main` is invisible - the linker gives up an
+archive member only to resolve an undefined symbol, and whoever links it defined `main` already.
+
+**A unit test sits beside its unit, and it is not part of it.** `src/<target>/<name>_test.<ext>` is a
+unit test; `tests/` holds what is about the assembled product. That is a rule about meaning - a reader
+has to be able to tell a level from a path without opening the file - and the thing it replaced was not
+a missing feature. Every source directly in a directory went into that directory's target, so
+`src/net/net_test.cpp` was compiled INTO `libnet.a`: the test's code and its `main` shipped inside the
+artefact and nothing in any run said a word. A co-located test names neither a dependency nor an include
+path, because sitting inside the library's directory already says both. `_test` is the one spelling;
+`test_<name>` is deliberately not a second one, or `test_helpers.cpp` becomes a test target with no
+`main`.
+
+**`tests/system/` and `tests/acceptance/` name a level, and a level is a ctest label.** So
+`ctest --test-dir build -L unit` really selects the unit tests, and a test directly in `tests/` keeps the
+meaning it had and carries no level. Worth knowing before writing a gate around it:
+`ctest -L <a-label-nothing-carries>` exits **0** and prints `No tests were found!!!`, so a check that
+reads the exit code is green for a level that contributed nothing.
+
+**A library can be shared, and its headers can be found.** `add_library` was written bare, so every
+target followed `BUILD_SHARED_LIBS` - which nobody sets, so every library was static and no product could
+have both. `targets: { plugin: { kind: shared } }` is the one word a directory of sources cannot say
+about itself; `static` and `executable` are the other two, and the kind is written into the generated
+file rather than left implied. Include directories were `PRIVATE`, which means used to compile the target
+and inherited by nothing, so a library's headers could not be found by the target one directory over. A
+library now exports the directory its sources sit in, and an executable and a test keep theirs private
+because nothing links either. The export is usable **within the generated project** and no further -
+there is no `install(TARGETS ... EXPORT ...)` and no package config, because an export set with no
+importer is written for a consumer that does not exist, and the consumer that will exist is
+[simplon#128](https://github.com/marcozwyssig/simplon/issues/128).
+
+**And [simplon#132](https://github.com/marcozwyssig/simplon/issues/132): the build had no debug symbols
+at all.** Nothing set `CMAKE_BUILD_TYPE`, and with a single-config generator an empty one means no
+optimisation and no `-g`. It is said in the profile's `configure` argv and NOT in the generated
+`CMakeLists.txt`, because a build type belongs to the run: a committed `set(CMAKE_BUILD_TYPE ...)` would
+decide it for every consumer of that tree forever. `RelWithDebInfo` is the default because a CI build is
+the one run whose artefact ships and whose failure has to be explicable, and
+`./cppdemo.sh build configure -DCMAKE_BUILD_TYPE=Debug` still wins - measured, the last `-D` is the one
+in the cache.
+
+Two things are named rather than solved. A `SHARED` target gets no `-fvisibility=hidden` and no generated
+export header, so it links on Linux and not on Windows, and the kernel ships no Windows toolchain. And a
+co-located unit test is REFUSED on the .NET side: an SDK-style project compiles every `.cs` beneath
+itself, so the file is part of the library whatever the solution says, and a second project in one
+directory is not a shape MSBuild has. Saying so beats generating something that builds and is wrong.
+
+**Driven end to end in this same `silkeh/clang:19`, and read off the artefacts rather than off the
+generated text** - which is the point, because `add_library(plugin SHARED ...)` appears in the file
+whether or not a shared object came out:
+
+```text
+$ file build/src/plugin/libplugin.so build/src/calculator/libcalculator.a build/src/e2edemo/e2edemo
+build/src/plugin/libplugin.so:        ELF 64-bit LSB shared object, x86-64 ... with debug_info, not stripped
+build/src/calculator/libcalculator.a: current ar archive
+build/src/e2edemo/e2edemo:            ELF 64-bit LSB pie executable, x86-64 ... with debug_info, not stripped
+
+$ nm build/src/calculator/libcalculator.a
+calculator.cpp.o:
+0000000000000000 T _ZN4demo3addEii
+
+mul.cpp.o:
+0000000000000000 T _ZN4demo3mulEii
+```
+
+Read the second command twice. The nested `detail/mul.cpp` is in the archive and the co-located
+`calculator_test.cpp` is not, and neither of those two facts is visible in any `CMakeLists.txt`. The
+executable links two libraries and its manifest names no include path at all.
+
+`with debug_info` is the phrase that matters and `not stripped` is not: a build with no build type at all
+is **also** `not stripped`, so an assertion on the second word would have been green on exactly the tree
+simplon#132 was opened about.
 {{< /callout >}}
 
 ## test

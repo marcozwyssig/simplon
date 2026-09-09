@@ -43,7 +43,34 @@ PROFILES: dict[str, Profile] = {
     "cpp": Profile(
         image="silkeh/clang:{version}",
         commands={
-            "configure": {"workdir": "/src", "argv": ["cmake", "-S", ".", "-B", "build"]},
+            # THE BUILD TYPE IS SAID HERE AND NOWHERE ELSE (si#132). With a single-config generator an
+            # EMPTY `CMAKE_BUILD_TYPE` means no optimisation and no `-g` at all, so the binary si#102
+            # compiled and ran carried no debug symbols; nothing set it, and the generated
+            # `CMakeLists.txt` deliberately does not either, because a committed
+            # `set(CMAKE_BUILD_TYPE ...)` would decide it for every consumer of that tree forever. A
+            # build type belongs to the RUN, and this table IS the run: `support:toolchain` scaffolds
+            # it into the product's own manifest, where it is a line a reviewer reads and a one-word
+            # diff to change. That is why si#132 needed no new manifest key.
+            #
+            # RelWithDebInfo rather than Debug or Release, and the choice silently decides what a stack
+            # trace from a CI failure looks like: `Debug` gives symbols and no optimisation, `Release`
+            # gives optimisation and nothing to read a trace with. A CI build is the one run whose
+            # artefact ships AND whose failure has to be explicable, and only the third is both.
+            #
+            # A CALLER STILL OVERRIDES IT, measured on 2026-09-09 rather than assumed: si#105 gave
+            # `toolchain:run` a variadic tail, and `cmake ... -DCMAKE_BUILD_TYPE=RelWithDebInfo
+            # -DCMAKE_BUILD_TYPE=Debug` leaves `CMAKE_BUILD_TYPE:STRING=Debug` in the cache. So
+            # `build configure -DCMAKE_BUILD_TYPE=Debug` is the debuggable build, and the pin is the
+            # default rather than a decree.
+            #
+            # `compile` below needs no `--config` and the two therefore cannot disagree: this image
+            # produces Unix Makefiles, where the type is fixed at configure time. Ninja Multi-Config
+            # and the Visual Studio generators IGNORE `CMAKE_BUILD_TYPE` and take `--config` on the
+            # BUILD step instead - the kernel ships neither, and a flag silently ignored is exactly the
+            # shape that produces a green run with the wrong artefact, so it is named here.
+            "configure": {"workdir": "/src",
+                          "argv": ["cmake", "-S", ".", "-B", "build",
+                                   "-DCMAKE_BUILD_TYPE=RelWithDebInfo"]},
             "compile": {"workdir": "/src", "argv": ["cmake", "--build", "build", "-j"]},
             # ctest EXITS 8, not 1, on a failed test - measured again on 2026-09-09: three cases, one
             # broken, `67% tests passed, 1 tests failed out of 3`, rc 8. It reports its own error class

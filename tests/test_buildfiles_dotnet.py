@@ -28,9 +28,9 @@ def _targets():
     return [
         buildfiles.Target(name="App", kind="executable", directory=Path("src/App"),
                           sources=[Path("src/App/Program.cs")]),
-        buildfiles.Target(name="Core", kind="library", directory=Path("src/Core"),
+        buildfiles.Target(name="Core", kind="static", directory=Path("src/Core"),
                           sources=[Path("src/Core/A.cs")]),
-        buildfiles.Target(name="Net", kind="library", directory=Path("src/Net"),
+        buildfiles.Target(name="Net", kind="shared", directory=Path("src/Net"),
                           sources=[Path("src/Net/B.cs")], depends=["Core"]),
     ]
 
@@ -166,7 +166,7 @@ def test_a_dependency_naming_no_project_is_refused_rather_than_a_traceback(monke
     monkeypatch.setattr(buildfiles.log, "die",
                         lambda m, *a, **k: (_ for _ in ()).throw(RuntimeError(m)))
     targets = [*_targets(),
-               buildfiles.Target(name="Web", kind="library", directory=Path("src/Web"),
+               buildfiles.Target(name="Web", kind="static", directory=Path("src/Web"),
                                  sources=[Path("src/Web/C.cs")], depends=["Coer"])]
 
     # act / assert: the target, the name it got wrong, and the projects that do exist
@@ -180,8 +180,62 @@ def test_that_refusal_stops_rather_than_falling_through(monkeypatch):
     # the assumption that it did not exit, or the KeyError comes back after the diagnosis
     monkeypatch.setattr(buildfiles.log, "die", lambda m, *a, **k: None)
     targets = [*_targets(),
-               buildfiles.Target(name="Web", kind="library", directory=Path("src/Web"),
+               buildfiles.Target(name="Web", kind="static", directory=Path("src/Web"),
                                  sources=[Path("src/Web/C.cs")], depends=["Coer"])]
+
+    # act / assert
+    with pytest.raises(SystemExit):
+        buildfiles.dotnet_files(targets, Path("/product"), "demo")
+
+
+def test_a_shared_kind_renders_the_same_class_library_a_static_one_does():
+    """si#131's `kind:` is a C++ word, and the .NET half is where it deliberately says nothing.
+
+    A .NET assembly is a .NET assembly: `shared` and `static` are the same `.csproj`, and that is
+    correct rather than a gap - the distinction the key exists for is CMake's, and the solution
+    generator would have to invent a meaning to render it differently.
+    """
+    # act
+    files = _files()
+
+    # assert
+    static = files[Path("/product/src/Core/Core.csproj")]
+    shared = files[Path("/product/src/Net/Net.csproj")]
+    assert "<OutputType>" not in static and "<OutputType>" not in shared
+    assert "<IsTestProject>" not in static and "<IsTestProject>" not in shared
+
+
+def test_a_co_located_unit_test_is_refused_because_dotnet_cannot_express_one(monkeypatch):
+    """si#134's .NET half, answered plainly rather than generated wrong.
+
+    THE REASON IS THE SDK'S GLOB, not the test framework's package references. An SDK-style project
+    compiles every `.cs` beneath itself - `_render_csproj` emits no `<Compile>` items at all - so a
+    test file inside a library's directory is part of that library whatever the solution says about it,
+    and a second `.csproj` in the same directory is not a shape MSBuild has. There is nothing to
+    generate that is both buildable and true, so the generator refuses and names the move.
+    """
+    # arrange
+    monkeypatch.setattr(buildfiles.log, "die",
+                        lambda m, *a, **k: (_ for _ in ()).throw(RuntimeError(m)))
+    targets = [*_targets(),
+               buildfiles.Target(name="CoreTests", kind="test", directory=Path("src/Core"),
+                                 sources=[Path("src/Core/CoreTests.cs")], depends=["Core"],
+                                 level=buildfiles.UNIT_LEVEL)]
+
+    # act / assert: the file, and where it has to go instead
+    with pytest.raises(RuntimeError) as e:
+        buildfiles.dotnet_files(targets, Path("/product"), "demo")
+    assert "src/Core/CoreTests.cs" in str(e.value)
+    assert "tests/CoreTests/" in str(e.value)
+
+
+def test_the_co_located_refusal_stops_rather_than_falling_through(monkeypatch):
+    # arrange: the rule every refusal in this module keeps
+    monkeypatch.setattr(buildfiles.log, "die", lambda m, *a, **k: None)
+    targets = [*_targets(),
+               buildfiles.Target(name="CoreTests", kind="test", directory=Path("src/Core"),
+                                 sources=[Path("src/Core/CoreTests.cs")],
+                                 level=buildfiles.UNIT_LEVEL)]
 
     # act / assert
     with pytest.raises(SystemExit):
