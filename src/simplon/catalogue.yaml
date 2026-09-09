@@ -304,6 +304,31 @@ tasks:
       name: { help: "the image to build (normally pinned per command with `with:`)" }
       tag:  { help: "the tag to build under, for a version only known after a build" }
 
+  # The product's OWN build files, written from its source tree (si#102). The second half of si#95:
+  # `toolchain:run` runs a pinned compiler over a product tree, and these two produce the files that
+  # compiler reads. They meet in the tree and nowhere else.
+  #
+  # PLACEMENTS rather than families, unlike `toolchain:run` beside them, and the reason is meaning
+  # rather than symmetry: generating a build file is a `build` act and belongs nowhere else, while
+  # `toolchain:run` had to be a family because `ctest` and `dotnet test` belong under `test`.
+  #
+  # DECLARED, NOT PLACED, by si#58's bar: the placement bar is "useful in EVERY product", and a product
+  # written in neither language has no tree these can read. A C++ or .NET product declares the one
+  # command it wants; every other product never sees either.
+  #
+  # NEITHER TAKES A PARAMETER, and neither carries a `params:` block, because there is nothing for a
+  # `with:` block to pin: the root and the product name come from the registered ProductContext, and the
+  # one thing a directory cannot show - what a target depends on - is read from the product's own
+  # top-level `build: targets:` section. si#105 is the ticket that makes this worth stating: the loader
+  # binds `with:` to the impl's PARAMETERS one for one, so a key here that no parameter answers to is
+  # refused at load and a manifest naming it cannot be assembled at all.
+  build:cmake-files:
+    impl: simplon.tasks.buildfiles:cmake
+    help: "Write this product's CMakeLists.txt files from its source tree."
+  build:dotnet-solution:
+    impl: simplon.tasks.buildfiles:dotnet
+    help: "Write this product's .sln and .csproj files from its source tree."
+
   # --- release: what a product hands over --------------------------------------------------------------
   # A TASK, not a placed command: it needs an `artifacts:` section naming the registry, the package, the
   # directory and the media type, so a command declared here would die on its first line in a product

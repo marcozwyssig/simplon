@@ -331,10 +331,10 @@ checker that cannot see what the compiler saw is analysing a program nobody buil
 for Roslyn analyzers, `clang-tidy` and mypy alike. Here it is a property of the manifest, so it is
 readable rather than promised.
 
-## The solution file, which Simplon does not write
+## The solution file, which Simplon did not write
 
-Row 2 is the open question this chapter is asked to name rather than gloss. Generating `.sln` and
-`.csproj` is explicitly out of scope in the design, and the reason given is that a solution file is a
+Row 2 is the open question this chapter was asked to name rather than gloss. Generating `.sln` and
+`.csproj` was explicitly out of scope in the design, and the reason given is that a solution file is a
 format with GUIDs and configuration matrices - inventing conventions for it without a product to measure
 against is how a generator ages faster than it helps.
 
@@ -347,8 +347,37 @@ So `dotnetdemo` brings its own, written by `dotnet new sln` inside the same pinn
 runs in, and the kernel only runs the toolchain over what it finds. That works, and it leaves a specific
 gap: the kernel scaffolds a product, is about to scaffold its toolchain configuration, and the one file
 the toolchain compiles over is the thing the product has to obtain elsewhere.
-[simplon#107](https://github.com/marcozwyssig/simplon/issues/107) is where that is open, with the three
+[simplon#107](https://github.com/marcozwyssig/simplon/issues/107) is where that was open, with the three
 candidate homes for it and the trigger that decides between them.
+
+{{< callout type="info" >}}
+**Since this walk: row 2 has an answer, and the measurement above is what bought it.**
+[simplon#102](https://github.com/marcozwyssig/simplon/issues/102) added `build:dotnet-solution`, which
+writes the `.sln` and one `.csproj` per project from the tree: a directory of `.cs` files is a project,
+one holding a `Program.cs` is an executable, a directory under `tests/` is a test project, and a
+`depends:` in the manifest becomes a `ProjectReference`. Fifty-four lines, five GUIDs and 24
+configuration rows is tedious rather than deep, which is exactly the shape worth generating - and it is
+also why the depth stops there: per-configuration flags, packaging, multi-targeting and package
+references beyond project references are each a ticket with a product behind it, and a product that
+outgrows the table keeps its hand-written files and does not declare the coordinate.
+
+The GUIDs are **derived** and never generated - `uuid5` over a fixed namespace and the project's path
+relative to the product root - because the output is committed. A `uuid4` would put a new GUID into the
+diff on every run and make that decision unusable within a week. Everything else is sorted for the same
+reason: two runs on two machines produce the same bytes.
+
+Driven end to end on a throwaway product on 2026-09-09, in this same `mcr.microsoft.com/dotnet/sdk:9.0`:
+four files written, `dotnet build` rc 0 across all three projects, and the assembly it produced then
+executed. One defect only the execution could find - the generator's first cut targeted `net8.0`, which
+BUILDS in a 9.0 SDK image because the targeting pack is restored from NuGet, and then refuses to run:
+`You must install or update .NET to run this application`, rc 150. It targets the framework the SDK
+image carries now, and the restore went from 8 s to 51 ms with it.
+
+`dotnet test` is the half that is still not there, and for the reason the depth limit names rather than
+by omission: the test SDK's package references are out of scope, so a generated test project states
+`IsTestProject` and nothing more. The table above is left standing as the record of what dotnetdemo met
+on the date it was measured.
+{{< /callout >}}
 
 ## release
 

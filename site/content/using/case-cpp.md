@@ -293,6 +293,39 @@ Row 10 is closed too, by si#105: `toolchain:run` now declares the variadic tail 
 is no longer what `analyse` depends on, which is the point of the driver.
 {{< /callout >}}
 
+### The file the product still wrote by hand
+
+Read the tree listing at the top of this chapter again. Every line of cppdemo's build is manifest data
+except one: `CMakeLists.txt`, three targets, written by a person. Nothing on this page labelled that a
+gap, because when the walk was taken there was nothing else to write - which is exactly the shape the
+chapter is about, one file lower down.
+
+{{< callout type="info" >}}
+**Since this walk: `build:cmake-files` writes that file.**
+[simplon#102](https://github.com/marcozwyssig/simplon/issues/102) reads the tree as the declaration it
+already is - `src/<name>/` holding sources is a library, one holding a `main.cpp` is an executable, and
+each `tests/<name>_test.cpp` is one ctest case - and writes one `CMakeLists.txt` per directory plus the
+root file that adds them. The one thing a directory cannot show is what a target depends on, and an
+optional `build:` section carrying `targets: { cppdemo: { depends: [calculator], include: [src/calculator] } }`
+is the whole of that exception. Guessing it from include paths was refused in the design: it reads a
+preprocessor approximately, and an approximate answer fails at link time, in a message about symbols
+rather than about the manifest.
+
+Driven end to end on a throwaway product on 2026-09-09, in this same `silkeh/clang:19`: four files
+written, `configure` rc 0, `compile` rc 0, ctest 1 of 1 passed, and the binary printed its line.
+
+Two things a product adopting it has to know, and both are consequences rather than caveats. The
+generated files are **committed** and each carries a `DO NOT EDIT` header, because the generator
+overwrites without asking - deliberately the opposite of `support:toolchain`'s never-clobber rule, since
+a manifest is a product's own statement and a `CMakeLists.txt` is a rendering of one. And the output
+layout moves: `add_subdirectory` puts a target's binary under its own directory, so an executable
+declared in `src/cppdemo/` lands at `build/src/cppdemo/cppdemo` and not at the `build/cppdemo` that row
+15's `deploy up` argv above names.
+
+The table and the transcripts above are left standing as the record of what cppdemo met on the date they
+were measured.
+{{< /callout >}}
+
 ## test
 
 The suite runs, and it runs in the image the compile ran in - which is the one rule the design states

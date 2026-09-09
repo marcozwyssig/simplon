@@ -136,7 +136,7 @@ the number that says whether a rib is filled:
 
 | namespace | kind | tasks in the catalogue today |
 |---|---|---|
-| `build` | phase, agnostic | 1 |
+| `build` | phase, agnostic | 3 |
 | `test` | phase, agnostic | 4 |
 | `release` | phase, agnostic | 4 |
 | `deploy` | phase, env-first | 0 |
@@ -147,7 +147,7 @@ the number that says whether a rib is filled:
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Twenty-eight coordinates: seventeen carrying a placement, eleven free to be filed. The numbers in this sentence, in that
+Thirty coordinates: nineteen carrying a placement, eleven free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -171,15 +171,38 @@ it - or **placed**, written into the tree for everybody. The bar a placed comman
 *Produce the artefacts.* Whatever a product ships: a wheel, a container image, a bundle, a generated
 site.
 
-**In the catalogue today: 1 task.**
+**In the catalogue today: 3 tasks.**
 
+- `build:cmake-files`
+- `build:dotnet-solution`
 - `build:image`
 
-**What a product brings itself.** The artefact. There is exactly one thing the kernel knows how to
-build for you, and it is a container image - everything else is a body in the product's own `tasks:`,
-because "build" means something different in every language. It also brings the `images:` section
-`build:image` reads, which is why the task is offered rather than placed: declared for everybody, it
-would die on its first line in every product without a Dockerfile.
+**What a product brings itself.** The artefact, and the source tree the other two read. There are two
+things the kernel knows how to build for you: a container image, and the build files a C++ or a .NET
+product hands to its compiler. Everything past that is a body in the product's own `tasks:`, because
+"build" means something different in every language. Each of the three reads something the product
+brings - `build:image` an `images:` section, the two generators a tree of sources - which is why all
+three are offered rather than placed: declared for everybody, `build:image` would die on its first
+line in a product with no Dockerfile, and a generator would write a CMake project for a product with
+no C++ in it.
+
+**The tree is the declaration, and the manifest is the exception.** A directory holding sources
+already says what it is - a library, or an executable when it holds a `main` - so the generators read
+that rather than asking a product to state it twice. The one thing a directory cannot show is what a
+target depends on, and that is the whole of what the optional `build: targets:` block carries.
+Guessing it from include paths was considered and refused: it reads a C++ preprocessor approximately,
+and an approximate answer in a build file fails at link time, in a message about symbols rather than
+about the manifest.
+
+**What they write is COMMITTED**, which is what makes determinism load-bearing rather than tidy.
+Everything is sorted, and a solution's GUIDs are derived with `uuid5` from the project's path rather
+than generated - a random one would put a new GUID in the diff on every run and make the committed
+output unreviewable within a week. Each generated file carries a `DO NOT EDIT` header, and the
+generator overwrites without asking. That is deliberately the opposite of `support:toolchain`'s
+never-clobber rule, and the difference is the subject: a manifest is a product's own statement, a
+`CMakeLists.txt` is a rendering of one. Reverting a statement would be wrong; reverting a rendering is
+the point. A product whose build outgrows what the two generators can express keeps its hand-written
+files and declares neither coordinate - nothing degrades, it simply does what every product does today.
 
 This is also the rib where families land most, and simplon's own `build` is the illustration: it holds
 four commands - `wheel`, `reference`, `site` and the `docs` aggregate - and not one of them is
