@@ -25,9 +25,12 @@ manifest or THIS repository's own number:
 WHY THE FLOOR EXISTS AT ALL, kept here because it is the reason for simplon's own two numbers. Notes
 start at 0.4.0, declared on the page itself. Demanding a section for all fourteen earlier tags would mean
 writing them from memory now, and a reconstructed record is indistinguishable from a real one. 0.4.0's
-own notes then predate the completeness rule and name no ticket anywhere: fifteen were merged into its
-range and the section carries none, and two of them have no paragraph at all, so retro-fitting would mean
-writing new prose about a released version from the outside.
+own notes then predate the completeness rule and name no ticket anywhere: sixteen tickets arrived in its
+thirteen merges and the section carries none, and two of them have no paragraph at all, so retro-fitting
+would mean writing new prose about a released version from the outside. (That count said FIFTEEN until
+si#89 measured it. si#103's rule reads a web merge one level down and found one more, and the typed
+number beside it had simply never been re-run - which is the defect this suite exists for, in the
+docstring of the exemption it excuses. The assertion below is what holds it; this sentence is not.)
 
 THE FLOORS ARE READ THROUGH THE KERNEL'S OWN READER rather than retyped as constants here. That is not
 tidiness: `FLOOR` and `COMPLETE_FROM` used to be module constants, and a constant beside a manifest is

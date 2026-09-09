@@ -158,9 +158,16 @@ site:
 # is the first section that must name every ticket merged into its range. The gap between the two floors
 # IS the excused set, and here it is exactly one release: 0.4.0's notes were written before the rule and
 # name no number anywhere. Retro-fitting them would mean deciding, a release later, which paragraph each
-# of fifteen numbers belongs beside - and two of them have no paragraph at all, so it would mean writing
-# new prose about a released version from the outside. That is reconstruction, which is the objection the
-# page's own floor paragraph raises against writing the older releases up at all.
+# of SIXTEEN numbers belongs beside - measured today over v0.3.0..v0.4.0's thirteen merges - and two of
+# them have no paragraph at all, so it would mean writing new prose about a released version from the
+# outside. That is reconstruction, which is the objection the page's own floor paragraph raises against
+# writing the older releases up at all.
+#
+# The old wording said FIFTEEN, and that number was already stale when it was carried here: si#103's rule
+# reads a web merge one level down, which found one more. A typed count going wrong is the defect this
+# repository has now proved five times, and it happened again inside the comment explaining an exemption
+# against it. The count is stated here as measured on a date rather than as a standing fact, and what
+# holds it is the assertion in tests/test_releases_page.py, not this sentence.
 #
 # The exemption is PAID FOR rather than merely declared, and not here: `tests/test_releases_page.py` pins
 # the excused population at one and requires it to be genuinely incomplete, so the day somebody writes
