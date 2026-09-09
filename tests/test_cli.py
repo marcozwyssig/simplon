@@ -1067,11 +1067,13 @@ def test_an_annotation_the_generator_cannot_write_is_dropped_rather_than_handed_
         app = typer.Typer(add_completion=False, no_args_is_help=True, help="demo root")
         cli.assemble(app, manifest.load(text), product="demo")
 
-        # act
-        result = CliRunner().invoke(app, ["build", "mapped", "--help"])
+        # act: BUILDING the click command is the step that used to raise
+        root = get_command(app)
+        group = root.get_command(click.Context(root), "build")
+        command = group.get_command(click.Context(group), "mapped")
 
-        # assert
-        assert result.exit_code == 0, result.output
-        assert "--env" in result.output
+        # assert: the parameter survives as the text option the generated module renders
+        env = next(p for p in command.params if p.name == "env")
+        assert env.opts == ["--env"] and env.type is click.STRING
     finally:
         del sys.modules["annot_impls"]
