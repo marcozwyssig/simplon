@@ -315,8 +315,8 @@ reason first.
 
 **Files:** `src/simplon/orchestrator/tui.py`, `site/content/using/examples.md`
 
-- [ ] 7.1 Test: every new binding appears in the footer.
-- [ ] 7.2 Extend `examples.md` section 3 with the keys, the bar and the transcript.
+- [x] 7.1 Test: every new binding appears in the footer.
+- [x] 7.2 Extend `examples.md` section 3 with the keys, the bar and the transcript.
 - [ ] 7.3 `./simplon.sh test all` and `./simplon.sh test typecheck-python`; compare against the baseline.
 - [ ] 7.4 Dispatch `python-reviewer` on the diff; act on what it finds.
 - [ ] 7.5 Open the PR against `main`, no labels, and update the ticket body with items 7-9.
