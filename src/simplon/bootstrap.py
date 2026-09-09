@@ -211,15 +211,20 @@ def repository_name_from_url(url: str) -> str:
 
 
 def _git(args: list[str], *, cwd: Path) -> str | None:
-    """One read-only git call from `cwd`: its trimmed stdout, or None when git returned non-zero.
+    """One read-only git call from `cwd`: its trimmed stdout, or None when git had no answer to give.
 
-    None rather than an empty string, and this is the recurring defect CLAUDE.md names: `git remote
-    get-url origin` prints nothing AND fails when there is no origin, so an empty string cannot tell
-    "no remote" from "a remote whose URL is blank". OSError (no git on PATH at all) is deliberately NOT
-    caught here - it is a different condition and gets its own sentence at the call site.
+    NO ANSWER COVERS BOTH A NON-ZERO RC AND AN EMPTY STDOUT, and collapsing them is the point rather than
+    a shortcut. This is the ambiguity CLAUDE.md hunts, and the callers below are exactly where it would
+    bite: an empty `--show-toplevel` would become `Path("")`, which resolves to the CURRENT directory, so
+    a repository that could not name its own root would scaffold into wherever the command was typed and
+    call it a success. Every caller here wants a non-empty string or nothing, and there is no third
+    meaning for either of them to carry.
+
+    OSError (no git on PATH at all) is deliberately NOT caught: it is a different condition and gets its
+    own sentence at the call site.
     """
     result = run(["git", "-C", str(cwd), *args])
-    return result.out.strip() if result.ok else None
+    return (result.out.strip() or None) if result.ok else None
 
 
 def repository_default(start: Path) -> RepositoryDefault:

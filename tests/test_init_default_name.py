@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from simplon import bootstrap
+from simplon.run import Result
 
 
 def _git(*args: str, cwd: Path) -> str:
@@ -165,6 +166,35 @@ def test_a_plain_directory_with_no_git_says_what_it_wants_and_names_the_argument
     message = str(excinfo.value)
     assert "not inside a git repository" in message, message
     assert "simplon init <product>" in message, message
+
+
+def test_a_bare_repository_is_refused_rather_than_scaffolded_into_the_current_directory(tmp_path):
+    """A repository with no working tree cannot say where its root is, and the one thing that must NOT
+    happen is a scaffold landing wherever the command was typed. git answers `rev-parse --show-toplevel`
+    with rc 128 here, and `_git` collapses an empty answer to the same nothing, so neither route can turn
+    into `Path("")` - which resolves to the current directory and would look exactly like success."""
+    # arrange
+    bare = tmp_path / "bare.git"
+    bare.mkdir()
+    _git("init", "-q", "--bare", ".", cwd=bare)
+
+    # act / assert
+    with pytest.raises(ValueError) as excinfo:
+        bootstrap.repository_default(bare)
+    assert "simplon init <product>" in str(excinfo.value)
+
+
+def test_git_answering_with_nothing_is_the_same_as_not_answering(tmp_path, monkeypatch):
+    """rc 0 with an empty stdout is the shape the bare-repository case above cannot produce on this git,
+    and it is the one that would do real damage: `Path("")` resolves to the CURRENT directory, so a
+    repository that could not name its own root would scaffold into wherever the command was typed and
+    report success. `_git` collapses it to the same nothing a failure gives."""
+    # arrange
+    monkeypatch.setattr(bootstrap, "run", lambda argv, **kwargs: Result(rc=0, out="  \n", err=""))
+
+    # act / assert
+    with pytest.raises(ValueError, match="not inside a git repository"):
+        bootstrap.repository_default(tmp_path)
 
 
 def test_git_missing_from_PATH_is_its_own_cause_with_the_same_fix(tmp_path, monkeypatch):
