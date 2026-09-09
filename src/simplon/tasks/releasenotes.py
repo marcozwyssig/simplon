@@ -65,6 +65,12 @@ SECTION = "releases"
 _VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
 #: A `## X.Y.Z` heading, which is what gives a version a section.
+#:
+#: THE LIMIT, recorded rather than implied: this is a line match, not a Markdown parse, so a line that
+#: says exactly `## 0.4.0` inside a fenced code block or a blockquote counts as a section. A page
+#: documenting its own heading convention by example would therefore invent a release. No page reached by
+#: this kernel does that today; a product whose notes show the convention should indent the example or
+#: write the number differently.
 _HEADING = re.compile(r"^## (\d+\.\d+\.\d+)\s*$", re.MULTILINE)
 
 #: The three spellings a merge subject names a ticket in, and it is MEASURED which source is complete
@@ -99,7 +105,11 @@ _GITHUB_PR_MERGE = re.compile(r"Merge pull request #\d+ from \S+")
 #: still held to the rule.
 _GITHUB_MERGE = re.compile(r"Merge [0-9a-f]{40} into [0-9a-f]{40}")
 
-Version = tuple[int, ...]
+#: Exactly three parts, not `tuple[int, ...]`. Only `version_of` builds one, and its regex has exactly
+#: three groups - but Python compares tuples of different lengths silently rather than refusing, so a
+#: future two- or four-part version would MISORDER releases instead of failing. The narrower type is what
+#: makes mypy say so.
+Version = tuple[int, int, int]
 
 
 @dataclass(frozen=True)
@@ -114,7 +124,10 @@ class Declared:
 def version_of(text: str) -> Version | None:
     """`0.4.0` -> `(0, 4, 0)`; anything else -> None (a release candidate, a stray tag, a typo)."""
     match = _VERSION.fullmatch(text.strip())
-    return tuple(int(part) for part in match.groups()) if match else None
+    if match is None:
+        return None
+    major, minor, patch = match.groups()
+    return (int(major), int(minor), int(patch))
 
 
 def spell(version: Version) -> str:
@@ -250,6 +263,9 @@ def tickets_of(root: Path, sha: str, subject: str) -> set[int]:
     """
     if not _GITHUB_PR_MERGE.fullmatch(subject):
         return tickets_in(subject)
+    # `^1..^2` names the first two parents, so an octopus merge's third branch would be invisible here.
+    # That is an accepted assumption rather than an oversight: this branch is reached only for a subject
+    # GitHub's own merge button composed, and that button produces a two-parent merge and nothing else.
     written = {number
                for line in _git(root, "log", "--no-merges", "--format=%s", f"{sha}^1..{sha}^2").splitlines()
                for number in tickets_in(line)}
@@ -334,13 +350,16 @@ def check() -> int:
     Every one of them reports EVERY offender rather than the first, because a gate that stops at one
     finding turns a five-minute fix into five runs.
     """
-    spec = declared()
-    if spec is None:
-        return 1
-    root = context.current().root
     try:
-        return _assess(root, spec)
+        spec = declared()
+        if spec is None:
+            return 1
+        return _assess(context.current().root, spec)
     except RuntimeError as exc:
+        # `ProductContext.manifest_data()` raises this for a manifest it cannot read or parse, and `_git`
+        # raises it for a repository git refuses to open. Both are inside the try for the same reason:
+        # this module promises everywhere that a gate's whole output is a return code and a sentence, and
+        # a YAML typo answered with a Python traceback is that promise broken at the first opportunity.
         log.error(str(exc))
         return 1
 
@@ -354,11 +373,22 @@ def _plural(count: int, noun: str) -> str:
 def _assess(root: Path, spec: Declared) -> int:
     """The four verdicts over one product, separated from `check` so the manifest and the git failures
     are handled once, at the seam, rather than in the middle of the rule."""
-    if not spec.page.is_file():
+    # THREE DIFFERENT MISTAKES, and they need three different fixes - "the notes could not be read" would
+    # send a reader looking in the wrong place for two of them.
+    if not spec.page.exists():
         log.error(f"the declared release notes are not there: {spec.page} does not exist. The manifest "
                   f"says this is where they live, so either the path is wrong or the page is missing")
         return 1
-    body = spec.page.read_text(encoding="utf-8")
+    if not spec.page.is_file():
+        log.error(f"the declared release notes are not a file: {spec.page} is a directory. `page:` names "
+                  f"the page itself, not the directory it sits in")
+        return 1
+    try:
+        body = spec.page.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        log.error(f"the declared release notes could not be read: {spec.page} ({exc}). The page is "
+                  f"Markdown in UTF-8, which is what its headings are looked for in")
+        return 1
 
     released = released_versions(root)
     documented = documented_versions(body)
@@ -407,18 +437,26 @@ def _assess(root: Path, spec: Declared) -> int:
                         + ", ".join(tag_of(version) for version in absent))
 
     # 2. A section for a version that carries no tag. Exactly ONE of those is legitimate and it is the
-    #    release being prepared - the notes are written before the tag, so the highest documented
-    #    version may be ahead of every tag. Two is either a release somebody forgot to cut or a number
-    #    written down twice, and both promise a release nobody can install.
+    #    release being prepared - the notes are written before the tag, so one documented version may be
+    #    ahead of every tag. Two is either a release somebody forgot to cut or a number written down
+    #    twice, and both promise a release nobody can install.
+    #
+    #    THE PREPARED ONE IS THE NEXT AFTER THE HIGHEST TAG, and this was a false positive until review.
+    #    The rule used to excuse the LOWEST untagged section, which is the same thing only while every
+    #    untagged section sits above the highest tag. Put a stray one BELOW it - a `## 0.3.0` nobody ever
+    #    cut, which is the other half of this rule's own subject - and the stray takes the excuse while
+    #    the release genuinely being prepared is reported as a promise nobody can install.
     ahead = sorted(version for version in documented if version not in released)
-    highest = released[-1] if released else (0, 0, 0)
+    highest = released[-1]
+    prepared = next((version for version in ahead if version > highest), None)
     ruled += len(ahead)
-    unexplained = [version for version in ahead if version <= highest] + ahead[1:]
+    unexplained = [version for version in ahead if version != prepared]
     if unexplained:
         findings.append(
             "the page documents versions that carry no tag and are not the one being prepared: "
-            + ", ".join(tag_of(version) for version in sorted(set(unexplained)))
-            + f" (highest tag: {tag_of(highest)})")
+            + ", ".join(tag_of(version) for version in unexplained)
+            + f" (highest tag: {tag_of(highest)}"
+            + (f", being prepared: {tag_of(prepared)})" if prepared else ")"))
 
     # 3 and 4 share the ranges, and each range is REPORTED whether or not it has a finding: the range
     #   and what HEAD resolved to are the two facts that make a red legible, and a run that prints them

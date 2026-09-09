@@ -432,6 +432,95 @@ def test_a_checkout_git_cannot_read_is_a_failure_and_not_an_empty_answer(tmp_pat
     assert "git tag" in said
 
 
+def test_a_legitimate_prepared_release_is_not_blamed_for_a_stray_section_beneath_it(tmp_path, capsys,
+                                                                                     monkeypatch):
+    """A false positive on exactly the case the rule is supposed to treat as normal (found in review).
+
+    The rule picks ONE documented-but-untagged version as legitimate - the release being prepared - and
+    used to pick the lowest of them. That holds only while every untagged section is above the highest
+    tag. Put a stray one BELOW it, which is the other half of the same rule's own subject, and the lowest
+    is the stray: the legitimate prepared release is pushed to index 1 and reported as a promise nobody
+    can install, while the section that really is one is reported beside it and looks like the pair.
+
+    The release being prepared is the next one AFTER the highest tag, so that is what is selected now.
+    Both offenders and neither innocent.
+    """
+    # arrange: v0.4.0 and v0.5.0 exist; the page documents a stray 0.3.0 and a correct prepared 0.6.0
+    root = _complete_release(tmp_path)
+    _product(monkeypatch, root, COMPLETE_PAGE.replace("## 0.4.0", "## 0.3.0\n\nA section for a release "
+                                                      "nobody ever cut, si#40.\n\n## 0.4.0"))
+
+    # act
+    rc = releasenotes.check()
+
+    # assert
+    said = capsys.readouterr().err
+    offenders = said.split("not the one being prepared: ")[1].split(" (highest tag")[0]
+
+    assert rc == 1
+    assert offenders == "v0.3.0", (
+        "only the stray section promises a release nobody can install; 0.6.0 is the release being "
+        f"prepared, which is the one case this rule exists to allow - the offenders were {offenders!r}")
+    assert "being prepared: v0.6.0" in said, "and the message says which one it excused, by name"
+
+
+def test_a_manifest_that_is_not_valid_yaml_is_a_sentence_and_not_a_traceback(tmp_path, capsys,
+                                                                             monkeypatch):
+    """The contract this module states everywhere: a gate's whole output is a return code and a sentence.
+
+    `ProductContext.manifest_data()` raises on a manifest it cannot parse, and that raise used to travel
+    straight out of `check()` - so a typo in a YAML file produced a Python traceback out of a CLI command,
+    which is the failure declining to say what it knows. Found in review; no test reached it.
+    """
+    # arrange
+    root = _complete_release(tmp_path)
+    _product(monkeypatch, root, COMPLETE_PAGE, manifest="releases: [unclosed\n  page: nope\n")
+
+    # act
+    rc = releasenotes.check()
+
+    # assert
+    said = capsys.readouterr().err
+    assert rc == 1
+    assert "sample.yaml" in said
+
+
+def test_a_page_that_is_not_utf_8_is_a_sentence_and_not_a_traceback(tmp_path, capsys, monkeypatch):
+    """Same contract, the other unguarded read. A page written in some other encoding is a product's
+    mistake to hear about, not a `UnicodeDecodeError` three frames down."""
+    # arrange
+    root = _complete_release(tmp_path)
+    _product(monkeypatch, root, COMPLETE_PAGE)
+    (root / "notes.md").write_bytes(b"## 0.5.0\n\nsi#40 und si#41 \xff\xfe were merged.\n")
+
+    # act
+    rc = releasenotes.check()
+
+    # assert
+    said = capsys.readouterr().err
+    assert rc == 1
+    assert "notes.md" in said and "UTF-8" in said
+
+
+def test_a_page_that_is_a_directory_is_not_reported_as_missing(tmp_path, capsys, monkeypatch):
+    """"does not exist" about a path that plainly does is the wrong sentence, and the two need different
+    fixes: one is a typo in the manifest, the other is a path pointing one level too high."""
+    # arrange
+    root = _complete_release(tmp_path)
+    _product(monkeypatch, root, COMPLETE_PAGE)
+    (root / "notes.md").unlink()
+    (root / "notes.md").mkdir()
+
+    # act
+    rc = releasenotes.check()
+
+    # assert
+    said = capsys.readouterr().err
+    assert rc == 1
+    assert "is a directory" in said
+    assert "does not exist" not in said
+
+
 def test_a_manifest_without_the_section_stops_the_gate_before_it_touches_git(tmp_path, capsys, monkeypatch):
     """A product that placed the command and declared nothing is told which three values it owes."""
     # arrange
