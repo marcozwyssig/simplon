@@ -7,7 +7,7 @@ minimal, valid product skeleton and prints the next steps, after which the new p
 
 Run it standalone (with `simplon` installed, e.g. `pip install simplon`)::
 
-    simplon init <product> [--dir DIR] [--orch-dir DIR] [--force]
+    simplon init [<product>] [--dir DIR] [--orch-dir DIR] [--force]
 
 `python -m simplon.bootstrap <product> ...` keeps working for anyone who has it in muscle memory, but
 the console script is the entry point the README documents.
@@ -73,10 +73,12 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
 
 import simplon
+from simplon.run import run
 
 # A product name is a lowercase slug: it becomes the shim/manifest filename, the manifest `product:` label,
 # the LAUNCH_PRODUCT diagnostic token and the `<PRODUCT>_ENV` variable stem. The package itself is the FIXED
@@ -164,6 +166,110 @@ def validate_product_name(name: str) -> str:
             f"product name {name!r} is invalid; use a lowercase slug matching {_PRODUCT_RE.pattern} "
             f"(a letter, then letters/digits/hyphens), e.g. 'fooctl'")
     return trimmed
+
+
+#: The way out of every refusal below, spelled once. Each of them has the SAME fix - name the product
+#: yourself - and a message that only says what went wrong leaves a first-time user with a broken command
+#: and no next move.
+_NAME_THE_ARGUMENT = ("give the name as the argument instead: `simplon init <product>` "
+                      "(a lowercase slug: a letter, then letters, digits and hyphens, e.g. 'fooctl')")
+
+
+@dataclass(frozen=True)
+class RepositoryDefault:
+    """What the repository a `simplon init` runs in says the product should be called, and where it is.
+
+    `source` is carried rather than reconstructed because the run PRINTS it: two defaults fall out of one
+    omitted argument (the name, and with it the target directory), and a user who did not type either has
+    to be told which repository was read and where the skeleton went.
+    """
+
+    #: The product name, already through `validate_product_name`.
+    name: str
+    #: Where it was read from, in words, for the note the CLI prints.
+    source: str
+    #: The repository's working-tree root - the scaffold target a defaulted name implies.
+    root: Path
+
+
+def repository_name_from_url(url: str) -> str:
+    """The repository name a remote URL spells, with the URL's own punctuation dropped and NOTHING else.
+
+    A trailing `/` and a trailing `.git` belong to the URL rather than to the name, so removing them is
+    parsing. Everything after that is handed on untouched, `Ops%20Tools` and `my.ctl` included, and
+    `validate_product_name` is what refuses them - which is the point: a name repaired here would be
+    repaired silently and by the wrong layer, and the caller could no longer tell whether the repository
+    really is called that.
+
+    The split is on `/` AND `:` because git accepts the scp-like `git@host:acme/netctl.git`, where the
+    last path separator before the name may be a colon.
+    """
+    trimmed = url.strip().rstrip("/")
+    if trimmed.endswith(".git"):
+        trimmed = trimmed[:-len(".git")]
+    return re.split(r"[/:]", trimmed)[-1]
+
+
+def _git(args: list[str], *, cwd: Path) -> str | None:
+    """One read-only git call from `cwd`: its trimmed stdout, or None when git returned non-zero.
+
+    None rather than an empty string, and this is the recurring defect CLAUDE.md names: `git remote
+    get-url origin` prints nothing AND fails when there is no origin, so an empty string cannot tell
+    "no remote" from "a remote whose URL is blank". OSError (no git on PATH at all) is deliberately NOT
+    caught here - it is a different condition and gets its own sentence at the call site.
+    """
+    result = run(["git", "-C", str(cwd), *args])
+    return result.out.strip() if result.ok else None
+
+
+def repository_default(start: Path) -> RepositoryDefault:
+    """The product name the repository containing `start` implies, or ValueError naming the fix (si#129).
+
+    WHICH NAME, and why the remote wins. The `origin` remote's repository name and the working tree's
+    root directory name disagree the moment somebody clones into a differently named folder, and the
+    remote is the one that survives it: `git clone .../netctl.git myproject` makes the directory an
+    accident of one machine while the remote still carries the name the product is published under. A
+    linked git worktree is the same case from the other side - its basename is `agent-3f2a` and the
+    product is still netctl. So the remote is the primary and the working tree is the FALLBACK rather
+    than a competitor: a repository with no remote yet is the ordinary state of a brand-new product, and
+    failing there would refuse the one case this default exists for.
+
+    The fallback reads `git rev-parse --show-toplevel`, not `start.name`. Running the command from a
+    subdirectory would otherwise name the product after the subdirectory, silently.
+
+    A DEFAULT, NEVER A DECREE, and si#102 is the fresh counter-example: its generator derived a CMake
+    target from `root.name` and got the product name wrong, because a directory is named for where it
+    sits and not for what it is. A repository can be `tooling`, or a monorepo holding two products. So
+    the argument still wins, and a repository whose name cannot BE a product name is refused with the
+    argument named rather than mangled into something that half works.
+    """
+    try:
+        toplevel = _git(["rev-parse", "--show-toplevel"], cwd=start)
+    except OSError:
+        raise ValueError(
+            f"no product name was given and git is not on PATH, so the repository's name cannot be "
+            f"read; install git or {_NAME_THE_ARGUMENT}") from None
+    if toplevel is None:
+        raise ValueError(
+            f"no product name was given and {start} is not inside a git repository, so there is no "
+            f"repository name to read; run it inside one, or {_NAME_THE_ARGUMENT}")
+
+    root = Path(toplevel).resolve()
+    url = _git(["remote", "get-url", "origin"], cwd=root)
+    if url:
+        raw, source = repository_name_from_url(url), f"the 'origin' remote ({url})"
+    else:
+        raw, source = root.name, f"the working tree at {root}, which has no 'origin' remote"
+
+    try:
+        name = validate_product_name(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"{exc}. It was read from {source}, because no product name was given. It is not repaired "
+            f"here on purpose: the name becomes the launcher's filename, the manifest's filename, the "
+            f"package path and the <PRODUCT>_ENV variable stem, so a mangled one would name all four "
+            f"after something nobody chose. So {_NAME_THE_ARGUMENT}") from None
+    return RepositoryDefault(name=name, source=source, root=root)
 
 
 def env_var_name(name: str) -> str:
@@ -729,9 +835,28 @@ def next_steps(name: str, target: Path, *, orch_dir: str = DEFAULT_ORCH_DIR) -> 
 
 
 def main(argv: list[str] | None = None) -> int:
-    """`simplon init <product> [--dir DIR] [--orch-dir DIR] [--force]`: scaffold a product skeleton and
-    print the next steps. Returns 0 on success, 2 on a bad product name, a clobber conflict, or a kernel
-    whose version yields no pin a product could install (fail loud, no traceback)."""
+    """`simplon init [<product>] [--dir DIR] [--orch-dir DIR] [--force]`: scaffold a product skeleton and
+    print the next steps. Returns 0 on success, 2 on a bad product name, a directory with no repository
+    to read a name from, a clobber conflict, or a kernel whose version yields no pin a product could
+    install (fail loud, no traceback).
+
+    THE PRODUCT ARGUMENT IS OPTIONAL (si#129), and omitting it decides TWO things, which is why neither
+    of them is silent:
+
+        name given, --dir given      the argument, and --dir. Unchanged.
+        name given, no --dir         the argument, and `./<name>/`. Unchanged.
+        name defaulted, --dir given  the repository's name, and --dir.
+        name defaulted, no --dir     the repository's name, and the REPOSITORY ROOT.
+
+    The last row is the only new placement, and it is not a second default falling out of the first by
+    accident. Reading the name from the repository IS the statement that the repository is the product,
+    so `./<repo>/` inside that same repository contradicts the fact just used to name it - and it would
+    put the launcher one directory below the manifest marker its own `paths.py` walks up to. The run
+    prints the name it read, where it read it and where the skeleton is going.
+
+    The name is read from the repository the command RUNS in, never from `--dir`. One rule rather than
+    two: with `--dir .`, which is the case this default is for, the two are the same directory anyway.
+    """
     # `simplon init <name>` reads like a command; the bare product name as the first argument read like a
     # typo. The old call pattern stays valid, so `python -m simplon.bootstrap <name>` keeps working.
     if argv is None:
@@ -739,10 +864,12 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] == "init":
         argv = argv[1:]
     elif not argv:
-        # A bare `simplon` must name the one thing it can do. argparse alone would only complain about a
-        # missing `product`, which tells a first-time user nothing about the subcommand they omitted.
-        print("simplon: nothing to do. The one command is `simplon init <product> [--dir DIR] "
-              "[--orch-dir DIR] [--force]`; "
+        # A bare `simplon` must name the one thing it can do, and since si#129 that is no longer something
+        # argparse could say for us: `product` is optional now, so `simplon` with no argv at all would
+        # otherwise scaffold whatever repository the shell happened to be sitting in. `simplon init` with
+        # nothing after it is a legal command; `simplon` alone is not, and the two must not collapse.
+        print("simplon: nothing to do. The one command is `simplon init [<product>] [--dir DIR] "
+              "[--orch-dir DIR] [--force]`, and the product name is optional inside a git repository; "
               "use `simplon init --help` for the options.", file=sys.stderr)
         return 2
 
@@ -751,9 +878,15 @@ def main(argv: list[str] | None = None) -> int:
         # `python -m simplon.bootstrap <product>` still works, it is just no longer what we advertise.
         prog="simplon init",
         description="Scaffold a fresh product onto the delivery orchestrator (netctl#651 strand 4).")
-    parser.add_argument("product", help="the product slug (lowercase; letters, digits, hyphens), e.g. 'fooctl'")
+    parser.add_argument("product", nargs="?", default=None,
+                        help=("the product slug (lowercase; letters, digits, hyphens), e.g. 'fooctl'. "
+                              "OPTIONAL: with no argument it is read from the git repository you are "
+                              "standing in - the 'origin' remote's repository name, or the working "
+                              "tree's root directory name when there is no remote - and the skeleton "
+                              "then lands at the repository root rather than in a subdirectory"))
     parser.add_argument("--dir", dest="directory", default=None,
-                        help="target directory (default: ./<product>); use '.' to scaffold in place")
+                        help=("target directory (default: ./<product>, or the repository root when the "
+                              "product name was read from the repository); use '.' to scaffold in place"))
     parser.add_argument("--orch-dir", dest="orch_dir", default=DEFAULT_ORCH_DIR,
                         help=("where the orchestrator block goes, relative to the target: it holds .venv, "
                               "requirements.txt and src/python/ (default: %(default)s, which is where "
@@ -764,14 +897,34 @@ def main(argv: list[str] | None = None) -> int:
                         help="overwrite existing files instead of refusing")
     args = parser.parse_args(argv)
 
+    # Both defaults are resolved before anything is written, and both can refuse: a directory that is not
+    # a repository has no name to give, and a repository whose name is not a legal product name is a
+    # refusal rather than a repair. See this function's docstring for the four cases.
+    found: RepositoryDefault | None = None
     try:
-        product = validate_product_name(args.product)
+        if args.product is None:
+            found = repository_default(Path.cwd())
+            product, implied_target = found.name, found.root
+        else:
+            product = validate_product_name(args.product)
+            implied_target = Path.cwd() / product
         orch_dir = validate_orch_dir(args.orch_dir)
     except ValueError as exc:
         print(f"simplon init: {exc}", file=sys.stderr)
         return 2
 
-    target = Path(args.directory).resolve() if args.directory else (Path.cwd() / product)
+    target = Path(args.directory).resolve() if args.directory else implied_target
+    if found is not None:
+        # Nothing that was DECIDED for the user stays unsaid. The name first, with the source, because a
+        # repository can be named for where it sits rather than for what it is; then the target, because
+        # the omitted argument moved that too.
+        print(f"simplon init: no product name given, so it is {product!r}, read from {found.source}",
+              file=sys.stderr)
+        if args.directory is None:
+            print(f"simplon init: the repository is the product, so the skeleton lands at {target} "
+                  f"rather than in a subdirectory (pass --dir to change that)", file=sys.stderr)
+        else:
+            print(f"simplon init: writing it to {target}, as --dir asks", file=sys.stderr)
     try:
         write(product, target, force=args.force, orch_dir=orch_dir)
     except (FileExistsError, ValueError) as exc:
