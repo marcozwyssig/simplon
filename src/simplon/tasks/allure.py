@@ -92,6 +92,19 @@ class Merge:
         return self.tagged + self.already_labelled + self.copied + self.environments
 
     @property
+    def results(self) -> int:
+        """The entries that are RESULTS, as against the environment merged beside them (si#133).
+
+        `empty` below counts everything this merge handled, which is the right question for the report
+        step: did the merge do anything at all. A GATE asks something narrower - did this LEVEL produce
+        evidence - and an `environment.properties` is not evidence, it is the run's own verdict travelling
+        with the results. A source dir holding only that file would answer "not empty", and a runner that
+        wrote one and then fell over before writing a single result would report green with no case in the
+        archive, which is the false green the caller of this property exists to remove.
+        """
+        return self.tagged + self.already_labelled + self.copied
+
+    @property
     def empty(self) -> bool:
         """Nothing was merged - the case that used to read exactly like a successful merge.
 

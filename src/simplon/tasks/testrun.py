@@ -650,7 +650,10 @@ def _harvested(gv: GateVerdict, gate: Gate, cfg: Suites, results: str, since: fl
     source = str(context.current().root / gate.results_from)
     merged = allure.merge_results(results, [source], parent_suite=cfg.parent_suite, not_before=since)
     _say_merge(merged, f"{gate.name} results")
-    if merged.empty:
+    # `Merge.results` AND NOT `Merge.empty`, and the difference is one file. `empty` asks whether the
+    # merge did anything at all, which is the report step's question; this one asks whether the LEVEL
+    # produced evidence, and an `environment.properties` travelling with the results is not evidence.
+    if not merged.results:
         if gv.verdict is Verdict.PASSED:
             return replace(gv, verdict=Verdict.FAILED, rc=NO_RESULTS_RC,
                            detail=NO_RESULTS_DETAIL.format(source=gate.results_from,

@@ -512,3 +512,28 @@ def test_an_appending_gate_that_contributed_nothing_owns_nothing(monkeypatch, tm
 
     # assert
     assert gv.verdict is Verdict.FAILED and not gv.owned_results
+
+
+def test_an_environment_file_on_its_own_is_not_a_contribution(monkeypatch, tmp_path):
+    """The hole a review found in the check, and it is in exactly the class this ticket exists to close.
+
+    `Merge.empty` counts every entry a merge handled, `environment.properties` included, which is the
+    right question for the report step: did the merge do anything at all. A GATE asks something
+    narrower - did this LEVEL produce evidence - and an environment file is not evidence. A runner that
+    writes one (an allure-native one does) and then falls over before writing a single result would
+    otherwise answer "not empty" and report green with no case in the archive.
+    """
+    # arrange: the runner writes the environment file and nothing else
+    _product(monkeypatch, tmp_path, into="")
+    source = tmp_path / WROTE_INTO
+    source.mkdir(parents=True)
+    (source / "environment.properties").write_text("Runner=ctest\n", encoding="utf-8")
+    gate = testrun.Gate(name="unit", command="build unit", results="clear",
+                        results_from=WROTE_INTO)
+
+    # act
+    gv = testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert
+    assert gv.verdict is Verdict.FAILED, f"an environment file counted as a level's results: {gv.line}"
+    assert "contributed no results" in gv.line, gv.line
