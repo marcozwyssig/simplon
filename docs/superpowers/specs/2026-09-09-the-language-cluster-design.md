@@ -66,6 +66,16 @@ all"*.
 So a `Gate` gains one key naming the directory the product's own runner wrote results into. The merge
 already exists; this makes it reachable from the manifest.
 
+**Correction, measured by Lane B after this section was written (si#136).** The paragraph above says a
+`command:` gate over a toolchain command "gets an exit code". It gets less than that: it cannot be
+declared at all. `run_toolchain` takes a `typer.Context` as its first parameter and the gate parser
+refuses any body that does - `'build unit' takes a CLI context, which a gate has none of to give it`.
+Every si#106 test resolves to a context-free stub, so no test ever touched the real coordinate, and both
+case chapters promise a shape neither of them drove. The premise "a `command:` gate is how a C++ or .NET
+level runs" is therefore false today, and si#136 owns fixing it. Nothing in this section's decision
+changes - a gate naming its results dir is what a product needs either way - but the route a product
+takes to get there is an `impl:` gate until si#136 lands.
+
 **Three things this must not become.** It must not be a second `junit:` (that key is pytest-only by
 construction and stays so). It must not silently succeed when the directory is empty, because an Allure
 report rendered with a level missing looks exactly like one where the level passed. And it must not
