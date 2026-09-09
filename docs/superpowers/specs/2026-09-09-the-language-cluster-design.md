@@ -44,10 +44,15 @@ This is a rule about meaning, not a convenience: a reader must be able to tell a
 without opening the file.
 
 **The consequence si#134 has to carry.** `tests/` now holds two levels, so the generator must tell them
-apart, and today it tells neither. The obvious spelling is `tests/system/` and `tests/acceptance/`, and
-it collides head-on with si#131's open question about nested directories: under one answer those are
-targets, under the other they are folded into a parent. **si#131 and si#134 are decided together or one
-of them is redone.** They belong to the same lane for that reason, not because they are similar.
+apart, and today it tells neither. **si#131 and si#134 are decided together or one of them is redone**,
+and they belong to the same lane for that reason rather than because they are similar.
+
+*Corrected by Lane A, which built it (si#131).* This paragraph first argued the pairing from a collision
+between `tests/system/` and si#131's nesting question. There is none: folding is a rule about `src/`,
+and `tests/` already had its own rule from si#102. Two real reasons stand in its place - under `tests/`
+a directory has to be read as a LEVEL or as a test project and it cannot be both, and `_library_targets`'
+recursive read and the lifting of a co-located test out of a library are the same twenty lines. The
+pairing was right; the argument for it was not.
 
 **The defect this rule exposes is not cosmetic.** `_sources` returns every source file directly in a
 directory, so a co-located `net_test.cpp` is compiled INTO the library today. Test code, and its test
@@ -146,8 +151,10 @@ sibling lane.
 - How far the C++ export goes: usable within the generated project is a small change; installable and
   findable by a foreign project needs `install(TARGETS ... EXPORT ...)` and a package config. si#131's
   plan decides, and says which it built.
-- Whether co-located unit tests are expressible in .NET at all. A test `.cs` inside a library project
-  drags the test framework's package references into the shipped library, so the answer may be no, and
-  saying so plainly beats generating something that builds and is wrong.
+- Whether co-located unit tests are expressible in .NET at all. *Lane A measured the mechanism and this
+  entry named the wrong one:* it is not the test framework's package references. The generated `.csproj`
+  emits no `<Compile>` items at all, so the SDK's own `**/*.cs` glob compiles a co-located test into the
+  library whatever the references say. The conclusion survives - saying "not expressible" plainly beats
+  generating something that builds and is wrong - but it rests on the glob, not on the references.
 - Windows. A `SHARED` target without symbol visibility links on Linux and not on Windows; the kernel
   ships no Windows toolchain, so this is named rather than solved.
