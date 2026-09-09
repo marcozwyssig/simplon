@@ -18,6 +18,80 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.9.0
+
+**0.8.0 shipped a uniform build that no product could drive.** This is the release that can, and the
+reason it took a second one is worth stating plainly: every test in 0.8.0 was a unit test with a stubbed
+`run`, and the plan's own end-to-end step - "netctl's CI green with `build compile`" - was never
+executed. Two people writing use case chapters drove it for real within a day and found four defects
+between the design, the scaffolder and the loader.
+
+A minor rather than a patch, because si#106 adds a gate kind: a manifest surface, not a repair.
+
+### Before you bump
+
+**`support toolchain` takes the version as a second argument** (si#105). It always needed one - every
+profile's image is a `{version}` template - but the catalogue declared only `language`, and
+`signatures.bindable` drops `**kwargs`, so it raised `KeyError: 'version'` for every language:
+
+```
+./<product>.sh support toolchain cpp 19
+```
+
+or pinned per command with `with: { version: "19" }`.
+
+**The block the scaffolder writes now assembles** (si#105). It did not: the loader binds `with:` keys to
+impl PARAMETERS, and `run_toolchain` took none of `image`/`workdir`/`argv`/`env`/`caches`. A manifest
+that a product's own scaffolder writes and the product's own loader then refuses is the shape this
+release exists to remove. If you scaffolded under 0.8.0, re-run `support toolchain` - nothing else to do.
+
+**A command's tail reaches the tool again** (si#105). "Manifest first, caller appends" is what the design
+promises and 0.8.0 did not deliver: `./x.sh build compile --verbose` answered `No such option`. It needed
+both halves - a variadic positional AND `passthrough_args: true` - and neither works alone.
+
+**No `instance:` section is needed unless a command declares caches** (si#105). It was resolved before
+anything asked whether a cache existed, so a freshly scaffolded product died on its first command.
+`simplon.yaml` itself has no such section.
+
+### A command in the product's tree can back a gate (si#106)
+
+`Gate` took `suite:` (a pytest root) or `impl:` (a product callable). A `toolchain:run` command is
+neither, so a product whose test runner is a containerised toolchain got an exit code and NO verdict - no
+`setup-failed`, no marker, no Allure archive.
+
+Measured, and this is the failure that made it urgent rather than untidy: a C++ product's `build compile`
+exited 2 on a type error, and `build unit` then reported **`100% tests passed, 0 tests failed out of 3`**
+off stale binaries. A positively wrong green.
+
+A gate may now name a command:
+
+```yaml
+suites:
+  unit:
+    command: "build unit"
+    preamble: "build compile"
+```
+
+The kernel resolves it the way the CLI does - the body its `task:` names, with that command's own `with:`
+pinned - and turns the rc into the same verdict vocabulary every other gate produces. The alternative,
+making `toolchain:run` usable as an `impl:`, was rejected: a gate's `impl:` is called with no arguments,
+so it would need a second copy of image, argv and caches inside `suites:`, beside the command the product
+already declares. Two declarations of one build drift, and then the verdict is about a line nobody runs.
+
+The cost is stated in the code: the command is resolved at gate-run time, so a typo is a run-time
+refusal - but everything resolves BEFORE the results directory is cleared, so a typo can no longer cost
+the last real run's archive.
+
+### Two use case chapters, driven rather than described (si#108, si#109)
+
+`case-cpp` and `case-dotnet` walk the whole loop with real products - CMake and ctest, `dotnet build` and
+xUnit - scaffolded, wired to the kernel and run. Every command on those pages is resolved against the
+tree their fixture manifests assemble, every quoted refusal is pinned against the code that builds it,
+and every step carries `run`, `derived` or `does not exist yet` with the ticket where a decision is open.
+
+They are the reason this release exists: writing them is what drove the kernel, and driving it is what
+found si#105 and si#106.
+
 ## 0.8.0
 
 One merge, and it adds a catalogue coordinate - which is why this is 0.8.0 and not 0.7.2. Nothing existing
