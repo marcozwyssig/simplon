@@ -156,3 +156,31 @@ def test_a_refusal_stops_rather_than_falling_through(tmp_path, monkeypatch):
     # act / assert
     with pytest.raises(SystemExit):
         buildfiles.read_tree(root, {"nett": {"depends": ["core"]}})
+
+
+def test_two_directories_that_would_carry_one_target_name_are_refused(tmp_path, monkeypatch):
+    # arrange: `src/core/` is the library `core` and `tests/core/` is the test project `core`, and
+    # CMake refuses the second `add_library(core ...)` outright - so the generated tree could not have
+    # configured. What the model did instead was worse than the CMake error: `_overridden` round-tripped
+    # the list through a dict keyed on the name, so ONE of the two silently replaced the other and the
+    # library vanished from a file nobody would look at again
+    monkeypatch.setattr(buildfiles.log, "die",
+                        lambda m, *a, **k: (_ for _ in ()).throw(RuntimeError(m)))
+    root = _tree(tmp_path, "src/core/a.cpp", "tests/core/b.cpp")
+
+    # act / assert: the name, and BOTH directories, because the way out is renaming one of them
+    with pytest.raises(RuntimeError) as e:
+        buildfiles.read_tree(root, {})
+    assert "core" in str(e.value)
+    assert "src/core" in str(e.value) and "tests/core" in str(e.value)
+
+
+def test_the_duplicate_refusal_stops_rather_than_falling_through(tmp_path, monkeypatch):
+    # arrange: same rule as every other refusal here - `log.die` may exit, and the code after it must
+    # not be reached on the assumption that it did not
+    monkeypatch.setattr(buildfiles.log, "die", lambda m, *a, **k: None)
+    root = _tree(tmp_path, "src/core/a.cpp", "tests/core/b.cpp")
+
+    # act / assert
+    with pytest.raises(SystemExit):
+        buildfiles.read_tree(root, {})

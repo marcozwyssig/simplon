@@ -67,7 +67,36 @@ def read_tree(root: Path, overrides: Mapping[str, Mapping[str, object]]) -> list
     """
     targets = _library_targets(root) + _test_targets(root)
     targets.sort(key=lambda t: t.name)
+    _unique(targets)
     return _overridden(targets, overrides)
+
+
+def _unique(targets: list[Target]) -> None:
+    """Refuse two directories that would carry one target name, and name both of them.
+
+    A NAME IS THE ONE THING THIS MODEL CANNOT SHARE, and it is the tools rather than the model that
+    decide that: `src/core/` and `tests/core/` both derive the target `core`, and CMake answers the
+    second one with `add_executable cannot create target "core" because another target with the same
+    name already exists`. So the generated tree could not have configured either way, and a refusal
+    here says which two directories collided instead of leaving CMake to say that something did.
+
+    What made it worth a refusal rather than a comment is what happened WITHOUT one. `_overridden`
+    round-trips the list through a dict keyed on the name, so one of the two silently replaced the
+    other: the library disappeared, the test target was written twice, and the run reported success -
+    the exact defect this repository hunts, in a file nobody opens again because a generator wrote it.
+
+    The refusal is diagnosis and costs no flexibility: it forbids nothing a product could have shipped.
+    """
+    seen: dict[str, Path] = {}
+    for target in targets:
+        first = seen.get(target.name)
+        if first is not None:
+            log.die(f"two directories both declare the target `{target.name}` - "
+                    f"{first.as_posix()} and {target.directory.as_posix()}. A target name is what "
+                    f"CMake and the solution both key on, so one of the two has to be renamed; "
+                    f"nothing was written.")
+            raise SystemExit(1)
+        seen[target.name] = target.directory
 
 
 def _library_targets(root: Path) -> list[Target]:
@@ -125,6 +154,10 @@ def _sources(directory: Path) -> list[Path]:
 
 def _overridden(targets: list[Target], overrides: Mapping[str, Mapping[str, object]]) -> list[Target]:
     """Apply `targets:` over the model, refusing a key that names no target.
+
+    IT KEYS ON THE NAME, so it assumes what `_unique` has already refused: two targets sharing a name
+    would collapse into one here and the other would vanish without a word. The precondition is stated
+    rather than defended twice - `read_tree` runs the refusal one line before this call.
 
     The refusal LISTS the targets that exist, because the fault is almost always a typo and the way out
     is the correct spelling rather than the news that something was wrong.

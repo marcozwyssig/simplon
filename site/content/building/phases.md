@@ -201,8 +201,8 @@ output unreviewable within a week. Each generated file carries a `DO NOT EDIT` h
 generator overwrites without asking. That is deliberately the opposite of `support:toolchain`'s
 never-clobber rule, and the difference is the subject: a manifest is a product's own statement, a
 `CMakeLists.txt` is a rendering of one. Reverting a statement would be wrong; reverting a rendering is
-the point. A product whose build outgrows what those shapes can express keeps its hand-written files
-and declares neither coordinate - nothing degrades, it simply does what every product does today.
+the point. A product whose build outgrows what the two generators can express keeps its hand-written
+files and declares neither coordinate - nothing degrades, it simply does what every product does today.
 
 This is also the rib where families land most, and simplon's own `build` is the illustration: it holds
 four commands - `wheel`, `reference`, `site` and the `docs` aggregate - and not one of them is
