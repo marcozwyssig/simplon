@@ -18,6 +18,107 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.8.0
+
+One merge, and it adds a catalogue coordinate - which is why this is 0.8.0 and not 0.7.2. Nothing existing
+changes; the count on the [rules page](../../building/rules/) moves from 25 to 26.
+
+### Before you bump
+
+**Nothing.** `support:ci-privileges` is DECLARED and not placed, so no product's CLI grows a command it
+did not ask for. If you want it, place it like any other offered task:
+
+```yaml
+support:
+  commands:
+    ci-privileges: { task: "support:ci-privileges" }
+```
+
+### The uniform build: one task, four languages (si#95, si#99, si#100, si#101)
+
+The largest thing in this release, and the shape it took is the argument for it.
+
+**`toolchain:run`** runs a pinned image over the product tree, as the calling user, with named caches. It
+is the half of a build that is identical in every language: Java, C++, .NET and Python differ in which
+image runs and which argv it is handed, not in how a container is wired to a source tree. It is a
+FAMILY rather than a placement, because a toolchain is needed by `build` AND `test` - ctest, dotnet test
+and gradle test all belong under the latter.
+
+**`support:toolchain`** writes a language's ready-made configuration into the product's manifest:
+
+```
+./<product>.sh support toolchain cpp
+```
+
+lands `configure`, `compile`, `unit` and `analyse`, each a `toolchain:run` command with a pinned
+`silkeh/clang:19`. A product declares its parameters and receives the rest.
+
+**Scaffolded, not resolved at run time**, and that is a safety property rather than a convenience. A
+profile read while a build runs would let a kernel release change what that build does - the same class
+as an unpinned image, one level up. Written into the manifest, the product owns what it runs from then
+on, and this kernel's table can move without moving anybody's build.
+
+**It never clobbers.** A command that already exists is left as it is and named. The edit was somebody's
+decision, and the scaffolder cannot tell a deliberate one from a stale one.
+
+Both coordinates are DECLARED and not placed, so nothing appears in a product's CLI until the product
+asks for it.
+
+### The release guard could not see GitHub's own merge (si#97, si#98)
+
+A defect in this repository's own gate, and it had been red on every pull request for as long as the
+rule existed. `test_every_merge_in_a_documented_range_names_its_ticket` asks that every merge in a
+release range names a ticket in its subject. CI runs `on: [push, pull_request]`, and the `pull_request`
+event checks out `refs/pull/N/merge` - an ephemeral merge GitHub composes, whose subject is exactly
+`Merge <40 hex> into <40 hex>`, with no ticket and no way for an author to add one.
+
+So every PR carried one permanently red check that had nothing to do with its content. The fix skips
+that one subject and only that one: a full match on the machine format, so a real merge whose author
+forgot the number is still caught, and one that prefixes GitHub's wording to disguise itself is not
+excused.
+
+### Also in this range: a design and its plan, and nothing built from either (si#95, si#96)
+
+The spec for `toolchain:run` and the uniform build across Java, C++, .NET and Python landed in this
+range as a document, and its implementation plan behind it. **Nothing in 0.8.0 implements either** -
+they are in `docs/superpowers/specs/` and `docs/superpowers/plans/`, to be read and argued with before
+code exists.
+
+Both numbers are here because their MERGES are in the range, and this paragraph is what keeps them from
+reading as shipped changes. Worth noting for si#89: neither number appears in a single authored commit
+subject - they come only from GitHub's automatic `Merge pull request #NN` line, so the guard is asking
+for notes about pull requests rather than about work.
+
+### The CI privileges of a host, as a task that refuses unless it is root (si#92, si#93)
+
+Every product that puts a CI agent on a host was writing the same six lines by hand, and one of them is
+easy to leave out:
+
+```sh
+grep -q '^#includedir /etc/sudoers.d' /etc/sudoers || echo '#includedir /etc/sudoers.d' >> /etc/sudoers
+```
+
+Without it the drop-in in that directory is **inert**, and everything still looks right. Measured on three
+CI hosts that answered `sudo: a password is required` while the file sat at exactly the expected path with
+exactly the expected content. Nothing in those six lines is product knowledge - only the user name.
+
+Three things it does that a copied snippet does not:
+
+- **It refuses unless it is root, and says why.** This grants the privilege the kernel needs in order to
+  be allowed to do anything, so it cannot take it from inside a job - si#87 drew the same line one level
+  down. The refusal names the cure; "it did not work" would be useless.
+- **It validates the sudoers file before it is in force.** A broken file in `/etc/sudoers.d` does not fail
+  the command, it breaks `sudo` for everyone on the host - and the way back needs the privilege that just
+  stopped working. So it is written beside the directory, checked with `visudo -cqf`, and only then moved.
+- **It verifies as the USER, not as root.** Root can always sudo, so a check from here would pass on a
+  host where the grant did nothing. It also says that an agent which is already running must be restarted,
+  because a process inherits its groups at start - and it does not restart anything, because it does not
+  know what the service is called.
+
+**Why it is not placed**, while `support:install` beside it is: this one hands out `NOPASSWD: ALL`. A
+command that changes who may become root on a machine has to be something a product asked for, not
+something it received along with the kernel.
+
 ## 0.7.1
 
 Seven merges, and they have one thing in common worth saying first: **six of the
