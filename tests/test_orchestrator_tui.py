@@ -697,3 +697,34 @@ def test_the_bar_follows_the_runs_state_in_its_css_class():
 
     classes = asyncio.run(scenario())
     assert "-failed" in classes, classes
+
+
+def test_the_tui_path_leaves_the_same_transcript_behind(tmp_path, monkeypatch):
+    """si#148 item 3, the other half of the both-paths decision: `run_pipeline` writes AFTER `App.run()`
+    returns, so a run the operator quit half way through still leaves a record of what did happen."""
+    from simplon import context
+    from simplon.context import ProductContext
+    from simplon.orchestrator.tui import run_pipeline
+
+    # arrange: a TTY, a registered product, and an app that quits itself the moment the run is done
+    monkeypatch.setattr(context, "_current", ProductContext("cleon", tmp_path, tmp_path / "cleon.yaml"))
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    pipeline = _planned_pipeline({"compile": 1})
+    real_on_done = _StepApp._on_done
+
+    def quit_when_done(self) -> None:
+        real_on_done(self)
+        self.exit()
+
+    monkeypatch.setattr(_StepApp, "_on_done", quit_when_done)
+
+    # act
+    rc = run_pipeline(pipeline)
+
+    # assert
+    assert rc == 1
+    written = tmp_path / "build" / "logs" / "run-transcript.log"
+    assert written.is_file(), "the TUI path must leave the same artefact the headless path does"
+    text = written.read_text(encoding="utf-8")
+    assert "=== simplon run transcript: bringup ===" in text
+    assert "✗ build.compile  rc 1" in text

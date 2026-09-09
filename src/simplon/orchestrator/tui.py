@@ -13,23 +13,28 @@ its subtree takes down with it (netctl#1317).
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 
 from . import steps as steps_module
 from .steps import (STATE_ICON, Emit, Pipeline, Row, Step, StepState, abort_after, build_rows,
                     failure_report, format_duration, omitted_note, overall_rc, run_headless,
-                    status_line)
+                    status_line, step_header, write_run_transcript)
 
 
 def run_pipeline(pipeline: Pipeline) -> int:
     """Run the pipeline in the Textual UI when attached to a TTY (and Textual imports), else headless.
     Returns the overall exit code (0 iff every step passed)."""
     if not sys.stdout.isatty():
-        return run_headless(pipeline)
+        return run_headless(pipeline)     # which writes its own transcript
+    started = datetime.now()
     try:
         app = _StepApp(pipeline)
     except Exception:  # noqa: BLE001 - any Textual import/construct issue -> safe fallback
         return run_headless(pipeline)
     app.run()
+    # AFTER the app, not from `_on_done`: quitting is a normal way for `App.run` to return, and a run the
+    # operator stopped half way through is exactly the one whose record is worth keeping (si#148 item 3).
+    write_run_transcript(pipeline, started)
     # The TUI's screen - and with it the details pane that held the reason - is gone the moment the app
     # exits. The same block a CI log gets is therefore printed onto the terminal the operator is left
     # looking at (#49). A run with no failure prints nothing here, so a green run is not one line longer.
@@ -250,9 +255,12 @@ class _StepApp(App):
     def _step_header(step: Step) -> str:
         """The details pane's first line for a step: its exact command, plus the command's own help text
         when the manifest gave it one (#49). One line, and only where a step is ENTERED - the left pane's
-        rows stay the dotted paths, which is what makes them scannable."""
-        identity = step.command or step.label
-        return f"$ {identity} - {step.help}" if step.help else f"$ {identity}"
+        rows stay the dotted paths, which is what makes them scannable.
+
+        The line itself moved down to `steps.step_header` with si#148, because the run transcript renders
+        the same sentence and is written on the headless path too. Two spellings of one line is how two
+        artefacts of the same run come to disagree; this stays as the pane's own name for it."""
+        return step_header(step)
 
     def _details_text(self, row: Row) -> str:
         """What the right pane shows for `row`, as plain text - the one source `_show_details`, `c` and

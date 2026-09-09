@@ -241,22 +241,22 @@ clock fixture already covers the new label branch).
 **Files:** `src/simplon/orchestrator/steps.py`, `src/simplon/steplog.py`, `src/simplon/context.py`,
 `src/simplon/cli.py`, `tests/test_steplog.py`, `tests/test_orchestrator_steps.py`
 
-- [ ] 3.1 Failing test for `steps.transcript(pipeline, header)`: a three-step pipeline with one failure
+- [x] 3.1 Failing test for `steps.transcript(pipeline, header)`: a three-step pipeline with one failure
       renders every step IN ORDER, each with its rc and its duration, the failure's output, and the header
       lines above them. Assert the content, not the call.
-- [ ] 3.2 Implement `transcript`. Pure: it takes the header lines and returns lines.
-- [ ] 3.3 Failing test for `steplog.run_header(name, started)`: it carries the run's start time, the
+- [x] 3.2 Implement `transcript`. Pure: it takes the header lines and returns lines.
+- [x] 3.3 Failing test for `steplog.run_header(name, started)`: it carries the run's start time, the
       environment, the instance and the simplon provenance line; and with no product context / no
       `instance:` section / no `DELIVERY_ENVIRONMENT` it says so in words instead of raising.
-- [ ] 3.4 Rename `cli._provenance` to `cli.provenance_line` and update its one call site. Add
+- [x] 3.4 Rename `cli._provenance` to `cli.provenance_line` and update its one call site. Add
       `context.ENVIRONMENT_ENV` and export it from `cli.main` beside the product's own variable.
-- [ ] 3.5 Implement `run_header` and `steplog.write_run`.
-- [ ] 3.6 Failing test: `run_headless` over a real multi-step pipeline writes
+- [x] 3.5 Implement `run_header` and `steplog.write_run`.
+- [x] 3.6 Failing test: `run_headless` over a real multi-step pipeline writes
       `build/logs/run-transcript.log`, and its content carries the header and every step. Failing test:
       the TUI path writes the same file.
-- [ ] 3.7 Implement `steps.write_run_transcript(pipeline, started, now=None)` and call it from
+- [x] 3.7 Implement `steps.write_run_transcript(pipeline, started, now=None)` and call it from
       `run_headless` and from `run_pipeline`.
-- [ ] 3.8 Test: no markup, no ANSI escape in the written file (the shared-`STATE_ICON` constraint).
+- [x] 3.8 Test: no markup, no ANSI escape in the written file (the shared-`STATE_ICON` constraint).
 
 **Verify:** `pytest tests/test_steplog.py tests/test_orchestrator_steps.py` green.
 

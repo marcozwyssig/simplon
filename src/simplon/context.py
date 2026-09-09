@@ -29,6 +29,26 @@ from simplon.orchestrator.manifest import load as _load_manifest
 ROOT_ENV = "DELIVERY_PRODUCT_ROOT"
 MANIFEST_ENV = "DELIVERY_MANIFEST"
 
+#: The ACTIVE environment's name, mirrored into the kernel's own namespace by ``simplon.cli.main``
+#: (si#148 item 4). Unlike the two above it is not a resolution INPUT and overrides nothing - it is a
+#: fact about the running invocation that the kernel would otherwise have no way to read back.
+#:
+#: WHY IT EXISTS AT ALL. ``main`` already exports the active environment into the PRODUCT's own variable
+#: (``environments.ENV_VAR`` - ``NETCTL_ENV``, ``SIMPLON_ENV``, ...), and that variable's NAME is the
+#: product's, injected through the ``EnvironmentProvider`` seam. So the one place that knows the answer
+#: spells the question in a vocabulary no kernel leaf can look up: a module like ``steplog``, asked to
+#: write which environment a run targeted, can reach the provider through no import that does not
+#: reverse the product -> kernel direction. One kernel-owned mirror beside the product's own export
+#: costs a line and keeps the coupling pointing the right way.
+#:
+#: It is an ENV VAR rather than a module global on purpose: a step is frequently a subprocess that is
+#: itself a product command, and the fact has to survive that boundary the way the other two do.
+#:
+#: UNSET IS AN ANSWER. A pipeline built outside ``main`` - a unit test, a scaffolder run, a product
+#: importing the kernel directly - has no active environment, and a reader is told so rather than handed
+#: the manifest's default, which would put a fact in a transcript that no run produced.
+ENVIRONMENT_ENV = "DELIVERY_ENVIRONMENT"
+
 
 @dataclass(frozen=True)
 class ProductContext:

@@ -12,8 +12,10 @@ import os
 import shlex
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Callable
+from pathlib import Path
+from typing import TYPE_CHECKING, Callable, Sequence
 
 from simplon import log
 from simplon import steplog
@@ -781,6 +783,105 @@ def status_line(root: Row, now: float) -> str:
     return f"waiting to start{_BAR}{summary.counts}"
 
 
+def step_header(step: Step) -> str:
+    """One step's identity line: its EXACT command, plus the command's own help text when the manifest
+    gave it one (#49). The dotted path is what a reader SCANS for; this is what makes a pasted excerpt
+    reproducible, which is why it appears where a step is entered and in the transcript, and never on a
+    tree row.
+
+    Pure, and shared: the TUI's details pane and the run transcript render the identical line. It sits in
+    this module rather than in the TUI because the transcript is written on the HEADLESS path too, and a
+    second spelling of the same sentence is how two artefacts of one run come to disagree.
+    """
+    identity = step.command or step.label
+    return f"$ {identity} - {step.help}" if step.help else f"$ {identity}"
+
+
+def transcript(pipeline: Pipeline, header: Sequence[str]) -> list[str]:
+    """The WHOLE run as text lines: every step in the order it ran, each with its exact command, its rc
+    and its duration, then why each failure failed, then the verdict (si#148 item 3).
+
+    THE GAP IT CLOSES. `steplog.write` keeps what one step printed and `failure_report` prints the
+    failures once the app has exited. Neither is the artefact somebody attaches to a ticket, and a nicer
+    pane cannot become one: a pane is gone when the app is.
+
+    IN EXECUTION ORDER, not as a tree. `render_tree` already draws the shape and both runners show it;
+    what it cannot show is the ORDER, which is the half a reader reconstructing an incident needs - and
+    the order is `pipeline.steps`, which is what actually ran.
+
+    IT REUSES RATHER THAN RESTATES. `step_header` is the pane's own line, `failure_report` is the block
+    both runners already print (tail plus the path to the whole file, or the sentence saying the run does
+    not know), and the verdict is the status bar's. Composing them is the work; a second rendering of any
+    of them would be a second answer to a question that has one.
+
+    NO OUTPUT BODIES. The full text of every step is already on disk one file per step, and inlining it
+    here would produce a transcript nobody opens for a build that prints 40 000 lines. What a failure
+    contributes is `failure_report`'s tail AND the path to the rest - #49's both-or-neither rule.
+
+    Pure: it returns lines and prints none of them, and it is plain text throughout, so nothing here can
+    put markup or an escape into a file a reader attaches to a ticket (si#144's warning about a pty,
+    applied to the artefact rather than to the stream).
+    """
+    lines = list(header)
+    if lines:
+        lines.append("")
+    for step in pipeline.steps:
+        identity = step.command or step.label
+        icon = STATE_ICON[step.state]
+        if step.state == StepState.SKIPPED:
+            lines.append(f"{icon} {identity}  (skipped: {_skip_note(pipeline, step)})")
+        elif step.rc is None:
+            # Never entered `Step.run` and was not skipped either: the run stopped before it, which is
+            # what a transcript of a TUI run the operator quit half way through has to be able to say.
+            lines.append(f"{icon} {identity}  ({step.state.value})")
+        else:
+            duration = step.duration
+            shown = f"  {format_duration(duration)}" if duration is not None else ""
+            lines.append(f"{icon} {identity}  rc {step.rc}{shown}")
+        lines.append(f"    {step_header(step)}")
+    failures = failure_report(pipeline)
+    if failures:
+        lines += [""] + failures
+    lines += ["", f"verdict: {_verdict_text(summarise(build_rows(pipeline)))}"]
+    return lines
+
+
+def _skip_note(pipeline: Pipeline, skipped: Step) -> str:
+    """Which subtree declined to run `skipped`, in the words `Abort.reason` uses - the same content the
+    TUI's pane and the headless runner already show beside a `⊘`, recomputed here rather than carried,
+    because a Step does not hold it and the transcript is written after the fact.
+
+    It asks the FIRST failure whose abort claims this step. Later failures may claim it too; the first
+    one is the one that decided, exactly as both runners' `setdefault` records it.
+    """
+    index = next((i for i, step in enumerate(pipeline.steps) if step is skipped), None)
+    if index is None:
+        return "a previous step failed"
+    for i, step in enumerate(pipeline.steps[:index]):
+        if step.state == StepState.FAILED:
+            abort = abort_after(pipeline, i)
+            if index in abort.indices:
+                return abort.reason
+    return "a previous step failed"
+
+
+def write_run_transcript(pipeline: Pipeline, started: datetime) -> Path | None:
+    """Write the run transcript beside the per-step logs; returns the path, or None when there was
+    nowhere to put it.
+
+    CALLED ON BOTH PATHS, and that is a decision rather than an oversight. The run that most needs to be
+    attachable to a ticket is a red CI run, which is exactly the headless path - a transcript written
+    only under the TUI would exist only on the machine where the operator could already read the screen.
+    It costs a CI run one file under `build/`, which `clean` removes, and it degrades to nothing when no
+    product context is registered, the way `steplog.write` already does.
+
+    The TUI's caller writes it AFTER `App.run()` returns rather than from `_on_done`, so a run the
+    operator quit half way through still leaves a record of what did happen. That is why the body above
+    has a branch for a step that was neither run nor skipped.
+    """
+    return steplog.write_run("\n".join(transcript(pipeline, steplog.run_header(pipeline.name, started))))
+
+
 def render_tree(root: Row, indent: str = "  ") -> list[str]:
     """The display tree as text lines, one per row, indented by depth - what `run_headless` prints so a CI
     log shows the structure the TUI draws.
@@ -858,7 +959,12 @@ def run_headless(pipeline: Pipeline, verbose: bool | None = None) -> int:
 
     A RED run then adds `failure_report` between that tree and the verdict line (#49): the tree says which
     steps failed, the report says why each of them did, and the count stays last. A green run adds
-    nothing - the normal case must not pay for the exceptional one, which is #49's own acceptance."""
+    nothing - the normal case must not pay for the exceptional one, which is #49's own acceptance.
+
+    It also leaves a RUN TRANSCRIPT behind (si#148 item 3), and headless is not the afterthought path for
+    it: the run that most needs to be attachable to a ticket is a red CI run, and this is the runner CI
+    uses. See `write_run_transcript`."""
+    started = datetime.now()
     show_passing = _verbose_env() if verbose is None else verbose
     failures = 0
     skipped = 0
@@ -903,8 +1009,10 @@ def run_headless(pipeline: Pipeline, verbose: bool | None = None) -> int:
         for line in failure_report(pipeline):
             print(line, flush=True)
         tail = f", {skipped} skipped" if skipped else ""
+        write_run_transcript(pipeline, started)
         log.warn(f"{pipeline.name}: {failures}/{len(pipeline.steps)} step(s) failed{tail}")
         return 1
+    write_run_transcript(pipeline, started)
     log.ok(f"{pipeline.name}: all {len(pipeline.steps)} steps passed")
     return 0
 
