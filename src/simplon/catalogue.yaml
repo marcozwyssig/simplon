@@ -370,6 +370,16 @@ tasks:
   # A FAMILY, not a placement: si#34 would confine `build:toolchain` to `build`, and ctest / dotnet test /
   # gradle test belong under `test`. Declared and not placed, because a product with no compiled
   # toolchain should not receive the command with the kernel.
+  # The ready-made configuration, GENERATED rather than resolved (si#95). It lands under `support`
+  # because it touches the product's own tree and reads no phase - the same argument `install` sits on.
+  # Declared and not placed for the reason above: a product without a compiled toolchain has no use for
+  # it, and a command nobody asked for is a command nobody reviews.
+  support:toolchain:
+    impl: simplon.tasks.toolchain:scaffold
+    help: "Write a ready-made toolchain configuration for a language into this product's manifest."
+    params:
+      language: { help: "java | cpp | dotnet | python", argument: true }
+
   toolchain:run:
     impl: simplon.tasks.toolchain:run_toolchain
     help: "Run a pinned toolchain image over the product tree, as the calling user."
