@@ -53,6 +53,17 @@ rc is `SETUP_FAILED`, and THE BODY NEVER RUNS - the rule a pytest gate's preambl
 is the true sentence here as well. The suite did not run, so the run learned nothing about the product.
 `tests/test_suites_command_gate.py` pins it.
 
+AND A GATE OF ANY KIND MAY SAY WHERE ITS RUNNER PUT ITS RESULTS (si#133). `results_from:` names a
+directory the product's own runner wrote into - a `ctest --output-junit` file, a Gradle build's JUnit
+XML, a `dotnet test` TRX - and the kernel merges it into this run's allure results after the runner has
+run. The merge is `allure.merge_results`, which has been technology-agnostic since it was written; what
+was missing was a way to reach it from a manifest rather than from a Python body, and a product that
+wrote that body is the only reason anything but pytest was ever in a report. Two halves make it honest:
+the staleness cutoff is the GATE'S OWN start, because nothing on this side of the seam empties a
+product's results directory and a runner that wrote nothing would otherwise contribute the last run's
+files; and a runner that exits 0 having contributed NOTHING is red, because an archive rendered with a
+level missing looks exactly like one where the level passed.
+
 Its `precondition:` is a command too, for the reason the kind exists at all: a product with no Python in
 it must not have to write a Python body in order to reach a hook - that is the si#61 trap one level
 across. The SECTION-level precondition stays a ref; it belongs to no gate and therefore to no kind.
