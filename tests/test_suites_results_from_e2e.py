@@ -18,13 +18,16 @@ THE TWO MEASUREMENTS THE DESIGN REFUSED TO ASSUME, made before this file was wri
   * the .NET SDK image ships the TRX logger with no `PackageReference`; `--logger junit` answers
     `Could not find a test logger ... 'junit'` and exits 1. Nothing here depends on the second answer.
 
-WHY THE GATE BELOW IS AN `impl:` AND NOT THE `command:` THE TICKET DESCRIBES. Measured, not chosen:
-a `command:` gate CANNOT name a `toolchain:run` command today, because `run_toolchain`'s first parameter
-is a `typer.Context` and `_command` refuses any body that takes one. si#106's own tests all resolve to
-`simplon.test_impls:pinned_rc`, a body with no context, so nothing caught it, and both case chapters
-promise the shape without having driven it. `test_a_command_gate_cannot_name_a_toolchain_run_command_yet`
-pins that measurement; it is si#136, a defect in si#106 and NOT in this ticket, and it is why the drive
-uses the kind a product can actually run today - which is also javademo's real shape.
+WHY THE GATE BELOW IS AN `impl:` AND NOT THE `command:` THE TICKET DESCRIBES. It was measured rather
+than chosen, and the measurement has since been repaired. When this file was written a `command:` gate
+could NOT name a `toolchain:run` command: `run_toolchain`'s first parameter is a `typer.Context` and
+`_command` refused any body that took one, while every si#106 test resolved to
+`simplon.test_impls:pinned_rc`, a body with no context - so nothing caught it and both case chapters
+promised a shape neither had driven. si#136 fixed that (a gate hands such a body a `GateContext`), and
+`tests/test_suites_command_gate_e2e.py` is where the real coordinate is now driven. The `impl:` gate
+stays HERE because this file is about `results_from:` and not about the gate kind: it is javademo's real
+shape, it exercises the merge through a runner the kernel cannot see, and rewriting it onto the other
+kind would put a second change in a diff whose whole claim is the first.
 
 WHY THE SKIP IS ON DOCKER AND NOTHING ELSE - the rule `tests/test_buildfiles_e2e.py` states: the tool is
 what is being measured, so its absence is a skip and everything else is a failure. A missing image is not
@@ -287,33 +290,29 @@ def test_a_level_whose_runner_wrote_no_results_is_red_and_the_archive_is_empty(m
 # --- the limit this drive met, measured rather than assumed --------------------------------------------
 
 
-def test_a_command_gate_cannot_name_a_toolchain_run_command_yet(monkeypatch, tmp_path):
-    """si#106's own case, and it does not run. Recorded here because the drive above had to work around
-    it and a workaround nobody wrote down is a workaround somebody repeats.
+def test_a_command_gate_can_name_the_toolchain_run_command_this_product_declares(monkeypatch, tmp_path):
+    """si#106's own case, reachable at last (si#136), and kept HERE because this is where it was found.
 
-    A gate may name a command (si#106), and the command a C++, .NET or Java level actually has is a
-    `toolchain:run` one. `run_toolchain`'s first parameter is a `typer.Context` - it uses it for one
-    thing, the command path it names in a refusal - and `_command` refuses ANY body that takes one,
-    because a gate has no Click context to give and because that refusal is also what stops a gate naming
-    the `test:gate` command it is invoked as. Every si#106 test resolves to `simplon.test_impls:pinned_rc`
-    instead, which takes no context, so nothing measured the real coordinate; `case-cpp.md` and
-    `case-dotnet.md` both promise the shape and neither drove it.
+    The predecessor of this test asserted the refusal - `'build unit' takes a CLI context, which a gate
+    has none of to give it` - and said in as many words that the day somebody fixed it, this record had
+    to change. It changed. What it holds now is the same join from the other side: the manifest above is
+    a real product's, its `build unit` is a real `toolchain:run` command, and a `command:` gate resolves
+    it instead of refusing it.
 
-    This test states what happens TODAY, and si#136 carries the finding. It is a defect in si#106 rather
-    than in si#133, it needs a decision this ticket is not the place for (what context, if any, a gate
-    hands a body, and how the loop stays refused), and the day it is fixed this test is what tells
-    whoever fixed it that the record here has to change.
+    It stops at the RESOLUTION and runs no container, deliberately: `tests/test_suites_command_gate_e2e.py`
+    drives the verdict end to end, and a second full compile here would buy nothing but a minute.
     """
     # arrange: the manifest a real C++ product writes, and a gate that names its test command
     _product(monkeypatch, tmp_path)
     gate = testrun.Gate(name="unit", command="build unit", results="clear")
 
     # act
-    with pytest.raises(ValueError) as refused:
-        testrun.assess_gate(gate, _cfg(), [], filtered=False)
+    runner = testrun._command(gate.command, f"gates.{gate.name}.command")
 
-    # assert
-    assert "takes a CLI context" in str(refused.value), str(refused.value)
+    # assert: it resolved to a callable, and to the body the manifest's `task:` names
+    assert callable(runner)
+    assert context.current().manifest().commands["build"]["unit"].impl == \
+        "simplon.tasks.toolchain:run_toolchain"
 
 
 @needs_docker
