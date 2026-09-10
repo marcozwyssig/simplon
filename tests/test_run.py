@@ -89,3 +89,75 @@ def test_chain_runs_its_steps_in_the_directory_it_was_given(tmp_path):
 def test_chain_of_nothing_succeeds():
     # arrange / act / assert: an empty plan is not a failure
     assert chain() == 0
+
+
+# --- si#144: a segment is what arrived, not what ended in a newline ----------------------------------
+
+def test_run_stream_hands_over_a_partial_line_when_the_child_goes_quiet():
+    """The measured defect (si#144): pytest writes one dot per test and completes the line every 72 of
+    them, so `for line in proc.stdout` froze the pane for up to 11.37s while the child was writing every
+    few milliseconds. A reader that waits for the terminator is the whole of it."""
+    # arrange: a child that writes an unterminated run of dots, pauses, then finishes the line
+    seen: list[str] = []
+    argv = ["sh", "-c", "printf '...'; sleep 0.5; printf '... [100%%]\\n'"]
+
+    # act
+    rc = run_stream(argv, seen.append, flush_after=0.05)
+
+    # assert: the first three dots arrived on their own, before the line was ever terminated
+    assert rc == 0
+    assert seen == ["...", "... [100%]"]
+
+
+def test_run_stream_splits_on_a_carriage_return_as_well_as_a_newline():
+    """A repaint ends a segment for the same reason a newline does: what came before it is finished
+    text. This passed before si#144 too - `text=True` makes `\\r` a terminator for `readline` - and is
+    kept because the rewrite to a chunk reader must not lose it."""
+    # arrange
+    seen: list[str] = []
+
+    # act
+    rc = run_stream(["sh", "-c", "printf 'a  17%%\\rb 100%%\\n'"], seen.append)
+
+    # assert
+    assert rc == 0
+    assert seen == ["a  17%", "b 100%"]
+
+
+def test_run_stream_treats_crlf_as_one_break():
+    # arrange: a Windows-ending child, which must not produce an empty segment between the two bytes
+    seen: list[str] = []
+
+    # act
+    run_stream(["sh", "-c", "printf 'one\\r\\ntwo\\r\\n'"], seen.append)
+
+    # assert
+    assert seen == ["one", "two"]
+
+
+def test_run_stream_keeps_a_multibyte_character_whole_across_a_chunk_boundary():
+    """Chunked reading can cut a UTF-8 character in half, which `text=True` used to prevent. The state
+    icons this kernel echoes (the run tree's glyphs) are exactly such characters."""
+    # arrange: the two halves of one character, written 0.3s apart, so they land in different reads
+    seen: list[str] = []
+    argv = ["python3", "-c",
+            "import sys,time; b='\\u2713'.encode(); sys.stdout.buffer.write(b[:1]);"
+            " sys.stdout.buffer.flush(); time.sleep(0.3);"
+            " sys.stdout.buffer.write(b[1:]+b'\\n'); sys.stdout.buffer.flush()"]
+
+    # act
+    run_stream(argv, seen.append, flush_after=0.05)
+
+    # assert: one whole character, never two replacement marks
+    assert "".join(seen) == "✓"
+
+
+def test_run_stream_emits_the_last_line_when_the_child_never_terminates_it():
+    # arrange
+    seen: list[str] = []
+
+    # act
+    rc = run_stream(["sh", "-c", "printf 'no newline here'; exit 3"], seen.append)
+
+    # assert
+    assert (rc, seen) == (3, ["no newline here"])
