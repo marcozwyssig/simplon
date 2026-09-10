@@ -191,7 +191,10 @@ def test_a_transcript_written_mid_run_names_the_running_step_with_one_plain_glyp
     text = "\n".join(transcript(pipeline, header=["=== x ==="]))
     # assert
     running = [line for line in text.splitlines() if "build.compile" in line]
-    assert running and running[0].startswith(f"{STATE_ICON[StepState.RUNNING]} build.compile"), running
+    # The character is NAMED, not read back out of the table this is guarding: derived, the assertion
+    # would follow a revert to `▶` instead of catching it, and would prove only that the transcript
+    # reproduces `STATE_ICON` - true before si#162 and beside its point.
+    assert running and running[0].startswith("↻ build.compile"), running
     assert len(STATE_ICON[StepState.RUNNING]) == 1, "one character, and the same one every time"
     assert "\x1b" not in text, "no ANSI escape"
     assert "[/" not in text and "[bold" not in text and "[red" not in text, "no rich markup"

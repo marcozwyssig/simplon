@@ -1412,7 +1412,12 @@ def test_coming_back_to_a_running_step_lands_on_its_tail_and_goes_on_following_i
             # ... and it has to keep following from there
             gate_two.write_text("go", encoding="utf-8")
             await _until(pilot, 100)
-            await pilot.pause()
+            # `Step.live` is appended to BEFORE the line is handed to `emit`, so reaching 100 there says
+            # nothing about the UI thread having processed the hundredth `call_from_thread`. Pumped until
+            # it has, bounded - one `pause()` happens to be enough today and that is not a guarantee.
+            deadline = time.monotonic() + 10
+            while "line 100" not in _visible(_details_log(app)) and time.monotonic() < deadline:
+                await pilot.pause(0.02)
             still_following = _visible(_details_log(app))
             release.write_text("go", encoding="utf-8")
             await app.workers.wait_for_complete()

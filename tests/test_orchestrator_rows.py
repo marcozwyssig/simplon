@@ -436,7 +436,13 @@ def test_render_tree_shows_each_rows_state_icon_including_the_derived_ones():
 def test_the_headless_rows_carry_one_static_glyph_per_state_and_no_markup():
     """si#162 moved the RUNNING glyph, and `render_tree` is the second place the same table is rendered -
     a CI log, where a colour is a lie and an animation is a character nobody can read back. Every icon
-    stays exactly one plain character, whatever the TUI does with it on a terminal."""
+    stays exactly one plain character, whatever the TUI does with it on a terminal.
+
+    THE GLYPH IS WRITTEN OUT HERE rather than read from `STATE_ICON`. Deriving it from the table would
+    have made this assertion follow whatever the table said, including `▶` - it would have proved only
+    that this renderer reproduces the table, which was never in doubt and was already true before the
+    fix. The point of naming the character is that a revert of the table goes red HERE too, in the
+    artefact a CI log is, and not only in the tree test that knows about Textual."""
     # arrange: a run stopped between two steps, so a RUNNING row is really in the tree
     pipeline = _planned_pipeline()
     pipeline.steps[0].run()
@@ -444,7 +450,8 @@ def test_the_headless_rows_carry_one_static_glyph_per_state_and_no_markup():
     text = "\n".join(render_tree(build_rows(pipeline)))
     # assert
     assert all(len(icon) == 1 for icon in STATE_ICON.values()), STATE_ICON
-    assert STATE_ICON[StepState.RUNNING] in text, text
+    assert STATE_ICON[StepState.RUNNING] == "↻", STATE_ICON[StepState.RUNNING]
+    assert "↻ deploy.bringup" in text, text
     assert "\x1b" not in text, "no ANSI escape reaches a CI log"
     assert "[/" not in text and "[bold" not in text, "no rich markup either"
 
