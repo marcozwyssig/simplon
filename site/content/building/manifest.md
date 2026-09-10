@@ -430,52 +430,71 @@ tasks:
     group: build
 ```
 
-**That form is gone.** A manifest written that way no longer loads.
-
-It does not fail with "no longer supported", though, and that is the part worth knowing about: the
-loader rewrites *your* sections, in *your* names, and prints the result. Feeding the manifest above to
-the loader answers with
+**That form was abolished in 0.4.0.** A manifest written that way no longer loads, and the loader says
+so by name rather than letting it die further down as a missing key on some node:
 
 ```
-this manifest is written in the flat command form, which this kernel no longer loads: group(s) 'build'
-name commands directly, with `impl:` on them; task(s) 'docs:reference' are keyed by a platform
-coordinate; an `import:` section makes catalogue coordinates available. Rewrite those sections as:
+this manifest is written in the flat command form, which no longer loads: the form was abolished in
+0.4.0 and this kernel is past it.
 
-    tasks:
-      wheel: { impl: "orchestrator.cli:build_wheel", help: "Build the wheel." }
+What says so here: group(s) 'build' name commands directly, with `impl:` on them; task(s)
+'docs:reference' are keyed by a platform coordinate; an `import:` section makes catalogue coordinates
+available.
 
-    groups:
-      build:
-        commands:
-          wheel: { task: "wheel" }
-          reference: { task: "docs:reference" }
-
-  - a command is an INSTANCE of a task: the body is declared once under `tasks:` and the command points
-    at it with `task:`
+What it becomes:
+  - a command is an INSTANCE of a task: declare the body once under `tasks:` and let the command point
+    at it with `task:`, under `groups: <group>: commands:`
   - a catalogue task keeps its body in the kernel - the command names the coordinate
     (`task: "<namespace>:<name>"`) and copies nothing
   - the catalogue's own commands arrive by merging its tree, so `import:` has nothing left to do -
     delete the section
+
+The tree form is documented at https://marcozwyssig.github.io/simplon/building/manifest/ - "The command
+tree" for the shape, and "The flat form, and how to leave it" for this migration in particular. Nothing
+here rewrites the file for you: the sections have to be edited by hand, which is also the only way your
+comments survive the move.
 ```
 
-Paste that block over the sections it names and the manifest loads. The rewrite covers the whole of
-`tasks:` and `groups:`, including any group you had already converted, so a half-migrated manifest does
-not lose its converted half when you paste. Four things to know about what it does:
+The manifest above becomes:
+
+```yaml
+tasks:
+  wheel: { impl: "orchestrator.cli:build_wheel", help: "Build the wheel." }
+
+groups:
+  build:
+    commands:
+      wheel: { task: "wheel" }
+      reference: { task: "docs:reference" }
+```
+
+*(Until 0.11.0 the refusal also printed that block for you, rendered from your own manifest. The
+renderer went in si#85: no manifest that installs this kernel had been on the flat form since 0.4.0, so
+it was some 250 lines describing the manifest's shape a second time, where nobody reading was left to
+notice it drifting - and si#56 had just found a property of it that was mis-documented from the day it
+was written. This page is the source that is maintained.)*
+
+Five things to know while you convert:
 
 - **An aggregate crosses unchanged.** A command with `depends_on:` and no `impl:` was never a body, so
-  there is nothing to move.
-- **A shared body becomes one task.** Two commands that spelled out the same `impl:` come out as one
-  template with two placements - which is the point of the form.
-- **A name collision is qualified, not shadowed.** `build build` and `deploy build` are two different
-  bodies under one command name; the rewrite renames the second task.
-- **A name the catalogue places carries `override: true`.** `support install` is your body under a name
-  the platform already uses, so the merge demands you say you mean it - and the rewrite says it for you.
+  there is nothing to move out of it.
+- **A shared body becomes one task.** Two commands that spelled out the same `impl:` are one template
+  with two placements - which is the point of the form. Do not carry the duplication across.
+- **A name collision needs two task names.** `build build` and `deploy build` are two different bodies
+  under one command name. That is legal in the tree and impossible in one flat `tasks:` block, so one of
+  the two bodies has to be declared under a different task name; the commands keep the names they had.
+- **A name the catalogue places needs `override: true`.** `support install` is your body under a name
+  the platform already uses, so the merge demands you say you mean it. Where your placement names the
+  platform's *own* body, it is a refinement and needs no key.
+- **Your comments are yours to carry.** Nothing rewrites the file for you any more, which is the one
+  respect in which this is easier than it was: a generated block was correct YAML carrying none of the
+  reasoning the file it replaced carried, and a consumer whose manifest held forty lines of it kept them
+  only because somebody looked.
 
-So what it prints loads, as printed, in one round. What no rewrite can fix is an old manifest that says
-something the tree form does not allow at all - a group the platform's tree does not declare, a
-coordinate placed outside the group its namespace names, a name that is an aggregate for you and a
-task-backed command in the catalogue. Those are refusals of your manifest rather than of the block, and
-each names its own way out.
+What no conversion can fix is an old manifest that says something the tree form does not allow at all -
+a group the platform's tree does not declare, a coordinate placed outside the group its namespace names,
+a name that is an aggregate for you and a task-backed command in the catalogue. Those are refusals of
+your manifest rather than of its spelling, and each names its own way out.
 
 What you lose is the `import:` section, and you lose nothing with it: the catalogue's own commands
 arrive by merging its tree, and any other coordinate is named directly by the command that wants it.

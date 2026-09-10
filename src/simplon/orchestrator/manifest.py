@@ -748,12 +748,10 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
 
     The FLAT form - `impl:` written straight onto a command, `import:`, a coordinate-keyed `tasks:` entry -
     is gone (netctl#1469 plan 3, si#33). A manifest still written that way is refused before anything else
-    runs, with its own sections rewritten in the message (`treeform.check_no_old_form`) - and that
-    rewrite is given the CATALOGUE, so a command whose name the catalogue also places is printed with
-    the `override: true` the merge then demands and the printed block loads as printed (si#42). It is
-    given the TEXT too, because the block is rendered from the parse and carries no comments: the refusal
-    counts what a paste would drop and says so, rather than letting a green migration lose its reasoning
-    silently (si#56).
+    runs (`treeform.check_no_old_form`), with a message that names the form, the release that abolished
+    it and the page the tree form is documented on. It used to print a rewrite of the manifest's own
+    sections as well; si#85 struck that renderer, because no reachable manifest is on the flat form any
+    more and a second, unread source of the manifest's shape is a source that rots.
     Unknown top-level keys stay ignored (backward compatible), with ONE exception: a leftover `composites:`
     key is rejected loudly (the concept was removed in netctl#898; declare an impl-less aggregate command
     with `depends_on` instead) - silently dropping it would turn a still-declared pipeline into dead data.
@@ -764,22 +762,16 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     """
     data = yaml.safe_load(text) or {}
     # The flat form is gone (netctl#1469 plan 3, si#33) and a manifest still written in it is refused
-    # HERE, first, with its own sections rewritten in the message - before any of the checks below can
-    # report a symptom of it instead. `impl:` on a command would otherwise surface as `treeform.resolve`'s
-    # "declare the body once under `tasks:`" one command at a time, which is true and useless: it names
-    # the rule, not the file's way out of it.
-    # The catalogue's own tree, read HERE rather than further down: `check_no_old_form` needs it too, so
-    # that the rewrite it prints carries `override: true` on the names the catalogue itself places
-    # (si#42). `taxonomy:` is `groups:`'s predecessor (netctl#1444, superseded by netctl#1469) and a
-    # catalogue carries one or the other, never both. The two spell a node the same way - help,
-    # env_first, nested groups - so the older one is simply a tree with no commands placed in it, and
-    # reading it here is what keeps a catalogue that has not moved yet owning the shape AND the
+    # HERE, first - before any of the checks below can report a symptom of it instead. `impl:` on a
+    # command would otherwise surface as `treeform.resolve`'s "declare the body once under `tasks:`" one
+    # command at a time, which is true and useless: it names the rule, not the file's way out of it.
+    treeform.check_no_old_form(data)
+    # The catalogue's own tree. `taxonomy:` is `groups:`'s predecessor (netctl#1444, superseded by
+    # netctl#1469) and a catalogue carries one or the other, never both. The two spell a node the same
+    # way - help, env_first, nested groups - so the older one is simply a tree with no commands placed in
+    # it, and reading it here is what keeps a catalogue that has not moved yet owning the shape AND the
     # existence of its groups.
     catalogue_groups = (getattr(catalogue, "groups", {}) or {}) or (getattr(catalogue, "taxonomy", {}) or {})
-    # The TEXT goes with the parsed document (si#56). The rewrite is rendered from the parse and a comment
-    # hangs on a line, so a commented manifest pasted over with it loads and loses its reasoning - and the
-    # only place that can tell whether THIS manifest is in that case is here, where the lines still exist.
-    treeform.check_no_old_form(data, catalogue_groups, source=text)
     tree = data.get("groups") or {}
     if not isinstance(tree, dict):
         raise ValueError(

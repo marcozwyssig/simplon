@@ -23,12 +23,13 @@ it is the one section held only to existing.
 
 ## 0.11.0
 
-**Three things a real run showed that no test was asking about, and a gate that had quietly stopped
-covering what its name claims.** The first three are the runner; they came out of one screenshot and one
-sentence from the operator watching it, and none of them was a failure - the run was correct and
-unreadable at the same time.
+**Three things a real run showed, and two that had quietly stopped being true.** The first three came
+out of one screenshot and one sentence from the operator watching a build: none of them was a failure,
+the run was correct and unreadable at the same time. The other two are a refusal that still offered work
+it should no longer do, and a gate that had stopped covering what its name claims.
 
-A minor rather than a patch: the state alphabet is a surface, and one of its five characters changed.
+A minor rather than a patch: the state alphabet is a surface and one of its five characters changed,
+what a refusal says is a surface, and so is what a gate covers.
 
 ### The running row stops reading as two arrows (si#162)
 
@@ -78,15 +79,65 @@ from.
 Both were reproduced before they were touched, with a real child through the real stream reader and the
 cursor moved deliberately, and both tests were seen red against 0.10.0 first.
 
+### The flat-form refusal names the way out instead of printing it (si#85)
+
+The renderer served a measured-empty population. All six manifests that install this kernel have been off
+the flat form since 0.4.0, the seventh flat one does not install it at all, and si#56 had just found that
+the renderer carried a property that had been mis-documented since the day it was written. That is the
+shape of a second source nobody reads: correct-looking, unexercised, and drifting from the thing it
+describes.
+
+**The refusal itself survives, and the argument for it was never rebutted.** A population is not the set
+of possible inputs, and a new consumer can arrive with an old manifest. Without the refusal that manifest
+dies further down as a missing key on some node, which names neither the shape the file is in nor the
+release that abolished it. Roughly forty lines buy that, and they stay.
+
+What the message says now, in place of the block:
+
+```
+this manifest is written in the flat command form, which no longer loads: the form was abolished in
+0.4.0 and this kernel is past it.
+
+What says so here: group(s) 'build' name commands directly, with `impl:` on them; task(s)
+'docs:reference' are keyed by a platform coordinate; an `import:` section makes catalogue coordinates
+available.
+
+What it becomes:
+  - a command is an INSTANCE of a task: declare the body once under `tasks:` and let the command point
+    at it with `task:`, under `groups: <group>: commands:`
+  ...
+
+The tree form is documented at https://marcozwyssig.github.io/simplon/building/manifest/ - "The command
+tree" for the shape, and "The flat form, and how to leave it" for this migration in particular. Nothing
+here rewrites the file for you: the sections have to be edited by hand, which is also the only way your
+comments survive the move.
+```
+
+The detection is unchanged: the same four shapes are still found together, and the same manifest is still
+refused before any other check can report a symptom of it instead.
+
+**Nothing to do unless you have a flat manifest**, and if you do, [The
+manifest](../../building/manifest/#the-flat-form-and-how-to-leave-it) is now where the migration is
+written down. That page grew the worked example the renderer used to print, plus the five things to know
+while converting - including the one the renderer could never do for you, which is carry your comments
+across.
+
 ### `test all` runs every test again (si#156)
 
 si#89 moved the release-notes guard out of the pytest suite and into the catalogue coordinate
-`test:release-notes`, which was right and had a side effect nobody stated: the check left the local
-gate. `./simplon.sh test all` says *Run every test* and had not been running it since. A developer
-running the gate the project points them at learned nothing about their notes; CI told them, after the
-push. `test all` reaches the same single implementation the CI step reaches - not a second pytest test
-shelling out to it, which would be the two-ways-to-one-verdict shape the manifest already forbids beside
-`typecheck-python`.
+`test:release-notes`. That was right, and it had a side effect nobody stated: the check left the LOCAL
+gate. `./simplon.sh test all` was the pytest suite and nothing else, so a developer who ran the gate the
+project tells them to run learned about missing notes from CI, after the push - from a command whose help
+says *Run every test*.
+
+**`test all` is an AGGREGATE now**, over the pytest suite and the notes guard, and not a second
+implementation of either: it plans the same `test:release-notes` the CI step invokes, so the two cannot
+disagree. The pytest leaf needed a name of its own to make room and is `test suite` - the kernel's
+`impl:` XOR `depends_on:` lock (si#895/si#896) means one command cannot be both a body and a plan.
+
+**What a product has to do:** nothing, unless it invoked simplon's own `test all` expecting exactly the
+pytest run - that is `test suite` now. The aggregate costs about a second more, measured, and it fails on
+the first step that fails.
 
 ## 0.10.0
 
