@@ -101,13 +101,49 @@ PROFILES: dict[str, Profile] = {
     "java": Profile(
         image="gradle:jdk{version}",
         commands={
-            # DRIVEN AND LEFT AS IT IS (si#122): both commands run and both are green on a green tree,
-            # but `gradle build` depends on `check`, so `compile` runs the tests too and a broken
-            # assertion makes the COMPILE red - which is the distinction a gate's `preamble:` exists to
-            # draw. And there is no `analyse` here, because Java's checkers are Gradle plugins the
-            # product's own `build.gradle` has to apply rather than a word the kernel can put in an argv.
-            "compile": {"workdir": "/work", "argv": ["gradle", "build", "--no-daemon", "--console=plain"]},
+            # TWO TASKS, AND THE SECOND ONE IS THE MEASUREMENT (si#122). `compile` used to be
+            # `gradle build`, which depends on `check` and therefore RUNS THE TESTS - so a broken
+            # assertion made the COMPILE red, and si#106's gate shape (`command: "build unit"` with
+            # `preamble: "build compile"`) then reported `setup-failed` for a product fault. That is
+            # precisely the distinction the preamble exists to draw. Measured in `gradle:jdk25`
+            # (Gradle 9.7.1) on 2026-09-10, one class and two JUnit 5 cases, `mul` returning `a + b`:
+            # `gradle build` -> `CalculatorTest > multiplies() FAILED`, BUILD FAILED, rc 1.
+            #
+            # THE TICKET'S OWN TWO CANDIDATES ARE BOTH WRONG, and for a half it did not look for.
+            # `gradle assemble` over a tree whose TEST SOURCE does not compile:
+            # `compileJava classes jar assemble`, BUILD SUCCESSFUL, rc 0 - it never runs
+            # `compileTestJava`, so a test that does not compile is green in the compile and red in the
+            # unit gate, the same wrong verdict pointing the other way. `gradle build -x test` produces
+            # the IDENTICAL task list plus an empty `:check`, because `-x` drops the excluded task's
+            # exclusive dependencies too and `compileTestJava` is one of them.
+            #
+            # `assemble testClasses` is the pair that means what the two commands are called, measured
+            # both ways on the same trees: rc 1 with `error: incompatible types: String cannot be
+            # converted to int` on the broken test source, and rc 0 on the tree whose assertion is
+            # broken - where `gradle test` is then rc 1 with `There were failing tests`.
+            "compile": {"workdir": "/work",
+                        "argv": ["gradle", "assemble", "testClasses",
+                                 "--no-daemon", "--console=plain"]},
             "unit": {"workdir": "/work", "argv": ["gradle", "test", "--no-daemon", "--console=plain"]},
+            # AND NO `analyse`, WHICH IS A DECISION RATHER THAN AN OMISSION (si#122). The other three
+            # languages have one; java's slot stays empty because the kernel has nothing true to put in
+            # it, and a missing command with a reason beats a command that cannot fail.
+            #
+            # Tested rather than repeated from the ticket, in the same image, over a file carrying a raw
+            # type, an unused import, a dead store and a guaranteed NullPointerException.
+            # `gradle check --dry-run` on a stock `java` plugin lists
+            # `compileJava classes compileTestJava testClasses test check` - `check` IS `unit` under
+            # another name. And `gradle check -x test` over those four defects runs `> Task :check`
+            # ALONE, no javac at all, BUILD SUCCESSFUL, rc 0. That is si#111's clang-tidy finding in its
+            # purest form: a command that cannot go red, and a gate naming it green forever.
+            #
+            # The one thing in the image that does go red is `javac -Xlint:all -Werror` (rc 1, 1 error,
+            # 4 warnings) - unusable here, because it went red only for a file NAMED on the command
+            # line, and the kernel knows neither the product's source layout nor its test classpath,
+            # which are the two things Gradle exists to know. It also said nothing about the certain
+            # NPE. SpotBugs, PMD, Checkstyle and ErrorProne are all plugins the product's own
+            # `build.gradle` applies, so a product that wants one adds a `build analyse` command of its
+            # own - which is a manifest line, exactly like everything else the scaffolder writes.
         },
     ),
     "dotnet": Profile(
@@ -123,14 +159,109 @@ PROFILES: dict[str, Profile] = {
     ),
     "python": Profile(
         image="python:{version}",
-        # DRIVEN AND BROKEN, and left for si#121 rather than guessed at here: the official `python:3.12`
-        # carries neither tool, so both commands exit 127 before the product is looked at. What the entry
-        # should say is the same kind of open question si#111 was - name a product-built image, install
-        # into a cache volume first, or drop the profile because Python's toolchain is a per-product set
-        # of wheels rather than a compiler.
+        # THE IMAGE STAYS, AND A COMMAND INSTALLS THE TOOLS (si#121). `python:3.12` carries neither
+        # pytest nor mypy, so both commands used to exit 127 - `exec: "pytest": executable file not
+        # found in $PATH` - before the product was looked at at all.
+        #
+        # WHY NOT A FATTER IMAGE, which is the obvious repair and the one that looks free. There is no
+        # official python image carrying the two, so it means pinning a third party's supply chain into
+        # the kernel's own table for two wheels pip installs in six seconds - and it would STILL be
+        # wrong, because no prebuilt image can carry the PRODUCT's dependencies. mypy over a tree whose
+        # imports are not installed reports missing stubs rather than type errors, which is precisely
+        # why `typecheck.py` runs the kernel's own mypy in the host venv instead of in a container. An
+        # image answer fixes the 127 and leaves `analyse` saying nothing true. A product-BUILT image
+        # fails for a different reason: the profile's whole promise is a starting point that runs before
+        # the product has built anything.
+        #
+        # WHY NOT A `caches:` VOLUME, which is the one candidate that fits the existing mechanism and is
+        # already measured dead in this repository. `case-java.md`: a named docker volume is created
+        # ROOT-owned, `--user <uid>:<gid>` cannot write into it, and gradle died unpacking a shared
+        # object with no mention of permissions anywhere. `toolchain:run` runs EVERY container as the
+        # caller, so no `caches:` entry in any profile could ever be written into.
+        #
+        # SO THE TOOLS GO INTO THE BIND MOUNT, the one directory in the container the caller provably
+        # owns, through a `deps` command of its own - the two-command shape si#121 named, with the
+        # volume replaced by the mount. `unit` and `analyse` then reach the tools with `python -m`,
+        # which needs no PATH: a `--user` install puts its scripts somewhere pip itself warns is not on
+        # one.
+        #
+        # AND `python -m` IS NOT ONLY THE PATH DODGE, which is the measurement that settles the choice.
+        # `python -m` prepends the CWD to `sys.path`; a console script does not. On the same tree, with
+        # the user base's `bin` put on PATH so the console script is reachable, `pytest -q` is
+        # `ModuleNotFoundError: No module named 'pydemo'` and rc 2 where `python -m pytest -q` is
+        # `2 passed` and rc 0 - because the product is a source tree that was never installed, which is
+        # what a product tree in a container IS. (rc 2, not 1: collection error. Same rule as ctest's 8
+        # and `dotnet format`'s 2 above - compare to 0, never to 1.)
+        #
+        # DRIVEN ON 2026-09-10 AS A NON-ROOT CALLER (`--user 1000:1000` over a tree owned by 1000),
+        # because running it as root would have hidden every permission question in it:
+        #
+        #   deps     6.0s cold, 0.9s warm, user base left owned by 1000:1000, no root-owned droppings
+        #   unit     `2 passed` rc 0; `1 failed, 1 passed` rc 1 with the assertion broken
+        #   analyse  `Success: no issues found in 3 source files` rc 0; rc 1 with
+        #            `Incompatible return value type (got "int", expected "str")  [return-value]`
+        #
+        # Three further measurements, so the next reader does not re-derive them:
+        #
+        #   * `unit` and `analyse` need NO NETWORK once `deps` has run - both green under
+        #     `--network none`. `deps` needs one, and being a separate command is how the other two
+        #     avoid paying for it on every run.
+        #   * THE LEADING DOT IN THE USER BASE IS LOAD-BEARING. mypy reports `3 source files` and pytest
+        #     collects 2 over a tree whose user base holds thousands of `.py`, because both skip
+        #     dot-directories by default. Named without it, every run would analyse site-packages.
+        #   * `--no-cache-dir` buys a CLEAN TRANSCRIPT, not behaviour: without it the same run answers
+        #     `WARNING: The directory '/.cache/pip' ... is not writable by the current user. The cache
+        #     has been disabled.` - a `--user`-mapped container has no writable HOME either way.
+        #
+        # WHAT IT COSTS THE TREE, measured rather than waved at: the user base is 80 MB, and it lands
+        # beside `.mypy_cache` and `.pytest_cache`, which a containerised run would have produced
+        # anyway. `simplon init` scaffolds no `.gitignore` at all, so there is no kernel-owned file to
+        # add them to and this is the product's line to write - named here so it is a known cost rather
+        # than a surprise in somebody's first commit.
+        #
+        # THE PINS ARE THE POINT OF `deps`, for `docker.pinned_image`'s own reason one level in: a build
+        # whose output depends on when it ran is not a build, and unpinned the first install on a fresh
+        # tree takes whatever was newest that day. What the pins do NOT buy was measured too - an
+        # unpinned WARM install is offline as well, because pip short-circuits on "already satisfied"
+        # without querying the index.
+        #
+        # `analyse` EXCLUDES THE ORCHESTRATOR, and that is the one thing the docker runs above could not
+        # have found - it took driving a real `simplon init` product. `mypy .` over a scaffolded pydemo
+        # is rc 1 with FIVE errors and every one of them in the kernel's own scaffold:
+        # `deploy/provision/orchestrator/.../cli.py: Cannot find implementation or library stub for
+        # module named "simplon"` (and `typer`, and `simplon.environments`). Not one was about the
+        # product. The orchestrator is HOST-venv Python by construction - its `requirements.txt`
+        # installs the kernel into `.venv`, and `test:typecheck-python` is the command that checks it,
+        # in the environment where its imports exist. A container that has neither can only produce
+        # import-not-found noise about it, so the two commands' jobs are disjoint and the flag is what
+        # says so. Measured with it: `Success: no issues found in 3 source files`, rc 0; with a
+        # deliberate type error in the product's own package, rc 1 and one error naming that file.
+        #
+        # The path is `simplon.bootstrap.DEFAULT_ORCH_DIR`, declared twice on purpose and held together
+        # by `test_the_python_analyse_excludes_the_directory_the_scaffolder_writes`: an import would
+        # give this table behaviour, which is the one thing the module head promises it does not have. A
+        # product that moved it with `--orch-dir`, or that states its roots in a `mypy.ini` the way the
+        # kernel does for itself, edits the scaffolded line - which is what scaffolding is for.
+        #
+        # AND THE PRODUCT'S OWN DEPENDENCIES NEED NO MANIFEST EDIT. `toolchain:run`'s variadic `extra`
+        # appends, so `build deps -r requirements.txt` installs them beside the two tools; measured, and
+        # `python -c "import yaml, pytest, mypy"` then answers in the same container. Pinning it into
+        # the manifest instead is a one-line diff the product owns, which is what the scaffold is for -
+        # and it is deliberately not the default, because a starting point that dies on a file a fresh
+        # product does not have is si#105's defect wearing a new hat.
         commands={
-            "unit": {"workdir": "/src", "argv": ["pytest", "-q"]},
-            "analyse": {"workdir": "/src", "argv": ["mypy", "."]},
+            "deps": {"workdir": "/src",
+                     "env": {"PYTHONUSERBASE": "/src/.simplon-toolchain"},
+                     "argv": ["python", "-m", "pip", "install", "--user", "--no-cache-dir",
+                              "--disable-pip-version-check", "--no-warn-script-location",
+                              "pytest==9.1.1", "mypy==2.3.1"]},
+            "unit": {"workdir": "/src",
+                     "env": {"PYTHONUSERBASE": "/src/.simplon-toolchain"},
+                     "argv": ["python", "-m", "pytest", "-q"]},
+            "analyse": {"workdir": "/src",
+                        "env": {"PYTHONUSERBASE": "/src/.simplon-toolchain"},
+                        "argv": ["python", "-m", "mypy",
+                                 "--exclude", "^deploy/provision/orchestrator/", "."]},
         },
     ),
 }

@@ -127,6 +127,58 @@ fix. This is the same rule the kernel writes down for its own containers -
 one step further out, where the mount is a cache rather than an output.
 {{< /callout >}}
 
+### The kernel's own java profile, which this product deliberately does not use
+
+javademo writes its own `orchestrator.gradle` body, and the chapter is built on that: the kernel does
+not know what Gradle is. A product that would rather not write one asks for the ready-made configuration
+instead - `support toolchain java 25` - and gets `toolchain:run` commands scaffolded into its manifest.
+**Two of that profile's decisions were wrong until si#122, and both were wrong in a way only a driven
+run shows.**
+
+`compile` was `gradle build`. `build` depends on `check`, so it ran the tests, and a broken assertion
+made the *compile* red - which destroys the one distinction a gate's `preamble:` exists to draw. The
+`test` section below shows that distinction working on this product:
+[a build that never reached the tests](#a-build-that-never-reached-the-tests) arrives as `setup-failed`,
+and `setup-failed` is a statement about the BUILD. On the old profile a failing assertion arrived
+wearing that word. The repair is not the obvious one either. Measured in `gradle:jdk25` (Gradle 9.7.1) on 2026-09-10, over a
+tree whose **test source does not compile**:
+
+```text
+$ gradle assemble --no-daemon --console=plain
+> Task :compileJava   > Task :classes   > Task :jar   > Task :assemble
+BUILD SUCCESSFUL in 2s
+rc 0
+```
+
+`assemble` never runs `compileTestJava`, so it trades one wrong verdict for another - and
+`gradle build -x test` produces the identical task list, because Gradle's `-x` drops the excluded task's
+exclusive dependencies too. `assemble testClasses` is the pair that means what the two commands are
+called: on that same tree it is rc 1 with
+`error: incompatible types: String cannot be converted to int`, and on a tree whose *assertion* is
+broken it is rc 0 while `gradle test` is rc 1.
+
+**And the profile carries no `analyse` at all, on purpose.** The other three languages have one - C++
+has clang-tidy, .NET has `dotnet format`, Python has mypy - and Java's slot stays empty because the
+kernel has nothing true to put in it. `gradle check` on a stock `java` plugin is `test` under another
+name (`--dry-run` lists `compileJava classes compileTestJava testClasses test check`), and the obvious
+repair is worse:
+
+```text
+$ gradle clean check -x test --no-daemon --console=plain      # a raw type, an unused import,
+> Task :clean                                                 # a dead store and a certain NPE
+> Task :check
+BUILD SUCCESSFUL in 2s
+rc 0
+```
+
+One task, no javac at all, rc 0 over four deliberate defects. That is exactly the shape
+[simplon#111](https://github.com/marcozwyssig/simplon/issues/111) measured for clang-tidy without
+`-warnings-as-errors=*`: a command that cannot go red, and a gate naming it green forever. SpotBugs,
+PMD, Checkstyle and ErrorProne are all Gradle plugins the product's own `build.gradle` applies, so a
+Java product that wants one declares a `build analyse` command of its own. **A missing command with a
+reason beats a command that cannot fail** - which is the same rule the `deploy` section below applies to
+a whole phase.
+
 ## test
 
 This is the seam the chapter exists for, so it is the longest section - and even so, most of it is

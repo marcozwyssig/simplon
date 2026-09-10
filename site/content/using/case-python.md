@@ -137,6 +137,76 @@ asked the run to stop and `-15` tells them nothing.
 That is worth carrying past this page. **An outcome that cannot tell "nothing to do" from "failed" is a
 bug**, and the three outcomes with `ran == False` are the whole of what that rule cost to build.
 
+### The containerised toolchain, and why this product does not use it
+
+Everything above runs Python in a **host venv**, and that is a decision rather than an accident. The
+kernel's own `test:gate` and `test:typecheck-python` run where the product's dependencies are installed,
+because a type checker that cannot import what the code imports reports missing stubs instead of type
+errors - `typecheck.py` says so in as many words.
+
+The kernel *also* ships a ready-made containerised toolchain for Python, behind
+`support toolchain python 3.12`, for a product that wants one. **Until si#121 it could not run at all.**
+It named `python:3.12` and the two bare words `pytest` and `mypy`, and the official image carries
+neither, so both commands died before the product was looked at:
+
+```text
+docker: ... exec: "pytest": executable file not found in $PATH: unknown.
+rc 127
+```
+
+The repair is not a bigger image, and the reason is the same sentence as the paragraph above: **no
+prebuilt image can carry a product's wheels.** So the profile now installs its two tools itself, into a
+`PYTHONUSERBASE` inside the bind mount - the one directory in the container the caller provably owns,
+since a named docker volume is created root-owned and
+[a container that writes into a mount runs as `--user`](../../building/rules/#a-container-that-writes-into-a-mount-runs-as---user).
+Three commands instead of two, and `deps` is the only one that needs a network:
+
+```text
+deps     python -m pip install --user --no-cache-dir --disable-pip-version-check
+                               --no-warn-script-location pytest==9.1.1 mypy==2.3.1
+unit     python -m pytest -q
+analyse  python -m mypy --exclude ^deploy/provision/orchestrator/ .
+```
+
+(the argv of each, not the manifest block - what `support toolchain` splices in is the ordinary
+`toolchain:run` shape, with the `PYTHONUSERBASE` above in an `env:` key)
+
+**`python -m` is not only a dodge around `PATH`, and that decided it.** `python -m` prepends the working
+directory to `sys.path`; a console script does not. Measured on the same tree with the user base's `bin`
+put on `PATH` so the console script really is reachable: `pytest -q` is
+`ModuleNotFoundError: No module named 'pydemo'` and **rc 2**, where `python -m pytest -q` is `2 passed`
+and rc 0 - because a product tree in a container is a source tree nobody installed. (rc 2 rather than 1,
+which is the same lesson `ctest`'s 8 and `dotnet format`'s 2 teach: compare a toolchain command's rc to
+0, never to 1.)
+
+Driven on a scaffolded `pydemo` on 2026-09-10 - a *third* product, not one of this chapter's two, which
+is why the table above has no row for it:
+
+```text
+$ ./pydemo.sh build deps      Successfully installed ... mypy-2.3.1 ... pytest-9.1.1 ...   rc 0
+$ ./pydemo.sh build unit      2 passed in 0.00s                                           rc 0
+$ ./pydemo.sh build analyse   Success: no issues found in 3 source files                  rc 0
+```
+
+and red, each for its own reason, because a check nobody has seen fail is not a check:
+
+```text
+$ ./pydemo.sh build unit      FAILED tests/test_calculator.py::test_multiplies - assert 5 == 6   rc 1
+$ ./pydemo.sh build analyse   pydemo/broken.py:6: error: Incompatible return value type
+                              (got "int", expected "str")  [return-value]                       rc 1
+```
+
+{{< callout type="warning" >}}
+**`analyse` excludes the orchestrator, and only a real product could have shown why.** Over a
+hand-made tree `mypy .` is clean. Over a tree `simplon init` produced it is **rc 1 with five errors,
+every one of them `Cannot find implementation or library stub for module named "simplon"` inside
+`deploy/provision/orchestrator/`, and not one of them about the product.** That directory is host-venv
+Python by construction - its own `requirements.txt` installs the kernel into `.venv` - so a container
+that has neither the kernel nor typer can only produce import noise about it, and
+`test:typecheck-python` is the command that checks it properly. The exclude is what states that the two
+commands have disjoint jobs.
+{{< /callout >}}
+
 ## release
 
 The tag is the version, the push is the claim, and nothing local decides either. That argument, the
