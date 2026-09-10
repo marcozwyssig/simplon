@@ -286,6 +286,57 @@ become noise.
 
 **Nothing to do.** The headless path is unchanged.
 
+### Output arrives when it happens, not when a line ends (si#144)
+
+A step's output used to reach the pane in bursts, or only once the step ended. The cause was measured
+rather than guessed, and it is neither buffering nor a missing pty.
+
+**A line only exists once the child writes its terminator, and these tools write output that has
+none yet.** `run_stream` iterated lines. pytest writes one dot per test and completes the line every
+seventy-two of them, so on `./simplon.sh test all` the child wrote **2865 times and the reader handed
+over 126 times**, with a byte waiting up to **11.37 seconds** - the pane frozen for eleven seconds while
+the child was writing every few milliseconds. It now reads chunks, splits on carriage return and
+newline, and hands over the partial line it holds once the child has been quiet for 0.1s. The same step
+afterwards: 191 segments, worst silence 6.93s, and the residual is pytest's own collecting, which no
+reader can shorten. The 0.1s came off the latency curve - 0.05s buys 0.65s worst for 210 segments, 0.2s
+gives 1.76s for 159.
+
+**The carriage return was not the cause, and the first candidate was wrong.** `run_stream` passed
+`text=True`, which turns on universal newlines, and `\r` was already a terminator for `readline`: a
+`git clone --progress` writing 405 of them came out as 412 lines with nothing delayed. What a repaint
+costs here is a bar becoming a page, which is a display question, not a latency one. The split is kept
+explicitly, because dropping `text=True` for chunked reading would otherwise have lost it.
+
+**Child-side block buffering is not present in this toolbox.** Measured on this machine, first byte out
+of a plain pipe: `docker pull` 1.69s (its own first byte), `docker build` 0.25s, `curl --progress-bar`
+0.13s, `git clone` 0.00s, `oras push` 0.00s, `containerlab` 0.11s, and simplon's own step child 0.68s.
+Every one of them delivers as it writes. The only child that block-buffered was a Python child without
+`-u`, and this kernel spawns none: `simplon.sh` execs `python -u -m <module>` and the step factory
+builds `[sys.executable, "-u", ...]`. `stdbuf -oL` changed nothing about even that child, confirming
+what it says on the tin - it sets libc STDIO's mode, and neither Python's `io` nor Go's `os.Stdout` is
+libc stdio.
+
+**A pty was rejected, with its price measured.** It fixes exactly one tool, `gh`, which writes **nothing
+at all** to a pipe by its own terminal check. It costs everywhere else: the same `docker build` goes
+from 822 bytes to 37196 - 45x - with 397 carriage returns, and `oras push` from 444 to 2774. Every one
+of those bytes would land in the step log and in si#148's run transcript, which is the file somebody
+attaches to a ticket. `gh`'s silence is a per-tool fact for a per-tool answer on the day a step needs
+it.
+
+**A row highlighted mid-run now shows what the step has already said.** `Outcome.output` is only built
+after the action returns, so the details pane said `(running…)` however much the step had printed, and
+whatever went by while another row was selected was gone. si#148's follow mode covers the operator who
+touches nothing; this covers the one who navigates away and comes back. The backlog is the list the
+streaming step already collects into, handed to the `Step` by reference - one buffer, not a second copy
+of the step log kept for the pane.
+
+**What a product sees change.** A step log gains lines the child did not end itself: 126 to 191 for
+`test all`, and 21 to 22 for this repository's own `build.site`. None of them is markup - no escape
+sequence and no carriage return enters a step log or the transcript that did not enter it before. The
+`build.site` line is worth looking at, because it is a repair rather than a cost: hugo writes `collected
+modules in 1469 ms` without a terminator, and on the old reader that text was GLUED to the front of the
+next log line. The headless path is otherwise unchanged, and CI output stays complete.
+
 ### The design behind the language cluster, as a document (si#135)
 
 `docs/superpowers/specs/2026-09-09-the-language-cluster-design.md` records the four decisions eight
