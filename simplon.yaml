@@ -129,6 +129,14 @@ groups:
       # Siblings execute in list order, so the notes guard runs after the suite: it costs 0.34s measured
       # on this tree, against the suite's 55s, and it rules on prose rather than on code.
       #
+      # ONE OBSERVABLE CHANGE beyond the extra gate, named here rather than left to be discovered: the
+      # leaf returned pytest's own exit code (2 interrupted, 5 nothing collected, ...) and an aggregate
+      # returns `steps.overall_rc`, which is 0 or 1 and nothing else. Rc 5 - a collection that found no
+      # tests - now reads as plain failure on `test all`. That is the kernel's established shape rather
+      # than a decision taken here (`build docs` collapses the same way), it is the right one for a
+      # verdict over several steps, and `test suite` still hands the raw number through for anyone who
+      # wants it.
+      #
       # NOT typecheck-python, and that is a decision rather than an oversight: it is the same gap one
       # gate over, but folding it in would rewrite `tests/test_type_gate.py`'s central rule ("any job
       # that runs `test all` runs the gate") into a plan-expanding one in the same commit that changes

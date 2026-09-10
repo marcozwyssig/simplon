@@ -172,7 +172,7 @@ def test_the_excused_section_really_is_the_one_that_could_not_pass(monkeypatch):
         f"{releasenotes.spell(spec.first)} in simplon.yaml and delete it")
 
 
-def test_the_local_gate_reaches_the_notes_guard(monkeypatch):
+def test_the_local_gate_reaches_the_notes_guard():
     """si#156: `./simplon.sh test all` must run this check, not merely offer a command that could.
 
     si#89 moved the mechanism into the kernel as `test:release-notes`, which was right, and it had a side
@@ -190,6 +190,9 @@ def test_the_local_gate_reaches_the_notes_guard(monkeypatch):
     Derived rather than typed: the command is found by the COORDINATE it instantiates, so renaming
     `release-notes` keeps the assertion honest instead of turning it into a search for a string that
     stopped meaning anything.
+
+    No `monkeypatch` here, unlike its four siblings: this reads the manifest as TEXT rather than through
+    `releasenotes.declared()`, so there is no process-global product to register and nothing to revert.
     """
     # arrange
     source = (ROOT / "simplon.yaml").read_text(encoding="utf-8")
