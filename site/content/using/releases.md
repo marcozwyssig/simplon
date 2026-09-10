@@ -11,9 +11,12 @@ reconstructed record reads exactly like a real one. The [release
 procedure](../releasing/) explains how a version comes into being.
 
 Every section from **0.5.0** on names the number of every ticket merged into
-that release, and `tests/test_releases_page.py` measures it against the merges
-in the release's own range, so a change cannot go out undescribed. The numbers
-are issues and pull requests in [this
+that release, and `./simplon.sh test release-notes` measures it against the
+merges in the release's own range, so a change cannot go out undescribed. That
+command is the catalogue's `test:release-notes`, so the rule is the kernel's
+and every product that keeps release notes can run it; what is simplon's own is
+the `releases:` section in `simplon.yaml` naming this page and those two
+numbers. The numbers below are issues and pull requests in [this
 repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.

@@ -242,6 +242,61 @@ If `registry:` does not name `ghcr.io`, no GitHub token is minted for it. The pu
 credential your own `docker login <host>` stored, and a rejection says so instead of pointing at
 `gh auth refresh`, which would mean nothing on someone else's registry.
 
+### `releases:` - where the notes live, and from when they are complete
+
+`test:release-notes` reads this one. It is the smallest product-data section in the kernel, and that is
+the point of it: the rule it feeds needs no product knowledge at all, so what a product owes it is three
+values and nothing else.
+
+```yaml
+releases:
+  page: "site/content/using/releases.md"   # where the notes live, under the product root
+  from: "0.4.0"                            # the first release that must have a section at all
+  complete_from: "0.5.0"                   # the first section that must name every ticket in its range
+```
+
+The gate then answers four questions out of `git tag`, `git log` and the page's own `## X.Y.Z` headings:
+is every release at or above `from` written up at all; does the page promise a version nobody can
+install; does every merge in a documented range name a ticket in its subject; and does every section
+from `complete_from` on name each of them.
+
+**Nothing reads the prose.** What a change *meant* is knowledge no tool has. The whole claim is that a
+number appears somewhere in the section, which is deliberately the weakest claim that catches the
+failure this exists for - a release section that describes the pull request it was written in rather
+than the release it names.
+
+**The two floors, and why the second is a floor rather than a list.** `from` is where notes begin:
+earlier releases have their tags and their commits, and writing them up now would mean reconstructing a
+record from memory. `complete_from` is where *completeness* begins, and the gap between the two is the
+excused set. An exemption list would be the thing that grows quietly, one entry at a time, each looking
+justified on its own; a second floor can only ever be raised in public. A product that excuses nothing
+writes the same number twice, and a `complete_from` *below* `from` is refused, because it would demand
+completeness of a section the same manifest says may be absent.
+
+**The spelling is the page's, not `git`'s.** `0.4.0`, three parts and no `v`. The tag carries the `v`
+and the heading does not, so `from: "v0.4.0"` is refused rather than helpfully stripped - it would
+otherwise be a floor that matches no section at all.
+
+{{< callout type="warning" >}}
+**The range is `<last tag>..HEAD` of the state being checked, and which state that is depends on the
+event.** A `push` to your default branch has the merge that just landed as `HEAD`, so a pull request's
+own ticket is in range from the second it merges. A `pull_request` run checks out `refs/pull/N/merge` -
+your branch *as merged with the base* - so a branch green on its own tip goes red the moment the base
+moves. Both are the gate working; neither used to be said. Every run now prints what `HEAD` resolved
+to, and names GitHub's own merge in as many words when that is what it found.
+
+**A pull request never has to name its own PR number.** GitHub's `Merge pull request #N from <branch>`
+is a statement about the *vorgang*, not about the work, so the gate reads the commits that merge brought
+in instead. The number the notes have to carry is the *ticket* number in your own commit subjects - one
+you had before the branch existed. Without that rule a release-notes PR would demand a note about
+itself, and a follow-up PR would bring its own number too: the regress has no floor.
+{{< /callout >}}
+
+**It is offered, not placed.** A product with no release notes never sees the command, and one that
+declares this section places it in one line under `test`. A checkout with no tags is diagnosed as the
+*checkout* - `actions/checkout` fetches no tags unless you ask - rather than blamed on the page, and a
+run that ruled on nothing is red rather than green.
+
 ### `workflows:` - the CI files, generated from this same manifest
 
 The manifest has always been meant to have **two outputs**. It assembles the command line, and - with

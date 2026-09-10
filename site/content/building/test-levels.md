@@ -589,6 +589,55 @@ runtime condition to limp along with, and the error lists what *is* declared:
 
 > 'suites.gates' declares no gate 'sytem' (declared: unit, system, ui)
 
+## A gate that is not a level: `test:release-notes`
+
+Not every command under `test` is a suite. `test:release-notes` declares no gate, appears in no
+`suites:` section and runs no runner. It asks one question about the repository - does the releases page
+describe the releases the repository actually carries - and answers it out of `git tag`, `git log` and
+the page's own `## X.Y.Z` headings. Its three values live in a
+[`releases:` section](../manifest/#releases---where-the-notes-live-and-from-when-they-are-complete), and
+placing it is one line:
+
+```yaml
+groups:
+  test:
+    commands:
+      release-notes: { task: "test:release-notes" }
+```
+
+**Why it is in `test` at all.** Its verdict is red or green and nothing else, which is what the phase
+means, and `test:` is a group name, so [the placement rule](../task-and-command/) puts it under `test` in
+every product rather than leaving it to taste.
+
+**Why it is not in `release`.** Folding it into `release:tag` was the obvious alternative - one command,
+no bypass, exactly where the damage is. It is rejected because release notes are written *before* the
+tag: the tag points at a tree that already carries them. A guard that only speaks when `release tag` is
+typed speaks after every cheap chance to fix it has passed, and it would catch none of the pull requests
+where the omission is actually made. The release being prepared has a measurable range already - it ends
+at `HEAD` - so the same question is answerable on every push, and being answerable continuously is what
+makes this a gate rather than a ceremony.
+
+**It reports what it ruled on, green or red.** Every run prints the range each section answers for and
+what `HEAD` resolved to:
+
+```text
+==> releases.md: 8 documented, 23 tagged, notes from 0.4.0, complete from 0.5.0
+==> HEAD is eb671cc 'Merge pull request #137 from marcozwyssig/feat/129-init-reads-the-repository'
+==>   v0.9.0     v0.8.0..v0.9.0  5 merges, 4 tickets, 4 named
+==>   v0.10.0    v0.9.0..HEAD  11 merges, 12 tickets, 7 named
+ERR the v0.10.0 section names 7 of the 12 tickets merged into v0.9.0..HEAD; missing: si#129, si#130
+```
+
+That second line is not decoration. The range is `<last tag>..HEAD` **of the state this run checked
+out**, and a `pull_request` run checks out `refs/pull/N/merge` - your branch as merged with the base - so
+a branch green on its own tip goes red the moment the base moves. Both readings are correct and neither
+used to be said out loud, which is the only reason it read as a flaky gate.
+
+**A run that ruled on nothing is red.** A floor above every release, a page whose headings stopped being
+`## X.Y.Z`, a checkout with no tags - each leaves the gate with nothing to measure, and a green there is
+a report that nobody looked. The tag-less checkout is diagnosed as the *checkout*: `actions/checkout`
+fetches no tags unless you ask, so the message names `fetch-depth: 0` rather than blaming the page.
+
 ## Checklist for adding a level
 
 1. Decide `suite:` or `impl:` - is this pytest, or is the runner yours?

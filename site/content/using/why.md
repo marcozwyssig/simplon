@@ -150,7 +150,7 @@ by the kind of work instead of by the phase it runs in:
 
 | the work | what the bodies shell out to | coordinates |
 |---|---|---|
-| version control | `git`, `gh` | `vcs:commit`, `vcs:push`, `vcs:prune-branches`, `vcs:submodules`, `vcs:auth-scopes`, `release:tag` |
+| version control | `git`, `gh` | `vcs:commit`, `vcs:push`, `vcs:prune-branches`, `vcs:submodules`, `vcs:auth-scopes`, `release:tag`, `test:release-notes` |
 | testing | pytest, mypy, Allure | `test:gate`, `test:accept`, `test:report`, `test:typecheck-python` |
 | documentation | Hugo, docToolchain, the assembled command line itself | `docs:site`, `docs:render`, `docs:reference` |
 | packaging and publishing | `docker`, `oras`, `gh`, `dotnet` | `build:image`, `release:image`, `release:artifact`, `release:asset`, `release:nuget`, `release:conan`, `build:nuget-config`, `build:nuget-restore`, `build:conan-cache` |
@@ -173,6 +173,9 @@ held to it by the suite rather than believed.
 
 The two ways of grouping cut the same coordinates differently, and the difference is the point rather
 than an untidiness. `release:tag` is version-control work that happens in the release phase;
+`test:release-notes` is version-control work that happens in the test phase - it reads tags and merge
+subjects and shells out to nothing else, so filing it under *testing* would have put `git` in that row's
+middle column and cost this page the one claim it is making;
 `docs:site` is documentation work that simplon files under `build` and another product could file under
 `release`. Which half of a coordinate decides which is the placement-or-family rule, in [The five
 phases](../../building/phases/#what-the-catalogue-offers-today).

@@ -261,11 +261,48 @@ migration table on [What you may import](../../building/surface/) describes some
 exists the moment the files go.
 {{< /callout >}}
 
+## The notes are part of the release, and something checks
+
+A release nobody wrote up is a release that happened silently, and nothing in a repository notices by
+itself: the tag is there, the wheel is there, and the page simply does not mention it. `test:release-notes`
+is the gate that notices. Declare where the notes live and from when they count, in a
+[`releases:` section](../../building/manifest/#releases---where-the-notes-live-and-from-when-they-are-complete),
+place the command under `test`, and run it in CI beside the suite.
+
+It reads nothing of your prose. What it holds you to is that each release at or above your floor has a
+section, that the page promises no version nobody can install, and that from your completeness floor on
+each section names the number of every ticket merged into its range.
+
+**Write the notes before the tag.** That is not a preference, it is the mechanism: the tag points at a
+tree, so the tree has to already carry them. The section for the release you are preparing is measured
+against `<last tag>..HEAD`, which is exactly what the tag will point at, so it is checkable before there
+is anything to check it against.
+
+{{< callout type="warning" >}}
+**Two things about the range surprise people once each, and both are the gate working.**
+
+*A pull request is measured as merged, not as its tip.* The `pull_request` event checks out
+`refs/pull/N/merge` - your branch merged with the base - so when the base gains a merge your branch does
+not have, the range gains it too and your section is asked about it. Rebase or merge the base in, and
+write the number. Every run prints what `HEAD` resolved to, so the two states are told apart on the spot.
+
+*The default branch goes red the moment a pull request merges* if that pull request's own ticket is not
+in the prepared section. The merge is in range from the second it lands, which is correct - the release
+being prepared really does now carry it.
+
+**You never have to name your own pull request number.** GitHub's `Merge pull request #N from <branch>`
+is a statement about the *vorgang*, not about the work, so the gate reads the commits that merge brought
+in instead. The number your notes have to carry is the ticket number in your own commit subjects - one
+you had before the branch existed. Without that rule a release-notes pull request would demand a note
+about itself, and the follow-up would bring its own number too: the regress has no floor.
+{{< /callout >}}
+
 ## The whole sequence
 
 ```text
 $ ./myctl.sh test all                  # the workflow runs these again; find out here instead
 $ ./myctl.sh test typecheck-python
+$ ./myctl.sh test release-notes        # the section for v1.4.0, against what v1.4.0 will carry
 $ ./myctl.sh build wheel               # optional, but it fails faster than the workflow does
 $ ./myctl.sh release tag v1.4.0        # the release
 ```

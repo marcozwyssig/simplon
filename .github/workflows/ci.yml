@@ -45,3 +45,18 @@ jobs:
       # way is the fix. What it checks and what it excuses is stated in mypy.ini, not here.
       - run: ./simplon.sh test typecheck-python
       - run: ./simplon.sh build wheel
+      # The release-notes guard (si#89), and it is LAST on purpose. A gate that fails early
+      # hides everything behind it, and this one rules on prose rather than on code: a
+      # release section still to be written must not stop a reader from seeing whether the
+      # suite, the type gate and the wheel are green. It is a real gate all the same - a
+      # tagged release nobody wrote up is a failure this repository has already shipped once.
+      #
+      # Its range is `<last tag>..HEAD` of whatever this run checked out, so it says
+      # different things under the two triggers this workflow declares, and both are
+      # correct: a `push` to main has the merge that just landed in range, and a
+      # `pull_request` run checks out `refs/pull/N/merge` - the branch AS MERGED with the
+      # base - so a branch green on its own tip goes red when the base moves. The command
+      # prints what HEAD resolved to on every run, which is what makes that legible instead
+      # of surprising. `fetch-depth: 0` above is a precondition for it too: with no tags
+      # there is no released version to measure the page against.
+      - run: ./simplon.sh test release-notes
