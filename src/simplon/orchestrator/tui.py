@@ -268,8 +268,19 @@ class _StepApp(App):
         row = self._cursor_row()
         if row is None or row.step is not None:
             return
-        if self._details_text(row) != self._painted_details:
-            self._show_details(row)
+        if self._details_text(row) == self._painted_details:
+            return
+        # `_show_details` clears and rewrites, and it only remembers a place for the row it is LEAVING -
+        # so a repaint of the row already on screen would have found nothing remembered and opened at the
+        # bottom, once a second, dragging a reader who had scrolled up in a forty-child listing back down
+        # with it. That is si#148 item 6's defect reintroduced one pane over, by the repaint that fixes
+        # si#162. The reader's place is therefore recorded here first, in the same vocabulary and under
+        # the same rule `_on_line` applies to a leaf: at the tail means stay at the tail, anywhere else
+        # means do not move.
+        rlog = self.query_one("#details", RichLog)
+        self._scroll_at[id(row)] = (None if rlog.is_vertical_scroll_end
+                                    else int(rlog.scroll_offset.y))
+        self._show_details(row)
 
     def _repaint_status(self) -> None:
         """Write the bar. The TEXT is `steps.status_line`, computed over the display tree and the clock -

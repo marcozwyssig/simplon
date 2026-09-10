@@ -1467,3 +1467,65 @@ def test_an_aggregate_listing_moves_while_the_step_under_it_runs(monkeypatch):
     assert "build.install" in first, first
     assert first != later, "an aggregate whose child is running may not render the same pane forever"
     assert "12.0s" in later, f"and what changed has to be how long it has been running:\n{later}"
+
+
+def _wide_manifest(count: int) -> str:
+    """A plan of ONE aggregate over `count` leaves, so its details listing is longer than the pane."""
+    tasks = "\n".join(f'  t{i}: {{ impl: "demo.impls:t{i}", help: "Task {i}." }}' for i in range(count))
+    commands = "\n".join(f'      c{i}: {{ task: "t{i}" }}' for i in range(count))
+    depends = ", ".join(f'"c{i}"' for i in range(count))
+    return (f"tasks:\n{tasks}\n\ngroups:\n  build:\n    commands:\n{commands}\n"
+            f'      wide: {{ help: "All of them.", depends_on: [{depends}] }}\nenv_groups: []\n')
+
+
+def test_the_repaint_of_an_aggregate_does_not_drag_a_reader_back_to_the_bottom(monkeypatch):
+    """The regression the si#162 repaint could have introduced, and it is the reason this test exists
+    rather than only the one above.
+
+    `_show_details` remembers a place for the row it is LEAVING, so a repaint of the row already on
+    screen finds nothing remembered and opens at the BOTTOM. Once a second, over a forty-child listing,
+    that is si#148 item 6's defect - a reader yanked out of what they were reading - moved one pane over
+    by the fix for a different one. Seen red against the first draft of that fix."""
+    import threading
+
+    clock = _Clock()
+    monkeypatch.setattr(steps_mod, "clock", clock)
+    release = threading.Event()
+    tree = manifest_load(_wide_manifest(40)).plan_tree_for("wide")
+    steps = []
+    for index, leaf in enumerate(tree.leaves()):
+        if index == 0:
+            def action(event=release) -> Outcome:
+                event.wait(5.0)
+                return Outcome(rc=0, output="held")
+        else:
+            def action() -> Outcome:                      # type: ignore[misc]
+                return Outcome(rc=0, output="ran")
+        steps.append(Step(label=leaf.name, command=leaf.path, action=action))
+    pipeline = Pipeline("wide", steps, False, tree, tree.path)
+
+    async def scenario():
+        app = _StepApp(pipeline)
+        async with app.run_test(size=(100, 24)) as pilot:
+            await pilot.pause()
+            await _until_running(pilot, pipeline)
+            _focus_line(app, 0)                     # the root, whose listing is 40 rows long
+            await pilot.pause()
+            log = _details_log(app)
+            log.scroll_to(y=5, animate=False)       # ... and the reader is READING it, not tailing it
+            await pilot.pause()
+            found = log.scroll_offset.y
+            clock.at = 12.0                         # the tick that now repaints the listing
+            app._tick()
+            await pilot.pause()
+            after = _details_log(app).scroll_offset.y
+            release.set()
+            await app.workers.wait_for_complete()
+            return found, after
+
+    # act
+    found, after = asyncio.run(scenario())
+
+    # assert
+    assert found == 5, f"the test itself has to have scrolled, got {found}"
+    assert after == found, f"a repaint must not move a reader who is not at the bottom, went to {after}"
