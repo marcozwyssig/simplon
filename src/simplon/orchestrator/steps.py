@@ -122,6 +122,13 @@ class Step:
     # the cursor to the running step, which covers the operator who touches nothing and leaves this
     # exactly as it was for the operator who navigates.
     #
+    # TWO THREADS TOUCH IT AND THERE IS NO LOCK, which the alias makes worth stating. The runner thread
+    # appends (the TUI runs `_run_steps` under `@work(thread=True)`); the UI thread reads, on ordinary
+    # cursor movement that is not synchronised with the runner at all. It is safe under CPython for a
+    # reason and not by luck: `list.append` is one bytecode, and `str.join` over a list of `str` runs to
+    # completion without releasing the GIL, so a reader sees a PREFIX of the output and never a torn
+    # list. A free-threaded build is what would end that, and it is what to revisit here.
+    #
     # The alternative si#144 names is to write `steplog` incrementally and let the pane tail the file.
     # Rejected: `steplog.write` returns None with no product context registered and on an unwritable
     # checkout, so the backlog would be missing in exactly the degraded cases - and the pane would take

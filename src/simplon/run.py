@@ -60,6 +60,14 @@ LIVE_FLUSH = 0.1
 #: does - what came before it is finished text a reader can see.
 _BREAK = re.compile(r"\r\n|\r|\n")
 
+#: The reader thread's name. Named rather than anonymous so a test can make `os.read` fail for THIS
+#: thread and no other - patching it globally in a test process breaks whatever else is reading a pipe.
+_PUMP_THREAD = "run_stream"
+
+#: How long the unwind waits for the reader thread after killing the child. Only the exception path ever
+#: waits at all; see `run_stream`'s `finally`.
+_UNWIND_GRACE = 5.0
+
 
 @dataclass(frozen=True)
 class Result:
@@ -163,41 +171,63 @@ def run_stream(argv: list[str], on_line: Callable[[str], None],
     assert proc.stdout is not None
     fd = proc.stdout.fileno()
     chunks: queue.Queue[bytes] = queue.Queue()
+    # What the pump could not read. A read that FAILED is not a stream that ended, and the two are
+    # otherwise indistinguishable here: `proc.wait()` still returns the child's real exit code, so a
+    # green rc would be reported over half a log. Collected rather than raised in the thread, because a
+    # thread cannot raise into its caller, and re-raised below - after the sentinel, so the reader is
+    # never left waiting on a queue nothing will fill.
+    unread: list[OSError] = []
 
     def pump() -> None:
         while True:
             try:
                 chunk = os.read(fd, 65536)
-            except OSError:
+            except OSError as error:
+                unread.append(error)
                 chunk = b""
             chunks.put(chunk)
             if not chunk:
                 return
 
-    thread = threading.Thread(target=pump, name="run_stream", daemon=True)
+    thread = threading.Thread(target=pump, name=_PUMP_THREAD, daemon=True)
     thread.start()
     # An INCREMENTAL decoder: a chunk boundary can fall inside a multi-byte character, which `text=True`
     # used to hide. `errors="replace"` keeps the old contract - output is shown, never raised on.
     decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
     pending = ""
-    while True:
-        try:
-            chunk = chunks.get(timeout=flush_after)
-        except queue.Empty:
-            if pending:                        # the child went quiet holding an unfinished line
-                on_line(pending)
-                pending = ""
-            continue
-        if not chunk:
-            break
-        pending += decoder.decode(chunk)
-        parts = _BREAK.split(pending)
-        pending = parts.pop()                  # what follows the last break is not finished yet
-        for part in parts:
-            on_line(part)
-    pending += decoder.decode(b"", True)
-    if pending:
-        on_line(pending)
-    thread.join()
-    proc.stdout.close()
+    try:
+        while True:
+            try:
+                chunk = chunks.get(timeout=flush_after)
+            except queue.Empty:
+                if pending:                    # the child went quiet holding an unfinished line
+                    on_line(pending)
+                    pending = ""
+                continue
+            if not chunk:
+                break
+            pending += decoder.decode(chunk)
+            parts = _BREAK.split(pending)
+            pending = parts.pop()              # what follows the last break is not finished yet
+            for part in parts:
+                on_line(part)
+        pending += decoder.decode(b"", True)
+        if pending:
+            on_line(pending)
+        if unread:
+            raise unread[0]
+    except BaseException:
+        # `on_line` raised (in the TUI it is a `call_from_thread`, which can), or the pipe could not be
+        # read. Either way the caller has abandoned this run, and without the kill the child KEEPS
+        # RUNNING and is never reaped - measured on both this reader and the one it replaces, `ps
+        # --ppid` still showing the child after the exception had propagated.
+        proc.kill()
+        proc.wait()
+        raise
+    finally:
+        # Instant on the ordinary path - the pump returned before it sent the sentinel this loop broke
+        # on. The grace is for the unwind, where a grandchild holding the write end could otherwise turn
+        # a raised exception into a hang; the thread is a daemon, so abandoning it costs nothing.
+        thread.join(_UNWIND_GRACE)
+        proc.stdout.close()
     return proc.wait()

@@ -1,6 +1,15 @@
 """Unit tests for run - the subprocess seam: the live line-streaming helper the TUI builds on, and the
 two shapes a command impl runs external tools with (platform#43). Real `sh` subprocesses, because what is
 under test IS the plumbing of the real exit code."""
+import errno
+import os
+import subprocess
+import threading
+from unittest import mock
+
+import pytest
+
+from simplon import run as run_module
 from simplon.run import chain, run_stream, stream
 
 
@@ -161,3 +170,53 @@ def test_run_stream_emits_the_last_line_when_the_child_never_terminates_it():
 
     # assert
     assert (rc, seen) == (3, ["no newline here"])
+
+
+def test_run_stream_reaps_the_child_when_the_sink_raises():
+    """A leak the rewrite was the chance to close, and it was there before it too: when `on_line` raises
+    - in the TUI it is a `call_from_thread`, which can - the exception used to propagate with the child
+    never killed and never waited for. Measured on both readers: `ps --ppid` still showed the `sh`
+    process alive after the exception had reached the caller."""
+    # arrange: a child that would outlive the run by a mile, and a sink that refuses its first line
+    proc_holder: dict[str, object] = {}
+    real_popen = subprocess.Popen
+
+    def remember(*args, **kwargs):
+        proc = real_popen(*args, **kwargs)
+        proc_holder["proc"] = proc
+        return proc
+
+    def refuse(_line: str) -> None:
+        raise RuntimeError("the sink is gone")
+
+    # act
+    with mock.patch.object(subprocess, "Popen", remember):
+        with pytest.raises(RuntimeError, match="the sink is gone"):
+            run_stream(["sh", "-c", "echo one; sleep 30"], refuse)
+
+    # assert: the child is dead and reaped, not left behind holding a terminal
+    proc = proc_holder["proc"]
+    assert proc.returncode is not None, "the child was never waited for"
+    assert proc.poll() is not None
+
+
+def test_run_stream_raises_when_the_pipe_could_not_be_read():
+    """A read that FAILED is not a stream that ended. The two are otherwise indistinguishable here -
+    `proc.wait()` returns the child's real exit code either way - so a failed read would report a green
+    rc over half a log, which is exactly the class of defect this repository hunts."""
+    # arrange: `os.read` fails, but ONLY on the reader thread, so nothing else in this process is hurt
+    real_read = os.read
+
+    def flaky(fd: int, size: int) -> bytes:
+        if threading.current_thread().name == run_module._PUMP_THREAD:
+            raise OSError(errno.EIO, "simulated")
+        return real_read(fd, size)
+
+    # act / assert
+    # A SHORT child: with the re-raise removed the failed read looks exactly like EOF, so `run_stream`
+    # returns normally and this must FAIL rather than sit here waiting for the child - a test that hangs
+    # when the property it protects is broken is not an assertion.
+    with mock.patch.object(run_module.os, "read", flaky):
+        with pytest.raises(OSError) as caught:
+            run_stream(["sh", "-c", "echo one; sleep 1"], lambda _line: None)
+    assert caught.value.errno == errno.EIO
