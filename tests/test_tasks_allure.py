@@ -669,12 +669,20 @@ def test_a_key_dropped_in_a_conflict_is_said_out_loud(tmp_path, capsys):
 # `{"failed":0,"passed":3,"total":3}` out of a file 66 seconds older than the run that shipped it.
 
 
+def _stamped(path, at, body="<testsuite/>"):
+    """A file carrying the mtime the test CHOSE, rather than the one the machine happened to give it.
+
+    Which side of the cutoff a file falls on is the whole subject of these tests, so it is the one thing
+    they must not leave to the box they run on (si#86, below)."""
+    path.write_text(body, encoding="utf-8")
+    os.utime(path, (at, at))
+    return path
+
+
 def _aged(path, seconds, body="<testsuite/>"):
     """A file whose mtime is `seconds` in the past - the leftovers of a run that finished before this one
     started, which is the only thing that distinguishes them from this run's output."""
-    path.write_text(body, encoding="utf-8")
-    os.utime(path, (time.time() - seconds, time.time() - seconds))
-    return path
+    return _stamped(path, time.time() - seconds, body)
 
 
 def test_merge_results_leavesBehindAFileWrittenBeforeTheRunThatIsMergingIt(tmp_path):
@@ -696,16 +704,36 @@ def test_merge_results_leavesBehindAFileWrittenBeforeTheRunThatIsMergingIt(tmp_p
     assert (src / "TEST-demo.CalculatorTest.xml").is_file()
 
 
+# THE ONE ASSERTION IN THIS MODULE THAT MEASURED THE CLOCK INSTEAD OF SETTING IT (si#86). The
+# arrangement below used to take `started = time.time()` and only THEN write `TEST-new.xml`, so it
+# asserted that a file the run really wrote reads as newer than an instant taken microseconds earlier.
+# That is a comparison between two reads of CLOCK_REALTIME taken in two different places - one in this
+# process, one in the kernel's write path - and the two are not ordered with respect to each other.
+# Measured while investigating si#86: 0 backward excursions in 2000 idle rounds, 1 in 300000 rounds
+# under load, and 52 in 200000 rounds that force a CPU migration between the two reads, the worst of
+# them 7047 ns. A guard whose verdict rides on that is a coin, and this one guards si#70, where a red
+# nobody believes is spent on the next true one.
+#
+# The mechanism si#86 SUSPECTED - one- or two-second mtime granularity - is not it, and arithmetic says
+# so before any lab does: a cutoff taken mid-second is later than every mtime truncated into that
+# second, so such a filesystem would fail this on every attempt rather than on one full run in four.
+# Measured against a simulated coarse filesystem: 200/200 attempts failed with the raw cutoff, 0/200
+# with the floored one the product's own caller passes (`testrun._started`, guarded in
+# test_tasks_testrun.py).
+#
+# So both mtimes are SET here and the cutoff is a number this test picked. Nothing is weaker for it:
+# the `not_before` branch is still the only thing keeping TEST-old.xml out of the archive, and deleting
+# that branch still turns this red.
 def test_merge_results_takesTheFileThisRunWroteAndLeavesTheOneItDidNot(tmp_path):
-    # arrange: one leftover and one this run produced, in the same dir
+    # arrange: one leftover and one this run produced, in the same dir, either side of a chosen instant
     src, dst = tmp_path / "junit-xml", tmp_path / "results"
     src.mkdir()
-    _aged(src / "TEST-old.xml", 66)
-    started = time.time()
-    (src / "TEST-new.xml").write_text("<testsuite/>", encoding="utf-8")
+    began = 1_700_000_000.0
+    _stamped(src / "TEST-old.xml", began - 66)
+    _stamped(src / "TEST-new.xml", began + 1)
 
     # act
-    merged = allure.merge_results(str(dst), [str(src)], parent_suite="Java", not_before=started)
+    merged = allure.merge_results(str(dst), [str(src)], parent_suite="Java", not_before=began)
 
     # assert: the distinction is per FILE, because a build rewrites some of its outputs and not others
     assert merged.copied == 1 and merged.stale == (str(src / "TEST-old.xml"),)

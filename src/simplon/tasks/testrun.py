@@ -785,6 +785,12 @@ def _started() -> float:
     read a file the runner really did write as older than the run. Erring early keeps at most a second of
     the previous run's leavings; erring late silently drops a genuine result, and only one of those two
     is recoverable by a reader.
+
+    A NANOSECOND-EXACT FILESYSTEM DOES NOT REMOVE THE NEED FOR IT (si#86). This instant and the one the
+    kernel stamps an inode with are two reads of CLOCK_REALTIME taken in different places, and those are
+    not ordered with respect to each other: measured at up to 7047 ns apart, the wrong way round, across
+    a CPU migration between the two. A whole second is far more headroom than that needs, which is why
+    one floor answers both.
     """
     return float(int(time.time()))
 
