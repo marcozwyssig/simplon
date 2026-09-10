@@ -136,9 +136,11 @@ instead - `support toolchain java 25` - and gets `toolchain:run` commands scaffo
 run shows.**
 
 `compile` was `gradle build`. `build` depends on `check`, so it ran the tests, and a broken assertion
-made the *compile* red - which destroys the one distinction a gate's `preamble:` exists to draw: the
-`setup-failed` above says the build broke, and it would have been saying it about a product fault. The
-repair is not the obvious one either. Measured in `gradle:jdk25` (Gradle 9.7.1) on 2026-09-10, over a
+made the *compile* red - which destroys the one distinction a gate's `preamble:` exists to draw. The
+`test` section below shows that distinction working on this product:
+[a build that never reached the tests](#a-build-that-never-reached-the-tests) arrives as `setup-failed`,
+and `setup-failed` is a statement about the BUILD. On the old profile a failing assertion arrived
+wearing that word. The repair is not the obvious one either. Measured in `gradle:jdk25` (Gradle 9.7.1) on 2026-09-10, over a
 tree whose **test source does not compile**:
 
 ```text
