@@ -30,6 +30,31 @@ simplon/tasks/vcs.py      a task body — reach it by coordinate, `vcs:commit`
 simplon/tasks/gitops.py   that body's innards — no promise at all
 ```
 
+### One of them is worth naming: `simplon.fetch`
+
+si#142 added it, and why it is public is the rule in miniature. The kernel downloaded a file in three
+places, and all three were a bare `urllib.request.urlretrieve`: no progress, no timeout, no temporary
+name, and a `# noqa: S310` beside two of them arguing that the URL was a pinned https asset. That
+argument is true of those three URLs and says nothing at all about the fourth one, which a product was
+going to write. So there is one, and it is yours:
+
+```python
+from pathlib import Path
+from simplon import fetch
+
+fetch.download("https://example.test/tool.tgz", Path("build/tools/tool.tgz"), label="tool")
+```
+
+It refuses anything but https on **every hop** of a redirect chain, not only the URL you asked for and
+the URL that answered: urllib follows the middle of a chain by its own rule, which admits `http` and
+`ftp`, so `https` to `http` to `https` used to pass both of those checks with one hop in the clear. It
+times out, so a server that accepts the connection and never answers fails instead of hanging your
+command forever. It writes to a temporary name in the destination directory and renames on success, so
+an interrupted download never leaves a file a later run reads as cached. It compares what arrived
+against what was announced, because `HTTPResponse.read` on a truncated body returns nothing and raises
+nothing. And it reports differently depending on who is reading: one line repainted in a terminal, two
+lines and a rare heartbeat in a log, never a carriage return into CI.
+
 ### What `simplon/tasks/` is, stated carefully
 
 The obvious phrasing — *"a product may not import a task body"* — is **false**, and it is worth being

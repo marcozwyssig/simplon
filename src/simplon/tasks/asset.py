@@ -36,7 +36,13 @@ def _declared(name: str) -> dict:
 
 
 def _said(result: run.Result) -> str:
-    """What `gh` reported, from whichever stream carried it."""
+    """What `gh` reported, from whichever stream carried it.
+
+    Used by the CREATE and not by the upload, which is the rule in `simplon.run`'s head made concrete:
+    the create's text is a verdict this module reads (`_already_there`), so it is captured and can be
+    quoted; the upload's text is a progress report the user is watching, so it is never captured and
+    there is nothing here to quote.
+    """
     return result.err.strip() or result.out.strip() or f"rc {result.rc}"
 
 
@@ -81,10 +87,17 @@ def publish(name: str = "", tag: str = "") -> int:
     if not created.ok and not _already_there(created):
         raise RuntimeError(f"could not create release {resolved}: {_said(created)}")
 
-    uploaded = run.run(["gh", "release", "upload", resolved,
-                        *[str(f) for f in files], "--clobber", *where])
-    if not uploaded.ok:
-        raise RuntimeError(f"could not attach to release {resolved}: {_said(uploaded)}")
+    # NOT captured, and the create four lines up IS - the two halves of the rule in `simplon/run.py`,
+    # a few lines apart. Nobody reads the upload's text and everybody waits for its bytes, so `gh`'s own
+    # reporting is the only thing saying the process is alive; capturing it left an asset upload as
+    # exactly the long silent wait si#142 and si#143 exist to remove.
+    rc = run.stream(["gh", "release", "upload", resolved,
+                     *[str(f) for f in files], "--clobber", *where])
+    if rc != 0:
+        raise RuntimeError(
+            f"could not attach to release {resolved}: gh exited {rc}. What it said is on the terminal "
+            f"directly above this - it was not captured, because an upload is a transfer somebody is "
+            f"waiting on.")
 
     log.ok(f"published {len(files)} asset(s) to release {resolved}")
     return 0

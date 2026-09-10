@@ -1,5 +1,5 @@
 """Unit tests for the self-healing venv provisioning (netctl#475, kernel-extracted netctl#592). No real
-venvs, no network; run() and urlretrieve are doubles that materialise the files a successful step would;
+venvs, no network; run() and fetch.download are doubles that materialise the files a successful step would;
 AAA throughout."""
 import os
 
@@ -68,8 +68,8 @@ def test_no_ensurepip_falls_back_to_get_pip(monkeypatch, tmp_path):
         return Result(rc=0, out="", err="")
 
     monkeypatch.setattr(pyvenv, "run", fake_run)
-    monkeypatch.setattr(pyvenv.urllib.request, "urlretrieve",
-                        lambda url, dest: fetched.append(url) or _executable(pyvenv.Path(dest)))
+    monkeypatch.setattr(pyvenv.fetch, "download",
+                        lambda url, dest, **kw: fetched.append(url) or _executable(pyvenv.Path(dest)))
 
     # act
     pyvenv.ensure_venv(venv)
@@ -84,7 +84,7 @@ def test_dies_when_pip_cannot_be_provisioned_at_all(monkeypatch, tmp_path):
     # arrange: every strategy runs but nothing materialises a pip
     venv = tmp_path / ".venv"
     monkeypatch.setattr(pyvenv, "run", lambda argv, **kw: Result(rc=1, out="", err=""))
-    monkeypatch.setattr(pyvenv.urllib.request, "urlretrieve", lambda url, dest: _executable(pyvenv.Path(dest)))
+    monkeypatch.setattr(pyvenv.fetch, "download", lambda url, dest, **kw: _executable(pyvenv.Path(dest)))
     monkeypatch.setattr(pyvenv.log, "die", _boom)
 
     # act / assert: the die names the apt fix
