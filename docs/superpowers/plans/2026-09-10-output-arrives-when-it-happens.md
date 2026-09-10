@@ -182,7 +182,7 @@ exactly such characters.
   `flush_after` seconds, or the remainder at EOF. No terminator is included, and no segment is empty
   except one produced by a genuinely empty line.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `tests/test_run.py`, after the existing two `run_stream` tests:
 
@@ -253,7 +253,7 @@ def test_run_stream_emits_the_last_line_when_the_child_never_terminates_it():
     assert (rc, seen) == (3, ["no newline here"])
 ```
 
-- [ ] **Step 2: Run them and watch them fail**
+- [x] **Step 2: Run them and watch them fail**
 
 Run: `cd /tmp/wt-144 && deploy/orchestrator/.venv/bin/python -m pytest tests/test_run.py -x -q`
 Expected: FAIL. `test_run_stream_hands_over_a_partial_line_when_the_child_goes_quiet` gets
@@ -261,7 +261,7 @@ Expected: FAIL. `test_run_stream_hands_over_a_partial_line_when_the_child_goes_q
 `test_run_stream_splits_on_a_carriage_return_as_well_as_a_newline` PASSES already - universal newlines
 does that today, which is measurement (b). Keep it: it is the assertion that the rewrite must not lose.
 
-- [ ] **Step 3: Rewrite `run_stream`**
+- [x] **Step 3: Rewrite `run_stream`**
 
 Replace the body of `run_stream` in `src/simplon/run.py` (imports `codecs`, `os`, `queue`, `re`,
 `threading` at the top of the module):
@@ -353,18 +353,18 @@ def run_stream(argv: list[str], on_line: Callable[[str], None],
     return proc.wait()
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 Run: `cd /tmp/wt-144 && deploy/orchestrator/.venv/bin/python -m pytest tests/test_run.py -q`
 Expected: PASS, all of them, including the two that existed before.
 
-- [ ] **Step 5: See the new assertions red**
+- [x] **Step 5: See the new assertions red**
 
 Temporarily set `flush_after`'s default to `10**9` and re-run: the quiet-flush test must fail with
 `['...... [100%]']`. Temporarily change `_BREAK` to `re.compile(r"\n")`: the carriage-return test must
 fail. Restore both.
 
-- [ ] **Step 6: Prove it against a REAL long-running child, with the timing**
+- [x] **Step 6: Prove it against a REAL long-running child, with the timing**
 
 Run, and record both numbers in the commit message:
 
@@ -382,7 +382,7 @@ PY
 Expected: `first` around 0.7-1.0s (was 1.40s) and `worst silence` around 7s (was 11.30s), with roughly
 190 segments (was 126).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/simplon/run.py tests/test_run.py
@@ -406,7 +406,7 @@ MSG
   empty for an `action` step) and `Step.shown_output -> str` (`self.output` once the step has finished,
   else `"\n".join(self.live)`). `argv_step` passes its own collector list as `live=`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `tests/test_orchestrator_steps.py`:
 
@@ -480,12 +480,12 @@ def test_a_re_run_step_does_not_show_the_previous_run_s_lines():
 (The two `monkeypatch` tests take `monkeypatch` as a parameter; `steps` is the module already imported
 by that file. Use the file's existing `_no_steplog` arrangement so nothing is written to `build/logs/`.)
 
-- [ ] **Step 2: Run them and watch them fail**
+- [x] **Step 2: Run them and watch them fail**
 
 Run: `cd /tmp/wt-144 && deploy/orchestrator/.venv/bin/python -m pytest tests/test_orchestrator_steps.py -x -q -k "backlog or running or re_run"`
 Expected: FAIL with `TypeError: Step.__init__() got an unexpected keyword argument 'live'`.
 
-- [ ] **Step 3: Add the field and the property**
+- [x] **Step 3: Add the field and the property**
 
 In `src/simplon/orchestrator/steps.py`, in `Step`, after `output`:
 
@@ -534,17 +534,17 @@ In `argv_step`, hand the collector over and clear it per run:
     return Step(label=label, stream=stream, live=lines, command=identity, help=help)
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 Run: `cd /tmp/wt-144 && deploy/orchestrator/.venv/bin/python -m pytest tests/test_orchestrator_steps.py -q`
 Expected: PASS.
 
-- [ ] **Step 5: See it red**
+- [x] **Step 5: See it red**
 
 Temporarily change `shown_output` to `return self.output`: the two backlog tests must fail with `''`.
 Temporarily drop `lines.clear()`: the re-run test must fail with `'run 0\nrun 1'`. Restore both.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/simplon/orchestrator/steps.py tests/test_orchestrator_steps.py
@@ -567,7 +567,7 @@ MSG
 - Produces: nothing new. `_details_text` and `_render_details` read `step.shown_output` where they read
   `step.output`; `c` and `s` therefore copy and save a running step's backlog too.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 In `tests/test_orchestrator_tui.py`, the proof the ticket asks for - a DIFFERENT row highlighted while
 the step produces output, then its own:
@@ -616,12 +616,12 @@ def test_a_row_highlighted_mid_run_shows_what_the_step_has_already_produced():
     assert "(running…)" not in rendered
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `cd /tmp/wt-144 && deploy/orchestrator/.venv/bin/python -m pytest tests/test_orchestrator_tui.py -x -q -k mid_run`
 Expected: FAIL - the pane holds `(running…)` and neither line.
 
-- [ ] **Step 3: Read `shown_output` in both renderers**
+- [x] **Step 3: Read `shown_output` in both renderers**
 
 In `_details_text`:
 
@@ -644,16 +644,16 @@ In `_render_details`:
             elif step.state == StepState.RUNNING:
 ```
 
-- [ ] **Step 4: Run the test and watch it pass**
+- [x] **Step 4: Run the test and watch it pass**
 
 Run: `cd /tmp/wt-144 && deploy/orchestrator/.venv/bin/python -m pytest tests/test_orchestrator_tui.py -q`
 Expected: PASS, and every other TUI test still green.
 
-- [ ] **Step 5: See it red**
+- [x] **Step 5: See it red**
 
 Put `step.output` back in `_render_details` only: the new test must fail again. Restore.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/simplon/orchestrator/tui.py tests/test_orchestrator_tui.py
@@ -671,7 +671,7 @@ MSG
 - Modify: `site/content/using/releases.md`
 - Test: `tests/test_orchestrator_transcript.py` (run, not modified)
 
-- [ ] **Step 1: Prove the artefacts did not change shape**
+- [x] **Step 1: Prove the artefacts did not change shape**
 
 Run the two suites that assert si#148's artefacts carry no markup, unchanged:
 
@@ -682,7 +682,7 @@ cd /tmp/wt-144 && deploy/orchestrator/.venv/bin/python -m pytest \
 
 Expected: PASS with no edit to either file. If one goes red, the fix is the code, not the assertion.
 
-- [ ] **Step 2: Write a real run's transcript and read it**
+- [x] **Step 2: Write a real run's transcript and read it**
 
 ```bash
 cd /tmp/wt-144 && ./simplon.sh test all > /dev/null 2>&1; \
@@ -691,25 +691,25 @@ cd /tmp/wt-144 && ./simplon.sh test all > /dev/null 2>&1; \
 
 Expected: zero escape characters in every file.
 
-- [ ] **Step 3: Add the release-notes section**
+- [x] **Step 3: Add the release-notes section**
 
 Under `## 0.10.0` in `site/content/using/releases.md`, after the si#148 section (the change these notes
 continue), a `### ...(si#144)` section: what was measured, which candidate was the cause, which were
 ruled out and with what evidence, and what a product sees change (more lines in a step log, none of them
 markup).
 
-- [ ] **Step 4: Run the notes gate**
+- [x] **Step 4: Run the notes gate**
 
 Run: `cd /tmp/wt-144 && ./simplon.sh test release-notes`
 Expected: PASS - it reads the merged tickets in the range and 144 is now named.
 
-- [ ] **Step 5: The full gate**
+- [x] **Step 5: The full gate**
 
 Run: `cd /tmp/wt-144 && ./simplon.sh test all; ./simplon.sh test typecheck-python`
 Expected: the three known `test_tasks_docs.py` failures (this box runs as root) and nothing else;
 mypy clean over 86 files.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add site/content/using/releases.md
@@ -721,8 +721,6 @@ MSG
 
 ---
 
-## Self-review
-
 **Spec coverage.** Mechanism A: Tasks 2 and 3, proven the way the ticket specifies (highlight a
 different row, come back, assert the pane carries the lines). Mechanism B: measured in table (c) and
 found absent - no code change, and the finding is recorded in `run_stream`'s docstring and in the notes.
@@ -733,6 +731,30 @@ measurement, candidate 4 rejected with its cost measured. "Numbers, per tool, be
 
 **Placeholders.** None: every code step carries the code, every test step the test, every run step the
 command and the expected output.
+
+## Where execution diverged from this plan
+
+Two places, both recorded because the plan was wrong and the code is not.
+
+**Task 2's Step model was built twice.** The first version put the recorder in `Step.run`, wrapping the
+`Emit` it hands the streaming action, so that EVERY streaming step got a backlog rather than only the
+ones handed their list. It is the better-looking design and it was rolled back: it makes `argv_step`'s
+action correct only when reached through `run`, and two of this kernel's own tests
+(`test_a_streaming_step_writes_its_output_where_it_can_be_read`,
+`test_a_failed_step_writes_its_output_too`) call `.stream(...)` directly - under that design they wrote
+an EMPTY step log and said nothing about it. A silent wrong answer on an existing correct-looking call
+beat a hand-built `stream=` step showing no backlog, which is what the pane did before anyway. The cost
+of the version kept is written on the field.
+
+**Task 3's test drives a real child.** The plan's version built a `Step(stream=...)` by hand, which
+under the design above has no backlog at all - so the test failed for the right reason and for the wrong
+one. It now runs a real `sh` child through the real `run_stream`, blocked on a file rather than a sleep,
+which is what the proof standard asked for: what broke here was the plumbing between the reader and the
+pane, and a fake action does not have any. Its wait carries a DEADLINE, because the first version spun
+until the backlog appeared and therefore HUNG instead of failing when the property was broken - a test
+that hangs when the thing it protects is broken is not an assertion.
+
+## Self-review
 
 **Type consistency.** `Step.live: list[str]` and `Step.shown_output -> str` are used under those exact
 names in Tasks 2 and 3; `run_stream(argv, on_line, *, flush_after)` keeps its two positional parameters,
