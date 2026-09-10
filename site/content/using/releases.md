@@ -118,26 +118,45 @@ refused before any other check can report a symptom of it instead.
 
 **Nothing to do unless you have a flat manifest**, and if you do, [The
 manifest](../../building/manifest/#the-flat-form-and-how-to-leave-it) is now where the migration is
-written down. That page grew the worked example the renderer used to print, plus the five things to know
+written down. That page grew the worked example the renderer used to print, plus the seven things to know
 while converting - including the one the renderer could never do for you, which is carry your comments
 across.
 
 ### `test all` runs every test again (si#156)
 
-si#89 moved the release-notes guard out of the pytest suite and into the catalogue coordinate
-`test:release-notes`. That was right, and it had a side effect nobody stated: the check left the LOCAL
-gate. `./simplon.sh test all` was the pytest suite and nothing else, so a developer who ran the gate the
-project tells them to run learned about missing notes from CI, after the push - from a command whose help
-says *Run every test*.
+si#89 moved the release-notes guard out of simplon's own pytest suite and into the catalogue coordinate
+`test:release-notes`. That was right, and it had a side effect nobody stated: **the check left the local
+gate.** `./simplon.sh test all` was the pytest suite, `test release-notes` was a command only `ci.yml`
+invoked, and a developer running the gate this project tells them to run learned nothing about their
+missing notes until after the push. A command named `all` whose help says "Run every test" was not every
+test.
 
-**`test all` is an AGGREGATE now**, over the pytest suite and the notes guard, and not a second
-implementation of either: it plans the same `test:release-notes` the CI step invokes, so the two cannot
-disagree. The pytest leaf needed a name of its own to make room and is `test suite` - the kernel's
-`impl:` XOR `depends_on:` lock (si#895/si#896) means one command cannot be both a body and a plan.
+The pytest leaf is called **`test suite`** now, and `test all` is an impl-less **aggregate** over it and
+`test release-notes`. Nothing was reimplemented: the aggregate reaches the same command `ci.yml` reaches,
+so there is one implementation per verdict, invoked from two places rather than written in two. That is
+the rule `typecheck-python` already carries in the manifest, and a pytest test that shelled out to the
+guard would have broken it.
 
-**What a product has to do:** nothing, unless it invoked simplon's own `test all` expecting exactly the
-pytest run - that is `test suite` now. The aggregate costs about a second more, measured, and it fails on
-the first step that fails.
+`stop_on_failure` stays at its default, and here that is the load-bearing half: both steps run, both
+verdicts print, and the aggregate takes the worst rc, so a red suite cannot hide the notes verdict and a
+missing section cannot hide the suite. The notes guard costs **0.34s** against the suite's 55s, so the
+local gate is the same length it was.
+
+`ci.yml` still names the four leaves rather than the aggregate. A GitHub job stops at its first failed
+step, so putting the aggregate first would place the prose gate in front of the type gate and the wheel,
+which is exactly what si#89 refused when it put that step last.
+
+**What to do about it.** For simplon itself, nothing. For a product that has adopted the coordinate: the
+mechanism is `depends_on`, which the kernel already had, so folding the guard into your own `test all` is
+two manifest lines and no new coordinate. Give your pytest leaf a name of its own, then let `all` depend
+on it and on `release-notes` - a command either instantiates a task or plans other commands, never both,
+which is why the leaf has to be renamed rather than extended.
+
+Two things worth knowing beyond the change itself. `release.yml` runs `test all`, so the release path now
+checks the notes too, and a tag whose section nobody wrote stops the publish rather than following it.
+And `tests/test_type_gate.py` gained an assertion: its rule "any job that runs the suite runs the gate"
+was a single command string, and renaming the command in `ci.yml` left every assertion in that file green
+while the rule matched no job there at all. It asks about the predicate as well as about the gate now.
 
 ## 0.10.0
 
@@ -511,42 +530,6 @@ the run started is one second boundary away from being read as the previous run'
 the run now, the way the other twenty-two tests in that file already do it.
 
 **Nothing to do.** No behaviour changed - the only source change is a docstring.
-
-### `test all` runs every test again (si#156)
-
-si#89 moved the release-notes guard out of simplon's own pytest suite and into the catalogue coordinate
-`test:release-notes`. That was right, and it had a side effect nobody stated: **the check left the local
-gate.** `./simplon.sh test all` was the pytest suite, `test release-notes` was a command only `ci.yml`
-invoked, and a developer running the gate this project tells them to run learned nothing about their
-missing notes until after the push. A command named `all` whose help says "Run every test" was not every
-test.
-
-The pytest leaf is called **`test suite`** now, and `test all` is an impl-less **aggregate** over it and
-`test release-notes`. Nothing was reimplemented: the aggregate reaches the same command `ci.yml` reaches,
-so there is one implementation per verdict, invoked from two places rather than written in two. That is
-the rule `typecheck-python` already carries in the manifest, and a pytest test that shelled out to the
-guard would have broken it.
-
-`stop_on_failure` stays at its default, and here that is the load-bearing half: both steps run, both
-verdicts print, and the aggregate takes the worst rc, so a red suite cannot hide the notes verdict and a
-missing section cannot hide the suite. The notes guard costs **0.34s** against the suite's 55s, so the
-local gate is the same length it was.
-
-`ci.yml` still names the four leaves rather than the aggregate. A GitHub job stops at its first failed
-step, so putting the aggregate first would place the prose gate in front of the type gate and the wheel,
-which is exactly what si#89 refused when it put that step last.
-
-**What to do about it.** For simplon itself, nothing. For a product that has adopted the coordinate: the
-mechanism is `depends_on`, which the kernel already had, so folding the guard into your own `test all` is
-two manifest lines and no new coordinate. Give your pytest leaf a name of its own, then let `all` depend
-on it and on `release-notes` - a command either instantiates a task or plans other commands, never both,
-which is why the leaf has to be renamed rather than extended.
-
-Two things worth knowing beyond the change itself. `release.yml` runs `test all`, so the release path now
-checks the notes too, and a tag whose section nobody wrote stops the publish rather than following it.
-And `tests/test_type_gate.py` gained an assertion: its rule "any job that runs the suite runs the gate"
-was a single command string, and renaming the command in `ci.yml` left every assertion in that file green
-while the rule matched no job there at all. It asks about the predicate as well as about the gate now.
 
 ### Before you bump
 

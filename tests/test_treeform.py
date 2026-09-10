@@ -817,12 +817,16 @@ def test_the_refusal_names_the_release_that_abolished_the_form_and_the_page_that
         manifest.load(_REAL_OLD_MANIFEST, catalogue=catalogue_mod.load())
     message = str(exc.value)
 
-    # assert: the release, and the page - by URL and by the section heading a reader searches for
+    # assert: the release, and the page - the deep link by its ANCHOR rather than by a heading a reader
+    # would have to search a 500-line page for
     assert "abolished in 0.4.0" in message
-    assert "building/manifest/" in message
-    assert "The flat form, and how to leave it" in message
-    page = ROOT / "site" / "content" / "building" / "manifest.md"
-    assert "## The flat form, and how to leave it" in page.read_text(encoding="utf-8")
+    assert "building/manifest/#the-flat-form-and-how-to-leave-it" in message
+    # and the anchor resolves: Hugo derives it from the heading, so the heading has to be spelled that
+    # way on the page this refusal sends people to
+    page = (ROOT / "site" / "content" / "building" / "manifest.md").read_text(encoding="utf-8")
+    headings = [line[3:].strip() for line in page.splitlines() if line.startswith("## ")]
+    slugs = {heading.lower().replace(",", "").replace(" ", "-") for heading in headings}
+    assert "the-flat-form-and-how-to-leave-it" in slugs
 
 
 def test_the_refusal_no_longer_promises_a_rewrite():
@@ -838,4 +842,45 @@ def test_the_refusal_no_longer_promises_a_rewrite():
     assert "blueprint" not in message
     assert "comment line" not in message
     assert not hasattr(treeform, "rewrite_of_old_form")
+
+
+def test_a_task_that_places_its_own_command_is_told_to_delete_the_group_key():
+    """The one case where following the message literally leaves the reader refused a second time.
+
+    A `tasks:` entry with `group:` already HAS its body under `tasks:`, so "declare the body once under
+    `tasks:` and point a command at it" describes work that is done. What makes it flat is the `group:`
+    key, and `old_form_tasks` keeps flagging the manifest until it goes.
+    """
+    # arrange / act
+    with pytest.raises(ValueError) as exc:
+        treeform.check_no_old_form({"tasks": {"lab": {"impl": "o.cli:lab", "group": "build"}}})
+    message = str(exc.value)
+
+    # assert
+    assert "DELETE its `group:` key" in message
+    # and it is NOT told the kernel owns its body, which is the other finding's note
+    assert "keeps its body in the kernel" not in message
+
+
+def test_a_coordinate_named_task_with_its_own_impl_is_told_the_body_is_the_products():
+    """Two different files land in the same finding, and only one of them belongs to the platform.
+
+    A bare coordinate names the KERNEL's body. One carrying its own `impl:` is the PRODUCT's body under
+    a name shaped like the platform's - si#33's own migration had both - so a note saying "the body stays
+    in the kernel" would send its owner to a body that is not theirs and lose the one that is.
+    """
+    # arrange: both shapes at once, so the message has to distinguish rather than pick
+    data = {"tasks": {"docs:site": {"group": "build"},
+                      "docs:reference": {"impl": "my.own:renderer", "group": "build"}}}
+
+    # act
+    with pytest.raises(ValueError) as exc:
+        treeform.check_no_old_form(data)
+    message = str(exc.value)
+
+    # assert: one note each, and the product's own body named
+    assert "keeps its body in the kernel" in message
+    assert "'docs:reference' declare an `impl:` of their own" in message
+    assert "the body is YOURS and not the platform's" in message
+    assert "'docs:site' declare an `impl:`" not in message
 

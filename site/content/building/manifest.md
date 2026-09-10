@@ -449,10 +449,13 @@ What it becomes:
   - the catalogue's own commands arrive by merging its tree, so `import:` has nothing left to do -
     delete the section
 
-The tree form is documented at https://marcozwyssig.github.io/simplon/building/manifest/ - "The command
-tree" for the shape, and "The flat form, and how to leave it" for this migration in particular. Nothing
-here rewrites the file for you: the sections have to be edited by hand, which is also the only way your
-comments survive the move.
+This migration is documented at
+  https://marcozwyssig.github.io/simplon/building/manifest/#the-flat-form-and-how-to-leave-it
+and the shape it leads to at
+  https://marcozwyssig.github.io/simplon/building/manifest/
+
+Nothing here rewrites the file for you: the sections have to be edited by hand, which is also the only
+way your comments survive the move.
 ```
 
 The manifest above becomes:
@@ -474,7 +477,7 @@ it was some 250 lines describing the manifest's shape a second time, where nobod
 notice it drifting - and si#56 had just found a property of it that was mis-documented from the day it
 was written. This page is the source that is maintained.)*
 
-Five things to know while you convert:
+Seven things to know while you convert:
 
 - **An aggregate crosses unchanged.** A command with `depends_on:` and no `impl:` was never a body, so
   there is nothing to move out of it.
@@ -486,6 +489,14 @@ Five things to know while you convert:
 - **A name the catalogue places needs `override: true`.** `support install` is your body under a name
   the platform already uses, so the merge demands you say you mean it. Where your placement names the
   platform's *own* body, it is a refinement and needs no key.
+- **A `tasks:` entry with `group:` keeps its body and loses the key.** Its body is already where the
+  tree form wants it; what makes it flat is that it places its own command. Delete `group:`, and add the
+  command under `groups: <group>: commands:` pointing at the task with `task:`. Leaving the key behind is
+  the one case where a manifest fixed by eye is refused a second time.
+- **A coordinate-shaped name with its own `impl:` is *your* body, not the platform's.** `docs:site:` with
+  no `impl:` names the kernel's task and copies nothing; `docs:site:` carrying an `impl:` was never a
+  placement of the platform's body at all - it is yours under a name that looks like theirs. Keep the
+  `impl:`, rename the task to a bare name, and point the command at that.
 - **Your comments are yours to carry.** Nothing rewrites the file for you any more, which is the one
   respect in which this is easier than it was: a generated block was correct YAML carrying none of the
   reasoning the file it replaced carried, and a consumer whose manifest held forty lines of it kept them

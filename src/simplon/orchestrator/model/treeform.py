@@ -466,8 +466,11 @@ def old_form_tasks(tasks: dict) -> dict:
 
 #: Where the tree form is written down. The refusal points at the PAGE rather than printing the shape:
 #: the page is maintained beside the loader and covers the cases a rendered block never could, while a
-#: renderer of the same thing was the second source si#85 struck.
+#: renderer of the same thing was the second source si#85 struck. Deep-linked to the migration's own
+#: heading rather than to the page root, because the page is long and "search it for a heading" is the
+#: instruction a reader in the middle of a failed load least wants.
 _TREE_FORM_DOCS = "https://marcozwyssig.github.io/simplon/building/manifest/"
+_TREE_FORM_MIGRATION = _TREE_FORM_DOCS + "#the-flat-form-and-how-to-leave-it"
 
 
 def check_no_old_form(data: dict) -> None:
@@ -510,13 +513,34 @@ def check_no_old_form(data: dict) -> None:
     # What each finding BECOMES, one line each, and only for the findings this manifest actually has. It
     # is not a rewrite and does not pretend to be one: it is the sentence that makes the linked page
     # searchable, so the reader arrives there knowing which section is theirs.
+    #
+    # One line per FINDING and not per SHAPE, with two exceptions that are not cosmetic - each is a case
+    # where a reader following the shared line literally is refused a second time by this same function:
+    #
+    #  - `placing` shares the "a command instantiates a task" line with `groups`, but its body is ALREADY
+    #    under `tasks:`; what makes it flat is the `group:` key, and a note that never says to delete it
+    #    describes a fix that does not load.
+    #  - `coordinate_keyed` covers two different files. A bare coordinate names the KERNEL's body. One
+    #    carrying its own `impl:` is the PRODUCT's body under a name shaped like the platform's, and
+    #    telling its owner that "the body stays in the kernel" points at a body that is not theirs.
     notes = []
-    if groups or placing:
+    if groups:
         notes.append("a command is an INSTANCE of a task: declare the body once under `tasks:` and let "
                      "the command point at it with `task:`, under `groups: <group>: commands:`")
-    if coordinate_keyed:
+    if placing:
+        notes.append("a task no longer places its own command: keep the body under `tasks:`, DELETE its "
+                     "`group:` key, and add the command that instantiates it under "
+                     "`groups: <group>: commands:` with `task:`")
+    own_bodied = [name for name in coordinate_keyed
+                  if isinstance(tasks.get(name), dict) and tasks[name].get("impl")]
+    if [name for name in coordinate_keyed if name not in own_bodied]:
         notes.append("a catalogue task keeps its body in the kernel - the command names the coordinate "
                      "(`task: \"<namespace>:<name>\"`) and copies nothing")
+    if own_bodied:
+        notes.append(f"task(s) {', '.join(repr(name) for name in own_bodied)} declare an `impl:` of "
+                     f"their own under a coordinate-shaped name, so the body is YOURS and not the "
+                     f"platform's - keep it, rename the task to a bare name, and have the command point "
+                     f"at that name rather than at the coordinate")
     if stale_import:
         notes.append("the catalogue's own commands arrive by merging its tree, so `import:` has nothing "
                      "left to do - delete the section")
@@ -525,10 +549,10 @@ def check_no_old_form(data: dict) -> None:
         "abolished in 0.4.0 and this kernel is past it.\n\nWhat says so here: "
         + "; ".join(found) + ".\n\nWhat it becomes:\n"
         + "\n".join(f"  - {note}" for note in notes)
-        + "\n\nThe tree form is documented at " + _TREE_FORM_DOCS + " - \"The command tree\" for the "
-          "shape, and \"The flat form, and how to leave it\" for this migration in particular. Nothing "
-          "here rewrites the file for you: the sections have to be edited by hand, which is also the "
-          "only way your comments survive the move.")
+        + "\n\nThis migration is documented at\n  " + _TREE_FORM_MIGRATION
+        + "\nand the shape it leads to at\n  " + _TREE_FORM_DOCS
+        + "\n\nNothing here rewrites the file for you: the sections have to be edited by hand, which is "
+          "also the only way your comments survive the move.")
 
 
 # --- a declared task nobody places is a task on OFFER (si#53) -----------------------------------------
