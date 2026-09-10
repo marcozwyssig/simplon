@@ -205,6 +205,12 @@ PROFILES: dict[str, Profile] = {
         #     `WARNING: The directory '/.cache/pip' ... is not writable by the current user. The cache
         #     has been disabled.` - a `--user`-mapped container has no writable HOME either way.
         #
+        # WHAT IT COSTS THE TREE, measured rather than waved at: the user base is 80 MB, and it lands
+        # beside `.mypy_cache` and `.pytest_cache`, which a containerised run would have produced
+        # anyway. `simplon init` scaffolds no `.gitignore` at all, so there is no kernel-owned file to
+        # add them to and this is the product's line to write - named here so it is a known cost rather
+        # than a surprise in somebody's first commit.
+        #
         # THE PINS ARE THE POINT OF `deps`, for `docker.pinned_image`'s own reason one level in: a build
         # whose output depends on when it ran is not a build, and unpinned the first install on a fresh
         # tree takes whatever was newest that day. What the pins do NOT buy was measured too - an

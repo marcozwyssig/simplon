@@ -320,7 +320,9 @@ network), `build unit` and `build analyse`, the last two run through `python -m`
 install puts its scripts somewhere that is not on `PATH`. `analyse` excludes
 `deploy/provision/orchestrator/`: that tree is host-venv Python and `test:typecheck-python` is what
 checks it, so a container that has neither the kernel nor typer could only report five import errors
-about the scaffold and none about the product.
+about the scaffold and none about the product. The user base is 80 MB and lands in your tree beside
+`.mypy_cache` and `.pytest_cache`; `simplon init` scaffolds no `.gitignore`, so those three lines are
+yours to add.
 
 **The Java `compile` compiles, and the Java `analyse` is gone on purpose** (si#122). `compile` was
 `gradle build`, which depends on `check` and therefore ran the tests - so a broken assertion made the
