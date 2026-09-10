@@ -69,6 +69,24 @@ def writes_empty_results(into: str = "") -> int:
     return 0
 
 
+def writes_unreadable_results(into: str = "") -> int:
+    """A runner that exits 0 and writes its results in a format the kernel has no table entry for.
+
+    It is a RUNNER rather than a file the test lays beside the run, and that is si#86's lesson applied
+    one module over. A pre-placed file carries whatever second the fixture happened to land in, and the
+    cutoff `_started` hands the merge is floored to the whole second, so a fixture written in second N
+    and a gate that starts in second N+1 is left behind as the previous run's - by exactly the rule that
+    exists to protect this run's own output. Seen red on the CI runner and reproduced here by ageing the
+    tree one second at the instant the cutoff is taken. A file the RUN writes cannot fall on the wrong
+    side of the run's own cutoff, and it is what a real runner does anyway.
+    """
+    directory = context.current().root / into
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "results.ndjson").write_text('{"name": "a case", "ok": true}\n', encoding="utf-8")
+    test_impls.CALLS.append(("writes_unreadable_results", into, 0))
+    return 0
+
+
 def writes_results(rc: int = 0, into: str = "", name: str = "ctest-junit.xml") -> int:
     """A body standing in for a toolchain command that WRITES ITS RESULTS and returns an rc.
 
@@ -96,6 +114,7 @@ tasks:
   toolchain: {{ impl: "simplon.test_impls:pinned_rc", help: "Run a pinned toolchain image." }}
   writer:    {{ impl: "test_suites_results_from:writes_results", help: "A runner that writes results." }}
   hollow:    {{ impl: "test_suites_results_from:writes_empty_results", help: "A runner that selects nothing." }}
+  ndjson:    {{ impl: "test_suites_results_from:writes_unreadable_results", help: "A foreign format." }}
   gate:      {{ impl: "simplon.tasks.testrun:gate", help: "Run a declared level.", passthrough_args: true }}
 groups:
   build:
@@ -104,6 +123,7 @@ groups:
       marked:  {{ task: toolchain, with: {{ rc: 0, tag: "marked", marker: "{marker}" }}, help: "ctest." }}
       unit:    {{ task: writer, with: {{ rc: {unit_rc}, into: "{into}" }}, help: "ctest." }}
       hollow:  {{ task: hollow, with: {{ into: "{into}" }}, help: "ctest over a label nothing carries." }}
+      ndjson:  {{ task: ndjson, with: {{ into: "{into}" }}, help: "A runner in a foreign format." }}
   test:
     commands:
       unit: {{ task: gate, with: {{ name: "unit" }}, help: "The gate itself." }}
@@ -602,12 +622,11 @@ def test_a_format_the_kernel_cannot_count_is_trusted_rather_than_refused(monkeyp
     this kernel knows about, and calling a level empty because the kernel could not parse its evidence
     would be a false red invented by the checker, which is the same defect pointing the other way.
     """
-    # arrange: a results file in no format the kernel knows
-    _product(monkeypatch, tmp_path, into="")
-    source = tmp_path / WROTE_INTO
-    source.mkdir(parents=True)
-    (source / "results.ndjson").write_text('{"name": "a case", "ok": true}\n', encoding="utf-8")
-    gate = testrun.Gate(name="unit", command="build unit", results="clear",
+    # arrange: a runner whose results are in no format the kernel knows. The file is written BY THE RUN
+    # rather than laid beside it, because a pre-placed one is a second boundary away from being read as
+    # the previous run's - see `writes_unreadable_results` (si#86)
+    _product(monkeypatch, tmp_path)
+    gate = testrun.Gate(name="unit", command="build ndjson", results="clear",
                         results_from=WROTE_INTO)
 
     # act
