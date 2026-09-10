@@ -10,7 +10,7 @@ is the whole point: a rule that lives in one product's `tests/` guards one produ
 catching real failures for exactly one repository while every consumer of the same kernel could tag,
 publish and never write a word.
 
-WHAT IS LEFT HERE IS WHAT IS SIMPLON'S. Four assertions, and each is a statement about THIS page, THIS
+WHAT IS LEFT HERE IS WHAT IS SIMPLON'S. Five assertions, and each is a statement about THIS page, THIS
 manifest or THIS repository's own number:
 
   * the page's prose names the same floor `simplon.yaml` declares, and its introduction names the same
@@ -20,7 +20,10 @@ manifest or THIS repository's own number:
     view on how many a product excuses; simplon's answer is one, and an exemption's real cost is not the
     case it was written for but the second case somebody adds to it quietly;
   * that excused section is genuinely incomplete. An exemption is worth nothing if the thing it excuses
-    would have passed anyway - it then guards nothing and merely stands there looking justified.
+    would have passed anyway - it then guards nothing and merely stands there looking justified;
+  * simplon's own LOCAL gate reaches the kernel's guard (si#156). Which gates a product folds into its
+    `test all` is the product's call and the kernel takes no view on it, so the placement is simplon's
+    to state and simplon's to hold.
 
 WHY THE FLOOR EXISTS AT ALL, kept here because it is the reason for simplon's own two numbers. Notes
 start at 0.4.0, declared on the page itself. Demanding a section for all fourteen earlier tags would mean
@@ -40,7 +43,10 @@ AAA throughout.
 """
 from __future__ import annotations
 
-from simplon import context
+import yaml
+
+from simplon import catalogue as catalogue_mod, context
+from simplon.orchestrator import manifest as manifest_mod
 from simplon.tasks import releasenotes
 
 from conftest import ROOT
@@ -164,3 +170,44 @@ def test_the_excused_section_really_is_the_one_that_could_not_pass(monkeypatch):
         f"the {releasenotes.tag_of(spec.first)} section now names every one of the {len(merged)} tickets "
         f"merged into {start}..{end}, so its exemption guards nothing: set `complete_from:` to "
         f"{releasenotes.spell(spec.first)} in simplon.yaml and delete it")
+
+
+def test_the_local_gate_reaches_the_notes_guard():
+    """si#156: `./simplon.sh test all` must run this check, not merely offer a command that could.
+
+    si#89 moved the mechanism into the kernel as `test:release-notes`, which was right, and it had a side
+    effect nobody stated: the check left the local gate. `test all` was the pytest suite and the guard was
+    a command only `ci.yml` invoked, so a developer running the gate this project tells them to run
+    learned nothing about their missing notes until after the push. Before si#89 the same rule sat in this
+    very file and a local run caught it.
+
+    WHAT THIS DOES AND DOES NOT PROVE, said plainly because the ticket says it: this asserts the PLAN, and
+    a plan is not a verdict. What holds the verdict is the run - delete a ticket from the page, type the
+    command, watch it go red - and no unit test can stand in for that. This is the regression guard beside
+    it: the day somebody drops the dependency, or renames the command it names, the plan stops reaching
+    the guard and this says so.
+
+    Derived rather than typed: the command is found by the COORDINATE it instantiates, so renaming
+    `release-notes` keeps the assertion honest instead of turning it into a search for a string that
+    stopped meaning anything.
+
+    No `monkeypatch` here, unlike its four siblings: this reads the manifest as TEXT rather than through
+    `releasenotes.declared()`, so there is no process-global product to register and nothing to revert.
+    """
+    # arrange
+    source = (ROOT / "simplon.yaml").read_text(encoding="utf-8")
+    raw = yaml.safe_load(source)
+    mf = manifest_mod.load(source, catalogue=catalogue_mod.load())
+
+    # act: whichever command in the `test` group instantiates the kernel's notes coordinate
+    guards = [name for name, spec in raw["groups"]["test"]["commands"].items()
+              if spec.get("task") == "test:release-notes"]
+    plan = mf.plan_for("all", group="test")
+
+    # assert
+    assert guards == ["release-notes"], (
+        "simplon's `test` group no longer instantiates test:release-notes exactly once; si#89 put the "
+        f"mechanism in the kernel and this manifest is where it is placed - found {guards}")
+    assert guards[0] in plan, (
+        f"`test all` plans {list(plan)}, which does not include '{guards[0]}': the local gate has stopped "
+        f"running the release-notes guard and only CI would notice a release nobody wrote up (si#156)")

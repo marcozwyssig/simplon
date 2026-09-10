@@ -4,9 +4,15 @@
 # a command that is renamed or removed breaks generation instead of leaving a workflow calling
 # something that is gone. `--check` reports drift and returns 1.
 
-# Every push and every pull request, and it is the SAME three commands a developer types in a
+# Every push and every pull request, and every step is a command a developer can type in a
 # checkout - not a pipeline's own spelling of them. Two routes to one verdict is the shape that
 # produced si#8, where the CI was green for months because it had never run mypy at all.
+#
+# The steps name the LEAVES, not the `test all` aggregate that plans two of them (si#156). A
+# GitHub job stops at its first failed step, so an aggregate here would put the prose gate in
+# front of the type gate and the wheel, which is exactly what the last step's note refuses. Every
+# verdict below still has one implementation, and `test all` reaches two of them by name rather
+# than by repeating them.
 name: ci
 on:
   - push
@@ -37,7 +43,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: ./simplon.sh test all
+      - run: ./simplon.sh test suite
       # The type gate (si#8), and it runs HERE rather than as a `mypy src` step of its own,
       # because the command has to be the same one a developer runs. si#8 was raised as "mypy is
       # red locally and green in CI, so it must be the Python version" - and the CI had simply

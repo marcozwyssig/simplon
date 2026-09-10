@@ -100,8 +100,17 @@ jobs:
       #
       # That would have been si#8 committed a second time, one level up: a pipeline that is green because
       # a question is not asked. tests/test_type_gate.py holds it as a RULE over the whole workflows
-      # directory - any job that runs `test all` runs the gate - so a future workflow inherits it instead
-      # of being remembered.
+      # directory - any job that runs the suite runs the gate - so a future workflow inherits it instead
+      # of being remembered. It knows two spellings of "runs the suite" since si#156, `test all` and
+      # `test suite`, and this file is the one that still says the first.
+      #
+      # AND `test all` CARRIES A THIRD VERDICT HERE since si#156: it is an aggregate over the pytest
+      # suite and `test release-notes`, so this step also rules on whether the release being cut has a
+      # section naming every ticket it carries. That is the guard si#89 built acting one step earlier
+      # than it used to, and it is deliberate - the notes are written BEFORE the tag (si#3), so a tag
+      # whose section nobody wrote stops the publish rather than following it. The consequence to know:
+      # this step can now go red on prose while every line of code is fine, and the message names the
+      # missing numbers.
       - run: ./simplon.sh test all
       - run: ./simplon.sh test typecheck-python
       - run: ./simplon.sh build wheel

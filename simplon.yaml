@@ -13,9 +13,13 @@ tasks:
   wheel:
     impl: "orchestrator.cli:build_wheel"
     help: "Build the wheel."
-  all:
-    impl: "orchestrator.cli:test_all"
-    help: "Run every test."
+  # NAMED `suite` since si#156, and the rename is the whole mechanism of that ticket. This body is the
+  # pytest run and nothing else; `all` is now the AGGREGATE over it and the release-notes guard, and a
+  # command either instantiates a task or plans other commands (si#895/si#896), so the leaf had to give
+  # the name `all` up to get one of its own.
+  suite:
+    impl: "orchestrator.cli:test_suite"
+    help: "Run the pytest suite."
   doctor:
     impl: "orchestrator.cli:doctor"
     help: "Check the tools and the environment."
@@ -71,7 +75,10 @@ groups:
         depends_on: [reference, site]
   test:
     commands:
-      all: { task: all }
+      # The pytest suite (si#156). It answered to `all` until that ticket; what took the name is the
+      # aggregate at the bottom of this group, and the two are not interchangeable - this one is a leaf
+      # with a body, and a leaf may not also plan other commands.
+      suite: { task: suite }
       # The type gate, on the kernel that ships it (#8). Simplon has carried `test:typecheck-python` for
       # other products since the catalogue had a `test` namespace and had never placed it for itself, so
       # `mypy src` was something a developer ran by hand or not at all - and for months the answer was 36
@@ -98,6 +105,46 @@ groups:
       # No `with:` - there is nothing to pin. All three values are the product's data and reach the body
       # through the manifest, which is the whole shape of the ticket.
       release-notes: { task: "test:release-notes" }
+      # THE LOCAL GATE (si#156), and an impl-less AGGREGATE for the same reason `build docs` above is
+      # one: a command either instantiates a task or plans other commands, never both.
+      #
+      # si#89 moved the release-notes guard out of `tests/test_releases_page.py` and into the coordinate
+      # above, which was right and had a side effect nobody stated: the check left the local gate. `test
+      # all` was the pytest suite, `test release-notes` was a command only ci.yml invoked, and a
+      # developer running the gate this project tells them to run learned nothing about their missing
+      # notes until after the push. The command is named `all` and its help says every test; it was not
+      # every test.
+      #
+      # NOT a pytest test that shells out to the guard, which is the obvious repair and the wrong one -
+      # `typecheck-python` above carries the rule it breaks: two ways to reach one verdict is the shape
+      # that produced si#8. An aggregate reaches the SAME command ci.yml reaches, so there is one
+      # implementation and one verdict, invoked from two places rather than written in two.
+      #
+      # `stop_on_failure` stays at its default (false), deliberately, and here that is the load-bearing
+      # half: a red suite must not hide the notes verdict and a missing section must not hide the suite.
+      # Both steps run, both verdicts print, and the aggregate takes the worst rc. That is also why
+      # ci.yml still names the four leaves rather than this command - a GitHub job stops at its first
+      # failed step, so si#89's reason for putting the prose gate LAST there is untouched by this.
+      #
+      # Siblings execute in list order, so the notes guard runs after the suite: it costs 0.34s measured
+      # on this tree, against the suite's 55s, and it rules on prose rather than on code.
+      #
+      # ONE OBSERVABLE CHANGE beyond the extra gate, named here rather than left to be discovered: the
+      # leaf returned pytest's own exit code (2 interrupted, 5 nothing collected, ...) and an aggregate
+      # returns `steps.overall_rc`, which is 0 or 1 and nothing else. Rc 5 - a collection that found no
+      # tests - now reads as plain failure on `test all`. That is the kernel's established shape rather
+      # than a decision taken here (`build docs` collapses the same way), it is the right one for a
+      # verdict over several steps, and `test suite` still hands the raw number through for anyone who
+      # wants it.
+      #
+      # NOT typecheck-python, and that is a decision rather than an oversight: it is the same gap one
+      # gate over, but folding it in would rewrite `tests/test_type_gate.py`'s central rule ("any job
+      # that runs `test all` runs the gate") into a plan-expanding one in the same commit that changes
+      # what `test all` means. si#156 scoped itself to the notes; the typecheck half is measured at 3.4s
+      # and wants its own ticket.
+      all:
+        help: "Run every test: the pytest suite, then the release-notes guard."
+        depends_on: [suite, release-notes]
   release:
     commands:
       # The release itself (#32). Simplon cuts its own releases with the command it ships, for the same
@@ -186,9 +233,11 @@ releases:
 # WHAT IS HERE AND WHAT IS NOT. The runner image, the trigger, the interpreter version and the
 # permissions are declared, because the kernel cannot know them and must not guess: whether a tag
 # publishes is this product's statement. The step SEQUENCE is not declared twice - a step says
-# `command: test all`, and the generator resolves that against the command tree above before writing
-# `./simplon.sh test all`. Rename `test all` and generation fails; today, renaming it would leave a
-# workflow calling a command that is gone, and the first anybody would hear of it is a red runner.
+# `command: test suite`, and the generator resolves that against the command tree above before writing
+# `./simplon.sh test suite`. Rename `test suite` and generation fails; without it, renaming it would
+# leave a workflow calling a command that is gone, and the first anybody would hear of it is a red
+# runner. si#156 renamed exactly that command and this is what made it a mechanical edit rather than a
+# discovery.
 #
 # The checkout is not declared either. `fetch-depth: 0` is si#3's invariant - a shallow clone makes
 # setuptools-scm derive a version that is merely wrong rather than failing - and the generator emits it,
@@ -201,9 +250,15 @@ workflows:
 
   ci:
     note: |
-      Every push and every pull request, and it is the SAME three commands a developer types in a
+      Every push and every pull request, and every step is a command a developer can type in a
       checkout - not a pipeline's own spelling of them. Two routes to one verdict is the shape that
       produced si#8, where the CI was green for months because it had never run mypy at all.
+
+      The steps name the LEAVES, not the `test all` aggregate that plans two of them (si#156). A
+      GitHub job stops at its first failed step, so an aggregate here would put the prose gate in
+      front of the type gate and the wheel, which is exactly what the last step's note refuses. Every
+      verdict below still has one implementation, and `test all` reaches two of them by name rather
+      than by repeating them.
     # VERBATIM product data: whether a push runs the suite is nothing the kernel can derive.
     on: [push, pull_request]
     jobs:
@@ -221,7 +276,10 @@ workflows:
         runs-on: ubuntu-latest
         python: "3.12"
         steps:
-          - command: test all
+          # The pytest suite, and it says `test suite` since si#156 - the name this leaf took when
+          # `test all` became the aggregate over it and the notes guard. The same run, the same body,
+          # renamed; the aggregate is the developer's one command, not the pipeline's.
+          - command: test suite
           - note: |
               The type gate (si#8), and it runs HERE rather than as a `mypy src` step of its own,
               because the command has to be the same one a developer runs. si#8 was raised as "mypy is

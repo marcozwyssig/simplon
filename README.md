@@ -164,7 +164,16 @@ Simplon builds and tests itself with itself:
     ./simplon.sh test typecheck-python
     ./simplon.sh build wheel
 
-Those three are exactly what CI runs, in that order. The type gate is the
+CI runs the same gates, and it spells the first one differently: `test all` is
+an aggregate over `test suite` (the pytest run) and `test release-notes`
+(si#156), and CI names those two leaves separately, with the notes check LAST
+rather than second. That is not cosmetic. A GitHub job stops at its first failed
+step, so a release section still to be written would otherwise go red in front
+of the type gate and the wheel; locally nothing stops at a failure, so one
+command that runs both is the better shape. Typing `test all` here gets you the
+suite and the notes check in one go.
+
+The type gate is the
 kernel's own `test:typecheck-python`, placed on itself: what it covers and what
 it excuses is stated in `mypy.ini`, and it pins the language level to the
 `requires-python` floor rather than to whichever interpreter you have, so its
