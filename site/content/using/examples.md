@@ -71,9 +71,41 @@ So: filtered runs to find the problem, one unfiltered run to prove it fixed.
 
 ## 3. Read what a step actually printed
 
-Aggregates run their steps in a terminal UI, and a terminal UI takes the mouse. Your terminal's own
-selection stops working, so the output is visible and unreachable at the same time. Three ways out, in
-order of how much you had to know in advance:
+Aggregates run their steps in a terminal UI: the plan as a tree on the left, the highlighted row's
+details on the right.
+
+**What the run is doing, without pressing anything.** The bar along the bottom follows the PROCESS, not
+your cursor. It names the step that is running right now and how long it has been running, beside the
+run's own counts and clock:
+
+```text
+▶ build.compile  1m12s…  ·  3 ok · 1 running · 5 pending  ·  run 2m48s
+```
+
+That is the line that answers "is this compiling or has it hung", and it goes on answering it while you
+read something else entirely. The running row carries the same counter in the tree, spelled `1m12s…` -
+the trailing character is the difference between a step that TOOK twelve seconds and one that has taken
+twelve so far. When the run ends the bar carries the verdict, which is the last thing you read before
+pressing `q`.
+
+State is a glyph AND a colour: `✓` green, `✗` red and bold, `▶` amber, `⊘` dimmed, `·` dim and
+uncoloured. The glyph is never dropped, so a broken terminal palette or a saved log loses nothing. If
+the colours are unreadable on your terminal, `ctrl+p` opens the command palette and its **Theme** entry
+picks another one; the rows follow it.
+
+**Moving around.** The cursor follows each step as it starts, and stops the moment you navigate by hand -
+`f` asks for it back and goes straight to whatever is running now. On a finished run, `n` walks the
+failures and wraps, and `/` filters the tree to the rows matching a substring plus the rows that carry
+them (`/` again clears it). Everything in the footer is also in the command palette on `ctrl+p`, with a
+sentence each, which is where to look rather than at a key you would have to remember.
+
+The details pane keeps your place: scroll up in a long step's output, look somewhere else, come back, and
+you are where you were. While a step is running, the pane follows the tail only if you are AT the tail -
+scroll up and the lines keep arriving below you instead of dragging you down with them.
+
+**Getting the text out.** A terminal UI takes the mouse, so your terminal's own selection stops working
+and the output is visible and unreachable at the same time. Three ways out, in order of how much you had
+to know in advance:
 
 **You planned ahead:** redirect the whole command. Works, sidesteps the UI entirely, and requires you to
 have known before the run that you would want the text.
@@ -84,12 +116,36 @@ have known before the run that you would want the text.
 
 ```text
 $ ls build/logs/
-build.compile.log   test.unit.log   deploy.up.log
+build.compile.log   test.unit.log   deploy.up.log   run-transcript.log
 ```
 
 One file per step, in `build/logs/`, overwritten each run rather than appended - the interesting run is
 the last one, and a file holding four of them makes finding the right one your job. It lives under
 `build/` because a step log is a build output, and `clean` should take it with everything else.
+
+**And one file for the RUN**, which is the one you attach to a ticket. `run-transcript.log` holds every
+step in the order it ran with its exact command, its rc and its duration, then why each failure failed
+and where the whole of its output is, under a header that says which run this was:
+
+```text
+=== simplon run transcript: bringup ===
+started:      2026-09-10 14:03:09
+environment:  prod
+instance:     dev
+tooling:      assembled by simplon 0.9.0 (/opt/myctl/.venv/lib/python3.12/site-packages/simplon)
+
+✓ build.install  rc 0  2.0s
+    $ build.install - Install host prereqs.
+✗ build.compile  rc 1  1.4s
+    $ build.compile - Compile the artefacts.
+⊘ deploy.up  (skipped: build.prep stopped on a failure)
+    $ deploy.up - Deploy up.
+```
+
+That last header line is what turns a pasted excerpt into evidence: it is the same provenance the
+top-level `--help` prints, so an excerpt says which simplon produced it rather than leaving everyone to
+assume it was theirs. The transcript is written on BOTH runners - the terminal UI and the plain one CI
+falls back to - because the run that most needs attaching to a ticket is a red CI run.
 
 ## 4. Cut a release
 

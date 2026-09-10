@@ -45,7 +45,7 @@ _CHECKOUT_DIR = "/home/marco/git/simplon/src/simplon"
 
 #: The rendered-help tests use a SHORT path on purpose: rich wraps the epilog to the terminal width and
 #: may break a long path anywhere, so a test that asserted the real shape would be asserting the width it
-#: happened to run at. The shape is asserted on `_provenance()` above; these ask only whether it arrives.
+#: happened to run at. The shape is asserted on `provenance_line()` above; these ask only whether it arrives.
 _SHORT_FILE = "/venv/simplon/__init__.py"
 _SHORT_DIR = "/venv/simplon"
 
@@ -124,7 +124,7 @@ def test_a_released_wheel_names_the_version_and_the_site_packages_directory(monk
     _install(monkeypatch, version="0.9.0", file=_WHEEL_FILE)
 
     # act
-    line = cli._provenance()
+    line = cli.provenance_line()
 
     # assert
     assert line == f"assembled by simplon 0.9.0 ({_WHEEL_DIR})"
@@ -139,7 +139,7 @@ def test_an_editable_install_is_visibly_different_from_a_wheel(monkeypatch):
              dist=_Dist('{"dir_info": {"editable": true}, "url": "file:///home/marco/git/simplon"}'))
 
     # act
-    line = cli._provenance()
+    line = cli.provenance_line()
 
     # assert
     assert line == f"assembled by simplon 0.9.0 (editable install, {_CHECKOUT_DIR})"
@@ -153,7 +153,7 @@ def test_a_direct_url_install_that_is_not_editable_reads_as_an_ordinary_install(
              dist=_Dist('{"dir_info": {}, "url": "file:///home/marco/git/simplon"}'))
 
     # act
-    line = cli._provenance()
+    line = cli.provenance_line()
 
     # assert
     assert line == f"assembled by simplon 0.9.0 ({_WHEEL_DIR})"
@@ -170,7 +170,7 @@ def test_a_source_tree_with_no_installed_distribution_says_so(monkeypatch):
              dist=cli.PackageNotFoundError("simplon"))
 
     # act
-    line = cli._provenance()
+    line = cli.provenance_line()
 
     # assert
     assert line == f"assembled by simplon 0.0.0.dev0+unknown (no installed distribution, {_CHECKOUT_DIR})"
@@ -184,7 +184,7 @@ def test_a_distribution_lookup_that_fails_for_any_other_reason_leaves_the_line_s
     _install(monkeypatch, file=_WHEEL_FILE, dist=ValueError("broken dist-info"))
 
     # act
-    line = cli._provenance()
+    line = cli.provenance_line()
 
     # assert
     assert line == f"assembled by simplon 0.9.0 ({_WHEEL_DIR})"
@@ -209,7 +209,7 @@ def test_unusable_direct_url_metadata_does_not_break_the_line(monkeypatch, paylo
     _install(monkeypatch, file=_WHEEL_FILE, dist=_Dist(payload))
 
     # act
-    line = cli._provenance()
+    line = cli.provenance_line()
 
     # assert
     assert line == f"assembled by simplon 0.9.0 ({_WHEEL_DIR})"
@@ -223,7 +223,7 @@ def test_a_version_that_could_not_be_resolved_is_named_as_unresolved(monkeypatch
     _install(monkeypatch, version="", file=_WHEEL_FILE)
 
     # act
-    line = cli._provenance()
+    line = cli.provenance_line()
 
     # assert
     assert line == f"assembled by simplon, version unknown ({_WHEEL_DIR})"
@@ -236,7 +236,7 @@ def test_a_package_with_no_file_falls_back_to_its_search_path(monkeypatch):
     _install(monkeypatch, file=None, path=[_WHEEL_DIR, _CHECKOUT_DIR])
 
     # act
-    line = cli._provenance()
+    line = cli.provenance_line()
 
     # assert
     assert line == f"assembled by simplon 0.9.0 ({_WHEEL_DIR}, {_CHECKOUT_DIR})"
@@ -248,7 +248,7 @@ def test_a_package_with_no_location_at_all_still_renders(monkeypatch):
     _install(monkeypatch, file=None, path=[], dist=cli.PackageNotFoundError("simplon"))
 
     # act
-    line = cli._provenance()
+    line = cli.provenance_line()
 
     # assert
     assert line == "assembled by simplon 0.9.0 (no installed distribution, location unknown)"

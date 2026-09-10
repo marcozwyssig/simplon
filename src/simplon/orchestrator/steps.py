@@ -12,8 +12,10 @@ import os
 import shlex
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Callable
+from pathlib import Path
+from typing import TYPE_CHECKING, Callable, Sequence
 
 from simplon import log
 from simplon import steplog
@@ -297,6 +299,29 @@ class Row:
             return None
         start, end = self.started_at, self.ended_at
         return end - start if start is not None and end is not None else None
+
+    def elapsed(self, now: float) -> float | None:
+        """How long this row has taken SO FAR, on the same monotonic clock `duration` uses - the live
+        value a running row and the status bar need, and the one `duration` deliberately does not give
+        (si#148 items 2 and 8).
+
+        `duration` answers None for anything not over, which is the right answer to its own question
+        ("how long did this take") and the wrong one to this one ("how long has this been going"). The two
+        are kept apart rather than merged because `duration` is what the transcript and `render_tree`
+        print, and a number that grows between two reads has no business in a record of a finished run.
+
+        `now` is a PARAMETER and not a `clock()` call, for the reason the `clock` attribute above states:
+        a test that watched this tick by sleeping would be slow, flaky, and would prove less than one that
+        states the instant it means.
+
+        It never invents a zero, exactly as `duration` does not: a row that has not started has no
+        elapsed, because `0.0s` is the one value a reader could mistake for "did not run".
+        """
+        duration = self.duration
+        if duration is not None:
+            return duration
+        start = self.started_at
+        return now - start if start is not None else None
 
     @property
     def state(self) -> StepState:
@@ -603,6 +628,278 @@ def format_duration(seconds: float) -> str:
     return f"{minutes}m{rest:02d}s"
 
 
+# --- the bottom bar: what is ACTIVE, and how the run is doing (si#148 items 2 and 8) -------------------
+#
+# THE ONE THING ON SCREEN THAT FOLLOWS THE PROCESS RATHER THAN THE CURSOR. Both panes of the TUI follow
+# the cursor - the tree row is where the operator navigated to, the details pane is that row's output -
+# so an operator who navigates away has nothing left that says what is running or how long it has been
+# running, which is the question asked immediately before someone presses Ctrl-C. A permanent line
+# answers it once and keeps answering it while the operator reads something else.
+#
+# PURE, over the DISPLAY tree plus an injected `now`. Over the display tree because that is where the
+# identity a reader scans for lives - `_label`'s dotted path, never the argv - and because the derived
+# aggregate state is already computed there. With an injected `now` because the value has to travel
+# `started_at -> Row.elapsed -> format_duration -> the text` and a test that stated no instant could only
+# assert that path by sleeping.
+#
+# The separator is wide on purpose: three groups of numbers on one line need to be separable at a glance
+# by an operator who is WATCHING rather than reading. Posting's status bar is denser because its user is
+# composing something; density that helps an editor hides a state change in a monitor.
+_BAR = "  ·  "
+
+#: How many running steps the bar NAMES before it summarises the rest. Execution is sequential today, so
+#: this is one name in practice - but si#147 is an open ticket for a parallel executor with a join, and a
+#: line that could render only one name would have to be rebuilt for it. Nothing here supports parallel
+#: execution; what it does is refuse a shape that would have to be thrown away. Two, because the bar is
+#: ONE line and a fan-out of eight has to stay one line.
+NAMED_RUNNING = 2
+
+
+@dataclass(frozen=True)
+class RunSummary:
+    """How a run is doing, counted over the LEAVES of the display tree - the aggregates are derived and
+    counting them would count the same work several times."""
+
+    ok: int = 0
+    failed: int = 0
+    skipped: int = 0
+    running: int = 0
+    pending: int = 0
+    total: int = 0
+
+    @property
+    def finished(self) -> bool:
+        """True when nothing can still change: every leaf has run or been skipped. A run with no steps at
+        all is finished and did not pass, which is the distinction `passed` keeps."""
+        return self.total > 0 and self.ok + self.failed + self.skipped == self.total
+
+    @property
+    def passed(self) -> bool:
+        """True only for a finished run in which every leaf is OK. An empty run passed NOTHING, and
+        calling that green is the defect this repo keeps hunting."""
+        return self.finished and self.ok == self.total
+
+    @property
+    def counts(self) -> str:
+        """The categories that have a member, and only those. A bar reading `0 ok · 0 failed · 0 skipped ·
+        0 running · 3 pending` spends four fifths of its width on nothing having happened, and the
+        operator then has to read it to find out that nothing has."""
+        parts = [f"{count} {name}" for count, name in
+                 ((self.ok, "ok"), (self.failed, "failed"), (self.skipped, "skipped"),
+                  (self.running, "running"), (self.pending, "pending")) if count]
+        return " · ".join(parts) if parts else "no steps"
+
+
+def leaf_rows(root: Row) -> tuple[Row, ...]:
+    """Every EXECUTABLE row under `root`, in display order - the rows that carry a step and therefore an
+    rc of their own."""
+    if root.step is not None:
+        return (root,)
+    return tuple(leaf for child in root.children for leaf in leaf_rows(child))
+
+
+def summarise(root: Row) -> RunSummary:
+    """Count the display tree's leaves by state. Pure."""
+    states = [leaf.state for leaf in leaf_rows(root)]
+    return RunSummary(ok=states.count(StepState.OK), failed=states.count(StepState.FAILED),
+                      skipped=states.count(StepState.SKIPPED), running=states.count(StepState.RUNNING),
+                      pending=states.count(StepState.PENDING), total=len(states))
+
+
+def running_rows(root: Row) -> tuple[Row, ...]:
+    """The leaves that are RUNNING right now, in display order. A TUPLE rather than an optional single
+    row: see NAMED_RUNNING for why the plural is the shape even while execution is sequential."""
+    return tuple(leaf for leaf in leaf_rows(root) if leaf.state == StepState.RUNNING)
+
+
+def run_elapsed(root: Row, now: float) -> float | None:
+    """How long the RUN has been going, or None before anything started - the root row's own elapsed, so
+    a finished run stops at its last step instead of following the wall clock into the operator's reading
+    time."""
+    return root.elapsed(now)
+
+
+def _active_text(rows: tuple[Row, ...], now: float) -> str:
+    """The left half while something is running: up to NAMED_RUNNING identities, then how many more, then
+    the elapsed of the one that has been going longest."""
+    named = ", ".join(row.label for row in rows[:NAMED_RUNNING])
+    tail = f" +{len(rows) - NAMED_RUNNING} more" if len(rows) > NAMED_RUNNING else ""
+    elapsed = max((value for value in (row.elapsed(now) for row in rows) if value is not None),
+                  default=None)
+    # The ellipsis is one character and it is the difference between `12.0s` on a row that finished in
+    # twelve seconds and `12.0s…` on one that has been going for twelve and may go for sixty more.
+    shown = f"  {format_duration(elapsed)}…" if elapsed is not None else ""
+    return f"{STATE_ICON[StepState.RUNNING]} {named}{tail}{shown}"
+
+
+def _last_finished(root: Row) -> Row | None:
+    """The leaf that ended most recently, for the window in which nothing is running and the run is not
+    over. Narrow but real: an aborted subtree is marked SKIPPED one step at a time with a repaint between
+    each, and during that stretch no step is RUNNING."""
+    ended = [leaf for leaf in leaf_rows(root) if leaf.ended_at is not None]
+    return max(ended, key=lambda row: row.ended_at or 0.0) if ended else None
+
+
+def _verdict_text(summary: RunSummary) -> str:
+    """What a finished run's bar says - the verdict, because it is the last thing an operator reads before
+    pressing q, and because the details pane it was reading is gone the moment the app exits."""
+    if summary.passed:
+        return f"{STATE_ICON[StepState.OK]} all {summary.total} steps passed"
+    if summary.total == 0:
+        return "nothing ran"
+    tail = f", {summary.skipped} skipped" if summary.skipped else ""
+    return f"{STATE_ICON[StepState.FAILED]} {summary.failed} of {summary.total} steps failed{tail}"
+
+
+def status_line(root: Row, now: float) -> str:
+    """The bottom bar's whole text: what is active right now, how the run is doing, and how long it has
+    been going. Pure; plain text, so nothing here can leak markup into a log.
+
+    FOUR STATES AND NONE OF THEM IS BLANK. A bar that empties reads as a broken widget, and three of the
+    four are easy to leave empty by accident:
+
+      - nothing has started - `waiting to start`. One frame in practice, because `on_mount` paints before
+        the worker thread has entered the first step, but the frame exists and it is the first thing an
+        operator sees.
+      - something is running - the identity, the elapsed, the counts, the run's own clock.
+      - nothing is running and the run is not over - the step that finished LAST, marked as such. See
+        `_last_finished` for when this window occurs.
+      - the run is over - the verdict.
+    """
+    summary = summarise(root)
+    elapsed = run_elapsed(root, now)
+    clock_text = f"{_BAR}run {format_duration(elapsed)}" if elapsed is not None else ""
+    running = running_rows(root)
+    if running:
+        return f"{_active_text(running, now)}{_BAR}{summary.counts}{clock_text}"
+    if summary.finished:
+        return f"{_verdict_text(summary)}{clock_text}"
+    last = _last_finished(root)
+    if last is not None:
+        duration = last.duration
+        shown = f"  {format_duration(duration)}" if duration is not None else ""
+        head = f"last: {STATE_ICON[last.state]} {last.label}{shown}"
+        return f"{head}{_BAR}{summary.counts}{clock_text}"
+    return f"waiting to start{_BAR}{summary.counts}"
+
+
+def step_header(step: Step) -> str:
+    """One step's identity line: its EXACT command, plus the command's own help text when the manifest
+    gave it one (#49). The dotted path is what a reader SCANS for; this is what makes a pasted excerpt
+    reproducible, which is why it appears where a step is entered and in the transcript, and never on a
+    tree row.
+
+    Pure, and shared: the TUI's details pane and the run transcript render the identical line. It sits in
+    this module rather than in the TUI because the transcript is written on the HEADLESS path too, and a
+    second spelling of the same sentence is how two artefacts of one run come to disagree.
+    """
+    identity = step.command or step.label
+    return f"$ {identity} - {step.help}" if step.help else f"$ {identity}"
+
+
+def transcript(pipeline: Pipeline, header: Sequence[str]) -> list[str]:
+    """The WHOLE run as text lines: every step in the order it ran, each with its exact command, its rc
+    and its duration, then why each failure failed, then the verdict (si#148 item 3).
+
+    THE GAP IT CLOSES. `steplog.write` keeps what one step printed and `failure_report` prints the
+    failures once the app has exited. Neither is the artefact somebody attaches to a ticket, and a nicer
+    pane cannot become one: a pane is gone when the app is.
+
+    IN EXECUTION ORDER, not as a tree. `render_tree` already draws the shape and both runners show it;
+    what it cannot show is the ORDER, which is the half a reader reconstructing an incident needs - and
+    the order is `pipeline.steps`, which is what actually ran.
+
+    IT REUSES RATHER THAN RESTATES. `step_header` is the pane's own line, `failure_report` is the block
+    both runners already print (tail plus the path to the whole file, or the sentence saying the run does
+    not know), and the verdict is the status bar's. Composing them is the work; a second rendering of any
+    of them would be a second answer to a question that has one.
+
+    NO OUTPUT BODIES. The full text of every step is already on disk one file per step, and inlining it
+    here would produce a transcript nobody opens for a build that prints 40 000 lines. What a failure
+    contributes is `failure_report`'s tail AND the path to the rest - #49's both-or-neither rule.
+
+    Pure: it returns lines and prints none of them, and it is plain text throughout, so nothing here can
+    put markup or an escape into a file a reader attaches to a ticket (si#144's warning about a pty,
+    applied to the artefact rather than to the stream).
+    """
+    lines = list(header)
+    if lines:
+        lines.append("")
+    for step in pipeline.steps:
+        identity = step.command or step.label
+        icon = STATE_ICON[step.state]
+        if step.state == StepState.SKIPPED:
+            lines.append(f"{icon} {identity}  (skipped: {_skip_note(pipeline, step)})")
+        elif step.rc is None:
+            # Never entered `Step.run` and was not skipped either: the run stopped before it, which is
+            # what a transcript of a TUI run the operator quit half way through has to be able to say.
+            lines.append(f"{icon} {identity}  ({step.state.value})")
+        else:
+            duration = step.duration
+            shown = f"  {format_duration(duration)}" if duration is not None else ""
+            lines.append(f"{icon} {identity}  rc {step.rc}{shown}")
+        lines.append(f"    {step_header(step)}")
+    failures = failure_report(pipeline)
+    if failures:
+        lines += [""] + failures
+    lines += ["", f"verdict: {_verdict_text(summarise(build_rows(pipeline)))}"]
+    return lines
+
+
+def _skip_note(pipeline: Pipeline, skipped: Step) -> str:
+    """Which subtree declined to run `skipped`, in the words `Abort.reason` uses - the same content the
+    TUI's pane and the headless runner already show beside a `⊘`, recomputed here rather than carried,
+    because a Step does not hold it and the transcript is written after the fact.
+
+    It asks the FIRST failure whose abort claims this step. Later failures may claim it too; the first
+    one is the one that decided, exactly as both runners' `setdefault` records it.
+    """
+    index = next((i for i, step in enumerate(pipeline.steps) if step is skipped), None)
+    if index is None:
+        return "a previous step failed"
+    for i, step in enumerate(pipeline.steps[:index]):
+        if step.state == StepState.FAILED:
+            abort = abort_after(pipeline, i)
+            if index in abort.indices:
+                return abort.reason
+    return "a previous step failed"
+
+
+def write_run_transcript(pipeline: Pipeline, started: datetime) -> Path | None:
+    """Write the run transcript beside the per-step logs; returns the path, or None when there was
+    nowhere to put it.
+
+    CALLED ON BOTH PATHS, and that is a decision rather than an oversight. The run that most needs to be
+    attachable to a ticket is a red CI run, which is exactly the headless path - a transcript written
+    only under the TUI would exist only on the machine where the operator could already read the screen.
+    It costs a CI run one file under `build/`, which `clean` removes, and it degrades to nothing when no
+    product context is registered, the way `steplog.write` already does.
+
+    The TUI's caller writes it AFTER `App.run()` returns rather than from `_on_done`, so a run the
+    operator quit half way through still leaves a record of what did happen. That is why the body above
+    has a branch for a step that was neither run nor skipped.
+
+    THE GUARD IS ROUND THE WHOLE COMPOSITION, not just the file write, and one frame's difference is the
+    entire point. `steplog.write_run` catches `OSError` because that is the only thing WRITING can raise;
+    everything before it - `run_header`, and `transcript` with its `STATE_ICON` lookups, its `abort_after`
+    traversal and its `failure_report` - is rendering, and a rendering fault there propagates out of
+    `run_headless` and `run_pipeline`. It would then take the process down BEFORE the exit code is
+    returned and before the failure summary is printed, on exactly the red run this artefact exists for:
+    a file meant to explain a failure would instead replace the explanation with its own traceback.
+    A courtesy that raises is a defect, and the courtesy is the whole call, not its last line.
+
+    The cost is stated rather than hidden: a bug in the rendering leaves no transcript, and says so once
+    where an unguarded version would announce it loudly. That is the same trade `steplog.write` already
+    makes, and it goes the same way - the RUN's verdict is what a caller came for.
+    """
+    try:
+        text = "\n".join(transcript(pipeline, steplog.run_header(pipeline.name, started)))
+    except Exception as exc:  # noqa: BLE001 - see the paragraph above; nothing here may cost a run
+        log.warn(f"{pipeline.name}: the run transcript could not be composed ({exc})")
+        return None
+    return steplog.write_run(text)
+
+
 def render_tree(root: Row, indent: str = "  ") -> list[str]:
     """The display tree as text lines, one per row, indented by depth - what `run_headless` prints so a CI
     log shows the structure the TUI draws.
@@ -680,7 +977,12 @@ def run_headless(pipeline: Pipeline, verbose: bool | None = None) -> int:
 
     A RED run then adds `failure_report` between that tree and the verdict line (#49): the tree says which
     steps failed, the report says why each of them did, and the count stays last. A green run adds
-    nothing - the normal case must not pay for the exceptional one, which is #49's own acceptance."""
+    nothing - the normal case must not pay for the exceptional one, which is #49's own acceptance.
+
+    It also leaves a RUN TRANSCRIPT behind (si#148 item 3), and headless is not the afterthought path for
+    it: the run that most needs to be attachable to a ticket is a red CI run, and this is the runner CI
+    uses. See `write_run_transcript`."""
+    started = datetime.now()
     show_passing = _verbose_env() if verbose is None else verbose
     failures = 0
     skipped = 0
@@ -724,6 +1026,10 @@ def run_headless(pipeline: Pipeline, verbose: bool | None = None) -> int:
         # been. A green run reaches none of this (#49).
         for line in failure_report(pipeline):
             print(line, flush=True)
+    # ONE call for both outcomes: what goes into the transcript does not depend on the verdict, and the
+    # verdict lines below are the last thing a reader sees either way.
+    write_run_transcript(pipeline, started)
+    if failures:
         tail = f", {skipped} skipped" if skipped else ""
         log.warn(f"{pipeline.name}: {failures}/{len(pipeline.steps)} step(s) failed{tail}")
         return 1

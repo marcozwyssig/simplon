@@ -30,7 +30,7 @@ import typer
 
 import simplon
 from simplon import clitaxonomy, log, signatures
-from simplon.context import ProductContext, launcher
+from simplon.context import ENVIRONMENT_ENV, ProductContext, launcher
 from simplon.orchestrator import manifest
 from simplon.orchestrator.product import StepFactoryContext, run_command
 from simplon.taskgen import _docstring
@@ -338,7 +338,7 @@ def _install_marker() -> str:
     return "editable install" if editable else ""
 
 
-def _provenance() -> str:
+def provenance_line() -> str:
     """The single line the top-level `--help` ends with: which simplon assembled this CLI, and from where.
 
     Both halves can be absent and neither absence may cost the reader their help screen, so each degrades
@@ -401,7 +401,7 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
 
     The assembled ROOT app also gets the si#125 provenance line in its epilog - which simplon assembled
     this CLI, and from where - appended below any epilog the product declared. Group sub-apps do not get
-    it; see `_provenance` above for the wording and for what each half says when it cannot be resolved.
+    it; see `provenance_line` above for the wording and for what each half says when it cannot be resolved.
 
     A command whose spec declares `hidden: true` (netctl#1277) stays reachable exactly as above but is
     additionally hidden from ITS GROUP's listing (the flat alias has always been hidden, unconditionally):
@@ -497,7 +497,7 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
     # silently delete a line somebody wrote on purpose.
     declared = app.info.epilog
     declared = declared.strip() if isinstance(declared, str) else ""
-    line = _provenance()
+    line = provenance_line()
     app.info.epilog = f"{declared}\n\n{line}" if declared else line
 
 
@@ -567,6 +567,10 @@ def main(*, app: typer.Typer, context: ProductContext,
     if env_explicit:
         env = sys.argv.pop(1)
     os.environ[environments.ENV_VAR] = env
+    # ... and again in the kernel's own namespace, because the variable above is the PRODUCT's and its
+    # name arrives through the injected provider - so no kernel leaf can read the answer back out of it.
+    # See `context.ENVIRONMENT_ENV`; the run transcript is its first reader (si#148 item 4).
+    os.environ[ENVIRONMENT_ENV] = env
 
     # Preserve the bash dispatcher's UX: `<product> help` -> Typer help, and the command aliases.
     if len(sys.argv) >= 2:

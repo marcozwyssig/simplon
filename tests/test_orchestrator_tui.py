@@ -250,8 +250,14 @@ def test_the_tree_auto_focuses_the_first_failure_when_the_run_is_done():
     assert "compile ran" in rendered
 
 
-def test_the_tree_leaves_the_cursor_on_the_root_when_nothing_failed():
-    """The negative case: auto-focus is for failures, not a cursor that wanders on every green run."""
+def test_the_tree_does_not_jump_anywhere_when_nothing_failed():
+    """The negative case: auto-focus is for FAILURES, and `_on_done` must not move the cursor on a green
+    run.
+
+    si#148 changed where a green run leaves the cursor, and this test moved with it rather than being
+    weakened. Follow mode takes the cursor to each step as it starts, so a run nobody touched ends on the
+    LAST step - which is `_follow_to`'s doing and not `_on_done`'s. What is asserted is therefore that the
+    cursor is where following left it, and not on some failure that does not exist."""
     # arrange
     pipeline = _planned_pipeline()
 
@@ -261,13 +267,14 @@ def test_the_tree_leaves_the_cursor_on_the_root_when_nothing_failed():
             await app.workers.wait_for_complete()
             await pilot.pause()
             from textual.widgets import Tree
-            return str(app.query_one("#steps", Tree).cursor_node.label)
+            return str(app.query_one("#steps", Tree).cursor_node.label), app._follow
 
     # act
-    label = asyncio.run(_drive())
+    label, following = asyncio.run(_drive())
 
     # assert
-    assert "deploy.bringup" in label
+    assert following is True, "nobody touched this run, so it never stopped following itself"
+    assert "deploy.up" in label, "the last step to run, which is where following left it"
 
 
 def test_a_row_whose_text_did_not_change_is_not_written_again(monkeypatch):
@@ -540,3 +547,697 @@ def test_s_writes_the_focused_steps_output_and_says_where():
     saved, notes = asyncio.run(scenario())
     assert len(saved) == 1
     assert any("/tmp/x.log" in note for note in notes)
+
+
+# --- the bottom bar: what is ACTIVE, whatever the cursor is doing (si#148 items 2 and 8) -------------
+
+def _status(app) -> str:
+    from textual.widgets import Static
+    return str(app.query_one("#status", Static).content)
+
+
+class _Clock:
+    """A clock the TEST holds and moves, so an elapsed counter is asserted at a stated instant instead of
+    watched with a sleep - `simplon.tasks.allure.report_filename`'s injectable `now`, one layer down."""
+
+    def __init__(self) -> None:
+        self.at = 0.0
+
+    def __call__(self) -> float:
+        return self.at
+
+
+def _blocking_pipeline(release: "threading.Event") -> Pipeline:
+    """A two-leaf plan whose FIRST step blocks until the test lets it go, so the run can be observed
+    mid-flight rather than after the fact."""
+    tree = manifest_load(_NESTED_MANIFEST).plan_tree_for("prep")
+    steps = []
+    for index, leaf in enumerate(tree.leaves()):
+        if index == 0:
+            def action(event=release) -> Outcome:
+                event.wait(5.0)
+                return Outcome(rc=0, output="held")
+        else:
+            def action() -> Outcome:                      # type: ignore[misc]
+                return Outcome(rc=0, output="ran")
+        steps.append(Step(label=leaf.name, command=leaf.path, action=action))
+    return Pipeline("prep", steps, False, tree, tree.path)
+
+
+async def _until_running(pilot, pipeline: Pipeline, tries: int = 250) -> None:
+    """Wait for the worker thread to enter the first step - BOUNDED, and failing with a sentence rather
+    than hanging.
+
+    An unbounded `while` here would turn a future regression that stalls the worker into a CI timeout with
+    no diagnosis attached, which is the same defect class as a green verdict that lies: the test would
+    stop saying anything at all. 250 x 20ms is five seconds, two orders of magnitude above what this
+    actually takes, and it is a ceiling rather than a delay - nothing waits for it in the normal case."""
+    for _ in range(tries):
+        if pipeline.steps[0].state == StepState.RUNNING:
+            return
+        await pilot.pause(0.02)
+    raise AssertionError(f"the worker never entered step 0; it is {pipeline.steps[0].state}")
+
+
+def test_the_bar_names_the_running_step_while_the_cursor_is_somewhere_else(monkeypatch):
+    """THE feature. Both panes follow the cursor, so an operator who navigated away had nothing left that
+    said what was running - which is the question asked immediately before someone presses Ctrl-C."""
+    import threading
+
+    clock = _Clock()
+    monkeypatch.setattr(steps_mod, "clock", clock)
+    release = threading.Event()
+    pipeline = _blocking_pipeline(release)
+
+    async def scenario():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _until_running(pilot, pipeline)
+            # arrange: the operator navigates AWAY from the running step, to the root
+            _focus_line(app, 0)
+            clock.at = 12.0
+            app._tick()
+            await pilot.pause()
+            shown = _status(app)
+            cursor = app._cursor_row()
+            release.set()
+            await app.workers.wait_for_complete()
+            return shown, cursor
+
+    # act
+    shown, cursor = asyncio.run(scenario())
+
+    # assert: the cursor really is elsewhere - on the root aggregate, not on the running leaf - and the
+    # bar answers anyway
+    assert cursor is not None and cursor.label == "build.prep"
+    assert "build.install" in shown, f"the bar must name the running step, got: {shown}"
+    assert "12.0s…" in shown, f"the bar must say how long it has been running, got: {shown}"
+    assert "run 12.0s" in shown, f"the bar must carry the RUN's own clock too, got: {shown}"
+
+
+def test_the_bar_carries_the_verdict_once_the_run_is_over():
+    async def scenario():
+        app = _StepApp(_planned_pipeline({"compile": 1}))
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            return _status(app)
+
+    shown = asyncio.run(scenario())
+    assert "1 of 3 steps failed" in shown, shown
+
+
+def test_the_bar_is_never_blank_not_even_before_the_first_step(monkeypatch):
+    """A bar that empties reads as a broken widget, and `on_mount` paints before the worker thread has
+    entered the first step."""
+    import threading
+
+    release = threading.Event()
+    pipeline = _blocking_pipeline(release)
+
+    async def scenario():
+        app = _StepApp(pipeline)
+        shown_at_mount: list[str] = []
+        original = app._repaint_status
+
+        def record() -> None:
+            original()
+            shown_at_mount.append(_status(app))
+
+        app._repaint_status = record
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            release.set()
+            await app.workers.wait_for_complete()
+            return shown_at_mount
+
+    shown = asyncio.run(scenario())
+    assert shown and all(line.strip() for line in shown), shown
+
+
+def test_the_running_rows_own_label_counts_up_without_the_test_sleeping(monkeypatch):
+    """si#148 item 2: while a step runs its row carried nothing at all, so 'compiling for three minutes'
+    and 'hung' looked identical. The counter is driven by the injected clock, never by a sleep."""
+    import threading
+
+    clock = _Clock()
+    monkeypatch.setattr(steps_mod, "clock", clock)
+    release = threading.Event()
+    pipeline = _blocking_pipeline(release)
+
+    async def scenario():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _until_running(pilot, pipeline)
+            before = app._row(0)
+            clock.at = 12.0
+            app._tick()
+            await pilot.pause()
+            after = app._row(0)
+            release.set()
+            await app.workers.wait_for_complete()
+            return before, after
+
+    before, after = asyncio.run(scenario())
+    assert before == "▶ build.install  <0.1s…", before
+    assert after == "▶ build.install  12.0s…", after
+    assert "…" in after, "a running row's number must not be readable as a finished one"
+
+
+def test_the_bar_follows_the_runs_state_in_its_css_class():
+    async def scenario():
+        app = _StepApp(_planned_pipeline({"compile": 1}))
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            from textual.widgets import Static
+            return set(app.query_one("#status", Static).classes)
+
+    classes = asyncio.run(scenario())
+    assert "-failed" in classes, classes
+
+
+def test_the_tui_path_leaves_the_same_transcript_behind(tmp_path, monkeypatch):
+    """si#148 item 3, the other half of the both-paths decision: `run_pipeline` writes AFTER `App.run()`
+    returns, so a run the operator quit half way through still leaves a record of what did happen."""
+    from simplon import context
+    from simplon.context import ProductContext
+    from simplon.orchestrator.tui import run_pipeline
+
+    # arrange: a TTY, a registered product, and an app that quits itself the moment the run is done
+    monkeypatch.setattr(context, "_current", ProductContext("cleon", tmp_path, tmp_path / "cleon.yaml"))
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    pipeline = _planned_pipeline({"compile": 1})
+    real_on_done = _StepApp._on_done
+
+    def quit_when_done(self) -> None:
+        real_on_done(self)
+        self.exit()
+
+    monkeypatch.setattr(_StepApp, "_on_done", quit_when_done)
+
+    # act
+    rc = run_pipeline(pipeline)
+
+    # assert
+    assert rc == 1
+    written = tmp_path / "build" / "logs" / "run-transcript.log"
+    assert written.is_file(), "the TUI path must leave the same artefact the headless path does"
+    text = written.read_text(encoding="utf-8")
+    assert "=== simplon run transcript: bringup ===" in text
+    assert "✗ build.compile  rc 1" in text
+
+
+# --- follow mode (si#148 item 1) ----------------------------------------------------------------------
+
+def test_the_cursor_follows_each_step_as_it_starts():
+    """`on_mount` showed the root and the cursor stayed wherever it was, so an operator who touched
+    nothing watched an aggregate listing while the interesting output went past unseen - `_on_line` only
+    writes a live line when that step's own row is highlighted."""
+    seen: list[str] = []
+
+    async def scenario():
+        pipeline = _planned_pipeline()
+        app = _StepApp(pipeline)
+        original = app._follow_to
+
+        def record(index: int) -> None:
+            original(index)
+            row = app._cursor_row()
+            if row is not None:
+                seen.append(row.label)
+
+        app._follow_to = record
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+    asyncio.run(scenario())
+    assert seen == ["build.install", "build.compile", "deploy.up"], seen
+
+
+def test_navigating_by_hand_switches_following_off():
+    import threading
+
+    release = threading.Event()
+    pipeline = _blocking_pipeline(release)
+
+    async def scenario():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # mid-run, so there is somewhere below the cursor to navigate TO
+            await _until_running(pilot, pipeline)
+            before = app._follow
+            await pilot.press("down")
+            await pilot.pause()
+            after = app._follow
+            release.set()
+            await app.workers.wait_for_complete()
+            return before, after
+
+    before, after = asyncio.run(scenario())
+    assert before is True, "a run nobody has touched follows itself"
+    assert after is False, "the moment the operator navigates, the app stops moving the cursor"
+
+
+def test_the_follow_key_switches_it_back_on_and_the_cursor_jumps_to_what_is_running(monkeypatch):
+    import threading
+
+    release = threading.Event()
+    pipeline = _blocking_pipeline(release)
+
+    async def scenario():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _until_running(pilot, pipeline)
+            _focus_line(app, 0)                  # the operator navigates away, following stops
+            await pilot.pause()
+            off = app._follow
+            await pilot.press("f")               # ... and asks for it back
+            await pilot.pause()
+            on, row = app._follow, app._cursor_row()
+            release.set()
+            await app.workers.wait_for_complete()
+            return off, on, row
+
+    off, on, row = asyncio.run(scenario())
+    assert off is False
+    assert on is True
+    assert row is not None and row.label == "build.install", \
+        "resuming follow does not wait for the next step - it goes to what is running now"
+
+
+# --- finding a failure in a tree of forty (si#148 item 5) ---------------------------------------------
+
+def _scattered_pipeline() -> Pipeline:
+    """Failures among passes, which is the shape the ticket describes: scanning icons is the only way to
+    find them today."""
+    return _planned_pipeline({"install": 1, "up": 1})
+
+
+def test_n_walks_the_failures_and_wraps():
+    async def scenario():
+        app = _StepApp(_scattered_pipeline())
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            _focus_line(app, 0)                       # start from the root, deliberately
+            await pilot.pause()
+            landed = []
+            for _ in range(3):
+                await pilot.press("n")
+                await pilot.pause()
+                row = app._cursor_row()
+                landed.append(row.label if row is not None else None)
+            return landed
+
+    landed = asyncio.run(scenario())
+    assert landed == ["build.install", "deploy.up", "build.install"], landed
+
+
+def test_n_on_a_green_run_says_so_rather_than_moving_the_cursor_somewhere_arbitrary():
+    async def scenario():
+        app = _StepApp(_planned_pipeline())
+        notes: list[str] = []
+        app.notify = lambda message, **kw: notes.append(message)
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            _focus_line(app, 0)
+            await pilot.press("n")
+            await pilot.pause()
+            row = app._cursor_row()
+            return notes, row
+
+    notes, row = asyncio.run(scenario())
+    assert any("no failure" in note for note in notes), notes
+    assert row is not None and row.label == "deploy.bringup", "the cursor stayed where it was"
+
+
+def test_slash_filters_the_tree_to_the_matching_rows_and_the_rows_that_carry_them():
+    async def scenario():
+        app = _StepApp(_planned_pipeline())
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.press("/")
+            await pilot.press(*"compile")
+            await pilot.pause()
+            filtered = _rows(app)
+            await pilot.press("/")                # toggles the box shut and clears the filter
+            await pilot.pause()
+            return filtered, _rows(app)
+
+    filtered, restored = asyncio.run(scenario())
+    # the match, plus the ancestors that carry it, and nothing else
+    assert [row.split(" ", 1)[1].split("  ")[0] for row in filtered] == \
+        ["deploy.bringup", "build.prep", "build.compile"], filtered
+    assert len(restored) == 5, restored
+
+
+def test_a_filter_that_matches_nothing_leaves_the_root_rather_than_an_empty_pane():
+    async def scenario():
+        app = _StepApp(_planned_pipeline())
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.press("/")
+            await pilot.press(*"zzz")
+            await pilot.pause()
+            return _rows(app), app._cursor_row()
+
+    rows, cursor = asyncio.run(scenario())
+    assert len(rows) == 1, rows
+    assert cursor is not None, "a pane with no cursor has nothing to show on the right"
+
+
+def test_a_run_keeps_painting_through_a_filter_that_hides_the_running_row(monkeypatch):
+    """The filter remounts the tree, so a step finishing while a filter is up finds no node of its own.
+    Five readers already tolerate a missing chain by design (`_mount_tree`); this asserts the filter does
+    not turn that tolerance into a wrong row."""
+    import threading
+
+    release = threading.Event()
+    pipeline = _blocking_pipeline(release)
+
+    async def scenario():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _until_running(pilot, pipeline)
+            await pilot.press("/")
+            await pilot.press(*"zzz")             # hides everything, the running step included
+            await pilot.pause()
+            release.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.press("/")                # clear it again
+            await pilot.pause()
+            return _rows(app)
+
+    rows = asyncio.run(scenario())
+    assert any("✓ build.install" in row for row in rows), rows
+
+
+def test_every_new_key_is_in_the_footer():
+    """A binding nobody can discover is a binding nobody uses. Asserted against what the footer really
+    renders - `Screen.active_bindings` filtered by `show` - rather than against the BINDINGS literal,
+    which says what was declared and not what a reader can see."""
+    async def scenario():
+        app = _StepApp(_planned_pipeline())
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            return {key for key, active in app.screen.active_bindings.items()
+                    if active.binding.show}
+
+    shown = asyncio.run(scenario())
+    # `slash` is Textual's own name for the key; what the footer renders is the description beside it.
+    assert {"f", "n", "slash"} <= shown, shown
+
+
+# --- the details pane's scroll (si#148 item 6) --------------------------------------------------------
+
+def _long_output_pipeline() -> Pipeline:
+    """Two steps, each printing far more than a pane can hold, so there is somewhere to scroll TO."""
+    tree = manifest_load(_NESTED_MANIFEST).plan_tree_for("prep")
+    steps = [Step(label=leaf.name, command=leaf.path,
+                  action=lambda name=leaf.name: Outcome(
+                      rc=0, output="\n".join(f"{name} line {n}" for n in range(200))))
+             for leaf in tree.leaves()]
+    return Pipeline("prep", steps, False, tree, tree.path)
+
+
+def _details_log(app):
+    from textual.widgets import RichLog
+    return app.query_one("#details", RichLog)
+
+
+def test_a_reader_who_scrolled_up_is_not_yanked_back_by_the_next_line():
+    """MEASURED first, from `RichLog.write`: `auto_scroll` defaults to True and its `scroll_end` branch is
+    unconditional - it never asks where the reader is. So every line a running step emitted pulled a
+    reader who had scrolled up back to the bottom, and following a running step by READING it was
+    impossible. This test was red against that before the fix."""
+    async def scenario():
+        app = _StepApp(_long_output_pipeline())
+        async with app.run_test(size=(100, 24)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            _focus_line(app, 1)                       # build.install, with 200 lines behind it
+            await pilot.pause()
+            log = _details_log(app)
+            log.scroll_to(y=10, animate=False)
+            await pilot.pause()
+            before = log.scroll_offset.y
+            app._on_line(0, "a line arriving while the reader is elsewhere")
+            await pilot.pause()
+            return before, log.scroll_offset.y
+
+    before, after = asyncio.run(scenario())
+    assert before == 10, f"the test itself has to have scrolled, got {before}"
+    assert after == before, "a line must not move a reader who is not at the bottom"
+
+
+def test_a_reader_who_is_at_the_bottom_keeps_being_carried_along():
+    """The other half, and the reason this is a sticky bottom rather than auto_scroll switched off: an
+    operator watching the tail of a running step must go on seeing the tail."""
+    async def scenario():
+        app = _StepApp(_long_output_pipeline())
+        async with app.run_test(size=(100, 24)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            _focus_line(app, 1)
+            await pilot.pause()
+            log = _details_log(app)
+            log.scroll_end(animate=False)
+            await pilot.pause()
+            app._on_line(0, "the newest line")
+            await pilot.pause()
+            return log.is_vertical_scroll_end
+
+    assert asyncio.run(scenario()) is True
+
+
+def test_the_scroll_position_survives_a_trip_to_another_row_and_back():
+    """`_show_details` clears the pane and rewrites it, so somebody who found a place in a long step's
+    output, looked elsewhere and came back had to find it again."""
+    async def scenario():
+        app = _StepApp(_long_output_pipeline())
+        async with app.run_test(size=(100, 24)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            _focus_line(app, 1)                       # build.install
+            await pilot.pause()
+            log = _details_log(app)
+            log.scroll_to(y=42, animate=False)
+            await pilot.pause()
+            found = log.scroll_offset.y
+            _focus_line(app, 2)                       # build.compile - a different row entirely
+            await pilot.pause()
+            _focus_line(app, 1)                       # ... and back
+            await pilot.pause()
+            return found, _details_log(app).scroll_offset.y
+
+    found, back = asyncio.run(scenario())
+    assert found == 42, found
+    assert back == found, f"the reader's place must survive the round trip, was {found}, came back {back}"
+
+
+# --- state as colour, additively (si#148 item 7) ------------------------------------------------------
+
+def _node_style(app, index: int):
+    """The Rich style the LEFT pane really rendered step `index`'s row with."""
+    return app._chain_nodes[index][-1].label.style
+
+
+def test_a_failed_row_is_red_and_bold_so_it_is_findable_in_a_tree_of_forty():
+    async def scenario():
+        app = _StepApp(_planned_pipeline({"compile": 1}))
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            return _node_style(app, 1), app.current_theme.error
+
+    style, error = asyncio.run(scenario())
+    assert style.color is not None and style.color.name.lower() == error.lower(), style
+    assert style.bold, "bold as well as red - finding one row among forty is the whole item"
+
+
+def test_a_passing_row_is_green_and_a_pending_one_is_merely_dim(monkeypatch):
+    import threading
+
+    release = threading.Event()
+    pipeline = _blocking_pipeline(release)
+
+    async def scenario():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _until_running(pilot, pipeline)
+            running, pending = _node_style(app, 0), _node_style(app, 1)
+            release.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            return running, pending, _node_style(app, 0), app.current_theme
+
+    running, pending, done, theme = asyncio.run(scenario())
+    assert running.color is not None and running.color.name.lower() == theme.warning.lower()
+    assert pending.color is None and pending.dim, "nothing has happened; a colour here spends attention"
+    assert done.color is not None and done.color.name.lower() == theme.success.lower()
+
+
+def test_the_glyphs_stay_so_a_colour_is_never_the_only_channel():
+    """A state that is only a colour is invisible to a reader with a colour vision deficiency, to a
+    terminal with a broken palette and to a log file."""
+    async def scenario():
+        app = _StepApp(_planned_pipeline({"compile": 1}))
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            return _rows(app)
+
+    rows = asyncio.run(scenario())
+    assert any(row.startswith("✗ ") for row in rows), rows
+    assert any(row.startswith("✓ ") for row in rows), rows
+
+
+def test_the_plain_text_paths_carry_no_markup_at_all():
+    """The other half, and it is the one that would go wrong silently: `STATE_ICON` is shared with the
+    HEADLESS renderer, and the run transcript is a file somebody attaches to a ticket. Colour belongs
+    where the widget is rendered, never in the shared label helper."""
+    from simplon.orchestrator.steps import build_rows, render_tree, transcript
+
+    # arrange
+    pipeline = _planned_pipeline({"compile": 1})
+    steps_mod.run_headless(pipeline, verbose=False)
+    # act
+    text = "\n".join(render_tree(build_rows(pipeline)) + transcript(pipeline, header=[]))
+    # assert
+    assert "\x1b" not in text, "no ANSI escape reaches a CI log or a transcript"
+    assert "[bold" not in text and "[/" not in text, "no rich markup either"
+
+
+def test_a_row_label_stays_a_plain_string_so_painted_can_still_compare_it():
+    """`_refresh_row` writes a node only when the text really changed, and it compares what `_label`
+    returned. Comparing objects instead of content would repaint every row on every tick, or none."""
+    app = _StepApp(_planned_pipeline())
+    label = app._label(app.rows)
+    assert isinstance(label, str), type(label)
+
+
+def test_changing_the_theme_repaints_the_rows_in_the_new_themes_colours():
+    async def scenario():
+        app = _StepApp(_planned_pipeline({"compile": 1}))
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            before = _node_style(app, 1).color.name
+            # A theme of the test's own, not one of Textual's: several built-in themes happen to share
+            # an error colour (textual-light and textual-dark are both #ba3c5b), so a swap between them
+            # would assert nothing at all.
+            from textual.theme import Theme
+            app.register_theme(Theme(name="probe", primary="#112233", error="#ff00ff",
+                                     success="#00ff00", warning="#ffaa00"))
+            app.theme = "probe"
+            await pilot.pause()
+            return before, _node_style(app, 1).color.name, app.current_theme.error
+
+    before, after, error = asyncio.run(scenario())
+    assert after.lower() == error.lower(), (after, error)
+    assert after != before, "the whole point of reading the theme is that it follows the theme"
+
+
+# --- the command palette (si#148 item 9) --------------------------------------------------------------
+
+def test_every_action_this_runner_has_is_in_the_command_palette():
+    """A footer holds about five bindings before it becomes noise. The palette is where somebody FINDS
+    an action instead of remembering a key."""
+    async def scenario():
+        app = _StepApp(_planned_pipeline())
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            return [command.title for command in app.get_system_commands(app.screen)]
+
+    titles = asyncio.run(scenario())
+    for wanted in ("Follow", "Next failure", "Filter", "Copy", "Save", "Transcript"):
+        assert any(wanted in title for title in titles), (wanted, titles)
+
+
+def test_the_theme_picker_comes_free_with_the_palette():
+    """Textual's own system commands are kept, so the answer to a terminal whose palette makes our green
+    unreadable costs nothing: the operator picks another theme and the rows follow it."""
+    async def scenario():
+        app = _StepApp(_planned_pipeline())
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            return [command.title for command in app.get_system_commands(app.screen)]
+
+    titles = asyncio.run(scenario())
+    assert "Theme" in titles, titles
+
+
+def test_the_palette_can_write_the_transcript_before_the_run_is_over(tmp_path, monkeypatch):
+    from simplon import context
+    from simplon.context import ProductContext
+
+    monkeypatch.setattr(context, "_current", ProductContext("cleon", tmp_path, tmp_path / "cleon.yaml"))
+
+    async def scenario():
+        app = _StepApp(_planned_pipeline({"compile": 1}))
+        notes: list[str] = []
+        app.notify = lambda message, **kw: notes.append(message)
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            app.action_save_transcript()
+            await pilot.pause()
+            return notes
+
+    notes = asyncio.run(scenario())
+    written = tmp_path / "build" / "logs" / "run-transcript.log"
+    assert written.is_file(), notes
+    assert "✗ build.compile" in written.read_text(encoding="utf-8")
+
+
+def test_following_puts_the_live_lines_in_front_of_an_operator_who_touched_nothing():
+    """si#148 item 1's stated payoff, asserted rather than argued: `_on_line` writes a live line only when
+    that step's own row is highlighted (si#144 mechanism A), so an untouched run showed an aggregate
+    listing while the output went past unseen. With the cursor following the run, the common case is
+    covered - and mechanism A is still there for the operator who navigates away, which is what the bar
+    exists for."""
+    tree = manifest_load(_NESTED_MANIFEST).plan_tree_for("prep")
+
+    def streaming(emit):
+        emit("configure: checking for a C compiler")
+        emit("configure: yes")
+        return Outcome(rc=0, output="configure: checking for a C compiler\nconfigure: yes")
+
+    steps = [Step(label=leaf.name, command=leaf.path,
+                  stream=(streaming if index == 0 else lambda emit: Outcome(rc=0, output="")))
+             for index, leaf in enumerate(tree.leaves())]
+    pipeline = Pipeline("prep", steps, False, tree, tree.path)
+
+    seen: list[str] = []
+
+    async def scenario():
+        app = _StepApp(pipeline)
+        original = app._on_line
+
+        def record(index: int, line: str) -> None:
+            original(index, line)
+            seen.append(_details(app))
+
+        app._on_line = record
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+    asyncio.run(scenario())
+    assert seen, "no line was ever streamed - the test is not exercising the path"
+    assert "checking for a C compiler" in seen[-1], seen[-1]
