@@ -194,6 +194,98 @@ tried to decide which halves of it are safe would be a rule that can be wrong.
 **Before you bump:** a new scaffold lands in a different directory than it did in 0.10.0. Existing
 products pass `--orch-dir` explicitly and are unaffected.
 
+### The release-notes guard becomes a kernel gate (si#89, si#103)
+
+Until now the rule that a release documents what it carries was simplon's own house rule, living in
+simplon's own `tests/`. Every other product consuming this kernel could release undocumented and nothing
+would say a word. It is now the catalogue coordinate `test:release-notes` - **declared, not placed**, so a
+product opts in by naming it.
+
+**It is a `test:` gate and not a `release:` step**, and the reason is when it can still help. Notes are
+written BEFORE the tag; the tag points at a tree that already carries them. A guard speaking at
+`release tag` speaks after every cheap chance to fix the omission has passed, and it would have caught
+neither of the two cases that turned `main` red while this was being built - both of them pull requests,
+days away from a tag. A prepared release's range already ends at `HEAD`, so the question is answerable on
+every push.
+
+**si#103 is settled by a distinction rather than by an exemption.** A subject GitHub composed is not a
+statement about the work: `Merge pull request #N` carries the pull request's number, so the commits it
+brought in are read instead. What a notes PR must name is its own TICKET number, which its author had
+before the branch existed. What it never has to name is a number that did not exist when the notes were
+written. The ticket's own proposed fix - `git log --no-merges` - would have broken the guard outright,
+because the population IS merges and a ticket named only in a merge subject would vanish.
+
+The floors are manifest data: a page path, a version the guard starts reading from, and a version it
+holds to completeness. An exemption LIST was asked for and refused - a list is what grows quietly, while
+the gap between two floors can only be widened in public.
+
+Two defects found on the way, both older than the change. A checkout with no tags blamed the PAGE ("every
+section documents a version that carries no tag") when the fault was `fetch-depth`. And
+`test_the_page_states_the_floor_it_is_held_to` could not fail: it searched the whole page, and `## 0.4.0`
+IS the string `0.4.0`, so the page satisfied the rule by carrying the very section the rule exists to
+excuse.
+
+**Nothing to do** unless you want it: declare `test:release-notes` in your manifest and give it the three
+values.
+
+### Downloads say what they are doing, and uploads stop being swallowed (si#142, si#143)
+
+simplon downloaded the docker CLI tarball, the oras release asset and `get-pip.py` in silence. `fetch` is
+one kernel function with a progress bar, public so a product uses it rather than writing a fourth. No new
+dependency: the kernel declares no `rich` and imports nothing from it, and adding one to draw a bar would
+be the wrong trade.
+
+On a terminal it repaints in place; **into a pipe it writes plain lines with no `\r`, no erase sequence
+and no bar cells**, because this runs in CI far more often than in a terminal. Without a `Content-Length`
+it turns a spinner and claims no percentage it cannot know.
+
+Three things came with it that the ticket did not ask for and that matter more than the bar:
+
+- **A timeout.** `urlretrieve` has none, so a hung server hung the command forever with no output at all.
+- **A short body is now an error.** A temporary name and a rename on success is NOT enough:
+  `HTTPResponse.read(amt)` returns `b""` on a truncated body and raises nothing, so the download reported
+  success and the rename happened. The next run then treated a half file as cached.
+- **The scheme is refused on every hop.** urllib's redirect handler admits `http`, `ftp` and an empty
+  scheme for intermediate hops and follows the whole chain before the caller sees anything, so
+  `https -> http -> https` passed because it ended where it was supposed to. Reproduced with three real
+  servers.
+
+The upload half is deliberately NOT symmetric: simplon uploads no bytes itself - every upload shells out
+to `oras`, `gh`, `docker` or `dotnet` - so a bar there would mean reimplementing authentication, chunking
+and OCI manifests to draw over them. What was wrong is that `gh release upload` ran through `run.run`,
+whose default captures, so its progress was swallowed. `run`'s documentation now carries the rule and its
+counter-example: `gh release create`, four lines above, reads `"already exists"` out of its captured
+output and must keep capturing.
+
+**Nothing to do.**
+
+### The Textual runner: a run you can follow, and one file you can quote (si#148)
+
+Nine changes to the step runner. The three that matter most:
+
+**The bottom bar follows the PROCESS, not the cursor.** It names what is running and for how long,
+alongside the run's counts and elapsed time, wherever the operator has navigated. Until now the tree row
+and the details pane both followed the cursor and nothing followed the process, so navigating away meant
+losing sight of the run.
+
+**`auto_scroll` was fighting the reader, measured.** `RichLog.write` calls `scroll_end` unconditionally
+and never asks where the reader is, so a reader at line 10 was thrown to line 182 by a single emitted
+line - following a running step by reading it was impossible. The pane now has a sticky bottom: the
+position before a write decides the position after it.
+
+**There is a run transcript**, `build/logs/run-transcript.log`: every step in order with its command, its
+rc, its duration and the run's provenance header. A log per step existed; a log of the RUN did not, and
+that is the thing somebody attaches to a ticket.
+
+Also: state now carries COLOUR from the theme rather than a glyph alone - the glyphs stay, because a state
+that is only a colour is invisible to a reader with colour vision deficiency, to a broken palette and to a
+log file, and the shared label helper keeps producing markup-free text for the headless runner and the
+transcript. Plus follow mode (`f`), next-failure (`n`), a `/` filter, remembered scroll positions, and
+Textual's command palette, which is where the new actions are discoverable without a footer that has
+become noise.
+
+**Nothing to do.** The headless path is unchanged.
+
 ### The design behind the language cluster, as a document (si#135)
 
 `docs/superpowers/specs/2026-09-09-the-language-cluster-design.md` records the four decisions eight
