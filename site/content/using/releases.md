@@ -309,6 +309,36 @@ report: clang-tidy reports its findings as warnings and exits 0 without it, so `
 every tree. Re-run `support toolchain cpp <version>` to pick the new argv up, or edit the one line in
 your manifest - the scaffolder never overwrites a command you already have.
 
+**The Python profile runs at all** (si#121). It named `python:3.12` and the two bare words `pytest` and
+`mypy`, and the official image carries neither, so both commands exited **127** before the product was
+looked at. A fatter image is not the repair: mypy over a tree whose imports are not installed reports
+missing stubs rather than type errors, and no image on any registry carries a product's wheels. So the
+profile installs its two tools itself, into a `PYTHONUSERBASE` inside the bind mount - the one directory
+a `--user`-mapped container can write, since a named docker volume is created root-owned. There are
+three commands now: `build deps` (pinned `pytest==9.1.1` and `mypy==2.3.1`, the only one that needs a
+network), `build unit` and `build analyse`, the last two run through `python -m` because a `--user`
+install puts its scripts somewhere that is not on `PATH`. `analyse` excludes
+`deploy/provision/orchestrator/`: that tree is host-venv Python and `test:typecheck-python` is what
+checks it, so a container that has neither the kernel nor typer could only report five import errors
+about the scaffold and none about the product.
+
+**The Java `compile` compiles, and the Java `analyse` is gone on purpose** (si#122). `compile` was
+`gradle build`, which depends on `check` and therefore ran the tests - so a broken assertion made the
+*compile* red, and a gate whose `preamble:` is `build compile` reported `setup-failed` for a product
+fault, which is the exact distinction the preamble exists to draw. It is
+`gradle assemble testClasses` now, and neither `assemble` nor `build -x test` alone would have done:
+both produce the identical task list, neither runs `compileTestJava`, and both are green over a test
+source that does not compile. The profile also carries **no `analyse`**, which is now a stated decision
+rather than an empty slot - `gradle check` on a stock `java` plugin is `test` under another name, and
+`gradle check -x test` runs one task, no javac, and exits 0 over a raw type, an unused import, a dead
+store and a certain NullPointerException. Java's checkers are Gradle plugins a product's own
+`build.gradle` applies.
+
+**Re-running `support toolchain` will not fix an existing manifest**, and that is the never-clobber rule
+working rather than failing: a command you already have is kept and named. A product on the old entries
+edits the argv itself - one line each for Java, and for Python the two commands plus the new `deps`
+beside them.
+
 ## 0.9.0
 
 **0.8.0 shipped a uniform build that no product could drive.** This is the release that can, and the
