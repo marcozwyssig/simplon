@@ -156,6 +156,12 @@ def run_toolchain(ctx: typer.Context, image: str = "", argv: list[str] | None = 
     `ctx` is here for the DIAGNOSIS and for nothing else. It is recognised by name, never rendered as a
     CLI parameter, and it carries the one thing the values cannot: which command the broken `with:` block
     was read from.
+
+    IT IS ALSO WHY THIS BODY IS REACHABLE FROM A GATE AGAIN (si#136). `command_path` is the whole of what
+    this body asks of a context, and a gate knows it - the manifest names the command the gate runs - so
+    `simplon.tasks.testrun.GateContext` supplies it and nothing else. A body that reached for the rest of
+    a Click context would be refused there by name; this one never does, and the annotation stays
+    `typer.Context` because that is what the CLI hands it and the stand-in is structural.
     """
     where = ctx.command_path or "toolchain:run"
     # HANDED OVER RAW, not coerced on the way in, and that is not tidiness. `declared` is the gate that

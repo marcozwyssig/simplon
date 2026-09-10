@@ -28,6 +28,14 @@ Every command here resolves through the product's real manifest, deliberately: t
 the way the CLI runs it - the impl the `task:` names, with the command's own `with:` pinned - so a test
 that stubbed the resolution would verify the stub and not the seam.
 
+AND THAT WAS ONLY HALF TRUE, WHICH IS si#136. The manifest is real; every command in it resolved to
+`simplon.test_impls:pinned_rc`, a body that takes no CLI context - and the command a C++ or a .NET level
+actually has is a `toolchain:run` one, whose body takes one and was therefore refused outright. So this
+file proved the sequencing over a shape no product writes, and stayed green while the kind was
+unreachable for exactly the products it was invented for. `reads_the_command_path` below is the shape
+that was missing, and `tests/test_suites_command_gate_e2e.py` drives the real coordinate in the real
+image - because the defect was that everything here is a stub, and a better stub does not repair it.
+
 AAA throughout.
 """
 import textwrap
@@ -50,6 +58,8 @@ product: cppdemo
 tasks:
   toolchain: {{ impl: "simplon.test_impls:pinned_rc", help: "Run a pinned toolchain image." }}
   gate:      {{ impl: "simplon.tasks.testrun:gate", help: "Run a declared level.", passthrough_args: true }}
+  accept:    {{ impl: "simplon.tasks.testrun:accept_cmd", help: "Run every level.", passthrough_args: true }}
+  ctxbody:   {{ impl: "test_suites_command_gate:reads_the_command_path", help: "Takes a CLI context." }}
   strict:    {{ impl: "simplon.test_impls:needs_a_value", help: "Needs a value nothing pins." }}
   framed:    {{ impl: "test_suites_command_gate:framed_body", help: "A body with a typer default." }}
 groups:
@@ -63,7 +73,9 @@ groups:
       all:     {{ depends_on: ["compile"], help: "Plans other commands, runs none of its own." }}
   test:
     commands:
-      unit: {{ task: gate, with: {{ name: "unit" }}, help: "The gate itself." }}
+      unit:   {{ task: gate, with: {{ name: "unit" }}, help: "The gate itself." }}
+      accept: {{ task: accept, help: "Every gate, in order." }}
+      ctx:    {{ task: ctxbody, with: {{ rc: 0 }}, help: "A body whose first parameter is a context." }}
 """
 
 
@@ -107,6 +119,17 @@ def framed_body(deep: bool = typer.Option(False, "--deep", help="A typer DECLARA
     """
     test_impls.CALLS.append(("framed_body", deep))
     return 0
+
+
+def reads_the_command_path(ctx, rc: int = 0):
+    """A body shaped like `simplon.tasks.toolchain:run_toolchain` - a leading CLI context it reads exactly
+    one attribute off, and payload the manifest pins (si#136).
+
+    It lives here rather than in `simplon.test_impls` for `framed_body`'s reason: those bodies are
+    deliberately framework-free, and this one's whole point is the parameter a framework supplies.
+    """
+    test_impls.CALLS.append(("reads_the_command_path", ctx.command_path))
+    return rc
 
 
 def _cfg(*gates, merge=()):
@@ -295,19 +318,43 @@ def test_an_aggregate_cannot_back_a_gate(monkeypatch, tmp_path):
     assert "plans other commands and runs no body of its own" in str(refused.value)
 
 
-def test_the_gate_command_itself_cannot_back_a_gate(monkeypatch, tmp_path):
-    """The loop, closed by the rule that was there for another reason: `test:gate`'s body takes a CLI
-    context, and a gate has none to give it. So a gate cannot name the command it is invoked as."""
+@pytest.mark.parametrize("path", ["test unit", "test accept"])
+def test_a_gate_cannot_name_the_command_that_runs_the_gates(path, monkeypatch, tmp_path):
+    """The loop, refused as itself since si#136 rather than as a side effect of the context rule.
+
+    It used to ride on "the body takes a CLI context", which is a different statement and was never even
+    a complete guard: a product body taking NO context and calling `testrun.accept()` passed that check
+    and recursed until the interpreter stopped it (measured on 0.10.0). Both commands the kernel has that
+    run gates are ruled on here, because `test:gate` is not the only way back in.
+    """
     # arrange
     _product(monkeypatch, tmp_path)
-    gate = testrun.Gate(name="unit", command="test unit", results="clear")
+    gate = testrun.Gate(name="unit", command=path, results="clear")
 
     # act
     with pytest.raises(ValueError) as refused:
         testrun.assess_gate(gate, _cfg(), [], filtered=False)
 
-    # assert
-    assert "takes a CLI context" in str(refused.value)
+    # assert: it names the recursion and the way out, not a parameter shape
+    said = str(refused.value)
+    assert f"'{path}' is the command that RUNS the gates" in said, said
+    assert "name the command whose rc this level is about" in said, said
+
+
+def test_a_body_that_takes_a_cli_context_is_run_and_told_which_command_it_is(monkeypatch, tmp_path):
+    """si#136's decision, at the seam it was made at. A gate is not a CLI invocation, so it hands such a
+    body a `GateContext` carrying the one thing it can state truthfully - the command path the manifest
+    named - instead of refusing every context-taking body and leaving `toolchain:run` unreachable."""
+    # arrange
+    _product(monkeypatch, tmp_path)
+    gate = testrun.Gate(name="unit", command="test ctx", results="clear")
+
+    # act
+    gv = testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert: it ran, and what it was told about itself is true
+    assert gv.verdict is Verdict.PASSED and gv.rc == 0
+    assert test_impls.CALLS == [("reads_the_command_path", "test ctx")]
 
 
 def test_a_parameter_the_command_does_not_pin_is_refused_pointing_at_with(monkeypatch, tmp_path):

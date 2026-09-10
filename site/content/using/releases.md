@@ -174,6 +174,36 @@ image ships the TRX logger and no JUnit logger.
 
 **Nothing to do.** A gate that declares no `results_from:` behaves exactly as before.
 
+### A command gate can finally name the command a C++ or a .NET level has (si#136)
+
+si#106 gave a gate a `command:` key so that a product whose test runner is a containerised toolchain
+gets a verdict instead of a bare exit code. It could not name a `toolchain:run` command - the one command
+such a product actually has. `run_toolchain`'s first parameter is a `typer.Context`, a gate refused any
+body that took one, and every test behind si#106 resolved to a context-free stub, so the feature was
+green over a case it could not do while both case chapters described the shape.
+
+**A gate is not a CLI invocation, so it hands such a body what it truthfully can and nothing else.** A
+`GateContext` carries the path of the command the gate is running - which the manifest names, and which
+is the only thing `run_toolchain` reads off a context, to say which command a broken `with:` block was
+read from. A body reaching for the rest of a Click context (`args`, `params`, `obj`) is asking a gate for
+a command line it does not have, and is told so by name rather than handed an invented empty one.
+
+**The gate-names-itself loop is now refused as itself.** It used to ride on the context rule, which was a
+different statement wearing its clothes - and measured, it did not even hold: a product body that takes
+no context and calls `testrun.accept()` passed the check and recursed until the interpreter stopped it.
+That indirect case is recorded rather than patched here; the direct one is refused by name, at resolve
+time, before a clearing gate has emptied anything.
+
+**Driven, not asserted.** `tests/test_suites_command_gate_e2e.py` compiles a real CMake project in
+`silkeh/clang:19` and runs a real `ctest` through a real gate: green, red carrying ctest's own rc of
+**8** rather than 1, and a tree that does not compile stopping at the preamble with the stale binaries
+untouched. Two quoted refusals on `building/test-levels.md` were repaired on the way - one listed a
+parameter set `run_toolchain` does not have and was unreachable for it anyway, the other named a
+required-parameter refusal that body cannot produce - and `tests/test_test_levels_refusals.py` now builds
+them from the code that raises them.
+
+**Nothing to do**, unless a gate of yours relied on a context-taking command being refused.
+
 ### simplon init reads what the repository already knows (si#129, si#130)
 
 The product name argument is now OPTIONAL and defaults to the `origin` remote's repository name, falling

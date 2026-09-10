@@ -61,7 +61,7 @@ Every such row carries the ticket where the decision is still open.
 | 8 | Run the unit tests in the same image | `./dotnetdemo.sh build unit` | run | 2026-09-09 06:38:26, rc 0; three passed |
 | 9 | A failing xUnit test arrives red | `./dotnetdemo.sh build unit` | run | 2026-09-09 06:39:10, rc 1; transcript below |
 | 10 | A type error in the product arrives with the same rc | `./dotnetdemo.sh build unit` | run | 2026-09-09 06:39:39, rc 1; transcript below |
-| 11 | Turn that rc into a verdict and an Allure archive | `test:accept`, `test:report` | does not exist yet | [simplon#106](https://github.com/marcozwyssig/simplon/issues/106); a gate takes `suite:` or `impl:`, and a toolchain command is neither |
+| 11 | Turn that rc into a verdict and an Allure archive | `test:accept`, `test:report` | derived | a gate takes `command:` since [simplon#106](https://github.com/marcozwyssig/simplon/issues/106) and really reaches a `toolchain:run` one since [simplon#136](https://github.com/marcozwyssig/simplon/issues/136); dotnetdemo declares no `suites:` section, so nothing was run on this product |
 | 12 | Analyse where the compile ran | `./dotnetdemo.sh build analyse` | run | 2026-09-09 06:38:38, rc 0; and 06:40:00, rc 2 on two stray spaces |
 | 13 | Cut the release tag | `./dotnetdemo.sh release tag v0.1.0` | run | 2026-09-09 06:40:21, rc 1; refused, nothing cut |
 | 14 | Publish the build output to a registry | `release:artifact`, `release:asset` | derived | they read an `artifacts:` and an `assets:` section, and dotnetdemo declares neither |
@@ -71,12 +71,12 @@ Every such row carries the ticket where the decision is still open.
 | 18 | Render the architecture documentation to HTML and PDF | `docs:render` | derived | it reads a pinned docToolchain tag, and dotnetdemo declares none |
 | 19 | Build a documentation website with Hugo | `docs:site` | derived | it reads a `site:` section, and dotnetdemo declares none |
 
-Of the 19 steps above, 10 are **run**, 4 are **derived** and 5 **does not exist yet**.
+Of the 19 steps above, 10 are **run**, 5 are **derived** and 4 **does not exist yet**.
 
-The four *derived* rows are the same shape as in the Java chapter and it is worth saying once: each of
-those tasks reads a manifest section this product does not have. They are **offered and not placed** -
-the catalogue carries the body, and a product declares the command the day it has something for it to
-read.
+The five *derived* rows are the same shape as in the Java chapter and it is worth saying once: each of
+those tasks reads a manifest section this product does not have, and row 11's is `suites:`. They are
+**offered and not placed** - the catalogue carries the body, and a product declares the command the day
+it has something for it to read.
 
 The five *does not exist yet* rows are not that shape at all, and they are the reason to read on. Rows 3
 and 7 are one ticket - [simplon#105](https://github.com/marcozwyssig/simplon/issues/105) - and so is row
@@ -303,6 +303,12 @@ declares `command:` - a command in this product's own tree, `build unit` as it i
 as `setup-failed` instead of arriving as the same `rc 1` the second row carries. The gate resolves that
 command the way the CLI does, the body its `task:` names with its own `with:` pinned, so the image and
 the argv stay declared once and the verdict is about the line a person runs.
+
+That shape has been driven, on a C++ product rather than on this one: a real test command in a pinned
+image, behind a real `command:` gate, green, red, and stopped at a failed compile
+([simplon#136](https://github.com/marcozwyssig/simplon/issues/136) - which is also what found that until
+then a gate could not name a `toolchain:run` command at all, because its first parameter is a CLI context
+and every test behind simplon#106 used a Python stub instead).
 
 **This product declares no `suites:` section**, and the runs above are what it does without one: the
 measurement is what two commands do when nobody pairs them. Closing it costs one manifest section and no

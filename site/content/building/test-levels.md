@@ -166,17 +166,35 @@ What is refused, and only when the gate actually runs, because deciding it needs
 > no single rc for a gate to report - name one of the commands it plans
 
 > 'suites.gates.unit.command': 'build unit' pins imag with `with:`, which
-> simplon.tasks.toolchain:run_toolchain does not take (it takes: argv, env, image, network, workdir)
+> simplon.tasks.toolchain:run_toolchain does not take (it takes: argv, caches, env, extra, image,
+> network, workdir)
 
-> 'suites.gates.unit.command': 'build unit' needs image, which its `with:` does not pin - a gate has no
-> command line to supply them on, so pin them there
+That last one is the calling convention in a refusal, and it is the one `simplon.cli._bound` already
+makes: a gate runs a command with what the manifest pinned and nothing else, so a `with:` key naming no
+parameter is refused by name rather than arriving as a `TypeError` three frames down. A parameter the
+body *requires* and no `with:` key pins is refused the same way, pointing at the block to edit -
+`toolchain:run` has none, because every one of its parameters carries a default, so what an unpinned
+`image:` gets instead is the toolchain's own diagnosis:
 
-The last two are the whole calling convention in a refusal, and they are the pair
-`simplon.cli._bound` already makes: a gate runs a command with what the manifest pinned and nothing
-else, so a key that names no parameter and a parameter that no key names are both refused by name rather
-than arriving as a `TypeError` three frames down. A body that takes a
-CLI context is refused for the harder version of the same reason - and that is also what stops a gate
-naming the command it is invoked as.
+> build unit: no `image:` - a toolchain command names the image it runs in
+
+**Read the first two words.** The message names the command a person types, not the coordinate behind
+it, and that is what the gate hands the body: a `toolchain:run` command reads exactly one thing off a CLI
+context, the path of the command it is running, and a gate knows that from the manifest. It hands over
+that and nothing else ([simplon#136](https://github.com/marcozwyssig/simplon/issues/136)). A body
+reaching for the rest of a Click context - `args`, `params`, `obj` - is asking a gate for a command line,
+and a gate has none, so it is told so by name instead of being handed an invented empty one.
+
+**The one command a gate may never name is the one that runs the gates:**
+
+> 'suites.gates.unit.command': 'test accept' is the command that RUNS the gates, so a gate naming it
+> would run itself until the interpreter stopped it - name the command whose rc this level is about
+> instead
+
+Until si#136 that loop was closed only as a side effect - `test:gate`'s body takes a CLI context, and
+every context-taking body was refused - which also meant the kind could not reach `toolchain:run` at all,
+and the case both the [C++](../../using/case-cpp/) and the [.NET](../../using/case-dotnet/) chapters rest
+on did not run. The refusal now says what it is about.
 
 ### An `impl:` gate is opaque, and says so
 

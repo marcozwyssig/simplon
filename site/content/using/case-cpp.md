@@ -73,7 +73,7 @@ Every such row carries the ticket where the decision is still open.
 | 8 | A tree that does not compile reports a full green suite | `./cppdemo.sh build unit` | run | 2026-09-09 06:41:47, compile rc 2 and unit rc 0; table below |
 | 9 | Static analysis over the compile database | `./cppdemo.sh build analyse` | run | 2026-09-09, rc 1: the profile's argv named no input file; fixed and re-driven the same day, [simplon#111](https://github.com/marcozwyssig/simplon/issues/111) |
 | 10 | Append an argument to the pinned argv | `./cppdemo.sh build analyse src/calculator.cpp` | does not exist yet | rc 2, refused by the command line before docker was asked, [simplon#105](https://github.com/marcozwyssig/simplon/issues/105) |
-| 11 | A verdict and an Allure archive for the ctest run | `test:accept` | does not exist yet | a gate names a suite or an impl, never a command, [simplon#106](https://github.com/marcozwyssig/simplon/issues/106) |
+| 11 | A verdict and an Allure archive for the ctest run | `test:accept` | derived | a gate names a command since [simplon#106](https://github.com/marcozwyssig/simplon/issues/106) and really reaches a `toolchain:run` one since [simplon#136](https://github.com/marcozwyssig/simplon/issues/136), which drove a `ctest` through one green and red; cppdemo declares no `suites:` section, so nothing was run on this product |
 | 12 | Refuse a toolchain reference that is not pinned | `./cppdemo.sh build configure` | run | 2026-09-09 06:45:25, rc 1; message below |
 | 13 | Cut the release tag | `./cppdemo.sh release tag v0.1.0` | run | 2026-09-09 06:41:28, rc 1; refused, nothing cut |
 | 14 | Publish the binary or a container image | `release:artifact`, `release:image` | derived | they read an `artifacts:` and an `images:` section, and cppdemo declares neither |
@@ -81,11 +81,16 @@ Every such row carries the ticket where the decision is still open.
 | 16 | Deploy past the local host - Proxmox, Portainer, a cloud | - | does not exist yet | [simplon#5](https://github.com/marcozwyssig/simplon/issues/5) |
 | 17 | Render the documentation | `docs:render`, `docs:site` | derived | neither reads anything C++; the Java chapter drove `docs:render` and cppdemo declares no `site:` section |
 
-Of the 17 steps above, 11 are **run**, 2 are **derived** and 4 **does not exist yet**.
+Of the 17 steps above, 11 are **run**, 3 are **derived** and 3 **does not exist yet**.
 
-Four open rows is three more than the Java chapter carries, and that is the honest shape of a capability
+Three open rows is two more than the Java chapter carries, and that is the honest shape of a capability
 one week old: the toolchain itself does everything it promises, and the path from "I have a C++ product"
-to "I have those commands" is not joined up yet.
+to "I have those commands" is not joined up yet. Row 11 was the fourth until
+[simplon#136](https://github.com/marcozwyssig/simplon/issues/136), and how it stopped being one is worth
+the sentence: the key it needs had existed since simplon#106 and could not name the kind of command this
+product has, because every test behind that key used a Python stub. It is *derived* rather than *run* for
+the ordinary reason the other two are - this product declares no `suites:` section, so nobody ran it
+here.
 
 ## What the kernel carries for C++
 
@@ -474,6 +479,12 @@ ctest command above and whose `preamble:` is the compile stops on the third row 
 verdict is `setup-failed`, ctest is never asked about last week's binaries, and the archive says the
 build fell over rather than that three tests passed. Nothing is copied out of the `build` commands - the
 image, the argv and the caches stay declared once, where they already are.
+
+**That pairing has since been driven rather than described** - a real `ctest` in `silkeh/clang:19`,
+behind a real `command:` gate, green, red, and stopped at a failed compile
+([simplon#136](https://github.com/marcozwyssig/simplon/issues/136), which is also what found that the key
+could not name a `toolchain:run` command at all until then). What it has not been driven on is *this
+product*: cppdemo declares no `suites:` section, which is why row 11 says *derived*.
 
 **The three runs above were measured before that key existed**, and they are still exactly what the two
 commands do when they are run bare. That is the point of the third row rather than an artefact of it: the

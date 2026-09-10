@@ -53,6 +53,14 @@ rc is `SETUP_FAILED`, and THE BODY NEVER RUNS - the rule a pytest gate's preambl
 is the true sentence here as well. The suite did not run, so the run learned nothing about the product.
 `tests/test_suites_command_gate.py` pins it.
 
+AND IT REALLY REACHES `toolchain:run` SINCE si#136, which the first version of the kind did not. A body
+whose first parameter is a CLI context was refused, `run_toolchain`'s first parameter is one, and every
+test behind si#106 resolved to a context-free stand-in - so the kind was green over a body no product
+has and unreachable for the products it was written for. A gate now hands such a body a `GateContext`
+carrying the command path it is running, which is the one thing about a CLI context a gate can state
+truthfully, and the gate-names-itself loop is refused as itself rather than as a side effect of the
+context rule. `tests/test_suites_command_gate_e2e.py` drives a real `ctest` through it, green and red.
+
 AND A GATE OF ANY KIND MAY SAY WHERE ITS RUNNER PUT ITS RESULTS (si#133). `results_from:` names a
 directory the product's own runner wrote into - a `ctest --output-junit` file, a Gradle build's JUnit
 XML, a `dotnet test` TRX - and the kernel merges it into this run's allure results after the runner has
@@ -458,6 +466,59 @@ def _setup(gate: Gate, ref: str, stage: str) -> Callable[[], int]:
     return _command(ref, at) if gate.command else _hook(ref, at)
 
 
+@dataclass(frozen=True)
+class GateContext:
+    """What a gate hands a body that asks for a CLI context (si#136).
+
+    THE QUESTION THIS ANSWERS. A gate is not a CLI invocation: nothing was typed, no Click command was
+    matched, no parameters were parsed. So a body whose first parameter is a context cannot be handed the
+    thing the CLI hands it - and it used to be refused for that reason, which made the `command:` gate
+    kind unreachable for exactly the products it was invented for (see `_command`).
+
+    WHAT IS TRUE HERE RATHER THAN INVENTED. A gate knows ONE thing a Click context also carries: the
+    command path it is about to run, because the manifest names it. `command_path` is that, and it is why
+    the stand-in is not a lie - `simplon.tasks.toolchain:run_toolchain` reads `ctx.command_path` and
+    nothing else, to name the command a broken `with:` block was read from, and `tests/test_buildfiles_e2e.py`
+    was already handing it a `SimpleNamespace` of exactly this shape for exactly that reason.
+
+    AND EVERYTHING ELSE REFUSES INSTEAD OF ANSWERING. A Click context also carries `args`, `params`,
+    `obj`, `invoke` - none of which a gate has anything true to put in. Inventing an empty one for each
+    would let a body silently do the wrong thing (a `passthrough_args` body would read "no args" as a
+    fact rather than as an absence), and letting attribute lookup fail on its own would arrive as an
+    `AttributeError` from inside somebody else's body, naming neither the gate nor the command. So the
+    stand-in says what it is and what was asked of it. That is this repository's recurring defect stated
+    at a seam: a value that cannot tell "nothing" from "not available" is a bug.
+
+    Dunder lookups fall through to the ordinary `AttributeError`, because `copy`, `pickle` and `repr`
+    probe for them and a refusal there would be about none of this.
+
+    AND IT IS STRICTER THAN AN `AttributeError`, WHICH IS THE POINT AND HAS TO BE SAID. `getattr(ctx, x,
+    default)` and `hasattr(ctx, x)` swallow `AttributeError` and nothing else, so the defensive idiom a
+    Click-shaped object invites - `getattr(ctx, "resilient_parsing", False)` - gets the refusal rather
+    than the fallback. That is deliberate: a fallback here would be a body quietly running under an
+    invented answer, which is the outcome this class exists to prevent. It is also the only thing a
+    reader could reasonably expect to work and does not.
+
+    THE PARAMETER IS RECOGNISED BY NAME, NOT BY TYPE (`signatures.CONTEXT_NAMES`), so a body whose FIRST
+    parameter is ordinary payload called `c`, `ctx` or `context` receives one of these instead of its
+    value. That is not a hazard this class introduces: `simplon.cli._bound` drops the same parameter from
+    the same names and lets Typer put a real Click context there, so such a body was already being handed
+    a context on the command line. The gate path now behaves the way the CLI path does, which is what
+    `_command` claims about itself.
+    """
+
+    command_path: str
+    where: str = ""
+
+    def __getattr__(self, name: str) -> object:
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
+        raise ValueError(f"{self.where or 'a gate'}: '{self.command_path}' reads 'ctx.{name}' off its "
+                         f"CLI context, and a gate is not a CLI invocation - it has a command path and "
+                         f"no command line, so there is nothing true to answer with. A command a gate "
+                         f"backs may read only 'ctx.command_path'.")
+
+
 def _command(path: str, where: str) -> Callable[[], int]:
     """A command in the PRODUCT'S OWN TREE as a callable that yields an exit code (si#106).
 
@@ -467,12 +528,25 @@ def _command(path: str, where: str) -> Callable[[], int]:
     copying its declaration into the gate: the image, the argv and the caches are stated once, so the
     verdict is about the command a person runs and cannot come to be about a different one.
 
-    IT IS THE CLI'S CALL MINUS THE COMMAND LINE, which is where the last refusal comes from. A parameter
-    the manifest does not pin is one the CLI would ask for on the command line, and a gate has no command
-    line to put it on; so a required parameter left unpinned is refused by name, pointing at `with:`. A
-    body that takes a CLI CONTEXT is refused for the harder version of the same reason - the gate has no
-    Click context to hand it, and cannot invent one. That refusal is also what stops the obvious loop: the
-    command a gate is invoked as is `test:gate` itself, whose body takes the context.
+    IT IS THE CLI'S CALL MINUS THE COMMAND LINE, which is where the remaining refusals come from. A
+    parameter the manifest does not pin is one the CLI would ask for on the command line, and a gate has
+    no command line to put it on; so a required parameter left unpinned is refused by name, pointing at
+    `with:`.
+
+    A BODY THAT TAKES A CLI CONTEXT GETS `GateContext` (si#136), and that is a correction rather than a
+    widening. Such a body used to be refused outright, which read as a rule about contexts and was in
+    fact a rule about nothing a product could satisfy: the command a C++ or a .NET level actually has is
+    a `toolchain:run` one, `run_toolchain`'s first parameter is a `typer.Context`, and the whole kind was
+    therefore unreachable for the products it was written for. Every si#106 test resolved to
+    `simplon.test_impls:pinned_rc`, a body with no context, so the suite was green over the one case the
+    kind exists for.
+
+    AND THE LOOP NOW NAMES ITSELF. The context refusal was also carrying the reason a gate may not name
+    the command that runs the gates, which is a different statement wearing the first one's clothes -
+    measured on 0.10.0, it did not even hold: a product body taking NO context and calling
+    `testrun.accept()` passed the check and recursed until Python stopped it. So the recursion is refused
+    as the recursion, by `_runs_gates`, and it is refused where the context refusal used to be - at
+    resolve time, before a clearing gate has emptied anything.
 
     Refused at RUN time rather than at load, deliberately, and `_gate` says why: this needs the parsed
     manifest, so the whole diagnosis about a command lives here in one place instead of half here and
@@ -491,10 +565,10 @@ def _command(path: str, where: str) -> Callable[[], int]:
                          f"is no single rc for a gate to report - name one of the commands it plans")
     body = resolve_ref(spec.impl, f"{where} ('{path}')")
     pinned = dict(spec.with_ or {})
-    if signatures.takes_context(body):
-        raise ValueError(f"{where}: '{path}' takes a CLI context, which a gate has none of to give it - "
-                         f"only a command the kernel can call with its pinned `with:` alone can back a "
-                         f"gate")
+    if _runs_gates(body):
+        raise ValueError(f"{where}: '{path}' is the command that RUNS the gates, so a gate naming it "
+                         f"would run itself until the interpreter stopped it - name the command whose "
+                         f"rc this level is about instead")
     bindable = signatures.bindable(body)
     # THE SAME REFUSAL `simplon.cli._bound` MAKES, and it is here because this function claims to be that
     # call minus the command line. A `with:` key naming no parameter of the body is the likeliest typo in
@@ -516,10 +590,43 @@ def _command(path: str, where: str) -> Callable[[], int]:
         raise ValueError(f"{where}: '{path}' needs {', '.join(missing)}, which its `with:` does not pin - "
                          f"a gate has no command line to supply them on, so pin them there")
 
+    # A body's leading context is supplied HERE and never through `pinned`: `signatures.bindable` drops
+    # it, so it is not a parameter a `with:` block may name, and a manifest that named it would be
+    # pinning the seam rather than a value.
+    supplied = (GateContext(command_path=path, where=where),) if signatures.takes_context(body) else ()
+
     def call() -> int:
-        return _verdict(body(**pinned))
+        return _verdict(body(*supplied, **pinned))
 
     return call
+
+
+def _runs_gates(body: object) -> bool:
+    """Is `body` one of the two bodies in this module that run gates (si#136)?
+
+    BY IDENTITY, not by coordinate string. `"simplon.tasks.testrun:gate"` written out here would be a
+    second source for a name this module already owns, and a rename that missed it would leave the rule
+    pointing at nothing while still passing - the failure mode this repository has now measured five
+    times on typed facts. The functions are module globals resolved at call time, so the check reads the
+    same two objects `resolve_ref` would hand back.
+
+    TWO AND NOT THREE. `report_cmd` renders an archive and runs no gate, so naming it in a gate is odd
+    and not recursive, and refusing it would be a rule with no defect behind it - `rules.md`'s own
+    sorting question answers that the refused manifest would have produced a working product.
+
+    WHAT THIS DOES NOT REACH, said rather than left to be found. A body a PRODUCT wrote that calls
+    `accept()` itself loops just as happily, and did so before this function existed - the "takes a CLI
+    context" refusal never looked at it either, because such a body takes no context. That is a separate
+    defect with a separate shape and it is recorded rather than patched in here.
+
+    An alias is caught and a second IMPORT would not be: a product re-exporting `gate` from a module of
+    its own hands `resolve_ref` the same function object, so identity holds where a coordinate string
+    would have missed it; but `simplon.tasks.testrun` imported a second time under another name - a stray
+    `sys.path` entry making a bare `import testrun` resolve - would make two module objects and two
+    `gate`s. Nothing in this kernel imports it that way (no relative imports, no path insertion), which
+    is why this is a caveat and not a second mechanism.
+    """
+    return body is gate or body is accept_cmd
 
 
 def _reports_dir(cfg: Suites) -> str:
