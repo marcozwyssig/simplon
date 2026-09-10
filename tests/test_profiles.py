@@ -19,6 +19,7 @@ somebody's decision rather than this ticket's.
 """
 import pytest
 
+from simplon import bootstrap
 from simplon.tasks import profiles, toolchain
 
 
@@ -206,8 +207,10 @@ def test_the_python_profile_installs_its_own_tools_before_it_runs_them():
             f"holds thousands of .py. Got {base!r} against workdir {body['workdir']!r}")
     for name in ("unit", "analyse"):
         assert python.commands[name]["argv"][:2] == ["python", "-m"], (
-            f"{name}: a --user install puts its scripts in a directory that is not on PATH, so the tool "
-            f"is reached as a module: {python.commands[name]['argv']}")
+            f"{name}: `python -m` prepends the CWD to sys.path and a console script does not - measured "
+            f"on the same tree with the user base's bin on PATH, `pytest -q` is `ModuleNotFoundError: "
+            f"No module named 'pydemo'` rc 2 where `python -m pytest -q` is `2 passed` rc 0, because a "
+            f"product tree in a container was never installed: {python.commands[name]['argv']}")
 
 
 def test_the_python_deps_command_pins_the_tools_it_installs():
@@ -240,12 +243,11 @@ def test_the_python_analyse_excludes_the_directory_the_scaffolder_writes():
 
     THE PATH IS DECLARED TWICE ON PURPOSE. `profiles` is a table with no behaviour and no imports beyond
     `log`, so it carries the literal rather than importing `bootstrap`; this assertion is what keeps the
-    two from drifting, exactly the way the releases page's FLOOR is held to the page's own prose.
+    two from drifting, exactly the way the releases page's FLOOR is held to the page's own prose. That
+    constraint is on the TABLE and not on this file, which is why `bootstrap` is imported at module
+    scope here like every other name.
     """
-    # arrange
-    from simplon import bootstrap
-
-    # act
+    # arrange / act
     argv = profiles.profile("python", version="3.12").commands["analyse"]["argv"]
     excluded = argv[argv.index("--exclude") + 1] if "--exclude" in argv else ""
 

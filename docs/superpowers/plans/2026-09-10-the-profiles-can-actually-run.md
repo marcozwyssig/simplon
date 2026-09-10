@@ -211,68 +211,68 @@ scaffolder writes.
 
 ### Task 1: the plan lands first
 
-- [ ] Commit this file, so the measurements above exist in the history before any code moves.
+- [x] Commit this file, so the measurements above exist in the history before any code moves.
 
 ### Task 2: java `compile` compiles and nothing else
 
-- [ ] RED: extend `tests/test_profiles.py` with a test asserting the java `compile` argv does not run
+- [x] RED: extend `tests/test_profiles.py` with a test asserting the java `compile` argv does not run
       the tests - it names `assemble` and `testClasses` and does not name `build`. It fails against the
       current table.
-- [ ] GREEN: change `PROFILES["java"]["compile"]` to
+- [x] GREEN: change `PROFILES["java"]["compile"]` to
       `["gradle", "assemble", "testClasses", "--no-daemon", "--console=plain"]`.
-- [ ] Rewrite the java entry's comment with the four transcripts above: `build` red on an assertion,
+- [x] Rewrite the java entry's comment with the four transcripts above: `build` red on an assertion,
       `assemble` green on a test source that does not compile, `-x test` identical to `assemble`, and
       the pair that works.
-- [ ] Verify: `./simplon.sh test all` and the four docker runs re-driven.
+- [x] Verify: `./simplon.sh test all` and the four docker runs re-driven.
 
 ### Task 3: java's missing `analyse` becomes a decision the table states
 
-- [ ] RED: add a test asserting `PROFILES["java"]` carries no `analyse`, whose failure message is the
+- [x] RED: add a test asserting `PROFILES["java"]` carries no `analyse`, whose failure message is the
       `check -x test` measurement. (It passes immediately - it is a pin on a decision, not a repair, and
       it goes red the day somebody adds `gradle check`.)
-- [ ] Write the measurement into the java comment.
-- [ ] Verify: `./simplon.sh test all`.
+- [x] Write the measurement into the java comment.
+- [x] Verify: `./simplon.sh test all`.
 
 ### Task 4: the python profile runs
 
-- [ ] RED: extend `tests/test_profiles.py` - the python commands are `deps`, `unit`, `analyse`; each
+- [x] RED: extend `tests/test_profiles.py` - the python commands are `deps`, `unit`, `analyse`; each
       names its tool through `python -m`; each pins `PYTHONUSERBASE` under the workdir; `deps` pins both
       tool versions with `==`. Fails against the current table.
-- [ ] GREEN: rewrite `PROFILES["python"]`.
-- [ ] Add a round-trip test putting every python body through `toolchain.declared()`. `env:` is a key no
+- [x] GREEN: rewrite `PROFILES["python"]`.
+- [x] Add a round-trip test putting every python body through `toolchain.declared()`. `env:` is a key no
       profile has ever carried, and `declared()` is what has to accept it - this is the "KNOWN gap" the
       `test_profiles.py` docstring names, closed exactly as far as the new key reaches.
-- [ ] Update `test_the_other_three_languages_carry_their_own_toolchain`, which asserts
+- [x] Update `test_the_other_three_languages_carry_their_own_toolchain`, which asserts
       `python.commands["analyse"]["argv"][0] == "mypy"`.
-- [ ] Write the whole decision into the python entry's comment: why the image stays, the three
+- [x] Write the whole decision into the python entry's comment: why the image stays, the three
       alternatives and their costs, the four measurements.
-- [ ] Verify: `./simplon.sh test all`, `./simplon.sh test typecheck-python`, and the docker runs
+- [x] Verify: `./simplon.sh test all`, `./simplon.sh test typecheck-python`, and the docker runs
       re-driven green AND red.
 
 ### Task 5: drive it through a real product's own CLI
 
-- [ ] `simplon init pydemo` against this working tree, place `support:toolchain`, run
+- [x] `simplon init pydemo` against this working tree, place `support:toolchain`, run
       `support toolchain python 3.12`, and drive `build deps`, `build unit`, `build analyse` - green,
       then red. The docker runs above prove the argv; this proves the SCAFFOLDER writes a manifest that
       assembles and runs, which is the half si#105 found broken by not doing it.
-- [ ] Same for java: `support toolchain java 25`, `build compile` green over a broken assertion,
+- [x] Same for java: `support toolchain java 25`, `build compile` green over a broken assertion,
       `build unit` red.
 
 ### Task 6: the pages, and the labels they are held to
 
-- [ ] `site/content/using/case-python.md`: a section for the containerised python toolchain, with the
+- [x] `site/content/using/case-python.md`: a section for the containerised python toolchain, with the
       transcripts, and table rows labelled `run` ONLY where a command was really driven on that product.
-- [ ] `site/content/using/case-java.md`: the same for `build compile` / `build unit`, plus the sentence
+- [x] `site/content/using/case-java.md`: the same for `build compile` / `build unit`, plus the sentence
       that the java profile carries no `analyse` and why.
-- [ ] `tests/fixtures/case_*_manifest.yaml`: no change is expected (neither the java nor the python
+- [x] `tests/fixtures/case_*_manifest.yaml`: no change is expected (neither the java nor the python
       chapter's product drives the profile today), but the case-chapter suites compare fixture to
       profile entry by entry - re-run them and fix whatever they name.
-- [ ] `site/content/using/releases.md`: name si#121 and si#122 in the 0.10.0 section. si#89's gate turns
+- [x] `site/content/using/releases.md`: name si#121 and si#122 in the 0.10.0 section. si#89's gate turns
       `main` red for a merged ticket nobody wrote down.
 
 ### Task 7: review
 
-- [ ] Dispatch `python-reviewer` on the diff and act on what it finds.
-- [ ] `./simplon.sh test all` + `./simplon.sh test typecheck-python` against the recorded baseline
+- [x] Dispatch `python-reviewer` on the diff and act on what it finds.
+- [x] `./simplon.sh test all` + `./simplon.sh test typecheck-python` against the recorded baseline
       (3 failed / 2731 passed / 3 skipped and mypy clean over 84 files on `origin/main`, on this box;
       the three failures are `test_tasks_docs.py`'s and are a root-user artefact, not this branch's).

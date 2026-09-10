@@ -185,6 +185,14 @@ PROFILES: dict[str, Profile] = {
         # which needs no PATH: a `--user` install puts its scripts somewhere pip itself warns is not on
         # one.
         #
+        # AND `python -m` IS NOT ONLY THE PATH DODGE, which is the measurement that settles the choice.
+        # `python -m` prepends the CWD to `sys.path`; a console script does not. On the same tree, with
+        # the user base's `bin` put on PATH so the console script is reachable, `pytest -q` is
+        # `ModuleNotFoundError: No module named 'pydemo'` and rc 2 where `python -m pytest -q` is
+        # `2 passed` and rc 0 - because the product is a source tree that was never installed, which is
+        # what a product tree in a container IS. (rc 2, not 1: collection error. Same rule as ctest's 8
+        # and `dotnet format`'s 2 above - compare to 0, never to 1.)
+        #
         # DRIVEN ON 2026-09-10 AS A NON-ROOT CALLER (`--user 1000:1000` over a tree owned by 1000),
         # because running it as root would have hidden every permission question in it:
         #

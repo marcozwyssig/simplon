@@ -171,6 +171,14 @@ analyse  python -m mypy --exclude ^deploy/provision/orchestrator/ .
 (the argv of each, not the manifest block - what `support toolchain` splices in is the ordinary
 `toolchain:run` shape, with the `PYTHONUSERBASE` above in an `env:` key)
 
+**`python -m` is not only a dodge around `PATH`, and that decided it.** `python -m` prepends the working
+directory to `sys.path`; a console script does not. Measured on the same tree with the user base's `bin`
+put on `PATH` so the console script really is reachable: `pytest -q` is
+`ModuleNotFoundError: No module named 'pydemo'` and **rc 2**, where `python -m pytest -q` is `2 passed`
+and rc 0 - because a product tree in a container is a source tree nobody installed. (rc 2 rather than 1,
+which is the same lesson `ctest`'s 8 and `dotnet format`'s 2 teach: compare a toolchain command's rc to
+0, never to 1.)
+
 Driven on a scaffolded `pydemo` on 2026-09-10 - a *third* product, not one of this chapter's two, which
 is why the table above has no row for it:
 
