@@ -5,6 +5,7 @@ codes. Skipped when Textual is not installed. The pure-data half of the same tre
 fallbacks, the text rendering) is in test_orchestrator_rows.py and needs no terminal.
 """
 import asyncio
+import time
 
 import pytest
 
@@ -1241,3 +1242,52 @@ def test_following_puts_the_live_lines_in_front_of_an_operator_who_touched_nothi
     asyncio.run(scenario())
     assert seen, "no line was ever streamed - the test is not exercising the path"
     assert "checking for a C compiler" in seen[-1], seen[-1]
+
+
+def test_a_row_highlighted_mid_run_shows_what_the_step_has_already_produced(tmp_path):
+    """si#144 mechanism A, driven the way the ticket specifies: run a step that produces output slowly,
+    keep a DIFFERENT row highlighted while it does, then highlight the step's own row and read the pane.
+
+    si#148's follow mode covers the operator who touches nothing - the cursor rides the running step and
+    `_on_line` writes each line as it arrives. This is the operator who navigated away and came back,
+    for whom the pane used to say `(running…)` and nothing else, however much the step had printed.
+
+    A REAL child through the real `run_stream`, not a fake stream action: what broke here was the
+    plumbing between the reader and the pane, and a fake action does not have any. The child waits for a
+    file rather than sleeping, so what is asserted is "before it exited" and not "faster than this
+    machine".
+    """
+    from simplon.orchestrator.steps import argv_step
+
+    release = tmp_path / "release"
+    slow = argv_step("slow", ["sh", "-c",
+                              f"printf 'compiling one\\ncompiling two\\n'; "
+                              f"while [ ! -f {release} ]; do sleep 0.02; done; echo done"],
+                     command="build.compile")
+    pipeline = Pipeline("smoke", [
+        slow,
+        Step(label="after", command="deploy.up", action=lambda: Outcome(rc=0, output="up")),
+    ])
+
+    async def _drive():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            deadline = time.monotonic() + 10       # a deadline, so a broken backlog FAILS and never hangs
+            while len(slow.live) < 2 and time.monotonic() < deadline:
+                await pilot.pause()
+            _focus_line(app, 2)                    # the OTHER row, while the first step is still running
+            await pilot.pause()
+            _focus_line(app, 1)                    # ... and back to the running step
+            await pilot.pause()
+            mid_run = _details(app)
+            release.write_text("go", encoding="utf-8")
+            await app.workers.wait_for_complete()
+            return mid_run
+
+    # act
+    rendered = asyncio.run(_drive())
+
+    # assert: the backlog is there, and the pane is not claiming it has nothing
+    assert "compiling one" in rendered
+    assert "compiling two" in rendered
+    assert "(running…)" not in rendered
