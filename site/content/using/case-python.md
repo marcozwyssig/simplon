@@ -161,12 +161,15 @@ since a named docker volume is created root-owned and
 [a container that writes into a mount runs as `--user`](../../building/rules/#a-container-that-writes-into-a-mount-runs-as---user).
 Three commands instead of two, and `deps` is the only one that needs a network:
 
-```yaml
-deps:    python -m pip install --user --no-cache-dir --disable-pip-version-check
+```text
+deps     python -m pip install --user --no-cache-dir --disable-pip-version-check
                                --no-warn-script-location pytest==9.1.1 mypy==2.3.1
-unit:    python -m pytest -q
-analyse: python -m mypy --exclude ^deploy/provision/orchestrator/ .
+unit     python -m pytest -q
+analyse  python -m mypy --exclude ^deploy/provision/orchestrator/ .
 ```
+
+(the argv of each, not the manifest block - what `support toolchain` splices in is the ordinary
+`toolchain:run` shape, with the `PYTHONUSERBASE` above in an `env:` key)
 
 Driven on a scaffolded `pydemo` on 2026-09-10 - a *third* product, not one of this chapter's two, which
 is why the table above has no row for it:
