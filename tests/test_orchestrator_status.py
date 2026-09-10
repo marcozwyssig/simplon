@@ -203,7 +203,7 @@ def test_a_running_bar_names_the_step_its_elapsed_the_counts_and_the_runs_own_cl
     line = status_line(root, now=14.0)
     # assert: the dotted identity, the elapsed with the mark that says it is still counting, and both
     # numbers - the step's 12 seconds and the run's 14
-    assert line == "▶ build.compile  12.0s…  ·  1 ok · 1 running · 1 pending  ·  run 14.0s"
+    assert line == "↻ build.compile  12.0s…  ·  1 ok · 1 running · 1 pending  ·  run 14.0s"
 
 
 def test_a_running_step_is_named_by_its_row_identity_and_never_by_its_argv():
@@ -232,7 +232,7 @@ def test_three_running_steps_render_as_two_names_and_a_tail():
     # act
     line = status_line(root, now=5.0)
     # assert: the bar is one line and stays one line whatever si#147 hands it
-    assert line.startswith("▶ build.install, build.compile +1 more  5.0s…")
+    assert line.startswith("↻ build.install, build.compile +1 more  5.0s…")
 
 
 def test_between_two_steps_the_bar_names_the_last_one_rather_than_going_blank():

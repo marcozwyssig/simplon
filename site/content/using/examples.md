@@ -79,7 +79,7 @@ your cursor. It names the step that is running right now and how long it has bee
 run's own counts and clock:
 
 ```text
-▶ build.compile  1m12s…  ·  3 ok · 1 running · 5 pending  ·  run 2m48s
+↻ build.compile  1m12s…  ·  3 ok · 1 running · 5 pending  ·  run 2m48s
 ```
 
 That is the line that answers "is this compiling or has it hung", and it goes on answering it while you
@@ -88,7 +88,7 @@ the trailing character is the difference between a step that TOOK twelve seconds
 twelve so far. When the run ends the bar carries the verdict, which is the last thing you read before
 pressing `q`.
 
-State is a glyph AND a colour: `✓` green, `✗` red and bold, `▶` amber, `⊘` dimmed, `·` dim and
+State is a glyph AND a colour: `✓` green, `✗` red and bold, `↻` amber, `⊘` dimmed, `·` dim and
 uncoloured. The glyph is never dropped, so a broken terminal palette or a saved log loses nothing. If
 the colours are unreadable on your terminal, `ctrl+p` opens the command palette and its **Theme** entry
 picks another one; the rows follow it.
@@ -101,7 +101,13 @@ sentence each, which is where to look rather than at a key you would have to rem
 
 The details pane keeps your place: scroll up in a long step's output, look somewhere else, come back, and
 you are where you were. While a step is running, the pane follows the tail only if you are AT the tail -
-scroll up and the lines keep arriving below you instead of dragging you down with them.
+scroll up and the lines keep arriving below you instead of dragging you down with them. Being at the tail
+is itself the thing remembered, so leaving a running step while you are watching its newest line and
+coming back later puts you on its newest line again rather than on the one that used to be there.
+
+A row with steps under it answers a different question, and it answers it live: it lists what is below it
+with each one's exit code, and the one that is running carries how long it has been running. So the root
+of the plan is a place you can sit and watch the run from, not a snapshot of the moment you arrived.
 
 **Getting the text out.** A terminal UI takes the mouse, so your terminal's own selection stops working
 and the output is visible and unreachable at the same time. Three ways out, in order of how much you had

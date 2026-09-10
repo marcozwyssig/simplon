@@ -22,6 +22,7 @@ from simplon.context import ProductContext
 from simplon.orchestrator import steps as steps_mod
 from simplon.orchestrator.manifest import load as manifest_load
 from simplon.orchestrator.steps import (
+    STATE_ICON,
     Outcome,
     Pipeline,
     Step,
@@ -171,6 +172,27 @@ def test_the_transcript_carries_no_markup_and_no_escape():
     # act
     text = "\n".join(transcript(pipeline, header=["=== x ==="]))
     # assert
+    assert "\x1b" not in text, "no ANSI escape"
+    assert "[/" not in text and "[bold" not in text and "[red" not in text, "no rich markup"
+
+
+def test_a_transcript_written_mid_run_names_the_running_step_with_one_plain_glyph():
+    """si#162: the running marker changed, and this is the artefact that decides how far it may go.
+
+    An animated spinner would read better in the tree and be wrong here - a frame of an animation in a
+    file somebody attaches to a ticket is a character they then have to explain - so the shared
+    `STATE_ICON` has to keep producing exactly one static, markup-free glyph, and `action_save_transcript`
+    means a transcript really is written while a step is still RUNNING."""
+    # arrange: a run caught in flight, which is what `ctrl+p -> Transcript of this run` writes
+    pipeline = _pipeline()
+    pipeline.steps[0].run()
+    pipeline.steps[1].state = StepState.RUNNING
+    # act
+    text = "\n".join(transcript(pipeline, header=["=== x ==="]))
+    # assert
+    running = [line for line in text.splitlines() if "build.compile" in line]
+    assert running and running[0].startswith(f"{STATE_ICON[StepState.RUNNING]} build.compile"), running
+    assert len(STATE_ICON[StepState.RUNNING]) == 1, "one character, and the same one every time"
     assert "\x1b" not in text, "no ANSI escape"
     assert "[/" not in text and "[bold" not in text and "[red" not in text, "no rich markup"
 

@@ -176,7 +176,20 @@ class _StepApp(App):
         # clears the pane and rewrites it, so somebody who found a place in a long step's output, looked
         # elsewhere and came back had to find it again. Kept per ROW rather than per pane, because the
         # question is "where was I in THIS step".
-        self._scroll_at: dict[int, int] = {}
+        #
+        # None means AT THE TAIL, and it is the same answer as "never visited" on purpose (si#162). A y
+        # OFFSET is the wrong thing to keep for a row that is still growing: measured on a running step,
+        # the operator left it while its five lines fitted the pane whole (offset 0, and at the end),
+        # came back to 37 lines, and `scroll_to(y=0)` put them at the TOP of it - showing `line 1` while
+        # the step was at `line 65`. Worse than one stale screen: `_on_line`'s sticky bottom asks
+        # `is_vertical_scroll_end` before every write, so from that moment the pane never caught up
+        # again. The tail is a RELATIONSHIP to output that has not been written yet, so it has to be
+        # restored as one and not as the number it happened to have.
+        self._scroll_at: dict[int, int | None] = {}
+        # The aggregate listing the pane last rendered, or None when it is showing a leaf - the content
+        # guard for the once-a-second repaint in `_refresh_open_aggregate`, and `_painted`'s argument one
+        # pane to the right.
+        self._painted_details: str | None = None
         # Which row the pane is currently rendering, so the offset above can be saved for the row being
         # LEFT. The cursor has already moved by the time a highlight arrives, so the pane has to remember
         # what it was showing itself.
@@ -226,11 +239,37 @@ class _StepApp(App):
         gives it an ordering. This one is on a timer. It is safe because each of those is a single
         attribute and CPython's GIL makes such a read atomic - the worst case is a value one tick stale,
         which the next tick corrects, and never a torn read. If this ever runs on a free-threaded
-        interpreter, that argument is the one to revisit."""
+        interpreter, that argument is the one to revisit.
+
+        `_refresh_open_aggregate` joins it under exactly the same argument and adds no new hazard: it
+        reads `rc`, `state` and `started_at`/`ended_at` through `Row`, one attribute at a time, and the
+        worst it can render is a listing one tick behind."""
         for index, step in enumerate(self.pipeline.steps):
             if step.state == StepState.RUNNING:
                 self._refresh_row(index)
+        self._refresh_open_aggregate()
         self._repaint_status()
+
+    def _refresh_open_aggregate(self) -> None:
+        """Repaint the details pane when the cursor is on an AGGREGATE and its listing has changed
+        (si#162).
+
+        The pane was written only when a step STARTED (`_begin_details`) or ENDED
+        (`_maybe_refresh_details`), so between two step boundaries nothing repainted it - and a step
+        boundary is precisely the event a long step does not produce. An operator who moved to the root
+        to see the shape of the run was then looking at a frozen listing while the bar beside it counted.
+
+        Guarded on CONTENT, the same way `_painted` guards the tree: a tick that changes no character
+        writes nothing, so a run between two boundaries with no running child - or one whose elapsed has
+        not ticked over - costs one string comparison and no clear/rewrite. A LEAF is not this method's
+        business at all: its live lines arrive through `_on_line`, which appends instead of rewriting and
+        must go on doing so.
+        """
+        row = self._cursor_row()
+        if row is None or row.step is not None:
+            return
+        if self._details_text(row) != self._painted_details:
+            self._show_details(row)
 
     def _repaint_status(self) -> None:
         """Write the bar. The TEXT is `steps.status_line`, computed over the display tree and the clock -
@@ -426,14 +465,39 @@ class _StepApp(App):
             return f"{self._step_header(step)}\n\n{body}".rstrip("\n")
         lines = [f"$ {row.label}", ""]
         for child in row.children:
-            verdict = f"rc {child.rc}" if child.rc is not None else f"({child.state.value})"
-            lines.append(f"{STATE_ICON[child.state]} {child.label}  {verdict}")
+            lines.append(f"{STATE_ICON[child.state]} {child.label}  {self._child_verdict(child)}")
         note = omitted_note(row)
         if note:
             lines += ["", note]
         elif not row.children:
             lines.append("(no steps)")
         return "\n".join(lines).rstrip("\n")
+
+    @staticmethod
+    def _child_verdict(child: Row) -> str:
+        """One child's right-hand column in an aggregate's listing: its exit code once it has one, and
+        until then what it is doing.
+
+        A RUNNING child carries its live elapsed, and that is si#162's second half rather than a
+        decoration. The listing said `(running)` and nothing else, so an operator sitting on an
+        aggregate while a step ran watched a pane that was byte-identical minute after minute -
+        measured: 1.5 seconds on `build.prep` during which the child produced 30 more lines and the
+        rendered text did not change by one character. That is "you cannot see the current state while
+        something is running" exactly, and a repaint alone would not have fixed it, because there was
+        nothing in the text for a repaint to change.
+
+        This is the opposite call to `_label`'s, and the difference is what the two columns cost. There,
+        a live number on an AGGREGATE row would mark every visible line of its subtree dirty once a
+        second - the cost `_painted` exists to avoid - and the run's own elapsed is on the bar anyway.
+        Here the aggregate is not a row among forty but the ONE thing on screen, its listing is a handful
+        of lines, and the number is the only thing that can tell it apart from a hung run.
+        """
+        if child.rc is not None:
+            return f"rc {child.rc}"
+        if child.state != StepState.RUNNING:
+            return f"({child.state.value})"
+        elapsed = child.elapsed(steps_module.clock())
+        return f"(running {format_duration(elapsed)}…)" if elapsed is not None else "(running)"
 
     def _save_details_to(self, identity: str, text: str):
         """Write one pane's text; separated so a test can substitute it and so the path comes back."""
@@ -465,10 +529,14 @@ class _StepApp(App):
         What changes is only that a place somebody found is not thrown away when they look elsewhere."""
         rlog = self.query_one("#details", RichLog)
         if self._showing is not None and self._showing is not row:
-            self._scroll_at[id(self._showing)] = int(rlog.scroll_offset.y)
+            # None for a reader who was AT THE TAIL - see `_scroll_at` for what keeping the y instead
+            # cost on a running step.
+            self._scroll_at[id(self._showing)] = (None if rlog.is_vertical_scroll_end
+                                                  else int(rlog.scroll_offset.y))
         self._showing = row
         rlog.clear()
         self._render_details(rlog, row)
+        self._painted_details = self._details_text(row) if row.step is None else None
         remembered = self._scroll_at.get(id(row))
         if remembered is None:
             rlog.scroll_end(animate=False)
@@ -495,8 +563,7 @@ class _StepApp(App):
         # go", so the pane lists its children with their exit codes.
         rlog.write(f"$ {row.label}\n")
         for child in row.children:
-            verdict = f"rc {child.rc}" if child.rc is not None else f"({child.state.value})"
-            rlog.write(f"{STATE_ICON[child.state]} {child.label}  {verdict}")
+            rlog.write(f"{STATE_ICON[child.state]} {child.label}  {self._child_verdict(child)}")
         note = omitted_note(row)
         if note:
             rlog.write("")

@@ -312,7 +312,7 @@ def test_a_row_whose_text_did_not_change_is_not_written_again(monkeypatch):
     for node_writes in writes.values():
         assert all(new != previous for previous, new in zip(node_writes, node_writes[1:])), node_writes
     root_writes = [w for w in writes.values() if any("deploy.bringup" in text for text in w)]
-    assert root_writes == [["▶ deploy.bringup", "✓ deploy.bringup  <0.1s"]], root_writes
+    assert root_writes == [["↻ deploy.bringup", "✓ deploy.bringup  <0.1s"]], root_writes
 
 
 def test_every_row_including_the_derived_ones_repaints_to_ok_when_the_run_finished():
@@ -702,8 +702,8 @@ def test_the_running_rows_own_label_counts_up_without_the_test_sleeping(monkeypa
             return before, after
 
     before, after = asyncio.run(scenario())
-    assert before == "▶ build.install  <0.1s…", before
-    assert after == "▶ build.install  12.0s…", after
+    assert before == "↻ build.install  <0.1s…", before
+    assert after == "↻ build.install  12.0s…", after
     assert "…" in after, "a running row's number must not be readable as a finished one"
 
 
@@ -1291,3 +1291,179 @@ def test_a_row_highlighted_mid_run_shows_what_the_step_has_already_produced(tmp_
     assert "compiling one" in rendered
     assert "compiling two" in rendered
     assert "(running…)" not in rendered
+
+
+# --- si#162: the state alphabet and the tree's own alphabet must not overlap ---------------------------
+
+def _tree_own_alphabet() -> set[str]:
+    """Every character a Textual `Tree` puts on a row BY ITSELF, read out of the pinned version rather
+    than typed here: the two node icons and every guide variant in `Tree.LINES` - the default `│ └─ ├─`,
+    the BOLD `┃ ┗━ ┣━` (reachable, because `_state_styles` renders a FAILED row bold) and the double one.
+    """
+    from textual.widgets import Tree
+    chars = set(Tree.ICON_NODE + Tree.ICON_NODE_EXPANDED)
+    for variant in Tree.LINES.values():
+        chars |= set("".join(variant))
+    return {ch for ch in chars if not ch.isspace()}
+
+
+def test_no_state_icon_is_a_character_the_tree_already_draws():
+    """si#162's first half, and the reason it is asserted over the WHOLE table rather than for RUNNING
+    alone: `STATE_ICON[RUNNING]` was `▶`, which is exactly `Tree.ICON_NODE`, so a running row with
+    children rendered `├── ▶ ▶ win2019   13m51s…` - two identical arrows, two unrelated meanings, on
+    precisely the rows that carry work.
+
+    Checking the other four was the ticket's own instruction and not a courtesy: `·`, `✓`, `✗` and `⊘`
+    are clear, but "confirm rather than assume" is what this assertion is for, and it is what keeps the
+    next glyph anybody adds from re-opening the collision silently."""
+    from simplon.orchestrator.steps import STATE_ICON
+    collisions = {state: icon for state, icon in STATE_ICON.items() if icon in _tree_own_alphabet()}
+    assert not collisions, f"these state icons are also drawn by the tree itself: {collisions}"
+
+
+def test_a_running_row_with_children_shows_one_arrow_and_it_is_the_trees(monkeypatch):
+    """The screenshot, reproduced: the row REALLY RENDERED for a collapsed aggregate whose child is
+    running. Asserted against the strip the widget produced, not against `_label` - the collision only
+    exists once the tree has added its own icon, so a test that reads our text alone cannot see it."""
+    import threading
+
+    release = threading.Event()
+    pipeline = _blocking_pipeline(release)
+
+    async def scenario():
+        app = _StepApp(pipeline)
+        async with app.run_test(size=(60, 20)) as pilot:
+            await pilot.pause()
+            await _until_running(pilot, pipeline)
+            from textual.widgets import Tree
+            tree = app.query_one("#steps", Tree)
+            tree.root.collapse()          # the state the screenshot was in: children hidden
+            await pilot.pause()
+            rendered = "".join(seg.text for seg in tree.render_line(0))
+            release.set()
+            await app.workers.wait_for_complete()
+            return rendered
+
+    rendered = asyncio.run(scenario())
+    assert "build.prep" in rendered, rendered
+    assert rendered.count("▶") == 1, \
+        f"exactly one ▶, the tree's own disclosure marker, belongs on this row: {rendered!r}"
+    assert "↻" in rendered, f"and the state has to be visible beside it: {rendered!r}"
+
+
+# --- si#162: what is on screen must follow the run, not the last time the cursor was there ------------
+
+def _visible(log) -> str:
+    """Only the lines the reader can actually SEE - the viewport, not the buffer behind it. The whole of
+    si#162's second half is a pane that HELD the newest output and was scrolled somewhere else."""
+    top = log.scroll_offset.y
+    return "\n".join(str(line) for line in log.lines[top:top + log.size.height])
+
+
+def test_coming_back_to_a_running_step_lands_on_its_tail_and_goes_on_following_it(tmp_path):
+    """si#162 candidate two, driven as the ticket demands: a REAL child through the real `run_stream`,
+    the cursor moved away deliberately, output produced while it is away, and the pane read back.
+
+    si#144's backlog is not the hole - it was measured present, all 37 lines of it. What was wrong is
+    WHERE the pane was pointed. `_show_details` restored the y offset the row had when it was left, and
+    the row was left holding five lines that fitted the pane whole: offset 0, and at the end. Coming back
+    to 37 lines, `scroll_to(y=0)` is the TOP. Measured: the pane showed `line 1` while the step was at
+    `line 65`, and `_on_line`'s sticky bottom - which asks `is_vertical_scroll_end` before every write -
+    never carried it again, so it stayed there for the rest of the step.
+
+    The child is gated on files rather than timed, so every count below is exact and nothing here is a
+    race against this machine."""
+    from simplon.orchestrator.steps import argv_step
+
+    gate_one, gate_two, release = (tmp_path / name for name in ("one", "two", "go"))
+    slow = argv_step("slow", ["sh", "-c", f"""
+        for n in $(seq 1 5); do echo "line $n"; done
+        while [ ! -f {gate_one} ]; do sleep 0.02; done
+        for n in $(seq 6 80); do echo "line $n"; done
+        while [ ! -f {gate_two} ]; do sleep 0.02; done
+        for n in $(seq 81 100); do echo "line $n"; done
+        while [ ! -f {release} ]; do sleep 0.02; done
+    """], command="build.compile")
+    pipeline = Pipeline("smoke", [
+        slow,
+        Step(label="after", command="deploy.up", action=lambda: Outcome(rc=0, output="up")),
+    ])
+
+    async def _until(pilot, count: int) -> None:
+        deadline = time.monotonic() + 20     # bounded, so a regression FAILS instead of hanging
+        while len(slow.live) < count and time.monotonic() < deadline:
+            await pilot.pause(0.02)
+        assert len(slow.live) >= count, f"the child only produced {len(slow.live)} of {count} lines"
+
+    async def _drive():
+        app = _StepApp(pipeline)
+        async with app.run_test(size=(100, 24)) as pilot:
+            await _until(pilot, 5)
+            # arrange: the operator leaves the running step while its output still fits the pane whole
+            _focus_line(app, 2)
+            await pilot.pause()
+            gate_one.write_text("go", encoding="utf-8")
+            await _until(pilot, 80)
+            # act: ... and comes back to a step that has long outgrown it
+            _focus_line(app, 1)
+            await pilot.pause()
+            log = _details_log(app)
+            landed_at_the_tail, on_return = log.is_vertical_scroll_end, _visible(log)
+            # ... and it has to keep following from there
+            gate_two.write_text("go", encoding="utf-8")
+            await _until(pilot, 100)
+            await pilot.pause()
+            still_following = _visible(_details_log(app))
+            release.write_text("go", encoding="utf-8")
+            await app.workers.wait_for_complete()
+            return landed_at_the_tail, on_return, still_following
+
+    # act
+    landed_at_the_tail, on_return, still_following = asyncio.run(_drive())
+
+    # assert
+    assert landed_at_the_tail, "the reader was at the tail when they left; they have to come back to it"
+    assert "line 80" in on_return, f"the newest line has to be ON SCREEN, not merely in the buffer:\n{on_return}"
+    assert "line 1'" not in on_return, f"and the pane must not be back at the top:\n{on_return}"
+    assert "line 100" in still_following, \
+        f"a line arriving after the return has to appear too:\n{still_following}"
+
+
+def test_an_aggregate_listing_moves_while_the_step_under_it_runs(monkeypatch):
+    """si#162 candidate three, and it is a second defect rather than a second symptom of the first.
+
+    Measured on 0.10.0: with the cursor on `build.prep` and its child streaming, the rendered pane was
+    BYTE-IDENTICAL over 1.5 seconds in which the child produced 30 more lines. Two causes at once - the
+    listing said `(running)`, which cannot change, and nothing repainted it between step boundaries,
+    which a long step does not produce. Both had to go, and this test would stay green against a fix for
+    either one alone only if the other were already right."""
+    import threading
+
+    clock = _Clock()
+    monkeypatch.setattr(steps_mod, "clock", clock)
+    release = threading.Event()
+    pipeline = _blocking_pipeline(release)
+
+    async def scenario():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _until_running(pilot, pipeline)
+            _focus_line(app, 0)                 # the operator moves to the root to see the whole shape
+            await pilot.pause()
+            first = _details(app)
+            clock.at = 12.0                     # the clock the TEST holds, never a sleep
+            app._tick()
+            await pilot.pause()
+            later = _details(app)
+            release.set()
+            await app.workers.wait_for_complete()
+            return first, later
+
+    # act
+    first, later = asyncio.run(scenario())
+
+    # assert
+    assert "build.install" in first, first
+    assert first != later, "an aggregate whose child is running may not render the same pane forever"
+    assert "12.0s" in later, f"and what changed has to be how long it has been running:\n{later}"
