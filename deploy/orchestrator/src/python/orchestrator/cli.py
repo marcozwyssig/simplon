@@ -8,11 +8,15 @@ resolve to, and hands the app + product context + environments + aliases to Simp
 the CI/CD panels) and the env-first dispatch live in the kernel, driven entirely by the manifest - so a
 fresh product adds groups/commands in simplon.yaml and impl callables HERE, and nowhere else.
 
-build.wheel, test.all and support.doctor below are simplon.yaml's three commands; keep them as
+build.wheel, test.suite and support.doctor below are simplon.yaml's three BODIES; keep them as
 module-level callables so the manifest's impl refs resolve (simplon.orchestrator.manifest.resolve_impl
 imports THIS module and getattrs the function named after the `:`). Each shells out to the working tree at
-ROOT (a subprocess, not an in-process call) so `./simplon.sh build wheel` / `test all` / `support doctor`
+ROOT (a subprocess, not an in-process call) so `./simplon.sh build wheel` / `test suite` / `support doctor`
 exercise the exact commands a developer would run by hand.
+
+`test suite` answered to `test all` until si#156. The name moved to an impl-less aggregate in the
+manifest that plans the suite and the release-notes guard, so `test all` is once again what it says it
+is; the body here did not change, only what it is called.
 """
 from __future__ import annotations
 
@@ -55,8 +59,13 @@ def build_wheel() -> int:
     return _run("-m", "build", "--wheel")
 
 
-def test_all() -> int:
-    """Run every test. Runs from tests/, so conftest applies."""
+def test_suite() -> int:
+    """Run the pytest suite. Runs from tests/, so conftest applies.
+
+    The pytest run ALONE, which is what the si#156 rename says out loud: `test all` is the aggregate
+    over this and `test release-notes`, and a body that quietly ran a second gate would put the kernel's
+    own "one implementation per verdict" rule back where si#89 found it.
+    """
     return subprocess.run([sys.executable, "-m", "pytest", "-q"],
                           cwd=ROOT / "tests").returncode
 
@@ -78,10 +87,10 @@ def doctor() -> int:
 # planned command's dotted identity through it.
 _MANIFEST = paths.CONTEXT.manifest()
 
-# The step-factory seam (#895/#896): if simplon.yaml ever grows an impl-less aggregate (a `depends_on`
-# command, no `impl`), the kernel would need this to turn its plan into live-streamed `./simplon.sh <cmd>`
-# steps. None of today's three commands are aggregates, but assemble() always takes a step_context, so it
-# is built here regardless. StepFactoryContext is simplon.orchestrator.product's step-factory seam (kept
+# The step-factory seam (#895/#896): it turns an impl-less aggregate's plan into live-streamed
+# `./simplon.sh <cmd>` steps. simplon.yaml has two of those - `build docs` and, since si#156, `test all` -
+# so this is load-bearing rather than provisional; assemble() takes a step_context either way.
+# StepFactoryContext is simplon.orchestrator.product's step-factory seam (kept
 # distinct from the identity context in simplon.context, netctl#737); `for_shim` is the kernel's own
 # factory for this shape, stamping each step with the planned command's exact-command identity so the
 # kernel can verify step i really is the step for plan leaf i (#42).
@@ -89,8 +98,8 @@ _STEP_CONTEXT = StepFactoryContext.for_shim("simplon", paths.ROOT / "simplon.sh"
 
 
 # Assemble the CLI from the manifest via Simplon's binding layer. Runs at import (like netctl's cli.py):
-# resolve_impl imports this module and binds each leaf command's callback (build_wheel, test_all, doctor),
-# so every command above must already be defined. The product name only shapes the usage hints.
+# resolve_impl imports this module and binds each leaf command's callback (build_wheel, test_suite,
+# doctor), so every command above must already be defined. The product name only shapes the usage hints.
 simplon_cli.assemble(app, _MANIFEST, product=paths.CONTEXT.name, step_context=_STEP_CONTEXT)
 
 

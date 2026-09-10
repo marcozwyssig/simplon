@@ -29,9 +29,15 @@ at `ci.yml` alone, and `release.yml` - the path that actually reaches consumers 
 fact checked; but by a PARALLEL workflow with no dependency on the release job. Restrict that trigger and
 the release path silently loses the check. That is si#8 committed a second time, one level up, and an
 enumeration of filenames is exactly the shape that lets it happen again in a file nobody has written yet.
-So the rule is: any job that runs `test all` runs the gate. Asserted the way #3's `fetch-depth` rule is,
+So the rule is: any job that runs the suite runs the gate. Asserted the way #3's `fetch-depth` rule is,
 over `*.y*ml` in the workflows directory, because the failure is invisible in a diff - a new workflow
 gets no gate, and no gate is the default.
+
+AND THE RULE NEEDS A SECOND GUARD, which si#156 supplied by breaking it. "Any job that runs the suite"
+was written as the single string `./simplon.sh test all`; that ticket renamed the pytest leaf to `test
+suite` and `ci.yml` with it, and every assertion here stayed green while the rule matched no job in that
+file at all. The vacuity test was asking whether both pipelines carry the GATE - which a rename does not
+touch - rather than whether both still match the PREDICATE. Both questions are asked now.
 """
 import configparser
 import tomllib
@@ -51,10 +57,21 @@ CONFIG = ROOT / "mypy.ini"
 COORDINATE = "test:typecheck-python"
 GATE = "./simplon.sh test typecheck-python"
 
-#: The command whose presence in a job means that job VERIFIES this tree - and therefore owes the gate.
+#: The commands whose presence in a job means that job VERIFIES this tree - and therefore owes the gate.
 #: A job that only builds (release.yml's `docs`) is not covered, deliberately: it makes no claim about
 #: whether the code is correct, only about whether the site renders.
-VERIFIES = "./simplon.sh test all"
+#:
+#: TWO SPELLINGS since si#156, and the second one is why this stopped being a single string. That ticket
+#: renamed the pytest leaf to `test suite` and gave the name `test all` to an aggregate over it and the
+#: release-notes guard; `ci.yml` now says `test suite` and `release.yml` still says `test all`. Measured
+#: on the branch that made the change: with only the old string here, every assertion below stayed GREEN
+#: while the rule silently stopped covering `ci.yml` at all - a rule over a predicate goes green when
+#: nothing matches the predicate, which is the failure mode the vacuity test underneath was written for
+#: and which it did not catch, because it asked about the GATE rather than about the predicate.
+#:
+#: A set rather than a derivation (expanding each command through the manifest plan) on purpose: what is
+#: being held is that a job SAYS it verified this tree, and both spellings are things a workflow says.
+VERIFIES = ("./simplon.sh test all", "./simplon.sh test suite")
 
 
 def _config() -> configparser.ConfigParser:
@@ -107,7 +124,7 @@ def test_everyWorkflowThatVerifiesThisTreeAlsoRunsTheGate() -> None:
     # after this one - owes the same verdict. A named-file version of this test passed while `release.yml`
     # published wheels nothing had typechecked.
     ungated = [f"{file}:{job}" for file, job, runs in _jobs()
-               if VERIFIES in runs and GATE not in runs]
+               if any(cmd in runs for cmd in VERIFIES) and GATE not in runs]
 
     assert ungated == [], (
         f"these jobs run the suite but not the type gate: {ungated}; a pipeline that is green because a "
@@ -123,6 +140,19 @@ def test_bothPipelinesAreCovered_soTheRuleIsNotVacuous() -> None:
     assert {"ci.yml", "release.yml"} <= gated
 
 
+def test_bothPipelinesMatchThePredicateItself_soTheRuleAboveHasSomethingToRuleOn() -> None:
+    # The half the test above does NOT hold, and si#156 is the ticket that found it out: it asks whether
+    # the two files carry the GATE, which stays true no matter what happens to VERIFIES. Rename the
+    # command a job runs the suite with and the rule stops matching that job - green, covering nothing,
+    # and the next workflow written against the new name inherits no gate at all. This asks the other
+    # question: each pipeline must still SAY it verified this tree, in a spelling VERIFIES knows.
+    verifying = {file for file, _, runs in _jobs() if any(cmd in runs for cmd in VERIFIES)}
+
+    assert {"ci.yml", "release.yml"} <= verifying, (
+        f"these pipelines match no VERIFIES spelling: {{'ci.yml', 'release.yml'}} - {verifying}; the rule "
+        f"above is now vacuous for them, so add the new spelling to VERIFIES rather than leaving it")
+
+
 def test_noWorkflowReachesForTheCheckerItself() -> None:
     # The gate must be the same command a developer runs. A bare `mypy` step would typecheck a tree nobody
     # can reproduce by hand, with roots and rules the workflow chose rather than mypy.ini.
@@ -136,7 +166,7 @@ def test_theWorkflowsStillBuildAndTestAroundTheGate() -> None:
     # the gate is an addition, not a replacement: a run that typechecks and stops proves less than before
     everything = [run for _, _, runs in _jobs() for run in runs]
 
-    assert VERIFIES in everything
+    assert any(cmd in everything for cmd in VERIFIES)
     assert "./simplon.sh build wheel" in everything
 
 
