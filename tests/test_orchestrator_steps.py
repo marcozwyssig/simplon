@@ -1042,3 +1042,127 @@ def test_a_step_without_help_keeps_its_bare_entry_line(capsys):
     run_headless(Pipeline("doctor", [_step("docker engine", 0)]), verbose=False)
     # Assert
     assert "docker engine - " not in capsys.readouterr().out
+
+
+# --- si#144 mechanism A: a running step's backlog -----------------------------------------------------
+
+def test_a_running_step_shows_the_lines_it_has_already_produced(monkeypatch):
+    """`Outcome.output` is only built after the action RETURNS, so a row highlighted while its step was
+    running showed `(running…)` however much the step had printed, and the lines that went by while
+    another row was selected were gone (si#144, mechanism A). si#148's follow mode moved the cursor to
+    the running step, which covers the operator who touches nothing and leaves this one exactly as it
+    was for the operator who navigates."""
+    # arrange: a fake run_stream that asks the step what a pane could render, from INSIDE the run
+    from simplon.orchestrator import steps as steps_module
+
+    seen: dict[str, str] = {}
+
+    def fake_run_stream(argv, on_line, **kwargs):
+        on_line("compiling")
+        on_line("linking")
+        seen["mid_run"] = step.shown_output
+        return 0
+
+    monkeypatch.setattr(steps_module, "run_stream", fake_run_stream)
+    step = argv_step("build", ["make"], command="build.compile")
+
+    # act
+    step.run()
+
+    # assert: the pane could have rendered both lines before the process exited
+    assert seen["mid_run"] == "compiling\nlinking"
+    assert step.shown_output == "compiling\nlinking"
+
+
+def test_the_backlog_is_the_list_the_step_already_fills_and_not_a_second_copy(monkeypatch):
+    """One buffer, handed over by reference. A `Step.live` that argv_step copied into would be the
+    second in-memory copy si#144 rules out, and it would be a copy that goes stale mid-run."""
+    # arrange
+    from simplon.orchestrator import steps as steps_module
+
+    monkeypatch.setattr(steps_module, "run_stream",
+                        lambda argv, on_line, **kw: (on_line("one"), 0)[1])
+    step = argv_step("build", ["make"], command="build.compile")
+
+    # act
+    step.run()
+
+    # assert: what the action collected IS what the step exposes
+    assert step.live == ["one"]
+
+
+def test_a_finished_step_shows_its_outcome_rather_than_the_backlog(monkeypatch):
+    """An action that returns different text than it streamed - a summary, a captured stderr - means
+    that text, so `output` wins once it is set."""
+    # arrange
+    step = Step(label="quick", action=lambda: Outcome(rc=0, output="the verdict"), live=["stale"])
+
+    # act
+    step.run()
+
+    # assert
+    assert step.shown_output == "the verdict"
+
+
+def test_a_re_run_step_does_not_show_the_previous_runs_lines(monkeypatch):
+    # arrange: a fake run_stream whose output differs per run
+    from simplon.orchestrator import steps as steps_module
+
+    runs: list[int] = []
+
+    def fake_run_stream(argv, on_line, **kwargs):
+        on_line(f"run {len(runs)}")
+        runs.append(1)
+        return 0
+
+    monkeypatch.setattr(steps_module, "run_stream", fake_run_stream)
+    step = argv_step("build", ["make"], command="build.compile")
+
+    # act
+    step.run()
+    step.run()
+
+    # assert: the second run's pane shows the second run
+    assert step.shown_output == "run 1"
+    assert step.live == ["run 1"]
+
+
+def test_a_real_child_s_lines_are_readable_while_it_is_still_running(tmp_path):
+    """The same backlog, through the REAL chain: a real subprocess, the real `run_stream`, the real
+    recorder. The tests above stub `run_stream`, so they prove the model and not the plumbing - and the
+    plumbing is where si#144 lived.
+
+    The child waits for a file rather than sleeping a fixed time: what is asserted is that the lines are
+    readable BEFORE the process exits, and a sleep would make that a race against this machine's load."""
+    # arrange: a child that prints two lines, then blocks until the test lets it finish
+    import threading
+    import time
+
+    release = tmp_path / "release"
+    step = argv_step("build", ["sh", "-c",
+                               f"printf 'compiling one\\ncompiling two\\n'; "
+                               f"while [ ! -f {release} ]; do sleep 0.02; done; echo done"],
+                     command="build.compile")
+    mid_run: dict[str, str] = {}
+
+    def watch() -> None:
+        # A DEADLINE, not a bare spin: with the recorder removed this loop would never see two lines,
+        # the child would never be released and the assertion would hang instead of failing. A test that
+        # hangs when the property it protects is broken is not an assertion.
+        deadline = time.monotonic() + 10
+        while len(step.live) < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        mid_run["output"] = step.shown_output
+        release.write_text("go", encoding="utf-8")
+
+    watcher = threading.Thread(target=watch, daemon=True)
+    watcher.start()
+
+    # act
+    outcome = step.run()
+    watcher.join(10)
+
+    # assert: readable while it ran, and the finished output is still the whole of it
+    assert mid_run["output"] == "compiling one\ncompiling two"
+    assert outcome.rc == 0
+    assert step.shown_output == "compiling one\ncompiling two\ndone"

@@ -414,7 +414,11 @@ class _StepApp(App):
         # where it does that work instead of leaving eleven unchecked attribute reads behind a property.
         step = row.step
         if step is not None:
-            body = step.output.rstrip("\n") if step.output else {
+            # `shown_output`, not `output`: a step that is still running has its lines in `Step.live`
+            # and its `output` empty until the action returns (si#144). What `c` and `s` hand over is
+            # therefore the backlog too, which is the point of this being the ONE source.
+            shown = step.shown_output
+            body = shown.rstrip("\n") if shown else {
                 StepState.RUNNING: "(running…)",
                 StepState.SKIPPED: f"(skipped: {self._skipped_because.get(id(step), 'a previous step failed')})",
                 StepState.PENDING: "(pending)",
@@ -477,8 +481,9 @@ class _StepApp(App):
         step = row.step
         if step is not None:
             rlog.write(f"{self._step_header(step)}\n")
-            if step.output:
-                rlog.write(step.output.rstrip("\n"))
+            shown = step.shown_output       # the backlog while it runs, the outcome once it has (si#144)
+            if shown:
+                rlog.write(shown.rstrip("\n"))
             elif step.state == StepState.RUNNING:
                 rlog.write("(running…)")
             elif step.state == StepState.SKIPPED:

@@ -105,6 +105,29 @@ class Step:
     help: str = ""
     state: StepState = StepState.PENDING
     output: str = ""
+    # The segments this step has produced SO FAR: THE SAME LIST the streaming action collects into,
+    # handed over by reference when the Step is built (see `argv_step`). Not a copy kept beside it for
+    # the pane, which is what si#144 rules out - a copy is a second in-memory version of the step log,
+    # and it goes stale the moment the action appends to its own.
+    #
+    # A hand-built `stream=` action that is not handed its list leaves this empty, and the pane then
+    # says `(running…)` exactly as it did before - a degradation, not a wrong answer. Recording inside
+    # `Step.run` instead, by wrapping the `Emit`, was built and rolled back: it makes `argv_step`'s
+    # action correct only when it is reached through `run`, and calling it directly - which two of this
+    # kernel's own tests do - then writes an EMPTY step log and says nothing.
+    #
+    # It exists because `Outcome.output` is only built after the action RETURNS (si#144, mechanism A): a
+    # row highlighted while its step was running showed `(running…)` however much the step had printed,
+    # and the lines that went by while another row was selected were gone. si#148's follow mode moved
+    # the cursor to the running step, which covers the operator who touches nothing and leaves this
+    # exactly as it was for the operator who navigates.
+    #
+    # The alternative si#144 names is to write `steplog` incrementally and let the pane tail the file.
+    # Rejected: `steplog.write` returns None with no product context registered and on an unwritable
+    # checkout, so the backlog would be missing in exactly the degraded cases - and the pane would take
+    # file I/O into its render path to get it. An `action` step fills this with nothing, which is the
+    # truth: it captures rather than streams, and has no output before it returns.
+    live: list[str] = field(default_factory=list)
     rc: int | None = None
     # When this step was entered and when it was left, on the MONOTONIC clock (#52). Wall time, because
     # wall time is what an operator waits through and what the tools themselves report - `collected
@@ -118,6 +141,14 @@ class Step:
     # that cannot tell "nothing to do" from "done and fast".
     started_at: float | None = None
     ended_at: float | None = None
+
+    @property
+    def shown_output(self) -> str:
+        """What a reader should see: the finished output, or the segments produced so far while it runs.
+
+        `output` wins once it is set, because it is the action's own last word - an action that returns
+        different text than it streamed (a summary, a captured stderr) means that text."""
+        return self.output or "\n".join(self.live)
 
     @property
     def duration(self) -> float | None:
@@ -934,8 +965,12 @@ def argv_step(label: str, argv: list[str], command: str | None = None, help: str
     the interesting one."""
     identity = command if command is not None else shlex.join(argv)
 
+    # The collector, built HERE rather than inside `stream`, so the Step below can be handed the SAME
+    # list and a pane can read what this step has produced while it is still producing it (si#144).
+    lines: list[str] = []
+
     def stream(emit: Emit) -> Outcome:
-        lines: list[str] = []
+        lines.clear()      # a Step can be run twice; the pane must not show the previous run's output
 
         def on_line(line: str) -> None:
             lines.append(line)
@@ -945,7 +980,7 @@ def argv_step(label: str, argv: list[str], command: str | None = None, help: str
         output = "\n".join(lines)
         steplog.write(identity, output)
         return Outcome(rc=rc, output=output)
-    return Step(label=label, stream=stream, command=identity, help=help)
+    return Step(label=label, stream=stream, live=lines, command=identity, help=help)
 
 
 def _print_captured(output: str) -> None:
