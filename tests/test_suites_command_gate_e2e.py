@@ -216,14 +216,13 @@ def test_a_tree_that_does_not_compile_stops_at_the_preamble_and_ctest_is_never_a
     assert _binaries(tmp_path) == stale, "the failed compile replaced the binary it was supposed to fail on"
 
 
-@needs_docker
 def test_the_gate_hands_the_toolchain_body_the_command_path_it_is_running(monkeypatch, tmp_path):
     """WHAT `GateContext` IS FOR, measured through the one thing `run_toolchain` reads off a context.
 
     Its refusals are worded with `ctx.command_path`, so a stand-in carrying the wrong path - or a
     hardcoded `toolchain:run` - would say the wrong thing about which manifest entry to edit. The image
     is dropped from the command's `with:` here, which is the refusal that quotes it, and nothing reaches
-    docker at all.
+    docker at all - which is why this one carries no `needs_docker`, unlike the three above it.
     """
     # arrange: a command whose `with:` names no image
     _product(monkeypatch, tmp_path, PASSES)

@@ -491,6 +491,20 @@ class GateContext:
 
     Dunder lookups fall through to the ordinary `AttributeError`, because `copy`, `pickle` and `repr`
     probe for them and a refusal there would be about none of this.
+
+    AND IT IS STRICTER THAN AN `AttributeError`, WHICH IS THE POINT AND HAS TO BE SAID. `getattr(ctx, x,
+    default)` and `hasattr(ctx, x)` swallow `AttributeError` and nothing else, so the defensive idiom a
+    Click-shaped object invites - `getattr(ctx, "resilient_parsing", False)` - gets the refusal rather
+    than the fallback. That is deliberate: a fallback here would be a body quietly running under an
+    invented answer, which is the outcome this class exists to prevent. It is also the only thing a
+    reader could reasonably expect to work and does not.
+
+    THE PARAMETER IS RECOGNISED BY NAME, NOT BY TYPE (`signatures.CONTEXT_NAMES`), so a body whose FIRST
+    parameter is ordinary payload called `c`, `ctx` or `context` receives one of these instead of its
+    value. That is not a hazard this class introduces: `simplon.cli._bound` drops the same parameter from
+    the same names and lets Typer put a real Click context there, so such a body was already being handed
+    a context on the command line. The gate path now behaves the way the CLI path does, which is what
+    `_command` claims about itself.
     """
 
     command_path: str
@@ -604,6 +618,13 @@ def _runs_gates(body: object) -> bool:
     `accept()` itself loops just as happily, and did so before this function existed - the "takes a CLI
     context" refusal never looked at it either, because such a body takes no context. That is a separate
     defect with a separate shape and it is recorded rather than patched in here.
+
+    An alias is caught and a second IMPORT would not be: a product re-exporting `gate` from a module of
+    its own hands `resolve_ref` the same function object, so identity holds where a coordinate string
+    would have missed it; but `simplon.tasks.testrun` imported a second time under another name - a stray
+    `sys.path` entry making a bare `import testrun` resolve - would make two module objects and two
+    `gate`s. Nothing in this kernel imports it that way (no relative imports, no path insertion), which
+    is why this is a caveat and not a second mechanism.
     """
     return body is gate or body is accept_cmd
 
