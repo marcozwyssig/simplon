@@ -294,6 +294,25 @@ where its results landed, and `simplon init` defaults rather than decrees - toge
 artefact-level proof each of the eight owes. Two of its own claims were disproved by the lanes that
 built against it and are corrected in place, which is the document working rather than failing.
 
+### The guard over the results cutoff stopped depending on the clock (si#86)
+
+`_started()` - the instant a gate hands its merge, floored to the whole second - is what keeps si#70's
+rule honest: a report takes only what this run wrote. The unit test guarding that rule MEASURED the wall
+clock instead of setting it, comparing an instant this process read with the instant the kernel stamps a
+file with. Those are two reads of CLOCK_REALTIME taken in different places, and they are not ordered
+with respect to each other: measured at up to 7047 ns apart, the wrong way round, across a CPU migration
+between them. The guard now stamps both files and picks the cutoff between them, and the floor that
+protects the real callers is guarded where it lives.
+
+Measured, and it refutes the ticket's own suspicion: one- or two-second mtime granularity would have
+failed that assertion on every attempt rather than on one run in four, so it was never the cause.
+
+The same shape was found and removed one module over, in si#133's own tests: a fixture written before
+the run started is one second boundary away from being read as the previous run's, so it is written by
+the run now, the way the other twenty-two tests in that file already do it.
+
+**Nothing to do.** No behaviour changed - the only source change is a docstring.
+
 ### Before you bump
 
 **The scaffolder no longer empties your manifest of its comments** (si#110). `support toolchain` read
