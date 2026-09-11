@@ -29,6 +29,8 @@ from simplon import context
 from simplon.context import ProductContext
 from simplon.tasks import gitops, release
 
+import sitepages
+
 
 # --- the pure decision -------------------------------------------------------------------------------
 
@@ -532,7 +534,7 @@ _README = Path(__file__).resolve().parents[1] / "README.md"
 def _pages() -> dict[str, str]:
     """Every page under `site/content/`, plus the README.
 
-    `using/commands.md` is generated and gitignored, so it is present here and absent in a fresh
+    `with-what/commands.md` is generated and gitignored, so it is present here and absent in a fresh
     checkout; the glob simply takes what is there, which is why nothing below asserts a page COUNT.
     """
     pages = {str(p.relative_to(_SITE)): p.read_text(encoding="utf-8") for p in _SITE.rglob("*.md")}
@@ -543,7 +545,7 @@ def _pages() -> dict[str, str]:
 def test_the_site_carries_the_four_things_a_reader_has_to_be_told_about_a_release():
     # arrange: the acceptance list of #32, and the page is part of the deliverable rather than a
     # follow-up - a command whose reasoning lives only in a docstring is a command nobody knows to type
-    page = (_SITE / "using" / "releasing.md").read_text(encoding="utf-8")
+    page = sitepages.chapter("releasing.md").read_text(encoding="utf-8")
 
     # act / assert: the tag IS the version, and there is no number to edit
     assert "no version to edit first" in page
@@ -562,7 +564,7 @@ def test_the_page_states_the_price_of_the_kernel_not_adding_the_v():
     # green command and no package. Saying "the kernel does not add the v" is not saying that; the
     # CONSEQUENCE is the part a reader needs, and claiming it was documented when only the rule was is
     # how a trap gets shipped with a success message on top.
-    page = (_SITE / "using" / "releasing.md").read_text(encoding="utf-8")
+    page = sitepages.chapter("releasing.md").read_text(encoding="utf-8")
 
     # act / assert
     assert "release tag 0.1.14" in page
@@ -572,7 +574,7 @@ def test_the_page_states_the_price_of_the_kernel_not_adding_the_v():
 def test_the_page_covers_the_tag_a_plain_git_pull_brings_down():
     # arrange: the situation the page's own advice leads into - pull before releasing, and a rival's tag
     # is suddenly a local tag
-    page = (_SITE / "using" / "releasing.md").read_text(encoding="utf-8")
+    page = sitepages.chapter("releasing.md").read_text(encoding="utf-8")
 
     # act / assert
     assert "git pull` fetches tags" in page
@@ -581,7 +583,7 @@ def test_the_page_covers_the_tag_a_plain_git_pull_brings_down():
 
 def test_the_page_says_the_escape_hatch_is_reported_by_the_workflow():
     # arrange: an exception nobody ever hears about is not a loud one
-    page = (_SITE / "using" / "releasing.md").read_text(encoding="utf-8")
+    page = sitepages.chapter("releasing.md").read_text(encoding="utf-8")
 
     # act / assert
     assert "no branch filter" in page
@@ -628,8 +630,8 @@ def test_no_code_block_tells_a_reader_to_type_git_push_tags():
 def test_the_release_page_is_reachable_rather_than_only_present():
     # arrange: a page nothing links to is a page nobody reads, and Hugo renders an unlinked page just as
     # happily as a linked one
-    index = (_SITE / "using" / "_index.md").read_text(encoding="utf-8")
-    examples = (_SITE / "using" / "examples.md").read_text(encoding="utf-8")
+    index = sitepages.index(sitepages.section_of("releasing.md")).read_text(encoding="utf-8")
+    examples = sitepages.chapter("examples.md").read_text(encoding="utf-8")
 
     # act / assert
     assert "releasing/" in index

@@ -1,6 +1,8 @@
 ---
 title: "A Java product, end to end"
-weight: 6
+weight: 3
+aliases:
+  - "/using/case-java/"
 ---
 
 The [Python chapter](../case-python/) walks one delivery loop with the kernel's own language underneath
@@ -123,7 +125,7 @@ native services` and no mention of permissions anywhere in its output.
 
 A bind mount under the product root, created by the orchestrator with the caller's own uid, is the whole
 fix. This is the same rule the kernel writes down for its own containers -
-[a container that writes into a mount runs as `--user`](../../building/rules/#a-container-that-writes-into-a-mount-runs-as---user) -
+[a container that writes into a mount runs as `--user`](../../with-what/rules/#a-container-that-writes-into-a-mount-runs-as---user) -
 one step further out, where the mount is a cache rather than an output.
 {{< /callout >}}
 
@@ -184,7 +186,7 @@ a whole phase.
 This is the seam the chapter exists for, so it is the longest section - and even so, most of it is
 elsewhere. What a level is, which one clears the results directory, how a non-pytest runner attaches and
 what the merge step will and will not do to your files are all in
-[Test levels](../../building/test-levels/#suite-against-impl---and-this-is-how-you-attach-gradle).
+[Test levels](../../with-what/test-levels/#suite-against-impl---and-this-is-how-you-attach-gradle).
 
 What belongs **here** is the whole taxonomy of a Java product, which fits in nine lines:
 
@@ -238,7 +240,7 @@ result with a parent suite means editing an Allure result JSON; a JUnit XML is n
 the copy branch untouched and reaches the report under whatever suite its own format names
 (`demo.CalculatorTest`). The line says so in as many words. It used to say `per-module results merged
 (parentSuite=Java)` for this exact case, which was a sentence about an intention rather than a result -
-[what the merge reports](../../building/test-levels/#what-the-merge-reports-and-what-it-will-not-do-to-your-files)
+[what the merge reports](../../with-what/test-levels/#what-the-merge-reports-and-what-it-will-not-do-to-your-files)
 is where that was taken apart.
 
 So: **`parent_suite:` is for merged Allure results, not for foreign formats.** Nothing warns you, because
@@ -259,7 +261,7 @@ CalculatorTest > multiplies() FAILED
 
 Read what the kernel does **not** say there. It does not say the suite ran and reported failures, because
 it did not run one - it called a Python callable and got a number. The sentence it uses instead is the
-`impl:` gate's own, and [why it is that sentence](../../building/test-levels/#what-the-kernel-says-about-your-runner-and-what-only-you-can-say)
+`impl:` gate's own, and [why it is that sentence](../../with-what/test-levels/#what-the-kernel-says-about-your-runner-and-what-only-you-can-say)
 is a measured story on the test levels page.
 
 ### A build that never reached the tests
@@ -282,7 +284,7 @@ return rc
 
 The variable is set for every gate and holds a path, so its presence says nothing - what carries the
 claim is the file. [The seam, and why the name stays as it
-is](../../building/test-levels/#the-variable-is-a-path-and-it-is-always-set), on the test levels page.
+is](../../with-what/test-levels/#the-variable-is-a-path-and-it-is-always-set), on the test levels page.
 
 With a deliberate type error in `src/main/java/demo/Broken.java`:
 
@@ -342,7 +344,7 @@ $ ./javademo.sh release tag v0.1.0
 ```
 
 `git tag` afterwards lists nothing. What the guard checks, and what it deliberately does not, is in
-[Cutting a release](../releasing/).
+[Cutting a release](../../how/releasing/).
 
 **What is different for a Java product is what gets published, not how.** A wheel goes to PyPI because
 `pyproject.toml` says so; a jar goes wherever your build tells it to. The kernel's two publishing tasks -
@@ -370,7 +372,7 @@ it - and it goes through the same pin gate as the build image.
 What does not exist is everything past that host. `deploy` is one of the two ribs the catalogue draws
 empty on purpose: the group name, the env-first gate, and no tasks at all.
 [simplon#5](https://github.com/marcozwyssig/simplon/issues/5) is where that decision is open, and
-[the two empty ribs](../../building/phases/#the-two-empty-ribs) is why leaving them empty is the expensive
+[the two empty ribs](../../with-what/phases/#the-two-empty-ribs) is why leaving them empty is the expensive
 choice rather than the lazy one.
 
 ## docs
@@ -422,9 +424,9 @@ Each of these is told once, elsewhere, and told properly:
 
 - the same loop with a Python product underneath it - [A Python product, end to end](../case-python/)
 - what a gate is, how a level is declared, and how a non-pytest runner attaches -
-  [Test levels](../../building/test-levels/)
+  [Test levels](../../with-what/test-levels/)
 - the five outcomes a gate can report, and which two of them are statements about the product -
   [the Python chapter's `test` section](../case-python/#test)
-- why the tag is the version and what the release guard refuses - [Cutting a release](../releasing/)
-- why `deploy` and `monitor` are empty - [The five phases](../../building/phases/)
-- getting a product to exist in the first place - [Getting started](../getting-started/)
+- why the tag is the version and what the release guard refuses - [Cutting a release](../../how/releasing/)
+- why `deploy` and `monitor` are empty - [The five phases](../../with-what/phases/)
+- getting a product to exist in the first place - [Getting started](../../how/getting-started/)

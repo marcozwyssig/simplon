@@ -1,6 +1,8 @@
 ---
 title: "A Python product, end to end"
-weight: 5
+weight: 2
+aliases:
+  - "/using/case-python/"
 ---
 
 Everything else on this half of the site shows one part at a time: how to get a command line, what to
@@ -79,8 +81,8 @@ hand-written, with the reason, is accounted for. That distinction is the differe
 do" and "nothing to say", and it is the defect this kernel hunts.
 
 What each of those files contains, and how to declare them, is not repeated here:
-[`workflows:` in the manifest](../../building/manifest/#workflows---the-ci-files-generated-from-this-same-manifest)
-and [Make TAB work](../getting-started/#make-tab-work).
+[`workflows:` in the manifest](../../how/manifest/#workflows---the-ci-files-generated-from-this-same-manifest)
+and [Make TAB work](../../how/getting-started/#make-tab-work).
 
 ## build
 
@@ -110,7 +112,7 @@ build carries its own provenance instead of being told what it is. Both halves o
 
 Both products place their levels the same way, and the levels differ by data rather than by code: what
 a level *is*, which one clears the results and how a non-pytest runner attaches are all in
-[Test levels](../../building/test-levels/). agile-cockpit is the interesting one to look at, because
+[Test levels](../../with-what/test-levels/). agile-cockpit is the interesting one to look at, because
 its `system` level runs against a real GitLab instance and therefore runs nightly rather than on push -
 which is a statement its manifest makes, not one the kernel imposes.
 
@@ -158,7 +160,7 @@ The repair is not a bigger image, and the reason is the same sentence as the par
 prebuilt image can carry a product's wheels.** So the profile now installs its two tools itself, into a
 `PYTHONUSERBASE` inside the bind mount - the one directory in the container the caller provably owns,
 since a named docker volume is created root-owned and
-[a container that writes into a mount runs as `--user`](../../building/rules/#a-container-that-writes-into-a-mount-runs-as---user).
+[a container that writes into a mount runs as `--user`](../../with-what/rules/#a-container-that-writes-into-a-mount-runs-as---user).
 Three commands instead of two, and `deps` is the only one that needs a network:
 
 ```text
@@ -210,7 +212,7 @@ commands have disjoint jobs.
 ## release
 
 The tag is the version, the push is the claim, and nothing local decides either. That argument, the
-guard, and what the guard deliberately does *not* check are in [Cutting a release](../releasing/) and
+guard, and what the guard deliberately does *not* check are in [Cutting a release](../../how/releasing/) and
 are not repeated here.
 
 What this chapter can add is that the guard was run against a live branch while the chapter was being
@@ -242,7 +244,7 @@ What does not exist is everything past that host. `deploy` is one of the two rib
 empty on purpose: it carries the group name, the env-first gate and **no tasks at all**. Proxmox,
 Portainer and a cloud account are not implemented, not stubbed and not planned in code -
 [simplon#5](https://github.com/marcozwyssig/simplon/issues/5) is where the decision is open, and
-[the two empty ribs](../../building/phases/#the-two-empty-ribs) is why leaving them empty is the
+[the two empty ribs](../../with-what/phases/#the-two-empty-ribs) is why leaving them empty is the
 expensive choice rather than the lazy one.
 
 So: a Python product can be built, tested, released and documented by this kernel today, and it can be
@@ -253,7 +255,7 @@ deployed to the machine in front of you. Beyond that, you write it yourself.
 ```text
 $ ./simplon.sh build docs
 [07:15:35] ==> build.reference - Write the product's command reference as Markdown, read off its BUILT command line.
-  [07:15:36]  OK command reference -> site/content/using/commands.md
+  [07:15:36]  OK command reference -> site/content/with-what/commands.md
 [07:15:36] ==> build.site - Build the product's documentation website with Hugo, in Docker (HTML only).
   [07:15:36] ==> fetching the pinned theme module github.com/imfing/hextra@v0.12.3
   [07:15:38] ==> building the site with hugo in hugomods/hugo:exts-0.148.2: site/ -> build/website/
@@ -292,8 +294,8 @@ work.
 Each of these is told once, elsewhere, and told properly:
 
 - what a gate is, how a level is declared, and how a non-pytest runner attaches -
-  [Test levels](../../building/test-levels/)
-- why the tag is the version and what the release guard refuses - [Cutting a release](../releasing/)
+  [Test levels](../../with-what/test-levels/)
+- why the tag is the version and what the release guard refuses - [Cutting a release](../../how/releasing/)
 - the jobs of the day, taken one at a time rather than as a loop - [Worked examples](../examples/)
-- why `deploy` and `monitor` are empty - [The five phases](../../building/phases/)
-- getting a product to exist in the first place - [Getting started](../getting-started/)
+- why `deploy` and `monitor` are empty - [The five phases](../../with-what/phases/)
+- getting a product to exist in the first place - [Getting started](../../how/getting-started/)

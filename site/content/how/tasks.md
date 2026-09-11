@@ -1,6 +1,8 @@
 ---
 title: "Writing a task"
 weight: 4
+aliases:
+  - "/building/tasks/"
 ---
 
 A task body is a plain Python function. Not a subclass, not a decorated callable, not an object with a
@@ -33,7 +35,7 @@ the product's.
 
 Once a body is in the kernel, the next question is what it may lean on: not every module in the
 package is yours to import, and not every module you may import is where you would guess. [What you may
-import](../surface/) draws that line and says what happens when a module moves.
+import](../../with-what/surface/) draws that line and says what happens when a module moves.
 
 There is a corollary, and it is the discipline that keeps the catalogue honest: a catalogue task is a
 promise to three products, not a convenience for one. A body that reaches for a directory it merely
@@ -133,7 +135,7 @@ log.die("this cannot continue")    # stderr, then SystemExit
 The `warn` / `error` line is the one that matters, and it is not a matter of tone. `warn` goes to stdout
 and is for the merely notable; `error` goes to stderr and means something failed. Anyone measuring a run
 by its exit code - which is every CI system - learns nothing from a warning. There is [a rule about
-exactly this](../rules/#a-missing-tool-is-not-a-failed-tool), and a warning is what a step reaches for
+exactly this](../../with-what/rules/#a-missing-tool-is-not-a-failed-tool), and a warning is what a step reaches for
 when it has not decided whether it failed.
 
 ## Report the outcome, do not raise it

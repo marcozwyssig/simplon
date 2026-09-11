@@ -1,6 +1,8 @@
 ---
 title: "What you may import"
-weight: 5
+weight: 2
+aliases:
+  - "/building/surface/"
 ---
 
 The kernel has **two** public surfaces, and until recently nothing said which was which.
@@ -165,7 +167,7 @@ promise names), with a test that turns red once a version past it is built.
 gone; an import of one is a `ModuleNotFoundError`. The gate is what ended it: the test went red on the
 release run, after the tag and before the publish, so v0.5.0 was cut, published nothing, and the period
 closed the same afternoon rather than lasting a fifth release. See
-[Releases](../../using/releases/#050) for what moved where.
+[Releases](../../when/releases/#050) for what moved where.
 
 The lesson worth carrying to the next move is about the measurement, not the files. The record said six
 import lines in three repositories; re-measured on the day, it was three lines in one — two of the

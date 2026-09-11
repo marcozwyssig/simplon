@@ -1,6 +1,8 @@
 ---
 title: "Cutting a release"
-weight: 4
+weight: 5
+aliases:
+  - "/using/releasing/"
 ---
 
 A release is one command:
@@ -257,7 +259,7 @@ because the version cannot know what you are about to type. This heading is the 
 Re-measure `MOVED_CONSUMERS` before you delete anything. "Nobody uses it any more" is a claim about
 other people's repositories, and the point of removing a tombstone is that the next import fails loudly
 — which is the wrong way to find out you were wrong. And delete the *promise* with the module: the
-migration table on [What you may import](../../building/surface/) describes something that no longer
+migration table on [What you may import](../../with-what/surface/) describes something that no longer
 exists the moment the files go.
 {{< /callout >}}
 
@@ -266,7 +268,7 @@ exists the moment the files go.
 A release nobody wrote up is a release that happened silently, and nothing in a repository notices by
 itself: the tag is there, the wheel is there, and the page simply does not mention it. `test:release-notes`
 is the gate that notices. Declare where the notes live and from when they count, in a
-[`releases:` section](../../building/manifest/#releases---where-the-notes-live-and-from-when-they-are-complete),
+[`releases:` section](../manifest/#releases---where-the-notes-live-and-from-when-they-are-complete),
 place the command under `test`, and run it in CI beside the suite.
 
 It reads nothing of your prose. What it holds you to is that each release at or above your floor has a

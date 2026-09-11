@@ -1,6 +1,8 @@
 ---
 title: "Environments"
-weight: 7
+weight: 4
+aliases:
+  - "/building/environments/"
 ---
 
 Some commands are meaningless without a target, and some are meaningless with one. Simplon makes that a
@@ -115,4 +117,4 @@ $ ./myctl.sh support environments
 Note that this is a command the product declares, and the catalogue does not place it for everybody.
 `support:environments` reads an `environments:` section; placed by default, it would be a command that
 dies on its first line in every product that has none. That is the same rule as `docs:site` and
-`test:gate` - see [the manifest chapter](../manifest/#product-data-sections).
+`test:gate` - see [the manifest chapter](../../how/manifest/#product-data-sections).

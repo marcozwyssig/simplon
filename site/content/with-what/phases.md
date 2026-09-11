@@ -1,6 +1,8 @@
 ---
 title: "The five phases"
-weight: 2
+weight: 1
+aliases:
+  - "/building/phases/"
 ---
 
 Every Simplon product hangs its commands off the same six top-level groups, and it cannot invent a
@@ -9,7 +11,7 @@ seventh. Five of them are the **phases of the delivery loop** - `build`, `test`,
 
 That is the corset the rest of this half of the site is written inside. The manifest chapter describes a
 file whose top level is these groups; the environments chapter is about a distinction that exists only
-between them; the placement rule in [Task and command](../task-and-command/) is a rule about their
+between them; the placement rule in [Task and command](../../how/task-and-command/) is a rule about their
 names. This chapter is the one that says what they are.
 
 ## The five, and the one beside them
@@ -86,7 +88,7 @@ handed *along* it. It is the bench the other five stand on.
 Because a product cannot declare a group the platform does not already declare - and the refusal is not
 a rule layered over the merge, it **is** the merge. A product's tree is merged onto the platform's, so a
 path the platform does not declare has nowhere to land. That mechanism, and the load error it produces,
-are set out in [What Simplon is](../../using/why/#the-cicd-process-is-a-closed-vocabulary) and are not
+are set out in [What Simplon is](../../why/why/#the-cicd-process-is-a-closed-vocabulary) and are not
 repeated here.
 
 What follows from it is the thing this chapter is about: `test` means *verify* in every product built on
@@ -122,7 +124,7 @@ The declaration, the matrix of environments, the dispatch's four steps and the b
 ## What the catalogue offers today
 
 A coordinate reaches a phase two ways, and [Task and
-command](../task-and-command/#placement-or-family-which-half-of-a-coordinate-says-where-it-goes) is
+command](../../how/task-and-command/#placement-or-family-which-half-of-a-coordinate-says-where-it-goes) is
 where that rule lives:
 
 - a coordinate whose namespace **is** a group name carries a **placement** - `build:image` sits under
@@ -154,7 +156,7 @@ out.
 
 **What each coordinate does is not written out here.** The sections below name them and nothing more,
 and the sentence that says what one is for lives in the [command
-reference](../../using/commands/) - generated on every build from the catalogue's own `help:`, for
+reference](../commands/) - generated on every build from the catalogue's own `help:`, for
 every coordinate there is. This page used to paraphrase those sentences beside the names, and by the time anybody
 compared them several had quietly stopped saying what the catalogue says: `docs:render` had grown the
 word *architecture*, `test:typecheck-python` had lost *(no Docker, no lab)*, `vcs:submodules` had lost
@@ -164,7 +166,7 @@ fix is not to guard the copy but not to keep one.
 
 Separately from all of this, a catalogue task is either **offered** - a product declares a command for
 it - or **placed**, written into the tree for everybody. The bar a placed command has to clear, and why
-`release:tag` does not clear it, are in [Offered, or placed](../task-and-command/#offered-or-placed).
+`release:tag` does not clear it, are in [Offered, or placed](../../how/task-and-command/#offered-or-placed).
 
 ### `build`
 
@@ -236,7 +238,7 @@ repository actually carries - and answers it out of `git tag`, `git log` and the
 It is in `test` because its verdict is red or green and nothing else, and it is not in `release`
 because release notes are written *before* the tag: a guard that only spoke when `release tag` was
 typed would speak after every cheap chance to fix it had passed. What is the product's own reaches it
-through a `releases:` section, in [The manifest](../manifest/#releases---where-the-notes-live-and-from-when-they-are-complete).
+through a `releases:` section, in [The manifest](../../how/manifest/#releases---where-the-notes-live-and-from-when-they-are-complete).
 
 ### `release`
 
@@ -273,7 +275,7 @@ packs a project and pushes it to `nuget.pkg.github.com`, and `build:nuget-config
 so `release:conan` is a *transport*: `conan cache save` writes an archive, this moves that archive into
 the registry as an ordinary OCI artifact, and `build:conan-cache` pulls the exact tag back for the
 product's own `conan cache restore`. No dependency graph is solved remotely and no version range is
-resolved - that distinction is spelled out in [Handing a package over](../../using/handing-a-package-over/).
+resolved - that distinction is spelled out in [Handing a package over](../../what/handing-a-package-over/).
 
 ### `deploy`
 
@@ -439,10 +441,10 @@ empty tail changes the line by not one byte.
 
 ## Where to go next
 
-The six groups are the top level of every manifest, so [The manifest](../manifest/) is the next chapter
+The six groups are the top level of every manifest, so [The manifest](../../how/manifest/) is the next chapter
 to read: the tree, the group lock, and the product data sections each of the tasks above reads.
 
-For what this looks like on a real product, the [command reference](../../using/commands/) is simplon's
+For what this looks like on a real product, the [command reference](../commands/) is simplon's
 own, generated from the assembled application on every build - and worth reading for what is *not* in
 it. There is no `deploy` and no `monitor` in that reference at all, because a group with no command
 anywhere under it does not render, and simplon deploys nothing and watches nothing. The two empty ribs

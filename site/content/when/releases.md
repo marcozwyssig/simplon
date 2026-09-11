@@ -1,6 +1,8 @@
 ---
 title: "Releases"
-weight: 9
+weight: 1
+aliases:
+  - "/using/releases/"
 ---
 
 What each release changed, and what a product has to do about it.
@@ -8,7 +10,7 @@ What each release changed, and what a product has to do about it.
 Notes start at **0.4.0**. Earlier releases have their tags and their commits;
 writing their notes now would mean reconstructing them from memory, and a
 reconstructed record reads exactly like a real one. The [release
-procedure](../releasing/) explains how a version comes into being.
+procedure](../../how/releasing/) explains how a version comes into being.
 
 Every section from **0.5.0** on names the number of every ticket merged into
 that release, and `./simplon.sh test release-notes` measures it against the
@@ -96,7 +98,7 @@ the sixteen is exercised through a manifest on disk and a registered context, in
 absence deliberately says nothing (`build:`, where no section is the normal case, and `env_var:`, which a
 product selecting its environment by token alone never declares).
 
-What was actually missing is on `building/manifest.md` now: **the sixteen names the kernel has claimed**,
+What was actually missing is on `how/manifest.md` now: **the sixteen names the kernel has claimed**,
 with the task that reads each and what it carries. The product this was reported from builds three Windows
 Server *releases* and learned that `releases:` was taken by reading `src/simplon/tasks/releasenotes.py`. A
 reserved name findable only in the source is a trap with a delay on it. The table is held to the kernel in
@@ -211,7 +213,7 @@ What it becomes:
     at it with `task:`, under `groups: <group>: commands:`
   ...
 
-The tree form is documented at https://marcozwyssig.github.io/simplon/building/manifest/ - "The command
+The tree form is documented at https://marcozwyssig.github.io/simplon/how/manifest/ - "The command
 tree" for the shape, and "The flat form, and how to leave it" for this migration in particular. Nothing
 here rewrites the file for you: the sections have to be edited by hand, which is also the only way your
 comments survive the move.
@@ -221,7 +223,7 @@ The detection is unchanged: the same four shapes are still found together, and t
 refused before any other check can report a symptom of it instead.
 
 **Nothing to do unless you have a flat manifest**, and if you do, [The
-manifest](../../building/manifest/#the-flat-form-and-how-to-leave-it) is now where the migration is
+manifest](../../how/manifest/#the-flat-form-and-how-to-leave-it) is now where the migration is
 written down. That page grew the worked example the renderer used to print, plus the seven things to know
 while converting - including the one the renderer could never do for you, which is carry your comments
 across.
@@ -474,6 +476,47 @@ and `f` still goes to a running step on demand. A CI log is one file, so the hea
 fan's steps and prints each block whole, in plan order, whichever branch won the race: the same bytes a
 sequential run produced, in the same sequence, arriving later. Nothing outside a fan is buffered at all.
 
+### The site is divided by the question you arrive with, not by who you are (si#170)
+
+Eighteen pages sat in two sections named after an AUDIENCE - "Using Simplon" and "Building on Simplon" -
+so somebody who wanted to know why any of this exists first had to decide which of the two they were.
+That is a question about the reader, and the reader is the one person who cannot answer it yet. The
+division is now by question: **Why** it exists, **What** it looks like, **How** you work with it, **With
+what** you look things up, and **When** each version went out.
+
+**"How" is wider than installation, and that is a decision rather than drift.** The obvious reading -
+how means install - leaves `Writing a task`, `The manifest` and `Task and command` nowhere honest to go.
+They explain, so filing them under lookup is a lie about what the page does, and they are not
+installation either. So How is "how you work with it", and With what keeps only the pages you open at a
+heading and close again.
+
+**The labels are English because the site is.** The five questions were picked in German, where they all
+begin with the same letter - Warum, Was, Wie, Womit, Wann - and that is a property of the language, not
+of the structure. The structure is the five questions and it survives translation; a navigation entry a
+reader has to translate first is not doing the one job a label has.
+
+**Every published URL that moved still answers.** `aliases:` in each page's front matter emits a
+redirect from the old path, so the eighteen chapters keep their old addresses, and the two old section
+roots land on the front page, which is where the five questions are now offered. Nothing you have
+bookmarked or linked into goes to a 404, including the links into these notes.
+
+**One place in the kernel prints a site address, and it moved.** The flat-form refusal (si#85) sends a
+product whose manifest just failed to load to the chapter that documents the tree form, by its full
+published address; it now names `how/manifest/`. A sweep of `src/` for hard-coded site URLs found that
+one and nothing else. The README's pointer to the release procedure moved with it.
+
+**What a product has to do: nothing.** No command, no manifest key and no task changed. What did change
+beside the pages is where simplon's own manifest writes the generated command reference - it is
+`site/content/with-what/commands.md` now - and that is simplon's own product data, not a kernel default.
+
+The guards moved differently from the pages. Twelve suites used to spell a chapter's section into a path
+of their own, so one re-division made twelve unrelated suites red for the same reason and each had to be
+told the new answer separately. They ask `sitepages` for a page by its FILE name now, which is the part
+a re-division does not touch. Two of them lost half an assertion and say so in place rather than
+quietly: a `weight:` orders within a section, and a chapter and the pages it defers to no longer always
+share one.
+
+
 ## 0.10.0
 
 **A C++ or a .NET product stops writing its build files by hand.** 0.9.0 gave every product one pinned
@@ -552,7 +595,7 @@ one remote type, `local-recipes-index`.
 
 The whole loop was driven end to end rather than asserted over an argv - published, then resolved from a
 second project, and for Conan restored into an empty cache and built against. [Handing a package
-over](../handing-a-package-over/) is the chapter. Nothing to do: five declared coordinates, and a
+over](../../what/handing-a-package-over/) is the chapter. Nothing to do: five declared coordinates, and a
 product that declares none of them is unchanged.
 
 ### The help screen names the simplon that is answering (si#125)
@@ -650,7 +693,7 @@ time, before a clearing gate has emptied anything.
 **Driven, not asserted.** `tests/test_suites_command_gate_e2e.py` compiles a real CMake project in
 `silkeh/clang:19` and runs a real `ctest` through a real gate: green, red carrying ctest's own rc of
 **8** rather than 1, and a tree that does not compile stopping at the preamble with the stale binaries
-untouched. Two quoted refusals on `building/test-levels.md` were repaired on the way - one listed a
+untouched. Two quoted refusals on `with-what/test-levels.md` were repaired on the way - one listed a
 parameter set `run_toolchain` does not have and was unreachable for it anyway, the other named a
 required-parameter refusal that body cannot produce - and `tests/test_test_levels_refusals.py` now builds
 them from the code that raises them.
@@ -971,7 +1014,7 @@ found si#105 and si#106.
 ## 0.8.0
 
 One merge, and it adds a catalogue coordinate - which is why this is 0.8.0 and not 0.7.2. Nothing existing
-changes; the count on the [rules page](../../building/rules/) moves from 25 to 26.
+changes; the count on the [rules page](../../with-what/rules/) moves from 25 to 26.
 
 ### Before you bump
 
@@ -1044,7 +1087,7 @@ command a person actually types.
 **What a product has to do about it: nothing.** `command:` is a third alternative beside `suite:` and
 `impl:`, both of which mean exactly what they did. Two load-time refusals are worded differently (the
 exactly-one-kind lock now offers three, and the opacity lock names the kind it is refusing), and no
-refusal was added or removed. The [test levels chapter](../../building/test-levels/) carries the whole
+refusal was added or removed. The [test levels chapter](../../with-what/test-levels/) carries the whole
 of it.
 
 ### The release guard asked for notes about pull requests (si#97, si#98, si#103)
@@ -1308,7 +1351,7 @@ means the same thing on both kinds of gate, because it is not a statement about
 what a gate writes but about whose run the directory belongs to. Migration: none.
 Both manifests carrying a `suites:` section open with a pytest gate, so nothing
 changes for them, no refusal was added or removed, and the [rules
-page](../../building/rules/) is untouched.
+page](../../with-what/rules/) is untouched.
 
 **`build:image` refuses a declaration that points at nothing, before it asks for
 docker** (si#74). Both `dockerfile:` and `context:` are checked against the
@@ -1401,7 +1444,7 @@ moved pin each need the network once.
 ### Documentation
 
 **A complete Java use case** (si#26), the other half of the pair 0.5.0 opened:
-[Delivering a Java product](../case-java/). Nine of its thirteen steps were
+[Delivering a Java product](../../what/case-java/). Nine of its thirteen steps were
 driven rather than derived, including `build docs` with docToolchain producing
 HTML and PDF — the step the Python chapter says outright it never saw. Three are
 derived and one does not exist. The three number series come out of the archive
@@ -1466,7 +1509,7 @@ they change in the same commit that lifts the pin.
 Two further lines the record named turned out never to have been simplon's:
 asbundle reads `from delivery import images` — a different kernel that ships a
 module of the same name — and biz-cockpit had already migrated. See
-[Surface](../../building/surface/) for why re-measuring beats remembering.
+[Surface](../../with-what/surface/) for why re-measuring beats remembering.
 
 **A killed run is a fifth outcome, and it leaves a different exit code**
 (si#55). A run a signal ended used to be reported as `failed` with `ran = True` —
@@ -1626,12 +1669,12 @@ Filing it turned up the larger finding. The two refusals stood in **no populatio
 at all**: the refusal census counted two modules, and `tasks/testrun.py` was not
 one of them — sixteen load-time refusals outside a census whose entire purpose is
 that the sum cannot grow quietly. All sixteen were classified: fifteen diagnosis,
-one expression rule. See [Rules](../../building/rules/) for the live split.
+one expression rule. See [Rules](../../with-what/rules/) for the live split.
 
 ### Documentation
 
 **A complete Python use case** (si#26), from `simplon init` to a deployed local
-host: [Delivering a Python product](../case-python/). Every step carries one of
+host: [Delivering a Python product](../../what/case-python/). Every step carries one of
 three labels — `run`, `derived`, `does not exist yet` — and the ratio is stated
 rather than implied: eleven of fourteen steps were driven here, two are derived,
 and one does not exist and names the open ticket instead of inventing a step. The
@@ -1659,7 +1702,7 @@ they stand, measured through the API rather than assumed:
 its product does not install this kernel at all, so no version of it can stop
 that manifest loading. Counting it here would repeat the mistake 0.4.0 fixed in
 five module heads, which named a consumer that never was one — see
-[Surface](../../building/surface/) for how that is measured now.)*
+[Surface](../../with-what/surface/) for how that is measured now.)*
 
 Every one of those refusals prints the fix, and for the flat form it prints the
 whole rewritten manifest. But the work is real, so plan it before the bump
@@ -1735,7 +1778,7 @@ meets the warning later, in operation. Measured by a consumer during their
 migration, not by us.
 
 Which modules are library and which are internals is now declared rather than
-guessed — see [Surface](../../building/surface/).
+guessed — see [Surface](../../with-what/surface/).
 
 ### New
 
@@ -1767,7 +1810,7 @@ guessed — see [Surface](../../building/surface/).
 
 ### Documentation
 
-New chapters on [the five phases](../../building/phases/) with a diagram, and
+New chapters on [the five phases](../../with-what/phases/) with a diagram, and
 on what the kernel means by running in Docker. The coordinate table lost the
 sentence beside each entry: those sentences were paraphrases of the catalogue's
 own `help:`, nothing compared the two, and by the time anybody looked several

@@ -1,6 +1,8 @@
 ---
 title: "Handing a package over"
-weight: 10
+weight: 6
+aliases:
+  - "/using/handing-a-package-over/"
 ---
 
 A build that nobody else can consume is half a build. This chapter is the other half: how a .NET product

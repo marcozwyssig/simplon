@@ -43,7 +43,7 @@ import sitepages
 from conftest import ROOT
 
 #: The page under test.
-PAGE = ROOT / "site" / "content" / "building" / "test-levels.md"
+PAGE = sitepages.chapter("test-levels.md")
 
 #: The product the page's own `command:` block describes: two `toolchain:run` commands, and the gate
 #: command a gate may not name. Written here rather than reused from another suite because the whole

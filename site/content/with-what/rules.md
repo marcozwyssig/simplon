@@ -1,6 +1,8 @@
 ---
 title: "The rules"
-weight: 8
+weight: 5
+aliases:
+  - "/building/rules/"
 ---
 
 Everything else on this site can be derived. The command reference is read off the assembled

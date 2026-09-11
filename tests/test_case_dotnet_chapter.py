@@ -66,10 +66,10 @@ import sitepages
 from conftest import ROOT
 
 #: The chapter under test.
-CHAPTER = ROOT / "site" / "content" / "using" / "case-dotnet.md"
+CHAPTER = sitepages.chapter("case-dotnet.md")
 
 #: The card list this half of the site renders, and the place the chapter has to appear in.
-INDEX = ROOT / "site" / "content" / "using" / "_index.md"
+INDEX = sitepages.index("what")
 
 #: The manifest of the product the chapter follows. `dotnetdemo` is not in this repository, so it
 #: travels with the chapter and every command the page types is resolved against the tree assembled
@@ -227,23 +227,37 @@ def test_the_chapter_renders_after_the_cases_it_is_the_third_of():
     """The three cases are one series and this is its last member, so the reader must meet it after the
     two that establish the shape. Hextra orders by `weight:`, so the check is over the front matter of
     the whole directory - and the weights must stay distinct, so the order is stated rather than left to
-    a tie-break."""
+    a tie-break.
+
+    WHAT si#170 RETIRED HERE, said rather than deleted. This used to compare this chapter's weight with
+    `getting-started` and `releasing` as well. `weight:` orders within a SECTION, and after the site was
+    divided by question those two are in `how/`, which is offered AFTER `what/` - deliberately, because
+    the division shows what the loop looks like before it explains it. So "must not be offered before
+    them" is no longer true of this site, and a weight comparison across two sections would be a
+    number that holds for a reason nobody stated. What replaces it is the half that was always the
+    point and is section-independent: the chapter POINTS at those pages instead of retelling them."""
     # arrange
     weights = {}
     for page in sorted(CHAPTER.parent.glob("*.md")):
-        if page.name in ("_index.md", "commands.md"):
+        if page.name == "_index.md" or page in sitepages.generated_pages():
             continue
         match = re.search(r"^weight: (\d+)$", page.read_text(encoding="utf-8"), re.M)
         assert match, f"{page} declares no weight"
         weights[page.stem] = int(match.group(1))
 
-    # assert: after the two cases it completes, and after the pages all three defer to
+    # assert: after the two cases it completes
     assert weights["case-dotnet"] > weights["case-java"]
     assert weights["case-dotnet"] > weights["case-python"]
-    assert weights["case-dotnet"] > weights["getting-started"]
 
     # assert: the weights are still distinct
     assert len(set(weights.values())) == len(weights)
+
+    # assert: it points at the pages it leans on rather than retelling them
+    linked = {sitepages.resolve(link) for link in sitepages.internal_links(CHAPTER)}
+    for name in ("getting-started.md", "case-python.md", "case-java.md"):
+        assert sitepages.chapter(name) in linked, (
+            f"{CHAPTER.name} no longer links to {name}, so it either retells that page or leaves the "
+            f"reader without it")
 
 
 # --- the labels, which are the whole ticket ------------------------------------------------------------

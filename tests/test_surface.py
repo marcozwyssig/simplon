@@ -22,6 +22,8 @@ import pytest
 import simplon
 from simplon import log, surface
 
+import sitepages
+
 SRC = Path(__file__).resolve().parents[1] / "src" / "simplon"
 
 #: Not modules of the package's surface in either direction: the dunder file and the build output.
@@ -256,7 +258,8 @@ def test_the_tombstones_are_gone_by_the_release_they_were_promised_for():
         f"tombstones {sorted(surface.MOVED)} are still here - they were promised to go at this "
         f"release. Removing them is: delete src/simplon/{{{','.join(sorted(surface.MOVED))}}}.py, "
         f"empty surface.MOVED and surface.MOVED_CONSUMERS, and drop the migration table and the "
-        f"deadline sentence from site/content/building/surface.md. Re-measure MOVED_CONSUMERS first - "
+        f"deadline sentence from {PAGE.relative_to(sitepages.ROOT)}. Re-measure "
+        f"MOVED_CONSUMERS first - "
         f"the record says {sum(len(v) for v in surface.MOVED_CONSUMERS.values())} import lines are "
         f"still out there.")
 
@@ -267,8 +270,7 @@ def test_the_release_page_sends_a_minor_release_to_the_record():
     reads has to carry it - and pointing at the record beats copying it, because a copy of a list of
     six import lines is a second source with a shelf life."""
     # arrange
-    page = (Path(__file__).resolve().parents[1] / "site" / "content" / "using"
-            / "releasing.md").read_text(encoding="utf-8")
+    page = sitepages.chapter("releasing.md").read_text(encoding="utf-8")
 
     # assert: the record by name, not a retyped copy of what is in it
     for named in ("simplon.surface", "MOVED_CONSUMERS", "MOVED_DUE_AFTER"):
@@ -343,7 +345,7 @@ def test_every_measured_non_consumer_says_how_that_was_measured():
 # --- the website says the same thing --------------------------------------------------------------
 
 
-PAGE = Path(__file__).resolve().parents[1] / "site" / "content" / "building" / "surface.md"
+PAGE = sitepages.chapter("surface.md")
 
 
 def test_the_website_names_the_same_internals():

@@ -81,6 +81,7 @@ from simplon import context, labegress, labinstance, nexusproxy, workflowgen
 from simplon.tasks import (artifact, asset, buildfiles, claudeplugins, docs, env, image, releasenotes,
                            site, testrun)
 
+import sitepages
 from conftest import ROOT
 
 SRC = ROOT / "src" / "simplon"
@@ -92,7 +93,7 @@ DOCUMENT_ACCESSOR = "manifest_data"
 
 #: The page that publishes the names, so a manifest author learns them from the documentation instead of
 #: from `src/simplon/tasks/releasenotes.py` - which is what the product in si#159 actually had to do.
-PAGE = ROOT / "site" / "content" / "building" / "manifest.md"
+PAGE = sitepages.chapter("manifest.md")
 
 #: The heading the published table sits under. A heading rather than a line number, because a page moves.
 PUBLISHED_UNDER = "### The names the kernel has claimed"

@@ -30,6 +30,7 @@ import pytest
 from simplon.tasks import testrun
 from simplon.verdict import Verdict
 
+import sitepages
 from conftest import ROOT
 
 CONTENT = ROOT / "site" / "content"
@@ -37,9 +38,9 @@ CONTENT = ROOT / "site" / "content"
 #: The pages that have to carry the seam, and why each one. A page that stops carrying it goes red here
 #: rather than quietly becoming a page that used to explain something.
 ADVERTISING = {
-    "building/test-levels.md": "the chapter that explains what a gate may claim - where a product author "
+    "with-what/test-levels.md": "the chapter that explains what a gate may claim - where a product author "
                                "reading about `impl:` gates arrives",
-    "using/case-java.md": "the case study for the language whose runner the kernel cannot see into, which "
+    "what/case-java.md": "the case study for the language whose runner the kernel cannot see into, which "
                           "is the product that needs the seam most",
 }
 
@@ -115,7 +116,7 @@ def test_the_page_that_explains_the_seam_says_the_variable_is_always_set():
     already shipped in v0.6.0. So the chapter has to keep stating it.
     """
     # arrange
-    body = _page("building/test-levels.md")
+    body = _page("with-what/test-levels.md")
 
     # act / assert
     assert "always set" in body, (

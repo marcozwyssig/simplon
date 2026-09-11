@@ -66,11 +66,12 @@ from simplon.context import ProductContext
 from simplon.tasks import buildfiles
 from simplon.orchestrator import manifest as manifest_mod
 
+import sitepages
 from conftest import ROOT
 
 #: The page that publishes the rule, and the row on it this module holds. A heading rather than a line
 #: number, for the reason `test_manifest_top_level` gives: a page moves.
-PAGE = ROOT / "site" / "content" / "building" / "manifest.md"
+PAGE = sitepages.chapter("manifest.md")
 
 #: cleon's REAL top-level `build:` section, `marcozwyssig/cleon@master`, read 2026-09-11. Verbatim, and
 #: trimmed to nothing: the sub-keys are the measurement, and `generate_targets:` under `ant:` is the

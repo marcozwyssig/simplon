@@ -1,6 +1,8 @@
 ---
 title: "What Simplon is"
 weight: 1
+aliases:
+  - "/using/why/"
 ---
 
 > **Simplon is the link between the CI/CD process and the technologies, and it brings structure and
@@ -131,7 +133,7 @@ catalogue task a promise to several products rather than a convenience for one.
 
 The consequence that matters is the one you feel on a bad day: the fix to a body reaches every product
 on the next version bump, and **there is no second copy to forget.** The test for whether a body belongs
-in the kernel at all is written down in [Writing a task](../../building/tasks/) - can it be written
+in the kernel at all is written down in [Writing a task](../../how/tasks/) - can it be written
 without naming this product's directories, images or services?
 
 ## The same five verbs over very different work
@@ -178,7 +180,7 @@ subjects and shells out to nothing else, so filing it under *testing* would have
 middle column and cost this page the one claim it is making;
 `docs:site` is documentation work that simplon files under `build` and another product could file under
 `release`. Which half of a coordinate decides which is the placement-or-family rule, in [The five
-phases](../../building/phases/#what-the-catalogue-offers-today).
+phases](../../with-what/phases/#what-the-catalogue-offers-today).
 
 One word does double duty across the two, and it is worth naming rather than leaving for a reader to
 trip over: **`test` is a phase, and testing is a kind of work.** They are not the same thing said
@@ -189,7 +191,7 @@ above.
 
 {{< callout type="info" >}}
 **A word this page does not use.** The goal this section comes from calls these *disciplines*. That
-word is already spoken for here: [Writing a task](../../building/tasks/) uses "discipline" for
+word is already spoken for here: [Writing a task](../../how/tasks/) uses "discipline" for
 self-restraint - *the discipline that keeps the catalogue honest* - and so does the kernel's own source,
 throughout. Two meanings of one word across one site is worse than a plainer word, so this page says
 **kinds of work**, and "discipline" keeps meaning rigour.
@@ -199,7 +201,7 @@ The row that is *not* in the table is worth naming too. **Running things** - put
 environment and watching it there - is a kind of work like the others, and the catalogue carries nothing
 for it at all. Not because it is not real work, but because its tools belong to the shared environment
 rather than to the product, and who should own them is still open. Those are the two empty ribs, in
-[The five phases](../../building/phases/#the-two-empty-ribs).
+[The five phases](../../with-what/phases/#the-two-empty-ribs).
 
 ## Why the technology travels in a container
 
@@ -232,7 +234,7 @@ machine no longer decides what the build uses, but the calendar does:
 
 The theme module is refused on the same grounds - `@latest`, `@master` and a bare branch name are
 all queries that resolve differently tomorrow. Both declarations, and the rest of the `site:`
-section, are in [The manifest](../../building/manifest/#product-data-sections).
+section, are in [The manifest](../../how/manifest/#product-data-sections).
 
 ### What it costs
 
@@ -262,14 +264,14 @@ A page that only listed the upside would be recommending something it had not us
 - **A container that writes into your tree writes as somebody.** The uid the image happens to run as is
   the uid that ends up owning the output, and both directions of getting that wrong have been measured
   here. The rule and both measurements are in [A container that writes into a mount runs as
-  `--user`](../../building/rules/#a-container-that-writes-into-a-mount-runs-as---user).
+  `--user`](../../with-what/rules/#a-container-that-writes-into-a-mount-runs-as---user).
 - **A container that is not there is not the same as one that failed - and which of the two a task
   chooses is the task's decision, not the container's.** For `docs:site`, no docker on the host is a
   hint and a zero exit code, because the machine that runs the loop is not always the one that
   publishes the page; docker present and no site produced is red. `docs:render` decides the other
   way and dies on a missing docker, so the two renders quoted above are a pair in how they get their
   tool and not in what they do when it is absent. The distinction is a rule of its own: [A missing
-  tool is not a failed tool](../../building/rules/#a-missing-tool-is-not-a-failed-tool).
+  tool is not a failed tool](../../with-what/rules/#a-missing-tool-is-not-a-failed-tool).
 
 ### Where a container is the wrong answer
 
@@ -316,7 +318,7 @@ that is missing and a tool that failed, the reason a step must use the interpret
 than whatever `python` resolves to - these are learned once, expensively, and then live in a person's
 head or a comment in one file. They are not the kind of knowledge a README carries, because they only
 become interesting at the moment something is being built. Here they are [rules with the failure that
-forced each one](../../building/rules/), and the mechanism that enforces them is in the kernel rather
+forced each one](../../with-what/rules/), and the mechanism that enforces them is in the kernel rather
 than in a person's memory.
 
 ## What it is not

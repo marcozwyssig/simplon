@@ -65,10 +65,10 @@ import sitepages
 from conftest import ROOT
 
 #: The chapter under test.
-CHAPTER = ROOT / "site" / "content" / "building" / "phases.md"
+CHAPTER = sitepages.chapter("phases.md")
 
 #: The chapter list this half of the site renders, and the place the new chapter has to appear in.
-INDEX = ROOT / "site" / "content" / "building" / "_index.md"
+INDEX = sitepages.index("with-what")
 
 #: The five phases of the delivery loop, spelled out rather than derived from the catalogue: a test that
 #: read the set out of the same file it then asserts the set of would hold nothing. `support` is
@@ -245,19 +245,25 @@ def test_the_chapter_is_not_empty():
 
 def test_the_chapter_comes_before_every_chapter_that_assumes_the_phases():
     """Acceptance 1: in the menu ahead of the chapters that presuppose the phases. Hextra orders by
-    `weight:`, so the check is over the front matter of the whole directory rather than over one file."""
+    `weight:`, so the check is over the front matter of the whole directory rather than over one file.
+
+    WHAT si#170 RETIRED HERE, said rather than deleted. The list used to include `manifest` and `tasks`.
+    Both are in `how/` now, which the site offers BEFORE `with-what/`, so this chapter no longer comes
+    ahead of them and the acceptance is smaller than it was. Keeping the comparison would have been
+    worse than shrinking it: `weight:` is per-section, phases is 1 in its own section and manifest is 3
+    in another, so the assertion would have gone on passing while comparing two numbers that mean
+    nothing to each other. The section order itself is held in test_site_links.py, which is where the
+    decision lives now."""
     # arrange
     weights = {}
     for page in sorted(CHAPTER.parent.glob("*.md")):
-        if page.name == "_index.md":
+        if page.name == "_index.md" or page in sitepages.generated_pages():
             continue
         match = re.search(r"^weight: (\d+)$", page.read_text(encoding="utf-8"), re.M)
         assert match, f"{page} declares no weight"
         weights[page.stem] = int(match.group(1))
 
-    # assert: every chapter that leans on the phases renders after this one
-    assert weights["phases"] < weights["manifest"]
-    assert weights["phases"] < weights["tasks"]
+    # assert: every chapter in this section that leans on the phases renders after this one
     assert weights["phases"] < weights["test-levels"]
     assert weights["phases"] < weights["environments"]
     assert weights["phases"] < weights["rules"]
@@ -428,7 +434,7 @@ def test_the_page_sends_the_reader_to_the_one_place_the_sentences_live():
     intro = body[start:body.index("### `", start)]
 
     # act / assert
-    assert "../../using/commands/" in intro, "the sections drop the descriptions and point nowhere"
+    assert "../commands/" in intro, "the sections drop the descriptions and point nowhere"
 
     # assert: and it is offered as the place the sentences live, rather than as a bare link
     assert "help:" in intro

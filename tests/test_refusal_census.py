@@ -93,6 +93,7 @@ import yaml
 
 from simplon import catalogue as catalogue_mod
 
+import sitepages
 from conftest import ROOT
 
 #: WHERE THE POPULATION COMES FROM, AND WHY IT IS NO LONGER A LIST (si#53, out of si#61).
@@ -135,7 +136,7 @@ DOCUMENT_ACCESSOR = "manifest_data"
 SRC = ROOT / "src" / "simplon"
 
 #: The chapter that publishes the counts.
-CHAPTER = ROOT / "site" / "content" / "building" / "rules.md"
+CHAPTER = sitepages.chapter("rules.md")
 
 #: Modules that read the manifest document INLINE - `ctx.manifest_data().get(SECTION)` in the middle of a
 #: task body - rather than handing it to a function of their own. The walk cannot separate the reading
@@ -1395,7 +1396,7 @@ def test_the_chapters_existing_anchors_still_resolve():
     # arrange: the anchors linked from elsewhere on the site, read off those pages rather than remembered
     linked = set()
     for page in sorted((ROOT / "site" / "content").rglob("*.md")):
-        for anchor in re.findall(r"building/rules/#([a-z0-9-]+)", page.read_text(encoding="utf-8")):
+        for anchor in re.findall(r"\brules/#([a-z0-9-]+)", page.read_text(encoding="utf-8")):
             linked.add(anchor)
 
     # act: the anchors Hugo derives from this chapter's own headings

@@ -7,6 +7,7 @@ import textwrap
 
 import pytest
 
+import sitepages
 from conftest import ROOT
 from simplon import catalogue as catalogue_mod
 from simplon.orchestrator import manifest
@@ -820,10 +821,10 @@ def test_the_refusal_names_the_release_that_abolished_the_form_and_the_page_that
     # assert: the release, and the page - the deep link by its ANCHOR rather than by a heading a reader
     # would have to search a 500-line page for
     assert "abolished in 0.4.0" in message
-    assert "building/manifest/#the-flat-form-and-how-to-leave-it" in message
+    assert f"{sitepages.section_of('manifest.md')}/manifest/#the-flat-form-and-how-to-leave-it" in message
     # and the anchor resolves: Hugo derives it from the heading, so the heading has to be spelled that
     # way on the page this refusal sends people to
-    page = (ROOT / "site" / "content" / "building" / "manifest.md").read_text(encoding="utf-8")
+    page = sitepages.chapter("manifest.md").read_text(encoding="utf-8")
     headings = [line[3:].strip() for line in page.splitlines() if line.startswith("## ")]
     slugs = {heading.lower().replace(",", "").replace(" ", "-") for heading in headings}
     assert "the-flat-form-and-how-to-leave-it" in slugs

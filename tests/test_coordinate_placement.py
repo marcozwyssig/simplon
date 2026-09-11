@@ -33,6 +33,7 @@ from simplon import catalogue as catalogue_mod
 from simplon.orchestrator import manifest as manifest_mod
 from simplon.orchestrator.model import treeform
 
+import sitepages
 from conftest import ROOT
 
 #: The platform's own top-level groups, spelled out rather than read back out of the catalogue: a test
@@ -375,7 +376,7 @@ def test_the_agile_cockpit_manifest_still_loads_with_the_rule_on_the_load_path()
 
 
 #: The chapter that states the rule, and the heading whose block quote reproduces the load error.
-CHAPTER = ROOT / "site" / "content" / "building" / "task-and-command.md"
+CHAPTER = sitepages.chapter("task-and-command.md")
 REFUSAL_HEADING = "### The refusal"
 
 

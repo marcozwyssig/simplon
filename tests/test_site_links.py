@@ -15,7 +15,7 @@ them: `test_the_site_really_carries_links` holds a FLOOR instead, because the co
 somebody writes a paragraph, and a suite that had to be edited for that would teach people to edit it
 without reading it.
 
-THE DECISION si#67 SAYS HAS TO BE MADE FIRST, and the reason it is not a detail. `using/commands.md` is
+THE DECISION si#67 SAYS HAS TO BE MADE FIRST, and the reason it is not a detail. `with-what/commands.md` is
 GENERATED into the content tree by `docs:reference` and is gitignored. Five links point at it. A checker
 that walked the tree on disk would therefore be green after `build docs` and red before it - a verdict
 that reports the order the commands ran in and calls it a statement about the site. The three ways out
@@ -41,11 +41,14 @@ WHAT IS NOT CHECKED, said rather than left as a gap:
     `test_no_link_reaches_into_a_generated_page_by_anchor` is what makes that visible instead of
     accidental - it names the one thing a future author would have to build the site to check;
   * EXTERNAL links. Whether github.com answers is not a fact about this repository, and a suite that
-    went red on somebody else's outage would be turned off within a week;
-  * `hugo.yaml`'s `menu.pageRef` entries. Measured rather than assumed: the site's own `pageRef:
-    "/using"` was pointed at a section that does not exist and hugo built it with rc 0 and not one
-    warning - the same silence, in a different file with a different parser. It belongs in its own
-    change, and it is written down here so it is a known gap rather than an unknown one.
+    went red on somebody else's outage would be turned off within a week.
+  * EXTERNAL links, still. Whether github.com answers is not a fact about this repository.
+
+WHAT THE GAP NOTE USED TO SAY, and why it is closed. `hugo.yaml`'s `menu.pageRef` entries were the one
+known hole: the site's own `pageRef: "/using"` was pointed at a section that does not exist and hugo
+built it with rc 0 and not one warning - the same silence, in a different file with a different parser.
+si#170 rewrote that menu from two entries to five, which is exactly the edit the hole was waiting for,
+so it is checked here now, together with the shape it navigates.
 
 AAA throughout.
 """
@@ -55,6 +58,7 @@ import re
 import subprocess
 
 import pytest
+import yaml
 
 import sitepages
 from sitepages import CONTENT
@@ -244,3 +248,139 @@ def test_no_link_reaches_into_a_generated_page_by_anchor():
     # simply carry no fragment. Without this the assertion above would hold on a site with no such link
     # at all, which is a different statement.
     assert [link for link in LINKS if sitepages.resolve(link) in GENERATED]
+
+
+# --- the shape the links are drawn across (si#170) -------------------------------------------------------
+
+#: Hugo's own configuration, which is where the navigation is declared.
+HUGO = sitepages.ROOT / "site" / "hugo.yaml"
+
+
+def _menu() -> list[dict]:
+    """The main menu's section entries, in the order hugo will render them.
+
+    Only the entries that name a page: `Search` and `GitHub` are a widget and an outbound link, and a
+    menu check that counted them would be counting two different things as one.
+    """
+    declared = yaml.safe_load(HUGO.read_text(encoding="utf-8"))["menu"]["main"]
+    entries = [entry for entry in declared if "pageRef" in entry]
+    if not entries:
+        raise ValueError(f"{HUGO} declares no menu entry with a pageRef, so the navigation could not be "
+                         f"read")
+    return sorted(entries, key=lambda entry: entry["weight"])
+
+
+def test_the_site_is_divided_into_the_sections_it_says_it_is():
+    """si#170's acceptance, and the assertion that makes every path in every other suite mean something.
+
+    The division is by QUESTION - why, what, how, with what, when - and a page has to sit in one of the
+    five. A sixth directory is not a smaller version of the same site: it is a page nobody decided the
+    question for, and it reaches the reader through a navigation that does not offer it.
+    """
+    # act
+    found = {page.parent.name for page in sitepages.pages() if page.parent != CONTENT}
+
+    # assert
+    assert found == set(sitepages.SECTIONS), (
+        f"the content tree holds {sorted(found)}; the site is divided into {list(sitepages.SECTIONS)}")
+
+    # assert: and it really ruled on a tree with pages in it rather than on two empty sets
+    assert len(sitepages.pages()) > len(sitepages.SECTIONS)
+
+
+def test_every_section_carries_its_own_framing_text():
+    """A section index is what a reader lands on from the navigation, so an empty one is a dead end at
+    the exact moment the division is supposed to be doing its work."""
+    for section in sitepages.SECTIONS:
+        # act
+        body = sitepages.index(section).read_text(encoding="utf-8")
+
+        # assert: front matter, then something for the reader, then somewhere to go
+        assert body.count("---") >= 2, f"{section}/_index.md carries no front matter"
+        assert len(sitepages.without_code(body.split("---", 2)[2]).strip()) > 200, (
+            f"{section}/_index.md offers cards and no framing text, so the section's own question is "
+            f"answered nowhere")
+        assert sitepages.internal_links(sitepages.index(section)), (
+            f"{section}/_index.md links at no page in its own section")
+
+
+def test_the_menu_offers_every_section_and_nothing_that_is_not_one():
+    """The hole si#67 wrote down and left open, closed by the change that made it matter.
+
+    `pageRef:` is resolved by hugo without a word when it names nothing - measured: rc 0, no warning,
+    full page count - so the menu is the one place on this site where a dead reference is completely
+    silent. It is read off the same `SECTIONS` the content tree is held to above, so the two cannot
+    drift apart in the direction that leaves a section unreachable.
+    """
+    # act
+    entries = _menu()
+
+    # assert: the five sections, in their order, and no entry pointing anywhere else
+    assert [entry["pageRef"] for entry in entries] == [f"/{section}" for section in sitepages.SECTIONS]
+
+    # assert: every one of them names a section that really has an index page
+    for entry in entries:
+        assert sitepages.index(entry["pageRef"].lstrip("/")).is_file()
+
+    # assert: and each carries a label, because an entry hugo would name after its path is not a choice
+    assert all(entry.get("name") for entry in entries)
+
+
+def test_the_sections_are_offered_in_the_order_their_own_front_matter_declares():
+    """Two sources say what order the site reads in - the menu's `weight:` and each index's own - and
+    only one of them is visible on the page. They have to agree, or the navigation offers one order and
+    the section a reader is standing in belongs to another."""
+    # arrange
+    from_menu = [entry["pageRef"].lstrip("/") for entry in _menu()]
+
+    # act
+    weights = {}
+    for section in sitepages.SECTIONS:
+        match = re.search(r"^weight: (\d+)$", sitepages.index(section).read_text(encoding="utf-8"), re.M)
+        assert match, f"{section}/_index.md declares no weight, so its place is left to a tie-break"
+        weights[section] = int(match.group(1))
+
+    # assert
+    assert sorted(weights, key=weights.get) == from_menu
+    assert len(set(weights.values())) == len(weights), f"two sections share a weight: {weights}"
+
+
+#: A page named in PROSE rather than linked: `` `building/manifest.md` `` in a backtick span. Hugo
+#: renders it as text, so `internal_links()` cannot see it and nothing above ever rules on it.
+_NAMED_IN_PROSE = re.compile(r"`([A-Za-z0-9._-]+/)*([A-Za-z0-9._-]+\.md)`")
+
+
+def test_no_page_names_another_page_by_a_section_it_does_not_sit_in():
+    """The blind spot si#170 walked into, and the reason it is a test rather than a proofread.
+
+    Two sentences in the release notes named `building/manifest.md` and `building/test-levels.md` after
+    both had moved. Neither is a link - they are backtick spans in prose - so the resolution check above
+    is structurally incapable of seeing them, and it stayed green over two pointers that went nowhere.
+    A path a reader is told to open is a claim about this site whether or not it is clickable.
+
+    Only a path that NAMES a section is ruled on: `manifest.md` on its own says nothing about where the
+    page lives, and a sentence is allowed to name a file without placing it.
+    """
+    # arrange: where each page really is, read off the tree and off the manifest's promise
+    section = {page.name: page.parent.name for page in sitepages.pages() if page.name != "_index.md"}
+    section.update({page.name: page.parent.name for page in GENERATED})
+
+    # act
+    named, offenders = [], []
+    for page in sitepages.pages():
+        body = sitepages.without_code(page.read_text(encoding="utf-8"))
+        for match in _NAMED_IN_PROSE.finditer(body):
+            prefix, name = match.group(0)[1:-1].rsplit("/", 1) if "/" in match.group(0) else ("", "")
+            if not prefix or name not in section:
+                continue
+            named.append(f"{page.relative_to(CONTENT)}: {match.group(0)}")
+            if prefix.rsplit("/", 1)[-1] != section[name]:
+                offenders.append(f"{page.relative_to(CONTENT)}: {match.group(0)} - {name} is served "
+                                 f"from {section[name]}/")
+
+    # assert
+    assert offenders == [], f"a page names another page by the wrong section: {offenders}"
+
+    # assert: and the sweep really found prose that places a page, rather than ruling on nothing
+    assert named, ("no page names another by a path any more, so this check holds vacuously - point it "
+                   "at whatever replaced that way of writing, or delete it")
