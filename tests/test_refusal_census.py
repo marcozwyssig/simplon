@@ -1061,9 +1061,9 @@ def _populations(monkeypatch) -> dict[str, list[str]]:
     """What every rule-bearing function on the tree path was handed, loading the kernel's own manifest.
 
     Records the FIRST positional argument, which is the population each of these functions rules on -
-    `flat`, `merged`, the command spec, the document. The distinction matters at exactly one site:
-    `check_no_old_form(data, catalogue_groups)` is HANDED the catalogue's tree as reference data while
-    ruling on the product's document, so recording every argument would report a reach it does not have.
+    `flat`, `merged`, the command spec, the document. It is the first rather than all of them because a
+    rule may be HANDED the catalogue as reference data while ruling on the product's document, and
+    recording every argument would report a reach it does not have.
 
     Recorded as `repr` AT CALL TIME, not as the object: `_resolve_one` pops the `task:` key out of the spec
     it is given, so a reference kept and read afterwards shows an empty-handed rule that was in fact handed
@@ -1171,10 +1171,10 @@ def test_the_only_tree_rules_not_handed_the_kernels_half_are_the_seam_statements
     """The other direction, and the one that keeps the paragraph on `building/rules.md` honest.
 
     Two rule-bearing functions on the tree path never see the catalogue's own placements:
-    `treeform.check_no_old_form`, which rules on the product's document and is merely SHOWN the catalogue so
-    its rewrite can print `override: true`, and `manifest._enforce_the_catalogue_owns_the_groups`, which is
-    handed the group NAMES and not the placements under them. Every expression rule in both is a statement
-    about the platform/product seam, and the census already says so.
+    `treeform.check_no_old_form`, which rules on the product's document alone (it was shown the catalogue
+    until si#85, for the rewrite it no longer prints), and `manifest._enforce_the_catalogue_owns_the_groups`,
+    which is handed the group NAMES and not the placements under them. Every expression rule in both is a
+    statement about the platform/product seam, and the census already says so.
 
     Without this, relabelling a seam rule REACH_MERGED would be free - and REACH is exactly the kind of
     hand-written word si#83 is about.

@@ -121,9 +121,9 @@ now loaded against the real catalogue with every rule-bearing function on the me
 rule is asked what it was actually handed. The catalogue holds **36** coordinates and its own tree places
 **9** of them; those 9 are the platform's half - in the merged tree because the catalogue put them there,
 not because this product asked - and all 9 reach every rule the table calls *held to it too*. Exactly two
-functions never see them, `check_no_old_form` (which rules on the product's document and is merely *shown*
-the catalogue so its rewrite can print `override: true`) and the one that enforces which groups exist, and
-every rule in both is a seam statement. A rule labelled *held to it too* that was handed only the product's
+functions never see them, `check_no_old_form` (which rules on the product's document alone; it was shown
+the catalogue until si#85, for the rewrite it no longer prints) and the one that enforces which groups
+exist, and every rule in both is a seam statement. A rule labelled *held to it too* that was handed only the product's
 half is now red - which is the shape the struck rule had, and nothing would have caught it.
 
 The row stays, at zero, and the suite goes red if it ever leaves zero without an argument. A

@@ -6,8 +6,8 @@ is a rule nobody has seen work.
 import textwrap
 
 import pytest
-import yaml
 
+from conftest import ROOT
 from simplon import catalogue as catalogue_mod
 from simplon.orchestrator import manifest
 from simplon.orchestrator.model import treeform
@@ -786,18 +786,6 @@ site:
 """
 
 
-def _rewritten(text: str) -> str:
-    """`text` with its `tasks:`/`groups:`/`import:` sections replaced by the rewrite the refusal prints.
-
-    Exactly the edit the message asks a human to make: keep everything else, paste the block over those
-    sections. Done here through the parsed document so the test is doing the pasting rather than
-    re-implementing the renderer.
-    """
-    data = yaml.safe_load(text)
-    rest = {key: value for key, value in data.items() if key not in ("tasks", "groups", "import")}
-    return yaml.safe_dump(rest, sort_keys=False) + "\n" + treeform.rewrite_of_old_form(data)
-
-
 def test_a_real_old_manifest_is_refused_and_the_message_names_every_flat_section():
     # arrange: all three flat shapes at once, which is the realistic case - a product that wrote `impl:`
     # on a command also placed its catalogue tasks the old way. Reporting one per load would be three
@@ -814,440 +802,85 @@ def test_a_real_old_manifest_is_refused_and_the_message_names_every_flat_section
     assert "`import:`" in message
 
 
-def test_the_refusal_shows_the_rewrite_and_not_only_that_the_form_is_gone():
+def test_the_refusal_names_the_release_that_abolished_the_form_and_the_page_that_replaced_it():
+    """si#85 struck the renderer that used to print the replacement, so this message is now the WHOLE of
+    what the refusal offers - and a message that says only "gone" leaves the reader exactly where the
+    missing-key error further down would have left them.
+
+    Three facts, because those are the three that cannot be recovered from the manifest itself: which
+    shape it is in, which release stopped loading it, and where the shape that replaced it is written
+    down. The page is asserted as a REACHABLE coordinate rather than as a string: `site/content` is
+    where it is maintained, so a page renamed out from under this refusal turns this red.
+    """
     # arrange / act
     with pytest.raises(ValueError) as exc:
         manifest.load(_REAL_OLD_MANIFEST, catalogue=catalogue_mod.load())
     message = str(exc.value)
 
-    # assert: the product's OWN names, in the shape they have to take - the body moved under `tasks:`,
-    # the command pointing at it, and the catalogue coordinate named rather than copied
-    assert 'wheel: { impl: "orchestrator.cli:build_wheel", help: "Build the wheel." }' in message
-    assert 'wheel: { task: "wheel" }' in message
-    assert 'site: { task: "docs:site" }' in message
-    # the aggregate was never a body, so it crosses unchanged
-    assert 'depends_on: ["reference", "site"]' in message
-
-
-def test_the_rewrite_the_refusal_prints_is_itself_a_manifest_that_loads():
-    """The whole claim, measured: a message that shows a rewrite nobody can load is a message that
-    reads well and helps nobody. Pasting the block over the sections it names has to produce a manifest
-    that assembles the SAME CLI - which is also what proves the rewrite lost nothing on the way."""
-    # arrange
-    rewritten = _rewritten(_REAL_OLD_MANIFEST)
-
-    # act
-    mf = manifest.load(rewritten, catalogue=catalogue_mod.load())
-
-    # assert: every command the old manifest declared, in the group it declared it in
-    assert set(mf.groups["build"]) == {"wheel", "docs", "reference", "site"}
-    assert set(mf.groups["test"]) == {"all", "typecheck-python"}
-    assert mf.groups["support"][-1] == "doctor"
-    assert mf.groups["release"] == ("tag",)
-    # the bodies survived the move from the command to the task
-    assert mf.spec_for("build", "wheel").impl == "orchestrator.cli:build_wheel"
-    assert mf.spec_for("build", "site").impl == "simplon.tasks.site:build"
-    assert mf.spec_for("build", "docs").depends_on == ("reference", "site")
-    # and so did the pinned values, which is where a rewrite would most easily lose something
-    assert mf.spec_for("build", "reference").with_["output"] == "site/content/using/commands.md"
-
-
-def test_two_commands_sharing_one_body_become_one_task_with_two_placements():
-    # arrange: the flat form spelled a shared body twice, so a rewrite that copied it would carry the
-    # duplication into the shape whose entire point is that a body is written down once
-    data = {"groups": {"test": {
-        "unit":   {"impl": "demo.gates:gate", "help": "Run a suite."},
-        "system": {"impl": "demo.gates:gate", "help": "Run a suite."},
-    }}}
-
-    # act
-    rewrite = treeform.rewrite_of_old_form(data)
-
-    # assert: ONE task, two commands pointing at it
-    assert rewrite.count('impl: "demo.gates:gate"') == 1
-    assert 'unit: { task: "unit" }' in rewrite
-    assert 'system: { task: "unit" }' in rewrite
-
-
-def test_a_command_name_already_taken_by_a_different_body_is_qualified_rather_than_shadowed():
-    # arrange: `build build` and `deploy build` are two different bodies under one command name, which
-    # is legal in a tree and impossible in one flat `tasks:` block - so the rewrite has to rename one,
-    # or it prints a block that does not load
-    data = {"groups": {
-        "build":  {"build": {"impl": "demo.cli:build", "help": "Build."}},
-        "deploy": {"build": {"impl": "demo.cli:rebuild", "help": "Rebuild in place."}},
-    }}
-
-    # act
-    rewrite = treeform.rewrite_of_old_form(data)
-
-    # assert: both bodies survive under distinct task names, and both commands keep the name they had
-    assert 'build: { impl: "demo.cli:build", help: "Build." }' in rewrite
-    assert 'deploy-build: { impl: "demo.cli:rebuild", help: "Rebuild in place." }' in rewrite
-    assert 'build: { task: "build" }' in rewrite
-    assert 'build: { task: "deploy-build" }' in rewrite
-
-
-def test_a_manifest_part_way_through_the_migration_gets_a_rewrite_of_the_whole_block():
-    # arrange: one group converted, one not. A rewrite of only the flat half is a block that SILENTLY
-    # DROPS the converted one the moment it is pasted over `groups:`.
-    data = {"tasks": {"img": {"impl": "demo.tooling:image", "help": "Build an image."}},
-            "groups": {"build": {"commands": {"web-image": {"task": "img"}}},
-                       "test":  {"unit": {"impl": "demo.cli:unit", "help": "Run the unit gate."}}}}
-
-    # act
-    rewrite = treeform.rewrite_of_old_form(data)
-
-    # assert: the already-converted group and its task come through untouched, beside the converted one
-    assert 'img: { impl: "demo.tooling:image", help: "Build an image." }' in rewrite
-    assert 'web-image: { task: "img" }' in rewrite
-    assert 'unit: { task: "unit" }' in rewrite
-
-
-# --- the printed rewrite loads where the catalogue places the same name (si#42) ------------------------
-#
-# The rewrite exists so nobody with an old manifest has to GUESS. A block that loads in three cases of
-# four and asks for a second round in the fourth solves the task three quarters of the way - and the
-# names it failed on were the commonest ones, `support install` above all, in the catalogue since 0.1.7.
-#
-# So every green below is the SHARPER probe: not "the printed text mentions override" but the printed
-# text, pasted in and LOADED, with the product's own body proved to be the one that runs.
-
-#: A catalogue that places `release tag`, which the SHIPPED one no longer does (si#39 unplaced it: a
-#: command that publishes must not arrive in every product unasked). The review found `release tag` as
-#: one of the three cases, so it is covered here against a catalogue that still places it - the rule is
-#: about what a catalogue places, not about which names today's catalogue happens to hold.
-_PLACES_RELEASE_TAG = """
-groups:
-  release:
-    help: "Publish them."
-    commands:
-      tag: { task: "release:tag" }
-tasks:
-  release:tag: { impl: "simplon.tasks.release:tag", help: "Cut the tag." }
-"""
-
-_OLD_SUPPORT_INSTALL = """
-groups:
-  support:
-    install: { impl: "orchestrator.cli:install", help: "install our stuff" }
-"""
-
-_OLD_RELEASE_TAG = """
-groups:
-  release:
-    tag: { impl: "orchestrator.cli:tag", help: "cut our tag" }
-"""
-
-_OLD_FLAT_SUPPORT_GIT = """
-groups:
-  support.git:
-    commit: { impl: "orchestrator.cli:commit", help: "commit it our way" }
-"""
-
-
-def _refused_rewrite(text: str, cat) -> str:
-    """The rewrite the refusal prints for `text`, taken out of the refusal itself.
-
-    Out of the MESSAGE rather than off `rewrite_of_old_form` directly, because the claim under test is
-    about what a human is handed, and a test that called the renderer would prove the renderer agrees
-    with itself while the loader printed something else.
-    """
-    with pytest.raises(ValueError) as exc:
-        manifest.load(text, catalogue=cat)
-    message = str(exc.value)
-    body = message.split("Rewrite those sections as:\n\n", 1)[1].split("\n\n  - ", 1)[0]
-    return textwrap.dedent(body)
-
-
-def test_the_rewrite_carries_override_where_the_catalogue_places_the_same_name():
-    # arrange: `support install` is the commonest case - the catalogue has placed it since 0.1.7
-    cat = catalogue_mod.load()
-
-    # act
-    rewrite = _refused_rewrite(_OLD_SUPPORT_INSTALL, cat)
-
-    # assert: next to the `task:`, which is where the merge's own refusal tells a reader to put it
-    assert 'install: { task: "install", override: true }' in rewrite
-
-
-def test_the_printed_rewrite_of_support_install_loads_without_a_second_round():
-    # arrange
-    cat = catalogue_mod.load()
-    rewrite = _refused_rewrite(_OLD_SUPPORT_INSTALL, cat)
-
-    # act
-    mf = manifest.load(rewrite, catalogue=cat)
-
-    # assert: it loads, and the body that runs is the PRODUCT's - an override that loaded while leaving
-    # the platform's body in place would be the silent choice the merge refuses to make
-    assert mf.spec_for("support", "install").impl == "orchestrator.cli:install"
-
-
-def test_the_printed_rewrite_of_release_tag_loads_without_a_second_round():
-    # arrange: against a catalogue that places `release tag` (see _PLACES_RELEASE_TAG)
-    cat = catalogue_mod.loads(_PLACES_RELEASE_TAG)
-    rewrite = _refused_rewrite(_OLD_RELEASE_TAG, cat)
-
-    # act
-    mf = manifest.load(rewrite, catalogue=cat)
-
-    # assert
-    assert 'tag: { task: "tag", override: true }' in rewrite
-    assert mf.spec_for("release", "tag").impl == "orchestrator.cli:tag"
-
-
-def test_the_printed_rewrite_of_a_flat_nested_group_loads_without_a_second_round():
-    # arrange: the dotted flat key `support.git`, whose members the catalogue places one level down
-    cat = catalogue_mod.load()
-    rewrite = _refused_rewrite(_OLD_FLAT_SUPPORT_GIT, cat)
-
-    # act
-    mf = manifest.load(rewrite, catalogue=cat)
-
-    # assert: the override reached the NESTED node, not the `support` level it was written flat under
-    assert 'commit: { task: "commit", override: true }' in rewrite
-    assert mf.spec_for("support.git", "commit").impl == "orchestrator.cli:commit"
-
-
-def test_every_name_the_shipped_catalogue_places_rewrites_into_a_manifest_that_loads():
-    """The three review cases are the ones that were MEASURED; this is the rule they are cases of.
-
-    Derived from the catalogue rather than listed, so a command placed there tomorrow is covered the day
-    it is placed instead of the day somebody remembers this file. The count is asserted for the reason
-    si#34's placement count is: a loop over an empty set is as green as a loop over eight.
-    """
-    # arrange: one old-form manifest per placed name, each colliding with the catalogue's own body
-    cat = catalogue_mod.load()
-    placed = treeform.placed_commands(cat.groups)
-    cases = {f"{'.'.join(path)} {command}": (path, command)
-             for path, commands in placed.items() for command in commands}
-
-    # act / assert
-    for label, (path, command) in cases.items():
-        text = yaml.safe_dump(
-            {"groups": {".".join(path): {command: {"impl": f"orchestrator.cli:{command}",
-                                                   "help": f"our own {command}"}}}},
-            sort_keys=False)
-        rewrite = _refused_rewrite(text, cat)
-        mf = manifest.load(rewrite, catalogue=cat)
-        assert mf.spec_for(".".join(path), command).impl == f"orchestrator.cli:{command}", label
-    assert len(cases) >= 8
-
-
-def test_a_name_the_catalogue_does_not_place_gets_no_override():
-    # arrange: `release tag` against the SHIPPED catalogue, which does not place it (si#39). An
-    # `override: true` printed where nothing is being overridden is a second kind of noise - it would
-    # tell a reader the platform has a body here when it has none.
-    cat = catalogue_mod.load()
-
-    # act
-    rewrite = _refused_rewrite(_OLD_RELEASE_TAG, cat)
-
-    # assert
-    assert 'tag: { task: "tag" }' in rewrite
-    assert "override" not in rewrite
-    assert manifest.load(rewrite, catalogue=cat).spec_for("release", "tag").impl == "orchestrator.cli:tag"
-
-
-def test_a_placement_that_names_the_platforms_own_body_is_a_refinement_and_gets_no_override():
-    # arrange: the old way of placing a PLATFORM task - a coordinate-keyed `tasks:` entry with `group:`.
-    # It rewrites to the same `task:` the catalogue already places there, which is a refinement of the
-    # platform's command and not a replacement of it.
-    cat = catalogue_mod.load()
-    text = """
-tasks:
-  support:install:
-    group: support
-"""
-
-    # act
-    rewrite = _refused_rewrite(text, cat)
-
-    # assert
-    assert 'install: { task: "support:install" }' in rewrite
-    assert "override" not in rewrite
-    assert manifest.load(rewrite, catalogue=cat).spec_for("support", "install").impl \
-        == "simplon.tasks.hosttools:install"
-
-
-# --- the rewrite is of the STRUCTURE, and the refusal says so (si#56) ----------------------------------
-#
-# Found on a consumer's 0.4.0 migration: the printed block is correct, loads in one round, and carries
-# NOTHING of the roughly forty comment lines their manifest used to explain why things stood where they
-# stood. Pasting it would have been green and the reasoning gone. They kept it only because they looked.
-#
-# It is the recurring defect in the one tool built against it - an outcome that cannot tell "migrated"
-# from "migrated and lost the reasons" - so the fix is at the seam where somebody acts: the terminal
-# message, which knows the manifest's own lines and can say which case this reader is in.
-#
-# The two manifests below are the SAME manifest. `_REAL_OLD_MANIFEST` is simplon's own `simplon.yaml` at
-# 0.3.0 with its comments stripped; the one here restores them, shortened but in the places they really
-# stood (`git show v0.3.0:simplon.yaml`). Same parse, same rewrite, and only one of them has anything to
-# lose - which is the whole property under test.
-
-_REAL_OLD_MANIFEST_COMMENTED = """
-# Simplon builds and tests itself with itself. The very kernel built here
-# assembles this CLI from this manifest -- if a commit breaks the assembly,
-# it fails in the same round instead of after a release.
-product: simplon
-default: dev
-
-# NOTE: no `commands:` nesting under each group. That shape is the loader's "new form", reserved for a
-# command that INSTANTIATES a task declared under `tasks:`, so this stays the flat "old form".
-groups:
-  build:
-    wheel:
-      help: "Build the wheel."
-      impl: "orchestrator.cli:build_wheel"
-    # The documentation website, as ONE command, and an impl-less AGGREGATE rather than a leaf (#2,
-    # task 3). `reference` WRITES the page `site` READS, so the order is not a preference - run them
-    # the other way round and the published site carries the previous run's reference. Siblings execute
-    # in list order, so [reference, site] IS the edge.
-    docs:
-      help: "Write the command reference, then build the website from it."
-      depends_on: [reference, site]
-  test:
-    all:
-      help: "Run every test."
-      impl: "orchestrator.cli:test_all"
-  support:
-    doctor:
-      help: "Check the tools and the environment."
-      impl: "orchestrator.cli:doctor"
-
-# Both documentation tasks are placed through `import:` + `tasks:` because this manifest is the flat old
-# form throughout: that is the old form's way of instantiating a catalogue coordinate.
-import:
-  delivery: [docs, test, release]
-tasks:
-  # `output` is PINNED (#2, task 3): the Hugo project exists, so where the page belongs is no longer an
-  # open question a caller answers on the command line.
-  docs:reference:
-    group: build
-    with:
-      output: site/content/using/commands.md
-      title: "Command reference"
-  docs:site:
-    group: build
-  test:typecheck-python:
-    group: test
-  release:tag:
-    group: release
-
-site:
-  # Outside the sections the block replaces: this one survives a paste and must not be counted.
-  image: "hugomods/hugo:exts-0.148.2"
-  source: "site"
-  output: "build/website"
-  base_url: "https://marcozwyssig.github.io/simplon/#top"
-  theme: "github.com/imfing/hextra@v0.12.3"
-"""
-
-#: What `comments_in_replaced_sections` has to answer for the manifest above, counted by hand: two lines
-#: above `groups:`, four inside it, two above `import:` and two inside `tasks:`. The three-line header
-#: above `product:` and the one inside `site:` are NOT in it - they survive the paste.
-_COMMENTS_A_PASTE_WOULD_DROP = 10
-
-
-def test_the_refusal_names_the_comment_lines_a_paste_would_drop():
-    # arrange / act
-    with pytest.raises(ValueError) as exc:
-        manifest.load(_REAL_OLD_MANIFEST_COMMENTED, catalogue=catalogue_mod.load())
-    message = str(exc.value)
-
-    # assert: the count, the cause, and the way out - a reader who never opens the release notes learns
-    # here that the block is a blueprint rather than a replacement
-    assert f"replaces carry {_COMMENTS_A_PASTE_WOULD_DROP} comment line(s)" in message
-    assert "rendered from the PARSED manifest" in message
-    assert "blueprint" in message
-
-
-def test_the_refusal_says_nothing_about_comments_when_the_manifest_has_none_to_lose():
-    """The other direction, and it is what keeps the sentence diagnosis rather than decoration: a
-    manifest with nothing in those sections but structure loses nothing by pasting, and telling its owner
-    to be careful would be a warning that is simply false for them."""
+    # assert: the release, and the page - the deep link by its ANCHOR rather than by a heading a reader
+    # would have to search a 500-line page for
+    assert "abolished in 0.4.0" in message
+    assert "building/manifest/#the-flat-form-and-how-to-leave-it" in message
+    # and the anchor resolves: Hugo derives it from the heading, so the heading has to be spelled that
+    # way on the page this refusal sends people to
+    page = (ROOT / "site" / "content" / "building" / "manifest.md").read_text(encoding="utf-8")
+    headings = [line[3:].strip() for line in page.splitlines() if line.startswith("## ")]
+    slugs = {heading.lower().replace(",", "").replace(" ", "-") for heading in headings}
+    assert "the-flat-form-and-how-to-leave-it" in slugs
+
+
+def test_the_refusal_no_longer_promises_a_rewrite():
+    """The other half of si#85, and the one a deletion silently gets wrong: a message that still says
+    "Rewrite those sections as:" and then prints nothing is worse than one that never offered it."""
     # arrange / act
     with pytest.raises(ValueError) as exc:
         manifest.load(_REAL_OLD_MANIFEST, catalogue=catalogue_mod.load())
     message = str(exc.value)
 
     # assert
-    assert "comment line" not in message
+    assert "Rewrite those sections as" not in message
     assert "blueprint" not in message
+    assert "comment line" not in message
+    assert not hasattr(treeform, "rewrite_of_old_form")
 
 
-def test_with_no_manifest_text_the_refusal_says_the_block_carries_no_comments_and_claims_nothing_more():
-    """"No comments in those sections" and "nobody handed me the text" are different facts. A caller that
-    passes only the parsed document cannot be told the first, so it is told the limit without the count -
-    printing nothing for both states is the collapse this kernel exists to refuse."""
+def test_a_task_that_places_its_own_command_is_told_to_delete_the_group_key():
+    """The one case where following the message literally leaves the reader refused a second time.
+
+    A `tasks:` entry with `group:` already HAS its body under `tasks:`, so "declare the body once under
+    `tasks:` and point a command at it" describes work that is done. What makes it flat is the `group:`
+    key, and `old_form_tasks` keeps flagging the manifest until it goes.
+    """
     # arrange / act
     with pytest.raises(ValueError) as exc:
-        treeform.check_no_old_form({"groups": {"build": {"wheel": {"impl": "a:b", "help": "h."}}}})
+        treeform.check_no_old_form({"tasks": {"lab": {"impl": "o.cli:lab", "group": "build"}}})
     message = str(exc.value)
 
     # assert
-    assert "carries no comments" in message and "blueprint" in message
-    assert "comment line(s)" not in message
+    assert "DELETE its `group:` key" in message
+    # and it is NOT told the kernel owns its body, which is the other finding's note
+    assert "keeps its body in the kernel" not in message
 
 
-def test_the_printed_rewrite_carries_none_of_the_manifests_comments():
-    """si#56 acceptance 2, as an assurance rather than an observation: the block the refusal prints is
-    the STRUCTURE, and the sentence beside it is only true for as long as that stays so. A renderer that
-    later learned to carry comments would break this - and would have to change the sentence with it."""
-    # arrange
-    cat = catalogue_mod.load()
+def test_a_coordinate_named_task_with_its_own_impl_is_told_the_body_is_the_products():
+    """Two different files land in the same finding, and only one of them belongs to the platform.
 
-    # act
-    rewrite = _refused_rewrite(_REAL_OLD_MANIFEST_COMMENTED, cat)
-
-    # assert: not one comment line, and none of the manifest's own words
-    assert not [line for line in rewrite.splitlines() if line.strip().startswith("#")]
-    assert "impl-less AGGREGATE" not in rewrite
-    assert "flat old form" not in rewrite
-
-
-def test_the_comments_are_the_only_thing_the_two_manifests_differ_by():
-    """What makes the count above a measurement of LOSS rather than of a string: the commented manifest
-    and the stripped one rewrite to the same block, byte for byte. Everything the parse carries survives;
-    the difference between the two files is exactly what does not.
-
-    It is also what keeps the new sentence OUT of the pasteable block. Taken out of the message rather
-    than off the renderer, so a sentence written on the wrong side of "Rewrite those sections as:" would
-    land in one of these two blocks and not the other - measured red by moving it there."""
-    # arrange
-    cat = catalogue_mod.load()
+    A bare coordinate names the KERNEL's body. One carrying its own `impl:` is the PRODUCT's body under
+    a name shaped like the platform's - si#33's own migration had both - so a note saying "the body stays
+    in the kernel" would send its owner to a body that is not theirs and lose the one that is.
+    """
+    # arrange: both shapes at once, so the message has to distinguish rather than pick
+    data = {"tasks": {"docs:site": {"group": "build"},
+                      "docs:reference": {"impl": "my.own:renderer", "group": "build"}}}
 
     # act
-    with_comments = _refused_rewrite(_REAL_OLD_MANIFEST_COMMENTED, cat)
-    without = _refused_rewrite(_REAL_OLD_MANIFEST, cat)
+    with pytest.raises(ValueError) as exc:
+        treeform.check_no_old_form(data)
+    message = str(exc.value)
 
-    # assert
-    assert with_comments == without
+    # assert: one note each, and the product's own body named
+    assert "keeps its body in the kernel" in message
+    assert "'docs:reference' declare an `impl:` of their own" in message
+    assert "the body is YOURS and not the platform's" in message
+    assert "'docs:site' declare an `impl:`" not in message
 
-
-def test_only_the_comments_inside_the_replaced_sections_are_counted():
-    # arrange / act
-    counted = treeform.comments_in_replaced_sections(_REAL_OLD_MANIFEST_COMMENTED)
-
-    # assert: the header above `product:` and the line inside `site:` survive the paste and are not part
-    # of the loss - a count over the whole file would be 14 and would overstate what is at stake
-    assert counted == _COMMENTS_A_PASTE_WOULD_DROP
-
-
-def test_a_hash_inside_a_value_is_not_a_comment():
-    # arrange: `base_url` above ends in `#top`. A count that read `#` anywhere would find it - and would
-    # then report a loss to a product that has none.
-    text = 'groups:\n  build:\n    web: { impl: "a:b", help: "see https://x/#top" }\n'
-
-    # act / assert
-    assert treeform.comments_in_replaced_sections(text) == 0
-
-
-def test_a_comment_block_above_a_replaced_key_belongs_to_the_section_it_introduces():
-    # arrange: where a section's reasoning is actually written - above the key, not inside it. A count
-    # that started at the key would miss exactly the lines worth keeping.
-    text = "# why the bodies stand here\n# and why they stay\ntasks:\n  img: { impl: \"a:b\" }\n"
-
-    # act / assert
-    assert treeform.comments_in_replaced_sections(text) == 2
