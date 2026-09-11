@@ -978,6 +978,64 @@ def _details_log(app):
     return app.query_one("#details", RichLog)
 
 
+async def _settled(pilot, probe, seconds: float = 10.0):
+    """Pump the app until `probe()` is truthy, bounded, and hand back what it last returned.
+
+    EVERY read of a scroll position in this file that expects one goes through it, and the reason
+    was measured out of the pinned Textual (8.2.8) rather than guessed (si#169). `Widget.scroll_to` and
+    `Widget.scroll_end` move NOTHING when they are called: both end in
+    `call_after_refresh(self._scroll_to, ...)` unless `immediate=True`, and the framework says in that
+    branch why - the layout has to settle first, or `max_scroll_y` is not yet the real one. The screen
+    drains those callbacks only after a frame, and `Screen._on_idle` declines to drain them at all while
+    a repaint is outstanding, which is exactly the state a pane that was just cleared and rewritten is
+    in. A bare `await pilot.pause()` sleeps one `SLEEP_GRANULARITY` - 20 ms - and hands back; the
+    screen's own update timer runs at 1/60 s. The read on the next line is therefore a 20-against-17
+    race, and that is the whole of si#169: on unmodified main under four competing CPU hogs the
+    ticket's test went red in 8 of 40 and again in 10 of 40 runs, where the full suite was green 12 of 12
+    and this module alone 30 of 30. An instrumented copy found the pane sitting at offset 0 of 61 at the
+    instant the test read it in 20 of 50 loaded runs.
+
+    IT IS THE TEST AND NOT THE RUNNER, and that is measured rather than argued, because the brief asks
+    for the opposite outcome to be considered: timed under the same four hogs, the pane reached 61 of 61
+    between 3.0 and 11.1 ms after the read, every time - inside one 60 Hz frame. Nobody watching a
+    terminal sees that, and the alternative in `tui.py` would be `scroll_end(immediate=True)`, which
+    Textual's own comment in that branch rules out: the layout has to settle first or `max_scroll_y` is
+    not the real one, and landing somewhere that is not the end is exactly the defect si#162 fixed.
+
+    The assertion stays exactly as strong. What a reader asks is "did the pane get there", never "was it
+    there within one frame", and a deadline that expires still fails: reverted to the pre-si#162
+    behaviour the pane goes to the TOP of the output and stays there, so this waits the full `seconds`
+    and the caller's assert fires unchanged."""
+    deadline = time.monotonic() + seconds
+    result = probe()
+    while not result and time.monotonic() < deadline:
+        await pilot.pause(0.02)
+        result = probe()
+    return result
+
+
+async def _pending_scrolls_applied(log, seconds: float = 10.0) -> None:
+    """Return once every scroll the APP has already asked for on `log` has been applied. A test that
+    scrolls the pane by hand has to wait for this first, or its own scroll is not the last word.
+
+    A second race and not the same one twice (si#169), and it is the one that survived the first fix.
+    `_focus_line` only assigns `Tree.cursor_line`; the highlight is POSTED and bubbles through the tree
+    before the app's handler sees it, and `_begin_details` and the one-second `_refresh_open_aggregate`
+    repaint the pane on their own account too. Whenever one of those got its `scroll_to` in AFTER the
+    test's, both were applied in that order and the pane ended where the APP wanted it. Measured over 120
+    loaded runs with only the deferred-scroll wait in place: `..._survives_a_trip_to_another_row_and_back`
+    came back at 181 instead of 42 five times, `..._is_not_yanked_back_by_the_next_line` read 182 instead
+    of 10 five times, and `..._does_not_drag_a_reader_back_to_the_bottom` went to 21 instead of 5 twice -
+    every one of them that pane's maximum offset, which is the signature of the app's own scroll landing
+    last.
+
+    Deterministic rather than timed, which is why this one polls nothing: `Widget.wait_for_refresh` queues
+    one more `call_after_refresh` BEHIND the ones already waiting and waits for it, and the screen invokes
+    them in arrival order. Bounded all the same, so a runner that stops refreshing fails here instead of
+    hanging."""
+    await asyncio.wait_for(log.wait_for_refresh(), seconds)
+
+
 def test_a_reader_who_scrolled_up_is_not_yanked_back_by_the_next_line():
     """MEASURED first, from `RichLog.write`: `auto_scroll` defaults to True and its `scroll_end` branch is
     unconditional - it never asks where the reader is. So every line a running step emitted pulled a
@@ -991,10 +1049,17 @@ def test_a_reader_who_scrolled_up_is_not_yanked_back_by_the_next_line():
             _focus_line(app, 1)                       # build.install, with 200 lines behind it
             await pilot.pause()
             log = _details_log(app)
+            await _pending_scrolls_applied(log)        # so the test's own scroll is the last word
             log.scroll_to(y=10, animate=False)
-            await pilot.pause()
+            await _settled(pilot, lambda: log.scroll_offset.y == 10)
             before = log.scroll_offset.y
             app._on_line(0, "a line arriving while the reader is elsewhere")
+            # A bare pause is enough on THIS side, and that is measured rather than assumed: a poll
+            # cannot wait for a negative, so the question is whether the read can go green because a
+            # wrong scroll had not landed yet. Against the si#148 item 6 regression itself - `auto_scroll`
+            # back on and `_on_line` writing without the sticky bottom - this read was red in 20 of 20
+            # runs and in 20 of 20 under four CPU hogs. The app is quiet here; the flake above needed a
+            # burst of eighty `call_from_thread` messages in flight to lose the frame (si#169).
             await pilot.pause()
             return before, log.scroll_offset.y
 
@@ -1014,11 +1079,15 @@ def test_a_reader_who_is_at_the_bottom_keeps_being_carried_along():
             _focus_line(app, 1)
             await pilot.pause()
             log = _details_log(app)
+            await _pending_scrolls_applied(log)        # so the test's own scroll is the last word
             log.scroll_end(animate=False)
-            await pilot.pause()
+            await _settled(pilot, lambda: log.is_vertical_scroll_end)
             app._on_line(0, "the newest line")
-            await pilot.pause()
-            return log.is_vertical_scroll_end
+            # The sticky bottom's own `scroll_end` is deferred like every other, and the line it just
+            # wrote moved `max_scroll_y` one further away, so the tail is reached a frame later. This is
+            # the one of the five that never went red in 40 loaded runs, and it is the same shape as the
+            # four that did - see `_settled`.
+            return await _settled(pilot, lambda: log.is_vertical_scroll_end)
 
     assert asyncio.run(scenario()) is True
 
@@ -1034,13 +1103,23 @@ def test_the_scroll_position_survives_a_trip_to_another_row_and_back():
             _focus_line(app, 1)                       # build.install
             await pilot.pause()
             log = _details_log(app)
+            await _pending_scrolls_applied(log)        # so the test's own scroll is the last word
             log.scroll_to(y=42, animate=False)
-            await pilot.pause()
+            # Before the cursor may move: `_show_details` writes down where the reader was in the row it
+            # is LEAVING, so a scroll that has not landed yet would have it remember 0 and this test
+            # would then assert that 0 survived a round trip.
+            await _settled(pilot, lambda: log.scroll_offset.y == 42)
             found = log.scroll_offset.y
             _focus_line(app, 2)                       # build.compile - a different row entirely
-            await pilot.pause()
+            # Both waits name the ROW the pane must be showing, and that is measured rather than tidy.
+            # Written as the offset alone, the second one was satisfied by a pane neither highlight had
+            # reached yet - it was still on build.install at 42, so the round trip the test is about had
+            # not happened and the read went green: 2 of 20 loaded runs against a `_show_details` with the
+            # reader's place taken out of it, which is the one regression this test exists for (si#169).
+            await _settled(pilot, lambda: "compile line" in _details(app))
             _focus_line(app, 1)                       # ... and back
-            await pilot.pause()
+            await _settled(pilot, lambda: "install line" in _details(app)
+                           and _details_log(app).scroll_offset.y == found)
             return found, _details_log(app).scroll_offset.y
 
     found, back = asyncio.run(scenario())
@@ -1418,16 +1497,23 @@ def test_coming_back_to_a_running_step_lands_on_its_tail_and_goes_on_following_i
             _focus_line(app, 1)
             await pilot.pause()
             log = _details_log(app)
+            # Bounded, because the scroll `_show_details` asks for is applied a frame later and nothing
+            # about a bare `pause()` covers that frame - see `_settled` for the measurement. What is
+            # asserted is unchanged: the pane reaches the tail, or it does not.
+            #
+            # The predicate names BOTH halves, and that is not belt and braces. `is_vertical_scroll_end`
+            # is trivially TRUE of a pane holding three lines, so a highlight that has not been dispatched
+            # yet satisfies it: written as the tail alone, this poll returned instantly with `deploy.up`'s
+            # `(pending)` still on screen, and the test failed one assert further down instead. What the
+            # reader came back to is the tail OF THIS STEP, so the wait says so.
+            await _settled(pilot, lambda: log.is_vertical_scroll_end and "line 80" in _visible(log))
             landed_at_the_tail, on_return = log.is_vertical_scroll_end, _visible(log)
             # ... and it has to keep following from there
             gate_two.write_text("go", encoding="utf-8")
             await _until(pilot, 100)
             # `Step.live` is appended to BEFORE the line is handed to `emit`, so reaching 100 there says
-            # nothing about the UI thread having processed the hundredth `call_from_thread`. Pumped until
-            # it has, bounded - one `pause()` happens to be enough today and that is not a guarantee.
-            deadline = time.monotonic() + 10
-            while "line 100" not in _visible(_details_log(app)) and time.monotonic() < deadline:
-                await pilot.pause(0.02)
+            # nothing about the UI thread having processed the hundredth `call_from_thread`.
+            await _settled(pilot, lambda: "line 100" in _visible(_details_log(app)))
             still_following = _visible(_details_log(app))
             release.write_text("go", encoding="utf-8")
             await app.workers.wait_for_complete()
@@ -1527,11 +1613,15 @@ def test_the_repaint_of_an_aggregate_does_not_drag_a_reader_back_to_the_bottom(m
             _focus_line(app, 0)                     # the root, whose listing is 40 rows long
             await pilot.pause()
             log = _details_log(app)
+            await _pending_scrolls_applied(log)     # so the test's own scroll is the last word
             log.scroll_to(y=5, animate=False)       # ... and the reader is READING it, not tailing it
-            await pilot.pause()
+            await _settled(pilot, lambda: log.scroll_offset.y == 5)
             found = log.scroll_offset.y
             clock.at = 12.0                         # the tick that now repaints the listing
             app._tick()
+            # Bare, for the reason given in `..._is_not_yanked_back_by_the_next_line`: measured against
+            # the repaint regression this guards - the scroll bookkeeping taken back out of
+            # `_refresh_open_aggregate` - it was red in 20 of 20 runs and in 30 of 30 loaded ones.
             await pilot.pause()
             after = _details_log(app).scroll_offset.y
             release.set()
