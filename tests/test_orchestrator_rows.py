@@ -9,10 +9,14 @@ absent. AAA throughout.
 from __future__ import annotations
 
 from simplon.orchestrator.manifest import load as manifest_load
+import io
+import sys
 import time
+from types import SimpleNamespace
 
 from simplon.orchestrator.steps import (
     STATE_ICON,
+    STATE_ICON_ASCII,
     Outcome,
     Pipeline,
     Row,
@@ -20,9 +24,11 @@ from simplon.orchestrator.steps import (
     StepState,
     build_rows,
     format_duration,
+    icons_for,
     omitted_note,
     render_tree,
     run_headless,
+    transcript,
 )
 
 # `bringup` is an impl-less aggregate over `prep` (itself an aggregate), `build` (an aggregate whose whole
@@ -631,3 +637,110 @@ def test_format_duration_reads_as_seconds_below_a_minute_and_as_minutes_above_on
     assert format_duration(2.44) == "2.4s"
     assert format_duration(46.0) == "46.0s"
     assert format_duration(964.0) == "16m04s"
+
+
+# --- si#161: the verdict must survive a stream that cannot encode the glyphs ---------------------------
+
+def _cp1252_stdout() -> io.TextIOWrapper:
+    """The stream a Windows CI job hands a redirected run, built without Windows: `sys.stdout` there IS an
+    `io.TextIOWrapper` whose encoding is the legacy code page, and this is that object with that encoding.
+    Reading it back needs `.buffer.getvalue()`, which is why it wraps a `BytesIO` and not a `StringIO` -
+    the whole defect is in the ENCODE step a `StringIO` does not have."""
+    return io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+
+
+def test_the_headless_verdict_survives_a_stream_that_cannot_encode_the_icons(monkeypatch):
+    """THE REPRODUCTION, and it is the reason this fix exists rather than a note in the docs. On
+    `origin/main` this same call raises
+
+        UnicodeEncodeError: 'charmap' codec can't encode character '\u2717' in position 0
+
+    out of `run_headless`'s tree print - AFTER every step has run and the exit code has been decided. So
+    a Windows runner with a redirected stdout turned a finished pipeline into a traceback, and si#162
+    made it worse by moving RUNNING to `↻`, which cp1252 cannot encode either.
+
+    Asserting that a glyph is ASCII would not have caught this: the crash is in the stream's encoder, so
+    the test has to own a stream with an encoding that really cannot carry the table."""
+    # arrange
+    stream = _cp1252_stdout()
+    monkeypatch.setattr(sys, "stdout", stream)
+    pipeline = _planned_pipeline()
+    # act
+    rc = run_headless(pipeline, verbose=False)
+    # assert: it returned its verdict instead of raising, and the tree is there in a readable alphabet
+    stream.flush()
+    printed = stream.buffer.getvalue().decode("cp1252")
+    assert rc == 0
+    # The spelling is padded to the widest in the table (`fail`), so the labels line up the way the
+    # one-character glyphs do. Written out rather than derived: this is what a Windows CI log now shows.
+    for line in ("ok   deploy.bringup", "  ok   build.prep", "    ok   build.install",
+                 "  ok   deploy.up"):
+        assert line in printed, f"missing tree line {line!r} in:\n{printed}"
+
+
+def test_a_stream_that_can_encode_the_glyphs_still_gets_them(monkeypatch):
+    """The other half of si#161, and the one a fix is most likely to break: a UTF-8 stream must come out
+    of this byte for byte as it did before. Nobody gets flattened to ASCII because Windows cannot encode
+    a tick."""
+    # arrange
+    stream = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+    monkeypatch.setattr(sys, "stdout", stream)
+    pipeline = _planned_pipeline()
+    # act
+    rc = run_headless(pipeline, verbose=False)
+    # assert
+    stream.flush()
+    printed = stream.buffer.getvalue().decode("utf-8")
+    assert rc == 0
+    for line in ("✓ deploy.bringup", "  ✓ build.prep", "    ✓ build.install", "  ✓ deploy.up"):
+        assert line in printed, f"missing tree line {line!r} in:\n{printed}"
+
+
+def test_the_ascii_spelling_still_says_which_state_the_row_is_in():
+    """si#161's own rule: a state that degrades must still NAME itself. `errors="replace"` was rejected
+    because `?` loses that, and so would `+`/`-`/`x` - each of those is ASCII and none of them tells a
+    reader anything. Every fallback spelling is a prefix of the state's own word, which is a property a
+    future edit cannot satisfy by accident."""
+    assert set(STATE_ICON_ASCII) == set(STATE_ICON), "both tables cover every state"
+    for state, spelling in STATE_ICON_ASCII.items():
+        assert spelling.isascii(), (state, spelling)
+        assert state.value.startswith(spelling), (state, spelling)
+    assert len(set(STATE_ICON_ASCII.values())) == len(STATE_ICON_ASCII), "and no two states read alike"
+
+
+def test_the_fallback_swaps_the_whole_table_and_not_only_the_unencodable_glyphs():
+    """`·` is U+00B7 and cp1252 carries it at 0xB7, so a per-character fallback would leave one glyph
+    standing among four words. One run, one alphabet: a reader of a CI log must not have to work out
+    which rows were rendered in which."""
+    # arrange
+    stream = _cp1252_stdout()
+    # act
+    table = icons_for(stream)
+    # assert
+    assert table == STATE_ICON_ASCII
+    assert icons_for(io.TextIOWrapper(io.BytesIO(), encoding="utf-8")) == STATE_ICON
+
+
+def test_a_stream_with_no_encoding_at_all_keeps_the_glyphs():
+    """A `StringIO` and any test double take `str` and cannot raise on a character, so there is nothing
+    to degrade for. Guessing ASCII from a missing attribute would take the glyphs away from callers that
+    never had the problem."""
+    assert icons_for(io.StringIO()) == STATE_ICON
+    assert icons_for(SimpleNamespace(encoding=None)) == STATE_ICON
+    assert icons_for(SimpleNamespace(encoding="no-such-codec")) == STATE_ICON_ASCII
+
+
+def test_the_transcript_keeps_the_glyphs_even_when_the_console_cannot_show_them(monkeypatch):
+    """si#148's artefact is a FILE, and `steplog` writes it `encoding="utf-8"` by name - so the console's
+    code page has no say in it. Asserted rather than assumed, because the cheap version of this fix
+    (degrade the shared table) would have silently rewritten the run transcript too."""
+    # arrange
+    stream = _cp1252_stdout()
+    monkeypatch.setattr(sys, "stdout", stream)
+    pipeline = _planned_pipeline()
+    # act
+    run_headless(pipeline, verbose=False)
+    text = "\n".join(transcript(pipeline, header=[]))
+    # assert: the transcript is unchanged, glyphs and all, on the very run whose console got ASCII
+    assert "✓ build.install" in text, text
+    assert "verdict: ✓ all 3 steps passed" in text, text
