@@ -202,6 +202,47 @@ The separator appears in `GB`, which is where a run of 5 GB media adds up to `5,
 **What to do.** If you print `fetch.human_bytes` output into logs or documents, `kB` is now `KB` and
 figures at or above 1000 GB carry a comma. Nothing else changes unless you pass `resume=True`.
 
+### The kernel can hash a file, and the cache beside it has a rule worth reading (si#177)
+
+Every `sha256` in this package was an image digest - `docker.py`, `labhost.py`, `clabrender.py`,
+`tasks/allure.py`, `tasks/site.py` all pin or compare a registry reference. None of them hashed a file.
+So the first product to pin **media** by hash wrote its own, and `simplon.checksum` is that function
+lifted into the kernel, with the part that actually needed deciding done differently.
+
+```python
+from simplon import checksum
+
+digest = checksum.sha256_of(path, cache=checksum.cache_dir(root))
+```
+
+`cache=None` is a plain hash. With a cache directory the digest is written to a sidecar, because a
+command whose whole job is to report what is present should not read five gigabytes to answer: driven on
+a real 2 GiB image, 0.674 s to hash it against 0.075 ms to answer from the sidecar.
+
+**A cache that can be wrong is worse than no cache**, and a checksum is the one place where being wrong
+is silent - the caller gets a hex string either way. So the invalidation rule is three conditions, not
+the usual two: the size is unchanged, `st_mtime_ns` is unchanged, **and** the sidecar's stat was taken at
+least a second after the mtime it records. The third one is what survives a write inside the same second,
+which is what a sync client, `touch -d`, `unzip` and `tar` all produce by stamping whole seconds, and
+which si#86 and si#169 both were in one week. It is git's answer to its own racily-clean index entries;
+it costs exactly one extra hash for a file hashed the moment it was written, and heals itself on the call
+after.
+
+It cannot see a rewrite that restores **both** size and mtime, and it says so in its own head rather than
+leaving that to be found. Everything else recomputes: an unreadable sidecar, a malformed one, one written
+by a version that spelled the record differently, one naming another path. Nothing trusts a record it
+could not fully check, and a sidecar that cannot be written is not an error - the caller asked for a
+digest and gets one.
+
+**Where the sidecars go is part of the answer.** They live in `build/checksums/`, under the `/build/`
+that is already the first anchored line of the `.gitignore` block si#155 scaffolds, so nothing is added
+to the list of what the kernel writes into a product tree - a `.sha256` beside the media would have been.
+`tests/test_checksum.py` asserts that through `git check-ignore` on a real scaffold rather than against
+the text of the block.
+
+**Nothing to do.** A new module on the library surface; no command, manifest key or existing signature
+changes.
+
 ## 0.11.0
 
 **Three things a real run showed, and two that had quietly stopped being true.** The first three came
