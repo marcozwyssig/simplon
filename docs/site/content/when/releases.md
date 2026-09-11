@@ -538,9 +538,25 @@ product's leaf name handed to everybody else. The convention is written on `how/
 `source:` still says where your site is.
 
 What moved beside the directory is every path that named it: the manifest's `site: source:`, the
-`docs:reference` output and the `releases: page:`, four `.gitignore` lines, four content-tree constants
-in the suite, and the module path in `go.mod`. The link checker walks every page and every fragment
-after the move, which is what says the move did not break the site rather than that it looked fine.
+`docs:reference` output and the `releases: page:`, four `.gitignore` lines, seven places in the suite
+that spelled the content tree out for themselves, and the module path in `go.mod`. The link checker
+walks every page and every fragment after the move, which is what says the move did not break the site
+rather than that it looked fine.
+
+**`tests/sitepages.py` calls itself the one place the site's shape is described, and it was not.** Six
+other test modules carried the path again, in four spellings the same sweep does not catch at once:
+`ROOT / "site" / "content"`, `Path(__file__).parents[1] / "site" / "content"`, `ROOT / "site" /
+"hugo.yaml"` and `root / "site"` inside a list comprehension. Two of the six went red and named
+themselves - one through its own vacuity guard, *"no page links into this chapter any more"*. The sixth
+went GREEN and stopped covering anything: `test_surface.py`'s si#51 assertion reads every page of this
+site for a repository named as a consumer that is not one, and `Path.rglob` over a directory that is no
+longer there yields nothing and raises nothing, so the check kept passing over 25 pages it had stopped
+opening. Measured by planting one of the names its own census has measured NOT to use this kernel into
+`why.md`: green before the path was repaired, red after, naming the file. That is the defect this
+repository calls a verdict that cannot fail, and a rename is how it arrives.
+
+It then went red on these very notes, which had named that repository as the example. Both halves are
+the guard working.
 
 
 ## 0.10.0
