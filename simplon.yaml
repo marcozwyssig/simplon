@@ -126,8 +126,19 @@ groups:
       # ci.yml still names the four leaves rather than this command - a GitHub job stops at its first
       # failed step, so si#89's reason for putting the prose gate LAST there is untouched by this.
       #
-      # Siblings execute in list order, so the notes guard runs after the suite: it costs 0.34s measured
-      # on this tree, against the suite's 55s, and it rules on prose rather than on code.
+      # Siblings execute in list order, so the notes guard runs last: it costs 0.3s measured on this
+      # tree, against the suite's 62s, and it rules on prose rather than on code. The type gate sits
+      # between them for the same reason it sits there in ci.yml - a verdict over code is read before a
+      # verdict over prose - and with `stop_on_failure` false the order decides only what a reader sees
+      # first, never what runs.
+      #
+      # THE TYPE GATE IS IN IT since si#163, which is the other half of this comment's last paragraph.
+      # si#156 left it out on purpose and said why: folding it in changes what `tests/test_type_gate.py`'s
+      # central rule is ABOUT, and that is a decision rather than a line move. The decision is taken
+      # there now and the rule is narrower rather than gone - a job that reaches the suite through THIS
+      # aggregate cannot miss the gate, so what is left to protect is the job that names the LEAF, which
+      # is what ci.yml does by design. Cost measured on this tree: 3.4s the first time, 0.4s with mypy's
+      # cache warm, against 62s of suite. The name says every test; it now is.
       #
       # ONE OBSERVABLE CHANGE beyond the extra gate, named here rather than left to be discovered: the
       # leaf returned pytest's own exit code (2 interrupted, 5 nothing collected, ...) and an aggregate
@@ -137,14 +148,13 @@ groups:
       # verdict over several steps, and `test suite` still hands the raw number through for anyone who
       # wants it.
       #
-      # NOT typecheck-python, and that is a decision rather than an oversight: it is the same gap one
-      # gate over, but folding it in would rewrite `tests/test_type_gate.py`'s central rule ("any job
-      # that runs `test all` runs the gate") into a plan-expanding one in the same commit that changes
-      # what `test all` means. si#156 scoped itself to the notes; the typecheck half is measured at 3.4s
-      # and wants its own ticket.
+      # THE TYPE GATE COSTS NOTHING HERE, and si#163 expected it to cost the same collapse: mypy answers
+      # 1 for findings and 2 for a usage or setup error, but `tasks/typecheck.py:check` already ends both
+      # on `log.die` - SystemExit(1) - so the leaf never handed mypy's own number through in the first
+      # place. There was nothing left for the aggregate to flatten. Measured, not assumed.
       all:
-        help: "Run every test: the pytest suite, then the release-notes guard."
-        depends_on: [suite, release-notes]
+        help: "Run every test: the pytest suite, the type gate, then the release-notes guard."
+        depends_on: [suite, typecheck-python, release-notes]
   release:
     commands:
       # The release itself (#32). Simplon cuts its own releases with the command it ships, for the same
@@ -254,11 +264,13 @@ workflows:
       checkout - not a pipeline's own spelling of them. Two routes to one verdict is the shape that
       produced si#8, where the CI was green for months because it had never run mypy at all.
 
-      The steps name the LEAVES, not the `test all` aggregate that plans two of them (si#156). A
-      GitHub job stops at its first failed step, so an aggregate here would put the prose gate in
-      front of the type gate and the wheel, which is exactly what the last step's note refuses. Every
-      verdict below still has one implementation, and `test all` reaches two of them by name rather
-      than by repeating them.
+      The steps name the LEAVES, not the `test all` aggregate that plans three of them (si#156,
+      si#163). A GitHub job stops at its first failed step, so an aggregate here would put the prose
+      gate in front of the type gate and the wheel, which is exactly what the last step's note
+      refuses. si#163 folded the type gate into that aggregate and deliberately did NOT collapse
+      these steps into it: what the local gate gains is one command that really runs every test, and
+      what this file would lose is the ordering. Every verdict below still has one implementation,
+      and `test all` reaches three of them by name rather than by repeating them.
     # VERBATIM product data: whether a push runs the suite is nothing the kernel can derive.
     on: [push, pull_request]
     jobs:

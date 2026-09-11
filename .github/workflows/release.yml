@@ -91,28 +91,42 @@ jobs:
       # site-packages -- it is the only one that catches a path escape
       # before it ships.
       #
-      # THE TYPE GATE IS HERE, and not only in ci.yml, because this is the path that reaches consumers
-      # (#8). `ci.yml` triggers on `push`, which includes tags, so in practice a tagged commit is checked
-      # by it today - but that is a PARALLEL workflow with no dependency on this one, not a gate on this
-      # one. Narrow the `ci` trigger some day and the release path loses the check without anybody's diff
-      # showing it. Repeating a step is the cheap half of that trade; the expensive half is publishing a
-      # wheel nothing typechecked.
+      # THE TYPE GATE IS ON THIS PATH, and not only in ci.yml, because this is the path that reaches
+      # consumers (#8). `ci.yml` triggers on `push`, which includes tags, so in practice a tagged commit
+      # is checked by it today - but that is a PARALLEL workflow with no dependency on this one, not a
+      # gate on this one. Narrow the `ci` trigger some day and the release path would lose the check
+      # without anybody's diff showing it, and the expensive half of that is publishing a wheel nothing
+      # typechecked. That would be si#8 committed a second time, one level up: a pipeline that is green
+      # because a question is not asked.
       #
-      # That would have been si#8 committed a second time, one level up: a pipeline that is green because
-      # a question is not asked. tests/test_type_gate.py holds it as a RULE over the whole workflows
-      # directory - any job that runs the suite runs the gate - so a future workflow inherits it instead
-      # of being remembered. It knows two spellings of "runs the suite" since si#156, `test all` and
-      # `test suite`, and this file is the one that still says the first.
+      # IT IS REACHED RATHER THAN NAMED since si#163. `test all` is an aggregate over the pytest suite,
+      # the type gate and the release-notes guard, so the one step below carries all three verdicts and
+      # a type error stops this publish exactly as it did before. What changed is where it is written:
+      # once, in simplon.yaml, for the CI and for a developer's checkout alike.
       #
-      # AND `test all` CARRIES A THIRD VERDICT HERE since si#156: it is an aggregate over the pytest
-      # suite and `test release-notes`, so this step also rules on whether the release being cut has a
+      # THE SEPARATE `test typecheck-python` STEP THAT USED TO FOLLOW IS GONE, and si#163 measured why
+      # rather than tidying. A GitHub job stops at its first failed step, so once `test all` carries the
+      # gate that step could only ever run when `test all` had already been green - which means the gate
+      # inside it had already passed. It could not fail. This repository's oldest hunt is for exactly
+      # that shape, so a step that had become a decoration on the publish path was removed rather than
+      # left to look like a guard.
+      #
+      # What holds the check now is tests/test_type_gate.py, as a RULE over the whole workflows
+      # directory - any job that verifies this tree REACHES the gate, by naming it or by running a
+      # command whose manifest plan contains it - plus one assertion that `test all` really does plan it.
+      # Drop the dependency in simplon.yaml and that second assertion goes red naming this consequence.
+      #
+      # AND `test all` RULES ON PROSE HERE since si#156: it also asks whether the release being cut has a
       # section naming every ticket it carries. That is the guard si#89 built acting one step earlier
       # than it used to, and it is deliberate - the notes are written BEFORE the tag (si#3), so a tag
       # whose section nobody wrote stops the publish rather than following it. The consequence to know:
       # this step can now go red on prose while every line of code is fine, and the message names the
       # missing numbers.
+      #
+      # ONE RC FOR THREE VERDICTS, stated because it is what a person watching a red release sees: the
+      # aggregate reports `steps.overall_rc`, 0 or 1, and prints every step's own verdict above it. The
+      # line to read is `all: N/3 step(s) failed` and the `why <step> failed` block under it.
       - run: ./simplon.sh test all
-      - run: ./simplon.sh test typecheck-python
       - run: ./simplon.sh build wheel
       # WHAT REPLACED "the tag must name the version being published" (#3).
       #
