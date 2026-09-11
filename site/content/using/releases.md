@@ -48,12 +48,18 @@ first four rules are anchored with a leading `/`: unanchored, `build/` would als
 directory named `build` and with it a generated `CMakeLists.txt`. A test drives the real si#102
 generators over a real tree and asserts git can still see all eight files they write.
 
-**Three of the lines this repository has been telling products to add were never necessary.** The 0.10.0
-notes named `.simplon-toolchain`, `.mypy_cache` and `.pytest_cache` as "yours to add". Only the first is:
-`python -m venv`, pytest and mypy each drop a `.gitignore` holding `*` into the directory they create, so
-`git check-ignore -v` names each cache's own file as the rule that hides it. That is also what makes one
-block right under both si#130 layouts - the only path that could have moved with `--orch-dir` was the
-launcher's `.venv`, and it needs no rule anywhere.
+**Two of the lines this repository has been telling products to add were never necessary, and it nearly
+became three.** The 0.10.0 notes named `.simplon-toolchain`, `.mypy_cache` and `.pytest_cache` as "yours
+to add"; only the first is, because pytest and mypy each drop a `.gitignore` holding `*` into the cache
+they create and `git check-ignore -v` names that file as the rule.
+
+A venv looked like the same case and is not. It writes the same self-ignoring file **only since CPython
+3.13**, where `EnvBuilder` gained `scm_ignore_files` - `python:3.12.14` leaves a fresh venv with no
+`.gitignore` at all, `python:3.13.15` writes one. The block was first shipped without a `.venv` rule, was
+green on a 3.13 developer machine and red in CI on 3.12, and CI was the honest reading: the launcher is
+written to survive a bare host and pins no host python. So `.venv/` is a rule, unanchored, which is the
+one line that covers the launcher's venv wherever `--orch-dir` puts it and a gate's `suite:` venv as
+well - and that, rather than an absence, is what makes one block right under both si#130 layouts.
 
 **It appends, and it never rewrites.** si#129 put `init` at the repository root, so the `.gitignore` it
 meets is usually somebody else's - refusing the whole scaffold over it would be wrong, and forcing over it

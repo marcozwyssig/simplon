@@ -217,29 +217,60 @@ def test_every_directory_the_block_anchors_is_one_the_kernel_writes_at_the_produ
             f"{directory}/ is anchored too loosely and would hide a generated CMakeLists.txt")
 
 
-def test_the_caches_that_ignore_themselves_carry_no_line_here(tmp_path):
-    """venv, pytest and mypy each write a `.gitignore` holding `*`; measured, not assumed.
+def test_the_two_caches_that_ignore_themselves_carry_no_line_here(tmp_path):
+    """pytest and mypy each write a `.gitignore` holding `*`; DRIVEN, because assuming it is what failed.
 
-    This is the finding that keeps the block honest. The 0.10.0 notes tell a product to add three lines -
-    `.simplon-toolchain`, `.mypy_cache`, `.pytest_cache` - and two of them were never needed. A block
-    that carried them would read as though it were doing work git was already doing.
+    The 0.10.0 notes tell a product to add three lines - `.simplon-toolchain`, `.mypy_cache`,
+    `.pytest_cache` - and two of them were never needed. A rule here would read as though it were doing
+    work git was already doing. What makes this an assertion rather than a remark is that the two tools
+    are really run: the first version of this suite asserted a THIRD self-ignoring directory from memory
+    and was wrong about it (see the venv test below), so nothing in this file takes one on trust.
     """
-    # arrange: a venv made the way the launcher makes one, in a tree carrying only the scaffold's block
+    # arrange: a tree with one trivial module, and the two tools pointed at it
+    repo = _scaffolded(tmp_path / "fooctl")
+    (repo / "m.py").write_text("def f() -> int:\n    return 1\n", encoding="utf-8")
+
+    # act: each tool in its own run, so a missing one is skipped rather than silently proving nothing
+    produced = {}
+    for module, cache in (("pytest", ".pytest_cache"), ("mypy", ".mypy_cache")):
+        done = subprocess.run([sys.executable, "-m", module, "m.py"], cwd=repo,
+                              capture_output=True, text=True)
+        if "No module named" in done.stderr:
+            pytest.skip(f"{module} is not installed, so this would rule on nothing")
+        produced[cache] = (repo / cache / ".gitignore").read_text(encoding="utf-8")
+
+    # assert: each hides itself, and no rule in the block claims the credit
+    for cache, self_ignore in produced.items():
+        assert "*" in self_ignore, f"{cache} no longer ignores itself; the block needs a rule"
+        assert _ignored(repo, f"{cache}/x"), f"{cache} is visible to git"
+        assert not [rule for rule in PATTERNS if cache in rule], (
+            f"{cache} writes its own .gitignore holding `*`; a rule here would be theatre")
+
+
+def test_the_venv_rule_holds_on_an_interpreter_that_does_not_self_ignore(tmp_path):
+    """The defect CI found and this box hid, kept as an assertion (si#155).
+
+    A venv DOES write a `.gitignore` holding `*` - since CPython 3.13, where `EnvBuilder` gained
+    `scm_ignore_files`. Measured on both sides of that line: `python:3.12.14` leaves a fresh venv with no
+    `.gitignore` at all, `python:3.13.15` writes one. The first block here therefore carried no `.venv`
+    rule, passed on a 3.13 developer box and failed in CI, which runs 3.12 - and CI was right, because
+    `<product>.sh` is written to survive a bare host and pins no host python.
+
+    So the rule is asserted against the WORSE interpreter rather than against this one: the venv's own
+    file is removed, which is exactly the tree a 3.12 host produces, and git is asked again.
+    """
+    # arrange: a venv where the launcher makes one, then stripped of whatever 3.13 may have added
     repo = _scaffolded(tmp_path / "fooctl")
     venv = repo / bootstrap.DEFAULT_ORCH_DIR / ".venv"
     done = subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(venv)],
                           capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
+    (venv / ".gitignore").unlink(missing_ok=True)
 
-    # act
-    self_ignore = venv / ".gitignore"
-
-    # assert: the venv hides itself, and no line in the block claims the credit
-    assert self_ignore.is_file(), "python no longer writes a .gitignore into a venv; the block needs one"
+    # act / assert: the block alone hides it, under the default layout and under an overridden one
     assert _ignored(repo, f"{bootstrap.DEFAULT_ORCH_DIR}/.venv/pyvenv.cfg")
-    for cache in (".venv", ".mypy_cache", ".pytest_cache"):
-        assert not [rule for rule in PATTERNS if cache in rule], (
-            f"{cache} writes its own .gitignore holding `*`; a rule here would be theatre")
+    assert _ignored(repo, "orchestrator/.venv/pyvenv.cfg"), "an --orch-dir at the root would be visible"
+    assert _ignored(repo, "tests/unit/.venv/pyvenv.cfg"), "a pytest gate's suite venv would be visible"
 
 
 # --- never clobber: what happens to a `.gitignore` that is already there --------------------------------
@@ -313,6 +344,33 @@ def test_the_block_never_lands_glued_to_an_unterminated_last_line(tmp_path):
     assert lines[0] == "*.log"
     assert bootstrap.GITIGNORE_MARKER in lines
     assert _ignored(repo, "build/x"), "the block was appended but git does not read it"
+
+
+@pytest.mark.parametrize("kind", ["a directory under that name", "bytes that are not UTF-8"])
+def test_a_gitignore_that_cannot_be_read_is_a_message_and_an_exit_code(tmp_path, capsys, kind):
+    """Taking the file out of the clobber rule took it out of the exception contract as well.
+
+    Every other scaffolded path reaches the user as `FileExistsError` -> a message and exit 2. This one
+    is read rather than refused, and a read has its own two failures: a directory wearing the name, and a
+    file some editor saved as UTF-16. Both used to leave `simplon init` as a traceback, against the
+    module's own bar for its first-ever command.
+    """
+    # arrange
+    repo = _repo(tmp_path / "fooctl")
+    if kind.startswith("a directory"):
+        (repo / bootstrap.GITIGNORE).mkdir()
+    else:
+        (repo / bootstrap.GITIGNORE).write_bytes("*.log\n".encode("utf-16"))
+
+    # act
+    rc = bootstrap.main(["init", "fooctl", "--dir", str(repo)])
+
+    # assert: exit 2 and a message naming the file and the way out, with the scaffold itself still written
+    assert rc == 2
+    said = capsys.readouterr().err
+    assert bootstrap.GITIGNORE in said and "could not be read as UTF-8" in said
+    assert "--force" in said, "the message does not say what to do about it"
+    assert (repo / "fooctl.yaml").is_file(), "the message claims the rest is written and it is not"
 
 
 def test_the_scaffolded_gitignore_is_written_with_lf_on_every_host(tmp_path):

@@ -770,14 +770,21 @@ GITIGNORE_MARKER = "# --- written by simplon ---"
 #: THE RULE IS NOT "IGNORE EVERYTHING THE KERNEL WRITES". Three populations are deliberately absent, and
 #: each absence was checked rather than reasoned about.
 #:
-#: * The paths that ALREADY IGNORE THEMSELVES. `python -m venv`, pytest and mypy each drop a `.gitignore`
-#:   holding `*` into the directory they create. Driven on the scaffolded product, `git check-ignore -v`
-#:   names each cache's OWN file as the rule that hides it, which is why `.pytest_cache` and
-#:   `.mypy_cache` are missing from the four lines above even though both directories are there. So
-#:   `<orch-dir>/.venv` (the launcher's), a pytest gate's `<suite>/.venv`, `.pytest_cache` and
-#:   `.mypy_cache` need no line from anybody. The 0.10.0 notes told a product to add three lines here;
-#:   two of the three were already unnecessary on the day they were written, and a block carrying them
-#:   would read as though it were doing that work.
+#: * The paths that ALREADY IGNORE THEMSELVES. pytest and mypy each drop a `.gitignore` holding `*` into
+#:   the cache directory they create. Driven on the scaffolded product, `git check-ignore -v` names each
+#:   cache's OWN file as the rule that hides it, which is why `.pytest_cache` and `.mypy_cache` are
+#:   missing from the four lines above even though both directories are there. The 0.10.0 notes told a
+#:   product to add three lines here; two of them were already unnecessary on the day they were written,
+#:   and a block carrying them would read as though it were doing that work.
+#:
+#:   A VENV IS NOT IN THAT SET, AND IT LOOKED LIKE IT WAS. `python -m venv` writes the same self-ignoring
+#:   file, but only since CPython 3.13, where `EnvBuilder` gained `scm_ignore_files`. Measured on the two
+#:   sides: `python:3.12.14` leaves no `.gitignore` in a fresh venv at all, `python:3.13.15` writes one
+#:   holding `*`. The first version of this block therefore carried no `.venv` rule and was GREEN on a
+#:   3.13 developer box and RED in CI, which runs 3.12 - and CI is the honest reading, because the
+#:   launcher is written to survive a bare host and pins no host python at all. So `.venv/` is a rule
+#:   here, unanchored: that one line covers `<orch-dir>/.venv` wherever `--orch-dir` puts it AND a pytest
+#:   gate's `<suite>/.venv`, on every interpreter a product might be provisioned with.
 #: * The files the kernel GENERATES TO BE COMMITTED. si#102's `CMakeLists.txt` (the product root and
 #:   every target directory), `<product>.sln` and each `<target>.csproj` carry a `DO NOT EDIT` header
 #:   and land among the SOURCES, never under `build/`; so do `nuget.config`, `deploy/completions/
@@ -795,7 +802,8 @@ GITIGNORE_MARKER = "# --- written by simplon ---"
 #: anchored - and `build/` unanchored would additionally swallow a target directory named `build`, into
 #: which si#102 writes a `CMakeLists.txt` that is meant to be committed. The last three cannot be
 #: anchored: `allure-results`/`allure-report` keep their names under a `reports:` a product may move,
-#: and `__pycache__` lands wherever python imported something.
+#: `.venv` follows `--orch-dir` and a gate's `suite:`, and `__pycache__` lands wherever python imported
+#: something.
 #:
 #: WHAT IS NOT HERE AND CANNOT BE. Three kernel outputs sit at a path the MANIFEST names, and two of
 #: those keys have no default at all - `site: output:` and `site: source:` (hugo's `resources/` and its
@@ -809,10 +817,10 @@ _GITIGNORE = f"""\
 # Paths the kernel's own commands leave in this tree. Appended once and never rewritten, so edit,
 # reorder or delete any line and a later `simplon init` will leave your version alone.
 #
-# Not here on purpose: .venv, .pytest_cache and .mypy_cache each write their own `.gitignore` holding
-# `*`, so git already cannot see them; si#102's generated CMakeLists.txt / .sln / .csproj, the generated
-# completions, workflows and nuget.config are meant to be COMMITTED; and `bin/`/`obj/` belong to
-# MSBuild's ignore file rather than to this one.
+# Not here on purpose: .pytest_cache and .mypy_cache each write their own `.gitignore` holding `*`, so
+# git already cannot see them; si#102's generated CMakeLists.txt / .sln / .csproj, the generated
+# completions, workflows and nuget.config are meant to be COMMITTED; and `bin`/`obj` belong to MSBuild's
+# ignore file rather than to this one.
 
 # `build deps` installs pytest and mypy into the bind mount, because a --user container may write
 # nothing else (si#121). Measured at 80 MB, 61 of them mypy's mypyc-compiled binary.
@@ -835,6 +843,12 @@ _GITIGNORE = f"""\
 # does not put a run's results in front of a reviewer.
 allure-results/
 allure-report/
+
+# The launcher's host venv, and a pytest gate's. NOT anchored, so it holds wherever `--orch-dir` and a
+# gate's `suite:` put one. A venv self-ignores only from CPython 3.13 on (EnvBuilder.scm_ignore_files):
+# measured, python:3.12.14 writes no `.gitignore` into one and python:3.13.15 does, and the launcher pins
+# no host python.
+.venv/
 
 # The kernel imports the product's orchestrator package on EVERY run, so `./<product>.sh help` leaves
 # one of these behind before the product has a command of its own. A containerised `build unit` adds one
@@ -954,11 +968,28 @@ def apply_ignore_block(path: Path, block: str) -> bool:
 
     `--force` does not reach this, deliberately. Forcing a re-scaffold is how somebody refreshes a
     launcher they hand-edited; it must not be how they discover their ignore rules are gone.
+
+    RAISES ValueError when the existing file cannot be read as text - a directory under that name, a
+    `.gitignore` some editor saved as UTF-16, a permission the caller does not have. That is a real
+    condition rather than a hypothetical, and it is the one place this function meets a file nobody here
+    wrote. It is a ValueError and not a bare traceback because `main` catches exactly that and turns it
+    into a message and exit code 2: taking the file out of the clobber rule took it out of the exception
+    contract that protects every other scaffolded path too, and `main`'s own comment sets the bar - a
+    traceback out of `simplon init`, the first command any new user types, is the wrong end of the tool
+    to be shown. The message says the rest of the scaffold is already written and prints nothing else,
+    because the block is in the file the message names.
     """
     if not path.exists():
         path.write_text(block, encoding="utf-8", newline=LF)
         return True
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(
+            f"simplon.bootstrap: the rest of the skeleton is written, but {path} could not be read as "
+            f"UTF-8 text ({exc.__class__.__name__}: {exc}), so simplon's ignore block was not added to "
+            f"it. Add it by hand - every other product's scaffolded {GITIGNORE} carries the same lines - "
+            f"or move that path aside and run `simplon init --force` again") from exc
     if GITIGNORE_MARKER in text:
         return False
     # Close a last line the product left open, then one blank line, so the block never lands glued to
@@ -1136,7 +1167,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if not had_ignore:
-        pass  # a fresh .gitignore is part of the file list next_steps' caller already sees
+        # Silence, and only for this one outcome: there was no file to preserve, so nothing was decided
+        # on the user's behalf. The other two touched - or deliberately did not touch - bytes somebody
+        # else wrote, and that is what has to be said out loud.
+        pass
     elif (target / GITIGNORE) in written:
         print(f"simplon init: appended simplon's ignore block to the {GITIGNORE} that was already there; "
               f"nothing in it was rewritten", file=sys.stderr)

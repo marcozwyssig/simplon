@@ -109,17 +109,26 @@ What it carries, and why each line is shaped the way it is:
     /tests/reports/         a gate's allure run, its junit xml and its verdict stamp
     allure-results/         ... the two of those whose names hold wherever `reports:` points
     allure-report/
+    .venv/                  the launcher's host venv, and a test gate's
     __pycache__/            python's, wherever the kernel imported something
 
 The first four are anchored to the product root with a leading `/` because that is the only place the
 kernel writes them - and because `build/` without it would also hide a target directory named `build`,
 into which `build cmake-files` generates a `CMakeLists.txt` that is meant to be **committed**.
 
+The last three cannot be anchored, and `.venv/` is the one to know about: unanchored, that single line
+covers the launcher's venv wherever `--orch-dir` puts it **and** a test gate's `suite:` venv, on any host
+python. It is there because a venv self-ignores only from CPython 3.13 on, where `EnvBuilder` gained
+`scm_ignore_files` - measured, `python:3.12.14` writes no `.gitignore` into a fresh venv and
+`python:3.13.15` writes one holding `*`. The block was first written without that line, passed on a 3.13
+developer machine and failed in CI on 3.12; CI was right, because `myctl.sh` is written to survive a bare
+host and pins no host python at all.
+
 Three things are deliberately absent:
 
-- **`.venv`, `.pytest_cache` and `.mypy_cache`.** Each of those tools writes its own `.gitignore` holding
-  `*` into the directory it creates, so git already cannot see them. That holds for the launcher's venv
-  wherever `--orch-dir` puts it, which is what makes one block right under both layouts.
+- **`.pytest_cache` and `.mypy_cache`.** Both tools write their own `.gitignore` holding `*` into the
+  directory they create, so git already cannot see them - unlike a venv, unconditionally. A rule here
+  would read as though it were doing work git was already doing.
 - **What the kernel generates to be committed**: the CMake files, the solution and its projects,
   `nuget.config`, `deploy/completions/myctl.bash`, `.github/workflows/*.yml` and the generated CLI
   module. They land among your sources and carry a `DO NOT EDIT` header, not an ignore rule.
