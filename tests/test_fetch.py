@@ -70,7 +70,14 @@ OTHER = b"changed!" * 32_000
 #: The object `/resumable`, `/norange` and `/ignores-range` are serving RIGHT NOW. A dict rather than a
 #: constant because "the object changed between the two halves of a resume" is the case that corrupts a
 #: file, and the only way to drive it is to change it.
-VERSION: dict = {"etag": '"v1"', "body": BODY}
+#: `send_etag` is separate from `etag` on purpose: a server that HAS a version and does not put it in
+#: this particular response is the case the review found, and it cannot be produced by blanking the
+#: version, because then there is nothing for `If-Range` to match either.
+#:
+#: `drop` makes every answer to a RANGED request die halfway - the `200` fallback and the `206` alike.
+#: It is the only way to look at what a resume LEAVES BEHIND, because a transfer that completes takes
+#: the partial file and the sidecar with it whatever the rule about keeping them says.
+VERSION: dict = {"etag": '"v1"', "body": BODY, "send_etag": True, "drop": False}
 
 #: Every `(path, Range, If-Range)` the server was asked for. A resume that is really a silent full
 #: download produces the same file, so the file alone cannot tell the two apart; this can.
@@ -185,21 +192,29 @@ class _Handler(BaseHTTPRequestHandler):
 
         if start is not None:
             self.send_response(206)
-            self.send_header("ETag", etag)
+            if VERSION["send_etag"]:
+                self.send_header("ETag", etag)
             self.send_header("Accept-Ranges", "bytes")
             self.send_header("Content-Range", f"bytes {start}-{len(body) - 1}/{len(body)}")
             self.send_header("Content-Length", str(len(body) - start))
             self.end_headers()
-            self.wfile.write(body[start:])
+            remaining = body[start:]
+            if VERSION["drop"]:
+                self.wfile.write(remaining[:len(remaining) // 2])
+                self.wfile.flush()
+                self.close_connection = True
+            else:
+                self.wfile.write(remaining)
             return
 
         self.send_response(200)
-        self.send_header("ETag", etag)
+        if VERSION["send_etag"]:
+            self.send_header("ETag", etag)
         if accept_ranges is not None:
             self.send_header("Accept-Ranges", accept_ranges)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        if wanted is None:
+        if wanted is None or VERSION["drop"]:
             self.wfile.write(body[:len(body) // 2])
             self.wfile.flush()
             self.close_connection = True
@@ -643,10 +658,10 @@ def test_the_line_never_outgrows_the_room_it_was_given():
 def versioned():
     """The served object back at v1, and the request log empty. Both are module state, because the case
     worth driving is the object CHANGING between the two halves of one resume."""
-    VERSION["etag"], VERSION["body"] = '"v1"', BODY
+    VERSION.update(etag='"v1"', body=BODY, send_etag=True, drop=False)
     SEEN.clear()
     yield VERSION
-    VERSION["etag"], VERSION["body"] = '"v1"', BODY
+    VERSION.update(etag='"v1"', body=BODY, send_etag=True, drop=False)
     SEEN.clear()
 
 
@@ -909,6 +924,92 @@ def test_a_resume_that_fails_again_keeps_what_it_got_and_says_so(base, tmp_path,
     assert "discarded" not in str(refusal.value), str(refusal.value)
     assert "resume" in str(refusal.value).lower(), str(refusal.value)
     assert (tmp_path / "big.iso.part").read_bytes() == BODY[:len(BODY) // 2]
+
+
+def test_bytes_no_response_vouched_for_are_not_kept_beside_a_sidecar_that_names_another_version(
+        base, tmp_path, versioned):
+    """FOUND IN REVIEW, and the reason `keep` is decided by the response and not by what was on disk
+    before the request.
+
+    The sequence: a partial file and a sidecar naming `"v1"` exist; the object has moved on, so the
+    server answers `200` with the whole current body - and THIS response carries no validator at all,
+    which servers do inconsistently. The partial file is then truncated and refilled from an object
+    nobody vouched for. If that transfer also dies, keeping the pair would leave bytes on disk beside a
+    sidecar naming a version they are not, and the only thing standing between that and a spliced file
+    on the next run would be the server getting `If-Range` right a second time.
+    """
+    # arrange
+    dest = tmp_path / "big.iso"
+    part = tmp_path / "big.iso.part"
+    source = tmp_path / "big.iso.part.source"
+    part.write_bytes(BODY[:len(BODY) // 2])
+    source.write_text(f"{base}/resumable\n\"v1\"\n")
+    VERSION.update(etag='"v2"', body=OTHER, send_etag=False, drop=True)
+
+    # act
+    with _capture(tty=False):
+        with pytest.raises(fetch.DownloadError):
+            fetch.download(f"{base}/resumable", dest, resume=True)
+
+    # assert
+    assert SEEN[-1][2] == '"v1"', f"the version on disk was never put to the server: {SEEN}"
+    assert not part.exists(), "bytes no response vouched for were kept for a later resume"
+    assert not source.exists(), "a sidecar outlived the bytes it was describing"
+
+
+def test_a_confirmed_206_that_carries_no_etag_still_resumes(base, tmp_path, versioned):
+    """The other side of the same decision, and the reason it is not simply "no validator, no keep".
+
+    A `206` is the server having compared `If-Range` and honoured it. Whether it repeats the version in
+    that response is its own business - many do not - and the sidecar's validator is exactly the one it
+    just ruled on. Throwing the partial file away there would turn a resume off against those servers
+    and nothing would ever say so.
+    """
+    # arrange
+    dest = tmp_path / "big.iso"
+    part = tmp_path / "big.iso.part"
+    with _capture(tty=False):
+        with pytest.raises(fetch.DownloadError):
+            fetch.download(f"{base}/resumable", dest, resume=True)
+    VERSION.update(send_etag=False, drop=True)
+
+    # act: a 206 with no ETag that ALSO dies halfway. A transfer that completes takes the partial file
+    # with it whatever the rule says, so this is the only shape that can see the decision at all.
+    with _capture(tty=False):
+        with pytest.raises(fetch.DownloadError):
+            fetch.download(f"{base}/resumable", dest, resume=True)
+    grown = part.stat().st_size
+    VERSION["drop"] = False
+    with _capture(tty=False):
+        fetch.download(f"{base}/resumable", dest, resume=True)
+
+    # assert
+    assert grown == len(BODY) // 2 + len(BODY) // 4, (
+        "the confirmed 206 that carried no ETag was thrown away instead of continued")
+    assert (tmp_path / "big.iso.part.source").exists() is False, "the sidecar outlived the file"
+    assert _ranges_asked_for() == [f"bytes={len(BODY) // 2}-", f"bytes={grown}-"], repr(SEEN)
+    assert dest.read_bytes() == BODY
+
+
+def test_a_sidecar_that_is_not_valid_utf8_raises_downloaderror_and_nothing_else(
+        base, tmp_path, versioned):
+    """FOUND IN REVIEW. `_resume_point` runs BEFORE this function's own try block, and `read_text`
+    answers a corrupted sidecar with `UnicodeDecodeError` - a `ValueError`, caught by nothing. It
+    escaped `download` raw, past a docstring promising `DownloadError` and only that. Same shape as the
+    idna `ValueError` this module already recorded once.
+    """
+    # arrange
+    dest = tmp_path / "big.iso"
+    (tmp_path / "big.iso.part").write_bytes(BODY[:1000])
+    (tmp_path / "big.iso.part.source").write_bytes(b"\xff\xfe not utf-8 at all\n")
+
+    # act / assert: a half-written sidecar is provenance nobody has, so it downloads from scratch -
+    # and the server drops halfway, which is an ordinary DownloadError and not a decoding crash.
+    with _capture(tty=False):
+        with pytest.raises(fetch.DownloadError):
+            fetch.download(f"{base}/resumable", dest, resume=True)
+
+    assert _ranges_asked_for() == [], f"a sidecar nobody could read was trusted anyway: {SEEN}"
 
 
 def test_a_resume_still_refuses_a_chain_through_cleartext(base, cleartext, tmp_path, monkeypatch,

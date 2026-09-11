@@ -59,7 +59,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 from urllib.parse import urlsplit
 
 from simplon import log
@@ -402,14 +402,27 @@ def _resume_point(part: Path, source: Path, url: str) -> tuple[int, str]:
         return 0, ""
     try:
         recorded = source.read_text(encoding="utf-8").split("\n")
-    except OSError:
-        return 0, ""          # bytes with no provenance at all - an older version, or a crash between
+    except (OSError, ValueError):
+        # OSError: no sidecar at all - an older version wrote the part, or a crash landed between the
+        # two writes. ValueError: `read_text` raises UnicodeDecodeError, which IS one, on a sidecar
+        # that is not valid UTF-8 - a half-written or corrupted file. This runs BEFORE `download`'s own
+        # try block, so an escape here is an escape past a docstring promising only `DownloadError`.
+        # Found in review, and it is the same shape as the idna ValueError recorded further down.
+        return 0, ""
     if len(recorded) < 2 or recorded[0] != url or not recorded[1]:
         return 0, ""          # a different URL, or a version the server was never asked to confirm
     return have, recorded[1]
 
 
 def _request(url: str, offset: int, validator: str) -> urllib.request.Request:
+    """The request, with the two headers a resume needs.
+
+    urllib's redirect handler carries both across a hop, including to another host, which is what the
+    oras call site needs - GitHub redirects a release asset to objects.githubusercontent.com, and a
+    `Range` lost there would silently re-download the whole thing. It is also safe by construction
+    rather than by luck: a validator the target does not recognise makes it answer `200` with the whole
+    object, which `_served_offset` reads as "truncate and start over".
+    """
     request = urllib.request.Request(url)
     if offset > 0:
         request.add_header("Range", f"bytes={offset}-")
@@ -469,7 +482,7 @@ def _served_total(response: http.client.HTTPResponse, offset: int) -> int | None
     return None if announced is None else offset + announced
 
 
-def _staging(dest: Path, resume: bool) -> tuple[Path, Any, Path | None]:
+def _staging(dest: Path, resume: bool) -> tuple[Path, IO[bytes] | None, Path | None]:
     """Where the bytes land before they are the file, and the trade between the two answers.
 
     WITHOUT `resume`: a unique `mkstemp` name, so two runs downloading the same destination cannot land
@@ -488,10 +501,12 @@ def _staging(dest: Path, resume: bool) -> tuple[Path, Any, Path | None]:
     # descriptor to the file it created and nothing else may open that name in between. The caller
     # closes it on every path out, including the ones that never write a byte into it.
     handle, temporary = tempfile.mkstemp(dir=dest.parent, prefix=f"{dest.name}.", suffix=".part")
+    # `r+b` rather than `wb` only so that `_sink` has one kind of stream to position; the file `mkstemp`
+    # just created is empty either way, and this path never resumes.
     return Path(temporary), os.fdopen(handle, "r+b"), None
 
 
-def _sink(part: Path, opened: Any, offset: int) -> Any:
+def _sink(part: Path, opened: IO[bytes] | None, offset: int) -> IO[bytes]:
     """The file the body is written into, positioned where the body actually starts.
 
     A seek rather than append mode: `ab` ignores where the handle is pointed, so a server that answered
@@ -564,6 +579,14 @@ def download(url: str, dest: str | Path, *, label: str = "",
                 if served_by:
                     _remember(source, url, served_by)
                     keep = True
+                else:
+                    # NO validator in THIS response, and `keep` may not stay at what the offset before
+                    # the request made it. On a confirmed `206` the sidecar's own validator is what the
+                    # server just honoured, so it still describes what is on disk. On a `200` it does
+                    # not: the partial file is about to be truncated and refilled from an object nobody
+                    # vouched for, and leaving the old sidecar beside it would pair bytes with a
+                    # version they are not. Found in review.
+                    keep = offset > 0
             received = offset
             with _sink(temporary, handle, offset) as sink:
                 progress = _Progress(name, total, started)
