@@ -51,9 +51,28 @@ class StepState(str, Enum):
 
 # The ONE state vocabulary both runners render: the TUI's tree rows and the headless tree print use these
 # icons, so a CI log and a TTY show the same structure in the same alphabet (netctl#1276).
+#
+# RUNNING IS NOT A TRIANGLE, AND THAT IS THE POINT (si#162). It was `▶` until a screenshot of a real
+# Packer build showed `├── ▶ ▶ win2019   13m51s…` - because `Tree.ICON_NODE` is `▶ ` and
+# `ICON_NODE_EXPANDED` is `▼ `, so every running row that had children rendered two identical arrows with
+# two unrelated meanings, and the collision fell exactly on the rows carrying work.
+#
+# The alphabet a Textual `Tree` draws on its own account was read out of the pinned 8.2.8 rather than
+# guessed: the two node icons above, plus `Tree.LINES` - `│ └─ ├─` by default, `┃ ┗━ ┣━` under a bold
+# row style and `║ ╚═ ╠═` under a double one. The bold variant is reachable here, because `_state_styles`
+# renders a FAILED row bold. Rendering the pane at 100, 40 and 24 columns changed none of it: a narrow
+# terminal truncates the labels and keeps the same guides. `↻` is in neither set, and neither are the
+# other four - `·`, `✓`, `✗` and `⊘` were checked against the same list rather than assumed.
+#
+# STATIC, DELIBERATELY. A spinner would read better in the tree and be wrong in the two places this table
+# is ALSO rendered - `render_tree`'s headless rows and si#148's `build/logs/run-transcript.log`, where a
+# frame of an animation is a character somebody has to explain. One glyph, every renderer.
+#
+# It is also one cell narrower than what it replaces, which is a bonus rather than the reason: `▶` and
+# `·` are East_Asian_Width AMBIGUOUS and render double-wide in a CJK locale, while `↻` is Neutral.
 STATE_ICON = {
     StepState.PENDING: "·",
-    StepState.RUNNING: "▶",
+    StepState.RUNNING: "↻",
     StepState.OK: "✓",
     StepState.FAILED: "✗",
     StepState.SKIPPED: "⊘",

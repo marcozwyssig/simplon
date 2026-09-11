@@ -21,6 +21,73 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.11.0
+
+**Three things a real run showed that no test was asking about, and a gate that had quietly stopped
+covering what its name claims.** The first three are the runner; they came out of one screenshot and one
+sentence from the operator watching it, and none of them was a failure - the run was correct and
+unreadable at the same time.
+
+A minor rather than a patch: the state alphabet is a surface, and one of its five characters changed.
+
+### The running row stops reading as two arrows (si#162)
+
+`STATE_ICON[RUNNING]` was `▶`, and `▶` is exactly what Textual's `Tree` puts in front of a collapsed
+node. A running row with steps under it therefore rendered
+
+```text
+├── ▶ ▶ build.prep   13m51s…
+```
+
+- two identical arrows, two unrelated meanings, on precisely the rows that carry work. It is `↻` now.
+
+The choice is a glyph nobody else draws, and the alphabet it was checked against was read out of the
+pinned Textual rather than assumed: the two node icons, plus every guide variant in `Tree.LINES` -
+`│ └─ ├─` by default, `┃ ┗━ ┣━` under a bold row style, which is reachable because a failed row IS bold.
+The other four were held to the same list instead of being taken on trust, and the pane was rendered at
+100, 40 and 24 columns to confirm a narrow terminal changes the guides not at all. A test now asserts
+the whole table is disjoint from that alphabet, so the next glyph anybody adds cannot re-open the
+collision quietly.
+
+**Static, and that is a constraint rather than a preference.** The same table renders the headless rows
+a CI log carries and the `run-transcript.log` somebody attaches to a ticket. A spinner would read better
+in the tree and be wrong in both, so `STATE_ICON` keeps producing exactly one plain character - asserted
+in each of those two artefacts, alongside the existing "no markup, no escape" checks.
+
+### The pane comes back to the tail, and an aggregate stops being a snapshot (si#162)
+
+*"When I change the view it loses its place. Above all you cannot see the latest state while something
+is running."* Two separate defects under one sentence, and si#144's backlog was neither of them - the
+lines were all there, all thirty-seven of them.
+
+**Where the pane was POINTED was wrong.** Leaving a running step remembered a y offset; the step had
+five lines at the time, so the offset was 0 and it was also the end. Coming back to thirty-seven lines,
+`scroll_to(y=0)` is the top - the pane showed `line 1` while the step was at `line 65`. Worse than one
+stale screen: the sticky bottom asks whether the reader is at the end before every write, so from that
+moment it never caught up again. Being at the tail is a relationship to output that has not been written
+yet, so it is now remembered as one and restored as one.
+
+**And an aggregate's listing never moved.** With the cursor on a parent row while its child streamed,
+the rendered pane was byte-identical over a second and a half in which the child produced thirty more
+lines. Two causes at once - the listing said `(running)`, which cannot change, and nothing repainted it
+between step boundaries, which is the one event a long step does not produce. A running child now
+carries how long it has been running, and the same one-second beat that drives the row counters
+repaints the pane when its text really changed. The root of a plan is somewhere you can watch a run
+from.
+
+Both were reproduced before they were touched, with a real child through the real stream reader and the
+cursor moved deliberately, and both tests were seen red against 0.10.0 first.
+
+### `test all` runs every test again (si#156)
+
+si#89 moved the release-notes guard out of the pytest suite and into the catalogue coordinate
+`test:release-notes`, which was right and had a side effect nobody stated: the check left the local
+gate. `./simplon.sh test all` says *Run every test* and had not been running it since. A developer
+running the gate the project points them at learned nothing about their notes; CI told them, after the
+push. `test all` reaches the same single implementation the CI step reaches - not a second pytest test
+shelling out to it, which would be the two-ways-to-one-verdict shape the manifest already forbids beside
+`typecheck-python`.
+
 ## 0.10.0
 
 **A C++ or a .NET product stops writing its build files by hand.** 0.9.0 gave every product one pinned
