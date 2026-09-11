@@ -50,7 +50,10 @@ WHAT THE RULE STILL MISSES, stated rather than discovered later:
     `rsync --times` that carries an older source stamp onto new content of the same length. Nothing
     short of reading the file can see that, which is the thing the cache exists not to do.
     `test_checksum.py` drives exactly this case and asserts the stale answer, so the blind spot is a
-    recorded measurement and not a surprise.
+    recorded measurement and not a surprise. A concurrent writer racing the read reaches the same
+    precondition by a different door and with a worse payload: the stat is taken once, the read happens
+    after it, and a rewrite that lands mid-read and then restores the stat leaves a digest of NEITHER
+    version cached. Same rule, same answer - out of reach of anything that does not read the file.
   * A clock that runs backwards, or media on a remote filesystem whose server clock is AHEAD of this
     one. Rule 3 is then never satisfied and the cache simply never hits: slow, never wrong. A server
     clock more than a second BEHIND weakens rule 3 by that much.
@@ -74,6 +77,7 @@ kernel adds none.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -145,19 +149,19 @@ def sha256_of(path: Path, *, cache: Path | None = None) -> str:
     that is not there has no answer, and returning one would be the "cannot tell nothing-to-do from
     failed" defect this repository hunts.
     """
+    if cache is None:
+        return _digest(path)
+
+    sidecar = _sidecar(cache, path)
     looked_at = _now_ns()
     stat = path.stat()
-    sidecar = _sidecar(cache, path) if cache is not None else None
 
-    if sidecar is not None:
-        cached = _read(sidecar, path, stat)
-        if cached is not None:
-            return cached
+    cached = _read(sidecar, path, stat)
+    if cached is not None:
+        return cached
 
     digest = _digest(path)
-
-    if sidecar is not None:
-        _write(sidecar, path, stat, digest, looked_at)
+    _write(sidecar, path, stat, digest, looked_at)
     return digest
 
 
@@ -186,6 +190,17 @@ def _absolute(path: Path) -> Path:
     return path if path.is_absolute() else Path(os.getcwd()) / path
 
 
+def _exact_int(value: object) -> int | None:
+    """`value` when it is really an integer, else None - and `True` is NOT one.
+
+    JSON's `true` decodes to a Python bool, `bool` is a subclass of `int`, and `True == 1`. So a record
+    carrying `"format": true` compares equal to `FORMAT` under a plain `==` and a sidecar this version
+    cannot read is read anyway. Every numeric field goes through here for that reason, rather than the
+    one field somebody thought of. Found in review.
+    """
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
 def _read(sidecar: Path, path: Path, stat: os.stat_result) -> str | None:
     """The digest in `sidecar` when every condition in this module's head holds, else None.
 
@@ -197,14 +212,16 @@ def _read(sidecar: Path, path: Path, stat: os.stat_result) -> str | None:
         record = json.loads(sidecar.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if not isinstance(record, dict) or record.get("format") != FORMAT:
+    if not isinstance(record, dict) or _exact_int(record.get("format")) != FORMAT:
         return None
     if record.get("path") != str(_absolute(path)):
         return None
-    if record.get("size") != stat.st_size or record.get("mtime_ns") != stat.st_mtime_ns:
+    if _exact_int(record.get("size")) != stat.st_size:
         return None
-    looked_at = record.get("looked_at_ns")
-    if not isinstance(looked_at, int) or looked_at - stat.st_mtime_ns < RACY_WINDOW_NS:
+    if _exact_int(record.get("mtime_ns")) != stat.st_mtime_ns:
+        return None
+    looked_at = _exact_int(record.get("looked_at_ns"))
+    if looked_at is None or looked_at - stat.st_mtime_ns < RACY_WINDOW_NS:
         return None
     digest = record.get("sha256")
     return digest if isinstance(digest, str) and _HEX.match(digest) else None
@@ -235,5 +252,16 @@ def _write(sidecar: Path, path: Path, stat: os.stat_result, digest: str, looked_
         temporary.write_text(json.dumps(record), encoding="utf-8")
         temporary.replace(sidecar)
     except OSError:
+        # The write can succeed and the rename still fail - something that is not a file standing where
+        # the sidecar goes, a directory that stopped being writable between the two. Swallowing that
+        # without removing the temporary would leak one file per call for as long as the condition
+        # lasts, which is a cache directory that grows without ever answering anything. Found in review.
+        #
+        # The cleanup is suppressed in turn, because the thing that broke the write can equally break the
+        # removal: with a FILE standing where the cache directory goes, `unlink` raises NotADirectoryError
+        # on a path whose parent is not a directory. A cache tidying itself up may not be the reason a
+        # command fails - the suite caught that one line after it was written.
+        with contextlib.suppress(OSError):
+            temporary.unlink(missing_ok=True)
         return False
     return True

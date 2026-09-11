@@ -394,6 +394,7 @@ def _tamper(cache: Path, **fields: object) -> None:
 
 @pytest.mark.parametrize("why, fields", [
     ("an unknown format", {"format": checksum.FORMAT + 1}),
+    ("a format of JSON true, which is == 1 in Python", {"format": True}),
     ("no format at all, as an older writer left it", {"format": None}),
     ("a path naming another file", {"path": "/elsewhere/media.iso"}),
     ("a digest that is not a digest", {"sha256": "not-a-digest"}),
@@ -451,6 +452,27 @@ def test_a_sidecar_that_cannot_be_read_recomputes(tmp_path, reads):
     # act / assert
     assert checksum.sha256_of(media, cache=cache) == DIGEST_A
     assert len(reads) == 2
+
+
+def test_a_failed_sidecar_write_leaves_no_temporary_behind(tmp_path, reads):
+    """Found in review, and it had no test. The write can succeed and the RENAME still fail - here with a
+    directory standing where the sidecar goes - and swallowing that without removing the temporary leaks
+    one file per call for as long as the condition lasts: a cache directory that grows and never answers
+    anything. Seen red by dropping the `unlink` from `checksum._write`.
+    """
+    # arrange: a directory occupying the sidecar's own name
+    cache = tmp_path / "cache"
+    media = _settled(tmp_path / "media.iso", A)
+    checksum._sidecar(cache, media).mkdir(parents=True)
+
+    # act
+    first = checksum.sha256_of(media, cache=cache)
+    second = checksum.sha256_of(media, cache=cache)
+
+    # assert
+    assert (first, second) == (DIGEST_A, DIGEST_A)
+    assert len(reads) == 2
+    assert not list(cache.glob("*.tmp")), "a failed sidecar write left its temporary behind"
 
 
 def test_a_cache_that_cannot_be_written_still_answers(tmp_path, reads):
