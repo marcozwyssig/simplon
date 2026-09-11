@@ -263,6 +263,56 @@ whose `report.merge:` or `results_from:` names its own results directory sees a 
 traceback, and a gate that named it goes red rather than green - point the key at the directory the
 runner writes into, or drop it.
 
+### The pane's scroll tests wait for the frame Textual defers the scroll to (si#169)
+
+si#162's own guard,
+`test_coming_back_to_a_running_step_lands_on_its_tail_and_goes_on_following_it`, turned five unrelated
+pull requests red in the two days after it was written, and a rerun of one identical commit failed
+again. **The property it guards is intact; the test was reading one frame too early, and so were three
+of its four neighbours.**
+
+Read out of the pinned Textual 8.2.8 rather than guessed: `Widget.scroll_to` and `Widget.scroll_end`
+move nothing at the moment they are called. Both end in `call_after_refresh` unless `immediate=True`,
+and the framework says in that branch why - the layout has to settle first or `max_scroll_y` is not
+the real one, which is the very number si#162 was about. The screen drains those callbacks only after
+a frame and refuses to drain them at all while a repaint is outstanding, which is the state a
+cleared-and-rewritten pane is always in. A bare `await pilot.pause()` sleeps one `SLEEP_GRANULARITY`,
+20 ms, and hands back, against a screen update timer at 1/60 s.
+
+**Reproduced before anything was touched, and the reproduction is the useful part.** The full suite
+went green 12 times of 12 on this machine and the module alone 30 of 30, which is what makes a flake
+look rare and unfixable. Under four competing CPU hogs it is not rare: the ticket's test went red in 8
+of 40 runs and again in 10 of 40, on the assertion the ticket quotes, and the same load found three of
+the four neighbouring scroll tests flaky on unmodified main too. That is also what the CI runner is,
+since it executes two suites at once.
+
+**It is the test and not the runner, and that was measured rather than argued.** Under the same four
+hogs the pane reached 61 of 61 between 3.0 and 11.1 ms after the read, every time, inside one 60 Hz
+frame. Nobody watching a terminal sees that, and the one alternative inside the runner -
+`scroll_end(immediate=True)` - is what Textual's own comment rules out, because the layout has to
+settle before `max_scroll_y` means anything. Nothing in the runner changed.
+
+**There were two races and not one of them twice.** Waiting on the deferred scroll still left three
+neighbours red over 120 loaded runs, all three at their pane's *maximum* offset - the signature of the
+app's own scroll landing after the test's. The cursor move only assigns a line number; the highlight is
+posted and bubbles, and the pane is repainted on the app's own account by a step starting and by the
+one-second aggregate tick. A test that scrolls the pane by hand now first drains what the app already
+asked for, deterministically rather than by waiting.
+
+**And two of the new waits were at first satisfied by the wrong pane**, which is the failure mode a
+poll introduces and the reason both are recorded in the file. Being at the tail is trivially true of a
+pane holding three lines, so waiting for the tail alone returned instantly with the *previous* step
+still on screen; and the round trip's second wait was satisfied by a pane neither cursor move had
+reached, going green 2 of 20 runs against a deliberately broken runner. Both waits now name the row the
+pane has to be showing.
+
+Not a longer sleep, not a retry, not a weaker assertion: every original assertion is unchanged and
+every one was seen red. Five properties were broken in the runner in turn, and each test failed 20 of
+20 loaded runs against its own - the round trip among them, which the row-naming wait took from 18 of
+20 to 20 of 20. The two reads that assert a scroll did **not** move are deliberately left on a bare
+pause, because a poll cannot wait for a negative; each was red in 10 of 10 idle and 20 of 20 loaded runs
+against the regression it exists to catch, which is why neither grew a wait it cannot justify. All five then survived 150 loaded runs with nothing red.
+
 ## 0.10.0
 
 **A C++ or a .NET product stops writing its build files by hand.** 0.9.0 gave every product one pinned
