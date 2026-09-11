@@ -255,10 +255,10 @@ deployed to the machine in front of you. Beyond that, you write it yourself.
 ```text
 $ ./simplon.sh build docs
 [07:15:35] ==> build.reference - Write the product's command reference as Markdown, read off its BUILT command line.
-  [07:15:36]  OK command reference -> site/content/with-what/commands.md
+  [07:15:36]  OK command reference -> docs/site/content/with-what/commands.md
 [07:15:36] ==> build.site - Build the product's documentation website with Hugo, in Docker (HTML only).
   [07:15:36] ==> fetching the pinned theme module github.com/imfing/hextra@v0.12.3
-  [07:15:38] ==> building the site with hugo in hugomods/hugo:exts-0.148.2: site/ -> build/website/
+  [07:15:38] ==> building the site with hugo in hugomods/hugo:exts-0.148.2: docs/site/ -> build/website/
   [07:15:44]  OK site built -> build/website/
 [07:15:44]  OK docs: all 2 steps passed
 ```

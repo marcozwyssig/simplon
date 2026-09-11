@@ -47,7 +47,7 @@ from simplon.orchestrator import manifest as manifest_mod
 from conftest import ROOT
 
 #: The Hugo content tree - every page the site renders lives under it.
-CONTENT = ROOT / "site" / "content"
+CONTENT = ROOT / "docs" / "site" / "content"
 
 #: The product manifest, which is where a GENERATED content page is declared.
 MANIFEST = ROOT / "simplon.yaml"
@@ -85,7 +85,7 @@ def pages() -> list[Path]:
 def chapter(name: str) -> Path:
     """The one page served under this file name, whichever section it sits in.
 
-    `chapter("case-java.md")` rather than `ROOT / "site" / "content" / "what" / "case-java.md"`: the file
+    `chapter("case-java.md")` rather than `ROOT / "docs" / "site" / "content" / "what" / "case-java.md"`: the
     name is what a chapter IS, the section is what si#170 decided about it, and a suite that holds a
     chapter against the code has no business restating the second.
 
@@ -254,7 +254,7 @@ def fragment_of(link: Link) -> str:
 def generated_pages() -> frozenset[Path]:
     """The content pages this product's manifest GENERATES, as paths in the content tree.
 
-    THIS IS si#67'S DECISION, and it is the whole reason the function exists. `site/content/with-what/
+    THIS IS si#67'S DECISION, and it is the whole reason the function exists. `docs/site/content/with-what/
     commands.md` is written by `docs:reference` during the build and is gitignored, so a link checker
     that walked the built tree would be green or red DEPENDING ON WHETHER THE REFERENCE HAD BEEN BUILT -
     an outcome that says nothing, which is the one shape this repository refuses everywhere else. The

@@ -810,7 +810,7 @@ def test_the_refusal_names_the_release_that_abolished_the_form_and_the_page_that
 
     Three facts, because those are the three that cannot be recovered from the manifest itself: which
     shape it is in, which release stopped loading it, and where the shape that replaced it is written
-    down. The page is asserted as a REACHABLE coordinate rather than as a string: `site/content` is
+    down. The page is asserted as a REACHABLE coordinate rather than as a string: `docs/site/content` is
     where it is maintained, so a page renamed out from under this refusal turns this red.
     """
     # arrange / act

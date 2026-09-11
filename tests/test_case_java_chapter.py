@@ -1,6 +1,6 @@
 """The Java use case chapter, held against the things it claims (si#26).
 
-WHY A TEST AND NOT PROOFREADING. `site/content/using/case-java.md` walks one delivery loop with a
+WHY A TEST AND NOT PROOFREADING. `docs/site/content/what/case-java.md` walks one delivery loop with a
 toolchain the kernel has never met, and the walk is made of second sources: command names its product's
 manifest already assembles, coordinates `catalogue.yaml` already declares, an image reference
 `simplon.docker.pinned_image` already rules on, refusal and verdict sentences the kernel already builds

@@ -1,6 +1,6 @@
 """The C++ use case chapter, held against the things it claims (si#108).
 
-WHY A TEST AND NOT PROOFREADING. `site/content/using/case-cpp.md` walks one delivery loop with a product
+WHY A TEST AND NOT PROOFREADING. `docs/site/content/what/case-cpp.md` walks one delivery loop with a product
 that writes no build body at all: four commands, one catalogue coordinate, one pinned image. Everything
 load-bearing on that page is a fact stated twice - the argv the kernel's C++ profile carries, the command
 names the product's manifest assembles, the docker line `toolchain.docker_argv` builds, the refusals the loader

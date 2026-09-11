@@ -3,7 +3,7 @@
 # Hugo's own configuration - the part that describes the SITE - lives here, in the product tree, because
 # it is the product's business: what the site is called, how it is navigated, which theme dresses it.
 # What the kernel's `docs:site` task contributes is the run: the pinned image, the mount, `--user`, the
-# wipe and the check that a home page came out. The `site:` section of ../simplon.yaml is the seam
+# wipe and the check that a home page came out. The `site:` section of ../../simplon.yaml is the seam
 # between the two, and it deliberately repeats two values that also appear here - `baseURL` and the
 # theme module - because the task passes `--baseURL` on the command line and runs `hugo mod get` for the
 # pinned theme before it builds. Hugo's own copies below are what makes `hugo server` in this directory
@@ -14,7 +14,7 @@ languageCode: "en-us"
 
 # The theme as a Hugo MODULE (spec: not a submodule, not vendored). The VERSION is not written here: it
 # lives in go.mod, which `hugo mod get github.com/imfing/hextra@vX.Y.Z` writes from the pin in
-# ../simplon.yaml. Two places naming a version is how the two drift, so this one names only the module.
+# ../../simplon.yaml. Two places naming a version is how the two drift, so this one names only the module.
 module:
   imports:
     - path: github.com/imfing/hextra

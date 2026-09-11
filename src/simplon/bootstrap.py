@@ -808,7 +808,7 @@ GITIGNORE_MARKER = "# --- written by simplon ---"
 #: WHAT IS NOT HERE AND CANNOT BE. Three kernel outputs sit at a path the MANIFEST names, and two of
 #: those keys have no default at all - `site: output:` and `site: source:` (hugo's `resources/` and its
 #: build lock live under the latter), and `docs:reference`'s `output`, which is why this kernel
-#: gitignores `site/content/with-what/commands.md` by hand. The kernel refuses those sections rather than
+#: gitignores `docs/site/content/with-what/commands.md` by hand. The kernel refuses those sections rather than
 #: guessing a path, so a scaffolder running before any of them exists cannot write their lines either.
 #: They are published on `how/getting-started.md` as the product's own; this constant is the part a
 #: scaffold can be sure of.

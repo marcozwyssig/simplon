@@ -200,7 +200,8 @@ MOVED_CONSUMERS: dict[str, tuple[str, ...]] = {}
 #: `0.4.0.postN.devM` - the minor does not move until a `v0.5.0` tag exists. The test therefore goes red
 #: on the RELEASE RUN of the next minor, not before: `.github/workflows/release.yml` runs `test all`
 #: after the tag and before the publish, so the tag is cut and nothing is published. That is the LAST
-#: moment, deliberately, and it is loud; the FIRST moment is `site/content/how/releasing.md`, which
+#: moment, deliberately, and it is loud; the FIRST moment is `docs/site/content/how/releasing.md`,
+#: which
 #: tells whoever is about to type a minor to look here.
 MOVED_DUE_AFTER = (0, 4)
 

@@ -53,7 +53,7 @@ def test_the_site_section_is_declared_and_valid(product):
     declared = site_task.declared(data, source=str(MANIFEST))
 
     # Assert: the four values Hugo actually needs, plus the theme the page's whole look hangs on.
-    assert declared.source == "site"
+    assert declared.source == "docs/site"
     assert declared.output == "build/website"
     assert declared.image and declared.theme
     assert declared.base_url.startswith("https://")

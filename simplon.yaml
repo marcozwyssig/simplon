@@ -42,20 +42,20 @@ groups:
       # an open question a caller answers on the command line. Pinned with `with:`, the parameter leaves
       # the command line entirely -- `./simplon.sh build reference` takes no arguments -- which is what
       # makes the aggregate below possible at all, since a planned step is spawned without arguments. The
-      # path points INTO site/content/, because Hugo only renders what is under its content directory; the
+      # path points INTO docs/site/content/, because Hugo only renders what is under its content directory;
       # generated page is gitignored there, since only the sources belong in the repo.
       reference:
         task: "docs:reference"
         with:
-          output: site/content/with-what/commands.md
+          output: docs/site/content/with-what/commands.md
           title: "Command reference"
       # The Hugo run itself. Its five values live in the `site:` section below rather than here, because
       # they are the product's data and `docs:site` reads them through the manifest -- see
       # src/simplon/tasks/site.py.
       site: { task: "docs:site" }
       # The documentation website, as ONE command, and an impl-less AGGREGATE rather than a leaf (#2, task
-      # 3). `reference` writes site/content/with-what/commands.md by reading the assembled CLI; `site` runs
-      # Hugo over site/ and publishes into build/website/. The first WRITES a page the second READS, so
+      # 3). `reference` writes docs/site/content/with-what/commands.md by reading the assembled CLI; `site`
+      # runs Hugo over docs/site/ and publishes into build/website/. The first WRITES a page the second READS, so
       # the order is not a preference - run them the other way round and the published site carries the
       # previous run's reference, or, the very first time, none at all.
       #
@@ -197,14 +197,14 @@ groups:
 # directory somewhere else entirely.
 #
 # THE KNOWN POINT, and the publishing job (task 4) has to know it: `theme` here is the single place the
-# theme version is declared, and the task makes site/go.mod agree with it by running
-# `hugo mod get <module>@<version>` before every build. That WRITES site/go.mod and refreshes
-# site/go.sum in this working tree. It is idempotent while the pin and go.mod already agree - the normal
+# theme version is declared, and the task makes docs/site/go.mod agree with it by running
+# `hugo mod get <module>@<version>` before every build. That WRITES docs/site/go.mod and refreshes
+# docs/site/go.sum in this working tree. It is idempotent while the pin and go.mod already agree - the normal
 # state, and both files are committed - but the first build after the pin moves leaves a real diff. A CI
 # gate asserting "working tree clean" after a site build would go red on the mechanism working correctly.
 site:
   image: "hugomods/hugo:exts-0.148.2"
-  source: "site"
+  source: "docs/site"
   output: "build/website"
   base_url: "https://marcozwyssig.github.io/simplon/"
   theme: "github.com/imfing/hextra@v0.12.3"
@@ -232,7 +232,7 @@ site:
 # simplon's own house rules about simplon's own page, which is exactly why they did not move into the
 # kernel with the mechanism.
 releases:
-  page: "site/content/when/releases.md"
+  page: "docs/site/content/when/releases.md"
   from: "0.4.0"
   complete_from: "0.5.0"
 

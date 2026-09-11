@@ -203,7 +203,7 @@ kernel's, the values are the product's, and the section is where they meet.
 ```yaml
 site:
   image: "hugomods/hugo:exts-0.148.2"
-  source: "site"
+  source: "docs/site"
   output: "build/website"
   base_url: "https://example.github.io/myctl/"
   theme: "github.com/imfing/hextra@v0.12.3"
@@ -221,6 +221,16 @@ build whose output depends on when it ran is not a build, and a documentation si
 prose - a generator change rewrites it wholesale. `source` and `output` must be plain relative paths
 under the product root, for a blunter reason: `output` is handed to a recursive delete, and
 `output: /var/tmp/x` would delete `/var/tmp/x`.
+
+**`docs/` is where documentation belongs, and that is a convention rather than a rule.** Simplon's own
+site moved to `docs/site` in si#183, so one repository stops answering "where is the documentation" in
+two places, and a product starting today should put its Hugo sources there. The kernel does not enforce
+it and does not default to it. Both were measured before they were rejected: of the seven manifests
+reachable from `simplon.surface.CONSUMERS` in September 2026, three declare a `site:` section, and the
+three disagree about the path - one at `site`, one at `docs/website`, one at `docs/site`. A refusal
+would turn away a consumer that has done nothing wrong, and a default of `docs/site` would be one
+product's leaf name imposed on the product that already chose another one. The convention is stated
+here; `source:` still says where your site is.
 
 {{< callout type="warning" >}}
 **`docs:site` writes into your working tree, on purpose.** A theme declared as a Hugo module means the
@@ -369,7 +379,7 @@ values and nothing else.
 
 ```yaml
 releases:
-  page: "site/content/when/releases.md"    # where the notes live, under the product root
+  page: "docs/site/content/when/releases.md"  # where the notes live, under the product root
   from: "0.4.0"                            # the first release that must have a section at all
   complete_from: "0.5.0"                   # the first section that must name every ticket in its range
 ```

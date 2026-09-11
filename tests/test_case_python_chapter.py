@@ -1,6 +1,6 @@
 """The Python use case chapter, held against the things it claims (si#26).
 
-WHY A TEST AND NOT PROOFREADING. `site/content/using/case-python.md` is a walk through one delivery
+WHY A TEST AND NOT PROOFREADING. `docs/site/content/what/case-python.md` is a walk through one delivery
 loop, and a walk is made of second sources: command names the manifest already carries, catalogue
 coordinates `catalogue.yaml` already declares, image pins `simplon.yaml` already states, a version
 derived by a scheme `pyproject.toml` already configures, and a count of its own rows. Every one of
