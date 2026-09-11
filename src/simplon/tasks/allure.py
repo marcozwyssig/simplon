@@ -411,7 +411,9 @@ def merge_results(dst: str, srcs: list[str], *, parent_suite: str = "Unit",
             # own text joined onto the product root - so `tests/reports/allure-results`,
             # `./tests/reports/allure-results` and a symlink to it are the same mistake written three
             # ways. Both paths are known to exist here: `dst` was created above, `src` passed `isdir` on
-            # the line before.
+            # the line before. A source deleted between those two lines would raise out of `stat` - left
+            # unguarded deliberately, because it is the race `glob.glob` three lines down already runs and
+            # catching it here would claim a robustness the rest of the loop does not have.
             myself.append(src)
             continue
         present.append(src)

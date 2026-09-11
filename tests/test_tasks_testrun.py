@@ -859,20 +859,33 @@ def test_report_doesNotDieWhenAProductDeclaresItsOwnResultsDirAsAMergeSource(mon
     The archive is still rendered, because nothing is wrong with it: the files are already at the
     destination. What was missing is the sentence saying the key can never do anything.
     """
-    # arrange: the destination, declared as its own source, holding a file the copy branch would take
+    # arrange: the destination, declared as its own source, holding a file the copy branch would take.
+    # The render is wired by hand rather than through `_report_lines`, because "it still renders" is half
+    # of what this test claims and a helper that throws the rc away cannot say it
     results = tmp_path / "test/reports/allure-results"
     results.mkdir(parents=True)
     (results / "ctest.xml").write_text('<testsuite tests="1"><testcase name="A"/></testsuite>',
                                        encoding="utf-8")
+    _register(monkeypatch, tmp_path,
+              _data(report={"merge": ["test/reports/allure-results"], "parent_suite": "Java"}))
+    rendered = []
+    monkeypatch.setattr(testrun.allure, "render_report",
+                        lambda *a, **k: rendered.append(a)
+                        or allure.Render(report="/r/allure-1.html", tool="allure"))
+    capsys.readouterr()
 
     # act
-    out = _report_lines(monkeypatch, tmp_path, capsys, merge=["test/reports/allure-results"])
+    rc = testrun.report()
+    out = capsys.readouterr().out
 
-    # assert: a sentence naming the directory and what to do, not a traceback - and the file untouched
+    # assert: a sentence naming the directory and what to do, not a traceback - and the archive is still
+    # written, because nothing is wrong with it
     assert "is the destination itself and was not merged" in out, out
     assert str(results) in out, out
     assert "drop the key" in out, out
     assert (results / "ctest.xml").is_file()
+    assert rendered, "the report step reported the mistake and then skipped the archive"
+    assert rc == 0
 
 
 def test_report_doesNotAnnounceAParentSuiteForAJunitXmlThatCannotCarryOne(monkeypatch, tmp_path, capsys,

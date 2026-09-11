@@ -907,3 +907,21 @@ def test_a_good_source_beside_a_self_sourced_one_still_merges(tmp_path):
     assert merged.self_sourced == (str(dst),)
     assert "1 of 2 declared source dirs" in merged.line, merged.line
     assert "is the destination itself" in merged.line, merged.line
+
+
+def test_a_self_sourced_dir_is_refused_before_its_files_are_aged(tmp_path):
+    # arrange: the check sits ahead of the per-file loop, so si#70's cutoff never sees these files. That
+    # ordering is the claim - a self-source reported as `stale` would name the right directory for the
+    # wrong reason, and the advice a reader gets ("the previous run's") would be false
+    dst = tmp_path / "allure-results"
+    dst.mkdir()
+    (dst / "ctest.xml").write_text("<testsuite/>", encoding="utf-8")
+    os.utime(dst / "ctest.xml", (0, 0))
+
+    # act
+    merged = allure.merge_results(str(dst), [str(dst)], parent_suite="Unit", not_before=time.time())
+
+    # assert
+    assert merged.self_sourced == (str(dst),)
+    assert merged.stale == ()
+    assert "the previous run's" not in merged.line, merged.line

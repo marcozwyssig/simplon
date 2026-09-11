@@ -132,7 +132,6 @@ whose `report.merge:` or `results_from:` names its own results directory sees a 
 traceback, and a gate that named it goes red rather than green - point the key at the directory the
 runner writes into, or drop it.
 
-
 ## 0.10.0
 
 **A C++ or a .NET product stops writing its build files by hand.** 0.9.0 gave every product one pinned
