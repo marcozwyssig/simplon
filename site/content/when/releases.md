@@ -98,7 +98,7 @@ the sixteen is exercised through a manifest on disk and a registered context, in
 absence deliberately says nothing (`build:`, where no section is the normal case, and `env_var:`, which a
 product selecting its environment by token alone never declares).
 
-What was actually missing is on `building/manifest.md` now: **the sixteen names the kernel has claimed**,
+What was actually missing is on `how/manifest.md` now: **the sixteen names the kernel has claimed**,
 with the task that reads each and what it carries. The product this was reported from builds three Windows
 Server *releases* and learned that `releases:` was taken by reading `src/simplon/tasks/releasenotes.py`. A
 reserved name findable only in the source is a trap with a delay on it. The table is held to the kernel in
@@ -693,7 +693,7 @@ time, before a clearing gate has emptied anything.
 **Driven, not asserted.** `tests/test_suites_command_gate_e2e.py` compiles a real CMake project in
 `silkeh/clang:19` and runs a real `ctest` through a real gate: green, red carrying ctest's own rc of
 **8** rather than 1, and a tree that does not compile stopping at the preamble with the stale binaries
-untouched. Two quoted refusals on `building/test-levels.md` were repaired on the way - one listed a
+untouched. Two quoted refusals on `with-what/test-levels.md` were repaired on the way - one listed a
 parameter set `run_toolchain` does not have and was unreachable for it anyway, the other named a
 required-parameter refusal that body cannot produce - and `tests/test_test_levels_refusals.py` now builds
 them from the code that raises them.

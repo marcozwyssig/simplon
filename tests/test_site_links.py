@@ -343,3 +343,44 @@ def test_the_sections_are_offered_in_the_order_their_own_front_matter_declares()
     # assert
     assert sorted(weights, key=weights.get) == from_menu
     assert len(set(weights.values())) == len(weights), f"two sections share a weight: {weights}"
+
+
+#: A page named in PROSE rather than linked: `` `building/manifest.md` `` in a backtick span. Hugo
+#: renders it as text, so `internal_links()` cannot see it and nothing above ever rules on it.
+_NAMED_IN_PROSE = re.compile(r"`([A-Za-z0-9._-]+/)*([A-Za-z0-9._-]+\.md)`")
+
+
+def test_no_page_names_another_page_by_a_section_it_does_not_sit_in():
+    """The blind spot si#170 walked into, and the reason it is a test rather than a proofread.
+
+    Two sentences in the release notes named `building/manifest.md` and `building/test-levels.md` after
+    both had moved. Neither is a link - they are backtick spans in prose - so the resolution check above
+    is structurally incapable of seeing them, and it stayed green over two pointers that went nowhere.
+    A path a reader is told to open is a claim about this site whether or not it is clickable.
+
+    Only a path that NAMES a section is ruled on: `manifest.md` on its own says nothing about where the
+    page lives, and a sentence is allowed to name a file without placing it.
+    """
+    # arrange: where each page really is, read off the tree and off the manifest's promise
+    section = {page.name: page.parent.name for page in sitepages.pages() if page.name != "_index.md"}
+    section.update({page.name: page.parent.name for page in GENERATED})
+
+    # act
+    named, offenders = [], []
+    for page in sitepages.pages():
+        body = sitepages.without_code(page.read_text(encoding="utf-8"))
+        for match in _NAMED_IN_PROSE.finditer(body):
+            prefix, name = match.group(0)[1:-1].rsplit("/", 1) if "/" in match.group(0) else ("", "")
+            if not prefix or name not in section:
+                continue
+            named.append(f"{page.relative_to(CONTENT)}: {match.group(0)}")
+            if prefix.rsplit("/", 1)[-1] != section[name]:
+                offenders.append(f"{page.relative_to(CONTENT)}: {match.group(0)} - {name} is served "
+                                 f"from {section[name]}/")
+
+    # assert
+    assert offenders == [], f"a page names another page by the wrong section: {offenders}"
+
+    # assert: and the sweep really found prose that places a page, rather than ruling on nothing
+    assert named, ("no page names another by a path any more, so this check holds vacuously - point it "
+                   "at whatever replaced that way of writing, or delete it")

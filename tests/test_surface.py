@@ -258,7 +258,8 @@ def test_the_tombstones_are_gone_by_the_release_they_were_promised_for():
         f"tombstones {sorted(surface.MOVED)} are still here - they were promised to go at this "
         f"release. Removing them is: delete src/simplon/{{{','.join(sorted(surface.MOVED))}}}.py, "
         f"empty surface.MOVED and surface.MOVED_CONSUMERS, and drop the migration table and the "
-        f"deadline sentence from {PAGE}. Re-measure MOVED_CONSUMERS first - "
+        f"deadline sentence from {PAGE.relative_to(sitepages.ROOT)}. Re-measure "
+        f"MOVED_CONSUMERS first - "
         f"the record says {sum(len(v) for v in surface.MOVED_CONSUMERS.values())} import lines are "
         f"still out there.")
 
