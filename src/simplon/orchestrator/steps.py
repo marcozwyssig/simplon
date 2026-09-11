@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import os
 import shlex
+import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Sequence
+from typing import TYPE_CHECKING, Callable, Mapping, Sequence, TextIO
 
 from simplon import log
 from simplon import steplog
@@ -77,6 +78,66 @@ STATE_ICON = {
     StepState.FAILED: "✗",
     StepState.SKIPPED: "⊘",
 }
+
+
+# THE SAME VOCABULARY IN ASCII, for a stream that cannot carry the one above (si#161). On Windows a
+# non-console stdout defaults to the legacy code page, and four of those five glyphs have no cp1252
+# encoding at all, so the headless runner raised `UnicodeEncodeError` out of its tree print. Measured
+# with `io.TextIOWrapper(io.BytesIO(), encoding="cp1252")`, which is the same object type `sys.stdout`
+# is there: `'charmap' codec can't encode character '\u2717' in position 0`, raised from the `print` in
+# `run_headless`'s tree loop AFTER every step had run and the exit code was already decided. A green
+# pipeline came out of CI as a traceback and a non-zero exit, on exactly the path a CI runner and a
+# piped run take.
+#
+# EVERY SPELLING STILL NAMES ITS STATE, and that is the requirement `errors="replace"` fails: `?` says a
+# character was lost, not which state the row is in, and a verdict that reads `?` is worse than the
+# crash, because the crash is at least visible. Each value below is a PREFIX of the matching
+# `StepState.value`, which is the property the test asserts - "it is ASCII" would be satisfied by `+`
+# and `-` too, and neither of those says anything to a reader.
+#
+# THE WHOLE TABLE DEGRADES TOGETHER even though `·` alone survives cp1252 (0xB7). One run must not mix
+# two alphabets, or a reader of that log has to work out which rows were rendered in which.
+STATE_ICON_ASCII = {
+    StepState.PENDING: "pend",
+    StepState.RUNNING: "run",
+    StepState.OK: "ok",
+    StepState.FAILED: "fail",
+    StepState.SKIPPED: "skip",
+}
+
+
+def icons_for(stream: TextIO) -> Mapping[StepState, str]:
+    """The state alphabet `stream` can actually carry: `STATE_ICON`, or its ASCII twin when the stream's
+    encoding cannot encode the glyphs (si#161).
+
+    THE DECISION LIVES HERE rather than in the table or in the streams. Two alternatives were rejected:
+    reconfiguring `sys.stdout` to UTF-8 at startup changes the encoding of a stream the kernel did not
+    open, for every other writer to it - the product's own prints, `log.info`, anything a library does -
+    to fix one runner's five characters; and flattening `STATE_ICON` itself to ASCII would take the
+    glyphs away from every terminal that can draw them, which si#148 and si#162 spent their whole
+    argument on.
+
+    ASKED ONCE PER RUN, not once per printed line. `render_tree` emits one line per row and the answer
+    cannot change between them, so the runner asks once and hands the table down.
+
+    A stream with no `encoding` at all (a `StringIO`, a test double) keeps the glyphs: it takes `str` and
+    cannot raise on one, and guessing ASCII there would degrade callers that never had the problem.
+
+    It ignores the stream's ERROR HANDLER on purpose. A stream opened with `errors="replace"` does not
+    raise, it prints `?` - and si#161 rules that worse than the crash, so the question asked here is what
+    the encoding can CARRY, not what the stream would do about what it cannot.
+    """
+    encoding = getattr(stream, "encoding", None)
+    if not encoding:
+        return STATE_ICON
+    try:
+        "".join(STATE_ICON.values()).encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        # LookupError rides along because an encoding NAME nothing can resolve is the same situation from
+        # the runner's side: the glyphs will not reach the reader, and a verdict must not be the thing
+        # that raises.
+        return STATE_ICON_ASCII
+    return STATE_ICON
 
 
 @dataclass(frozen=True)
@@ -957,19 +1018,29 @@ def write_run_transcript(pipeline: Pipeline, started: datetime) -> Path | None:
     return steplog.write_run(text)
 
 
-def render_tree(root: Row, indent: str = "  ") -> list[str]:
+def render_tree(root: Row, indent: str = "  ",
+                icons: Mapping[StepState, str] | None = None) -> list[str]:
     """The display tree as text lines, one per row, indented by depth - what `run_headless` prints so a CI
     log shows the structure the TUI draws.
 
     Since #52 a row that RAN carries its duration in a right-hand column, padded to one width so the
     numbers line up and can be scanned. A COLUMN and not a paragraph: the run gains no line, green or red.
     A row that did not run carries nothing there, and no trailing blank either - `⊘ deploy.up` ends where
-    the name ends, because the absence is the statement."""
+    the name ends, because the absence is the statement.
+
+    `icons` is the state alphabet to render in, and it defaults to the glyphs. `run_headless` passes
+    `icons_for(sys.stdout)` so a stream that cannot encode them gets the ASCII twin instead of a
+    `UnicodeEncodeError` (si#161); nothing else overrides it."""
+    table = STATE_ICON if icons is None else icons
+    # The icon column is padded to the widest spelling in the table, so the labels line up whichever
+    # alphabet is in use. Under `STATE_ICON` every value is one character and this pads nothing, which is
+    # why the glyph output is byte-identical to what it was.
+    icon_width = max(len(icon) for icon in table.values())
     rows: list[tuple[str, str]] = []
 
     def walk(row: Row, depth: int) -> None:
         duration = row.duration
-        rows.append((f"{indent * depth}{STATE_ICON[row.state]} {row.label}",
+        rows.append((f"{indent * depth}{table[row.state]:<{icon_width}} {row.label}",
                      format_duration(duration) if duration is not None else ""))
         for child in row.children:
             walk(child, depth + 1)
@@ -1040,6 +1111,12 @@ def run_headless(pipeline: Pipeline, verbose: bool | None = None) -> int:
     steps failed, the report says why each of them did, and the count stays last. A green run adds
     nothing - the normal case must not pay for the exceptional one, which is #49's own acceptance.
 
+    That tree is also the ONLY thing this runner prints in the shared glyph vocabulary, and on a stream
+    whose encoding cannot carry the glyphs it prints their ASCII twin instead (si#161) - a Windows CI
+    job with a redirected stdout used to end a GREEN pipeline with a `UnicodeEncodeError` from this very
+    loop, after the exit code had already been decided. The transcript is unaffected: `steplog` writes it
+    UTF-8 by name, so the file keeps the glyphs whatever the console can show.
+
     It also leaves a RUN TRANSCRIPT behind (si#148 item 3), and headless is not the afterthought path for
     it: the run that most needs to be attachable to a ticket is a red CI run, and this is the runner CI
     uses. See `write_run_transcript`."""
@@ -1079,7 +1156,9 @@ def run_headless(pipeline: Pipeline, verbose: bool | None = None) -> int:
     # display identity, which for a hand-built pipeline is the prose label. Without a line saying so, a CI
     # log lists one run twice under two vocabularies - the exact complaint this change answers.
     log.info("the same steps, as the TUI draws them:")
-    for line in render_tree(build_rows(pipeline)):
+    # The ONE place the shared glyph vocabulary reaches a stream this kernel did not open, so it is the
+    # one place that asks what that stream can encode (si#161). See `icons_for`.
+    for line in render_tree(build_rows(pipeline), icons=icons_for(sys.stdout)):
         print(line, flush=True)
     if failures:
         # The reasons go BETWEEN the tree and the verdict: the tree says which steps failed, this says

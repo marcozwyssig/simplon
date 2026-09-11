@@ -1315,10 +1315,20 @@ def test_no_state_icon_is_a_character_the_tree_already_draws():
 
     Checking the other four was the ticket's own instruction and not a courtesy: `·`, `✓`, `✗` and `⊘`
     are clear, but "confirm rather than assume" is what this assertion is for, and it is what keeps the
-    next glyph anybody adds from re-opening the collision silently."""
-    from simplon.orchestrator.steps import STATE_ICON
-    collisions = {state: icon for state, icon in STATE_ICON.items() if icon in _tree_own_alphabet()}
-    assert not collisions, f"these state icons are also drawn by the tree itself: {collisions}"
+    next glyph anybody adds from re-opening the collision silently.
+
+    IT COVERS BOTH TABLES since si#161, which added the ASCII twin a stream that cannot encode the
+    glyphs gets. That table is not rendered in a `Tree` today - it is the headless print's alphabet -
+    but the property si#162 protects is about the VOCABULARY, and a second vocabulary nobody asserts on
+    is exactly how the first one got `▶`. It is checked per CHARACTER because its spellings are words,
+    so a `·` or a `─` sneaking into one would not be caught by asking whether the whole word is in the
+    set."""
+    from simplon.orchestrator.steps import STATE_ICON, STATE_ICON_ASCII
+    drawn = _tree_own_alphabet()
+    for table, name in ((STATE_ICON, "STATE_ICON"), (STATE_ICON_ASCII, "STATE_ICON_ASCII")):
+        collisions = {state: icon for state, icon in table.items()
+                      if any(ch in drawn for ch in icon)}
+        assert not collisions, f"{name}: these are also drawn by the tree itself: {collisions}"
 
 
 def test_a_running_row_with_children_shows_one_arrow_and_it_is_the_trees(monkeypatch):

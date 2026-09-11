@@ -88,6 +88,33 @@ push. `test all` reaches the same single implementation the CI step reaches - no
 shelling out to it, which would be the two-ways-to-one-verdict shape the manifest already forbids beside
 `typecheck-python`.
 
+### A Windows CI log gets the verdict instead of a traceback (si#161)
+
+`run_headless` ends by printing the tree in the glyph vocabulary it shares with the TUI. On Windows a
+stdout that is not a console defaults to the legacy code page, and four of the five glyphs have no
+cp1252 encoding at all - `↻` since si#162 among them - so the runner raised `UnicodeEncodeError` **at
+the moment it reported its verdict**, after every step had run and the exit code was already decided. A
+green pipeline came out of CI as a traceback and a non-zero exit, on exactly the path a CI runner and a
+piped run take.
+
+The runner now asks the stream what it can carry and prints the ASCII twin of the same table when the
+answer is "not this": `pend`, `run`, `ok`, `fail`, `skip`, padded so the labels still line up. **A
+terminal that can draw the glyphs keeps getting them** - nothing is flattened for everyone because one
+platform cannot encode a tick, and `errors="replace"` was refused outright, because `?` loses which
+state the row was in and a verdict that reads `?` is worse than a crash that is at least visible. Each
+fallback spelling is a prefix of the state's own word, which is the property the test asserts; "it is
+ASCII" would be satisfied by `+` and `-` too, and neither says anything to a reader.
+
+The decision sits at the one print that reaches a stream the kernel did not open, asked once per run.
+Reconfiguring `sys.stdout` to UTF-8 at startup was the alternative, and it was rejected for its blast
+radius: it changes the encoding of a stream the kernel does not own, for every other writer to it, to
+fix one runner's five characters. **A product needs no change** - a composition root that already
+reconfigures its streams keeps working and simply never reaches the fallback.
+
+The run transcript is untouched: `steplog` writes it `encoding="utf-8"` by name, so the file a reader
+attaches to a ticket keeps the glyphs whatever the console can show, and a test now says so. si#162's
+disjointness assertion covers the second table too, per character, because its spellings are words.
+
 ## 0.10.0
 
 **A C++ or a .NET product stops writing its build files by hand.** 0.9.0 gave every product one pinned
