@@ -31,6 +31,35 @@ it should no longer do, and a gate that had stopped covering what its name claim
 A minor rather than a patch: the state alphabet is a surface and one of its five characters changed,
 what a refusal says is a surface, and so is what a gate covers.
 
+### The manifest publishes which top-level names are already taken (si#159)
+
+`groups:` is refused when it names a group the platform's tree does not declare. Every other top-level key
+is a product data section, and a report asked whether a typo in one of those names should be refused too,
+since the section would simply not exist and the task reading it would behave as though the product had
+opted out.
+
+It is not refused, and the measurement is why. Every manifest this kernel can reach was read - its own
+plus the six in other repositories - and of the seventy top-level keys in them, **none is read by nobody**.
+Eleven are read by the product's own task bodies rather than by the kernel, and each was traced to the line
+that reads it. A rule about unread keys would have a population of zero to protect and a sixteen per cent
+false-positive rate by construction. An edit-distance rule does worse: `release:` sits one character from
+the kernel's `releases:` and is a real, product-read section in two of the seven manifests, so the cheap
+version of the check refuses two live products on its first run.
+
+The premise did not survive either. A mistyped section is not silent: fourteen of the sixteen top-level
+keys the kernel reads are named by the reader that wanted them, and `sietv:` instead of `site:` answers
+`the 'site' section is missing or is not a mapping`. That is now driven rather than believed - every one of
+the sixteen is exercised through a manifest on disk and a registered context, including the two whose
+absence deliberately says nothing (`build:`, where no section is the normal case, and `env_var:`, which a
+product selecting its environment by token alone never declares).
+
+What was actually missing is on `building/manifest.md` now: **the sixteen names the kernel has claimed**,
+with the task that reads each and what it carries. The product this was reported from builds three Windows
+Server *releases* and learned that `releases:` was taken by reading `src/simplon/tasks/releasenotes.py`. A
+reserved name findable only in the source is a trap with a delay on it. The table is held to the kernel in
+both directions, and the modules that read a manifest are derived from the call sites rather than listed,
+so a new reader cannot join without appearing there.
+
 ### The running row stops reading as two arrows (si#162)
 
 `STATE_ICON[RUNNING]` was `▶`, and `▶` is exactly what Textual's `Tree` puts in front of a collapsed
