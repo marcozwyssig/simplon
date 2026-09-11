@@ -322,6 +322,18 @@ merging whatever was lying in the directory would invent evidence.
 `report.merge` is unchanged and still there: it is the section-level list of directories **other steps**
 wrote, merged at the end. A directory a gate names in `results_from:` does not need repeating in it.
 
+**And neither key may name the results directory itself.** `results_from:` means *where your runner
+wrote*, not *where the results end up*, and pointing either key at the kernel's own results directory used
+to end the step in a `shutil` traceback about copying a file onto itself. It is now refused by name, and a
+gate that named it is red rather than green - because those files are already at the destination, so
+nothing travelled and none of them is evidence this level produced:
+
+> unit: failed (rc 1) - 'tests/reports/allure-results' contributed no results to this run (nothing
+> merged: 0 of 1 declared source dirs present; 1 declared source dir is the destination itself and was not
+> merged (…/tests/reports/allure-results) - those files are already at the destination, so nothing
+> travelled and none of them counts as this merge's evidence. Name the directory the runner writes into,
+> or drop the key) - …
+
 ### What the kernel says about your runner, and what only you can say
 
 Opacity cuts both ways, and the second way is the one that produced a bug. Because the kernel sees a

@@ -706,13 +706,18 @@ def _say_merge(merged: allure.Merge, label: str = "per-module results") -> None:
     files, or a parent suite that reached nothing are all findings, and a merge that did what it says is
     not. Two call sites answering that separately are two answers waiting to disagree.
 
+    A SOURCE DIR THAT IS THE DESTINATION IS A FINDING TOO (si#138), and it belongs in this list rather
+    than beside it: on its own it already shows up as `empty`, but one good source next to a self-sourced
+    one is a merge that did something and still carries a declaration that can never do anything. That
+    read as an OK until this line named it.
+
     `label` is what parts them on the terminal. The report step's wording is `per-module results` and
     stays so - it is quoted on two documentation pages and pinned by a test - but a run of three gates
     would otherwise print that same anonymous sentence three times before the report step said it a
     fourth, and a reader could not tell which level each one was about. A gate names itself.
     """
     (log.warn if merged.missing or merged.empty or merged.stale or merged.unreached
-     else log.ok)(f"{label}: {merged.line}")
+     or merged.self_sourced else log.ok)(f"{label}: {merged.line}")
 
 
 def _harvested(gv: GateVerdict, gate: Gate, cfg: Suites, results: str, since: float) -> GateVerdict:
