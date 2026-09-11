@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping, NamedTuple
 
 import yaml
 
@@ -48,6 +49,67 @@ MANIFEST_ENV = "DELIVERY_MANIFEST"
 #: importing the kernel directly - has no active environment, and a reader is told so rather than handed
 #: the manifest's default, which would put a fact in a transcript that no run produced.
 ENVIRONMENT_ENV = "DELIVERY_ENVIRONMENT"
+
+
+class Section(NamedTuple):
+    """What a manifest document holds at ONE path, and - when it holds no mapping there - which step is
+    to blame and what that step held instead.
+
+    THREE FIELDS RATHER THAN A RAISE, and that is si#175's whole design. The nine kernel readers that
+    fetch a data section say nine different things when it is not there: `labegress` and `labinstance`
+    "is missing the 'lab_egress' section", `nexusproxy`, `tasks/testrun.py` and `tasks/claudeplugins.py`
+    "the 'nexus' section is missing or is not a mapping", `tasks/site.py` and `tasks/image.py` that plus
+    what to declare instead, `tasks/releasenotes.py` a paragraph naming its three values, and
+    `tasks/buildfiles.py` nothing at all - an absent `build:` is the normal case there, and the tree is
+    the declaration. si#159 measured that 14 of the 16 sections the kernel reads already refuse by name
+    and quote the key, and `tests/test_refusal_census.py` pins each of those sentences against the
+    literal at its own raise site. An accessor that raised would flatten nine good messages into one and
+    move the raise out of the module the census names it in. So this one ANSWERS and the caller REFUSES.
+    """
+
+    #: The mapping at the end of the path - `{}` when the walk did not get there.
+    data: Mapping[str, object]
+    #: The path step that stopped the walk, `""` when every step was a mapping.
+    blame: str
+    #: What the blamed step held, so a caller can print `got {type(...).__name__}`. `None` exactly when
+    #: that step is not declared at all.
+    got: object
+
+
+def section(document: Mapping[str, object], *path: str) -> Section:
+    """Walk `path` through a manifest DOCUMENT (`ProductContext.manifest_data()`) to a data section.
+
+    THE PATH, NOT A NAME. Since 0.10 the kernel reads a top-level `build:` of its own, so a product that
+    wants one nests underneath (si#172); the product si#175 was reported from keeps its data under
+    `build: packer:`, `build: templates:` and `release: transfer:`. `tasks/buildfiles.py` is where that
+    already costs something - it walks two steps by hand, because a typo in the OUTER key must not report
+    the inner one as absent. The walk stops at the first step that is not a mapping and NAMES it: `build:
+    5` blames `build`, `build: { targets: core }` blames `targets`, and a flat section is the same walk
+    with one step.
+
+    A DECLARED-BUT-EMPTY section is FOUND, not blamed: `site: {}` passed every reader's
+    `isinstance(..., Mapping)` and then failed on the key it wanted, and calling it "missing" here would
+    move that complaint onto the wrong sentence. A step declared NULL blames like an absent one, because
+    `.get()` has always handed a bare `build:` to a reader as None and every one of them read that as
+    "not declared".
+
+    NO `required=`, which si#175 asked for and which the two sites that would use it do not support. They
+    disagree about what present MEANS: `labegress` treats a key that is blank after `str(...).strip()` as
+    absent, `labinstance` treats `max_id_len: 0` as present and refuses it a line later with a sentence
+    of its own about integers. One keyword would serve three of labegress's six lines and two of
+    labinstance's three, and each key would still need its own wording. That is si#159's own finding
+    applied to a smaller population: the measured population does not support the rule.
+
+    Pure - no I/O, no raise, no product knowledge. A product reads its own sections through this too;
+    `site/content/building/manifest.md` is where that is published.
+    """
+    here: Mapping[str, object] = document
+    for step in path:
+        value = here.get(step)
+        if not isinstance(value, Mapping):
+            return Section({}, step, value)
+        here = value
+    return Section(here, "", None)
 
 
 @dataclass(frozen=True)

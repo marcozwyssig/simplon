@@ -76,8 +76,8 @@ def declared(data: Mapping[str, object],
 
     `source` only labels the errors (the caller passes its manifest path, so the message points at a file).
     """
-    section = data.get(SECTION)
-    if not isinstance(section, Mapping):
+    section, blame, _ = context.section(data, SECTION)
+    if blame:
         raise ValueError(f"{source}: the '{SECTION}' section is missing or is not a mapping")
 
     raw_markets = section.get("marketplaces") or {}

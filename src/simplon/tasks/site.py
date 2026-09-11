@@ -283,8 +283,8 @@ def declared(data: Mapping[str, object], source: str = "manifest") -> Site:
     `_str` rules on a value that is there; a bare `source:` carries no value at all and defaults, which
     is what `theme:` and `base_url:` have always done with one.
     """
-    section = data.get(SECTION)
-    if not isinstance(section, Mapping):
+    section, blame, _ = context.section(data, SECTION)
+    if blame:
         raise ValueError(f"{source}: the '{SECTION}' section is missing or is not a mapping "
                          f"- declare the pinned hugo image and where the site is built to (the sources "
                          f"default to '{DEFAULT_SOURCE}')")

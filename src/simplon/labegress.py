@@ -107,8 +107,8 @@ def spec() -> EgressSpec:
     defaulted env-var name would mean the operator's documented escape hatch does nothing, and a
     silently defaulted tag would make one product's teardown delete another's rules."""
     ctx = context.current()
-    data = ctx.manifest_data().get(MANIFEST_SECTION)
-    if not isinstance(data, dict):
+    data, blame, _ = context.section(ctx.manifest_data(), MANIFEST_SECTION)
+    if blame:
         raise ValueError(f"simplon: manifest {ctx.manifest_path} is missing the '{MANIFEST_SECTION}' section")
     values = {}
     for key in ("isolation_env", "harden_env", "rule_tag"):

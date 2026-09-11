@@ -133,6 +133,22 @@ LOADER_ENTRY = ("orchestrator.manifest", "load")
 #: _seams` goes red rather than quietly finding none.
 DOCUMENT_ACCESSOR = "manifest_data"
 
+#: The kernel's own path walk from a document to a data section, `context.section(...)` (si#175), and it
+#: is named here because the walk would otherwise MISREAD it in both directions.
+#:
+#: It is handed the document, so `_document_entries` would take it for a reader and make it an entry
+#: point - and it refuses nothing, so the closure from it collects no refusal at all while the sentences
+#: its callers raise stay outside the population. And a module that reads its section through it hands
+#: the document to a function, so `_inline_readers` would call that module COVERED BY THE CALLEE and stop
+#: listing it - which is si#61's defect exactly: nine modules that refuse a product's manifest, dropping
+#: out of a census whose only job is that the sum cannot grow quietly, on a refactor that changed no
+#: refusal at all.
+#:
+#: So the accessor is neither. A module that reads a section through it is still an INLINE reader, its
+#: refusals are still its own, and `test_the_section_walk_is_an_accessor_and_not_a_reader` holds both
+#: halves rather than leaving them to be noticed.
+SECTION_ACCESSOR = ("context", "section")
+
 SRC = ROOT / "src" / "simplon"
 
 #: The chapter that publishes the counts.
@@ -567,6 +583,13 @@ def _kernel_modules() -> list[str]:
     return sorted(_dotted_of(path) for path in SRC.rglob("*.py"))
 
 
+def _is_the_section_walk(called, module: _Module) -> bool:
+    """Is this call `context.section(...)` - the accessor, not a reader? See `SECTION_ACCESSOR`."""
+    target, name = SECTION_ACCESSOR
+    return (isinstance(called, ast.Attribute) and isinstance(called.value, ast.Name)
+            and called.attr == name and module.imports.get(called.value.id) == target)
+
+
 @functools.lru_cache(maxsize=None)
 def _document_entries() -> tuple[tuple[str, str], ...]:
     """Every function the kernel hands the manifest DOCUMENT to, read off the call sites.
@@ -584,6 +607,8 @@ def _document_entries() -> tuple[tuple[str, str], ...]:
             handed = [*node.args, *(kw.value for kw in node.keywords)]
             if not any(isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute)
                        and arg.func.attr == DOCUMENT_ACCESSOR for arg in handed):
+                continue
+            if _is_the_section_walk(node.func, module):
                 continue
             called = node.func
             if isinstance(called, ast.Name):
@@ -612,7 +637,7 @@ def _inline_readers() -> tuple[str, ...]:
         # (`tasks/workflows.py` -> `workflowgen.parse`); that one is covered by the callee, not here.
         hands_off = False
         for node in ast.walk(module.tree):
-            if not isinstance(node, ast.Call):
+            if not isinstance(node, ast.Call) or _is_the_section_walk(node.func, module):
                 continue
             handed = [*node.args, *(kw.value for kw in node.keywords)]
             if any(isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute)
@@ -825,6 +850,47 @@ def test_every_module_that_reads_the_manifest_is_accounted_for():
     assert set(READS_INLINE) <= touching, (
         f"READS_INLINE names a module that no longer reads the manifest: "
         f"{sorted(set(READS_INLINE) - touching)}")
+
+
+def test_the_section_walk_is_an_accessor_and_not_a_reader():
+    """si#175, and it is si#61's property held over a second spelling of the seam.
+
+    `context.section(ctx.manifest_data(), "build", "targets")` walks a document to a data section and
+    REFUSES NOTHING - every sentence stays at the reader that wanted the section, in its own words. That
+    makes it the one call the walk must read as neither half of the census: not an entry point (it holds
+    no refusal to collect, and taking it for one would make the closure from it the whole answer), and
+    not a hand-off (the nine readers that use it still raise their own refusals inline and must stay
+    named in READS_INLINE rather than counted as covered by a callee).
+
+    Nine modules read a section through it today, so if this ever stops being true the loss is not
+    hypothetical.
+    """
+    # arrange: every module that calls the accessor at all, computed the way the walk computes
+    callers = sorted(dotted for dotted in _kernel_modules()
+                     if any(isinstance(node, ast.Call)
+                            and _is_the_section_walk(node.func, _module(dotted))
+                            for node in ast.walk(_module(dotted).tree)))
+
+    # act
+    entries = _document_entries()
+    inline = set(_inline_readers())
+    walked = {dotted for dotted, _ in entries}
+
+    # assert: it ruled on a real population rather than on none
+    assert len(callers) > 1, "nothing calls the section accessor - this test is measuring nothing"
+
+    # assert: the accessor is not an entry point, so the walk keeps collecting the CALLERS' refusals
+    assert SECTION_ACCESSOR not in entries, (
+        "`context.section` was taken for a manifest reader. It raises nothing, so the closure from it "
+        "would classify an empty set while the sentences its callers raise went uncounted")
+
+    # assert: and every caller is still accounted for - walked through a function of its own, or named
+    # in READS_INLINE. Reading a section through the accessor is not a hand-off.
+    unaccounted = [dotted for dotted in callers
+                   if dotted not in walked and dotted not in inline and dotted not in READS_INLINE]
+    assert unaccounted == [], (
+        "a module reads a section through `context.section` and fell out of both halves of the census. "
+        f"The accessor covers nothing for its caller - the refusal is still the caller's: {unaccounted}")
 
 
 def test_the_only_excluded_raise_is_the_funnel_that_re_raises_the_model():

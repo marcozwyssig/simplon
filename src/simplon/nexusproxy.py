@@ -230,8 +230,8 @@ def declared(data: Mapping[str, object], root: Path, source: str = "manifest") -
     silently defaulted container name or volume would make a wrong report about the wrong service, which is
     the class of lie this whole module exists to remove.
     """
-    section = data.get(SECTION)
-    if not isinstance(section, Mapping):
+    section, blame, _ = context.section(data, SECTION)
+    if blame:
         raise ValueError(f"{source}: the '{SECTION}' section is missing or is not a mapping")
 
     def _text(key: str) -> str:

@@ -23,6 +23,41 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.12.0
+
+### One accessor for a data section, and it refuses nothing (si#175)
+
+`ProductContext.manifest_data()` handed back the raw mapping and stopped there, so every reader wrote
+the same two lines - fetch the section, check it is a mapping - and `tasks/buildfiles.py` wrote eighteen,
+because `build: targets:` is a PATH and a typo in the outer key must not report the inner one as absent.
+`simplon.context.section(document, *path)` is that walk, once. It stops at the first step that is not a
+mapping and names THAT step, hands back what the step held so a reader can print `got {type}`, and treats
+a section declared and empty as found rather than missing.
+
+**It raises nothing, and that is the design rather than an omission.** The nine kernel readers that fetch
+a data section say nine different things when it is not there - `labegress` names the manifest and the
+section, `nexusproxy` says "missing or is not a mapping", `tasks/site.py` adds what to declare instead,
+`tasks/buildfiles.py` says nothing at all because an absent `build:` is the normal case - and si#159
+measured that fourteen of the sixteen sections the kernel reads already refuse by name and quote the key.
+An accessor that raised would have replaced fourteen good sentences with one. So it answers and the
+caller refuses: all nine migrated readers produce a **byte-identical** message, driven with the section
+missing and with it malformed, before and after.
+
+Keeping the raise at the reader is also what keeps the refusal census honest. `tests/test_refusal_census.py`
+counts raise sites and pins each message against the literal at its own site; moving nine raises into one
+parameterised one would have collapsed nine entries into a message the census could no longer read. The
+population is unchanged at 129 refusals across ten modules, and the census learned the accessor's name so
+that a module reading a section through it is still counted as an inline reader rather than as one covered
+by a callee - the second half of si#61's property, held by a new test.
+
+What si#175 asked for and did not get is `required=`. The two sites that would use it disagree about what
+present means: `labegress` treats a key that is blank after `str(...).strip()` as absent, `labinstance`
+treats `max_id_len: 0` as present and refuses it a line later with a sentence about integers. One keyword
+would have served three of one site's six lines and two of the other's three. That is si#159's own
+finding at a smaller size - the measured population does not support the rule.
+
+Products need do nothing. `manifest_data()` is unchanged, and the accessor is additive.
+
 ## 0.11.0
 
 **Three things a real run showed, and two that had quietly stopped being true.** The first three came

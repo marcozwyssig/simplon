@@ -150,8 +150,8 @@ def declared() -> Declared | None:
     """
     ctx = context.current()
     where = ctx.manifest_path.name
-    section = ctx.manifest_data().get(SECTION)
-    if not isinstance(section, dict) or not section:
+    section, blame, _ = context.section(ctx.manifest_data(), SECTION)
+    if blame or not section:
         log.error(
             f"{where} has no `{SECTION}:` section, so this gate has nothing to measure. It needs three "
             f"values: `page:` (where the notes live, relative to the product root), `from:` (the first "

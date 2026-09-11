@@ -269,6 +269,11 @@ def test_a_build_section_that_cannot_hold_a_key_says_the_section_is_shared(secti
     assert "must be a mapping holding" not in result.output, (
         f"the refusal still tells a product what its own section must hold: {result.output!r}")
     assert "the product's own" in result.output, result.output
+    # si#175: the two refusals in this function BOTH end in "the product's own", so the assertion above
+    # was satisfied by the `targets:` one too and this check could not fail. Pin the half that is only
+    # ever said about the SECTION.
+    assert "this kernel reads `targets:` out of it" in result.output, (
+        f"a `build:` that holds no keys was refused by some other rule: {result.output!r}")
     assert not written
 
 

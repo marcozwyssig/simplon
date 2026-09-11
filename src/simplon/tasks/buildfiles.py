@@ -888,30 +888,29 @@ def _declared_targets(product: context.ProductContext) -> Mapping[str, Mapping[s
     module that touches a manifest at all; the renderers and the tree read stay unable to name one.
     """
     where = str(product.manifest_path)
-    section = product.manifest_data().get(SECTION)
-    if section is None:
+    declared, blame, got = context.section(product.manifest_data(), SECTION, TARGETS_KEY)
+    if blame and got is None:
         return {}
-    if not isinstance(section, Mapping):
+    if blame == SECTION:
         log.die(f"{where}: `{SECTION}:` must be a mapping - this kernel reads `{TARGETS_KEY}:` out of "
-                f"it, got {type(section).__name__}, which holds no keys at all. Everything else under "
+                f"it, got {type(got).__name__}, which holds no keys at all. Everything else under "
                 f"`{SECTION}:` is the product's own; the section is shared, not claimed (si#172)")
         raise SystemExit(1)
-    declared = section.get(TARGETS_KEY)
-    if declared is None:
-        return {}
-    if not isinstance(declared, Mapping):
+    if blame:
         log.die(f"{where}: `{SECTION}: {TARGETS_KEY}:` must be a mapping of target name to "
-                f"{{ kind: ..., depends: [...], include: [...] }}, got {type(declared).__name__}. "
+                f"{{ kind: ..., depends: [...], include: [...] }}, got {type(got).__name__}. "
                 f"Inside `{SECTION}:` the name `{TARGETS_KEY}` is this kernel's - if it is the "
                 f"product's own word here, rename the product's key (si#172)")
         raise SystemExit(1)
+    targets: dict[str, Mapping[str, object]] = {}
     for name, body in declared.items():
         if not isinstance(body, Mapping):
             log.die(f"{where}: `{SECTION}: {TARGETS_KEY}: {name}:` must be a mapping, got "
                     f"{type(body).__name__} - a dependency is written as "
                     f"`{name}: {{ depends: [<name>] }}`")
             raise SystemExit(1)
-    return {str(name): body for name, body in declared.items()}
+        targets[str(name)] = body
+    return targets
 
 
 def _written(files: Mapping[Path, str], root: Path) -> int:
