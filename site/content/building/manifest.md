@@ -198,6 +198,52 @@ path is the kernel's, not the manifest's: it is covered by the same `build/` rul
 and `.gitignore` already carry, and a CI job that wants offline builds is the one that should cache it.
 {{< /callout >}}
 
+### The names the kernel has claimed
+
+A top-level key the kernel does not read is **the product's own**, and nothing here rules on it. That is
+the design rather than a gap: the section is where a catalogue task's mechanism meets a product's values,
+and a product that could not invent one would have to ask the kernel for permission to have data.
+Measured over every manifest this kernel can reach, its own and the six in other repositories, eleven of
+the seventy top-level keys are exactly that, and every one of them is read by a body in the product's own
+repository. Adding a key nobody here has heard of is a supported thing to do.
+
+What was missing is the other half: **which names are already taken**. The product si#159 was reported
+from builds three Windows Server *releases*, and it learned that `releases:` already means
+`{page, from, complete_from}` to `test:release-notes` by reading `src/simplon/tasks/releasenotes.py`. A
+reserved name that can only be found in the source is a trap with a delay on it, so the sixteen are
+published here and `tests/test_manifest_top_level.py` holds this table to the kernel in both directions.
+
+| key | read by | what it carries |
+| --- | --- | --- |
+| `artifacts:` | `release:artifact`, `release:nuget-*`, `release:conan-*` | one entry per published artefact: registry, repository, source directory, media type |
+| `assets:` | `release:asset` | one entry per file attached to a GitHub release |
+| `build:` | `support:toolchain` | `targets:`, the dependency edges between build targets that a directory layout cannot show |
+| `claude:` | `support:claude-plugins` | the marketplaces and plugin ids an agent host installs |
+| `default:` | the environment selector | the environment a command targets when no env token is given |
+| `doctoolchain_version:` | `docs:render` | the pinned docToolchain image tag |
+| `env_var:` | `support:environments` | the variable a product's env-first CLI publishes the active environment into |
+| `environments:` | the environment selector | the environment matrix: name, backend, description |
+| `images:` | `build:image`, `release:image` | one entry per container image: registry, repository, Dockerfile, context |
+| `instance:` | the multi-tenant lab | the env var naming the lab instance, and the product's id-length budget |
+| `lab_egress:` | the lab egress helper | the host interface a lab reaches the outside through |
+| `nexus:` | the `nexus` commands | the proxy repositories, the compose file and the container this product runs |
+| `releases:` | `test:release-notes` | `page:`, `from:` and `complete_from:`, the three values that gate says what it measures against |
+| `site:` | `docs:site` | the pinned Hugo image, where the sources live, where the site is built to |
+| `suites:` | `test:*` | the test-level taxonomy: the gates, their order, and which one clears the shared results |
+| `workflows:` | `release:workflows` | one entry per generated CI file |
+
+A key that is **mistyped** is therefore not the silent no-op it looks like. Fourteen of the sixteen are
+named by the reader that wanted them, the moment that reader runs: `sietv:` instead of `site:` answers
+`the 'site' section is missing or is not a mapping`, and every other reader refuses the same way, naming
+the key it looked for. The two that say nothing say nothing on purpose:
+
+- **`build:`** - an absent section is the normal case. `support toolchain` renders a tree from the
+  sources, and `build: targets:` only adds the edges the directories cannot show.
+- **`env_var:`** - a product that selects its environment by token and `default:` alone has no such
+  variable, and a listing must still work on a manifest that has not adopted the key.
+
+Both are driven in the test module above, so the silence is measured rather than assumed.
+
 ### `images:` - the container image
 
 `build:image` and `release:image` read one entry of this section, pinned per command with
