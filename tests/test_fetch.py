@@ -911,6 +911,52 @@ def test_a_resume_that_fails_again_keeps_what_it_got_and_says_so(base, tmp_path,
     assert (tmp_path / "big.iso.part").read_bytes() == BODY[:len(BODY) // 2]
 
 
+def test_a_resume_still_refuses_a_chain_through_cleartext(base, cleartext, tmp_path, monkeypatch,
+                                                          versioned):
+    """si#176 changed HOW the request is built - a `Request` carrying headers instead of a bare URL -
+    and the scheme guard rides on the opener, not on the argument. So the hop rule is re-driven on the
+    resumed path, because a guard that used to hold and is never asked again is how one quietly stops.
+    """
+    # arrange: a part to resume, then a chain https -> http -> https
+    dest = tmp_path / "big.iso"
+    with _capture(tty=False):
+        with pytest.raises(fetch.DownloadError):
+            fetch.download(f"{base}/resumable", dest, resume=True)
+    monkeypatch.setitem(ROUTES, "/hop", f"{cleartext}/onward")
+    monkeypatch.setitem(ROUTES, "cleartext-onward", f"{base}/resumable")
+    (tmp_path / "big.iso.part.source").write_text(f"{base}/hop\n\"v1\"\n")
+
+    # act / assert
+    with _capture(tty=False):
+        with pytest.raises(fetch.DownloadError, match="https"):
+            fetch.download(f"{base}/hop", dest, resume=True)
+
+    assert not dest.exists()
+    assert (tmp_path / "big.iso.part").read_bytes() == BODY[:len(BODY) // 2], (
+        "the proven bytes were deleted over a redirect that said nothing about them")
+
+
+def test_a_resume_survives_an_ordinary_https_redirect(base, tmp_path, monkeypatch, versioned):
+    """And the other half, which the oras call site actually needs: GitHub redirects its release assets
+    to objects.githubusercontent.com, so a resume that lost its `Range` on the hop would silently
+    re-download the whole thing every time and nothing would ever say so."""
+    # arrange
+    dest = tmp_path / "big.iso"
+    monkeypatch.setitem(ROUTES, "/hop", f"{base}/resumable")
+    with _capture(tty=False):
+        with pytest.raises(fetch.DownloadError):
+            fetch.download(f"{base}/hop", dest, resume=True)
+
+    # act
+    with _capture(tty=False):
+        fetch.download(f"{base}/hop", dest, resume=True)
+
+    # assert
+    assert _ranges_asked_for() == [f"bytes={len(BODY) // 2}-"], (
+        f"the Range did not survive the redirect: {SEEN}")
+    assert dest.read_bytes() == BODY
+
+
 # --- what the numbers look like (si#178) ----------------------------------------------------------
 
 
