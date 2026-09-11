@@ -978,7 +978,7 @@ def _details_log(app):
     return app.query_one("#details", RichLog)
 
 
-async def _settled(pilot, probe, seconds: float = 10.0):
+async def _settled(pilot, probe, seconds: float = 10.0) -> bool:
     """Pump the app until `probe()` is truthy, bounded, and hand back what it last returned.
 
     EVERY read of a scroll position in this file that expects one goes through it, and the reason
@@ -1057,7 +1057,7 @@ def test_a_reader_who_scrolled_up_is_not_yanked_back_by_the_next_line():
             # A bare pause is enough on THIS side, and that is measured rather than assumed: a poll
             # cannot wait for a negative, so the question is whether the read can go green because a
             # wrong scroll had not landed yet. Against the si#148 item 6 regression itself - `auto_scroll`
-            # back on and `_on_line` writing without the sticky bottom - this read was red in 20 of 20
+            # back on and `_on_line` writing without the sticky bottom - this read was red in 10 of 10
             # runs and in 20 of 20 under four CPU hogs. The app is quiet here; the flake above needed a
             # burst of eighty `call_from_thread` messages in flight to lose the frame (si#169).
             await pilot.pause()
@@ -1621,7 +1621,7 @@ def test_the_repaint_of_an_aggregate_does_not_drag_a_reader_back_to_the_bottom(m
             app._tick()
             # Bare, for the reason given in `..._is_not_yanked_back_by_the_next_line`: measured against
             # the repaint regression this guards - the scroll bookkeeping taken back out of
-            # `_refresh_open_aggregate` - it was red in 20 of 20 runs and in 30 of 30 loaded ones.
+            # `_refresh_open_aggregate` - it was red in 10 of 10 runs and in 20 of 20 loaded ones.
             await pilot.pause()
             after = _details_log(app).scroll_offset.y
             release.set()

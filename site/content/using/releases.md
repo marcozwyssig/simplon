@@ -310,8 +310,8 @@ Not a longer sleep, not a retry, not a weaker assertion: every original assertio
 every one was seen red. Five properties were broken in the runner in turn, and each test failed 20 of
 20 loaded runs against its own - the round trip among them, which the row-naming wait took from 18 of
 20 to 20 of 20. The two reads that assert a scroll did **not** move are deliberately left on a bare
-pause, because a poll cannot wait for a negative, and they were red in 20 of 20 loaded runs against the
-regressions they exist to catch. All five then survived 150 loaded runs with nothing red.
+pause, because a poll cannot wait for a negative; each was red in 10 of 10 idle and 20 of 20 loaded runs
+against the regression it exists to catch, which is why neither grew a wait it cannot justify. All five then survived 150 loaded runs with nothing red.
 
 ## 0.10.0
 
