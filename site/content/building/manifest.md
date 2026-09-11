@@ -217,7 +217,7 @@ published here and `tests/test_manifest_top_level.py` holds this table to the ke
 | --- | --- | --- |
 | `artifacts:` | `release:artifact`, `release:nuget-*`, `release:conan-*` | one entry per published artefact: registry, repository, source directory, media type |
 | `assets:` | `release:asset` | one entry per file attached to a GitHub release |
-| `build:` | `support:toolchain` | `targets:`, the dependency edges between build targets that a directory layout cannot show |
+| `build:` | `build:cmake-files`, `build:dotnet-solution` | `targets:`, the dependency edges between build targets that a directory layout cannot show |
 | `claude:` | `support:claude-plugins` | the marketplaces and plugin ids an agent host installs |
 | `default:` | the environment selector | the environment a command targets when no env token is given |
 | `doctoolchain_version:` | `docs:render` | the pinned docToolchain image tag |
@@ -237,12 +237,44 @@ named by the reader that wanted them, the moment that reader runs: `sietv:` inst
 `the 'site' section is missing or is not a mapping`, and every other reader refuses the same way, naming
 the key it looked for. The two that say nothing say nothing on purpose:
 
-- **`build:`** - an absent section is the normal case. `support toolchain` renders a tree from the
-  sources, and `build: targets:` only adds the edges the directories cannot show.
+- **`build:`** - an absent section is the normal case. `build cmake-files` and `build dotnet-solution`
+  render the build files from the SOURCES, and `build: targets:` only adds the edges the directories
+  cannot show. A `build:` section that exists for some other reason and carries no `targets:` says the
+  same thing, on purpose - two live manifests have one, and the next section is about them.
 - **`env_var:`** - a product that selects its environment by token and `default:` alone has no such
   variable, and a listing must still work on a manifest that has not adopted the key.
 
 Both are driven in the test module above, so the silence is measured rather than assumed.
+
+### `build:` is shared, and `build: targets:` is the kernel's
+
+`build` is the one name that is a **group** and a **top-level data section** at the same time: the
+catalogue declares a `build` group, and `build:cmake-files` and `build:dotnet-solution` read their
+`targets:` out of a top-level `build:` section. The kernel's own source used to carry a comment saying
+the two could never meet. They already do (si#172).
+
+Measured over the same seven manifests si#159 read, two products carry a top-level `build:` section of
+their own and no `targets:` in it: cleon's holds `bundle:`, `ant:` and `site:`, and
+secure-windows-images' holds `packer:` and `templates:`. Neither is doing anything wrong. The kernel
+picked a name that was already taken, and one of those manifests had already written a comment to its
+own authors explaining the collision and telling them not to add a `targets:` key.
+
+**The rule, so nobody has to read the source for it again:**
+
+- `build:` is **yours**. Declare it, put what you like in it, and nothing here refuses it. Refusing it
+  is what si#159's measurement rules out - eleven of the seventy top-level keys across those manifests
+  are read by product task bodies in repositories this kernel cannot see, so a rule over the top-level
+  namespace refuses live products on its first run.
+- The kernel reads exactly **one key** out of it, `targets:`, and rules on nothing else in there.
+- An **absent** `targets:` means what an absent `build:` means: the source tree is the whole
+  declaration. That is not a fallback, it is si#102's design - the directories say what the targets are,
+  and `targets:` only adds the dependency edges they cannot show. Driven: a product carrying either of
+  those two real sections and placing `build:cmake-files` writes exactly the files a product with no
+  `build:` section writes.
+- Inside `build:`, the word **`targets` is the kernel's**. If your own build vocabulary has targets -
+  cleon's Ant block is one rename away, with `generate_targets:`, `compile_targets:` and
+  `package_targets:` - call yours something else. A `targets:` of the wrong shape is refused by name and
+  tells you to rename; it is not silent.
 
 ### `images:` - the container image
 

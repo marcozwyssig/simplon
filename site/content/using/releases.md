@@ -60,6 +60,38 @@ reserved name findable only in the source is a trap with a delay on it. The tabl
 both directions, and the modules that read a manifest are derived from the call sites rather than listed,
 so a new reader cannot join without appearing there.
 
+### `build:` is a group name and a section name at once, and the kernel says so now (si#172)
+
+`src/simplon/tasks/buildfiles.py` reads `build:cmake-files`' and `build:dotnet-solution`' `targets:`
+block out of a top-level `build:` section, and its own comment said that was safe because a command
+group and a data section could never share a name. They already did. Measured over the same seven
+manifests si#159 read, **two live products carry a top-level `build:` section of their own** - cleon's
+holds `bundle:`, `ant:` and `site:`, secure-windows-images' holds `packer:` and `templates:` - and one
+of them had written a comment to its own authors explaining the collision and telling them never to add
+a `targets:` key. A product should not have to document the kernel's namespace in its own file.
+
+What the collision costs was driven rather than argued, which is what decided the shape: both real
+sections were put into a product that DOES place `build:cmake-files`, and the command was run. It wrote
+the same three files as a product with no `build:` section at all, byte for byte. **There is no silent
+empty model on this path**, and not by luck - si#102 made the source tree the declaration, so an absent
+`targets:` withholds only the dependency edges a directory cannot show, which is exactly what the
+normal case withholds. A tree that yields no target is still refused.
+
+So the fix is a stated rule and not a new refusal. `build:` is the product's section, the kernel reads
+exactly one key out of it, an absent `targets:` means the tree is the whole declaration, and inside
+`build:` the word `targets` is the kernel's - cleon's Ant block is one rename from tripping it, with
+`generate_targets:`, `compile_targets:` and `package_targets:`. Refusing a product's `build:` was ruled
+out by si#159's own measurement (eleven of seventy top-level keys are read by product bodies in
+repositories this kernel cannot see). Renaming the section is free today, since not one reachable
+manifest declares `build: targets:`, and was still rejected: it moves the generators' input out of the
+group that produces it, for a collision measured at zero cost.
+
+Two refusals changed their wording, because both claimed a section the kernel shares: a `build:` that
+cannot hold a key no longer says what the product's section "must hold", and a `targets:` of the wrong
+shape now says whose name it is and which key to rename. The manifest page's `build:` row said
+`support:toolchain`, which reads `groups: build: commands:` and never the data section - si#172's own
+confusion, in the documentation written to end it - and the row is derived from the catalogue now.
+
 ### The running row stops reading as two arrows (si#162)
 
 `STATE_ICON[RUNNING]` was `▶`, and `▶` is exactly what Textual's `Tree` puts in front of a collapsed
