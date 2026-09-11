@@ -18,9 +18,10 @@ Product toggles keep their own ``<PRODUCT>_*`` namespace and never leak in here.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, NamedTuple
+from typing import NamedTuple
 
 import yaml
 
@@ -99,6 +100,16 @@ def section(document: Mapping[str, object], *path: str) -> Section:
     of its own about integers. One keyword would serve three of labegress's six lines and two of
     labinstance's three, and each key would still need its own wording. That is si#159's own finding
     applied to a smaller population: the measured population does not support the rule.
+
+    THE SHAPE TEST IS `Mapping`, AND FOR THREE READERS THAT IS A WIDENING. `nexusproxy`, `tasks/site.py`,
+    `tasks/image.py`, `tasks/testrun.py` and `tasks/claudeplugins.py` already asked `isinstance(...,
+    Mapping)`; `labegress`, `labinstance` and `tasks/releasenotes.py` asked `isinstance(..., dict)`, and
+    a `MappingProxyType` or an `OrderedDict` at their section key is now accepted where it used to be
+    refused. On the production path nothing changes at all - `manifest_data()` is `yaml.safe_load`, which
+    yields plain dicts and nothing else - so the only way to reach the difference is the seam the unit
+    tests use, where `manifest_data` is monkeypatched to hand back a literal. Recorded rather than
+    repaired: eight readers asking one question is the point of this function, and three of them keeping
+    a narrower one would be the duplication back in a subtler form.
 
     Pure - no I/O, no raise, no product knowledge. A product reads its own sections through this too;
     `site/content/building/manifest.md` is where that is published.

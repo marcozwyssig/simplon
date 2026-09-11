@@ -56,7 +56,12 @@ treats `max_id_len: 0` as present and refuses it a line later with a sentence ab
 would have served three of one site's six lines and two of the other's three. That is si#159's own
 finding at a smaller size - the measured population does not support the rule.
 
-Products need do nothing. `manifest_data()` is unchanged, and the accessor is additive.
+Products need do nothing. `manifest_data()` is unchanged, and the accessor is additive. One narrow
+behaviour note: the shared shape test is `isinstance(..., Mapping)`, where `labegress`, `labinstance`
+and `tasks/releasenotes.py` used to ask for a `dict`, so a `MappingProxyType` or an `OrderedDict` at
+one of those three section keys is now accepted. `manifest_data()` is `yaml.safe_load`, which yields
+plain dicts and nothing else, so the production path cannot reach that difference at all - only a test
+that hands a reader a literal can.
 
 ## 0.11.0
 
