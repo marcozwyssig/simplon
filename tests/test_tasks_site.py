@@ -121,15 +121,54 @@ def test_declared_refuses_a_manifest_without_the_section():
         site_task.declared({})
 
 
-@pytest.mark.parametrize("missing", ["image", "source", "output"])
+@pytest.mark.parametrize("missing", ["image", "output"])
 def test_declared_refuses_a_section_missing_a_required_key(missing):
-    # arrange: the output path belongs to the product, and so does the generator - a kernel default for
-    # either would be simplon's own choice imposed on every other product
+    # arrange: the generator is the product's choice, and `output` is handed to a recursive delete - a
+    # kernel default for either would be simplon's own choice imposed on every other product, and for
+    # `output` it would be one imposed on `shutil.rmtree`
     section = {key: value for key, value in _SITE.items() if key != missing}
 
     # act / assert
     with pytest.raises(ValueError, match=missing):
         site_task.declared({"site": section})
+
+
+def test_a_section_that_names_no_source_takes_the_documentation_root():
+    """si#183: `docs/` is where documentation lives, so a product that says nothing lands there.
+
+    The one key that gained a default, and the reason it is safe to give it one: `source` is only ever
+    READ. The block on `site.DEFAULT_SOURCE` carries the census this was decided on.
+    """
+    # arrange: the four keys a product must still declare, and no `source`
+    section = {key: value for key, value in _SITE.items() if key != "source"}
+
+    # act
+    cfg = site_task.declared({"site": section})
+
+    # assert
+    assert cfg.source == "docs/site"
+    assert cfg.source == site_task.DEFAULT_SOURCE
+
+
+def test_a_section_that_names_a_source_keeps_it():
+    """The default is SOFT, which is the whole difference between it and a rule. Measured on the two
+    real products it has to leave alone: cleon declares `site`, biz-cockpit declares `docs/website`.
+    """
+    # arrange / act / assert
+    for declared_path in ("site", "docs/website"):
+        cfg = site_task.declared({"site": {**_SITE, "source": declared_path}})
+        assert cfg.source == declared_path
+
+
+@pytest.mark.parametrize("bad", ["", "   ", 3])
+def test_a_source_that_is_present_and_broken_is_still_refused(bad):
+    """An ABSENT key takes the convention; a key that is there is ruled on. `source: ""` is a mistake
+    somebody made, not a decision to use the default, and a default that swallowed it would build the
+    documentation root while the manifest said something else.
+    """
+    # arrange / act / assert
+    with pytest.raises(ValueError, match="source"):
+        site_task.declared({"site": {**_SITE, "source": bad}})
 
 
 @pytest.mark.parametrize("image", ["hugomods/hugo", "hugomods/hugo:latest"])

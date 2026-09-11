@@ -53,7 +53,16 @@ def test_the_site_section_is_declared_and_valid(product):
     declared = site_task.declared(data, source=str(MANIFEST))
 
     # Assert: the four values Hugo actually needs, plus the theme the page's whole look hangs on.
+    #
+    # `source` is asserted TWICE over, because since si#183 it is the kernel's answer rather than this
+    # manifest's: the section must not carry the key at all, and the value must still be `docs/site`.
+    # That makes this repository the first consumer of the default rather than a product that happens to
+    # agree with it - so if the default ever stopped working, simplon's own `build docs` would say so.
+    assert "source" not in data["site"], (
+        "simplon declares `site: source:` again; si#183 leaves it out on purpose, so that the kernel's "
+        "own default is exercised by the one product this suite can actually build")
     assert declared.source == "docs/site"
+    assert declared.source == site_task.DEFAULT_SOURCE
     assert declared.output == "build/website"
     assert declared.image and declared.theme
     assert declared.base_url.startswith("https://")

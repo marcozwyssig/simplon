@@ -517,7 +517,7 @@ a re-division does not touch. Two of them lost half an assertion and say so in p
 quietly: a `weight:` orders within a section, and a chapter and the pages it defers to no longer always
 share one.
 
-### The site lives under `docs/`, with the rest of the documentation (si#183)
+### The site lives under `docs/`, and a product that says nothing lands there (si#183)
 
 `docs/` is the documentation root, and simplon's own site was not in it: the Hugo sources sat at `site/`
 in the repository root while `docs/` held only `superpowers/specs` and `superpowers/plans`, so one
@@ -526,16 +526,39 @@ repository answered "where is the documentation" in two places. The sources are 
 site is unchanged: `base_url` did not move and every URL it serves is the one it served before, because
 only the source directory changed.
 
-**What a product has to do: nothing.** The kernel gained no rule and no default, and both were measured
-before they were rejected. si#155 established that `site: source:` and `site: output:` have no default
-at all - the kernel refuses the section rather than guessing - so every product that declares a site
-says where it is. Of the seven manifests reachable from `simplon.surface.CONSUMERS`, three declare a
-`site:` section, and the three do not agree: one at `site`, one at `docs/website`, one at `docs/site`.
-A refusal for a `source:` outside `docs/` would turn away a consumer that has done nothing wrong, which
-is the expression rule si#53, si#85 and si#159 each declined to write. A default of `docs/site` would be
-no better: the one product already under `docs/` chose `docs/website`, so the default would be one
-product's leaf name handed to everybody else. The convention is written on `how/manifest/` instead, and
-`source:` still says where your site is.
+**What a product has to do: nothing, and that is not a figure of speech.** `site: source:` now DEFAULTS
+to `docs/site` instead of being required, so a manifest that names a path keeps exactly what it named and
+a manifest that says nothing lands on the convention. Nothing is refused that was accepted before.
+
+The refusal was considered and dropped, and the census is why. Of the seven manifests reachable from
+`simplon.surface.CONSUMERS`:
+
+| product | `site:` section | `source:` |
+| --- | --- | --- |
+| simplon | yes | `docs/site`, now by default and absent from the manifest |
+| cleon | yes | `site` |
+| biz-cockpit | yes | `docs/website` |
+| agile-cockpit | no | - |
+| asbundle | no | - |
+| netctl | no | - |
+| secure-windows-images | no | - |
+
+Three of seven declare a site, and the three disagree. A kernel that insisted on `docs/` would have
+refused two products that have done nothing wrong, on their first run with a new kernel - the expression
+rule si#53, si#85 and si#159 each declined to write, and the one kind of refusal the census asks a reason
+for.
+
+**So who is a default for, if all three existing products name the key?** The fourth. A product that gets
+a website from here on writes four keys instead of five and lands on the convention without having read
+about it, which is the only moment a convention is cheap to adopt. Simplon is its first consumer rather
+than a product that happens to agree with it: its own `site:` section carries no `source:` line, so every
+`build docs` in this repository exercises the default.
+
+**`site: output:` deliberately does not get one, and the asymmetry is the point.** By consumer agreement
+it has the better case - two of the three declare `build/website` and only cleon differs - but `output`
+is handed to `shutil.rmtree` before every build. A default there would recursively delete a directory the
+product never typed, the first time somebody forgot a key. `source` is only ever read. The kernel may
+assume where to look; it may not assume what to delete.
 
 What moved beside the directory is every path that named it: the manifest's `site: source:`, the
 `docs:reference` output and the `releases: page:`, four `.gitignore` lines, seven places in the suite
