@@ -1309,11 +1309,11 @@ class _StdoutRouter:
         self.errors = getattr(under, "errors", None)
         self._local = threading.local()
 
-    def target(self) -> "_LineWriter | None":
-        writer: "_LineWriter | None" = getattr(self._local, "writer", None)
+    def target(self) -> _LineWriter | None:
+        writer: _LineWriter | None = getattr(self._local, "writer", None)
         return writer
 
-    def take(self, writer: "_LineWriter | None") -> "_LineWriter | None":
+    def take(self, writer: _LineWriter | None) -> _LineWriter | None:
         """Point THIS thread at `writer` and return what it was pointing at, so a nested capture can put
         the previous one back."""
         previous = self.target()
@@ -1326,7 +1326,7 @@ class _StdoutRouter:
             return self.under.write(text)
         return writer.write(text)
 
-    def writelines(self, texts: "Sequence[str]") -> None:
+    def writelines(self, texts: Sequence[str]) -> None:
         for text in texts:
             self.write(text)
 
@@ -1372,15 +1372,24 @@ class _Routing:
         self._active = 0
 
     @contextlib.contextmanager
-    def to(self, writer: "_LineWriter") -> Iterator[None]:
-        """Route this thread's stdout into `writer` for the length of the block, on every way out."""
+    def to(self, writer: _LineWriter) -> Iterator[None]:
+        """Route this thread's stdout into `writer` for the length of the block, on every way out.
+
+        TWO NESTED `finally`s rather than one, because they undo two different things and the inner one
+        can fail. `_install` has already incremented the counter by the time `take` is called, so a fault
+        between them would leave the router installed for the rest of the process with nobody left to
+        remove it - `sys.stdout` permanently pointing at a router whose threads have all gone. The
+        release is therefore guarded from the instant the counter moves."""
         router = self._install()
-        previous = router.take(writer)
         try:
-            yield
+            previous = router.take(writer)
+            try:
+                yield
+            finally:
+                router.take(previous)
         finally:
-            router.take(previous)
             self._remove(router)
+
 
     @contextlib.contextmanager
     def suspended(self) -> Iterator[None]:
@@ -1568,14 +1577,24 @@ def capturing(label: str, work: Callable[[], None], command: str = "", help: str
         rc = 0
         try:
             with _ROUTING.to(writer):
+                # THE HALF LINE IS HANDED OVER ON BOTH PATHS, and they are written out separately
+                # rather than as one `finally`, because only one of them is unwinding (code review).
+                # On the raising path this flush is what puts the line the body fell over on into
+                # `lines` before `Step.run` composes the crash record out of them - and it is a
+                # COURTESY, running while the body's own exception is already travelling. If the emit
+                # behind it raised (in the TUI it is a `call_from_thread`, which can), that fault would
+                # become the exception `Step.run` records: `__context__` would still carry the body's,
+                # but `failure_report` shows a step's LAST ten lines, so the traceback a reader needs
+                # would be pushed out of exactly the window si#182 built the tail rule around. The
+                # body's exception wins; a fault in the courtesy is dropped. On the ordinary path
+                # nothing is travelling, so a flush fault is real news and propagates.
                 try:
                     work()
-                finally:
-                    # INSIDE the routing and in a `finally`: the half line a body left behind is handed
-                    # over whether it returned, exited or raised. On the raising path this is what puts
-                    # the line it fell over on into `lines` BEFORE `Step.run` composes the crash record
-                    # out of them.
-                    writer.flush()
+                except BaseException:
+                    with contextlib.suppress(Exception):
+                        writer.flush()
+                    raise
+                writer.flush()
         except SystemExit as exit:
             # Caught here and not in `Step.run`, which deliberately lets `SystemExit` past: a body saying
             # `sys.exit` means to end ITS OWN work, and only this function knows the body was written

@@ -141,10 +141,18 @@ body raised, so the line it fell over on sits beside the traceback. The break ru
 `simplon.run.LINE_BREAK` - published from `run_stream`'s own `_BREAK`, so an in-process step and a
 subprocess step disagree about nothing.
 
-**Fourteen deliberate breakages** confirmed each property can actually go red. One survived: the test
+**Sixteen deliberate breakages** confirmed each property can actually go red. One survived: the test
 that a captured thread is told it is not a terminal passed with `isatty` deleted outright, because
 pytest's own stdout already answers False. It is driven under a stream that claims to be a terminal now,
 and finding that is what found the Rich colour caching above.
+
+A review then found the same shape twice more. The half-line flush at the end of a step runs while a
+raising body's exception is already travelling, so a fault in that courtesy would have become the
+recorded traceback - `__context__` keeps the body's, but the ten-line tail would no longer show it. The
+body's exception wins now, and a fault in the flush is dropped. And the test for two capturing steps
+running side by side used a sleep to encourage the interleaving, which cannot fail falsely but can
+quietly stop exercising the race at all on a fast runner; it uses a barrier, so all three branches are
+provably inside their capture at once.
 
 ## 0.11.0
 

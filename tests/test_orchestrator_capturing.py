@@ -181,15 +181,21 @@ def test_two_capturing_steps_running_side_by_side_do_not_cross_wire():
     - five of six lines in the wrong step, and the process never got its stdout back, because
     `redirect_stdout` restores what IT saved on entry. One router with a thread-local target is what
     makes this hold."""
-    # Arrange
+    # Arrange: a BARRIER rather than a sleep, so all three are provably inside their capture at the same
+    # time (code review). A sleep only makes the interleaving likely: on a fast or differently scheduled
+    # runner the three could serialise, and the test would pass without ever exercising the race it is
+    # named for - power quietly lost rather than a false failure.
+    seen: dict[str, list[str]] = {name: [] for name in ("A", "B", "C")}
+    inside = threading.Barrier(len(seen), timeout=5)
+
     def body(name: str):
         def work() -> None:
+            inside.wait()          # every branch is now redirecting at once
             for i in range(3):
                 print(f"{name} line {i}")
                 time.sleep(0.02)
         return work
 
-    seen: dict[str, list[str]] = {name: [] for name in ("A", "B", "C")}
     steps = {name: capturing(name, body(name), command=f"probe.{name}") for name in seen}
     before = sys.stdout
 
@@ -280,6 +286,29 @@ def test_sys_exit_with_a_code_is_that_code(code, expected):
     step.run()
     # Assert
     assert step.rc == expected
+
+
+def test_a_fault_in_the_closing_flush_does_not_displace_the_bodys_own_exception():
+    """The half-line flush runs while the body's exception is already travelling, so it is a courtesy
+    that must not become the news. If it raised, `Step.crash` would end on the FLUSH's traceback -
+    `__context__` would still carry the body's, but `failure_report` shows a step's last ten lines, so
+    the traceback a reader actually needs would be pushed out of that window."""
+    # Arrange: an emit that blows up on the half line, and a body that has already blown up
+    def emit(line: str) -> None:
+        if not line.endswith("."):
+            raise RuntimeError("the repaint fell over on the half line")
+
+    def work() -> None:
+        print("a finished line.")
+        print("a half line with no newline", end="")
+        raise ValueError("the body's own fault")
+
+    step = capturing("probe", work, command="probe.flush")
+    # Act
+    step.run(emit)
+    # Assert: the body's exception is the recorded one, and the flush fault is gone rather than on top
+    assert "ValueError: the body's own fault" in step.crash
+    assert "the repaint fell over" not in step.crash
 
 
 def test_a_body_that_raises_becomes_a_failed_step_and_not_an_escaping_exception():
