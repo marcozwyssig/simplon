@@ -15,7 +15,7 @@ runs in CI now. It is the three-part ADOPTION, because each part is silently rem
 restores the exact condition #8 describes:
 
   1. the manifest declares the gate, so the command exists at all;
-  2. EVERY workflow that verifies this tree runs THAT command - not a `mypy` line of its own, which
+  2. EVERY workflow that verifies this tree REACHES that command - not a `mypy` line of its own, which
      would be a second route to the same verdict and the one nobody runs by hand;
   3. the requirements ask for the `[typecheck]` extra, so the checker is present in the venv the gate
      points at - without it the task reports a setup error rather than findings.
@@ -38,11 +38,41 @@ was written as the single string `./simplon.sh test all`; that ticket renamed th
 suite` and `ci.yml` with it, and every assertion here stayed green while the rule matched no job in that
 file at all. The vacuity test was asking whether both pipelines carry the GATE - which a rename does not
 touch - rather than whether both still match the PREDICATE. Both questions are asked now.
+
+WHAT si#163 CHANGED, AND WHAT THE RULE STILL PROTECTS. `test all` is an aggregate that plans the type
+gate since that ticket, so a job spelling `./simplon.sh test all` runs the gate whether or not it also
+names it. That takes half of what this rule used to protect away: for THAT spelling, "runs the suite" and
+"runs the gate" are no longer two things a job can get wrong separately.
+
+The rule is kept and narrowed rather than deleted, because the other half is not only alive but is the
+shape `ci.yml` deliberately has. si#156's reason stands: a GitHub job stops at its first failed step, so
+`ci.yml` names the LEAVES - `test suite`, then the gate, then the wheel, then the prose guard - and a job
+built that way carries no aggregate to drag the gate along. Delete its `test typecheck-python` step and
+the tree is unchecked again, with nothing else in the repository saying so. That is a live failure, it is
+one line wide, and it was seen red before this sentence was written.
+
+So the question the rule asks moved from "does the job NAME the gate" to "does the job REACH it", and the
+answer is derived from the manifest rather than matched against a table of spellings. A hand-written
+"these commands carry the gate" list would be si#156's defect one level up: it would keep saying `test
+all` carries the gate on the day somebody edits that `depends_on:`, and `release.yml` - which reaches the
+suite by the aggregate and, since si#163, names no gate step of its own - would be covered by a claim and
+by nothing else.
+
+The claim itself is held separately, by `test_theLocalGateAggregateReachesTheGate` below, and that is not
+redundancy. Drop the dependency today and the rule does catch it, because `release.yml` happens to have
+no other route to the gate - but that is a property of which workflows exist this week, not of the
+aggregate, and it would stop being true the moment a job named both. The separate assertion holds the
+claim itself, does not depend on any workflow, and names the CAUSE where the rule can only report the
+symptom.
 """
 import configparser
+import functools
 import tomllib
 
 import yaml
+
+from simplon import catalogue as catalogue_mod
+from simplon.orchestrator import manifest as manifest_mod
 
 from conftest import ROOT
 
@@ -53,9 +83,10 @@ CONFIG = ROOT / "mypy.ini"
 
 #: The catalogue coordinate the kernel carries, and the command that instantiates it in this manifest's
 #: `test` group (the coordinate's second half is the command name, as with `build reference` / `build
-#: site`).
+#: site`). The coordinate is the ONE constant this module still types: si#163 replaced the literal step
+#: spelling `./simplon.sh test typecheck-python` with `_gate_command()`, which reads the command name out
+#: of the placement, so a rename shows up as a failing placement rather than as a rule matching nothing.
 COORDINATE = "test:typecheck-python"
-GATE = "./simplon.sh test typecheck-python"
 
 #: The commands whose presence in a job means that job VERIFIES this tree - and therefore owes the gate.
 #: A job that only builds (release.yml's `docs`) is not covered, deliberately: it makes no claim about
@@ -71,7 +102,78 @@ GATE = "./simplon.sh test typecheck-python"
 #:
 #: A set rather than a derivation (expanding each command through the manifest plan) on purpose: what is
 #: being held is that a job SAYS it verified this tree, and both spellings are things a workflow says.
+#: This is the PREDICATE side and it stays a set for that reason; the GATE side is derived, see `_plan`.
 VERIFIES = ("./simplon.sh test all", "./simplon.sh test suite")
+
+
+@functools.cache
+def _loaded() -> "manifest_mod.Manifest":
+    """This repository's own manifest, loaded the way the CLI loads it - with the catalogue, so a command
+    that merely names a coordinate is a command with a body."""
+    return manifest_mod.load(MANIFEST.read_text(encoding="utf-8"), catalogue=catalogue_mod.load())
+
+
+def _plan(step: str) -> tuple[str, ...]:
+    """The leaf commands a `./simplon.sh <group> <command>` step really runs, expanded through the
+    manifest, or `()` for anything that is not one of those.
+
+    WHY THIS IS DERIVED AND NOT A TABLE (si#163). A workflow step is one string and can be several
+    verdicts: `./simplon.sh test all` plans three commands since si#163 and two before it. Asking whether
+    a job runs the gate by searching its `run:` lines for the gate's own spelling answers a question about
+    TEXT, and the fact it needs is a fact about the plan. A table mapping the one to the other would be
+    exactly the single string si#156 found here, one level up - correct on the day it is typed and silent
+    on the day the `depends_on:` under it changes.
+
+    Anything with a different shape - a multi-line `run: |` script, an `npm` line, a command with
+    arguments - plans nothing as far as this module is concerned. That is deliberate: this answers "which
+    of the product's own commands did this step invoke", and a step that is not one of them invokes none.
+    A command that took an argument would be a real gap, and there is none in either workflow today; the
+    generator writes `./simplon.sh <group> <command>` and si#40's `with:`-pinning is what keeps it that
+    way.
+
+    A step that LOOKS like one and names a command the manifest does not carry is a third case, and it
+    fails loudly rather than resolving to `()`. Swallowing it would be the quiet defect: a typo would drop
+    the step out of every population below, the job would match no spelling in VERIFIES either, and the
+    whole file would go green over a workflow that runs nothing. `ci.yml` cannot reach that state -
+    `support workflows --check` regenerates it from this manifest - but `release.yml` is hand-written, so
+    the message is written out here rather than left as a traceback into the loader.
+    """
+    parts = step.split()
+    if len(parts) != 3 or parts[0] != "./simplon.sh":
+        return ()
+    _, group, command = parts
+    try:
+        return _loaded().plan_for(command, group=group)
+    except ValueError as exc:
+        raise AssertionError(
+            f"a workflow step runs `{step}`, and simplon.yaml carries no such command: {exc}. Either the "
+            f"command was renamed and the workflow was not, or the workflow has a typo - a step that "
+            f"names nothing runs nothing, and no gate in this file can see it") from exc
+
+
+def _reached(runs: list[str]) -> set[str]:
+    """Every leaf command a job really runs: the union of its steps' plans."""
+    return {leaf for step in runs for leaf in _plan(step)}
+
+
+def _gate_command() -> str:
+    """The name of the command in the `test` group that instantiates the gate's coordinate.
+
+    Derived rather than typed, the way tests/test_releases_page.py derives the notes guard's: renaming
+    `typecheck-python` then keeps every assertion below honest instead of turning them into a search for
+    a string that has stopped meaning anything. `test_theManifestPlacesTheKernelsOwnTypeGate` is what
+    holds the name to the coordinate; everything here works in names because that is what a plan carries.
+
+    It asserts only that the placement is UNIQUE, not what the command is called. The name is pinned once,
+    by the test named above, and pinning it a second time here would turn a rename into two failures
+    saying the same thing - and would make this helper's own promise false.
+    """
+    commands = _manifest()["groups"]["test"]["commands"]
+    placed = [name for name, spec in commands.items() if spec.get("task") == COORDINATE]
+    assert len(placed) == 1, (
+        f"simplon's `test` group no longer instantiates {COORDINATE} exactly once - found {placed}; si#8 "
+        f"is about this manifest being where the kernel's own gate is placed")
+    return placed[0]
 
 
 def _config() -> configparser.ConfigParser:
@@ -123,21 +225,63 @@ def test_everyWorkflowThatVerifiesThisTreeAlsoRunsTheGate() -> None:
     # this tree - `ci` on every push, `release` on the path that reaches consumers, and any file written
     # after this one - owes the same verdict. A named-file version of this test passed while `release.yml`
     # published wheels nothing had typechecked.
+    #
+    # REACHES, not NAMES, since si#163: `test all` plans the gate now, so a job that spells only the
+    # aggregate is gated and a job that spells the LEAF `test suite` is not. Both sides are read out of
+    # the manifest, so the question asked is the one that decides whether mypy ran.
+    gate = _gate_command()
+
     ungated = [f"{file}:{job}" for file, job, runs in _jobs()
-               if any(cmd in runs for cmd in VERIFIES) and GATE not in runs]
+               if any(cmd in runs for cmd in VERIFIES) and gate not in _reached(runs)]
 
     assert ungated == [], (
-        f"these jobs run the suite but not the type gate: {ungated}; a pipeline that is green because a "
-        f"question is not asked is the whole of si#8")
+        f"these jobs run the suite but not the type gate: {ungated}; naming `test suite` reaches the "
+        f"pytest leaf ONLY - add `./simplon.sh test {gate}` as its own step, or run the `test all` "
+        f"aggregate that plans it. A pipeline that is green because a question is not asked is the whole "
+        f"of si#8")
 
 
 def test_bothPipelinesAreCovered_soTheRuleIsNotVacuous() -> None:
     # A rule over a predicate goes green when NOTHING matches the predicate, which is how a rule quietly
     # stops holding anything. Name the two files that must be in it - if a rename makes this red, the
     # rename also has to say what now carries the release.
-    gated = {file for file, _, runs in _jobs() if GATE in runs}
+    #
+    # Asked through the plan too (si#163), for one reason: the literal version of this test forbade a
+    # workflow from reaching the gate the way the manifest now lets it, by running `test all` alone. It
+    # would have gone red on a shape that is correct, which is worse than a rule that cannot fail - it is
+    # a rule that refuses the right answer.
+    gate = _gate_command()
+
+    gated = {file for file, _, runs in _jobs() if gate in _reached(runs)}
 
     assert {"ci.yml", "release.yml"} <= gated
+
+
+def test_theLocalGateAggregateReachesTheGate() -> None:
+    """si#163: `./simplon.sh test all` must RUN the type gate, not merely be a command that could.
+
+    THE HALF THE RULE ABOVE ONLY HAPPENS TO HOLD, and the reason this is a separate test rather than one
+    more line in it. That rule reads the plan to decide whether a job reaches the gate, so dropping
+    `typecheck-python` from this aggregate turns it red TODAY - only because no workflow has a second
+    route to the gate. That is a fact about `ci.yml` and `release.yml` this week, not about the aggregate,
+    and the day a job names both the rule goes quiet again. This asks the question directly, the way
+    `test_bothPipelinesMatchThePredicateItself_soTheRuleAboveHasSomethingToRuleOn` does for the
+    predicate side, and it is also the ONLY
+    assertion behind the local gate's own promise: `test all` is what a developer runs, and no workflow
+    file has anything to say about that.
+
+    WHAT THIS DOES AND DOES NOT PROVE, in the same words tests/test_releases_page.py uses for si#156's
+    half: this asserts the PLAN, and a plan is not a verdict. What holds the verdict is the run - break an
+    annotation, type `./simplon.sh test all`, watch the type row go red - and no unit test can stand in
+    for that. This is the regression guard beside it.
+    """
+    # arrange / act
+    plan = _loaded().plan_for("all", group="test")
+
+    # assert
+    assert _gate_command() in plan, (
+        f"`test all` plans {list(plan)}, which does not include '{_gate_command()}': the command named "
+        f"`all`, whose help says every test, has stopped running the type gate (si#163)")
 
 
 def test_bothPipelinesMatchThePredicateItself_soTheRuleAboveHasSomethingToRuleOn() -> None:

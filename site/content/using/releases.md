@@ -185,6 +185,40 @@ The run transcript is untouched: `steplog` writes it `encoding="utf-8"` by name,
 attaches to a ticket keeps the glyphs whatever the console can show, and a test now says so. si#162's
 disjointness assertion covers the second table too, per character, because its spellings are words.
 
+### The type gate joins the local gate, and a step that could not fail leaves the release (si#163)
+
+si#156 gave `test all` its name back over the release-notes guard and left the type gate out on purpose,
+because folding it in changes what `tests/test_type_gate.py`'s central rule is *about*. It is in now:
+`./simplon.sh test all` plans the pytest suite, then `test:typecheck-python`, then the notes guard.
+Measured on this tree it costs 3.4 s the first time and 0.6 s with mypy's cache warm, against some 60 s
+of suite - so the command this project tells a developer to run is every test again, at no price worth
+naming.
+
+**The rule is narrower rather than gone.** *Any job that runs the suite runs the gate* had two halves,
+and the aggregate takes one away: a job spelling `test all` cannot miss the gate any more. The other half
+is the shape `ci.yml` deliberately has - it names the **leaves**, because a GitHub job stops at its first
+failed step and the prose gate has to come last - and a job built that way still owes the gate a step of
+its own. So the question moved from *does this job name the gate* to *does it reach it*, answered by
+expanding each step through the manifest plan instead of matching a table of spellings. A table would be
+si#156's defect one level up: it would go on saying `test all` carries the gate on the day somebody edits
+that `depends_on:`. A separate assertion holds that claim by itself, so the cause is named rather than
+the symptom.
+
+**And `release.yml` lost a step.** It runs `test all`, which now carries the gate, so the
+`test typecheck-python` step behind it could only ever run when `test all` had already been green - which
+means the gate inside it had already passed. A check that cannot fail is the shape this repository hunts,
+so it went rather than stay looking like a guard. What stops a publish is unchanged: a type error stops
+it, one step earlier in the file, with the same verdict and the same message.
+
+**One thing si#163 expected and did not find.** The ticket noted that mypy's exit codes would collapse
+into the aggregate's 0/1 the way pytest's did. They were collapsed already: `tasks/typecheck.py` ends a
+failing run on `log.die`, which is `SystemExit(1)`, so mypy's 1 for findings and 2 for a usage error had
+never reached a caller in the first place. There was nothing left for the aggregate to flatten.
+
+Nothing to do for a consuming product: `test:typecheck-python` is unchanged and this is simplon's own
+manifest. What is worth copying is the shape - if your `test all` is an aggregate, the gate belongs in
+its `depends_on:`, and the assertion that it is there belongs beside it.
+
 ## 0.10.0
 
 **A C++ or a .NET product stops writing its build files by hand.** 0.9.0 gave every product one pinned

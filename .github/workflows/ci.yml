@@ -8,11 +8,13 @@
 # checkout - not a pipeline's own spelling of them. Two routes to one verdict is the shape that
 # produced si#8, where the CI was green for months because it had never run mypy at all.
 #
-# The steps name the LEAVES, not the `test all` aggregate that plans two of them (si#156). A
-# GitHub job stops at its first failed step, so an aggregate here would put the prose gate in
-# front of the type gate and the wheel, which is exactly what the last step's note refuses. Every
-# verdict below still has one implementation, and `test all` reaches two of them by name rather
-# than by repeating them.
+# The steps name the LEAVES, not the `test all` aggregate that plans three of them (si#156,
+# si#163). A GitHub job stops at its first failed step, so an aggregate here would put the prose
+# gate in front of the type gate and the wheel, which is exactly what the last step's note
+# refuses. si#163 folded the type gate into that aggregate and deliberately did NOT collapse
+# these steps into it: what the local gate gains is one command that really runs every test, and
+# what this file would lose is the ordering. Every verdict below still has one implementation,
+# and `test all` reaches three of them by name rather than by repeating them.
 name: ci
 on:
   - push
