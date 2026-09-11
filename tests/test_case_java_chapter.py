@@ -65,10 +65,10 @@ import sitepages
 from conftest import ROOT
 
 #: The chapter under test.
-CHAPTER = ROOT / "site" / "content" / "using" / "case-java.md"
+CHAPTER = sitepages.chapter("case-java.md")
 
 #: The card list this half of the site renders, and the place the chapter has to appear in.
-INDEX = ROOT / "site" / "content" / "using" / "_index.md"
+INDEX = sitepages.index("what")
 
 #: The manifest of the product the chapter follows. It is not in this repository - javademo is a Java
 #: product driven for si#26 - so it travels with the chapter, and every command the page types is
@@ -77,7 +77,7 @@ FIXTURE = ROOT / "tests" / "fixtures" / "case_java_manifest.yaml"
 
 #: The page that owns the price of the detour this chapter's seam removed (si#61). The chapter restates
 #: those numbers to make its point; they are read back off the page that measured them.
-TEST_LEVELS = ROOT / "site" / "content" / "building" / "test-levels.md"
+TEST_LEVELS = sitepages.chapter("test-levels.md")
 
 #: The closed vocabulary of honesty labels - the same three the Python chapter carries, deliberately, so
 #: a reader moving between the two cases is reading one scale and not two.
@@ -199,21 +199,34 @@ def test_the_chapter_is_listed_on_the_section_index():
 
 def test_the_chapter_renders_next_to_the_python_one_it_is_the_counterpart_to():
     """The two cases are a pair and the page says so in its first sentence, so the reader must meet them
-    together: after the pages both lean on, and immediately after its sibling. Hextra orders by
-    `weight:`, so the check is over the front matter of the whole directory."""
+    together: after the chapter of jobs both lean on, and immediately after its sibling. Hextra orders by
+    `weight:`, so the check is over the front matter of the whole directory.
+
+    WHAT si#170 RETIRED HERE, said rather than deleted. This used to compare this chapter's weight with
+    `getting-started` and `releasing` as well. `weight:` orders within a SECTION, and after the site was
+    divided by question those two are in `how/`, which is offered AFTER `what/` - deliberately, because
+    the division shows what the loop looks like before it explains it. So "must not be offered before
+    them" is no longer true of this site, and a weight comparison across two sections would be a
+    number that holds for a reason nobody stated. What replaces it is the half that was always the
+    point and is section-independent: the chapter POINTS at those pages instead of retelling them."""
     # arrange
     weights = {}
     for page in sorted(CHAPTER.parent.glob("*.md")):
-        if page.name in ("_index.md", "commands.md"):
+        if page.name == "_index.md" or page in sitepages.generated_pages():
             continue
         match = re.search(r"^weight: (\d+)$", page.read_text(encoding="utf-8"), re.M)
         assert match, f"{page} declares no weight"
         weights[page.stem] = int(match.group(1))
 
-    # assert: after the pages it defers to
-    assert weights["case-java"] > weights["getting-started"]
+    # assert: after the chapter it defers to and shares a section with
     assert weights["case-java"] > weights["examples"]
-    assert weights["case-java"] > weights["releasing"]
+
+    # assert: it points at the pages it leans on rather than retelling them
+    linked = {sitepages.resolve(link) for link in sitepages.internal_links(CHAPTER)}
+    for name in ("getting-started.md", "examples.md", "releasing.md"):
+        assert sitepages.chapter(name) in linked, (
+            f"{CHAPTER.name} no longer links to {name}, so it either retells that page or leaves the "
+            f"reader without it")
 
     # assert: and directly after its sibling, with nothing between them
     assert weights["case-java"] == weights["case-python"] + 1

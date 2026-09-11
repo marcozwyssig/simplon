@@ -1,9 +1,11 @@
 ---
 title: "Worked examples"
-weight: 3
+weight: 1
+aliases:
+  - "/using/examples/"
 ---
 
-The [command reference](../commands/) is complete and generated, which means it can tell you what every
+The [command reference](../../with-what/commands/) is complete and generated, which means it can tell you what every
 command takes and still not tell you which one you want. This chapter is the other half: eight jobs that
 actually come up, done end to end, with the reasoning about *why that command and not the neighbouring
 one*.
@@ -171,7 +173,7 @@ That last line used to be `git tag v0.1.13 && git push --tags`, typed by hand, a
 of the loop simplon did not hold. Two things changed with it becoming a command. It pushes **one** tag
 by name rather than every local tag the machine happens to carry, and it refuses to cut a tag on a
 commit `main` does not carry - which nothing stopped anyone from doing, and which would have published a
-feature branch to PyPI under a release number. [Cutting a release](../releasing/) is the whole
+feature branch to PyPI under a release number. [Cutting a release](../../how/releasing/) is the whole
 story, including what the guard deliberately does *not* check.
 
 The type gate is on that list for a reason worth stating. It is the kernel's own
@@ -283,7 +285,7 @@ $ ./myctl.sh build image           # docker build, with VERSION and REVISION der
 $ ./myctl.sh release image         # docker login, docker push, and then ASK THE REGISTRY
 ```
 
-Both read one entry of the manifest's [`images:` section](../../building/manifest/#images---the-container-image).
+Both read one entry of the manifest's [`images:` section](../../how/manifest/#images---the-container-image).
 A product that builds an image only to run a smoke test against it is then never one typo away from
 publishing it; a product that wants both in one step declares an aggregate over them, which is where an
 ordering belongs.
@@ -317,10 +319,10 @@ $ ./simplon.sh build docs
 
 That is an aggregate over `build reference` and `build site`, in that order, and the order is a
 `depends_on` edge in the manifest rather than a convention in a script. It has to be: the site's
-`content/using/commands.md` is written by the first step and read by the second, so a wrong order
+`content/with-what/commands.md` is written by the first step and read by the second, so a wrong order
 produces a site with a stale reference on it - and, the first time round, no reference at all. Both
-steps run in Docker, which is a decision with [its own rule](../../building/rules/#a-container-that-writes-into-a-mount-runs-as---user).
+steps run in Docker, which is a decision with [its own rule](../../with-what/rules/#a-container-that-writes-into-a-mount-runs-as---user).
 
 If Docker is not installed on your machine, that run is a hint and a zero exit code, not a failure. The
 machine that runs the loop is not always the machine that publishes the page - and that distinction has
-[a chapter of its own](../../building/rules/#a-missing-tool-is-not-a-failed-tool).
+[a chapter of its own](../../with-what/rules/#a-missing-tool-is-not-a-failed-tool).

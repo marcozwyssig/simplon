@@ -224,7 +224,7 @@ hang off the `v*` tag. A merged documentation fix appears when the next release
 is cut, and not before.
 
 The full story, including what the guard deliberately does not check, is on the
-site: <https://marcozwyssig.github.io/simplon/using/releasing/>.
+site: <https://marcozwyssig.github.io/simplon/how/releasing/>.
 
 Between tags the kernel calls itself `0.1.12.post1.dev4+g1234abc`: the release
 it descends from, plus how far. `simplon init` pins the released part

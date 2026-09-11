@@ -27,7 +27,7 @@ PRODUCT = "myctl"
 #: The two pages that describe what a scaffold produces. Not a sweep of the site: every other page
 #: legitimately shows a grown product's own layout, and `case-java.md` describing javademo's tree is not
 #: a claim about the default.
-PAGES = [ROOT / "site" / "content" / "using" / "getting-started.md", ROOT / "README.md"]
+PAGES = [sitepages.chapter("getting-started.md"), ROOT / "README.md"]
 
 #: The two spellings that mean "the orchestrator block", the same pair `test_own_orch_block.py` sweeps
 #: this repository's own configuration for. Each has to be prefixed by everything the default puts in

@@ -1,6 +1,8 @@
 ---
 title: "A .NET product, end to end"
-weight: 8
+weight: 5
+aliases:
+  - "/using/case-dotnet/"
 ---
 
 The [Java chapter](../case-java/) walks one delivery loop over a toolchain the kernel has never met, and
@@ -295,7 +297,7 @@ verdict vocabulary (the five outcomes are [the Python chapter's table](../case-p
 `setup-failed` and no setup marker to reach it with, no Allure results, no merge, no archive.
 
 The Java product paid one task body and got all three -
-[an `impl:` gate is opaque, and says so](../../building/test-levels/#an-impl-gate-is-opaque-and-says-so)
+[an `impl:` gate is opaque, and says so](../../with-what/test-levels/#an-impl-gate-is-opaque-and-says-so)
 is where that trade is written down. **This product pays nothing and gets the same, by naming the
 command it already has** ([simplon#106](https://github.com/marcozwyssig/simplon/issues/106)). A gate
 declares `command:` - a command in this product's own tree, `build unit` as it is typed - and
@@ -313,7 +315,7 @@ and every test behind simplon#106 used a Python stub instead).
 **This product declares no `suites:` section**, and the runs above are what it does without one: the
 measurement is what two commands do when nobody pairs them. Closing it costs one manifest section and no
 Python, so the design's claim that a product writes no body of its own reaches the test phase too -
-[Test levels](../../building/test-levels/#a-gate-may-name-a-command-in-your-own-tree) carries the block
+[Test levels](../../with-what/test-levels/#a-gate-may-name-a-command-in-your-own-tree) carries the block
 and the rules.
 
 ### analyse, and the one rule it obeys
@@ -400,7 +402,7 @@ $ ./dotnetdemo.sh release tag v0.1.0
 ```
 
 `git tag` afterwards lists nothing. What the guard checks, and what it deliberately does not, is in
-[Cutting a release](../releasing/).
+[Cutting a release](../../how/releasing/).
 
 What differs for a .NET product is what gets published, not how. A NuGet package, a self-contained
 publish directory and a container image are three different answers, and all three reach the registry
@@ -429,7 +431,7 @@ may say.
 What does not exist is everything past that host. `deploy` is one of the two ribs the catalogue draws
 empty on purpose: the group name, the env-first gate, and no tasks at all.
 [simplon#5](https://github.com/marcozwyssig/simplon/issues/5) is where that decision is open, and
-[the two empty ribs](../../building/phases/#the-two-empty-ribs) is why leaving them empty is the
+[the two empty ribs](../../with-what/phases/#the-two-empty-ribs) is why leaving them empty is the
 expensive choice rather than the lazy one.
 
 ## docs
@@ -446,7 +448,7 @@ Each of these is told once, elsewhere, and told properly:
 - the same loop with a hand-written build body under it - [A Java product, end to end](../case-java/)
 - the same loop in the kernel's own language - [A Python product, end to end](../case-python/)
 - what a gate is, how a level is declared, and how a non-pytest runner attaches -
-  [Test levels](../../building/test-levels/)
-- why the tag is the version and what the release guard refuses - [Cutting a release](../releasing/)
-- why `deploy` and `monitor` are empty - [The five phases](../../building/phases/)
-- getting a product to exist in the first place - [Getting started](../getting-started/)
+  [Test levels](../../with-what/test-levels/)
+- why the tag is the version and what the release guard refuses - [Cutting a release](../../how/releasing/)
+- why `deploy` and `monitor` are empty - [The five phases](../../with-what/phases/)
+- getting a product to exist in the first place - [Getting started](../../how/getting-started/)

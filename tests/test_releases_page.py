@@ -49,9 +49,10 @@ from simplon import catalogue as catalogue_mod, context
 from simplon.orchestrator import manifest as manifest_mod
 from simplon.tasks import releasenotes
 
+import sitepages
 from conftest import ROOT
 
-PAGE = ROOT / "site" / "content" / "using" / "releases.md"
+PAGE = sitepages.chapter("releases.md")
 
 
 def _declared(monkeypatch) -> releasenotes.Declared:

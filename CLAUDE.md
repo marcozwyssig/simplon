@@ -23,7 +23,7 @@ cause; the total was never weighed. It is weighed now — see #48.
 this paragraph used to carry (61) was the wrong population: six of those
 raises run at plan or run time, or only re-raise. The live count, split by
 kind, is computed by `tests/test_refusal_census.py` — walking out from the two
-places a manifest enters the kernel — and published on `building/rules.md`. A new
+places a manifest enters the kernel — and published on `with-what/rules.md`. A new
 refusal with no census entry turns that suite red until somebody says which
 kind it is, which is the point — a number typed into a document instead is
 wrong on the first day nobody checks it, and this repository has now proved
@@ -46,7 +46,7 @@ reads the manifest is either walked or named in `READS_INLINE` with the reason,
 so a new manifest reader cannot join quietly. And the sentence "everything else
 in the kernel refuses at run time — a task that cannot reach its tool, an image
 without a pin", which stood at the head of the census and on
-`building/rules.md`, was **false**: the pin is decided on a manifest string
+`with-what/rules.md`, was **false**: the pin is decided on a manifest string
 with nothing running. Prose about a population ages exactly the way a number
 does, and nothing was checking it.
 
@@ -68,7 +68,7 @@ first draft of this file listed it separately and put #34 under both, which is
 how the mistake showed. Ask instead how far a rule reaches: does it hold the
 kernel's own catalogue too (#34 checks over the *merged* tree, so it does), or
 does it exempt the kernel from what it asks of a product? Measured in #48 and
-again in #61, and **the split is on `building/rules.md`, not here** — every
+again in #61, and **the split is on `with-what/rules.md`, not here** — every
 count this paragraph used to carry has gone stale, the last two within a day of
 being typed. Most expression rules bind the kernel with the product; a few sit
 exactly on the platform/product seam; and **none exempts the kernel** any more.

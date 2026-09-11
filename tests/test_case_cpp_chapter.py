@@ -65,10 +65,10 @@ import sitepages
 from conftest import ROOT
 
 #: The chapter under test.
-CHAPTER = ROOT / "site" / "content" / "using" / "case-cpp.md"
+CHAPTER = sitepages.chapter("case-cpp.md")
 
 #: The card list this half of the site renders, and the place the chapter has to appear in.
-INDEX = ROOT / "site" / "content" / "using" / "_index.md"
+INDEX = sitepages.index("what")
 
 #: The manifest of the product the chapter follows. cppdemo is not in this repository - it is a C++
 #: product driven for si#108 - so it travels with the chapter, and every command the page types is
@@ -230,18 +230,25 @@ def test_the_chapter_renders_after_the_two_cases_it_leans_on():
     landing between them is a legitimate edit, and a suite that had to be rewritten for it would teach
     people to rewrite it without reading it. What must hold is that nothing which is NOT a case chapter
     is filed between two that are.
+
+    WHAT si#170 RETIRED HERE, said rather than deleted. This used to compare this chapter's weight with
+    `getting-started` and `releasing` as well. `weight:` orders within a SECTION, and after the site was
+    divided by question those two are in `how/`, which is offered AFTER `what/` - deliberately, because
+    the division shows what the loop looks like before it explains it. So "must not be offered before
+    them" is no longer true of this site, and a weight comparison across two sections would be a
+    number that holds for a reason nobody stated. What replaces it is the half that was always the
+    point and is section-independent: the chapter POINTS at those pages instead of retelling them.
     """
     # arrange
     weights = {}
     for page in sorted(CHAPTER.parent.glob("*.md")):
-        if page.name in ("_index.md", "commands.md"):
+        if page.name == "_index.md" or page in sitepages.generated_pages():
             continue
         match = re.search(r"^weight: (\d+)$", page.read_text(encoding="utf-8"), re.M)
         assert match, f"{page} declares no weight"
         weights[page.stem] = int(match.group(1))
 
-    # assert: after the pages it defers to
-    assert weights["case-cpp"] > weights["getting-started"]
+    # assert: after the pages it defers to and shares a section with
     assert weights["case-cpp"] > weights["examples"]
     assert weights["case-cpp"] > weights["case-python"]
     assert weights["case-cpp"] > weights["case-java"]
@@ -254,6 +261,13 @@ def test_the_chapter_renders_after_the_two_cases_it_leans_on():
 
     # assert: the weights are still distinct, so the order is stated rather than left to a tie-break
     assert len(set(weights.values())) == len(weights)
+
+    # assert: it points at the pages it leans on rather than retelling them
+    linked = {sitepages.resolve(link) for link in sitepages.internal_links(CHAPTER)}
+    for name in ("getting-started.md", "case-python.md", "case-java.md"):
+        assert sitepages.chapter(name) in linked, (
+            f"{CHAPTER.name} no longer links to {name}, so it either retells that page or leaves the "
+            f"reader without it")
 
 
 # --- the labels, which are the whole ticket ------------------------------------------------------------

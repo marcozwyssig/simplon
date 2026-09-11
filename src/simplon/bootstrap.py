@@ -808,9 +808,9 @@ GITIGNORE_MARKER = "# --- written by simplon ---"
 #: WHAT IS NOT HERE AND CANNOT BE. Three kernel outputs sit at a path the MANIFEST names, and two of
 #: those keys have no default at all - `site: output:` and `site: source:` (hugo's `resources/` and its
 #: build lock live under the latter), and `docs:reference`'s `output`, which is why this kernel
-#: gitignores `site/content/using/commands.md` by hand. The kernel refuses those sections rather than
+#: gitignores `site/content/with-what/commands.md` by hand. The kernel refuses those sections rather than
 #: guessing a path, so a scaffolder running before any of them exists cannot write their lines either.
-#: They are published on `using/getting-started.md` as the product's own; this constant is the part a
+#: They are published on `how/getting-started.md` as the product's own; this constant is the part a
 #: scaffold can be sure of.
 _GITIGNORE = f"""\
 {GITIGNORE_MARKER}
@@ -964,7 +964,7 @@ def apply_ignore_block(path: Path, block: str) -> bool:
     guard), cannot be reordered into meaning something else (nothing looks at position) and cannot eat a
     product's rules (nothing is rewritten). The cost is stated rather than hidden: a block that goes
     stale is never refreshed, which is the correct trade for a file the product owns - the current list
-    is published on `using/getting-started.md`.
+    is published on `how/getting-started.md`.
 
     `--force` does not reach this, deliberately. Forcing a re-scaffold is how somebody refreshes a
     launcher they hand-edited; it must not be how they discover their ignore rules are gone.

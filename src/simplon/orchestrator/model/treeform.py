@@ -469,7 +469,7 @@ def old_form_tasks(tasks: dict) -> dict:
 #: renderer of the same thing was the second source si#85 struck. Deep-linked to the migration's own
 #: heading rather than to the page root, because the page is long and "search it for a heading" is the
 #: instruction a reader in the middle of a failed load least wants.
-_TREE_FORM_DOCS = "https://marcozwyssig.github.io/simplon/building/manifest/"
+_TREE_FORM_DOCS = "https://marcozwyssig.github.io/simplon/how/manifest/"
 _TREE_FORM_MIGRATION = _TREE_FORM_DOCS + "#the-flat-form-and-how-to-leave-it"
 
 

@@ -32,14 +32,28 @@ markup:
   highlight:
     noClasses: false
 
+# The five questions a reader arrives with, in the order they arrive in (si#170). The site used to be
+# split by AUDIENCE - "Using Simplon" and "Building on Simplon" - which asked the reader to place
+# themselves before they could look anything up. The labels are ENGLISH because the site is: the
+# questions are the structure, the wording is a wording choice, and a navigation entry a reader has to
+# translate is not doing the one job it has.
 menu:
   main:
-    - name: "Using Simplon"
-      pageRef: "/using"
+    - name: "Why"
+      pageRef: "/why"
       weight: 1
-    - name: "Building on Simplon"
-      pageRef: "/building"
+    - name: "What"
+      pageRef: "/what"
       weight: 2
+    - name: "How"
+      pageRef: "/how"
+      weight: 3
+    - name: "With what"
+      pageRef: "/with-what"
+      weight: 4
+    - name: "When"
+      pageRef: "/when"
+      weight: 5
     - name: "Search"
       weight: 8
       params:

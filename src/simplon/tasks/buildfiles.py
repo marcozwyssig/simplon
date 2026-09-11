@@ -794,7 +794,7 @@ def _render_solution(targets: list[Target]) -> str:
 #: cannot show, which is the same answer the normal case gives and is the right one. `_model` still
 #: refuses a tree that yields no target, so the outcome si#102 guards against cannot arrive here quietly.
 #:
-#: SO THE RULE IS A SHARED SECTION, NOT A RESERVED ONE, and it is published on `building/manifest.md`:
+#: SO THE RULE IS A SHARED SECTION, NOT A RESERVED ONE, and it is published on `how/manifest.md`:
 #: `build:` stays the product's to use, and this kernel reads exactly one key out of it, `targets:`,
 #: ruling on nothing else in there. The two alternatives were both rejected with a reason:
 #:

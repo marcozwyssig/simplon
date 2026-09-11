@@ -52,13 +52,14 @@ import re
 from simplon import catalogue as catalogue_mod
 from simplon.tasks import site as site_mod
 
+import sitepages
 from conftest import ROOT
 
 #: The chapter under test.
-CHAPTER = ROOT / "site" / "content" / "using" / "why.md"
+CHAPTER = sitepages.chapter("why.md")
 
 #: The chapter that owns the OTHER meaning of "discipline", and has to keep owning it alone.
-TASKS_CHAPTER = ROOT / "site" / "content" / "building" / "tasks.md"
+TASKS_CHAPTER = sitepages.chapter("tasks.md")
 
 #: The site as a whole, because a terminology rule that only looked at one page would not be one.
 CONTENT = ROOT / "site" / "content"
@@ -337,7 +338,7 @@ def test_the_kind_of_work_with_no_catalogue_task_is_still_the_empty_one():
 
     # assert
     assert running == set()
-    assert "../../building/phases/#the-two-empty-ribs" in "\n".join(_section(KINDS_HEADING))
+    assert "../../with-what/phases/#the-two-empty-ribs" in "\n".join(_section(KINDS_HEADING))
 
 
 def test_the_bodies_the_page_says_reach_no_external_tool_really_do_not():

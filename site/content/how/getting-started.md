@@ -1,6 +1,8 @@
 ---
 title: "Getting started"
-weight: 2
+weight: 1
+aliases:
+  - "/using/getting-started/"
 ---
 
 ## Install
@@ -301,6 +303,6 @@ Everything else - the sub-application per group, the flat aliases, the help pane
 defaults, the environment gate - is assembled from the manifest by the kernel. That is why the next
 chapter is about the manifest and not about a plugin API.
 
-Ready for real work? [Worked examples](../examples/) walks eight jobs end to end. If you are the person
+Ready for real work? [Worked examples](../../what/examples/) walks eight jobs end to end. If you are the person
 who has to *build* the product rather than run it, go to [Building on
-Simplon](../../building/manifest/).
+Simplon](../manifest/).

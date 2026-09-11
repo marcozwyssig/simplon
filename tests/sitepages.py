@@ -9,13 +9,13 @@ written - and each of them would otherwise state those facts again. That is the 
 repository spends most of its time removing, and a helper duplicated across suites is the worst kind:
 it drifts silently, because both copies stay green.
 
-THE URL BASE IS THE PART THAT WAS ALREADY WRONG ONCE (si#67). Hugo serves `using/examples.md` at
-`using/examples/`, so a relative link written on that page resolves against `using/examples/` and NOT
-against `using/`. The first anchor check written for the Python chapter assumed the second, and with the
+THE URL BASE IS THE PART THAT WAS ALREADY WRONG ONCE (si#67). Hugo serves `what/examples.md` at
+`what/examples/`, so a relative link written on that page resolves against `what/examples/` and NOT
+against `what/`. The first anchor check written for the Python chapter assumed the second, and with the
 wrong base almost every relative link on that page fails to resolve - a checker that checks wrongly,
 which is worse than none. `url_dir` is that rule, written once. `_index.md` is the exception and the
 reason the rule needs a function at all: a section index IS its directory, so it resolves against
-`using/` itself.
+`what/` itself.
 
 (si#67 states that count as "58 of the chapter's 60 links". Measured here rather than carried over: the
 chapter carried sixteen markdown links, twelve of them relative, in 27ada9e - the commit that wrote it.
@@ -25,6 +25,14 @@ defect si#66 is about, so it is recorded here rather than repeated.)
 NOTHING HERE RETURNS AN EMPTY RESULT FOR A MISSING THING. `pages()` raises on an empty content tree and
 `headings()` raises on a page that is not there, because a helper that answers "nothing" for "I could
 not look" is the defect this repository hunts, one level below the suites that use it.
+
+WHERE A PAGE LIVES IS ALSO PART OF THE SHAPE (si#170). The site is divided by the five questions a
+reader arrives with - why, what, how, with what, when - and a page's section is the half of its path
+that the division decides. Twelve suites used to spell that half into a path constant of their own, so
+si#170's move made twelve unrelated suites red and each of them had to be told the new answer
+separately: the same second source this module was written to remove, in the one shape it still had.
+`chapter()` is the repair. A suite names the page by its FILE, which is the part a re-division does not
+touch, and the section is looked up here once.
 """
 from __future__ import annotations
 
@@ -52,6 +60,11 @@ REFERENCE_TASK = "docs:reference"
 #: The `with:` key that task takes for the file it writes.
 REFERENCE_OUTPUT = "output"
 
+#: The five sections the site is divided into (si#170), in the order the navigation offers them: one per
+#: question a reader arrives with. The QUESTIONS are the structure; these are the directories they are
+#: served at, and the site is written in English, so they are the English wording of them.
+SECTIONS = ("why", "what", "how", "with-what", "when")
+
 
 # --- the pages ------------------------------------------------------------------------------------------
 
@@ -68,12 +81,56 @@ def pages() -> list[Path]:
     return found
 
 
+@functools.lru_cache(maxsize=None)
+def chapter(name: str) -> Path:
+    """The one page served under this file name, whichever section it sits in.
+
+    `chapter("case-java.md")` rather than `ROOT / "site" / "content" / "what" / "case-java.md"`: the file
+    name is what a chapter IS, the section is what si#170 decided about it, and a suite that holds a
+    chapter against the code has no business restating the second.
+
+    Raises on a name that matches nothing - a helper answering "not there" for "it moved" is exactly the
+    silence this module exists below - and on a name that matches twice, which is what `_index.md` does:
+    six sections carry one, so a lookup by file name cannot say which, and `index()` below is the way to
+    ask for one.
+    """
+    found = [page for page in pages() if page.name == name]
+    if not found:
+        raise FileNotFoundError(
+            f"no page under {CONTENT} is named {name!r}; the site carries "
+            f"{sorted(page.name for page in pages())}")
+    if len(found) > 1:
+        raise ValueError(f"{name!r} names {len(found)} pages "
+                         f"({sorted(str(page.relative_to(CONTENT)) for page in found)}), so a lookup by "
+                         f"file name cannot say which one a caller means")
+    return found[0]
+
+
+def section_of(name: str) -> str:
+    """The section one page is served from, as its directory name - the half of a URL si#170 decided."""
+    return chapter(name).parent.name
+
+
+def index(section: str) -> Path:
+    """One section's `_index.md`, named by the section rather than by a path.
+
+    Raises on a section this site does not have, so a suite pointed at a name si#170 did not create says
+    so instead of reading an empty page.
+    """
+    if section not in SECTIONS:
+        raise ValueError(f"{section!r} is not a section of this site; it has {list(SECTIONS)}")
+    found = CONTENT / section / "_index.md"
+    if not found.is_file():
+        raise FileNotFoundError(f"{found} is not a page, so section {section!r} has no framing text")
+    return found
+
+
 def url_dir(page: Path) -> Path:
     """The directory a page's own URL sits in, as a path in the content tree.
 
-    `building/phases.md` is served at `building/phases/`, so `../manifest/` written on it means
-    `building/manifest/` and not `manifest/`. A section index is its own directory, so `using/_index.md`
-    is served at `using/` and resolves one level higher than its siblings.
+    `with-what/phases.md` is served at `with-what/phases/`, so `../rules/` written on it means
+    `with-what/rules/` and not `rules/`. A section index is its own directory, so `what/_index.md` is
+    served at `what/` and resolves one level higher than its siblings.
     """
     return page.parent if page.name == "_index.md" else page.parent / page.stem
 
@@ -197,7 +254,7 @@ def fragment_of(link: Link) -> str:
 def generated_pages() -> frozenset[Path]:
     """The content pages this product's manifest GENERATES, as paths in the content tree.
 
-    THIS IS si#67'S DECISION, and it is the whole reason the function exists. `site/content/using/
+    THIS IS si#67'S DECISION, and it is the whole reason the function exists. `site/content/with-what/
     commands.md` is written by `docs:reference` during the build and is gitignored, so a link checker
     that walked the built tree would be green or red DEPENDING ON WHETHER THE REFERENCE HAD BEEN BUILT -
     an outcome that says nothing, which is the one shape this repository refuses everywhere else. The

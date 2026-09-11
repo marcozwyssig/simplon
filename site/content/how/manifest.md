@@ -1,6 +1,8 @@
 ---
 title: "The manifest"
 weight: 3
+aliases:
+  - "/building/manifest/"
 ---
 
 One YAML file per product. It declares what commands exist, what they run, what they are called and
@@ -40,7 +42,7 @@ merge. There is one tree, so there is no second way to bring a group into existe
 **A group you name is a promise.** Declare a group in your own tree and leave it without a single
 command anywhere in its subtree, and the manifest fails to load, naming the group. A group only the
 *catalogue* offers, that your tree never mentions, is simply dropped from the assembled CLI - see [the
-rule](../rules/#a-group-with-no-commands-does-not-appear) and why both halves are needed.
+rule](../../with-what/rules/#a-group-with-no-commands-does-not-appear) and why both halves are needed.
 
 ## `task:`, and what the command adds
 
@@ -97,7 +99,7 @@ prune-branches:
 A command the catalogue already places can be refined in the product's own tree: change its `help:`, add
 `params:`, pin a `with:`. Point it at a *different* `task:` and the loader stops, naming both bodies by
 their real `module:function` and offering `override: true` as the explicit yes. That refusal has [its own
-rule](../rules/#a-name-collision-breaks-loudly), and the merge behaviour behind it is in [Task and
+rule](../../with-what/rules/#a-name-collision-breaks-loudly), and the merge behaviour behind it is in [Task and
 command](../task-and-command/#refinement-and-deliberate-replacement).
 
 ## Aggregates: `depends_on`
@@ -190,7 +192,7 @@ say it twice. `env_groups:` is the flat spelling of the same statement, and it i
 listing a group the catalogue already gates is a harmless restatement, listing one the catalogue
 declares **not** env-first is refused exactly as `env_first: true` on that group's node is. It is the
 manifest's own statement only for a **top-level group no catalogue owns**. Everything not gated refuses
-the token. See [Environments](../environments/) for what the dispatch does with it.
+the token. See [Environments](../../with-what/environments/) for what the dispatch does with it.
 
 ## Product data sections
 
@@ -367,7 +369,7 @@ values and nothing else.
 
 ```yaml
 releases:
-  page: "site/content/using/releases.md"   # where the notes live, under the product root
+  page: "site/content/when/releases.md"    # where the notes live, under the product root
   from: "0.4.0"                            # the first release that must have a section at all
   complete_from: "0.5.0"                   # the first section that must name every ticket in its range
 ```
@@ -567,9 +569,9 @@ What it becomes:
     delete the section
 
 This migration is documented at
-  https://marcozwyssig.github.io/simplon/building/manifest/#the-flat-form-and-how-to-leave-it
+  https://marcozwyssig.github.io/simplon/how/manifest/#the-flat-form-and-how-to-leave-it
 and the shape it leads to at
-  https://marcozwyssig.github.io/simplon/building/manifest/
+  https://marcozwyssig.github.io/simplon/how/manifest/
 
 Nothing here rewrites the file for you: the sections have to be edited by hand, which is also the only
 way your comments survive the move.

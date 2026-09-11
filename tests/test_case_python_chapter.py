@@ -53,13 +53,14 @@ from simplon import catalogue as catalogue_mod
 from simplon.orchestrator import manifest as manifest_mod
 from simplon.verdict import Verdict
 
+import sitepages
 from conftest import ROOT
 
 #: The chapter under test.
-CHAPTER = ROOT / "site" / "content" / "using" / "case-python.md"
+CHAPTER = sitepages.chapter("case-python.md")
 
 #: The card list this half of the site renders, and the place the chapter has to appear in.
-INDEX = ROOT / "site" / "content" / "using" / "_index.md"
+INDEX = sitepages.index("what")
 
 #: The product manifest the chapter's commands and image pins are measured against.
 MANIFEST = ROOT / "simplon.yaml"
@@ -171,21 +172,34 @@ def test_the_chapter_is_listed_on_the_section_index():
 
 def test_the_chapter_renders_after_the_pages_it_leans_on():
     """It links onward to Getting started, the examples and Cutting a release rather than retelling
-    them, so it must not be offered before them. Hextra orders by `weight:`, so the check is over the
-    front matter of the whole directory rather than over one file."""
+    them, so it must not be offered before the one that shares its section. Hextra orders by `weight:`,
+    so the check is over the front matter of the whole directory rather than over one file.
+
+    WHAT si#170 RETIRED HERE, said rather than deleted. This used to compare this chapter's weight with
+    `getting-started` and `releasing` as well. `weight:` orders within a SECTION, and after the site was
+    divided by question those two are in `how/`, which is offered AFTER `what/` - deliberately, because
+    the division shows what the loop looks like before it explains it. So "must not be offered before
+    them" is no longer true of this site, and a weight comparison across two sections would be a
+    number that holds for a reason nobody stated. What replaces it is the half that was always the
+    point and is section-independent: the chapter POINTS at those pages instead of retelling them."""
     # arrange
     weights = {}
     for page in sorted(CHAPTER.parent.glob("*.md")):
-        if page.name in ("_index.md", "commands.md"):
+        if page.name == "_index.md" or page in sitepages.generated_pages():
             continue
         match = re.search(r"^weight: (\d+)$", page.read_text(encoding="utf-8"), re.M)
         assert match, f"{page} declares no weight"
         weights[page.stem] = int(match.group(1))
 
     # assert
-    assert weights["case-python"] > weights["getting-started"]
     assert weights["case-python"] > weights["examples"]
-    assert weights["case-python"] > weights["releasing"]
+
+    # assert: it points at the pages it leans on rather than retelling them
+    linked = {sitepages.resolve(link) for link in sitepages.internal_links(CHAPTER)}
+    for name in ("getting-started.md", "examples.md", "releasing.md"):
+        assert sitepages.chapter(name) in linked, (
+            f"{CHAPTER.name} no longer links to {name}, so it either retells that page or leaves the "
+            f"reader without it")
 
     # assert: and the weights are still distinct, so the order is stated rather than left to a tie-break
     assert len(set(weights.values())) == len(weights)

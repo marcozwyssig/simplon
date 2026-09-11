@@ -47,14 +47,14 @@ groups:
       reference:
         task: "docs:reference"
         with:
-          output: site/content/using/commands.md
+          output: site/content/with-what/commands.md
           title: "Command reference"
       # The Hugo run itself. Its five values live in the `site:` section below rather than here, because
       # they are the product's data and `docs:site` reads them through the manifest -- see
       # src/simplon/tasks/site.py.
       site: { task: "docs:site" }
       # The documentation website, as ONE command, and an impl-less AGGREGATE rather than a leaf (#2, task
-      # 3). `reference` writes site/content/using/commands.md by reading the assembled CLI; `site` runs
+      # 3). `reference` writes site/content/with-what/commands.md by reading the assembled CLI; `site` runs
       # Hugo over site/ and publishes into build/website/. The first WRITES a page the second READS, so
       # the order is not a preference - run them the other way round and the published site carries the
       # previous run's reference, or, the very first time, none at all.
@@ -232,7 +232,7 @@ site:
 # simplon's own house rules about simplon's own page, which is exactly why they did not move into the
 # kernel with the mechanism.
 releases:
-  page: "site/content/using/releases.md"
+  page: "site/content/when/releases.md"
   from: "0.4.0"
   complete_from: "0.5.0"
 

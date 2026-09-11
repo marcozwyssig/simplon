@@ -1,10 +1,12 @@
 ---
 title: "Test levels"
-weight: 6
+weight: 3
+aliases:
+  - "/building/test-levels/"
 ---
 
 A gate is a command that instantiates a task - the [same model as everywhere
-else](../task-and-command/) - and the task is `test:gate`. What makes the test half of the loop worth its
+else](../../how/task-and-command/) - and the task is `test:gate`. What makes the test half of the loop worth its
 own chapter is that one body backs *every* level a product has, and the differences between the levels
 are data in a manifest section rather than code.
 
@@ -193,7 +195,7 @@ and a gate has none, so it is told so by name instead of being handed an invente
 
 Until si#136 that loop was closed only as a side effect - `test:gate`'s body takes a CLI context, and
 every context-taking body was refused - which also meant the kind could not reach `toolchain:run` at all,
-and the case both the [C++](../../using/case-cpp/) and the [.NET](../../using/case-dotnet/) chapters rest
+and the case both the [C++](../../what/case-cpp/) and the [.NET](../../what/case-dotnet/) chapters rest
 on did not run. The refusal now says what it is about.
 
 ### An `impl:` gate is opaque, and says so
@@ -625,7 +627,7 @@ Not every command under `test` is a suite. `test:release-notes` declares no gate
 `suites:` section and runs no runner. It asks one question about the repository - does the releases page
 describe the releases the repository actually carries - and answers it out of `git tag`, `git log` and
 the page's own `## X.Y.Z` headings. Its three values live in a
-[`releases:` section](../manifest/#releases---where-the-notes-live-and-from-when-they-are-complete), and
+[`releases:` section](../../how/manifest/#releases---where-the-notes-live-and-from-when-they-are-complete), and
 placing it is one line:
 
 ```yaml
@@ -636,7 +638,7 @@ groups:
 ```
 
 **Why it is in `test` at all.** Its verdict is red or green and nothing else, which is what the phase
-means, and `test:` is a group name, so [the placement rule](../task-and-command/) puts it under `test` in
+means, and `test:` is a group name, so [the placement rule](../../how/task-and-command/) puts it under `test` in
 every product rather than leaving it to taste.
 
 **Why it is not in `release`.** Folding it into `release:tag` was the obvious alternative - one command,

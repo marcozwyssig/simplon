@@ -1,6 +1,8 @@
 ---
 title: "A C++ product, end to end"
-weight: 7
+weight: 4
+aliases:
+  - "/using/case-cpp/"
 ---
 
 The [Python chapter](../case-python/) walks one delivery loop with the kernel's own language underneath
@@ -495,8 +497,8 @@ the gap is three keys in one section and no Python, which leaves the claim this 
 standing in the test phase as well as in the build.
 
 What a gate is, what a level is and how a
-[command backs one](../../building/test-levels/#a-gate-may-name-a-command-in-your-own-tree) are all in
-[Test levels](../../building/test-levels/); the five outcomes a gate can report, and which two of them
+[command backs one](../../with-what/test-levels/#a-gate-may-name-a-command-in-your-own-tree) are all in
+[Test levels](../../with-what/test-levels/); the five outcomes a gate can report, and which two of them
 are statements about the product, are in [the Python chapter's `test` section](../case-python/#test).
 
 ## release
@@ -506,7 +508,7 @@ language. `release:tag` is placed in cppdemo's manifest with one line and no bod
 behaves exactly as it does for a Python or a Java product - which the chapter can show, because it
 refused: with no `origin/main` in the checkout the question "main carries this commit" has no answer, so
 `./cppdemo.sh release tag v0.1.0` exited 1 and `git tag` afterwards listed nothing. What the guard checks,
-and what it deliberately does not, is in [Cutting a release](../releasing/).
+and what it deliberately does not, is in [Cutting a release](../../how/releasing/).
 
 What gets published is the part that differs, and cppdemo declares none of it: `release:artifact` reads
 an `artifacts:` section and `release:image` an `images:` one. Row 14 says *derived* for that reason and
@@ -535,7 +537,7 @@ be visible.
 What does not exist is everything past that host. `deploy` is one of the two ribs the catalogue draws
 empty on purpose: the group name, the env-first gate, and no tasks at all.
 [simplon#5](https://github.com/marcozwyssig/simplon/issues/5) is where that decision is open, and
-[the two empty ribs](../../building/phases/#the-two-empty-ribs) is why leaving them empty is the
+[the two empty ribs](../../with-what/phases/#the-two-empty-ribs) is why leaving them empty is the
 expensive choice rather than the lazy one.
 
 ## docs
@@ -555,7 +557,7 @@ Each of these is told once, elsewhere, and told properly:
   [A Python product, end to end](../case-python/)
 - the same loop with a hand-written build body - [A Java product, end to end](../case-java/)
 - what a gate is, how a level is declared, and how a foreign runner attaches -
-  [Test levels](../../building/test-levels/)
-- why the tag is the version and what the release guard refuses - [Cutting a release](../releasing/)
-- why `deploy` and `monitor` are empty - [The five phases](../../building/phases/)
-- getting a product to exist in the first place - [Getting started](../getting-started/)
+  [Test levels](../../with-what/test-levels/)
+- why the tag is the version and what the release guard refuses - [Cutting a release](../../how/releasing/)
+- why `deploy` and `monitor` are empty - [The five phases](../../with-what/phases/)
+- getting a product to exist in the first place - [Getting started](../../how/getting-started/)

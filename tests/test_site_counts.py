@@ -14,13 +14,13 @@ below is COMPUTED from the thing it counts and compared with the page word for w
 WHAT THE SWEEP FOUND, which is the more valuable half of the ticket. Looking for OTHER unwatched counts
 turned up five more families across four pages, none of them read by anything:
 
-  * the two ribs the catalogue draws empty, in the `phases/` card on `building/_index.md`. `phases.md`
+  * the two ribs the catalogue draws empty, in the `phases/` card on `with-what/_index.md`. `phases.md`
     itself has had this checked since si#35; the card that summarises it never did;
-  * the six design rules, counted in the home page's feature grid, in `building/_index.md`'s card, and
+  * the six design rules, counted in the home page's feature grid, in `with-what/_index.md`'s card, and
     FOUR MORE TIMES in `rules.md`'s own prose - a chapter that counts itself six times and reads itself
     none;
   * the five refusals the loader raises for a task, counted in `task-and-command.md`'s own heading, in
-    its closing callout, and in `building/_index.md`'s card;
+    its closing callout, and in `how/_index.md`'s card;
   * the four keys a task may declare, counted in the same chapter's prose while the loader's `TASK_KEYS`
     sits one import away.
 
@@ -59,14 +59,21 @@ from simplon.orchestrator.model import treeform
 import sitepages
 from sitepages import CONTENT, number_word
 
-#: The pages that carry a count of something.
-EXAMPLES = CONTENT / "using" / "examples.md"
-USING_INDEX = CONTENT / "using" / "_index.md"
-GETTING_STARTED = CONTENT / "using" / "getting-started.md"
+#: The pages that carry a count of something. A page is named by its FILE and a section index by its
+#: SECTION, both through `sitepages`: si#170 moved every one of these and a path spelled out here would
+#: have been the seventh copy of a decision that lives in one place.
+EXAMPLES = sitepages.chapter("examples.md")
+GETTING_STARTED = sitepages.chapter("getting-started.md")
 HOME = CONTENT / "_index.md"
-BUILDING_INDEX = CONTENT / "building" / "_index.md"
-RULES = CONTENT / "building" / "rules.md"
-TASK_AND_COMMAND = CONTENT / "building" / "task-and-command.md"
+RULES = sitepages.chapter("rules.md")
+TASK_AND_COMMAND = sitepages.chapter("task-and-command.md")
+
+#: The three section indexes that carry a card for one of the counted chapters. si#170 split them: the
+#: cards follow the chapters they offer, so the worked examples are offered from `what/`, the loader's
+#: refusals from `how/`, and the phases and the rules from `with-what/`.
+WHAT_INDEX = sitepages.index("what")
+HOW_INDEX = sitepages.index("how")
+WITH_WHAT_INDEX = sitepages.index("with-what")
 
 
 def _text(page):
@@ -160,8 +167,8 @@ def test_the_three_pages_that_count_the_worked_examples_count_the_chapter():
         f"{EXAMPLES.name} must say 'the other half: {word} jobs' - it has {count} numbered sections")
 
     # assert: the card that offers the chapter
-    assert f"{word.capitalize()} real jobs, end to end:" in _text(USING_INDEX), (
-        f"{USING_INDEX.parent.name}/_index.md must say '{word.capitalize()} real jobs, end to end:'")
+    assert f"{word.capitalize()} real jobs, end to end:" in _text(WHAT_INDEX), (
+        f"{WHAT_INDEX.parent.name}/_index.md must say '{word.capitalize()} real jobs, end to end:'")
 
     # assert: and the page that sends the reader there
     assert f"walks {word} jobs end to end." in _text(GETTING_STARTED), (
@@ -216,7 +223,7 @@ def test_the_card_for_the_phases_chapter_counts_the_empty_ribs_off_the_catalogue
     word = number_word(len(empty))
 
     # assert
-    assert f"the {word} ribs that are still empty" in _text(BUILDING_INDEX), (
+    assert f"the {word} ribs that are still empty" in _text(WITH_WHAT_INDEX), (
         f"the phases card must say 'the {word} ribs that are still empty'; the catalogue draws "
         f"{sorted(empty)} empty")
 
@@ -256,7 +263,7 @@ def test_every_page_that_counts_the_design_rules_counts_the_chapter():
     # act
     owed = {
         HOME: [f"{word.capitalize()} design rules"],
-        BUILDING_INDEX: [f"{word.capitalize()} rules the kernel is built on"],
+        WITH_WHAT_INDEX: [f"{word.capitalize()} rules the kernel is built on"],
         RULES: [f"Before the {word},",
                 f"these {word} things happened",
                 f"of the {word} are silence",
@@ -313,7 +320,7 @@ def test_every_page_that_counts_the_loader_refusals_counts_the_section():
 
     # assert: and so does the callout that closes it, and the card that offers the chapter
     assert f"Read the {word} together" in _text(TASK_AND_COMMAND)
-    assert f"the {word} things the loader refuses" in _text(BUILDING_INDEX)
+    assert f"the {word} things the loader refuses" in _text(HOW_INDEX)
 
     # assert: the section really listed something
     assert count > 1

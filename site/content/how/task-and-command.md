@@ -1,6 +1,8 @@
 ---
 title: "Task and command"
-weight: 1
+weight: 2
+aliases:
+  - "/building/task-and-command/"
 ---
 
 Two words that sound like synonyms and are not, and almost everything in the manifest follows from the
@@ -107,7 +109,7 @@ baseline command that dies on its first line in every product that has neither.
 Read the five together and the shape behind them is one rule: **a declaration that renders nowhere is
 worse than one that fails.** A task key that is read by nobody, a template nothing instantiates, a body
 written where it cannot be found - each of them loads clean and then does not exist, which is the most
-expensive kind of nothing. There is [a rule about exactly this](../rules/), and it is the one that comes
+expensive kind of nothing. There is [a rule about exactly this](../../with-what/rules/), and it is the one that comes
 up most often.
 {{< /callout >}}
 
@@ -209,7 +211,7 @@ The rejection names both bodies by their real `module:function` rather than by t
 `install` and `install` read identically; two module paths do not. A human cannot act on the first pair
 and can act on the second. `override: true` is the explicit yes, and an overriding node then stands
 **alone** rather than merging with the base's `help:` and `params:` - those describe the body that no
-longer runs. This has [its own rule](../rules/#a-name-collision-breaks-loudly).
+longer runs. This has [its own rule](../../with-what/rules/#a-name-collision-breaks-loudly).
 
 One more shape is refused for the same reason: refining a task-backed command into an aggregate, or the
 reverse. Moving a command between the two is a different command wearing the same name, and it is asked
@@ -257,7 +259,7 @@ nothing at all about when it runs.
 {{< callout type="info" >}}
 **Six groups, five phases.** The platform declares six top-level groups, and they are not six of the same
 thing. `build`, `test`, `release`, `deploy` and `monitor` are the **phases of the delivery loop**, and they
-have [a chapter of their own](../phases/): what each means, what flows between them, and what the
+have [a chapter of their own](../../with-what/phases/): what each means, what flows between them, and what the
 catalogue carries for each today. `support` is not a sixth: it is the group that **supports** those
 five, which is why it sits beside them rather than among them.
 
