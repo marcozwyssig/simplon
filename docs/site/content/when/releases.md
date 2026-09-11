@@ -154,6 +154,54 @@ running side by side used a sleep to encourage the interleaving, which cannot fa
 quietly stop exercising the race at all on a fast runner; it uses a barrier, so all three branches are
 provably inside their capture at once.
 
+### A dropped download can be resumed, and `human_bytes` can be adopted (si#176, si#178)
+
+Two changes to `simplon.fetch`, both asked for by a product that measured the kernel against its own
+copy rather than reading the docs.
+
+**`fetch.download(..., resume=True)` keeps what arrived.** A transfer that dies mid-body used to
+discard the bytes, which is the right trade for the three artefacts the kernel itself fetches and the
+wrong one at five gigabytes over a link that is sometimes a VPN. With `resume=True` those bytes stay in
+`<dest>.part`, and the next call with the same URL and destination continues from there.
+
+It is **opt-in**, and that is not timidity: it changes the promise si#142 made. Without it a failed
+download still leaves the destination directory exactly as it found it, which is what the docker
+bundle, the oras archive and `get-pip.py` all want.
+
+A resume is also the one change that could reopen the hole si#142 closed, because appending to bytes
+nobody vouched for produces a file of exactly the right length made of two different objects, and no
+length check can see that. So it resumes only what it can prove:
+
+- a sidecar beside the partial file records the URL and the object version (`ETag`, else
+  `Last-Modified`) those bytes came from. No sidecar, a different URL, or no validator at all means the
+  bytes are discarded before a socket is opened;
+- the request carries `If-Range` beside the `Range`, so whether those bytes are still current is decided
+  by the only party that can decide it;
+- **anything that is not a `206` confirming the exact offset asked for truncates the partial file and
+  downloads the whole object again.** That covers a server with no range support (a fresh download, in
+  the same call) and the case that quietly corrupts a file: a server that ignores `Range` and sends the
+  whole body with no hint that it did. A `206` whose `Content-Range` names a different offset is refused
+  outright, because where those bytes belong is exactly what a resume may not guess.
+
+A `416` (a stale partial file longer than the object) asks once more for the whole thing, so it cannot
+wedge the download forever. There is no retry loop: how many attempts and how long between them is the
+caller's policy, and a partial file that survives the call is what makes calling again cheap.
+
+**`human_bytes` now writes `KB` and a thousands separator.** `kB` is the strictly correct spelling and
+it changed anyway: the function exists to be the only one, three products had written their own, and the
+one publishing fact sheets beside every medium it ships could not adopt this copy without every number
+on them changing shape. The scale does **not** move - it stays decimal, and si#178 carries the best
+argument for that: a 1024-based helper called 450'000'000 bytes `429.2 MB`, comfortably under a cap it
+was in fact sitting on, and that confusion cost a publish.
+
+One thing si#178 asks for that this cannot give: the separator reaches less far than the ticket's
+examples imply. Every unit but the largest hands over at the next 1000, so `KB` and `MB` carry three
+digits, and the bare-byte step stops at `999 B` - `11,240,000,000 B` is `11.2 GB` here and always was.
+The separator appears in `GB`, which is where a run of 5 GB media adds up to `5,000.0 GB`.
+
+**What to do.** If you print `fetch.human_bytes` output into logs or documents, `kB` is now `KB` and
+figures at or above 1000 GB carry a comma. Nothing else changes unless you pass `resume=True`.
+
 ## 0.11.0
 
 **Three things a real run showed, and two that had quietly stopped being true.** The first three came
