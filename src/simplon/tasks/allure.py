@@ -137,6 +137,7 @@ class Merge:
     missing: tuple[str, ...] = ()
     skipped_dirs: tuple[str, ...] = ()
     stale: tuple[str, ...] = ()
+    self_sourced: tuple[str, ...] = ()
     cases: int = 0
     uncounted: int = 0
 
@@ -181,15 +182,15 @@ class Merge:
     @property
     def line(self) -> str:
         """The one sentence the report step logs, and every number in it is counted rather than assumed."""
-        declared = len(self.present) + len(self.missing)
+        declared = len(self.present) + len(self.missing) + len(self.self_sourced)
         where = f"{len(self.present)} of {declared} declared source dirs"
         if self.empty:
             said = f"nothing merged: {where} present"
             if self.missing:
                 said += f", missing: {', '.join(self.missing)}"
-            elif not self.stale:
+            elif not self.stale and not self.self_sourced:
                 said += " and they hold no files"
-            return said + self._stale + self._dirs
+            return said + self._stale + self._dirs + self._self
         parts = []
         if self.tagged:
             parts.append(f"{self.tagged} tagged parentSuite={self.parent_suite}")
@@ -204,7 +205,7 @@ class Merge:
         said = f"merged {self.files} file{'' if self.files == 1 else 's'} from {where}: " + ", ".join(parts)
         if self.missing:
             said += f"; missing: {', '.join(self.missing)}"
-        return said + self._stale + self._dirs + self._unreached + self._caseless
+        return said + self._stale + self._dirs + self._self + self._unreached + self._caseless
 
     @property
     def _caseless(self) -> str:
@@ -296,6 +297,57 @@ class Merge:
                 f"{'y' if len(self.skipped_dirs) == 1 else 'ies'} allure would not read "
                 f"({', '.join(self.skipped_dirs)})")
 
+    @property
+    def _self(self) -> str:
+        """A DECLARED SOURCE THAT IS THE DESTINATION, refused by name and contributing nothing (si#138).
+
+        THE FOURTH FATE, and it is not a fourth flavour of the three above. A missing source, a
+        subdirectory and a stale file all describe the WORLD at merge time: the build stopped early, the
+        runner wrote attachments, the last run's files are still lying there. Each of them can be right on
+        the next run with nobody editing anything, which is why each is skipped rather than refused. A
+        source that is the destination describes the DECLARATION instead. It is true on every run, it
+        cannot come right by itself, and no product ever meets it legitimately - so it is the one case
+        here that a reader has to be told about by name rather than counted.
+
+        WHAT IT DOES TODAY, measured on origin/main (2026-09-11) rather than argued, because the crash in
+        the ticket is only half of it:
+
+          * a source dir holding a `ctest.xml` reaches `shutil.copy(f, dst/base)` and raises
+            `SameFileError: '.../ctest.xml' and '.../ctest.xml' are the same file` - three frames down, in
+            the one module that names the offending key in every other refusal;
+          * a source dir holding `*-result.json` does NOT raise. The tag-and-rewrite branch writes each
+            file back over itself and counts it, so a gate whose own runner wrote nothing reported
+            `merged 3 files from 1 of 1 declared source dirs: 3 tagged parentSuite=Unit` and PASSED, over
+            three results an earlier gate had put there. That is the exact green-over-nothing si#133
+            exists to prevent, and it is the worse half, because it does not crash.
+
+        So nothing here is counted: not `present`, not `cases`, not `uncounted`. `contributed` stays
+        False, and si#133's gate goes red naming the directory instead of green over someone else's
+        evidence.
+
+        IT IS NOT A LOAD-TIME REFUSAL, and that is measured too. The destination is not one directory:
+        `results_dir` answers `allure-results` for a canonical run and `allure-results-filtered` for an
+        exploratory one, so the same declared path IS the destination on one run and a perfectly ordinary
+        source on the other. A load-time rule would have to forbid a manifest that works - an expression
+        rule by the census's own question - to catch a runtime fact. Refusing it HERE is right on both
+        runs, costs the census nothing and keeps the promise this module is built on: a manifest mistake
+        arrives as a sentence naming the key.
+
+        NOT AN EXCEPTION EITHER, for the reason #62 already wrote down one entry across: refusing a
+        subdirectory would have kept the crash under a nicer name. The archive is not damaged by this -
+        the files are already at the destination and already in the report - so raising would destroy a
+        report that is otherwise complete in order to report a redundant key.
+        """
+        if not self.self_sourced:
+            return ""
+        n = len(self.self_sourced)
+        return (f"; {n} declared source dir{'' if n == 1 else 's'} "
+                f"{'is' if n == 1 else 'are'} the destination itself and "
+                f"{'was' if n == 1 else 'were'} not merged ({', '.join(self.self_sourced)}) - "
+                f"those files are already at the destination, so nothing travelled and none of them "
+                f"counts as this merge's evidence. Name the directory the runner writes into, or drop "
+                f"the key")
+
 
 def merge_results(dst: str, srcs: list[str], *, parent_suite: str = "Unit",
                   not_before: float | None = None) -> Merge:
@@ -311,6 +363,13 @@ def merge_results(dst: str, srcs: list[str], *, parent_suite: str = "Unit",
     THREE FATES, NOT TWO (#62). The docstring above described `*-result.json` and "everything else", and a
     SUBDIRECTORY was neither: it fell into `shutil.copy` and raised. It is now its own case - skipped, and
     named in the result - and the branch below carries the measurement the choice rests on.
+
+    A SOURCE DIR THAT IS THE DESTINATION IS THE FOURTH FATE (si#138), and it is the one that is about the
+    DECLARATION rather than about the world: the other three can be right on the next run without anyone
+    editing anything, this one cannot. It is refused by name and contributes nothing at all - not a
+    present source, not a case, not an uncountable file - so si#133's `Merge.contributed` cannot go green
+    over results some other gate put in the shared dir. `Merge._self` carries the two measurements, the
+    reason it is not an exception and the reason it is not a load-time rule.
 
     `not_before` IS THE ONE QUESTION THIS FUNCTION NEVER ASKED (si#70): does this file belong to the run
     that is merging it? A source dir is the PRODUCT's - a Gradle build's JUnit XML, an npm reporter's
@@ -339,9 +398,23 @@ def merge_results(dst: str, srcs: list[str], *, parent_suite: str = "Unit",
     missing: list[str] = []
     dirs: list[str] = []
     stale: list[str] = []
+    # A DECLARED SOURCE THAT IS THE DESTINATION (si#138). `Merge._self` carries the measurement and the
+    # argument for why this is a named refusal rather than a fourth kind of skip.
+    myself: list[str] = []
     for src in srcs:
         if not os.path.isdir(src):
             missing.append(src)
+            continue
+        if os.path.samefile(src, dst):
+            # `samefile` and not a string compare, because the two paths arrive from different places -
+            # the destination is composed by the caller from the section, the source is the manifest's
+            # own text joined onto the product root - so `tests/reports/allure-results`,
+            # `./tests/reports/allure-results` and a symlink to it are the same mistake written three
+            # ways. Both paths are known to exist here: `dst` was created above, `src` passed `isdir` on
+            # the line before. A source deleted between those two lines would raise out of `stat` - left
+            # unguarded deliberately, because it is the race `glob.glob` three lines down already runs and
+            # catching it here would claim a robustness the rest of the loop does not have.
+            myself.append(src)
             continue
         present.append(src)
         for f in glob.glob(os.path.join(src, "*")):
@@ -427,7 +500,8 @@ def merge_results(dst: str, srcs: list[str], *, parent_suite: str = "Unit",
                 copied += 1
     return Merge(parent_suite=parent_suite, tagged=tagged, already_labelled=labelled, copied=copied,
                  environments=environments, present=tuple(present), missing=tuple(missing),
-                 skipped_dirs=tuple(dirs), stale=tuple(stale), cases=cases, uncounted=uncounted)
+                 skipped_dirs=tuple(dirs), stale=tuple(stale), cases=cases, uncounted=uncounted,
+                 self_sourced=tuple(myself))
 
 
 #: Allure's own convention: a `key=value` file in the RESULTS dir, rendered as the report's Environment

@@ -783,3 +783,145 @@ def test_merge_results_readsWhatAnEntryIsBeforeWhatItIsCalled(tmp_path):
     # assert: skipped and named, not opened
     assert merged.skipped_dirs == (str(src / "attachments-result.json"),)
     assert merged.empty
+
+
+# --- a declared source that IS the destination (si#138) ---------------------------------------------
+#
+# Measured on origin/main (2026-09-11), both halves, because only one of them is in the ticket:
+#
+#   * a source dir holding a `ctest.xml` reached `shutil.copy(f, dst/base)` and raised
+#     `SameFileError: '.../ctest.xml' and '.../ctest.xml' are the same file` - three frames down, out of a
+#     function whose whole design is to report what it did;
+#   * a source dir holding `*-result.json` did NOT raise. Each file was rewritten over itself and counted,
+#     so a gate whose own runner wrote nothing reported `merged 3 files from 1 of 1 declared source dirs:
+#     3 tagged parentSuite=Unit` and PASSED over three results an earlier gate had left there. That is
+#     si#133's green-over-nothing, and it is the worse half because nothing crashes.
+#
+# The fate is the fourth in `merge_results`, and it is the one that is about the DECLARATION: a missing
+# source, a subdirectory and a stale file all describe the world at merge time and can be right on the
+# next run, this one cannot. So it is refused by name and contributes nothing at all.
+
+
+def test_a_source_dir_that_is_the_destination_does_not_raise(tmp_path):
+    # arrange: the exact reproduction, a non-result file in a dir declared as its own source
+    dst = tmp_path / "allure-results"
+    dst.mkdir()
+    (dst / "ctest.xml").write_text('<testsuite tests="1"><testcase name="A"/></testsuite>',
+                                   encoding="utf-8")
+
+    # act
+    merged = allure.merge_results(str(dst), [str(dst)], parent_suite="Unit")
+
+    # assert: reported, not raised, and the file it was pointed at is untouched
+    assert merged.self_sourced == (str(dst),)
+    assert (dst / "ctest.xml").is_file()
+
+
+def test_a_source_dir_that_is_the_destination_is_named_rather_than_counted_as_missing(tmp_path):
+    # arrange
+    dst = tmp_path / "allure-results"
+    dst.mkdir()
+    (dst / "ctest.xml").write_text("<testsuite/>", encoding="utf-8")
+
+    # act
+    merged = allure.merge_results(str(dst), [str(dst)], parent_suite="Unit")
+
+    # assert: `missing` would be a lie - the directory is there - and a reader needs the key, not a count
+    assert merged.missing == ()
+    assert merged.present == ()
+    assert "is the destination itself and was not merged" in merged.line, merged.line
+    assert str(dst) in merged.line, merged.line
+    assert "drop the key" in merged.line, merged.line
+    assert "they hold no files" not in merged.line, \
+        f"an empty merge blamed the dir for being empty: {merged.line}"
+
+
+def test_a_self_sourced_merge_contributes_nothing_si133_can_read_as_evidence(tmp_path):
+    # arrange: the half that did not crash. Three allure raw results an EARLIER gate wrote, in the shared
+    # results dir, with a later gate declaring that dir as its own `results_from:`
+    dst = tmp_path / "allure-results"
+    dst.mkdir()
+    for name in ("a", "b", "c"):
+        (dst / f"{name}-result.json").write_text(json.dumps({"name": name, "status": "passed"}),
+                                                 encoding="utf-8")
+
+    # act
+    merged = allure.merge_results(str(dst), [str(dst)], parent_suite="Unit")
+
+    # assert: on main this was `tagged == 3` and `contributed` True, which is a level going green over
+    # somebody else's evidence - the exact defect si#133 exists to prevent
+    assert merged.tagged == 0
+    assert merged.cases == 0
+    assert merged.uncounted == 0
+    assert not merged.contributed
+    assert merged.empty
+
+
+def test_a_self_sourced_result_file_is_not_rewritten_in_place(tmp_path):
+    # arrange: the tag-and-rewrite branch wrote each file back over itself, which is a merge editing the
+    # destination while reporting that it moved something into it
+    dst = tmp_path / "allure-results"
+    dst.mkdir()
+    written = json.dumps({"name": "a", "status": "passed"})
+    (dst / "a-result.json").write_text(written, encoding="utf-8")
+
+    # act
+    allure.merge_results(str(dst), [str(dst)], parent_suite="Unit")
+
+    # assert: byte for byte what the gate that wrote it left, parentSuite included (it has none)
+    assert (dst / "a-result.json").read_text(encoding="utf-8") == written
+
+
+def test_a_self_sourced_dir_is_refused_however_the_manifest_spelled_it(tmp_path):
+    # arrange: the destination is composed by the caller from the section, the source is the manifest's
+    # own text joined onto the product root, so the same directory arrives spelled two ways
+    dst = tmp_path / "allure-results"
+    dst.mkdir()
+    (dst / "ctest.xml").write_text("<testsuite/>", encoding="utf-8")
+    spelled = os.path.join(str(tmp_path), ".", "allure-results", "")
+
+    # act
+    merged = allure.merge_results(str(dst), [spelled], parent_suite="Unit")
+
+    # assert
+    assert merged.self_sourced == (spelled,)
+    assert merged.present == ()
+
+
+def test_a_good_source_beside_a_self_sourced_one_still_merges(tmp_path):
+    # arrange: the refusal is per source, not per call. One real module's results, plus the destination
+    # declared by mistake alongside it
+    dst, src = tmp_path / "allure-results", tmp_path / "junit-xml"
+    dst.mkdir(); src.mkdir()
+    (dst / "already-there.xml").write_text("<testsuite/>", encoding="utf-8")
+    (src / "TEST-demo.xml").write_text('<testsuite tests="1"><testcase name="A"/></testsuite>',
+                                       encoding="utf-8")
+
+    # act
+    merged = allure.merge_results(str(dst), [str(src), str(dst)], parent_suite="Java")
+
+    # assert: the good source travelled, the declared count carries both, and the mistake is still named
+    assert merged.copied == 1
+    assert (dst / "TEST-demo.xml").is_file()
+    assert merged.present == (str(src),)
+    assert merged.self_sourced == (str(dst),)
+    assert "1 of 2 declared source dirs" in merged.line, merged.line
+    assert "is the destination itself" in merged.line, merged.line
+
+
+def test_a_self_sourced_dir_is_refused_before_its_files_are_aged(tmp_path):
+    # arrange: the check sits ahead of the per-file loop, so si#70's cutoff never sees these files. That
+    # ordering is the claim - a self-source reported as `stale` would name the right directory for the
+    # wrong reason, and the advice a reader gets ("the previous run's") would be false
+    dst = tmp_path / "allure-results"
+    dst.mkdir()
+    (dst / "ctest.xml").write_text("<testsuite/>", encoding="utf-8")
+    os.utime(dst / "ctest.xml", (0, 0))
+
+    # act
+    merged = allure.merge_results(str(dst), [str(dst)], parent_suite="Unit", not_before=time.time())
+
+    # assert
+    assert merged.self_sourced == (str(dst),)
+    assert merged.stale == ()
+    assert "the previous run's" not in merged.line, merged.line

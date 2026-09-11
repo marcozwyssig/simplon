@@ -219,6 +219,50 @@ Nothing to do for a consuming product: `test:typecheck-python` is unchanged and 
 manifest. What is worth copying is the shape - if your `test all` is an aggregate, the gate belongs in
 its `depends_on:`, and the assertion that it is there belongs beside it.
 
+### A merge source that is the destination is refused by name (si#138)
+
+`allure.merge_results` copied every non-result file with `shutil.copy(f, dst/base)`, so a product that
+declared its own results directory as a merge source copied a file onto itself and got
+`SameFileError: '.../ctest.xml' and '.../ctest.xml' are the same file` - a `shutil` traceback three
+frames down, naming neither the manifest key nor the directory, out of the one module that names the
+offending key in every other refusal. It is reachable through `report.merge:` and, since si#133, through
+a gate's `results_from:`, and both are plausible misreadings of *the directory the results are in*.
+
+**The crash was the smaller half.** Measured on 0.11.0's tree before the fix: a self-source holding
+`*-result.json` never reached `shutil.copy` at all. It reached the tag-and-rewrite branch, which wrote
+each file back over itself and counted it - so a gate whose own runner wrote nothing reported `merged 3
+files from 1 of 1 declared source dirs: 3 tagged parentSuite=Unit` and passed, over three results an
+earlier gate had left in the shared directory. That is precisely the green-over-nothing si#133 exists to
+prevent, reached through si#133's own key.
+
+**A fourth fate, not a fourth flavour of skip.** The three the merge already had - a missing source
+counted, a subdirectory named, a stale file named - all describe the world at merge time, and each can be
+right on the next run with nobody editing anything. A source that is the destination describes the
+*declaration*: it is true on every run and only an edit fixes it. So it is refused by name, and it
+contributes nothing at all - not a present source, not a case, not an uncountable file - which is what
+keeps `Merge.contributed` from going green over somebody else's evidence. The line says which directory
+and what to do:
+
+```text
+nothing merged: 0 of 1 declared source dirs present; 1 declared source dir is the destination itself and
+was not merged (…/tests/reports/allure-results) - those files are already at the destination, so nothing
+travelled and none of them counts as this merge's evidence. Name the directory the runner writes into,
+or drop the key
+```
+
+It is **not** a load-time refusal, and that was measured rather than argued: the destination is not one
+directory. `results_dir` answers `allure-results` for a canonical run and `allure-results-filtered` for
+an exploratory one, so the same declared path is the destination on one run and an ordinary source on the
+other. A rule at load time would have to forbid a manifest that works in order to catch a fact that is
+only true at run time. It is not an exception either, for the reason si#62 already wrote down one case
+across: the archive is not damaged by this, so raising would destroy a report that is otherwise complete.
+The report step now renders as usual and warns.
+
+**Nothing to do.** A product that declares a real source directory behaves exactly as before. A product
+whose `report.merge:` or `results_from:` names its own results directory sees a warning instead of a
+traceback, and a gate that named it goes red rather than green - point the key at the directory the
+runner writes into, or drop it.
+
 ## 0.10.0
 
 **A C++ or a .NET product stops writing its build files by hand.** 0.9.0 gave every product one pinned

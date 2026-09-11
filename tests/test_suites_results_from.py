@@ -634,3 +634,62 @@ def test_a_format_the_kernel_cannot_count_is_trusted_rather_than_refused(monkeyp
 
     # assert
     assert gv.verdict is Verdict.PASSED, f"a format the kernel cannot read was called empty: {gv.line}"
+
+
+# --- a gate that names the destination (si#138) -------------------------------------------------------
+
+
+def test_a_gate_whose_results_from_is_the_destination_is_red_rather_than_a_traceback(monkeypatch,
+                                                                                     tmp_path):
+    """si#138 through si#133's own key, which is the likelier of the two ways in because the key is new.
+
+    `results_from:` names the directory THIS GATE'S RUNNER wrote into, and a product that reads it as
+    "the directory the results are in" points it at the kernel's results dir. On origin/main the merge
+    then copied a file onto itself and the gate ended in `shutil.SameFileError` out of `shutil.copy`.
+
+    Red rather than green, and that is the honest answer rather than a convenience: nothing travelled, so
+    this level contributed no evidence of its own, and the line says which directory to name instead.
+    """
+    # arrange: the runner writes straight into the run's results dir, and the gate declares that dir
+    destination = f"build/reports/{RESULTS}"
+    _product(monkeypatch, tmp_path, into=destination)
+    gate = testrun.Gate(name="unit", command="build unit", results="clear",
+                        results_from=destination)
+
+    # act
+    gv = testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert: a verdict with a sentence, not an exception
+    assert gv.verdict is Verdict.FAILED, gv.line
+    assert "is the destination itself and was not merged" in gv.line, gv.line
+    assert destination in gv.line, gv.line
+    assert _merged(tmp_path) == ["ctest-junit.xml"], "the runner's own file was disturbed"
+
+
+def test_a_gate_cannot_go_green_over_results_another_gate_left_in_the_destination(monkeypatch, tmp_path):
+    """THE HALF THE TICKET DOES NOT MENTION, and the worse one, because it never crashed.
+
+    A self-source holding `*-result.json` reached the tag-and-rewrite branch instead of `shutil.copy`.
+    Measured on origin/main (2026-09-11): a gate whose runner wrote nothing at all reported
+    `merged 3 files from 1 of 1 declared source dirs: 3 tagged parentSuite=Unit` and PASSED, over three
+    results an earlier gate had put in the shared dir. That is exactly the green-over-nothing si#133
+    exists to prevent, reached through si#133's own key.
+    """
+    # arrange: an earlier gate's results are in the destination, THIS run's (so si#70's cutoff cannot be
+    # what saves the gate), and this gate's runner writes nothing
+    _product(monkeypatch, tmp_path, into="")
+    results = _results_dir(tmp_path)
+    results.mkdir(parents=True)
+    for name in ("a", "b", "c"):
+        (results / f"{name}-result.json").write_text('{"name": "t", "labels": []}', encoding="utf-8")
+    gate = testrun.Gate(name="unit", command="build unit", results="append",
+                        results_from=f"build/reports/{RESULTS}")
+
+    # act
+    gv = testrun.assess_gate(gate, _cfg(), [], filtered=False)
+
+    # assert: red, and the other gate's evidence is still there and still untagged
+    assert gv.verdict is Verdict.FAILED, f"a level went green over another gate's results: {gv.line}"
+    assert "contributed no results" in gv.line, gv.line
+    assert (results / "a-result.json").read_text(encoding="utf-8") == '{"name": "t", "labels": []}', \
+        "the merge rewrote a file the destination already held"
