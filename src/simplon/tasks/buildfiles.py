@@ -775,8 +775,47 @@ def _render_solution(targets: list[Target]) -> str:
 # --- the two coordinates, and the only two functions here that touch a disk (spec sections 1 and 3) ---
 
 #: The manifest section the `targets:` block lives under. A TOP-LEVEL `build:` section, beside `images:`
-#: and `artifacts:`, and NOT the `build` group: a product's command tree hangs off `groups:`, so the two
-#: names never meet, and the CLI engine ignores a section it does not model (`extra="ignore"`).
+#: and `artifacts:`, and not `groups: build:`, which is where a product's command tree hangs.
+#:
+#: THIS COMMENT USED TO SAY THE TWO NAMES NEVER MEET. THEY ALREADY DO (si#172). Measured on 2026-09-11
+#: over every manifest this kernel can reach - its own, the five in `simplon.surface.CONSUMERS`, and
+#: `secure-windows-images` on its `migrate-to-simplon` branch - two live products carry a top-level
+#: `build:` section of their own: cleon's holds `bundle:`, `ant:` and `site:`, and
+#: secure-windows-images' holds `packer:` and `templates:`. Neither holds a `targets:` key. swi's
+#: manifest carries a hand-written comment saying exactly that, calling it "luck rather than design"
+#: and telling its own authors never to add one. A product having to explain the kernel's namespace in
+#: its own file is si#159's smell at a new place.
+#:
+#: WHAT THE COLLISION COSTS, DRIVEN RATHER THAN REASONED (`tests/test_manifest_build_section.py`). Both
+#: of those real sections were put into a product that DOES place `build:cmake-files`, and the command
+#: was run: it wrote the same three files as a product with no `build:` section at all, exit 0, byte
+#: for byte. There is no silent empty model on this path, and the reason is si#102's own decision - the
+#: TREE is the declaration. An absent `targets:` withholds nothing but the dependency edges a directory
+#: cannot show, which is the same answer the normal case gives and is the right one. `_model` still
+#: refuses a tree that yields no target, so the outcome si#102 guards against cannot arrive here quietly.
+#:
+#: SO THE RULE IS A SHARED SECTION, NOT A RESERVED ONE, and it is published on `building/manifest.md`:
+#: `build:` stays the product's to use, and this kernel reads exactly one key out of it, `targets:`,
+#: ruling on nothing else in there. The two alternatives were both rejected with a reason:
+#:
+#:   * REFUSING a top-level `build:` that is not the kernel's is what si#172 forbids by name. si#159
+#:     measured the shape: 11 of the 70 top-level keys across seven manifests are read by product task
+#:     bodies in repositories this kernel cannot see, so a rule over the top level lands on names it
+#:     cannot watch being used, and this one would refuse two live products on its first run. si#53 and
+#:     si#85 reject that trade on principle.
+#:   * RENAMING this section away from `build:` is free TODAY - not one reachable manifest declares
+#:     `build: targets:`, so the migration is empty - and was still rejected. It moves the generators'
+#:     input out of the group whose coordinates produce it, to buy a collision that was measured to cost
+#:     nothing, and it would retract a name si#159 published on the manifest page eight commits ago.
+#:     What was missing was never the name. It was the sentence, and the sentence is cheap.
+#:
+#: WHAT IS STILL SHARP, stated so the next reader is not surprised: INSIDE a `build:` section the word
+#: `targets` is this kernel's. A product whose own build vocabulary has targets is not hypothetical -
+#: cleon's Ant block is one rename away, carrying `generate_targets:`, `compile_targets:` and
+#: `package_targets:` - and it has to keep calling them something else. That is loud rather than
+#: silent, driven in the same test module: a list answers "`build: targets:` must be a mapping of
+#: target name to ...", and a mapping of the product's own names answers "`targets:` names win2019,
+#: win2022, which the tree does not hold".
 SECTION = "build"
 
 #: The one key this kernel reads out of that section. Named as a constant because every refusal below
@@ -838,7 +877,10 @@ def _declared_targets(product: context.ProductContext) -> Mapping[str, Mapping[s
 
     THE TREE IS THE DEFAULT AND THE MANIFEST IS THE EXCEPTION (si#102), so a product that declares
     neither the section nor the block is the NORMAL case and gets an empty mapping rather than a
-    complaint. What is refused is a block of the wrong shape: `targets: { net: core }` is a plausible
+    complaint. So is a product that declares the SECTION for a reason of its own and no block: `build:`
+    is shared (si#172, and see `SECTION` for the two live manifests that share it), so an absent
+    `targets:` inside a `build:` that exists for something else means what an absent `build:` means -
+    the tree is the whole declaration. What is refused is a block of the wrong shape: `targets: { net: core }` is a plausible
     typo for `net: { depends: [core] }`, and handed on it reaches `_overridden` as a string whose `.get`
     does not exist - an AttributeError where this module promises a diagnosis.
 
@@ -850,15 +892,18 @@ def _declared_targets(product: context.ProductContext) -> Mapping[str, Mapping[s
     if section is None:
         return {}
     if not isinstance(section, Mapping):
-        log.die(f"{where}: the `{SECTION}:` section must be a mapping holding `{TARGETS_KEY}:`, got "
-                f"{type(section).__name__}")
+        log.die(f"{where}: `{SECTION}:` must be a mapping - this kernel reads `{TARGETS_KEY}:` out of "
+                f"it, got {type(section).__name__}, which holds no keys at all. Everything else under "
+                f"`{SECTION}:` is the product's own; the section is shared, not claimed (si#172)")
         raise SystemExit(1)
     declared = section.get(TARGETS_KEY)
     if declared is None:
         return {}
     if not isinstance(declared, Mapping):
         log.die(f"{where}: `{SECTION}: {TARGETS_KEY}:` must be a mapping of target name to "
-                f"{{ kind: ..., depends: [...], include: [...] }}, got {type(declared).__name__}")
+                f"{{ kind: ..., depends: [...], include: [...] }}, got {type(declared).__name__}. "
+                f"Inside `{SECTION}:` the name `{TARGETS_KEY}` is this kernel's - if it is the "
+                f"product's own word here, rename the product's key (si#172)")
         raise SystemExit(1)
     for name, body in declared.items():
         if not isinstance(body, Mapping):

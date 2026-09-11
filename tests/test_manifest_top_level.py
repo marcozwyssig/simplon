@@ -131,9 +131,12 @@ MODULES: dict[str, tuple[str, ...]] = {
 #: below, asserting the silence rather than asserting the comment: a declared exception nobody measured is
 #: a claim, and si#48/si#83 are what that costs when the claim is about a set nobody looked at.
 SILENT_ON_ABSENCE = {
-    "build": "an absent `build:` section is the NORMAL case - `support toolchain` renders a tree from the "
-             "sources, and `build: targets:` only adds the dependency edges a directory cannot show. "
-             "`_declared_targets` says so at its own docstring and returns an empty mapping.",
+    "build": "an absent `build:` section is the NORMAL case - `build cmake-files` renders the build "
+             "files from the SOURCES, and `build: targets:` only adds the dependency edges a directory "
+             "cannot show. `_declared_targets` says so at its own docstring and returns an empty "
+             "mapping. So does a `build:` section a product declares for its OWN reasons and that "
+             "holds no `targets:`, which two live manifests have - si#172, and "
+             "`tests/test_manifest_build_section.py` drives it.",
     "env_var": "`env_var:` names the variable a product's env-first CLI publishes the active environment "
                "into. A product that selects an environment by token and `default:` alone has no such "
                "variable, so `_active` answers with the default - 'not an error, since a listing must "
