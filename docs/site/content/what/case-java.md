@@ -5,6 +5,29 @@ aliases:
   - "/using/case-java/"
 ---
 
+## The commands, in order
+
+This chapter is the delivery loop on a product with **no Python in it at all** - one Gradle project,
+three JUnit tests. Here is what a person types, in order:
+
+```text
+./javademo.sh build jar             compile and package, with gradle inside a pinned container
+./javademo.sh test unit             the JUnit suite, and a verdict the kernel can read
+./javademo.sh test accept           every level in order, then the merged report
+./javademo.sh build docs            the architecture documentation, HTML and PDF
+./javademo.sh release tag v0.1.0    tag it; refused unless the tree is clean
+./javademo.sh dev deploy up         env-first: the environment is the outer token
+```
+
+Two support commands sit beside those steps. `./javademo.sh support install` is the host preflight, run
+once on a new machine. `./javademo.sh test report` renders the archive on its own, which is what you
+want after a red run rather than a second full sweep.
+
+Everything under this heading is the table below read as a sequence; the table is what says which rows
+were really run, and when.
+
+## The product, and what it proves
+
 The [Python chapter](../case-python/) walks one delivery loop with the kernel's own language underneath
 it. This one walks the same loop with **no Python in the product at all** - one Gradle project, three
 JUnit tests, and an orchestrator whose only job is to hand a container an argument list and read one

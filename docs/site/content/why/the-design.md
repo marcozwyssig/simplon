@@ -1,9 +1,10 @@
 ---
-title: "What Simplon is"
-weight: 1
-aliases:
-  - "/using/why/"
+title: "The design, noun by noun"
+weight: 2
 ---
+
+[What Simplon is](../why/) is the short answer. This is the long one, for a reader who wants to know why
+the design is shaped this way before adopting it.
 
 > **Simplon is the link between the CI/CD process and the technologies, and it brings structure and
 > reusability.**
@@ -12,8 +13,8 @@ That sentence is the design, and it is a blueprint rather than a figure of speec
 names something you can point at: the process is a fixed set of groups, the technologies are what a task
 body shells out to, the link is a resolution step in the loader with a name, and *structure* and
 *reusability* are each a short list of things the loader refuses to do. This chapter takes it apart noun
-by noun, and only then gets to the question the name of this page used to ask on its own - why not write
-the five verbs yourself.
+by noun, and only then gets to the question a hand-written delivery script answers by default - why not
+write the five verbs yourself.
 
 ## The three nouns
 
@@ -35,12 +36,8 @@ groups:
 
 A product fills those groups. It cannot invent a seventh, and the refusal is not a rule layered over the
 merge - it *is* the merge. A product's tree is merged onto the platform's, so a path the platform does
-not already declare has nowhere to land:
-
-> groups entry 'publish' names a group the platform's tree does not declare. The platform owns which
-> groups exist, so that the same groups and the same general tasks are there in every product. Available
-> here: build, deploy, monitor, release, support, test. Either put these commands in one of those, or
-> declare the new group in the platform's `groups:` - once, for everybody.
+not already declare has nowhere to land, and the loader says so in as many words - the message is quoted
+in full under [Strukturiert](../why/#strukturiert), where it is this site's only copy of it.
 
 There is one tree, so there is no second way to bring a group into existence. That is what makes the
 vocabulary hold: `test` means *verify* in every product that uses the kernel, and `deploy prod up` reads
@@ -320,21 +317,6 @@ head or a comment in one file. They are not the kind of knowledge a README carri
 become interesting at the moment something is being built. Here they are [rules with the failure that
 forced each one](../../with-what/rules/), and the mechanism that enforces them is in the kernel rather
 than in a person's memory.
-
-## What it is not
-
-Simplon is not a CI system. It does not schedule anything, it has no server, and it does not replace
-GitHub Actions or GitLab CI. It is what those systems *call*: `./myctl.sh test all` reads the same in a
-workflow file and in a terminal, which is the point. A step that only exists inside a CI runner cannot be
-run by the person debugging it.
-
-It is not a build system either. It has no dependency graph over files, no timestamps, no incremental
-rebuild. A command's `depends_on` is a plan - run these first, once each - and idempotency is each
-command's own promise. If you need Make, use Make; Simplon will happily call it.
-
-And it is not a framework you write your product against. The product's own code does not import Simplon
-to do its job. It imports it in exactly one file, the composition root, and that file's job is to hand
-Simplon the manifest and the callables it names.
 
 ## The kernel is its own first product
 

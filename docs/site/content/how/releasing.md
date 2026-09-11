@@ -1,6 +1,6 @@
 ---
 title: "Cutting a release"
-weight: 5
+weight: 6
 aliases:
   - "/using/releasing/"
 ---

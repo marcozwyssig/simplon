@@ -3,7 +3,65 @@ title: "What `init` wrote"
 weight: 2
 ---
 
-### The `.gitignore`, and what it does not claim
+[Getting started](../getting-started/) is the shortest path from nothing to a running command. This page
+is the rest of what `simplon init` put in your tree: the rules behind the product name, the ignore
+block, the starter manifest read line by line, shell completion, and the two files you go on editing.
+
+## The name, in full
+
+Inside a git repository that is already named after the product, the name is **optional** and there is
+nothing left to type:
+
+    simplon init
+
+It is read from the repository: the `origin` remote's repository name, or the working tree's root
+directory name when there is no remote yet. The remote wins because it is the half that survives a clone
+into a differently named folder, and the run prints which of the two it used.
+
+The argument still wins whenever it is given, and that is the point of having one. A repository can be
+called `tooling`, or hold two products at once; a directory is named for where it sits, not for what it
+is.
+
+A repository whose name cannot *be* a product name is refused rather than repaired. `Ops Tools` and
+`my.ctl` would become a launcher filename, a manifest filename, a package path and a `<PRODUCT>_ENV`
+variable, so a quietly mangled one is wrong in four places at once - the message names the argument that
+fixes it. In a plain directory with no `.git` there is nothing to read, and `init` says so rather than
+failing further down.
+
+{{< callout type="warning" >}}
+**The name also decides the directory.** With the name *given* and no `--dir`, the skeleton lands in a
+**new `./myctl/` subdirectory** - pass `--dir .` whenever the repository *is* the product. With the name
+*read from the repository*, the repository already is the product, so the skeleton lands at its **root**.
+`--dir` overrides both.
+{{< /callout >}}
+
+## Packaging
+
+The runtime dependencies are declared as ranges rather than exact pins, on purpose: a published
+package's pins become its consumers' pins, and exact versions belong in a product's own
+`requirements.txt`.
+
+One extra exists: `pip install simplon[typecheck]` adds mypy, which the `test:typecheck-python` gate
+runs. A product that never declares that command does not need it, which is why it is an extra and not a
+dependency.
+
+## The orchestrator block is a parameter
+
+The block - the directory holding `.venv`, `requirements.txt` and `src/python/` - is a parameter, not a
+decree. `deploy/provision/orchestrator` is the default because it is where every product that adopted
+Simplon put it by hand: their own structure rules reserve the repository root. A product that owns its
+root moves the whole block back up to it with `--orch-dir`.
+
+The value must be a plain relative path under the target; an absolute one, or one containing `..`, is
+refused rather than scaffolded somewhere unexpected. Both launchers derive their virtual environment,
+their requirements file and their `PYTHONPATH` from that single variable, so the block moves in one
+piece and nothing needs a hand-edit. The Python package stays `orchestrator` under any layout - it is an
+identifier resolved on `PYTHONPATH`, not a location.
+
+Pass the same flag on a later refresh, and note that `--force` overwrites the launchers: a hand-edit
+does not survive one.
+
+## The `.gitignore`, and what it does not claim
 
 The kernel writes into your tree, so `init` writes the rules for what it writes. Without them the first
 `build deps` followed by `git status` offers you an 80 MB commit: the python profile installs pytest and
@@ -54,7 +112,8 @@ Three things are deliberately absent:
   `source` you declare, where hugo leaves a `resources/` cache; `docs:reference` writes the page you name.
   None of those keys has a default - the kernel refuses the section rather than guessing - so a scaffolder
   running before any of them exists cannot write their lines either. Those are yours.
-### The starter manifest
+
+## The starter manifest, line by line
 
 Stripped of its comments, `myctl.yaml` is this:
 
@@ -126,7 +185,8 @@ Six commands, and each is a live example of a different shape:
 - **`all`** names no task at all - only `depends_on: [build, up]`. That is an **aggregate**: the kernel
   plans its dependencies and runs each as a step. It is a working example rather than a dead
   placeholder, which matters, because the aggregate is the shape people get wrong first.
-### Make TAB work
+
+## Make TAB work
 
 One more command on day one, and it is the one nobody thinks to look for:
 
@@ -146,6 +206,7 @@ Why a file rather than the completion Typer ships: Typer's runs the program on e
 this kernel's own CLI, a start costs 340-360 ms and one call of the generated function costs 0.16 ms.
 The file is registered on `myctl.sh` and that is deliberate - bash falls back to the part of a command
 word after the final slash, so the same registration answers for `./myctl.sh` and for an absolute path.
+
 ## Growing it
 
 Two files, and the division between them is the whole design:
@@ -162,6 +223,5 @@ Everything else - the sub-application per group, the flat aliases, the help pane
 defaults, the environment gate - is assembled from the manifest by the kernel. That is why the next
 chapter is about the manifest and not about a plugin API.
 
-Ready for real work? [Worked examples](../../what/examples/) walks eight jobs end to end. If you are the person
-who has to *build* the product rather than run it, go to [Building on
-Simplon](../manifest/).
+Ready for real work? [The manifest](../manifest/) is where every command you add is declared, and
+[Worked examples](../../what/examples/) shows the loop on real products.

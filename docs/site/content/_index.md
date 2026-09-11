@@ -22,15 +22,16 @@ aliases:
 
 <div class="hx:mb-12">
 {{< hextra/hero-subtitle >}}
-  Simplon is the link between the CI/CD process and the technologies, and it brings structure and
-  reusability. Concretely: it assembles a product's
-  build&nbsp;/&nbsp;test&nbsp;/&nbsp;release&nbsp;/&nbsp;deploy&nbsp;/&nbsp;monitor command line out of
-  one YAML file, runs the steps, and knows nothing about the product itself.
+  The same five verbs on every product, whatever it is written in.
+  Build&nbsp;/&nbsp;test&nbsp;/&nbsp;release&nbsp;/&nbsp;deploy&nbsp;/&nbsp;monitor, declared in one YAML
+  file and assembled into a command line - so somebody who has worked on the Java product can operate
+  the C++ one without being told anything. Not a CI server: yours calls this.
 {{< /hextra/hero-subtitle >}}
 </div>
 
 <div class="hx:mb-6">
 {{< hextra/hero-button text="Start here" link="how/getting-started/" >}}
+{{< hextra/hero-button text="What is this for?" link="why/why/" >}}
 </div>
 
 {{< hextra/feature-grid >}}

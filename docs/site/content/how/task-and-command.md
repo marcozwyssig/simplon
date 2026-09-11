@@ -1,6 +1,6 @@
 ---
 title: "Task and command"
-weight: 2
+weight: 3
 aliases:
   - "/building/task-and-command/"
 ---

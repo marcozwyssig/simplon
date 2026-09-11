@@ -5,48 +5,20 @@ aliases:
   - "/using/getting-started/"
 ---
 
-## Install
+Four commands from an empty repository to a working delivery CLI. Everything else `init` wrote is on
+[What `init` wrote](../what-init-wrote/).
+
+## 1. Install
 
     pip install simplon
 
-The runtime dependencies are declared as ranges rather than exact pins, on purpose: a published
-package's pins become its consumers' pins, and exact versions belong in a product's own
-`requirements.txt`.
-
-One extra exists: `pip install simplon[typecheck]` adds mypy, which the `test:typecheck-python` gate
-runs. A product that never declares that command does not need it, which is why it is an extra and not a
-dependency.
-
-## Scaffold a product
-
-A fresh product has a chicken-and-egg problem: it has no virtual environment, so it has no Simplon to
-write its launcher with. Break it once, by hand:
+## 2. Scaffold
 
     pipx run simplon init myctl --dir .
 
-or install Simplon into any environment and run `simplon init myctl --dir .` inside the product
-repository. After that the generated launcher carries itself, and a later `simplon init` refreshes it.
-
-### The name is a default, not a decree
-
-Inside a git repository that is already named after the product, the name is **optional** and there is
-nothing left to type:
-
-    simplon init
-
-It is read from the repository: the `origin` remote's repository name, or the working tree's root
-directory name when there is no remote yet. The remote wins because it is the half that survives a clone
-into a differently named folder, and the run prints which of the two it used.
-
-The argument still wins whenever it is given, and that is the point of having one. A repository can be
-called `tooling`, or hold two products at once; a directory is named for where it sits, not for what it
-is.
-
-A repository whose name cannot *be* a product name is refused rather than repaired. `Ops Tools` and
-`my.ctl` would become a launcher filename, a manifest filename, a package path and a `<PRODUCT>_ENV`
-variable, so a quietly mangled one is wrong in four places at once - the message names the argument that
-fixes it. In a plain directory with no `.git` there is nothing to read, and `init` says so rather than
-failing further down.
+Inside a git repository already named after the product the name is **optional** - plain
+`simplon init` reads it from the `origin` remote's repository name, or from the working tree's root
+directory when there is no remote yet.
 
 {{< callout type="warning" >}}
 **The name also decides the directory.** With the name *given* and no `--dir`, the skeleton lands in a
@@ -55,7 +27,8 @@ failing further down.
 `--dir` overrides both.
 {{< /callout >}}
 
-### What it writes
+## 3. What landed
+
 
     myctl.sh                                               the entry point (bash)
     myctl.cmd                                              the same entry point for cmd.exe
@@ -69,27 +42,12 @@ failing further down.
         paths.py                                           the product-context wiring
         environments.py                                    the environment provider
 
-Ten files, and only two of them are yours to edit day to day: `myctl.yaml` and `cli.py`.
+Ten files, and only two of them are yours to edit day to day: `myctl.yaml` and `cli.py`. The
+orchestrator block is a parameter rather than a decree - a product that owns its repository root writes
+`simplon init myctl --dir . --orch-dir orchestrator` instead, and [What `init`
+wrote](../what-init-wrote/#the-orchestrator-block-is-a-parameter) says what moves with it.
 
-The block - the directory holding `.venv`, `requirements.txt` and `src/python/` - is a parameter, not a
-decree. `deploy/provision/orchestrator` is the default because it is where every product that adopted
-Simplon put it by hand: their own structure rules reserve the repository root. A product that owns its
-root moves the whole block back up to it:
-
-    simplon init myctl --dir . --orch-dir orchestrator
-
-The value must be a plain relative path under the target; an absolute one, or one containing `..`, is
-refused rather than scaffolded somewhere unexpected. Both launchers derive their virtual environment,
-their requirements file and their `PYTHONPATH` from that single variable, so the block moves in one
-piece and nothing needs a hand-edit. The Python package stays `orchestrator` under any layout - it is an
-identifier resolved on `PYTHONPATH`, not a location.
-
-Pass the same flag on a later refresh, and note that `--force` overwrites the launchers: a hand-edit
-does not survive one.
-
-
-
-### The first run
+## 4. Run it
 
     ./myctl.sh help
 
@@ -143,4 +101,9 @@ That refusal is worth a second look on day one. `build` produces an artefact; an
 dev" is either a lie or a different artefact, and both are worth failing over. The manifest said which
 groups take an environment, so the dispatch can say no - and it says no with the command you meant.
 
+## Where to go next
 
+- [Worked examples](../../what/examples/) walks eight jobs end to end.
+- [The manifest](../manifest/) is the file every command you add is declared in.
+- [What `init` wrote](../what-init-wrote/) reads the rest of the scaffold - the ignore block, the starter
+  manifest, shell completion, and the two files you go on editing.
