@@ -63,11 +63,12 @@ SECTION = "site"
 #:
 #: A DEFAULT AND NOT A RULE, and the difference was measured rather than preferred. si#155 gave this key
 #: no default at all, on the reasoning that one product's layout must not be imposed on the next. That
-#: reasoning still holds for a REFUSAL and the census says so: of the seven manifests reachable from
-#: `simplon.surface.CONSUMERS` in September 2026, three declare a `site:` section and the three disagree -
-#: cleon at `site`, biz-cockpit at `docs/website`, simplon at `docs/site`. A `source:` outside `docs/`
-#: refused would turn away two products that have done nothing wrong, which is the expression rule si#53,
-#: si#85 and si#159 each declined to write.
+#: reasoning still holds for a REFUSAL and the census says so. Measured over the same population si#159
+#: and si#172 used - every manifest this kernel can reach: its own, the five in
+#: `simplon.surface.CONSUMERS`, and secure-windows-images - three of those seven declare a `site:`
+#: section, and the three disagree: cleon at `site`, biz-cockpit at `docs/website`, simplon at
+#: `docs/site`. A `source:` outside `docs/` refused would turn away two products that have done nothing
+#: wrong, which is the expression rule si#53, si#85 and si#159 each declined to write.
 #:
 #: SO WHO IS IT FOR, since by that same count it serves none of the three? The FOURTH. All three existing
 #: products name the key, so the default changes nothing for any of them and they keep whatever they
@@ -277,8 +278,10 @@ def declared(data: Mapping[str, object], source: str = "manifest") -> Site:
 
     `source` is the one that DOES default, to `DEFAULT_SOURCE`, and the block on that constant is where
     the reasoning and the census behind it live. A product that names a path still gets exactly what it
-    named; `source: ""` is still a mistake rather than an omission, because `_str` rules on a key that is
-    present.
+    named, and the default is normalised by the same `_inside_the_product` a declared path goes through
+    rather than being exempted from it. `source: ""` is still a mistake rather than an omission, because
+    `_str` rules on a value that is there; a bare `source:` carries no value at all and defaults, which
+    is what `theme:` and `base_url:` have always done with one.
     """
     section = data.get(SECTION)
     if not isinstance(section, Mapping):
@@ -290,8 +293,10 @@ def declared(data: Mapping[str, object], source: str = "manifest") -> Site:
     # complain about the optional theme it also got wrong.
     image = _str(section, "image", where, required=True)
     out = _str(section, "output", where, required=True)
-    # Not `required=True`: an ABSENT key takes the convention, a key that is there is ruled on. `_str`
-    # draws exactly that line, so `source: ""` and `source: 3` still refuse while an omission does not.
+    # Not `required=True`: a key that carries NO VALUE takes the convention, a key that carries a broken
+    # one is ruled on. `_str` draws exactly that line and draws it the same way for every optional key in
+    # this section, so `source: ""` and `source: 3` refuse while an omitted key and a bare `source:` (YAML
+    # null, which `theme:` and `base_url:` have always read as "not declared") both default.
     src = _str(section, "source", where) or DEFAULT_SOURCE
     theme = _str(section, "theme", where)
     # The image pin is `simplon.docker.pinned_image` rather than a rule of this module's own (si#47):

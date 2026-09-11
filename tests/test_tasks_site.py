@@ -162,13 +162,33 @@ def test_a_section_that_names_a_source_keeps_it():
 
 @pytest.mark.parametrize("bad", ["", "   ", 3])
 def test_a_source_that_is_present_and_broken_is_still_refused(bad):
-    """An ABSENT key takes the convention; a key that is there is ruled on. `source: ""` is a mistake
-    somebody made, not a decision to use the default, and a default that swallowed it would build the
-    documentation root while the manifest said something else.
+    """A key carrying no value takes the convention; a key carrying a BROKEN one is ruled on. `source: ""`
+    is a mistake somebody made, not a decision to use the default, and a default that swallowed it would
+    build the documentation root while the manifest said something else.
     """
     # arrange / act / assert
     with pytest.raises(ValueError, match="source"):
         site_task.declared({"site": {**_SITE, "source": bad}})
+
+
+def test_a_bare_source_key_defaults_like_an_omitted_one():
+    """`source:` with nothing after it is YAML null, and it DEFAULTS rather than refusing.
+
+    Written down because the line is not where a reader would guess from the test above: `_str` folds a
+    null into "not declared" for every optional key in this section, so a bare `theme:` has always meant
+    no theme and a bare `source:` now means the default. The distinction that matters is value-carrying
+    versus not, not `in` the mapping versus not - and an assertion is the only honest place to say which
+    of the two this module actually implements.
+    """
+    # arrange: the key is PRESENT in the mapping and carries nothing
+    section = {**_SITE, "source": None}
+    assert "source" in section
+
+    # act
+    cfg = site_task.declared({"site": section})
+
+    # assert
+    assert cfg.source == site_task.DEFAULT_SOURCE
 
 
 @pytest.mark.parametrize("image", ["hugomods/hugo", "hugomods/hugo:latest"])

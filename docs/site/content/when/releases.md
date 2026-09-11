@@ -530,8 +530,9 @@ only the source directory changed.
 to `docs/site` instead of being required, so a manifest that names a path keeps exactly what it named and
 a manifest that says nothing lands on the convention. Nothing is refused that was accepted before.
 
-The refusal was considered and dropped, and the census is why. Of the seven manifests reachable from
-`simplon.surface.CONSUMERS`:
+The refusal was considered and dropped, and the census is why. Measured over the same population si#159
+and si#172 used - every manifest this kernel can reach: simplon's own, the five in
+`simplon.surface.CONSUMERS`, and secure-windows-images:
 
 | product | `site:` section | `source:` |
 | --- | --- | --- |
