@@ -55,10 +55,15 @@ from typing import Callable
 #: gives 1.76s for 159. This is the knee.
 LIVE_FLUSH = 0.1
 
-#: A line break as a child writes one: CRLF FIRST, so a Windows ending is one break rather than a break
+#: A line break as a WRITER makes one: CRLF FIRST, so a Windows ending is one break rather than a break
 #: and an empty line. A bare `\r` is a repaint, and it ends a segment for the same reason a newline
 #: does - what came before it is finished text a reader can see.
-_BREAK = re.compile(r"\r\n|\r|\n")
+#:
+#: PUBLIC because there are now two readers of it (si#174). `run_stream` segments what a CHILD wrote into
+#: a pipe; `simplon.orchestrator.steps.capturing` segments what an IN-PROCESS body wrote to `sys.stdout`.
+#: The rule is the same rule and a second spelling of it is how one run's two artefacts come to disagree
+#: about where a line ended.
+LINE_BREAK = re.compile(r"\r\n|\r|\n")
 
 #: The reader thread's name. Named rather than anonymous so a test can make `os.read` fail for THIS
 #: thread and no other - patching it globally in a test process breaks whatever else is reading a pipe.
@@ -207,7 +212,7 @@ def run_stream(argv: list[str], on_line: Callable[[str], None],
             if not chunk:
                 break
             pending += decoder.decode(chunk)
-            parts = _BREAK.split(pending)
+            parts = LINE_BREAK.split(pending)
             pending = parts.pop()              # what follows the last break is not finished yet
             for part in parts:
                 on_line(part)

@@ -8,20 +8,23 @@ SAME Pipeline, so step pass/fail always reflects the real rc, never the UI state
 """
 from __future__ import annotations
 
+import contextlib
 import os
+import re
 import shlex
 import sys
 import threading
 import time
+import traceback
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Mapping, Sequence, TextIO
+from typing import TYPE_CHECKING, Callable, Iterator, Mapping, Sequence, TextIO
 
 from simplon import log
 from simplon import steplog
-from simplon.run import run_stream
+from simplon.run import LINE_BREAK, run_stream
 
 if TYPE_CHECKING:   # type-only: the step model is the LOWEST layer and must not import the manifest
     from simplon.orchestrator.manifest import PlanNode
@@ -152,6 +155,58 @@ class Outcome:
         return self.rc == 0
 
 
+# --- a step that BLEW UP rather than failed (si#182) ---------------------------------------------------
+#
+# WHAT A RAISE MEANS, decided rather than discovered. A step whose `action` or `stream` raised never
+# answered: it has no exit code of its own, because the thing that would have produced one did not get
+# that far. That is a different sentence from "it ran and said no", and si#182 asks which of the two the
+# kernel is going to tell.
+#
+# THE ANSWER IS ALREADY IN THIS REPOSITORY, in `simplon.verdict`'s module docstring, which argued the
+# same question for the neighbouring case (a gate whose SETUP fell over rather than whose probe went
+# red) and rejected both of si#182's own candidates:
+#
+#   - NOT A RESERVED rc. "An rc is one bit of judgement: zero or not." A reserved number pushes a second
+#     distinction through the one channel every caller already interprets as `if rc: fail`, so CI, a
+#     shell and `simplon.cli._rc` would each have to learn a private convention in order not to mistake
+#     a crash for something else. The rc here is therefore 1 - red, exactly as red as it has always been
+#     and carrying no new claim.
+#   - NOT A SIXTH `StepState`. `SKIPPED` already holds the neighbouring meaning (did not run because a
+#     failure aborted its subtree), and a crashed step is not that: it was entered, it did work, and it
+#     did not pass. FAILED IS ITS FATE and it should stay FAILED. A sixth state would also cost an entry
+#     in `STATE_ICON`, in `STATE_ICON_ASCII` (both alphabets degrade together, si#161) and a new case in
+#     `Row.state`, `Row.finished`, `RunSummary`, `_verdict_text`, `failure_report`, `_skip_note`,
+#     `abort_after` and the TUI's row styles - measured at eleven places over three files, every one of
+#     them a chance for the five-state renderers a product ships to meet a state they do not map.
+#
+# SO THE DISTINCTION LIVES IN WHAT GETS WRITTEN, which is the third thing `verdict.py` says: `Step.crash`
+# below holds the traceback, `failure_report` says "crashed" instead of "failed (rc 1)", the transcript
+# says so too, and `steplog` keeps the whole of it in a file the report names. Nothing is swallowed - the
+# exception is not re-raised, and it is also not lost: it is live on the log as it happens, in the pane,
+# in the per-step file and in the run transcript, which is four more places than today's traceback on
+# stderr followed by a dead run.
+#
+# THE rc THIS RETURNS IS 1 AND IT IS DELIBERATELY INDISTINGUISHABLE from an ordinary red step's, because
+# distinguishing it is not the rc's job. `overall_rc` is unchanged, `abort_after` scopes the crash exactly
+# as it scopes a failure, and `stop_on_failure: false` keeps meaning what it says - which si#174 depends
+# on, since one body raising must not take the rest of a pipeline down.
+CRASH_RC = 1
+
+
+def crash_text(exc: BaseException) -> str:
+    """The record a raise leaves: the whole traceback, then one sentence saying it is a crash.
+
+    THE SENTENCE GOES LAST, and that is the only interesting thing about this function. `failure_report`
+    shows a step's LAST `FAILURE_TAIL_LINES` lines, so a header at the top of a forty-frame traceback is
+    the first thing cut - and what a reader would then see is an unannotated stack in a block labelled
+    like every other failure. Put last, it is inside the tail whatever the traceback's length, and it
+    sits directly under the exception line, which is the pairing a reader wants.
+    """
+    return ("".join(traceback.format_exception(exc)).rstrip("\n")
+            + "\n\nthis step raised, so it never returned an exit code of its own; simplon recorded it "
+              "as a failed step and the run went on to its end")
+
+
 #: The clock `Step.run` measures with, as a module attribute rather than a bare `time.perf_counter()`
 #: call - so a test can freeze it (#68). What those tests assert on is the FORMAT of a duration, not how
 #: fast this machine happened to be, and a wall clock inside an assertion turns machine load into a
@@ -217,6 +272,15 @@ class Step:
     # truth: it captures rather than streams, and has no output before it returns.
     live: list[str] = field(default_factory=list)
     rc: int | None = None
+    # The traceback of the exception that ENDED this step, or "" for every step that answered for itself
+    # (si#182). This field IS the distinction between a step that failed and a step that blew up - see
+    # `CRASH_RC` for why it is not an rc and not a sixth state - and it is the one both renderers read:
+    # `failure_report` says "crashed" on the strength of it, and `transcript` prints `crashed` where it
+    # would otherwise print `rc 1`.
+    #
+    # It is set by `Step.run` alone, and only ever from "" to a traceback, so a reader of a finished step
+    # can take a non-empty value as proof rather than as a hint.
+    crash: str = ""
     # When this step was entered and when it was left, on the MONOTONIC clock (#52). Wall time, because
     # wall time is what an operator waits through and what the tools themselves report - `collected
     # modules in 31966 ms`. CPU time would be more precise and useless for this question: a step that
@@ -241,7 +305,12 @@ class Step:
     @property
     def duration(self) -> float | None:
         """Seconds from entering this step to leaving it, or None for a step that did not FINISH one -
-        never run, still running, or ended by a raise."""
+        never run, or still running.
+
+        A step that RAISED has one since si#182: `run` stamps `ended_at` in a `finally`, so the time a
+        crash took is measured like any other. It is the run's honest figure - the operator waited
+        through those seconds - and a crashed step with no duration was half of what left si#182's step
+        looking like it was still going."""
         if self.started_at is None or self.ended_at is None:
             return None
         return self.ended_at - self.started_at
@@ -251,25 +320,74 @@ class Step:
             raise ValueError("a Step needs exactly one of action / stream")
 
     def run(self, emit: Emit = _noop) -> Outcome:
+        """Run this step and leave a verdict on it, whether the action returned or blew up (si#182).
+
+        EVERY PATH THROUGH THIS METHOD ENDS WITH A STATE, AN rc AND AN `ended_at`. Before si#182 the
+        three were set only after the call returned, so a body that raised left the step `RUNNING`
+        forever - no rc, no duration - and the exception went on to take `run_plan` and `run_headless`
+        down with it, past the retraced tree, past `failure_report` and past the transcript. Losing that
+        transcript is the worst of it: the artefact exists precisely for the run that went wrong, and it
+        was written for every run except that one.
+
+        WHAT IT DOES NOT CATCH IS AS DELIBERATE AS WHAT IT DOES. `Exception`, not `BaseException`: a
+        `KeyboardInterrupt` is the operator saying stop and a `SystemExit` is the code saying exit, and
+        neither is a step blowing up. Both still leave through here and still end the run - what changed
+        for them is `run_headless`'s `finally`, which now writes the record on their way past. A body
+        that means to turn `sys.exit(...)` into an rc says so by being built with `capturing` (si#174),
+        which owns that translation because it is the one that knows the body reports by printing.
+
+        NOT RE-RAISED, AND NOT SILENT EITHER. The exception is turned into a verdict rather than passed
+        on, because the run reaching its end is the whole point; and it is recorded in five places
+        instead of the one it had - `log.error` as it happens, `self.crash`, `self.output` (so the
+        details pane and the report show it), the per-step file `steplog` writes, and the transcript.
+
+        THE LOG FILE IS WRITTEN HERE rather than left to the action, and the reason is `failure_report`'s
+        ten-line tail: a traceback is routinely longer than that, and a report that shows its last ten
+        lines and then says "the lines above are all of it" would be claiming the evidence does not
+        exist. With the file on disk the report names the path to the rest, which is #49's both-or-
+        neither rule. A step whose action already wrote its own log had not reached that write when it
+        raised, so nothing is overwritten.
+        """
         self.state = StepState.RUNNING
         self.started_at = clock()
-        if self.stream is not None:
-            outcome = self.stream(emit)
-        elif self.action is not None:
-            outcome = self.action()
-        else:
-            # `__post_init__` refuses a Step with neither, so this is the invariant restated at the one
-            # place that depends on it. It is not dead code: a Step is mutable, so the invariant holds
-            # only for a Step nobody has reached into since it was built - and writing it out is what
-            # makes `run` total instead of leaving `self.action()` as a call on `Callable | None`.
-            raise ValueError("a Step needs exactly one of action / stream")
-        # After the action and before the verdict fields: a step that raised leaves `ended_at` unset and
-        # therefore carries no duration, which is the truth - it never finished one.
-        self.ended_at = clock()
+        try:
+            if self.stream is not None:
+                outcome = self.stream(emit)
+            elif self.action is not None:
+                outcome = self.action()
+            else:
+                # `__post_init__` refuses a Step with neither, so this is the invariant restated at the
+                # one place that depends on it. It is not dead code: a Step is mutable, so the invariant
+                # holds only for a Step nobody has reached into since it was built - and writing it out
+                # is what makes `run` total instead of leaving `self.action()` as a call on
+                # `Callable | None`.
+                raise ValueError("a Step needs exactly one of action / stream")
+        except Exception as exc:  # noqa: BLE001 - a crash becomes this step's verdict; see the docstring
+            outcome = self._crashed(exc)
+        finally:
+            # IN A `finally`, so a `KeyboardInterrupt` through a step is measured too: the transcript
+            # `run_headless` writes on its way past then shows how long the step the operator stopped had
+            # been going, instead of leaving the one step anybody is asking about without a number.
+            self.ended_at = clock()
         self.output = outcome.output
         self.rc = outcome.rc
         self.state = StepState.OK if outcome.ok else StepState.FAILED
         return outcome
+
+    def _crashed(self, exc: Exception) -> Outcome:
+        """Turn the exception that ended this step into the Outcome it never produced.
+
+        The output is what the step had already streamed AND the traceback, in that order, because the
+        lines before the crash are half the evidence: a body that printed its way to the item it fell
+        over on has named that item, and a block holding only the stack throws that away.
+        """
+        self.crash = crash_text(exc)
+        produced = "\n".join(self.live).rstrip("\n")
+        output = f"{produced}\n\n{self.crash}" if produced else self.crash
+        identity = self.command or self.label
+        log.error(f"{identity} - crashed: {type(exc).__name__}: {exc}")
+        steplog.write(identity, output)
+        return Outcome(rc=CRASH_RC, output=output)
 
 
 @dataclass
@@ -731,7 +849,14 @@ def failure_report(pipeline: Pipeline, tail: int = FAILURE_TAIL_LINES) -> list[s
         if step.state != StepState.FAILED:
             continue
         identity = step.command or step.label
-        lines.append(f"why {identity} failed (rc {step.rc}):")
+        # WHY, IN THE STEP'S OWN TERMS (si#182). A crashed step did not exit 1 - it never exited at all,
+        # and `rc 1` is simplon's verdict on it rather than a number the step produced. Saying "failed
+        # (rc 1)" over a traceback is precisely the reading this repository hunts: it invites a reader to
+        # go looking for the gate that returned 1.
+        if step.crash:
+            lines.append(f"why {identity} crashed (it raised, so it has no exit code of its own):")
+        else:
+            lines.append(f"why {identity} failed (rc {step.rc}):")
         body = step.output.rstrip("\n").splitlines()
         if len(body) > tail:
             lines.append(f"  ... {len(body) - tail} earlier line(s) not shown")
@@ -979,7 +1104,11 @@ def transcript(pipeline: Pipeline, header: Sequence[str]) -> list[str]:
         else:
             duration = step.duration
             shown = f"  {format_duration(duration)}" if duration is not None else ""
-            lines.append(f"{icon} {identity}  rc {step.rc}{shown}")
+            # `crashed` rather than `rc 1` for a step that raised (si#182), for the reason
+            # `failure_report` states: the rc is the kernel's verdict and not the step's answer. The
+            # duration stays, because the seconds were real.
+            verdict = "crashed" if step.crash else f"rc {step.rc}"
+            lines.append(f"{icon} {identity}  {verdict}{shown}")
         lines.append(f"    {step_header(step)}")
     failures = failure_report(pipeline)
     if failures:
@@ -1107,6 +1236,355 @@ def argv_step(label: str, argv: list[str], command: str | None = None, help: str
         output = "\n".join(lines)
         steplog.write(identity, output)
         return Outcome(rc=rc, output=output)
+    return Step(label=label, stream=stream, live=lines, command=identity, help=help)
+
+
+# --- a body that REPORTS BY PRINTING (si#174) ---------------------------------------------------------
+#
+# THE GAP. `Step` takes an in-process `stream` callable, which is what lets a product run its own
+# functions in the TUI instead of shelling out - but a body that already exists reports by PRINTING, and
+# the kernel had nothing that turned a print into the step's emit. Measured on the installed package
+# before this: no `redirect_stdout` and no `StringIO` anywhere in it. The product that found this carries
+# ~1500 lines of command bodies ported one careful step at a time from Invoke-Build, all of which print.
+# The three ways to run those are to rewrite every body to take an `emit` (a rewrite of the thing you are
+# trying not to touch), to re-launch each as a subprocess (a process launch for no reason), or to
+# redirect stdout for the length of the call. This is the third, done once here rather than once per
+# product.
+#
+# WHY IT IS NOT `contextlib.redirect_stdout` PER STEP, and this is the part worth shipping. `sys.stdout`
+# is process-global and si#147 made steps run side by side, so a per-step redirect is not a per-step
+# anything. Measured with two threads each redirecting round three prints, 50 ms apart:
+#
+#     branch A captured ['A line 0']
+#     branch B captured ['B line 0', 'A line 1', 'B line 1', 'A line 2', 'B line 2']
+#     sys.stdout afterwards: branch A's writer, which is dead
+#
+# Three separate faults in one run of eleven lines: five of A's and B's six lines went into the wrong
+# step, an unrelated thread printing at the same time was swallowed by whichever step happened to be
+# capturing, and - the one that outlives the run - `redirect_stdout` restores what IT saved on entry, so
+# interleaved enter/exit left `sys.stdout` pointing at a finished step's buffer for the rest of the
+# process. "Restoration on every path" is not something a hand-rolled swap or a nested `redirect_stdout`
+# can promise under a fan.
+#
+# SO THERE IS ONE REDIRECT AND IT ROUTES BY THREAD. `_Routing` installs a single `_StdoutRouter` as
+# `sys.stdout` while any capturing step is running and takes it down when the last one ends; the router
+# holds a thread-local writer and hands a write to the writer of the thread that made it, or to the real
+# stdout when that thread has none. Two capturing branches therefore do not see each other's output, an
+# uncaptured thread keeps printing to the terminal, and the restore happens once, from a counter under a
+# lock, rather than once per step from a saved value that may be stale. The alternative - a lock held for
+# the length of each capturing step - is four lines and correct, and it silently serialises a fan the
+# manifest declared parallel, which is the kind of quiet this repository refuses.
+#
+# WHAT IT DOES NOT FIX is the process-global fact itself: a thread this kernel never started, spawned by
+# a captured body, has no thread-local writer and prints to the terminal rather than into its step.
+
+
+class _StdoutRouter:
+    """The ONE object installed as `sys.stdout` while capturing steps run: a write goes to the writer
+    registered for the CALLING thread, or to the stream this replaced.
+
+    IT SUBCLASSES NOTHING, and that is measured rather than stylistic. `io.TextIOBase` was the obvious
+    base and it is the wrong one: its `encoding` is a read-only C attribute, so carrying the replaced
+    stream's encoding raises `AttributeError: attribute 'encoding' of '_io._TextIOBase' objects is not
+    writable` - at RUNTIME, from inside the first capturing step, while mypy passed the same code. And
+    the encoding has to be carried: `icons_for(sys.stdout)` reads it to decide whether the console can
+    hold the state glyphs, and a None there is read as "a test double" and rewarded with the glyphs -
+    the wrong answer on exactly the Windows console si#161's ASCII table exists for. So this declares
+    the members a writer is asked for and nothing else.
+
+    `isatty` answers False to a captured thread on purpose, and it is not cosmetic. `rich.Console` asks
+    it (so does `simplon.fetch`), and a Rich console that believes it is on a terminal emits ANSI and
+    cursor moves into what is about to become a step log and a run transcript. si#144 spent its whole
+    argument on keeping escapes out of that file.
+
+    `fileno` delegates rather than refusing, because the honest answer to "which descriptor is the
+    console" is the console's - it is what a library asks in order to measure the terminal, not in order
+    to write. A library that wrote BYTES to that descriptor would bypass the capture; nothing on this
+    path does, and refusing would break the measuring caller to defend against the hypothetical one.
+    """
+
+    def __init__(self, under: TextIO) -> None:
+        self.under = under
+        self.encoding = getattr(under, "encoding", "utf-8") or "utf-8"
+        self.errors = getattr(under, "errors", None)
+        self._local = threading.local()
+
+    def target(self) -> "_LineWriter | None":
+        writer: "_LineWriter | None" = getattr(self._local, "writer", None)
+        return writer
+
+    def take(self, writer: "_LineWriter | None") -> "_LineWriter | None":
+        """Point THIS thread at `writer` and return what it was pointing at, so a nested capture can put
+        the previous one back."""
+        previous = self.target()
+        self._local.writer = writer
+        return previous
+
+    def write(self, text: str) -> int:
+        writer = self.target()
+        if writer is None:
+            return self.under.write(text)
+        return writer.write(text)
+
+    def writelines(self, texts: "Sequence[str]") -> None:
+        for text in texts:
+            self.write(text)
+
+    def flush(self) -> None:
+        writer = self.target()
+        if writer is None:
+            self.under.flush()
+        else:
+            writer.flush()
+
+    def isatty(self) -> bool:
+        return False if self.target() is not None else self.under.isatty()
+
+    def fileno(self) -> int:
+        return self.under.fileno()
+
+    def writable(self) -> bool:
+        return True
+
+    def readable(self) -> bool:
+        return False
+
+    def seekable(self) -> bool:
+        return False
+
+    @property
+    def closed(self) -> bool:
+        return self.under.closed
+
+
+class _Routing:
+    """Installs and removes the one router, counting the capturing steps that need it.
+
+    A COUNTER UNDER A LOCK rather than a saved-and-restored value per step: the restore then happens once,
+    when the last capture ends, and cannot be performed by a thread holding a stale idea of what stdout
+    was. It only restores if `sys.stdout` is still the router - something else may legitimately have
+    wrapped it since (a test's own `redirect_stdout`), and putting our saved value back over theirs would
+    be the same defect one layer up."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._router: _StdoutRouter | None = None
+        self._active = 0
+
+    @contextlib.contextmanager
+    def to(self, writer: "_LineWriter") -> Iterator[None]:
+        """Route this thread's stdout into `writer` for the length of the block, on every way out."""
+        router = self._install()
+        previous = router.take(writer)
+        try:
+            yield
+        finally:
+            router.take(previous)
+            self._remove(router)
+
+    @contextlib.contextmanager
+    def suspended(self) -> Iterator[None]:
+        """Un-route this thread for the length of the block - what an emit is delivered under.
+
+        THIS IS THE HANG si#174 WAS WRITTEN TO PREVENT, and it only shows on the path a developer at a
+        terminal does not take. The headless runner's emit PRINTS, so delivering a line to it with the
+        redirect still in force feeds that print straight back into the writer that produced it:
+        `maximum recursion depth exceeded` on the first line of the first step. The TUI's emit appends to
+        a widget and does not print, so an interactive run is fine and the fault waits for the first
+        piped or CI run."""
+        router = self._router
+        if router is None:                      # nothing is capturing; there is nothing to suspend
+            yield
+            return
+        previous = router.take(None)
+        try:
+            yield
+        finally:
+            router.take(previous)
+
+    def _install(self) -> _StdoutRouter:
+        with self._lock:
+            if self._router is None:
+                self._router = _StdoutRouter(sys.stdout)
+                sys.stdout = self._router
+            self._active += 1
+            return self._router
+
+    def _remove(self, router: _StdoutRouter) -> None:
+        with self._lock:
+            self._active -= 1
+            if self._active > 0:
+                return
+            self._router = None
+            if sys.stdout is router:
+                sys.stdout = router.under
+            else:
+                log.warn("stdout was replaced while a step was capturing it, so simplon left it alone "
+                         "rather than putting its own back over somebody else's")
+
+
+#: The ONE routing for the process. Module state, because `sys.stdout` is module state: two of these
+#: would each install a router over the other's and reintroduce exactly the interleaving measured above.
+_ROUTING = _Routing()
+
+
+#: The escape sequences a captured body can emit: CSI (colour, cursor moves) and OSC (window title and
+#: friends). Removed from every captured line - see `_LineWriter._deliver` for the measurement.
+_ESCAPES = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]")
+
+
+class _LineWriter:
+    """The file a captured body writes to: it collects text and hands over COMPLETE lines.
+
+    LINE-BUFFERED RATHER THAN WRITE-THROUGH, because Rich writes one visual line in several calls and a
+    pane of fragments is not a pane of lines. The break rule is `simplon.run.LINE_BREAK`, the same one
+    `run_stream` segments a child's pipe with, so an in-process step and a subprocess step disagree about
+    nothing.
+
+    WHAT HAPPENS TO A HALF LINE, which is the case si#144 measured for subprocesses and this is its
+    in-process twin. Three answers, and none of them is "lose it":
+
+    - a `flush()` hands it over immediately. `print(..., flush=True)` and `rich.Console` both flush, so a
+      body that means its half line to be seen gets it seen.
+    - the end of the step hands over whatever is left (see `capturing`), including on the path where the
+      body raised - so the line it fell over on is in the record beside the traceback.
+    - between those two it waits. `run_stream` also hands over on an idle timer, and that is deliberately
+      NOT carried across: there the pump thread has nothing else to do, while here the only thread that
+      could hand the bytes over is the body's own, and a second thread per step to publish text the body
+      has not finished writing would race the body for the same buffer. The bound is the step, not the
+      run.
+    """
+
+    def __init__(self, emit: Emit, routing: _Routing) -> None:
+        self._emit = emit
+        self._routing = routing
+        self._partial = ""
+
+    def write(self, text: str) -> int:
+        self._partial += text
+        parts = LINE_BREAK.split(self._partial)
+        self._partial = parts.pop()             # what follows the last break is not finished yet
+        for part in parts:
+            self._deliver(part)
+        return len(text)
+
+    def flush(self) -> None:
+        if self._partial:
+            self._deliver(self._partial)
+            self._partial = ""
+
+    def _deliver(self, line: str) -> None:
+        """Hand one finished line over, with its escape sequences removed.
+
+        WHY THE STRIPPING IS HERE AND NOT LEFT TO THE PRODUCT (rich 15.0.0, measured). `isatty()` answers
+        False to a captured thread, and that is NOT enough: `Console.is_terminal` does follow it - it
+        flipped to False the moment stdout was swapped - but `Console._color_system` is detected ONCE, in
+        `__init__`, and rich renders a style whenever that is truthy. So a console a product built at
+        module import, while stdout really was a terminal, keeps writing `\x1b[1;31m...` for the rest of
+        the process however the capture answers. Measured: `EIGHT_BIT` cached at construction, and
+        `[bold red]a warning[/]` arriving as `\x1b[1;31ma warning\x1b[0m`.
+
+        All three destinations of a captured line refuse those bytes. The details pane is a
+        `RichLog(markup=False)`, which renders them as literal escape characters; `steplog` writes them
+        into a file somebody greps; and the run transcript is the artefact si#144 spent its whole
+        argument on keeping plain, because it is what gets attached to a ticket.
+
+        THE OPPOSITE CHOICE IN `run_stream` IS NOT AN INCONSISTENCY. There the bytes come from a foreign
+        child and editing another program's output is not the kernel's business - which is exactly why
+        si#144 chose a pipe over a pty, so that the escapes would not be CREATED rather than removed
+        afterwards. Here the writer is the kernel's own and there is no equivalent lever: the one it has
+        (`isatty`) is measured above as insufficient."""
+        with self._routing.suspended():
+            self._emit(_ESCAPES.sub("", line))
+
+
+def _exit_rc(exit: SystemExit, hand_over: Emit) -> int:
+    """What `sys.exit(...)` inside a captured body means as an rc - CPython's own rule, not one invented
+    here: no argument or `None` is success, an int is that int, and anything else is printed and exits 1.
+
+    The message is handed over as a LINE of the step rather than dropped, because `sys.exit("no docker
+    found")` is a body saying why it stopped, and that sentence is the whole reason the step is red."""
+    code = exit.code
+    if code is None:
+        return 0
+    if isinstance(code, int):
+        return code
+    hand_over(str(code))
+    return 1
+
+
+def capturing(label: str, work: Callable[[], None], command: str = "", help: str = "") -> Step:
+    """A Step that runs `work()` in-process and turns what it PRINTS into the step's output (si#174).
+
+    For a body that already exists and already reports by printing: it needs no `emit` parameter, no
+    rewrite and no subprocess. Each completed line reaches the pane live through `emit`, the accumulated
+    text is the Outcome's output (so the pane keeps it after the step ends), and `steplog` writes the
+    whole of it to a file the failure report can name.
+
+    THE THREE WAYS A BODY REPORTS, ALL OF WHICH BECOME AN rc:
+
+    - it RETURNS - rc 0. The return VALUE is ignored; a body that wants to choose its own code says so
+      with `sys.exit(code)`, which is the spelling the ported bodies already use and the one a reader
+      cannot mistake for an accidental fall-through.
+    - it calls `sys.exit(...)` - `_exit_rc`, which is CPython's rule.
+    - it RAISES - a FAILED step, never an escaping exception, because one item blowing up must not take
+      the rest of the pipeline down: that is the opposite of what `stop_on_failure: false` promises. This
+      is where si#182 is load-bearing rather than merely adjacent: the exception is left to `Step.run`,
+      which stamps `ended_at`, records the traceback in `Step.crash`, composes it with the lines this
+      writer had already collected (they are the same list) and writes the file. Catching it here would
+      duplicate all four and would set none of them on a Step it does not have.
+
+    RESTORATION IS THE `with`, not a pair of assignments. `_Routing.to` puts this thread's stdout back on
+    every path out - a return, a `sys.exit`, a raise, a nested capture - which a hand-rolled swap cannot,
+    and which a per-step `contextlib.redirect_stdout` gets wrong under a fan for the measured reasons
+    stated above this class.
+
+    RICH REACHES IT, MEASURED RATHER THAN ASSUMED (rich 15.0.0), AND IT REACHES IT ONLY HALF WAY.
+    `Console.file` is a property that reads `sys.stdout` at every access when no `file=` was passed, so a
+    console built at a product's module import - before any of this exists - does write here, and
+    `Console.is_terminal` follows the capture too. What does NOT follow is the colour: `_color_system` is
+    detected once in `__init__`, so a console built while stdout really was a terminal goes on emitting
+    ANSI for the rest of the process. `_LineWriter._deliver` removes it, and says why there.
+
+    The one console this cannot reach at all is `Console(file=sys.stdout)`, which resolves the handle at
+    construction and then holds the real terminal for ever: measured, its output bypassed the capture
+    entirely and went to the screen. That is a product-side spelling to avoid, and it is named here
+    because the failure is silent - the step's pane is simply empty.
+    """
+    identity = command or label
+    # The collector, built HERE rather than inside `stream`, so the Step below can be handed the SAME
+    # list: the pane reads what the step has produced while it is still producing it (si#144), and
+    # `Step.run` composes a crash's output from it (si#182).
+    lines: list[str] = []
+
+    def stream(emit: Emit) -> Outcome:
+        lines.clear()      # a Step can be run twice; the pane must not show the previous run's output
+
+        def hand_over(line: str) -> None:
+            lines.append(line)
+            emit(line)
+
+        writer = _LineWriter(hand_over, _ROUTING)
+        rc = 0
+        try:
+            with _ROUTING.to(writer):
+                try:
+                    work()
+                finally:
+                    # INSIDE the routing and in a `finally`: the half line a body left behind is handed
+                    # over whether it returned, exited or raised. On the raising path this is what puts
+                    # the line it fell over on into `lines` BEFORE `Step.run` composes the crash record
+                    # out of them.
+                    writer.flush()
+        except SystemExit as exit:
+            # Caught here and not in `Step.run`, which deliberately lets `SystemExit` past: a body saying
+            # `sys.exit` means to end ITS OWN work, and only this function knows the body was written
+            # that way. Outside the `with`, so the message line below goes out on a restored stdout.
+            rc = _exit_rc(exit, hand_over)
+        output = "\n".join(lines)
+        steplog.write(identity, output)
+        return Outcome(rc=rc, output=output)
+
     return Step(label=label, stream=stream, live=lines, command=identity, help=help)
 
 
@@ -1564,6 +2042,11 @@ class _HeadlessOutput:
             _print_captured(step.output)
         if step.rc == 0:
             log.ok(self._title(index))
+        elif step.crash:
+            # NOT `failed (rc 1)` (si#182). `Step.run` has just said `crashed` on this step's own line;
+            # two lines disagreeing about the same step, one of them naming an exit code the step never
+            # produced, is the reading the crash contract exists to prevent.
+            log.warn(f"{self._title(index)} - crashed (it raised)")
         else:
             log.warn(f"{self._title(index)} - failed (rc {step.rc})")
 
@@ -1611,6 +2094,44 @@ class _HeadlessOutput:
                 self._verdict(index)
 
 
+def _write_the_record(pipeline: Pipeline, started: datetime) -> None:
+    """Everything a finished run leaves behind: the retraced tree, the reasons under it, and the
+    transcript on disk. Called from `run_headless`'s `finally`, so it runs for a run that ended by
+    raising as well as for one that ended (si#182).
+
+    IT MAY NOT RAISE, and that is a harder rule here than the one `write_run_transcript` already keeps
+    for itself. An exception thrown inside a `finally` REPLACES the one that was already travelling, so a
+    fault in the tree print would not merely lose the tree - it would swap the operator's Ctrl-C, or the
+    real crash, for a `UnicodeEncodeError` from the code that was trying to report it. si#161 measured
+    that very fault on this very loop.
+
+    So the rendering is guarded and the transcript is written OUTSIDE the guard, last: `write_run_
+    transcript` already catches its own composition and its own `OSError`, and putting it after means a
+    broken tree print cannot cost the file. What a guarded fault costs is stated where it happens rather
+    than swallowed - one warn naming what was lost."""
+    try:
+        # A header, because the two blocks can legitimately name the same step differently: the per-step
+        # line uses `command or label` (the exact-command identity, netctl#897) and a tree row uses the
+        # row's display identity, which for a hand-built pipeline is the prose label. Without a line
+        # saying so, a CI log lists one run twice under two vocabularies.
+        log.info("the same steps, as the TUI draws them:")
+        # The ONE place the shared glyph vocabulary reaches a stream this kernel did not open, so it is
+        # the one place that asks what that stream can encode (si#161). See `icons_for`.
+        for line in render_tree(build_rows(pipeline), icons=icons_for(sys.stdout)):
+            print(line, flush=True)
+        # The reasons go BETWEEN the tree and the verdict: the tree says which steps failed, this says
+        # why each of them did, and the count stays the last line so the verdict is where it has always
+        # been. A green run reaches none of this (#49).
+        for line in failure_report(pipeline):
+            print(line, flush=True)
+    except Exception as exc:  # noqa: BLE001 - see the paragraph above; nothing here may replace a verdict
+        log.warn(f"{pipeline.name}: the retraced tree could not be printed ({exc}); the transcript below "
+                 f"carries the same steps")
+    # ONE call for both outcomes: what goes into the transcript does not depend on the verdict, and the
+    # verdict lines are the last thing a reader sees either way.
+    write_run_transcript(pipeline, started)
+
+
 def run_headless(pipeline: Pipeline, verbose: bool | None = None) -> int:
     """Run every step in the order `schedule_for` says, printing the same info/ok/warn lines the rest of
     netctl uses (and a streaming step's lines live, indented), and return the overall exit code (0 iff
@@ -1655,7 +2176,16 @@ def run_headless(pipeline: Pipeline, verbose: bool | None = None) -> int:
     uses. See `write_run_transcript`."""
     started = datetime.now()
     show_passing = _verbose_env() if verbose is None else verbose
-    run_plan(pipeline, _HeadlessOutput(pipeline, show_passing).hooks())
+    try:
+        run_plan(pipeline, _HeadlessOutput(pipeline, show_passing).hooks())
+    finally:
+        # THE RECORD IS WRITTEN WHATEVER LEAVES THE WALK (si#182). `Step.run` turns a body's crash into a
+        # verdict, so the ordinary way out of `run_plan` is a return - but three things still leave here
+        # by raising, and each is a run whose record is worth more than most: a `KeyboardInterrupt` on a
+        # twenty-minute build, a `SystemExit` from inside a body, and a fault in a runner's own hook.
+        # Without this, those three lose the retraced tree, the failure report and the transcript, which
+        # is exactly the loss si#182 is about - and the transcript is the half that outlives the terminal.
+        _write_the_record(pipeline, started)
     # COUNTED FROM THE STATES, not tallied in the loop (si#147). A counter incremented as each step
     # returned was correct while one step returned at a time and would have been a race the moment two
     # did. It also had a second reader disagreeing with it: `overall_rc` and `failure_report` already
@@ -1663,24 +2193,6 @@ def run_headless(pipeline: Pipeline, verbose: bool | None = None) -> int:
     # independent tally that could differ from either.
     failures = sum(1 for step in pipeline.steps if step.state == StepState.FAILED)
     skipped = sum(1 for step in pipeline.steps if step.state == StepState.SKIPPED)
-    # A header, because the two blocks can legitimately name the same step differently: the per-step line
-    # above uses `command or label` (the exact-command identity, netctl#897) and a tree row uses the row's
-    # display identity, which for a hand-built pipeline is the prose label. Without a line saying so, a CI
-    # log lists one run twice under two vocabularies - the exact complaint this change answers.
-    log.info("the same steps, as the TUI draws them:")
-    # The ONE place the shared glyph vocabulary reaches a stream this kernel did not open, so it is the
-    # one place that asks what that stream can encode (si#161). See `icons_for`.
-    for line in render_tree(build_rows(pipeline), icons=icons_for(sys.stdout)):
-        print(line, flush=True)
-    if failures:
-        # The reasons go BETWEEN the tree and the verdict: the tree says which steps failed, this says
-        # why each of them did, and the count stays the last line so the verdict is where it has always
-        # been. A green run reaches none of this (#49).
-        for line in failure_report(pipeline):
-            print(line, flush=True)
-    # ONE call for both outcomes: what goes into the transcript does not depend on the verdict, and the
-    # verdict lines below are the last thing a reader sees either way.
-    write_run_transcript(pipeline, started)
     if failures:
         tail = f", {skipped} skipped" if skipped else ""
         log.warn(f"{pipeline.name}: {failures}/{len(pipeline.steps)} step(s) failed{tail}")

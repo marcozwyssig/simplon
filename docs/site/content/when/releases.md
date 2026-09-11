@@ -63,6 +63,89 @@ one of those three section keys is now accepted. `manifest_data()` is `yaml.safe
 plain dicts and nothing else, so the production path cannot reach that difference at all - only a test
 that hands a reader a literal can.
 
+### A step that blew up now has a verdict, and a body that prints can be a step (si#182, si#174)
+
+**A step whose `action` or `stream` raised stayed `RUNNING` for ever.** `Step.run` set the rc, the
+`ended_at` and the state only after the call returned, so a raise skipped all three - and then took the
+run with it. Headless, the exception left `run_plan` and `run_headless`, so the run died before the
+retraced tree, before `failure_report` and before the transcript. Losing that file is the worst of it:
+the artefact exists precisely for the run that went wrong, and it was written for every run except that
+one. Under the TUI, Textual catches a worker's exception, so `_on_done` was simply never reached and the
+operator watched a row on `↻` with a timer counting upwards for ever, with nothing on the screen saying
+the run had ended.
+
+**What a raise MEANS was the decision, not where to put the `try`.** The ticket offered a reserved rc or
+a sixth `StepState`, and this repository had already argued both down for the neighbouring case:
+`simplon.verdict`'s module docstring rejects a widened rc, because an rc is one bit of judgement and a
+private convention would have to be learned by CI, by a shell and by `simplon.cli._rc`; and it rejects a
+new state, because `SKIPPED` already holds the neighbouring meaning and a crashed step was ENTERED, did
+work and did not pass. FAILED is its fate. So the step is FAILED with rc 1, deliberately as red as any
+other red step, and **the distinction lives in what gets written**: `Step.crash` holds the traceback,
+`failure_report` says *"why `probe.crashes` crashed (it raised, so it has no exit code of its own)"*
+instead of naming an exit code the step never produced, the transcript prints `crashed` where it would
+print `rc 1`, and `steplog` keeps the whole traceback in a file the report names - because the report
+shows ten lines and a traceback is longer, and *"the lines above are all of it"* would be a claim that
+the evidence does not exist. Nothing is swallowed: the exception is recorded in five places where it
+previously reached one, and `KeyboardInterrupt` and `SystemExit` still end the run, because neither is a
+body blowing up. A sixth state was measured at eleven places over three files, every one of them a
+chance for a product's five-state renderer to meet a state it does not map.
+
+`run_headless` and the TUI's worker each grew a `finally`, so the tree, the report and the transcript are
+written for a run that ended by raising as well - which is now Ctrl-C, `sys.exit` and a fault in a
+runner's own hook. The tree print inside that `finally` is guarded, because an exception raised there
+REPLACES the one already travelling: si#161 measured a `UnicodeEncodeError` on that very loop, and it
+would have swapped the operator's Ctrl-C for the fault in the code reporting it.
+
+**`steps.capturing(label, work)` turns a body that PRINTS into a step.** Measured on the installed
+package first: no `redirect_stdout` and no `StringIO` anywhere in it, so a product with a few thousand
+lines of command bodies ported from elsewhere - all of which report by printing - had to rewrite every
+body, re-launch each as a subprocess, or go without. Completed lines reach the pane live, the accumulated
+text is the Outcome, and the three ways a body reports all become an rc: it returns (0), it calls
+`sys.exit(...)` (CPython's own rule, and a string message becomes a line of the step), or it raises -
+which is a FAILED step and never an escaping exception, because one item blowing up must not take the
+rest down. That last one is why the two tickets shipped together: the exception is left to `Step.run`,
+which is now the thing that has a contract for it.
+
+**The naive version is wrong in three ways, and si#147 made two of them likely.** `sys.stdout` is
+process-global, so a per-step `contextlib.redirect_stdout` is not a per-step anything. Measured with two
+threads each redirecting round three prints, 50 ms apart: five of the six lines landed in the wrong
+step's writer, an unrelated thread's output was swallowed by whichever step happened to be capturing,
+and - the fault that outlives the run - `redirect_stdout` restores what IT saved on entry, so
+interleaved enter and exit left `sys.stdout` pointing at a finished step's buffer for the rest of the
+process. So there is ONE router installed for as long as any capture is running, and it routes by
+thread: two capturing branches of a fan do not see each other, an uncaptured thread keeps printing to
+the terminal, and the restore happens once, from a counter under a lock. The alternative - one lock held
+for the length of each capturing step - is four lines and correct, and it silently serialises a fan the
+manifest declared parallel.
+
+The third way is a hang rather than a mix-up: the headless runner's emit PRINTS, so delivering a line
+with the redirect still in force feeds it back into the writer that produced it - `maximum recursion
+depth exceeded` on the first line of the first step. The TUI's emit appends to a widget, so an
+interactive run is fine and the fault waits for the first piped or CI run.
+
+**Rich reaches the capture only half way, and that was measured rather than assumed** (rich 15.0.0).
+`Console.file` is a property that reads `sys.stdout` at every access when no `file=` was passed, so a
+console built at a product's module import does write into the step, and `Console.is_terminal` follows
+the capture too. `Console._color_system` does not: it is detected once in `__init__`, and rich renders a
+style whenever it is truthy, so a console built while stdout really was a terminal went on emitting
+`\x1b[1;31m...` into what was about to become a step log and a run transcript - the plain-text artefact
+si#144 spent its whole argument on. Captured lines therefore have their escape sequences removed;
+`run_stream` still does not, and that is not an inconsistency, because there the bytes come from a
+foreign child and si#144 chose a pipe over a pty so they would not be created in the first place. The
+one console the capture cannot reach at all is `Console(file=sys.stdout)`, which pins the handle at
+construction - a product-side spelling to avoid, and worth naming because the failure is silent: the
+step's pane is simply empty.
+
+Half lines are handed over on a `flush()` and at the end of the step, including on the path where the
+body raised, so the line it fell over on sits beside the traceback. The break rule is
+`simplon.run.LINE_BREAK` - published from `run_stream`'s own `_BREAK`, so an in-process step and a
+subprocess step disagree about nothing.
+
+**Fourteen deliberate breakages** confirmed each property can actually go red. One survived: the test
+that a captured thread is told it is not a terminal passed with `isatty` deleted outright, because
+pytest's own stdout already answers False. It is driven under a stream that claims to be a terminal now,
+and finding that is what found the Rich colour caching above.
+
 ## 0.11.0
 
 **Three things a real run showed, and two that had quietly stopped being true.** The first three came

@@ -858,9 +858,21 @@ class _StepApp(App):
         branches on more, and they call these hooks directly. `call_from_thread` is what each of them
         already did, and it is the right call from any thread that is not the UI's - which none of these
         is."""
-        run_plan(self.pipeline, RunHooks(on_start=self._step_started, on_line=self._step_line,
-                                         on_finish=self._step_finished, on_skip=self._step_skipped))
-        self.call_from_thread(self._on_done)
+        try:
+            run_plan(self.pipeline, RunHooks(on_start=self._step_started, on_line=self._step_line,
+                                             on_finish=self._step_finished, on_skip=self._step_skipped))
+        finally:
+            # `_on_done` RUNS WHATEVER LEAVES THE WALK (si#182). This is a Textual `@work(thread=True)`
+            # worker, and Textual CATCHES a worker's exception - so before this `finally`, anything
+            # raising out of `run_plan` did not take the app down, it simply stopped: the operator was
+            # left watching a row on `↻` with a timer counting upwards forever and nothing on the screen
+            # saying the run had ended. A crash that looks like work in progress is worse than a crash.
+            #
+            # `Step.run` now turns a body's crash into a verdict, so this covers what is left: a
+            # `KeyboardInterrupt`, a `SystemExit`, and a fault in one of the four repaint callbacks
+            # above. In all three the plan is incomplete and `_on_done` says so honestly - `overall_rc`
+            # reads the states, and steps that never ran are not OK.
+            self.call_from_thread(self._on_done)
 
     def _step_started(self, i: int) -> None:
         self.call_from_thread(self._refresh_row, i)             # -> RUNNING shown
