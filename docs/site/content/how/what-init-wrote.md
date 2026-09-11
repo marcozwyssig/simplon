@@ -35,6 +35,13 @@ failing further down.
 `--dir` overrides both.
 {{< /callout >}}
 
+## Why `pipx run` for the very first command
+
+A fresh product has a chicken-and-egg problem: it has no virtual environment, so it has no Simplon to
+write its launcher with. `pipx run simplon init` breaks it once, from outside; installing Simplon into
+any environment and running `simplon init myctl --dir .` inside the product repository does the same
+thing. After that the generated launcher carries itself, and a later `simplon init` refreshes it.
+
 ## Packaging
 
 The runtime dependencies are declared as ranges rather than exact pins, on purpose: a published
