@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import shlex
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -576,10 +577,24 @@ def _chain_to(node: "PlanNode", target: "PlanNode") -> tuple["PlanNode", ...]:
     return ()
 
 
-def abort_after(pipeline: Pipeline, failed: int) -> Abort:
+def abort_after(pipeline: Pipeline, failed: int, started: frozenset[int] | None = None) -> Abort:
     """Which of the remaining steps a failure at step `failed` skips - the ONE place both runners ask
     (netctl#1317). `stop_on_failure` is declared per command, so it is a property of the SUBTREE that
     declares it, not of the run.
+
+    "REMAINING" IS "NOT COMMITTED TO", and `started` is what says so (si#147). While execution was
+    sequential that was the same sentence as "after the failed one" - every later step was also every step
+    that had not begun - so the index was the whole answer. With a fan in flight the two come apart in
+    both directions: a sibling with a HIGHER index may already be running, and one with a LOWER index may
+    be waiting on the bound. The set the scheduler passes therefore holds every step already RUNNING or
+    finished, plus every step in the other branches of any fan the failed one sits in - see
+    `parallel_siblings` for why a fan's members are committed as a group rather than raced.
+
+    Omitting it keeps the index reading, which is what `_skip_note` wants when it recomputes a reason
+    after the run, and what a caller with no scheduler behind it gets.
+
+    A step that IS running when the failure lands is never skipped: it is left to finish. See `run_plan`
+    for why cancelling was rejected.
 
     With a usable tree the scope is the OUTERMOST ancestor of the failed leaf whose flag is TRUE, and the
     skip set is that node's remaining leaves. The reason it is the outermost and not the nearest: the
@@ -620,16 +635,18 @@ def abort_after(pipeline: Pipeline, failed: int) -> Abort:
     negative: a degraded display and a degraded stop-scope have one cause, and a display-level degrade must
     never silently change EXECUTION semantics."""
     steps = pipeline.steps
+    remaining = (tuple(index for index in range(len(steps)) if index not in started)
+                 if started is not None else tuple(range(failed + 1, len(steps))))
     tree = pipeline.usable_tree()
     if tree is None:
-        return (Abort(scope="", indices=frozenset(range(failed + 1, len(steps))))
+        return (Abort(scope="", indices=frozenset(remaining))
                 if pipeline.stop_on_failure else _NOTHING_ABORTED)
     leaves = tree.leaves()
     scope = next((node for node in _chain_to(tree, leaves[failed]) if node.spec.stop_on_failure), None)
     if scope is None:
         return _NOTHING_ABORTED
     within = {id(leaf) for leaf in scope.leaves()}
-    indices = frozenset(index for index in range(failed + 1, len(leaves)) if id(leaves[index]) in within)
+    indices = frozenset(index for index in remaining if id(leaves[index]) in within)
     # A flagged node whose LAST leaf failed has no remainder: nothing is aborted, so nothing names a scope.
     return Abort(scope=scope.path or scope.name, indices=indices) if indices else _NOTHING_ABORTED
 
@@ -923,9 +940,16 @@ def transcript(pipeline: Pipeline, header: Sequence[str]) -> list[str]:
     failures once the app has exited. Neither is the artefact somebody attaches to a ticket, and a nicer
     pane cannot become one: a pane is gone when the app is.
 
-    IN EXECUTION ORDER, not as a tree. `render_tree` already draws the shape and both runners show it;
-    what it cannot show is the ORDER, which is the half a reader reconstructing an incident needs - and
-    the order is `pipeline.steps`, which is what actually ran.
+    IN PLAN ORDER, not as a tree. `render_tree` already draws the shape and both runners show it; what it
+    cannot show is the sequence, which is the half a reader reconstructing an incident needs - and the
+    sequence is `pipeline.steps`.
+
+    PLAN order and not COMPLETION order, which is a distinction si#147 created and it is worth being
+    exact about: while every step waited for the one before it the two were the same list. A plan that
+    declares `parallel:` runs some of them at once, so this is the order the manifest declares rather
+    than the order the clock saw. It stays the right reading order - it is the order the tree, the
+    headless log and the manifest all use, so a reader compares like with like - and the wall-clock
+    truth is not lost: every line carries that step's own duration, off its own `started_at`.
 
     IT REUSES RATHER THAN RESTATES. `step_header` is the pane's own line, `failure_report` is the block
     both runners already print (tail plus the path to the whole file, or the sentence saying the run does
@@ -970,7 +994,13 @@ def _skip_note(pipeline: Pipeline, skipped: Step) -> str:
     because a Step does not hold it and the transcript is written after the fact.
 
     It asks the FIRST failure whose abort claims this step. Later failures may claim it too; the first
-    one is the one that decided, exactly as both runners' `setdefault` records it.
+    one is the one that decided, exactly as `run_plan`'s `setdefault` records it.
+
+    It recomputes WITHOUT the started set, so it reads `abort_after`'s index rule rather than the
+    scheduler's (si#147). That is deliberate and it is safe for what this function is asked: the wider
+    set it computes can only claim steps that in fact ran, and this is only ever called for a step that
+    IS skipped - so the reason it finds is the reason that step got. Passing a started set would mean
+    keeping one until after the run, to answer a question that is already answered.
     """
     index = next((i for i, step in enumerate(pipeline.steps) if step is skipped), None)
     if index is None:
@@ -1080,6 +1110,332 @@ def argv_step(label: str, argv: list[str], command: str | None = None, help: str
     return Step(label=label, stream=stream, live=lines, command=identity, help=help)
 
 
+# --- running the plan: what may happen at the same time, and what has to wait (si#147) ---------------
+
+#: The env var a MACHINE limits parallelism with, and the count used when it says nothing.
+#:
+#: THE SPLIT IS DELIBERATE AND IT IS THE WHOLE DESIGN OF THE BOUND. The manifest declares WHAT may share
+#: a machine - a property of the work, which the product knows and which is true wherever it runs. How
+#: MANY of them fit is a property of the HOST, which the manifest cannot know: netctl's fan of eight
+#: image builds is eight `docker build`s, and that is not the same act on a two-core CI runner as on a
+#: fourteen-core workstation. A `max_parallel:` key in the manifest would be a machine fact written into
+#: a file that travels between machines, which is the second-source shape this repository refuses
+#: everywhere else.
+#:
+#: FOUR, NOT `cpu_count()`. The work in a fan is whole subprocesses - a docker build, a gradle run, a
+#: pytest suite - each of which already uses every core it can find, so the count is about how many
+#: CONTAINERS, caches and daemons are in flight, not about CPUs. Four is small enough that a plan of
+#: forty steps cannot start forty of them and large enough to pay for itself on the shapes that exist
+#: (the largest fan in any reachable manifest is netctl's eight images). The `cpu_count` floor is there
+#: so a one- or two-core runner does not get four anyway.
+MAX_PARALLEL_ENV = "SIMPLON_MAX_PARALLEL"
+DEFAULT_MAX_PARALLEL = 4
+
+
+def max_parallel() -> int:
+    """How many steps may RUN at once, from the environment or the default above.
+
+    A value that is not a step count WARNS and falls back rather than being read as 1 or as "no limit":
+    a typo that silently serialises a run is this repository's recurring defect wearing a number, and the
+    operator who typed it has to be told that what they asked for is not what is happening."""
+    raw = os.environ.get(MAX_PARALLEL_ENV, "").strip()
+    if raw:
+        try:
+            value = int(raw)
+        except ValueError:
+            value = 0
+        if value >= 1:
+            return value
+        log.warn(f"{MAX_PARALLEL_ENV}={raw!r} is not a step count of 1 or more; "
+                 f"using {min(DEFAULT_MAX_PARALLEL, os.cpu_count() or 1)}")
+    return min(DEFAULT_MAX_PARALLEL, os.cpu_count() or 1)
+
+
+@dataclass(frozen=True)
+class Fan:
+    """Branches that may run at the SAME time, each branch itself an ordered `Schedule`.
+
+    A branch and not a step, because a `parallel:` aggregate's dependency may itself be a chain: netctl's
+    `web-jar` is `[builder-image, web-jar-only]`, and a fan that flattened its members to leaves would
+    run gradle in an image that does not exist yet. What runs side by side is the SUBTREES."""
+    branches: tuple["Schedule", ...]
+
+
+#: One thing after another: a step INDEX into `Pipeline.steps`, or a `Fan` whose branches are not
+#: ordered against each other. Everything after a `Fan` in the same tuple is its JOIN - it starts when
+#: every branch has finished - which is why no separate barrier exists: `depends_on` already means
+#: "after", and a fan is the one place it stops meaning it.
+Schedule = tuple["int | Fan", ...]
+
+
+def schedule_indices(schedule: Schedule) -> tuple[int, ...]:
+    """Every step index in `schedule`, nested fans included, in PLAN order.
+
+    SORTED rather than in traversal order, and that is the property the headless log rests on: a reader
+    of a CI log follows the plan, not the scheduler, so the blocks come out in the order the tree
+    declares them whichever branch happened to finish first."""
+    flat: list[int] = []
+    for item in schedule:
+        if isinstance(item, Fan):
+            flat += [index for branch in item.branches for index in schedule_indices(branch)]
+        else:
+            flat.append(item)
+    return tuple(sorted(flat))
+
+
+def parallel_siblings(schedule: Schedule) -> dict[int, frozenset[int]]:
+    """Step index -> the steps that are running BESIDE it by declaration: every index in the other
+    branches of every fan it sits in. Empty for a step no fan contains.
+
+    WHAT IT IS FOR, and it is the sharpest decision in si#147. When a step fails, `abort_after` skips the
+    work in its scope that has not begun - and inside a fan "has not begun" is a RACE. Three branches
+    start within microseconds of each other; if the first one fails instantly, whether the other two were
+    far enough along to count as started depends on the OS scheduler, the bound, and the machine's load.
+    A run whose set of executed steps varies between two runs of the same plan is unreproducible, and
+    unreproducible is worse than either answer to the question.
+
+    So a fan's members are never skipped FOR EACH OTHER, and the reason is the declaration itself rather
+    than a tie-break: `parallel:` says these subtrees do not have to wait for each other, which is a
+    statement that none of them needs what another produces. A failure in one therefore does not make
+    another's work doomed - their results are still worth having, which is the whole reason they were
+    declared parallel. What IS doomed is whatever comes after the join, and that is skipped exactly as it
+    always was.
+
+    Within ONE branch nothing changes: a branch is an ordered chain, so the step after a failed one is
+    doomed in the ordinary way and is skipped by the ordinary rule.
+
+    The cost is stated: a fan of forty in which the first fails still runs the other thirty-nine. The
+    lever for that is the bound, and the manifest cannot express "stop the fan too" - v1 declines to add a
+    second flag for a shape no reachable manifest has."""
+    out: dict[int, frozenset[int]] = {}
+
+    def walk(sched: Schedule, inherited: frozenset[int]) -> None:
+        for item in sched:
+            if isinstance(item, Fan):
+                own = [frozenset(schedule_indices(branch)) for branch in item.branches]
+                whole = frozenset[int]().union(*own) if own else frozenset[int]()
+                for branch, mine in zip(item.branches, own):
+                    walk(branch, inherited | (whole - mine))
+            else:
+                out[item] = inherited
+
+    walk(schedule, frozenset())
+    return out
+
+
+def schedule_for(pipeline: Pipeline) -> Schedule:
+    """What this pipeline may do at the same time, read off its plan tree (si#147).
+
+    DECLARED, NOT DERIVED, and that was a measurement rather than a preference. Deriving would have been
+    better if it held - `depends_on` is already a graph, and everything unconnected in a graph is by
+    definition free - so the question was measured before it was designed: over the six manifests this
+    kernel can reach (`simplon.surface.CONSUMERS` plus its own), **541 pairs of planned leaves have no
+    edge between them, and 466 of those would break if run together**. The reason is uniform and it is
+    visible in every one of the six: an aggregate's dependencies are a LIST, and the order between
+    siblings is stated by their position in it and nowhere else. simplon's own `build docs` says so in
+    prose - "Siblings execute in list order, so [reference, site] IS the edge" - asbundle's build chain
+    says "in the order listed", biz-cockpit's `build` puts its type checker before its images by an owner
+    decision recorded only as list order, and the kernel's own #901 idiom for chaining under the
+    impl-XOR-depends_on lock (an aggregate `[builder-image, web-jar-only]`) makes every chained build
+    exactly such a pair. A derived executor would have broken all of it, silently, under load.
+
+    So a fan exists only where a node says `parallel: true`, and a manifest that says it nowhere gets the
+    tuple of indices it has always run - this function's whole output for every manifest that exists
+    today.
+
+    NO USABLE TREE, NO PARALLELISM. `parallel` is declared on a NODE, so without a verified leaf-to-step
+    pairing there is nothing to read it off; and a display-level degrade must not decide that two
+    subprocesses may share a machine. `Pipeline.usable_tree` already warns when it rejects one."""
+    tree = pipeline.usable_tree()
+    if tree is None:
+        return tuple(range(len(pipeline.steps)))
+    index_of = {id(leaf): index for index, leaf in enumerate(tree.leaves())}
+
+    def walk(node: "PlanNode") -> Schedule:
+        # `leaves()` is post-order - a node's own step comes after its children's - and this mirrors it,
+        # because the schedule and the step list have to agree about what "after" means.
+        # `index_of[...]` unguarded, deliberately: `usable_tree` has already verified that every leaf
+        # pairs with a step, so a missing one is a broken invariant and a KeyError says so. A `.get` here
+        # would DROP that step from the schedule - it would never run and nothing would say why, which is
+        # the "cannot tell nothing-to-do from failed" defect at the one place it would be invisible.
+        own: Schedule = ((index_of[id(node)],) if node.is_leaf else ())
+        if not node.children:
+            return own
+        if node.spec.parallel:
+            return (Fan(tuple(walk(child) for child in node.children)),) + own
+        return tuple(item for child in node.children for item in walk(child)) + own
+
+    return walk(tree)
+
+
+def _noop_start(_index: int) -> None:
+    pass
+
+
+def _noop_line(_index: int, _line: str) -> None:
+    pass
+
+
+def _noop_fan(_indices: "tuple[int, ...]") -> None:
+    pass
+
+
+@dataclass(frozen=True)
+class RunHooks:
+    """What a runner wants to be told while the plan runs. Every hook defaults to doing nothing, so a
+    caller that only wants the steps executed passes none of them.
+
+    ONE SET FOR BOTH RUNNERS. The TUI's worker thread and the headless loop each carried their own copy
+    of the walk - the abort set, the skip marking, the state transitions - and the two agreed only
+    because somebody kept them agreeing. A fan is exactly the kind of change that would have been made
+    in one of them; the walk is `run_plan` now and the difference between the runners is these six
+    callbacks.
+
+    `on_fan_start` / `on_fan_end` receive every step index in the fan, in PLAN order. The TUI ignores
+    them - its pane has been per-step since si#144 - and the headless runner uses them to keep a CI log
+    readable; see `_HeadlessOutput`."""
+    on_start: Callable[[int], None] = _noop_start
+    on_line: Callable[[int, str], None] = _noop_line
+    on_finish: Callable[[int], None] = _noop_start
+    on_skip: Callable[[int, str], None] = _noop_line
+    on_fan_start: Callable[["tuple[int, ...]"], None] = _noop_fan
+    on_fan_end: Callable[["tuple[int, ...]"], None] = _noop_fan
+
+
+class _Run:
+    """The state one `run_plan` call shares across its branch threads: which steps have begun, which are
+    doomed, and how many may be in flight.
+
+    Two threads touch each field and both are guarded, unlike `Step.live`, whose lock-free read is argued
+    for at its own declaration: that one is a single reader of an append-only list, these are read-modify
+    -write on a set and a dict from any number of branches."""
+
+    def __init__(self, pipeline: Pipeline, hooks: RunHooks, schedule: Schedule) -> None:
+        self.pipeline = pipeline
+        self.hooks = hooks
+        self.siblings = parallel_siblings(schedule)
+        self.lock = threading.Lock()
+        self.permits = threading.BoundedSemaphore(max_parallel())
+        self.aborted: dict[int, str] = {}
+        self.started: set[int] = set()
+
+
+def run_plan(pipeline: Pipeline, hooks: RunHooks | None = None) -> None:
+    """Run every step of `pipeline`, in the order `schedule_for` says, telling `hooks` what happens.
+
+    A FAILURE WITH STEPS IN FLIGHT LETS THEM FINISH, and starts nothing new outside the fan it happened
+    in (`parallel_siblings` argues that boundary). The alternative - cancel the siblings for a faster
+    verdict - was rejected on three counts, and the first is decisive: there is no
+    way to cancel a subprocess that leaves a verdict a reader can trust. A killed `docker build` exits
+    non-zero, and that number is indistinguishable from the build having failed on its own - the
+    "cannot tell nothing-to-do from failed" defect this repository hunts, manufactured deliberately.
+    Second, `abort_after` has always meant "which of the remaining steps do not START", never "stop what
+    is running", so one rule keeps covering both runners. Third, a half-killed build or a half-deployed
+    lab costs more to clean up than the seconds the faster verdict saved.
+
+    What it costs is stated rather than hidden: a fan of eight in which the first fails still takes as
+    long as its slowest member. The run SAYS so, which is the half that makes the choice readable rather
+    than merely taken: every member of the fan carries its OWN rc in the tree, the report and the
+    transcript, and only work the run declined to begin is `⊘` with the scope that stopped it.
+
+    THE EXIT CODE IS NOT "THE LAST ONE WINS". Nothing here counts failures; `overall_rc` reads every
+    step's final state and `failure_report` walks every FAILED one, so two simultaneous failures are two
+    entries and one rc. That was already true and it is why the verdict needed no change - what needed
+    the change is the counting `run_headless` used to do inside its loop, which a fan would have raced.
+
+    A branch that RAISES takes the run down, the way a sequential step that raises always has. Left to
+    `threading`'s default, that exception would be printed to stderr and the branch would simply stop,
+    leaving a run that reports its remaining steps as never having run and no reason anywhere - a silent
+    partial run being the one outcome worse than a crash."""
+    schedule = schedule_for(pipeline)
+    _walk(schedule, _Run(pipeline, hooks if hooks is not None else RunHooks(), schedule))
+
+
+def _walk(schedule: Schedule, run: _Run) -> None:
+    for item in schedule:
+        if isinstance(item, Fan):
+            _run_fan(item, run)
+        else:
+            _run_step(item, run)
+
+
+def _run_fan(fan: Fan, run: _Run) -> None:
+    indices = schedule_indices((fan,))
+    run.hooks.on_fan_start(indices)
+    faults: list[BaseException] = []
+
+    def branch(schedule: Schedule) -> None:
+        try:
+            _walk(schedule, run)
+        except BaseException as exc:   # noqa: BLE001 - re-raised on the calling thread below
+            faults.append(exc)
+
+    # ONE THREAD PER BRANCH, and the bound is on the STEPS rather than on the threads - so a fan of forty
+    # creates forty threads of which at most `max_parallel()` are doing anything. That is the tradeoff,
+    # named rather than discovered: a bounded pool would create four, and it would deadlock the moment a
+    # branch containing a nested fan held a worker while waiting for workers its children cannot get. A
+    # blocked thread costs a stack and nothing else; a deadlocked plan costs the run.
+    threads = [threading.Thread(target=branch, args=(schedule,),
+                                name=f"simplon-fan{indices[0]}-branch{n}", daemon=True)
+               for n, schedule in enumerate(fan.branches)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    run.hooks.on_fan_end(indices)
+    # EVERY fault is named and only the first is raised (si#147, code review). An exception can carry one
+    # cause, so a second branch raising at the same time has nowhere to go in the traceback - and dropping
+    # it is the silent partial failure this whole function's docstring refuses to accept, applied to
+    # itself. The ones that are not raised are logged, so a run with two broken branches says two things
+    # rather than one.
+    for extra in faults[1:]:
+        log.warn(f"{run.pipeline.name}: another branch of this fan raised at the same time and is not "
+                 f"the exception below: {extra!r}")
+    if faults:
+        raise faults[0]
+
+
+def _run_step(index: int, run: _Run) -> None:
+    step = run.pipeline.steps[index]
+    # A step already doomed when its branch reaches it is skipped WITHOUT taking a permit (si#147, code
+    # review). The authoritative check is the one below, under the permit, because a failure can land
+    # while this step waits for one; this is a fast path, not a second decision. Without it, the 36
+    # doomed steps of a bounded fan of 40 each queue for a permit in order to do nothing, and the run's
+    # verdict arrives one finishing step at a time.
+    with run.lock:
+        already_doomed = run.aborted.get(index)
+    if already_doomed is not None:
+        step.state = StepState.SKIPPED
+        run.hooks.on_skip(index, already_doomed)
+        return
+    with run.permits:      # the bound, held only while the step RUNS - never while a branch waits
+        with run.lock:
+            reason = run.aborted.get(index)
+            if reason is None:
+                run.started.add(index)
+        if reason is not None:
+            step.state = StepState.SKIPPED
+            run.hooks.on_skip(index, reason)
+            return
+        step.state = StepState.RUNNING
+        # Before the hook, not after: `Step.run` sets it again from the same clock, and the hook repaints
+        # a row and a status bar that count from this value. A counter started after the repaint
+        # under-reports every step by the cost of the repaint (#52's measurement, kept).
+        step.started_at = clock()
+        run.hooks.on_start(index)
+        outcome = step.run(lambda line: run.hooks.on_line(index, line))
+    run.hooks.on_finish(index)
+    if not outcome.ok:
+        with run.lock:
+            # The started set is what the run has COMMITTED to, not merely what has begun: a fan's other
+            # branches are in it whether or not the scheduler has reached them yet, so which steps a
+            # failure takes down is the same on every machine. See `parallel_siblings`.
+            abort = abort_after(run.pipeline, index,
+                                started=frozenset(run.started) | run.siblings.get(index, frozenset()))
+            for doomed in abort.indices:
+                run.aborted.setdefault(doomed, abort.reason)
+
+
 def _print_captured(output: str) -> None:
     """Print an action step's captured output with the SAME two-space indent the streamed lines use, so
     both kinds of step read identically headlessly."""
@@ -1087,20 +1443,197 @@ def _print_captured(output: str) -> None:
         print(f"  {line}", flush=True)
 
 
+class _HeadlessOutput:
+    """What a CI log shows while the plan runs - and, in a fan, what it HOLDS BACK so that it can still
+    be read afterwards (si#147).
+
+    THE PROBLEM PARALLELISM CREATES HERE IS NOT THE ONE IT CREATES IN THE TUI. The pane has been per-step
+    since si#144 put a step's own lines in `Step.live`, so two streams are two backlogs and the reader
+    picks one. A CI log is ONE file. Interleaved, two `docker build`s produce a file in which neither
+    build can be followed and nothing can be untangled after the fact, because the lines carry no step
+    identity - and a log nobody can read is the same as no log, on exactly the red run it exists for.
+
+    SO A FAN BUFFERS, AND FLUSHES IN PLAN ORDER. Each step inside a fan collects its lines; a step's
+    whole block - entry line, output, verdict - is printed once that step is done AND every
+    earlier-planned step of the fan has been printed. The result is a log whose blocks stand in the order
+    the manifest declares, whichever branch won the race, so two runs of the same plan read the same way.
+    Nothing is dropped: a passing streamed step's output is printed in full on flush, because it went out
+    live before this change and a green build's log must not get shorter for having been faster.
+
+    Incremental rather than "flush the whole fan at the end", which was the simpler version and is the
+    wrong one: eight five-minute image builds would print nothing for five minutes, and a CI log that
+    goes quiet is how an operator decides a job has hung.
+
+    ONE COST, STATED RATHER THAN DISCOVERED: `log.info` stamps the line with the time it is PRINTED, so a
+    buffered block carries flush times, not the moment the step began. The group header says so; the
+    honest timings are the durations in the tree and the transcript, which come off `Step.started_at`.
+
+    NOTHING IS BUFFERED OUTSIDE A FAN. A plan with no `parallel:` anywhere - every manifest that exists
+    today - takes the same branches it always did and prints the same bytes it always did."""
+
+    def __init__(self, pipeline: Pipeline, show_passing: bool) -> None:
+        self.pipeline = pipeline
+        self.show_passing = show_passing
+        self.lock = threading.Lock()         # guards the bookkeeping below
+        # A SECOND lock, held across the PRINTING of a block, and it is not redundant (si#147). The first
+        # version guarded only the pointer: two branches finishing at once each popped a different index
+        # and then printed at the same time, so `a`'s chunks, `b`'s chunks and `a`'s own OK line came out
+        # woven together - the exact defect the buffering exists to prevent, reintroduced by the code
+        # meant to prevent it. Measured on a real four-step plan of `sh -c` children, not reasoned about.
+        # It cannot deadlock: a flusher takes this one and then `lock`, and nothing takes them the other
+        # way round - `on_line`, which is the hot path, takes `lock` alone and is never blocked by a
+        # printing block.
+        self.flushing = threading.Lock()
+        self.depth = 0                       # nested fans flush through the OUTERMOST one's order
+        self.pending: tuple[int, ...] = ()   # the fan's indices, in plan order, not yet printed
+        self.finished: dict[int, str] = {}   # index -> "" when it ran, else the skip reason
+        self.lines: dict[int, list[str]] = {}
+
+    def hooks(self) -> RunHooks:
+        return RunHooks(on_start=self._start, on_line=self._line, on_finish=self._finish,
+                        on_skip=self._skip, on_fan_start=self._fan_start, on_fan_end=self._fan_end)
+
+    def _title(self, index: int) -> str:
+        step = self.pipeline.steps[index]
+        return step.command or step.label    # exact-command identity when the step carries one (#897)
+
+    def _fan_start(self, indices: "tuple[int, ...]") -> None:
+        with self.lock:
+            self.depth += 1
+            if self.depth > 1:
+                return
+            self.pending = indices
+            self.finished = {}
+            self.lines = {index: [] for index in indices}
+        names = ", ".join(self._title(index) for index in indices)
+        log.info(f"{len(indices)} steps side by side (at most {max_parallel()} at once): {names}")
+        log.info("their output is held and printed one step at a time, in plan order, so the timestamps "
+                 "in those blocks are when they were printed rather than when the step ran")
+
+    def _fan_end(self, _indices: "tuple[int, ...]") -> None:
+        with self.lock:
+            self.depth -= 1
+            still_open = self.depth > 0
+        if still_open:
+            return
+        self._flush(final=True)
+
+    def _buffering(self, index: int) -> bool:
+        with self.lock:
+            return index in self.lines and self.depth > 0
+
+    def _start(self, index: int) -> None:
+        if not self._buffering(index):
+            self._entry_line(index)
+
+    def _entry_line(self, index: int) -> None:
+        """The line a step is ENTERED with. The help text rides on it, not on a line of its own and not in
+        the retraced tree (#49): a green run keeps exactly the lines it had, one of them wider.
+        `build.reference` alone made a reader look the command up in the manifest."""
+        step = self.pipeline.steps[index]
+        log.info(f"{self._title(index)} - {step.help}" if step.help else self._title(index))
+
+    def _line(self, index: int, line: str) -> None:
+        if self._buffering(index):
+            with self.lock:
+                self.lines[index].append(line)
+            return
+        print(f"  {line}", flush=True)
+
+    def _finish(self, index: int) -> None:
+        if self._buffering(index):
+            with self.lock:
+                self.finished[index] = ""
+            self._flush()
+            return
+        self._verdict(index)
+
+    def _skip(self, index: int, reason: str) -> None:
+        if self._buffering(index):
+            with self.lock:
+                self.finished[index] = reason
+            self._flush()
+            return
+        log.warn(f"{self._title(index)} - skipped ({reason})")
+
+    def _verdict(self, index: int) -> None:
+        """The three lines a finished step contributes, buffered or not - one place, so a fan's block and
+        a sequential step's are the same text."""
+        step = self.pipeline.steps[index]
+        if step.stream is None and step.output and (step.rc != 0 or self.show_passing):
+            _print_captured(step.output)
+        if step.rc == 0:
+            log.ok(self._title(index))
+        else:
+            log.warn(f"{self._title(index)} - failed (rc {step.rc})")
+
+    def _flush(self, final: bool = False) -> None:
+        """Print every leading step of the fan that is done, in plan order. `final` says the fan is over,
+        so a step that has not finished never will.
+
+        ONE FLUSHER AT A TIME (`flushing`), because two branches can finish within microseconds of each
+        other and a block is not one write. A second flusher that merely took the next index would print
+        into the middle of the first one's block. Waiting rather than skipping: the waiting thread then
+        prints whatever became ready, so a block is never left sitting because somebody else was busy.
+
+        THE `final` PASS EXISTS BECAUSE OF A RAISE (si#147, code review). A step's action that raises never
+        reaches `on_finish`, so mid-fan it leaves a hole in the plan order - and a flusher that stops at
+        the first unfinished index would then never print the branches AFTER it, however much output they
+        had already captured and however successfully they ran. Three steps, the middle one raising, and
+        the log showed the first one only: the buffering that makes a fan readable would have destroyed
+        exactly the evidence a crash needs. At the end of a fan nothing more can arrive, so the remaining
+        finished blocks are printed in plan order and the hole is NAMED rather than skipped over - an
+        absent block that says nothing is the same defect one step further on.
+
+        The BOOKKEEPING lock is taken and released per step rather than held across the printing, so a
+        block of thousands of lines does not stall the other branches' `on_line` for its duration."""
+        with self.flushing:
+            while True:
+                with self.lock:
+                    if not self.pending:
+                        return
+                    index = self.pending[0]
+                    unfinished = index not in self.finished
+                    if unfinished and not final:
+                        return
+                    self.pending = self.pending[1:]
+                    reason = "" if unfinished else self.finished[index]
+                    held = self.lines.get(index, [])
+                if unfinished:
+                    log.warn(f"{self._title(index)} - no verdict: it was still running when the fan ended")
+                    continue
+                if reason:
+                    log.warn(f"{self._title(index)} - skipped ({reason})")
+                    continue
+                self._entry_line(index)
+                for line in held:
+                    print(f"  {line}", flush=True)
+                self._verdict(index)
+
+
 def run_headless(pipeline: Pipeline, verbose: bool | None = None) -> int:
-    """Run every step sequentially, printing the same info/ok/warn lines the rest of netctl uses (and a
-    streaming step's lines live, indented), and return the overall exit code (0 iff every step passed).
-    This is the TTY-fallback / CI path - no Textual. The overall result is the worst step's rc, never
-    derived from any UI state.
+    """Run every step in the order `schedule_for` says, printing the same info/ok/warn lines the rest of
+    netctl uses (and a streaming step's lines live, indented), and return the overall exit code (0 iff
+    every step passed). This is the TTY-fallback / CI path - no Textual. The overall result is the worst
+    step's rc, never derived from any UI state.
+
+    THE WALK ITSELF IS `run_plan`'S (si#147), not this function's. It was a `for` loop over
+    `pipeline.steps` here and a second one in the TUI's worker thread, and the two agreed about the abort
+    set, the skip marking and the state transitions only because somebody kept them agreeing. A plan may
+    now declare that some of its steps need not wait for each other, and that is exactly the change that
+    would have been made in one runner and not the other. What is left here is the printing - and a fan's
+    printing is its own problem, argued at `_HeadlessOutput`.
 
     An `action` step CAPTURES its output instead of streaming it, so nothing of it has been shown when it
     returns: this runner prints it (netctl#1073). Before the fix only `.ok`/`.rc` were read here and the
     text died with the Outcome - the TUI's details pane was its only reader - so a failing gate printed
     `failed (rc 1)` and swallowed the diagnosis it had just composed, on exactly the runs (CI, the in-`up`
     rebuild) nobody watches. Failures always print; a PASSING step's output only when `verbose` (default:
-    the DELIVERY_VERBOSE env var), so a green `doctor` stays a checklist. A `stream` step is never
-    reprinted here: its lines already went out live through `emit` and `outcome.output` is the same text
-    again.
+    the DELIVERY_VERBOSE env var), so a green `doctor` stays a checklist. A `stream` step OUTSIDE a fan is
+    never reprinted: its lines already went out live through `emit` and `outcome.output` is the same text
+    again. Inside a fan they did not go out live - they were held so the log stays readable - so there
+    they are printed once, on flush, whatever the rc. A green build's log must not get shorter for having
+    been faster.
 
     After the last step it prints the SAME tree the TUI draws (netctl#1276), indented, with each row's
     final icon - so a CI log and a TTY show one structure in one vocabulary. It goes at the END rather than
@@ -1122,35 +1655,14 @@ def run_headless(pipeline: Pipeline, verbose: bool | None = None) -> int:
     uses. See `write_run_transcript`."""
     started = datetime.now()
     show_passing = _verbose_env() if verbose is None else verbose
-    failures = 0
-    skipped = 0
-    # Step index -> why it will not run. A set of doomed indices rather than a `stopped` latch, because a
-    # failure now aborts a SUBTREE and not necessarily the tail of the run (netctl#1317): the steps after an
-    # aborted subtree may well be its siblings, which still run. The first abort that claims an index owns
-    # the reason printed for it.
-    aborted: dict[int, str] = {}
-    for index, step in enumerate(pipeline.steps):
-        title = step.command or step.label      # exact-command identity when the step carries one (#897)
-        if index in aborted:
-            step.state = StepState.SKIPPED
-            skipped += 1
-            log.warn(f"{title} - skipped ({aborted[index]})")
-            continue
-        # The help text rides on the ENTRY line, not on a line of its own and not in the retraced tree
-        # (#49): a green run keeps exactly the lines it had, one of them wider. `build.reference` alone
-        # made a reader look the command up in the manifest to learn what it was about to do.
-        log.info(f"{title} - {step.help}" if step.help else title)
-        outcome = step.run(lambda line: print(f"  {line}", flush=True))
-        if step.stream is None and outcome.output and (not outcome.ok or show_passing):
-            _print_captured(outcome.output)
-        if outcome.ok:
-            log.ok(title)
-        else:
-            failures += 1
-            log.warn(f"{title} - failed (rc {outcome.rc})")
-            abort = abort_after(pipeline, index)
-            for doomed in abort.indices:
-                aborted.setdefault(doomed, abort.reason)
+    run_plan(pipeline, _HeadlessOutput(pipeline, show_passing).hooks())
+    # COUNTED FROM THE STATES, not tallied in the loop (si#147). A counter incremented as each step
+    # returned was correct while one step returned at a time and would have been a race the moment two
+    # did. It also had a second reader disagreeing with it: `overall_rc` and `failure_report` already
+    # derive their answers from the same states, so the count is now the third derivation rather than an
+    # independent tally that could differ from either.
+    failures = sum(1 for step in pipeline.steps if step.state == StepState.FAILED)
+    skipped = sum(1 for step in pipeline.steps if step.state == StepState.SKIPPED)
     # A header, because the two blocks can legitimately name the same step differently: the per-step line
     # above uses `command or label` (the exact-command identity, netctl#897) and a tree row uses the row's
     # display identity, which for a hand-built pipeline is the prose label. Without a line saying so, a CI

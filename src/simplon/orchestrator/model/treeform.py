@@ -312,7 +312,7 @@ INHERITED = ("help", "passthrough_args")
 # What a TASK may declare. Everything else that `_CommandSpecModel` accepts belongs to the instance:
 # a template that pinned a value, hid itself or planned other commands would not be a template.
 TASK_KEYS = ("impl", "help", "passthrough_args", "params")
-COMMAND_ONLY_KEYS = ("hidden", "keep_awake", "stop_on_failure", "depends_on", "with", "task")
+COMMAND_ONLY_KEYS = ("hidden", "keep_awake", "stop_on_failure", "parallel", "depends_on", "with", "task")
 
 
 def check_task(name: str, spec: dict) -> None:

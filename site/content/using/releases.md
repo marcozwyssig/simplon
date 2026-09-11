@@ -417,6 +417,63 @@ every one was seen red. Five properties were broken in the runner in turn, and e
 pause, because a poll cannot wait for a negative; each was red in 10 of 10 idle and 20 of 20 loaded runs
 against the regression it exists to catch, which is why neither grew a wait it cannot justify. All five then survived 150 loaded runs with nothing red.
 
+### Steps that do not have to wait for each other can say so (si#147)
+
+Every step of a plan ran after the one before it. An aggregate whose dependencies are genuinely
+independent - five device images, four test levels - therefore cost their sum, and the manifest had no
+way to say otherwise. `parallel: true` on an aggregate is that way: its dependencies run at the same
+time, and whatever follows it in its own parent's list starts when all of them are done. That is the
+join, and it needs no new key - `depends_on` already means "after", and this is the one place it stops
+meaning it. Measured on a four-step plan of real subprocesses: **3.67s sequential, 1.81s with the flag**,
+the fan costing what its slowest member costs instead of what all three cost.
+
+**Declared and not derived, which was the first question and it was settled by counting rather than by
+preference.** A dependency graph already states what must come after what, so deriving parallelism from
+it - run everything that has no edge between it - needs no new key at all and would have been the better
+answer. Across the six manifests this kernel can reach, 541 pairs of planned steps have no edge between
+them, and **466 of those would break if they ran together**. The reason is uniform: an aggregate's
+dependencies are a LIST, and the order between siblings is stated by their position in it and nowhere
+else. Simplon's own manifest says so in prose - *"Siblings execute in list order, so [reference, site] IS
+the edge"* - asbundle's build chain says *"in the order listed"*, and the kernel's own idiom for chaining
+two steps under the impl-XOR-`depends_on` lock produces exactly such a pair on every chained build. A
+derived executor would have published a website before writing the page it publishes, and run a compiler
+inside an image that did not exist yet, in four products at once. So the flag is opt-in and its default
+is precisely the behaviour every existing manifest already has.
+
+**Three decisions that come with it, each stated rather than discovered.** A step already running when a
+sibling fails is left to finish: a killed subprocess exits non-zero and that number cannot be told from
+the step having failed on its own, which is this project's recurring defect manufactured on purpose. The
+members of one fan are never skipped for each other either - `parallel:` is the declaration that none of
+them needs another, so a failure in one does not make another's work doomed - while the work after the
+join is skipped by `stop_on_failure` exactly as before. And the exit code is not "the last one wins":
+it was already derived from every step's final state, so two simultaneous failures are two entries in the
+report and one return code.
+
+**How many run at once is the machine's answer, not the manifest's.** A manifest travels between machines
+and a container count does not: `SIMPLON_MAX_PARALLEL` sets the bound, and the default is four or the CPU
+count, whichever is smaller. Four because the work in a fan is whole subprocesses that each already use
+every core they can find, so the number is about how many daemons and caches are in flight rather than
+about CPUs.
+
+**Two defects a code review found, both of them the same shape as the one this feature refuses.** A fan
+in which two branches raise at the same time re-raised one and dropped the other with no trace anywhere;
+an exception carries one cause, so the ones that are not raised are logged. And a raise in the MIDDLE of
+a fan used to swallow the output of the branches after it - the flusher stopped at the hole the crashed
+step left, so a step that had run to completion and captured its output contributed nothing to the log.
+The buffering that makes a fan readable would have destroyed exactly the evidence a crash needs. A fan
+now flushes what it has when it ends, and names the hole rather than skipping over it. The remaining
+half - a step that raises is left in `RUNNING` for ever, and the run then loses its tree, its failure
+report and its transcript - is older than this change and is tracked as si#182.
+
+**The output was the half expected to hurt, and only one of the two runners felt it.** In the TUI it
+needed nothing: si#144 had already put each step's own lines in `Step.live`, so a second stream is a
+second backlog and the pane shows the highlighted one. si#148's status bar had been built plural on
+purpose and already names two running steps and counts the rest. What did change there is following -
+it stops at a fan rather than dragging the cursor between eight rows that started in the same second,
+and `f` still goes to a running step on demand. A CI log is one file, so the headless runner buffers a
+fan's steps and prints each block whole, in plan order, whichever branch won the race: the same bytes a
+sequential run produced, in the same sequence, arriving later. Nothing outside a fan is buffered at all.
+
 ## 0.10.0
 
 **A C++ or a .NET product stops writing its build files by hand.** 0.9.0 gave every product one pinned

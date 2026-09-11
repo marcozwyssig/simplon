@@ -126,6 +126,45 @@ docs:
   depends_on: [reference, site]
 ```
 
+`reference` writes the page that `site` reads. Nothing in the list says so except the order, and that is
+deliberate: the same fact written twice - once as an order, once as an edge - is a second source that can
+drift.
+
+### `parallel`: the one key that suspends list order
+
+Because position is the only statement of order, a command whose dependencies genuinely do *not* need
+each other has to say so:
+
+```yaml
+images:
+  help: "The five device images."
+  depends_on: [sidecar, frr, vyos, ios, radius]
+  parallel: true
+```
+
+Those five subtrees then run at the same time, and whatever follows `images` in its own parent's list
+starts only when every one of them is done. That is the join, and it needs no new key: `depends_on`
+already means "after", and `parallel` is the one place it stops meaning it.
+
+**It is declared and not derived, and that was measured.** A dependency graph already states what must
+come after what, so deriving parallelism from it - everything unconnected runs at once - looks like the
+better answer. Over the six manifests simplon can reach, 541 pairs of planned steps have no edge between
+them and **466 of those would break if they ran together**: the orders those manifests rely on are
+written as list position, not as edges. Deriving would have run a website build before the page it
+publishes, a packaging step before the thing it packages, and a gradle build inside an image that did not
+exist yet.
+
+Two things it does not change. A branch is still a chain - `parallel` applies to the dependencies of the
+command that declares it, not to what is inside them - and `stop_on_failure` still decides what a failure
+skips. A step already running when a sibling fails is left to finish rather than killed, because a killed
+subprocess exits non-zero and that number cannot be told from the step having failed on its own; the
+members of one fan are never skipped for each other, since the declaration says none of them needs
+another; and the work after the join is skipped in the ordinary way.
+
+How MANY run at once is the machine's answer rather than the manifest's, because the manifest travels
+between machines and the number does not: `SIMPLON_MAX_PARALLEL` sets it, and the default is four or the
+CPU count, whichever is smaller.
+
 Every `depends_on` entry must name a known, unambiguous command, and the graph must be acyclic. Both are
 checked at load, not at run: a dependency naming a command that does not exist is a manifest error, and
 it should not wait until the eleventh minute of a pipeline to say so.

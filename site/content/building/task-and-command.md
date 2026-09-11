@@ -53,7 +53,7 @@ impl   help   passthrough_args   params
 A command takes those it needs to place a task, plus the ones that describe *this* placement:
 
 ```text
-task   with   help   params   hidden   keep_awake   stop_on_failure   depends_on   override
+task   with   help   params   hidden   keep_awake   stop_on_failure   parallel   depends_on   override
 ```
 
 Two of the task's keys are **inherited** by every command that instantiates it unless the command says
@@ -63,9 +63,9 @@ once, and every placement gets that wording for free while remaining free to ove
 `impl` is not in that list, because it is never the command's to declare. `with` is not in it either, and
 the reason is worth stating plainly: **a template that pinned a value would not be a template.** It would
 be one particular use of itself, and the second product that wanted the same body with different data
-would have to fork it. The same argument covers `hidden`, `keep_awake`, `stop_on_failure` and
-`depends_on` - a template that hid itself, or planned other commands, has stopped being a template and
-become a use.
+would have to fork it. The same argument covers `hidden`, `keep_awake`, `stop_on_failure`, `parallel`
+and `depends_on` - a template that hid itself, or planned other commands, has stopped being a template
+and become a use.
 
 ## The five refusals
 

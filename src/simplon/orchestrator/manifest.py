@@ -68,6 +68,24 @@ class CommandSpec(NamedTuple):
     of them only, and the other's flag would never fire for it; `load()` rule 6 (netctl#1319) rejects that
     ambiguity where the two aggregates sit in ONE plan and their flags disagree.
 
+    `parallel` (an aggregate's flag, si#147) declares that this command's dependencies do NOT have to wait
+    for each other: its planned children run at the SAME time instead of in list order, and the command
+    itself is the join - whatever follows it in its own parent's list starts only once all of them are
+    done. DECLARED rather than derived, and the measurement is why. `depends_on` states ORDER, and across
+    the six manifests this kernel can reach (`simplon.surface.CONSUMERS` plus its own) 541 pairs of planned
+    leaves have no edge between them - and 466 of those would BREAK if run together, because the order
+    between siblings is stated by their POSITION in the list and nowhere else. `build docs` in this very
+    file says so in prose ("Siblings execute in list order, so [reference, site] IS the edge"), asbundle's
+    build chain says "in the order listed", and the kernel's own #901 leaf/aggregate idiom - an aggregate
+    `[builder-image, web-jar-only]` whose two members carry no edge - turns every chained build into such a
+    pair. A derived executor would run gradle in an image that does not exist yet, in five products at
+    once. So the flag is opt-in and its default is exactly today's behaviour.
+
+    Rejected on a LEAF for the reason `stop_on_failure` and `keep_awake` already are: a leaf has no
+    children, so the flag would do nothing where it is written. `parallel` and `stop_on_failure` compose
+    without a special case - a failure inside a fan skips what has not STARTED and lets what is already
+    running finish (`simplon.orchestrator.steps.abort_after`, which takes the started set for it).
+
     `keep_awake` (an aggregate's flag, netctl#1238) declares that the host must not idle-sleep while this
     command's PLAN runs: `run_command` wraps the whole dispatch in `simplon.awake.keep_awake`. It exists
     because a plan has no product code around it - the callback the CLI binds for an aggregate is
@@ -91,6 +109,7 @@ class CommandSpec(NamedTuple):
     passthrough_args: bool = False
     depends_on: tuple[str, ...] = ()
     stop_on_failure: bool = False
+    parallel: bool = False
     keep_awake: bool = False
     hidden: bool = False
     with_: dict[str, object] = {}
@@ -381,6 +400,7 @@ class _CommandSpecModel(BaseModel):
     passthrough_args: bool = False
     depends_on: tuple[str, ...] = ()
     stop_on_failure: bool = False
+    parallel: bool = False
     keep_awake: bool = False
     hidden: bool = False
 
@@ -402,7 +422,8 @@ class _CommandSpecModel(BaseModel):
             raise ValueError("'depends_on' must be a list of command names")
         return tuple(str(dep) for dep in value)
 
-    @field_validator("passthrough_args", "stop_on_failure", "keep_awake", "hidden", mode="before")
+    @field_validator("passthrough_args", "stop_on_failure", "parallel", "keep_awake", "hidden",
+                     mode="before")
     @classmethod
     def _as_bool(cls, value: object) -> bool:
         return bool(value)
@@ -516,6 +537,15 @@ class _ManifestModel(BaseModel):
                         f"command '{group}.{name}': stop_on_failure applies to an aggregate "
                         f"(depends_on); on a leaf it would scope to that leaf alone and skip nothing - "
                         f"declare it on the aggregate whose remaining steps should be skipped")
+                # `parallel` says a command's DEPENDENCIES need not wait for each other (si#147), so a
+                # command with no dependencies has nothing to run side by side and the flag would do
+                # nothing where it is written - the same trap stop_on_failure above and keep_awake below
+                # are rejected for.
+                if spec.parallel and not spec.depends_on:
+                    raise ValueError(
+                        f"command '{group}.{name}': parallel applies to an aggregate (depends_on); a "
+                        f"leaf has no dependencies to run side by side - declare it on the aggregate "
+                        f"whose dependencies may share a machine")
                 # keep_awake is honoured by `run_command`, which only ever runs an aggregate's PLAN. The
                 # CLI binds a leaf straight to its impl, so the flag there would be silently ignored -
                 # and a flag that does nothing where it is written is worse than no flag (netctl#1238).
@@ -846,7 +876,8 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None) ->
     commands = {
         group: {name: CommandSpec(impl=spec.impl, help=spec.help, passthrough_args=spec.passthrough_args,
                                   depends_on=spec.depends_on, stop_on_failure=spec.stop_on_failure,
-                                  keep_awake=spec.keep_awake, hidden=spec.hidden, with_=spec.with_,
+                                  parallel=spec.parallel, keep_awake=spec.keep_awake,
+                                  hidden=spec.hidden, with_=spec.with_,
                                   params={pname: ParamPresentation(help=p.help, short=p.short,
                                                                    argument=p.argument,
                                                                    metavar=p.metavar,
