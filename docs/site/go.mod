@@ -2,7 +2,7 @@
 //
 // It is COMMITTED rather than generated on the fly, for two reasons. `hugo mod get` needs a module file
 // to write into - without one it stops before it starts - and the version it writes has to come from
-// somewhere a human chose. The theme pin in ../simplon.yaml is that choice; `docs:site` runs
+// somewhere a human chose. The theme pin in ../../simplon.yaml is that choice; `docs:site` runs
 // `hugo mod get <module>@<version>` with it before every build, so this file is rewritten to agree with
 // the manifest on every run.
 //
@@ -10,7 +10,7 @@
 // WRITE into the working tree, and `hugo mod get` also refreshes go.sum. A CI job that builds the site
 // and then asserts a clean working tree will see a diff the first time the manifest pin moves ahead of
 // this file. That is the mechanism working, not a fault; the publishing job must not gate on it.
-module github.com/marcozwyssig/simplon/site
+module github.com/marcozwyssig/simplon/docs/site
 
 go 1.24
 

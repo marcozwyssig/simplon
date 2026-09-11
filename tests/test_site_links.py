@@ -147,7 +147,7 @@ def test_every_internal_reference_points_at_a_page_this_site_has(link):
 
     # assert
     assert target is not None, (
-        f"{link}: no page under site/content/ is served at that URL, and the manifest generates none "
+        f"{link}: no page under docs/site/content/ is served at that URL, and the manifest generates none "
         f"there either (it generates {sorted(str(page.relative_to(CONTENT)) for page in GENERATED)})")
 
 
@@ -253,7 +253,7 @@ def test_no_link_reaches_into_a_generated_page_by_anchor():
 # --- the shape the links are drawn across (si#170) -------------------------------------------------------
 
 #: Hugo's own configuration, which is where the navigation is declared.
-HUGO = sitepages.ROOT / "site" / "hugo.yaml"
+HUGO = sitepages.ROOT / "docs" / "site" / "hugo.yaml"
 
 
 def _menu() -> list[dict]:

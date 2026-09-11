@@ -57,6 +57,34 @@ from simplon.run import run
 #: a product that declares no website declares no section at all.
 SECTION = "site"
 
+#: Where a product's Hugo sources are, when its manifest does not say (si#183). `docs/` is the
+#: documentation root - architecture, specs, plans and the site all belong in it, so one repository stops
+#: answering "where is the documentation" in two places - and this is the leaf simplon itself uses.
+#:
+#: A DEFAULT AND NOT A RULE, and the difference was measured rather than preferred. si#155 gave this key
+#: no default at all, on the reasoning that one product's layout must not be imposed on the next. That
+#: reasoning still holds for a REFUSAL and the census says so. Measured over the same population si#159
+#: and si#172 used - every manifest this kernel can reach: its own, the five in
+#: `simplon.surface.CONSUMERS`, and secure-windows-images - three of those seven declare a `site:`
+#: section, and the three disagree: cleon at `site`, biz-cockpit at `docs/website`, simplon at
+#: `docs/site`. A `source:` outside `docs/` refused would turn away two products that have done nothing
+#: wrong, which is the expression rule si#53, si#85 and si#159 each declined to write.
+#:
+#: SO WHO IS IT FOR, since by that same count it serves none of the three? The FOURTH. All three existing
+#: products name the key, so the default changes nothing for any of them and they keep whatever they
+#: named. What it changes is the day a product gets a website: it writes four keys instead of five and
+#: lands on the convention without having to have read about it. A default nobody currently reaches is
+#: dead weight only if nobody arrives later, and products are the one thing this kernel exists to have
+#: more of.
+#:
+#: `output` DELIBERATELY DOES NOT GET ONE, and the asymmetry is the point rather than an oversight. By
+#: consumer agreement it has the better case - two of the three declare `build/website` and only cleon
+#: differs, against one of three for `docs/site` - but `output` is handed to `shutil.rmtree` before every
+#: build. A default there would recursively delete a directory the product never typed, on the first run
+#: of a manifest whose author forgot a key. `source` is only ever read. The kernel may assume where to
+#: LOOK; it may not assume what to DELETE.
+DEFAULT_SOURCE = "docs/site"
+
 #: Where the product root is bind-mounted inside the container. The kernel's own choice, like docs.py's
 #: `/project`: it is a path INSIDE a container the kernel creates, so no product ever sees it.
 MOUNT = PurePosixPath("/project")
@@ -242,24 +270,34 @@ def _inside_the_product(value: str, key: str, where: str) -> str:
 def declared(data: Mapping[str, object], source: str = "manifest") -> Site:
     """The website the manifest declares, validated LOUDLY.
 
-    Every value is required to BE declared rather than defaulted, because each one is a statement about a
-    product's own tree or its own toolchain: a kernel that assumed `site/` and `public/` would work for the
-    product that happens to use those names and silently build the wrong thing - or nothing - for the next
-    one, and a kernel that named the image would be choosing a generator on every product's behalf. A
-    missing section fails here, naming the key, rather than as a container run against a path that is not
-    there.
+    `image` and `output` are required to BE declared rather than defaulted, because each one is a
+    statement the kernel cannot make for a product: a kernel that named the image would be choosing a
+    generator on every product's behalf, and one that guessed `output` would hand `shutil.rmtree` a
+    directory nobody typed. A missing section fails here, naming the key, rather than as a container run
+    against a path that is not there.
+
+    `source` is the one that DOES default, to `DEFAULT_SOURCE`, and the block on that constant is where
+    the reasoning and the census behind it live. A product that names a path still gets exactly what it
+    named, and the default is normalised by the same `_inside_the_product` a declared path goes through
+    rather than being exempted from it. `source: ""` is still a mistake rather than an omission, because
+    `_str` rules on a value that is there; a bare `source:` carries no value at all and defaults, which
+    is what `theme:` and `base_url:` have always done with one.
     """
     section = data.get(SECTION)
     if not isinstance(section, Mapping):
         raise ValueError(f"{source}: the '{SECTION}' section is missing or is not a mapping "
-                         f"- declare the pinned hugo image, where the sources live and where the site "
-                         f"is built to")
+                         f"- declare the pinned hugo image and where the site is built to (the sources "
+                         f"default to '{DEFAULT_SOURCE}')")
     where = f"{source}: '{SECTION}'"
     # The REQUIRED keys first, then their shape: a section missing `image` altogether should say so, not
     # complain about the optional theme it also got wrong.
     image = _str(section, "image", where, required=True)
-    src = _str(section, "source", where, required=True)
     out = _str(section, "output", where, required=True)
+    # Not `required=True`: a key that carries NO VALUE takes the convention, a key that carries a broken
+    # one is ruled on. `_str` draws exactly that line and draws it the same way for every optional key in
+    # this section, so `source: ""` and `source: 3` refuse while an omitted key and a bare `source:` (YAML
+    # null, which `theme:` and `base_url:` have always read as "not declared") both default.
+    src = _str(section, "source", where) or DEFAULT_SOURCE
     theme = _str(section, "theme", where)
     # The image pin is `simplon.docker.pinned_image` rather than a rule of this module's own (si#47):
     # `docs:render` holds its docToolchain tag to the SAME gate, and so do the images the kernel names

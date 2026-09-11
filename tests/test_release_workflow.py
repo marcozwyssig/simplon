@@ -227,7 +227,7 @@ def test_the_artifact_is_taken_from_the_directory_the_manifest_builds_into(docs_
 
 
 def test_no_step_gates_on_a_clean_working_tree(workflow):
-    """`hugo mod get` WRITES site/go.mod and site/go.sum on every build - idempotent while the pin and
+    """`hugo mod get` WRITES docs/site/go.mod and docs/site/go.sum on every build - idempotent while the pin and
     the file agree, which is the committed state, but a real diff the first time the pin moves ahead.
 
     Pinning the dependency is what makes the build reproducible. Asserting afterwards that the build

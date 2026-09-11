@@ -42,20 +42,21 @@ groups:
       # an open question a caller answers on the command line. Pinned with `with:`, the parameter leaves
       # the command line entirely -- `./simplon.sh build reference` takes no arguments -- which is what
       # makes the aggregate below possible at all, since a planned step is spawned without arguments. The
-      # path points INTO site/content/, because Hugo only renders what is under its content directory; the
+      # path points INTO docs/site/content/, because Hugo only renders what is under its content directory;
       # generated page is gitignored there, since only the sources belong in the repo.
       reference:
         task: "docs:reference"
         with:
-          output: site/content/with-what/commands.md
+          output: docs/site/content/with-what/commands.md
           title: "Command reference"
-      # The Hugo run itself. Its five values live in the `site:` section below rather than here, because
-      # they are the product's data and `docs:site` reads them through the manifest -- see
-      # src/simplon/tasks/site.py.
+      # The Hugo run itself. Its values live in the `site:` section below rather than here, because they
+      # are the product's data and `docs:site` reads them through the manifest -- see
+      # src/simplon/tasks/site.py, which is also where the one value that is NOT in that section lives:
+      # `source:` defaults to docs/site and this manifest leaves it out.
       site: { task: "docs:site" }
       # The documentation website, as ONE command, and an impl-less AGGREGATE rather than a leaf (#2, task
-      # 3). `reference` writes site/content/with-what/commands.md by reading the assembled CLI; `site` runs
-      # Hugo over site/ and publishes into build/website/. The first WRITES a page the second READS, so
+      # 3). `reference` writes docs/site/content/with-what/commands.md by reading the assembled CLI; `site`
+      # runs Hugo over docs/site/ and publishes into build/website/. The first WRITES a page the second READS, so
       # the order is not a preference - run them the other way round and the published site carries the
       # previous run's reference, or, the very first time, none at all.
       #
@@ -184,27 +185,33 @@ groups:
       # placement rather than a preference.
       workflows: { task: "support:workflows" }
 
-# The documentation website's data (#2). Five values, every one of them required to BE declared: the
-# kernel defaults none of them, because a default would be simplon's own directory layout imposed on
-# every other product that places this task.
+# The documentation website's data (#2). Four values here and a fifth taken from the kernel: `source:` is
+# ABSENT on purpose since si#183, so this manifest is the first consumer of the `docs/site` default rather
+# than a product that happens to agree with it. If the default ever stopped working, `build docs` in this
+# repository would be the thing that said so.
+#
+# The other four are required to BE declared. si#155's reasoning holds for them and no longer holds for
+# `source`: the kernel cannot name a generator on a product's behalf, and it must not guess an `output` it
+# hands to a recursive delete - but WHERE THE DOCUMENTATION LIVES is a convention this platform is now
+# willing to state. The census behind that is in `simplon.tasks.site.DEFAULT_SOURCE`.
 #
 # `image` and `theme` must PIN a version and are refused otherwise - not `:latest`, not `@latest`, not a
 # branch. A build whose output depends on the day it ran is not a build, and a documentation site is
 # committed-to prose: a generator change rewrites it wholesale.
 #
-# `source` and `output` must be plain relative paths under the product root. That is not tidiness about
-# manifests: `output` is handed to shutil.rmtree before every build, so an absolute one would delete a
-# directory somewhere else entirely.
+# `source` and `output` must be plain relative paths under the product root when they are declared at all.
+# That is not tidiness about manifests: `output` is handed to shutil.rmtree before every build, so an
+# absolute one would delete a directory somewhere else entirely - which is also the reason `output` keeps
+# no default while `source` gained one.
 #
 # THE KNOWN POINT, and the publishing job (task 4) has to know it: `theme` here is the single place the
-# theme version is declared, and the task makes site/go.mod agree with it by running
-# `hugo mod get <module>@<version>` before every build. That WRITES site/go.mod and refreshes
-# site/go.sum in this working tree. It is idempotent while the pin and go.mod already agree - the normal
+# theme version is declared, and the task makes docs/site/go.mod agree with it by running
+# `hugo mod get <module>@<version>` before every build. That WRITES docs/site/go.mod and refreshes
+# docs/site/go.sum in this working tree. It is idempotent while the pin and go.mod already agree - the normal
 # state, and both files are committed - but the first build after the pin moves leaves a real diff. A CI
 # gate asserting "working tree clean" after a site build would go red on the mechanism working correctly.
 site:
   image: "hugomods/hugo:exts-0.148.2"
-  source: "site"
   output: "build/website"
   base_url: "https://marcozwyssig.github.io/simplon/"
   theme: "github.com/imfing/hextra@v0.12.3"
@@ -232,7 +239,7 @@ site:
 # simplon's own house rules about simplon's own page, which is exactly why they did not move into the
 # kernel with the mechanism.
 releases:
-  page: "site/content/when/releases.md"
+  page: "docs/site/content/when/releases.md"
   from: "0.4.0"
   complete_from: "0.5.0"
 

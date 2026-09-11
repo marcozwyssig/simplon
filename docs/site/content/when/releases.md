@@ -507,7 +507,8 @@ one and nothing else. The README's pointer to the release procedure moved with i
 
 **What a product has to do: nothing.** No command, no manifest key and no task changed. What did change
 beside the pages is where simplon's own manifest writes the generated command reference - it is
-`site/content/with-what/commands.md` now - and that is simplon's own product data, not a kernel default.
+`docs/site/content/with-what/commands.md` now - and that is simplon's own product data, not a kernel
+default.
 
 The guards moved differently from the pages. Twelve suites used to spell a chapter's section into a path
 of their own, so one re-division made twelve unrelated suites red for the same reason and each had to be
@@ -515,6 +516,71 @@ told the new answer separately. They ask `sitepages` for a page by its FILE name
 a re-division does not touch. Two of them lost half an assertion and say so in place rather than
 quietly: a `weight:` orders within a section, and a chapter and the pages it defers to no longer always
 share one.
+
+### The site lives under `docs/`, and a product that says nothing lands there (si#183)
+
+`docs/` is the documentation root, and simplon's own site was not in it: the Hugo sources sat at `site/`
+in the repository root while `docs/` held only `superpowers/specs` and `superpowers/plans`, so one
+repository answered "where is the documentation" in two places. The sources are at `docs/site/` now -
+`content/`, `hugo.yaml`, and the `go.mod` / `go.sum` that hold the pinned theme version. The published
+site is unchanged: `base_url` did not move and every URL it serves is the one it served before, because
+only the source directory changed.
+
+**What a product has to do: nothing, and that is not a figure of speech.** `site: source:` now DEFAULTS
+to `docs/site` instead of being required, so a manifest that names a path keeps exactly what it named and
+a manifest that says nothing lands on the convention. Nothing is refused that was accepted before.
+
+The refusal was considered and dropped, and the census is why. Measured over the same population si#159
+and si#172 used - every manifest this kernel can reach: simplon's own, the five in
+`simplon.surface.CONSUMERS`, and secure-windows-images:
+
+| product | `site:` section | `source:` |
+| --- | --- | --- |
+| simplon | yes | `docs/site`, now by default and absent from the manifest |
+| cleon | yes | `site` |
+| biz-cockpit | yes | `docs/website` |
+| agile-cockpit | no | - |
+| asbundle | no | - |
+| netctl | no | - |
+| secure-windows-images | no | - |
+
+Three of seven declare a site, and the three disagree. A kernel that insisted on `docs/` would have
+refused two products that have done nothing wrong, on their first run with a new kernel - the expression
+rule si#53, si#85 and si#159 each declined to write, and the one kind of refusal the census asks a reason
+for.
+
+**So who is a default for, if all three existing products name the key?** The fourth. A product that gets
+a website from here on writes four keys instead of five and lands on the convention without having read
+about it, which is the only moment a convention is cheap to adopt. Simplon is its first consumer rather
+than a product that happens to agree with it: its own `site:` section carries no `source:` line, so every
+`build docs` in this repository exercises the default.
+
+**`site: output:` deliberately does not get one, and the asymmetry is the point.** By consumer agreement
+it has the better case - two of the three declare `build/website` and only cleon differs - but `output`
+is handed to `shutil.rmtree` before every build. A default there would recursively delete a directory the
+product never typed, the first time somebody forgot a key. `source` is only ever read. The kernel may
+assume where to look; it may not assume what to delete.
+
+What moved beside the directory is every path that named it: the manifest's `site: source:`, the
+`docs:reference` output and the `releases: page:`, four `.gitignore` lines, seven places in the suite
+that spelled the content tree out for themselves, and the module path in `go.mod`. The link checker
+walks every page and every fragment after the move, which is what says the move did not break the site
+rather than that it looked fine.
+
+**`tests/sitepages.py` calls itself the one place the site's shape is described, and it was not.** Six
+other test modules carried the path again, in four spellings the same sweep does not catch at once:
+`ROOT / "site" / "content"`, `Path(__file__).parents[1] / "site" / "content"`, `ROOT / "site" /
+"hugo.yaml"` and `root / "site"` inside a list comprehension. Two of the six went red and named
+themselves - one through its own vacuity guard, *"no page links into this chapter any more"*. The sixth
+went GREEN and stopped covering anything: `test_surface.py`'s si#51 assertion reads every page of this
+site for a repository named as a consumer that is not one, and `Path.rglob` over a directory that is no
+longer there yields nothing and raises nothing, so the check kept passing over 25 pages it had stopped
+opening. Measured by planting one of the names its own census has measured NOT to use this kernel into
+`why.md`: green before the path was repaired, red after, naming the file. That is the defect this
+repository calls a verdict that cannot fail, and a rename is how it arrives.
+
+It then went red on these very notes, which had named that repository as the example. Both halves are
+the guard working.
 
 
 ## 0.10.0

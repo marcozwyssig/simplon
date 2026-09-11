@@ -806,10 +806,18 @@ GITIGNORE_MARKER = "# --- written by simplon ---"
 #: something.
 #:
 #: WHAT IS NOT HERE AND CANNOT BE. Three kernel outputs sit at a path the MANIFEST names, and two of
-#: those keys have no default at all - `site: output:` and `site: source:` (hugo's `resources/` and its
-#: build lock live under the latter), and `docs:reference`'s `output`, which is why this kernel
-#: gitignores `site/content/with-what/commands.md` by hand. The kernel refuses those sections rather than
-#: guessing a path, so a scaffolder running before any of them exists cannot write their lines either.
+#: those keys have no default at all - `site: output:` and `docs:reference`'s `output`, which is why this
+#: kernel gitignores `docs/site/content/with-what/commands.md` by hand. The kernel refuses those sections
+#: rather than guessing a path, so a scaffolder running before any of them exists cannot write their
+#: lines either.
+#:
+#: `site: source:` LEFT THAT LIST IN si#183 and is the one place this block could now grow: hugo's
+#: `resources/`, `public/` and `.hugo_build.lock` live under it, and the kernel knows where it is by
+#: default. It is deliberately NOT added here today. si#155's own rule was that the list came first and
+#: the rule second - every line in the block below was measured by driving a scaffolded product through
+#: real commands - and these three have not been, because `simplon init` scaffolds no `site:` section at
+#: all, so a fresh product has no website for them to be about. Three lines of noise in every scaffolded
+#: `.gitignore` bought on reasoning rather than measurement is the trade si#155 refused.
 #: They are published on `how/getting-started.md` as the product's own; this constant is the part a
 #: scaffold can be sure of.
 _GITIGNORE = f"""\

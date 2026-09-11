@@ -25,7 +25,7 @@ WHAT WOULD MAKE EACH ONE RED, since an assurance nobody can break is not one:
   * si#27 or si#45 quietly dropped from the cost list -> the link assertion;
   * "discipline" reused for a kind of work, on the site OR in the kernel -> the two terminology
     assertions. The second one exists because the first round of si#29 shipped a callout claiming
-    something about `src/` that only `site/content/` was holding up, and the claim was false.
+    something about `src/` that only `docs/site/content/` was holding up, and the claim was false.
 
 WHAT IS NOT COVERED, stated here rather than left to be discovered:
 
@@ -62,10 +62,11 @@ CHAPTER = sitepages.chapter("why.md")
 TASKS_CHAPTER = sitepages.chapter("tasks.md")
 
 #: The site as a whole, because a terminology rule that only looked at one page would not be one.
-CONTENT = ROOT / "site" / "content"
+CONTENT = ROOT / "docs" / "site" / "content"
 
 #: The two Python trees the callout makes a claim ABOUT ("and so does the kernel's own source,
-#: throughout"). A rule that stopped at `site/content/` would leave that half of the sentence held up by
+#: throughout"). A rule that stopped at `docs/site/content/` would leave that half of the sentence held
+#: up by
 #: nothing - which is how the first round of si#29 shipped a callout that was wrong about two docstrings.
 CODE = (ROOT / "src", ROOT / "tests")
 
@@ -426,7 +427,7 @@ def test_the_word_discipline_keeps_exactly_one_meaning_on_the_site():
 
 
 def test_the_kernel_source_keeps_the_meaning_the_callout_claims_for_it():
-    """The half of the callout that `site/content/` cannot hold up: *"and so does the kernel's own
+    """The half of the callout that `docs/site/content/` cannot hold up: *"and so does the kernel's own
     source, throughout"*.
 
     The first round of si#29 asserted that over the site only, and the sentence was false - two

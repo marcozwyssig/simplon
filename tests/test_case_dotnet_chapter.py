@@ -1,6 +1,6 @@
 """The .NET use case chapter, held against the things it claims (si#109).
 
-WHY A TEST AND NOT PROOFREADING. `site/content/using/case-dotnet.md` walks one delivery loop over a
+WHY A TEST AND NOT PROOFREADING. `docs/site/content/what/case-dotnet.md` walks one delivery loop over a
 toolchain the kernel runs but does not know, and like its two siblings it is made almost entirely of
 second sources: command names its product's manifest already assembles, coordinates `catalogue.yaml`
 already declares, an argv `simplon.tasks.profiles` already carries, refusal sentences the kernel already

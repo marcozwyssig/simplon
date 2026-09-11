@@ -203,17 +203,23 @@ kernel's, the values are the product's, and the section is where they meet.
 ```yaml
 site:
   image: "hugomods/hugo:exts-0.148.2"
-  source: "site"
   output: "build/website"
   base_url: "https://example.github.io/myctl/"
   theme: "github.com/imfing/hextra@v0.12.3"
+  # source: "docs/site"   # omitted: that is the default
 ```
 
-Every value is **required to be declared** rather than defaulted. A kernel that assumed `site/` and
-`public/` would work for the product that happens to use those names and silently build nothing for the
-next one; a kernel that named the image would be choosing a documentation generator on every product's
-behalf. A missing section fails at load, naming the key, instead of as a container run against a
-directory that is not there.
+`image` and `output` are **required to be declared** rather than defaulted. A kernel that named the image
+would be choosing a documentation generator on every product's behalf, and one that guessed `output`
+would hand a recursive delete a directory nobody typed. A missing section fails at load, naming the key,
+instead of as a container run against a directory that is not there.
+
+**`source` defaults to `docs/site`** (si#183). `docs/` is the documentation root - architecture, specs,
+plans and the site all belong in it - so a product that says nothing lands on the convention, and one
+that names a path still gets exactly what it named. Omitting the key is the recommended way to write it.
+Note the line the default does not cross: `source` is only ever read, `output` is handed to
+`shutil.rmtree` before every build, and that is the whole reason one of them has a default and the other
+never will.
 
 Two of those values are refused unless they pin a version. `image: "hugomods/hugo"` means `:latest`,
 which moves under the build; `theme: "...@latest"` fetches whatever is newest on the day it runs. A
@@ -221,6 +227,20 @@ build whose output depends on when it ran is not a build, and a documentation si
 prose - a generator change rewrites it wholesale. `source` and `output` must be plain relative paths
 under the product root, for a blunter reason: `output` is handed to a recursive delete, and
 `output: /var/tmp/x` would delete `/var/tmp/x`.
+
+**It is a default and not a rule, and that was measured rather than preferred.** A `source:` outside
+`docs/` REFUSED would turn away a product that has done nothing wrong. Measured over the same population
+si#159 and si#172 used - every manifest this kernel can reach: its own, the five in
+`simplon.surface.CONSUMERS`, and secure-windows-images - three of those seven declare a `site:` section
+and the three do not agree: cleon at `site`, biz-cockpit at `docs/website`, simplon at `docs/site`. Two of those three would
+fail on their first run with a kernel that insisted - an expression rule with no measured cause, which
+this platform declines to write ([the rules chapter](../../with-what/rules/) says why).
+
+By that same count the default serves none of the three, because all three name the key. It is for the
+**fourth**: the day your product gets a website, it writes four keys instead of five and lands on the
+convention without having had to read this page. Simplon itself is the first consumer - its own manifest
+leaves `source:` out, so the default is exercised by every `build docs` in the kernel's own repository
+rather than only by a test.
 
 {{< callout type="warning" >}}
 **`docs:site` writes into your working tree, on purpose.** A theme declared as a Hugo module means the
@@ -369,7 +389,7 @@ values and nothing else.
 
 ```yaml
 releases:
-  page: "site/content/when/releases.md"    # where the notes live, under the product root
+  page: "docs/site/content/when/releases.md"  # where the notes live, under the product root
   from: "0.4.0"                            # the first release that must have a section at all
   complete_from: "0.5.0"                   # the first section that must name every ticket in its range
 ```

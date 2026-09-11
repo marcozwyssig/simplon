@@ -243,7 +243,7 @@ jobs:
       # the upload below can read it - measured, see the task report; the image accepts a uid that does
       # not exist inside it, which is what makes the runner's 1001 no different from a developer's.
       #
-      # It also runs `hugo mod get` against the pinned theme, which WRITES site/go.mod and site/go.sum.
+      # It also runs `hugo mod get` against the pinned theme, which WRITES docs/site/go.mod and go.sum.
       # Both are committed and already agree with the pin, so the write is a no-op here - and there is
       # deliberately no "working tree clean" gate in this workflow to go red on it the day the pin moves
       # ahead of the file. Pinning the dependency is what makes the build reproducible; asserting that

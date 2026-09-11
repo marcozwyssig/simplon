@@ -33,7 +33,7 @@ from simplon.verdict import Verdict
 import sitepages
 from conftest import ROOT
 
-CONTENT = ROOT / "site" / "content"
+CONTENT = ROOT / "docs" / "site" / "content"
 
 #: The pages that have to carry the seam, and why each one. A page that stops carrying it goes red here
 #: rather than quietly becoming a page that used to explain something.

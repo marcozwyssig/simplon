@@ -1395,7 +1395,7 @@ def test_the_chapters_existing_anchors_still_resolve():
     rename one, and a heading is exactly the kind of thing an edit like this breaks silently."""
     # arrange: the anchors linked from elsewhere on the site, read off those pages rather than remembered
     linked = set()
-    for page in sorted((ROOT / "site" / "content").rglob("*.md")):
+    for page in sorted((ROOT / "docs" / "site" / "content").rglob("*.md")):
         for anchor in re.findall(r"\brules/#([a-z0-9-]+)", page.read_text(encoding="utf-8")):
             linked.add(anchor)
 
