@@ -23,7 +23,7 @@ an argument parser:
 ```yaml
 build:
   commands:
-    wheel: { task: "pkg:wheel", help: "Build the wheel." }
+    docs: { task: "docs:site", help: "Build the documentation website." }
 ```
 
 `simplon init` writes the launcher, and the launcher provisions its own virtual environment and installs
