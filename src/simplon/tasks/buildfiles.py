@@ -893,7 +893,7 @@ def _declared_targets(product: context.ProductContext) -> Mapping[str, Mapping[s
         return {}
     if not isinstance(section, Mapping):
         log.die(f"{where}: `{SECTION}:` must be a mapping - this kernel reads `{TARGETS_KEY}:` out of "
-                f"it and a {type(section).__name__} holds no keys at all. Everything else under "
+                f"it, got {type(section).__name__}, which holds no keys at all. Everything else under "
                 f"`{SECTION}:` is the product's own; the section is shared, not claimed (si#172)")
         raise SystemExit(1)
     declared = section.get(TARGETS_KEY)

@@ -169,8 +169,7 @@ def test_a_product_with_no_build_section_generates_its_files(monkeypatch, tmp_pa
 
 
 @pytest.mark.parametrize("section", [CLEON_BUILD, SWI_BUILD], ids=["cleon", "secure-windows-images"])
-def test_a_live_products_own_build_section_costs_the_generator_nothing(section, monkeypatch, tmp_path,
-                                                                      request):
+def test_a_live_products_own_build_section_costs_the_generator_nothing(section, monkeypatch, tmp_path):
     """si#172's proof standard, done literally: a real product `build:` section in a product that places
     `build:cmake-files`.
 
@@ -247,15 +246,22 @@ def test_a_products_own_targets_list_is_refused_and_told_to_rename(monkeypatch, 
     assert not written
 
 
-def test_a_build_section_that_cannot_hold_a_key_says_the_section_is_shared(monkeypatch, tmp_path):
-    """A `build:` that is a sequence - a product writing its build data as a list of steps.
+@pytest.mark.parametrize("section", [["generate", "compile"], 4], ids=["a list", "a scalar"])
+def test_a_build_section_that_cannot_hold_a_key_says_the_section_is_shared(section, monkeypatch,
+                                                                          tmp_path):
+    """A `build:` that holds no keys at all - a product writing its build data as a list of steps, or
+    as a single value.
 
     This refusal is right and its old wording was not: it said the section "must be a mapping holding
     `targets:`", which is the kernel claiming a section it shares. The section is the product's; what
-    the kernel may say is that it reads one key out of it and that a list holds no keys.
+    the kernel may say is that it reads one key out of it and that this value has none.
+
+    BOTH SHAPES ARE DRIVEN because the message interpolates `type(section).__name__` into a sentence,
+    and a sentence built around a type name is one an unmeasured case renders wrong - the first draft
+    of this wording said "a int holds no keys at all" for `build: 4`, and no test would have seen it.
     """
     # arrange / act
-    result, written = _run(monkeypatch, tmp_path, ["generate", "compile"])
+    result, written = _run(monkeypatch, tmp_path, section)
 
     # assert
     assert result.exit_code == 1, result.output
