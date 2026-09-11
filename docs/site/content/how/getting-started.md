@@ -29,7 +29,6 @@ directory when there is no remote yet.
 
 ## 3. What landed
 
-
     myctl.sh                                               the entry point (bash)
     myctl.cmd                                              the same entry point for cmd.exe
     myctl.yaml                                             the starter manifest
