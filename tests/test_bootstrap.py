@@ -57,6 +57,10 @@ _EXPECTED_FILES = {
     "fooctl.sh",
     "fooctl.cmd",
     "fooctl.yaml",
+    # si#155. The one rendered path a product may already own, so `write` treats it unlike the rest -
+    # appended to, never refused and never clobbered. tests/test_init_gitignore.py holds that behaviour
+    # and holds the block itself to git's verdict; here it is only part of the file set.
+    bootstrap.GITIGNORE,
     f"{BLOCK}/requirements.txt",
     f"{PKG}/__init__.py",
     f"{PKG}/__main__.py",
@@ -70,7 +74,8 @@ def test_render_produces_the_expected_minimal_file_set():
     # arrange / act
     rendered = bootstrap.render("fooctl")
 
-    # assert: exactly the two launchers (sh + cmd) + manifest + the orchestrator package wiring, nothing more
+    # assert: exactly the two launchers (sh + cmd) + manifest + .gitignore + the orchestrator package
+    # wiring, nothing more
     assert set(rendered) == _EXPECTED_FILES
 
 

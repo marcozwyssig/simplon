@@ -58,6 +58,7 @@ failing further down.
     myctl.sh                                               the entry point (bash)
     myctl.cmd                                              the same entry point for cmd.exe
     myctl.yaml                                             the starter manifest
+    .gitignore                                             what the kernel writes into your tree
     deploy/provision/orchestrator/requirements.txt         the host-venv deps, kernel pinned by version
     deploy/provision/orchestrator/src/python/orchestrator/
         __init__.py                                        the product package
@@ -66,7 +67,7 @@ failing further down.
         paths.py                                           the product-context wiring
         environments.py                                    the environment provider
 
-Nine files, and only two of them are yours to edit day to day: `myctl.yaml` and `cli.py`.
+Ten files, and only two of them are yours to edit day to day: `myctl.yaml` and `cli.py`.
 
 The block - the directory holding `.venv`, `requirements.txt` and `src/python/` - is a parameter, not a
 decree. `deploy/provision/orchestrator` is the default because it is where every product that adopted
@@ -83,6 +84,49 @@ identifier resolved on `PYTHONPATH`, not a location.
 
 Pass the same flag on a later refresh, and note that `--force` overwrites the launchers: a hand-edit
 does not survive one.
+
+### The `.gitignore`, and what it does not claim
+
+The kernel writes into your tree, so `init` writes the rules for what it writes. Without them the first
+`build deps` followed by `git status` offers you an 80 MB commit: the python profile installs pytest and
+mypy into the bind mount, because a `--user` container may write nothing else. And it arrives earlier
+than that - the launcher puts your orchestrator package on `PYTHONPATH` and the kernel imports it, so
+`./myctl.sh help` leaves a `__pycache__/` behind before you own a single command.
+
+The block is **appended once and never rewritten**. If your repository already has a `.gitignore` - which
+it usually does, since `init` lands at the repository root - your file keeps every byte and the block goes
+at the end; if the block's marker line is already there, the file is not touched at all, and `--force`
+does not change that. So edit it, reorder it, delete half of it: the next `init` leaves your version
+alone. The trade is that a stale block is never refreshed, which is the right way round for a file you
+own rather than the kernel.
+
+What it carries, and why each line is shaped the way it is:
+
+    /.simplon-toolchain/    the python profile's user base (80 MB)
+    /build/                 every build output the kernel names: logs, the run transcript, the fetched
+                            tool binaries, the hugo cache, docToolchain, dotnet's home, the nupkgs
+    /.gradle/               gradle's project-local state, written by `docs:render`
+    /tests/reports/         a gate's allure run, its junit xml and its verdict stamp
+    allure-results/         ... the two of those whose names hold wherever `reports:` points
+    allure-report/
+    __pycache__/            python's, wherever the kernel imported something
+
+The first four are anchored to the product root with a leading `/` because that is the only place the
+kernel writes them - and because `build/` without it would also hide a target directory named `build`,
+into which `build cmake-files` generates a `CMakeLists.txt` that is meant to be **committed**.
+
+Three things are deliberately absent:
+
+- **`.venv`, `.pytest_cache` and `.mypy_cache`.** Each of those tools writes its own `.gitignore` holding
+  `*` into the directory it creates, so git already cannot see them. That holds for the launcher's venv
+  wherever `--orch-dir` puts it, which is what makes one block right under both layouts.
+- **What the kernel generates to be committed**: the CMake files, the solution and its projects,
+  `nuget.config`, `deploy/completions/myctl.bash`, `.github/workflows/*.yml` and the generated CLI
+  module. They land among your sources and carry a `DO NOT EDIT` header, not an ignore rule.
+- **Paths only your manifest knows.** `docs:site` writes to the `output` you declare and reads the
+  `source` you declare, where hugo leaves a `resources/` cache; `docs:reference` writes the page you name.
+  None of those keys has a default - the kernel refuses the section rather than guessing - so a scaffolder
+  running before any of them exists cannot write their lines either. Those are yours.
 
 ### The starter manifest
 

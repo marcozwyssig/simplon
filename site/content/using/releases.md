@@ -31,6 +31,43 @@ it should no longer do, and a gate that had stopped covering what its name claim
 A minor rather than a patch: the state alphabet is a surface and one of its five characters changed,
 what a refusal says is a surface, and so is what a gate covers.
 
+### `simplon init` scaffolds a `.gitignore`, and three of its lines were never needed (si#155)
+
+`simplon init` wrote nine files and none of them told git what to hide, so the first `build deps`
+followed by `git status` offered an 80 MB commit: the python profile installs pytest and mypy into the
+bind mount, because a `--user` container may write nothing else. Driving a scaffolded product through
+`help`, `support toolchain python 3.12`, `build deps`, `build unit` and `build analyse` answers four
+untracked entries - and the first of them arrives from `help`, before the product owns a command:
+the launcher puts the orchestrator package on `PYTHONPATH` and the kernel imports it.
+
+**The list came first, not the rule**, because the kernel writes files on both sides of that line.
+si#102's `CMakeLists.txt`, `<product>.sln` and every `.csproj` carry a `DO NOT EDIT` header and are meant
+to be COMMITTED, as are `nuget.config`, the generated completions, the generated workflows and the
+generated CLI module. Those land among the sources and never under `build/`, which is why the block's
+first four rules are anchored with a leading `/`: unanchored, `build/` would also hide a target
+directory named `build` and with it a generated `CMakeLists.txt`. A test drives the real si#102
+generators over a real tree and asserts git can still see all eight files they write.
+
+**Three of the lines this repository has been telling products to add were never necessary.** The 0.10.0
+notes named `.simplon-toolchain`, `.mypy_cache` and `.pytest_cache` as "yours to add". Only the first is:
+`python -m venv`, pytest and mypy each drop a `.gitignore` holding `*` into the directory they create, so
+`git check-ignore -v` names each cache's own file as the rule that hides it. That is also what makes one
+block right under both si#130 layouts - the only path that could have moved with `--orch-dir` was the
+launcher's `.venv`, and it needs no rule anywhere.
+
+**It appends, and it never rewrites.** si#129 put `init` at the repository root, so the `.gitignore` it
+meets is usually somebody else's - refusing the whole scaffold over it would be wrong, and forcing over it
+would be si#110 again, where a scaffolder round-tripped a manifest through a plain yaml loader and
+forty-two comment lines did not come back. So the block is appended once, guarded by a marker line, and
+existing bytes are never read for structure. Edit it, reorder it, delete half of it and the next `init`
+leaves your version alone; `--force` does not reach it either. The cost is stated rather than hidden: a
+stale block is never refreshed, which is the right way round for a file the product owns.
+
+**The assertion is `git status --porcelain`, not a line in a file.** A pattern in the right file with the
+wrong anchoring ignores nothing and no `in body` check can tell. So the proof is a scaffolded product,
+committed, driven through the commands that write into it, with git asked what it can see - nothing - and
+then asked again about the files si#102 generates to be committed, all of which it still can.
+
 ### The manifest publishes which top-level names are already taken (si#159)
 
 `groups:` is refused when it names a group the platform's tree does not declare. Every other top-level key

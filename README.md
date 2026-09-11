@@ -65,11 +65,12 @@ path derived from it -- so nothing needs a hand-edit afterwards. Pass the same
 flag on a later refresh: `--force` overwrites the launchers, so an edit made by
 hand does not survive one.
 
-It writes nine files:
+It writes ten files:
 
     myctl.sh                                               the entry point (bash)
     myctl.cmd                                              the same entry point for cmd.exe
     myctl.yaml                                             the starter manifest
+    .gitignore                                             what the kernel writes into your tree
     deploy/provision/orchestrator/requirements.txt         the host-venv deps, kernel pinned by version
     deploy/provision/orchestrator/src/python/orchestrator/
         __init__.py                                        the product package

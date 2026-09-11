@@ -740,6 +740,109 @@ ENV_VAR = "@@ENV_VAR@@"
 PROVIDER = Provider(ENV_VAR, shim="./@@PRODUCT@@.sh", valid_backends=(LOCAL,))
 '''
 
+#: The file the block below goes into. Named rather than spelled inline, because three things key on it:
+#: the template map, the one branch in `write` that treats it unlike every other scaffolded file, and the
+#: test that drives a real `git check-ignore` over a scaffold.
+GITIGNORE = ".gitignore"
+
+#: The line that says the block is already here. Detection is a plain substring search for this, and a
+#: search is ALL that is ever done with it: nothing looks for a closing marker, because nothing ever
+#: rewrites what sits between two. A closing marker would be a promise to re-render the block later, and
+#: si#110 measured what that promise costs - `support:toolchain` round-tripped a product's manifest
+#: through `yaml.safe_dump` and forty-two comment lines went with it.
+GITIGNORE_MARKER = "# --- written by simplon ---"
+
+#: What the kernel puts in a product's tree, and therefore what a product must not be asked to discover
+#: on its first `git status` (si#155). MEASURED on a scaffolded product driven through `./<p>.sh help`,
+#: `support toolchain python 3.12`, `build deps`, `build unit` and `build analyse`: with no `.gitignore`
+#: at all, `git status --porcelain` answers
+#:
+#:     ?? .simplon-toolchain/
+#:     ?? deploy/provision/orchestrator/src/python/orchestrator/__pycache__/
+#:     ?? src/__pycache__/
+#:     ?? src/pydemo/__pycache__/
+#:
+#: - 80 MB of it the python profile's user base, and three of the four entries produced by a run nobody
+#: would call a build. The FIRST of them arrives from `./<product>.sh help`: the launcher puts the
+#: product's own orchestrator package on PYTHONPATH and the kernel imports it, so a product has an
+#: untracked directory before it has a command of its own.
+#:
+#: THE RULE IS NOT "IGNORE EVERYTHING THE KERNEL WRITES". Three populations are deliberately absent, and
+#: each absence was checked rather than reasoned about.
+#:
+#: * The paths that ALREADY IGNORE THEMSELVES. `python -m venv`, pytest and mypy each drop a `.gitignore`
+#:   holding `*` into the directory they create. Driven on the scaffolded product, `git check-ignore -v`
+#:   names each cache's OWN file as the rule that hides it, which is why `.pytest_cache` and
+#:   `.mypy_cache` are missing from the four lines above even though both directories are there. So
+#:   `<orch-dir>/.venv` (the launcher's), a pytest gate's `<suite>/.venv`, `.pytest_cache` and
+#:   `.mypy_cache` need no line from anybody. The 0.10.0 notes told a product to add three lines here;
+#:   two of the three were already unnecessary on the day they were written, and a block carrying them
+#:   would read as though it were doing that work.
+#: * The files the kernel GENERATES TO BE COMMITTED. si#102's `CMakeLists.txt` (the product root and
+#:   every target directory), `<product>.sln` and each `<target>.csproj` carry a `DO NOT EDIT` header
+#:   and land among the SOURCES, never under `build/`; so do `nuget.config`, `deploy/completions/
+#:   <product>.bash`, `.github/workflows/*.yml` and the generated CLI module. An ignore rule that
+#:   swallowed any of them would silently reverse a decided question, so a test drives the si#102
+#:   generator over a real tree and asserts git can still see every file it wrote.
+#: * What ANOTHER TOOL'S CONVENTION names and a product already ignores its own way. `bin/` and `obj/`
+#:   are MSBuild's, and any .NET product's ignore file carries them; unanchored here they would also
+#:   hide a `bin/` of shell scripts, which is a far more common directory than either.
+#:
+#: WHICH LINES ARE ANCHORED IS A MEASUREMENT TOO. A leading `/` pins a pattern to the product root; a
+#: bare name matches at every depth. The first four are written at the root and only there
+#: (`steplog`/`tools`/`site`/`docs`/`nuget` all build on `root / "build"`, `PYTHONUSERBASE=
+#: /src/.simplon-toolchain` over a root bind mount, `docs.GRADLE_STATE`, `testrun.REPORTS`), so they are
+#: anchored - and `build/` unanchored would additionally swallow a target directory named `build`, into
+#: which si#102 writes a `CMakeLists.txt` that is meant to be committed. The last three cannot be
+#: anchored: `allure-results`/`allure-report` keep their names under a `reports:` a product may move,
+#: and `__pycache__` lands wherever python imported something.
+#:
+#: WHAT IS NOT HERE AND CANNOT BE. Three kernel outputs sit at a path the MANIFEST names, and two of
+#: those keys have no default at all - `site: output:` and `site: source:` (hugo's `resources/` and its
+#: build lock live under the latter), and `docs:reference`'s `output`, which is why this kernel
+#: gitignores `site/content/using/commands.md` by hand. The kernel refuses those sections rather than
+#: guessing a path, so a scaffolder running before any of them exists cannot write their lines either.
+#: They are published on `using/getting-started.md` as the product's own; this constant is the part a
+#: scaffold can be sure of.
+_GITIGNORE = f"""\
+{GITIGNORE_MARKER}
+# Paths the kernel's own commands leave in this tree. Appended once and never rewritten, so edit,
+# reorder or delete any line and a later `simplon init` will leave your version alone.
+#
+# Not here on purpose: .venv, .pytest_cache and .mypy_cache each write their own `.gitignore` holding
+# `*`, so git already cannot see them; si#102's generated CMakeLists.txt / .sln / .csproj, the generated
+# completions, workflows and nuget.config are meant to be COMMITTED; and `bin/`/`obj/` belong to
+# MSBuild's ignore file rather than to this one.
+
+# `build deps` installs pytest and mypy into the bind mount, because a --user container may write
+# nothing else (si#121). Measured at 80 MB, 61 of them mypy's mypyc-compiled binary.
+/.simplon-toolchain/
+
+# Every build output the kernel names: build/logs/ (a log per step plus the run transcript, si#148),
+# build/tools/bin, build/hugo-cache, build/docToolchain, build/dotnet-home, build/nuget, and the
+# `cmake -B build` the C++ profile runs. Anchored, because a target directory named `build` is a source
+# tree and si#102 writes a committed CMakeLists.txt into it.
+/build/
+
+# gradle's project-local state, which docToolchain's own gradle writes during `docs:render`.
+/.gradle/
+
+# Where a test gate puts its allure run, its junit xml and its verdict stamp. This is the kernel's
+# DEFAULT for `suites: reports:`; a product that moves that key owns the line for the new place.
+/tests/reports/
+
+# The two of those whose names are fixed wherever `reports:` points, so a moved report directory still
+# does not put a run's results in front of a reviewer.
+allure-results/
+allure-report/
+
+# The kernel imports the product's orchestrator package on EVERY run, so `./<product>.sh help` leaves
+# one of these behind before the product has a command of its own. A containerised `build unit` adds one
+# per package it collects.
+__pycache__/
+"""
+
+
 def _templates(name: str, orch_dir: str) -> dict[str, str]:
     """The (relative POSIX path -> template) map for a product, BEFORE placeholder substitution."""
     pkg_dir = pkg_dir_for(orch_dir)
@@ -747,6 +850,7 @@ def _templates(name: str, orch_dir: str) -> dict[str, str]:
         f"{name}.sh": _render_launcher(name, "launch.sh.j2", orch_dir),
         f"{name}.cmd": _render_launcher(name, "launch.cmd.j2", orch_dir),
         f"{name}.yaml": _MANIFEST,
+        GITIGNORE: _GITIGNORE,
         f"{orch_dir}/requirements.txt": _REQUIREMENTS,
         f"{pkg_dir}/__init__.py": _INIT,
         f"{pkg_dir}/__main__.py": _MAIN,
@@ -827,6 +931,44 @@ def newline_for(rel: str) -> str:
     return CRLF if rel.endswith(_BATCH_SUFFIXES) else LF
 
 
+def apply_ignore_block(path: Path, block: str) -> bool:
+    """Put `block` into the `.gitignore` at `path` if the marker is not there yet; return whether it wrote.
+
+    THE ONE SCAFFOLDED FILE THAT IS NOT THE SCAFFOLD'S. `<product>.yaml`, the two launchers and the
+    generated package are the kernel's output, so `write` may refuse to clobber them and `--force` may
+    overwrite them. A `.gitignore` is a file the wider world already maintains - `simplon init` lands at
+    the repository ROOT now (si#129), and a repository being adopted onto simplon usually has one - so
+    both of those answers are wrong here: refusing would fail the whole scaffold over a file the scaffold
+    does not own, and forcing would delete the product's rules.
+
+    SO IT ONLY EVER APPENDS, and that is si#110's finding applied one file over. `support:toolchain`
+    round-tripped a product's manifest through `yaml.safe_load`/`safe_dump` and forty-two comment lines -
+    nearly every explanatory line the scaffold had written - did not come back. What replaced it keeps
+    every existing byte and splices. This does less than that and needs to: existing bytes are not read
+    for structure at all, only searched for the marker, so there is nothing here that a hand-edited,
+    reordered or partly deleted block can confuse. The block cannot be duplicated (the marker is the
+    guard), cannot be reordered into meaning something else (nothing looks at position) and cannot eat a
+    product's rules (nothing is rewritten). The cost is stated rather than hidden: a block that goes
+    stale is never refreshed, which is the correct trade for a file the product owns - the current list
+    is published on `using/getting-started.md`.
+
+    `--force` does not reach this, deliberately. Forcing a re-scaffold is how somebody refreshes a
+    launcher they hand-edited; it must not be how they discover their ignore rules are gone.
+    """
+    if not path.exists():
+        path.write_text(block, encoding="utf-8", newline=LF)
+        return True
+    text = path.read_text(encoding="utf-8")
+    if GITIGNORE_MARKER in text:
+        return False
+    # Close a last line the product left open, then one blank line, so the block never lands glued to
+    # somebody's final rule - `foo.log# --- written by simplon ---` is not a comment, it is a pattern.
+    lead = ("" if text.endswith("\n") else "\n") + "\n" if text else ""
+    with path.open("a", encoding="utf-8", newline=LF) as handle:
+        handle.write(lead + block)
+    return True
+
+
 def write(name: str, target: Path, *, force: bool = False, orch_dir: str = DEFAULT_ORCH_DIR) -> list[Path]:
     """Render the skeleton and write it under ``target``, returning the written paths (sorted). Creates parent
     dirs; sets the shim executable (0o755). Refuses to overwrite an existing file unless ``force`` - a fresh
@@ -839,6 +981,10 @@ def write(name: str, target: Path, *, force: bool = False, orch_dir: str = DEFAU
     # render() validates `orch_dir`, and it does so before any directory is created: a refused path must
     # leave no half-scaffold behind.
     files = render(product, orch_dir=orch_dir)
+    # Taken OUT of the clobber rule and out of the write loop both, because it is the one rendered path
+    # the product may already own - see `apply_ignore_block`. Leaving it in would mean a scaffold into
+    # any existing repository refuses everything over a file the scaffold is not entitled to anyway.
+    ignore_block = files.pop(GITIGNORE)
     shim = shim_relpath(product)
 
     existing = sorted(rel for rel in files if (target / rel).exists())
@@ -854,6 +1000,10 @@ def write(name: str, target: Path, *, force: bool = False, orch_dir: str = DEFAU
         path.write_text(content, encoding="utf-8", newline=newline_for(rel))
         path.chmod(0o755 if rel == shim else 0o644)
         written.append(path)
+    # After the loop: the target directory exists by now even on a scaffold into a fresh `./<product>/`.
+    # No chmod either - on a file that was already there it would change a mode nobody asked about.
+    if apply_ignore_block(target / GITIGNORE, ignore_block):
+        written.append(target / GITIGNORE)
     return sorted(written)
 
 
@@ -966,8 +1116,12 @@ def main(argv: list[str] | None = None) -> int:
                   f"rather than in a subdirectory (pass --dir to change that)", file=sys.stderr)
         else:
             print(f"simplon init: writing it to {target}, as --dir asks", file=sys.stderr)
+    # Read BEFORE the write, because afterwards the three outcomes are indistinguishable from the tree:
+    # a `.gitignore` holding the block looks the same whether this run created it, appended it, or found
+    # it there. A scaffolder that touches a file the product maintains has to say which of those it did.
+    had_ignore = (target / GITIGNORE).exists()
     try:
-        write(product, target, force=args.force, orch_dir=orch_dir)
+        written = write(product, target, force=args.force, orch_dir=orch_dir)
     except (FileExistsError, ValueError) as exc:
         # ValueError as well as FileExistsError, and it is not a formality: `write` -> `render` ->
         # `released_pin` raises one when this kernel's version cannot be reduced to something a
@@ -981,6 +1135,14 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
+    if not had_ignore:
+        pass  # a fresh .gitignore is part of the file list next_steps' caller already sees
+    elif (target / GITIGNORE) in written:
+        print(f"simplon init: appended simplon's ignore block to the {GITIGNORE} that was already there; "
+              f"nothing in it was rewritten", file=sys.stderr)
+    else:
+        print(f"simplon init: the {GITIGNORE} already carries simplon's block, so it was left untouched",
+              file=sys.stderr)
     print(next_steps(product, target, orch_dir=orch_dir))
     return 0
 
