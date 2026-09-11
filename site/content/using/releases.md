@@ -455,6 +455,16 @@ count, whichever is smaller. Four because the work in a fan is whole subprocesse
 every core they can find, so the number is about how many daemons and caches are in flight rather than
 about CPUs.
 
+**Two defects a code review found, both of them the same shape as the one this feature refuses.** A fan
+in which two branches raise at the same time re-raised one and dropped the other with no trace anywhere;
+an exception carries one cause, so the ones that are not raised are logged. And a raise in the MIDDLE of
+a fan used to swallow the output of the branches after it - the flusher stopped at the hole the crashed
+step left, so a step that had run to completion and captured its output contributed nothing to the log.
+The buffering that makes a fan readable would have destroyed exactly the evidence a crash needs. A fan
+now flushes what it has when it ends, and names the hole rather than skipping over it. The remaining
+half - a step that raises is left in `RUNNING` for ever, and the run then loses its tree, its failure
+report and its transcript - is older than this change and is tracked as si#182.
+
 **The output was the half expected to hurt, and only one of the two runners felt it.** In the TUI it
 needed nothing: si#144 had already put each step's own lines in `Step.live`, so a second stream is a
 second backlog and the pane shows the highlighted one. si#148's status bar had been built plural on

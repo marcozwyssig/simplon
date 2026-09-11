@@ -1370,19 +1370,44 @@ def _run_fan(fan: Fan, run: _Run) -> None:
         except BaseException as exc:   # noqa: BLE001 - re-raised on the calling thread below
             faults.append(exc)
 
-    threads = [threading.Thread(target=branch, args=(schedule,), name=f"simplon-branch-{n}", daemon=True)
+    # ONE THREAD PER BRANCH, and the bound is on the STEPS rather than on the threads - so a fan of forty
+    # creates forty threads of which at most `max_parallel()` are doing anything. That is the tradeoff,
+    # named rather than discovered: a bounded pool would create four, and it would deadlock the moment a
+    # branch containing a nested fan held a worker while waiting for workers its children cannot get. A
+    # blocked thread costs a stack and nothing else; a deadlocked plan costs the run.
+    threads = [threading.Thread(target=branch, args=(schedule,),
+                                name=f"simplon-fan{indices[0]}-branch{n}", daemon=True)
                for n, schedule in enumerate(fan.branches)]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
     run.hooks.on_fan_end(indices)
+    # EVERY fault is named and only the first is raised (si#147, code review). An exception can carry one
+    # cause, so a second branch raising at the same time has nowhere to go in the traceback - and dropping
+    # it is the silent partial failure this whole function's docstring refuses to accept, applied to
+    # itself. The ones that are not raised are logged, so a run with two broken branches says two things
+    # rather than one.
+    for extra in faults[1:]:
+        log.warn(f"{run.pipeline.name}: another branch of this fan raised at the same time and is not "
+                 f"the exception below: {extra!r}")
     if faults:
         raise faults[0]
 
 
 def _run_step(index: int, run: _Run) -> None:
     step = run.pipeline.steps[index]
+    # A step already doomed when its branch reaches it is skipped WITHOUT taking a permit (si#147, code
+    # review). The authoritative check is the one below, under the permit, because a failure can land
+    # while this step waits for one; this is a fast path, not a second decision. Without it, the 36
+    # doomed steps of a bounded fan of 40 each queue for a permit in order to do nothing, and the run's
+    # verdict arrives one finishing step at a time.
+    with run.lock:
+        already_doomed = run.aborted.get(index)
+    if already_doomed is not None:
+        step.state = StepState.SKIPPED
+        run.hooks.on_skip(index, already_doomed)
+        return
     with run.permits:      # the bound, held only while the step RUNS - never while a branch waits
         with run.lock:
             reason = run.aborted.get(index)
@@ -1491,7 +1516,7 @@ class _HeadlessOutput:
             still_open = self.depth > 0
         if still_open:
             return
-        self._flush()
+        self._flush(final=True)
 
     def _buffering(self, index: int) -> bool:
         with self.lock:
@@ -1542,23 +1567,41 @@ class _HeadlessOutput:
         else:
             log.warn(f"{self._title(index)} - failed (rc {step.rc})")
 
-    def _flush(self) -> None:
-        """Print every leading step of the fan that is done, in plan order.
+    def _flush(self, final: bool = False) -> None:
+        """Print every leading step of the fan that is done, in plan order. `final` says the fan is over,
+        so a step that has not finished never will.
 
         ONE FLUSHER AT A TIME (`flushing`), because two branches can finish within microseconds of each
         other and a block is not one write. A second flusher that merely took the next index would print
         into the middle of the first one's block. Waiting rather than skipping: the waiting thread then
         prints whatever became ready, so a block is never left sitting because somebody else was busy.
 
+        THE `final` PASS EXISTS BECAUSE OF A RAISE (si#147, code review). A step's action that raises never
+        reaches `on_finish`, so mid-fan it leaves a hole in the plan order - and a flusher that stops at
+        the first unfinished index would then never print the branches AFTER it, however much output they
+        had already captured and however successfully they ran. Three steps, the middle one raising, and
+        the log showed the first one only: the buffering that makes a fan readable would have destroyed
+        exactly the evidence a crash needs. At the end of a fan nothing more can arrive, so the remaining
+        finished blocks are printed in plan order and the hole is NAMED rather than skipped over - an
+        absent block that says nothing is the same defect one step further on.
+
         The BOOKKEEPING lock is taken and released per step rather than held across the printing, so a
         block of thousands of lines does not stall the other branches' `on_line` for its duration."""
         with self.flushing:
             while True:
                 with self.lock:
-                    if not self.pending or self.pending[0] not in self.finished:
+                    if not self.pending:
                         return
-                    index, self.pending = self.pending[0], self.pending[1:]
-                    reason, held = self.finished[index], self.lines.get(index, [])
+                    index = self.pending[0]
+                    unfinished = index not in self.finished
+                    if unfinished and not final:
+                        return
+                    self.pending = self.pending[1:]
+                    reason = "" if unfinished else self.finished[index]
+                    held = self.lines.get(index, [])
+                if unfinished:
+                    log.warn(f"{self._title(index)} - no verdict: it was still running when the fan ended")
+                    continue
                 if reason:
                     log.warn(f"{self._title(index)} - skipped ({reason})")
                     continue

@@ -32,9 +32,11 @@ from simplon.orchestrator.steps import (
     failure_report,
     max_parallel,
     overall_rc,
+    parallel_siblings,
     run_headless,
     run_plan,
     schedule_for,
+    schedule_indices,
     status_line,
 )
 
@@ -184,8 +186,13 @@ def test_a_pipeline_with_no_usable_tree_is_sequential_whatever_a_manifest_said()
 # --- the clock: max rather than sum ------------------------------------------------------------------
 
 
-def test_a_fan_of_sleeping_steps_takes_the_max_where_the_same_plan_in_order_takes_the_sum():
-    # Arrange: the SAME three sleeping steps, once ordered and once fanned
+def test_a_fan_of_sleeping_steps_takes_the_max_where_the_same_plan_in_order_takes_the_sum(monkeypatch):
+    # Arrange: the SAME three sleeping steps, once ordered and once fanned. The bound is PINNED, because
+    # the default is `min(4, cpu_count())` and this assertion needs three permits to hold - on a one- or
+    # two-core runner, which is an ordinary CI container, the ambient default would make the fan take the
+    # sum and the test would fail for a reason that has nothing to do with the code. Reproduced red at
+    # SIMPLON_MAX_PARALLEL=2 (code review), so this is a measured fix and not a precaution.
+    monkeypatch.setenv("SIMPLON_MAX_PARALLEL", "3")
     sequential = _planned(_manifest(_FAN_MANIFEST, parallel=False), "images", action=_sleeper(_SLEEP))
     parallel = _planned(_manifest(_FAN_MANIFEST, parallel=True), "images", action=_sleeper(_SLEEP))
     # Act
@@ -214,7 +221,8 @@ def test_the_join_waits_for_every_branch_before_the_step_after_the_fan_starts():
     pipeline = _planned(_manifest(_FAN_MANIFEST, parallel=True), "build", action=action_for)
     # Act
     run_plan(pipeline)
-    # Assert: every image had ENDED before verify started. The join is not a claim about the schedule's
+    # Assert: every image had ENDED before verify started. True at any bound - a join that waited for
+    # only the branches that happened to fit would be the defect - so this one does not pin it. The join is not a claim about the schedule's
     # shape - it is this inequality, which is the only thing a step after a fan actually needs.
     latest_end = max(step.ended_at or 0.0 for step in pipeline.steps if step.label != "verify")
     assert began_at and began_at[0] >= latest_end
@@ -497,3 +505,93 @@ def test_the_hooks_report_every_step_exactly_once_whichever_branch_it_ran_on():
     assert [i for i, _ in skipped] == [3]
     assert "stopped on a failure" in skipped[0][1]
     assert fans == [(0, 1, 2)]
+
+
+# --- the shapes a code review found untested ---------------------------------------------------------
+
+_NESTED_FAN_MANIFEST = """
+tasks:
+  a1: { impl: "demo.impls:a1", help: "Inner one." }
+  a2: { impl: "demo.impls:a2", help: "Inner two." }
+  b: { impl: "demo.impls:b", help: "The inner fan's sibling." }
+  tail: { impl: "demo.impls:tail", help: "After everything." }
+
+groups:
+  build:
+    commands:
+      a1: { task: "a1" }
+      a2: { task: "a2" }
+      b: { task: "b" }
+      tail: { task: "tail" }
+      inner: { help: "Two at once.", depends_on: ["a1", "a2"], parallel: true }
+      outer: { help: "The inner fan beside b.", depends_on: ["inner", "b"], parallel: true }
+      whole: { help: "Then the tail.", depends_on: ["outer", "tail"] }
+env_groups: []
+"""
+
+
+def test_a_fan_inside_a_fan_nests_rather_than_flattening_and_still_joins():
+    # Arrange: `outer` runs [a1,a2] beside b; `whole` runs tail after all of it
+    pipeline = _planned(_NESTED_FAN_MANIFEST, "whole", action=_sleeper(_SLEEP))
+    # Act
+    schedule = schedule_for(pipeline)
+    run_plan(pipeline)
+    # Assert: the shape nests - the inner fan is a BRANCH of the outer one, not three peers - and every
+    # index is still accounted for once. Both `_HeadlessOutput.depth` and `parallel_siblings` were
+    # written for this and neither was exercised by a test until a code review said so.
+    assert schedule == (Fan((((Fan(((0,), (1,))),)), (2,))), 3)
+    assert schedule_indices((schedule[0],)) == (0, 1, 2)
+    # ... a1, a2 and b are all siblings for abort purposes, the tail is nobody's
+    siblings = parallel_siblings(schedule)
+    assert siblings[0] == frozenset({1, 2}) and siblings[2] == frozenset({0, 1})
+    assert siblings[3] == frozenset()
+    # ... and the join still held: the tail started after everything above it ended
+    latest = max(step.ended_at or 0.0 for step in pipeline.steps[:3])
+    assert (pipeline.steps[3].started_at or 0.0) >= latest
+
+
+def test_two_branches_raising_at_once_name_both_and_raise_one(capsys):
+    # Arrange: two of the three branches blow up in the same instant
+    def action_for(name: str):
+        def action() -> Outcome:
+            if name in ("a", "b"):
+                raise RuntimeError(f"{name} blew up")
+            return Outcome(rc=0, output="")
+        return action
+
+    pipeline = _planned(_manifest(_FAN_MANIFEST, parallel=True), "images", action=action_for)
+    # Act
+    with pytest.raises(RuntimeError, match="blew up"):
+        run_plan(pipeline)
+    printed = capsys.readouterr().out
+    # Assert: an exception carries ONE cause, so the second has nowhere to go in the traceback - and
+    # dropping it would be the silent partial failure this feature refuses elsewhere. It is logged.
+    assert "another branch of this fan raised at the same time" in printed
+    assert ("a blew up" in printed) or ("b blew up" in printed)
+
+
+def test_a_branch_that_raises_does_not_swallow_the_output_its_siblings_already_produced(capsys):
+    # Arrange: three streamed steps in a fan; the MIDDLE one raises after the first has finished
+    text = _manifest(_FAN_MANIFEST, parallel=True)
+    tree = manifest_load(text).plan_tree_for("images")
+
+    def stream_for(name: str):
+        def stream(emit) -> Outcome:
+            emit(f"{name} did useful work")
+            if name == "b":
+                raise RuntimeError("b blew up")
+            return Outcome(rc=0, output=f"{name} did useful work")
+        return stream
+
+    steps = [Step(label=leaf.name, command=leaf.path, stream=stream_for(leaf.name))
+             for leaf in tree.leaves()]
+    # Act
+    with pytest.raises(RuntimeError, match="b blew up"):
+        run_headless(Pipeline("images", steps, False, tree, tree.path))
+    printed = re.sub(r"\x1b\[[0-9;]*m", "", capsys.readouterr().out)
+    # Assert: `c` ran to completion and its output was already captured. A flusher that stopped at the
+    # hole `b` left would have thrown it away - the buffering that makes a fan readable destroying exactly
+    # the evidence a crash needs. Both the output AFTER the hole and the hole itself are in the log.
+    assert "a did useful work" in printed
+    assert "c did useful work" in printed, "the branch after the raising one was swallowed"
+    assert "build.b - no verdict" in printed, "the hole has to be named, not skipped over"

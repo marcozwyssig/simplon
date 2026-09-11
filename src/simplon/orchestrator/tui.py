@@ -879,6 +879,13 @@ class _StepApp(App):
         self.call_from_thread(self._repaint_status)
 
     def _step_skipped(self, i: int, reason: str) -> None:
+        # The ONE mutation in this class that is not routed through `call_from_thread`, and it is
+        # deliberate rather than an oversight (si#147, code review). It writes a dict the UI thread only
+        # READS, from the same thread that immediately afterwards calls `call_from_thread` - which blocks
+        # on the UI thread's reply, so the write is ordered before every read of it. Routing it through
+        # the UI thread as well would buy nothing and would put the reason one frame behind the row that
+        # needs it. `dict.setdefault` on an int key is one bytecode under CPython; a free-threaded build
+        # is what would end that, exactly as for `Step.live`.
         self._skipped_because.setdefault(id(self.pipeline.steps[i]), reason)
         self.call_from_thread(self._refresh_row, i)
         self.call_from_thread(self._maybe_refresh_details, i)    # -> the pane names the scope
