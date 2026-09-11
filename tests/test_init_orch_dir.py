@@ -105,7 +105,27 @@ def test_orch_dir_moves_the_whole_block_in_the_file_set():
         f"{SHORT}/src/python/orchestrator/cli.py",
         f"{SHORT}/src/python/orchestrator/paths.py",
         f"{SHORT}/src/python/orchestrator/environments.py",
+        bootstrap.GITIGNORE,
     }
+
+
+def test_the_ignore_block_says_nothing_the_orch_dir_could_move(tmp_path):
+    """si#155 meets si#130: a scaffolded `.gitignore` has to be right under BOTH layouts.
+
+    It is, and by construction rather than by luck - the block names no path under the block dir at all.
+    The one candidate was the launcher's `.venv`, and it needs no rule: `python -m venv` writes its own
+    `.gitignore` holding `*`, so the venv is invisible wherever `--orch-dir` puts it. This asserts the
+    absence, because a line added here later would be the first thing an overridden layout breaks.
+    """
+    # arrange / act: the two layouts si#130 names - the default, and the root-owning short form
+    default = bootstrap.render("democtl")[bootstrap.GITIGNORE]
+    short = bootstrap.render("democtl", orch_dir=SHORT)[bootstrap.GITIGNORE]
+
+    # assert: one text, not two, and neither spells either block dir
+    assert default == short
+    for block in (bootstrap.DEFAULT_ORCH_DIR, SHORT):
+        assert block.split("/")[0] not in [line for line in default.splitlines()
+                                           if line and not line.startswith("#")]
 
 
 def test_write_lands_the_block_on_disk_under_the_chosen_dir(tmp_path):
