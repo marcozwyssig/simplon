@@ -547,6 +547,51 @@ groups:
     assert mf.spec_for("build", "images").stop_on_failure is True
 
 
+def test_load_rejects_parallel_on_a_leaf():
+    # arrange: `parallel` says a command's DEPENDENCIES need not wait for each other (si#147), and a leaf
+    # has none - so the flag would be inert where it is written, the trap stop_on_failure and keep_awake
+    # are already rejected for
+    text = """
+tasks:
+  jar: { impl: "m:f", help: "x" }
+
+groups:
+  build:
+    commands:
+      jar: { task: "jar", parallel: true }
+"""
+
+    # act / assert
+    with pytest.raises(ValueError, match="command 'build.jar': parallel applies to an aggregate"):
+        manifest.load(text)
+
+
+def test_load_reads_parallel_on_an_aggregate_and_defaults_it_to_false():
+    # arrange: the negative half. The DEFAULT is the load-bearing one here - 466 of the 541 unordered leaf
+    # pairs across the reachable manifests would break if run together (si#147), so a manifest that says
+    # nothing has to keep meaning exactly what it meant.
+    text = ("""
+tasks:
+  a: { impl: "m:a", help: "x" }
+  b: { impl: "m:b", help: "x" }
+
+groups:
+  build:
+    commands:
+      a: { task: "a" }
+      b: { task: "b" }
+      images: { help: "y", depends_on: ["a", "b"], parallel: true }
+      chain:  { help: "z", depends_on: ["a", "b"] }
+""")
+
+    # act
+    mf = manifest.load(text)
+
+    # assert
+    assert mf.spec_for("build", "images").parallel is True
+    assert mf.spec_for("build", "chain").parallel is False
+
+
 # --- rule 6: in-plan agreement on stop_on_failure (netctl#1319) -------------------------------------
 # The shape the ticket names: `first` (unflagged) and `guarded` (flagged) both declare `shared`, and one
 # plan - `run.root` - reaches both. The spanning tree plans `shared` under whichever of the two the DFS

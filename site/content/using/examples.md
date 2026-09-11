@@ -265,6 +265,11 @@ aborts its own phases while the `test all` that planned it carries on to the nex
 flag declared per aggregate has to mean - and it is why the default is off: run every step, take the
 worst return code, and see the whole picture once instead of one failure at a time.
 
+**Siblings run in list order unless you say otherwise.** That is how one step is made to follow another,
+and it is why `parallel: true` exists: a command whose dependencies genuinely do not need each other
+declares it, they run at the same time, and whatever comes after them waits for all of them. The machine,
+not the manifest, decides how many run at once - `SIMPLON_MAX_PARALLEL`, default four.
+
 If a long pipeline keeps getting interrupted by the host going to sleep, that is `keep_awake: true` on
 the aggregate. It is declared there rather than on each leaf so the inhibitor also spans the *gaps*
 between steps, which is where an idle timer actually fires.

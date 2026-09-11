@@ -5,10 +5,17 @@ runner (steps.run_headless) when stdout is not a TTY (CI, piped) or when Textual
 stay clean and the real subprocess exit codes still drive pass/fail. The overall exit code always comes from
 steps.overall_rc, never from the UI state.
 
-The tree's ROWS are display only (netctl#1276): execution still walks the flat `pipeline.steps` list in
-order, and an aggregate row is never run - its state is derived from the children below it (steps.Row.state).
-The PLAN behind them is not purely display: a failure asks `steps.abort_after` which of the remaining steps
-its subtree takes down with it (netctl#1317).
+The tree's ROWS are display only (netctl#1276): an aggregate row is never run - its state is derived from
+the children below it (steps.Row.state). The PLAN behind them is not display at all. It decides the ORDER
+(`steps.schedule_for`, si#147: one step after another unless a node declares `parallel:`, in which case its
+subtrees run at the same time and whatever follows joins them) and it decides what a failure takes down
+(`steps.abort_after`, netctl#1317). Both live in `steps`, so this runner and the headless one cannot
+disagree about either; what is here is the rendering.
+
+TWO STEPS AT ONCE NEEDED NOTHING NEW IN THE PANE, which is worth stating because it was the half expected
+to hurt. si#144 put a step's own lines in `Step.live` and `_on_line` writes only the HIGHLIGHTED step's,
+so a second stream lands in a second backlog and the reader picks one - the shape was already per-step.
+What did have to change is FOLLOWING: see `_follow_to`.
 """
 from __future__ import annotations
 
@@ -17,9 +24,10 @@ from datetime import datetime
 from typing import Iterable
 
 from . import steps as steps_module
-from .steps import (STATE_ICON, Emit, Pipeline, Row, Step, StepState, abort_after, build_rows,
-                    failure_report, format_duration, omitted_note, overall_rc, run_headless,
-                    status_line, step_header, write_run_transcript)
+from .steps import (STATE_ICON, Pipeline, Row, RunHooks, Step, StepState, build_rows,
+                    failure_report, format_duration, omitted_note, overall_rc,
+                    parallel_siblings, run_headless, run_plan, schedule_for, status_line,
+                    step_header, write_run_transcript)
 
 
 def run_pipeline(pipeline: Pipeline) -> int:
@@ -143,6 +151,11 @@ class _StepApp(App):
         # step". Filled on mount, when the nodes exist.
         self._chain_nodes: dict[int, tuple[TreeNode, ...]] = {}
         self._chain_rows: dict[int, tuple[Row, ...]] = {}
+        # The steps that start BESIDE another one (si#147), read off the schedule before anything runs.
+        # Follow mode consults it and nothing else does; see `_follow_to` for why membership rather than
+        # "is something else running" is the question, and `steps.parallel_siblings` for how it is built.
+        self._fanned = {index for index, beside in parallel_siblings(schedule_for(pipeline)).items()
+                        if beside}
         # Per SKIPPED step (by identity), why it will not run - the same `Abort.reason` the headless runner
         # prints. Without it the TTY operator sees a bare ⊘ and never learns which subtree decided, which is
         # the whole content of a subtree-scoped stop (netctl#1317). Keyed by the Step rather than its index
@@ -621,19 +634,6 @@ class _StepApp(App):
         if following_the_tail:
             rlog.scroll_end(animate=False)
 
-    def _emitter(self, i: int) -> Emit:
-        """Step `i`'s live-line callback.
-
-        A method rather than the `lambda line, i=i:` it replaces. The default-argument trick was there to
-        bind the loop variable per iteration, which a parameter does anyway - and it cost the checker the
-        lambda's type entirely, so nothing verified that what `Step.run` is handed matches `Emit`. Now it
-        does, and the capture is a call frame instead of a mutable default.
-        """
-        def emit(line: str) -> None:
-            self.call_from_thread(self._on_line, i, line)
-
-        return emit
-
     def _maybe_refresh_details(self, i: int) -> None:
         cursor = self._cursor_row()
         if cursor is not None and cursor in self._chain_rows.get(i, ()):
@@ -659,12 +659,37 @@ class _StepApp(App):
     # ---------------------------------------------------------------- following, finding, filtering
 
     def _follow_to(self, index: int) -> None:
-        """Take the cursor to step `index`'s row, if following is on and that row is on screen.
+        """Take the cursor to step `index`'s row as it starts, if following is on and that step is not
+        one of several starting together.
+
+        FOLLOWING STOPS AT A FAN, and that is si#147's one change to si#148's follow mode. "The cursor
+        goes to each step as it starts" reads as one sentence only while one step starts at a time: with
+        eight images starting together it is eight cursor moves inside a second, each one taking the pane
+        away from a stream the reader had just been given, and the row it ends on is whichever thread the
+        OS scheduled last. A run whose cursor lands somewhere different each time is not a feature.
+
+        Refusing on MEMBERSHIP of a fan rather than on "is anything else running" is what makes it
+        deterministic: the second condition is a race between two threads that start microseconds apart,
+        so the same plan would follow into the fan on one machine and not on the next. Membership is read
+        off the schedule before anything runs.
+
+        So a fan leaves the cursor where it is - which is usually the aggregate above it, whose pane
+        lists every child with its state and repaints as they finish, the one view that can show a fan at
+        all. The status bar names what is running and has been plural since si#148, and `f`
+        (`action_follow`) still goes to a running step on demand. A sequential plan is unaffected: no
+        step is in a fan, so every start follows exactly as before.
 
         A row hidden by the current filter has no chain, so this is a no-op for it rather than a jump to
         something else - the operator filtered it away on purpose, and the bar goes on naming it."""
-        if not self._follow:
+        if not self._follow or index in self._fanned:
             return
+        self._move_cursor_to(index)
+
+    def _move_cursor_to(self, index: int) -> None:
+        """Put the cursor on step `index`'s row and record that the app - not the operator - moved it.
+
+        Shared by the automatic follow above and the explicit `f`, because the refusal that belongs to
+        automatic following (a fan) must NOT reach the key an operator pressed to see a running step."""
         chain = self._chain_nodes.get(index, ())
         if not chain:
             return
@@ -681,7 +706,9 @@ class _StepApp(App):
         running = next((i for i, step in enumerate(self.pipeline.steps)
                         if step.state == StepState.RUNNING), None)
         if running is not None:
-            self._follow_to(running)
+            # `_move_cursor_to`, not `_follow_to`: the latter declines to enter a fan, and an operator who
+            # pressed `f` while eight images run is asking to be taken to one of them (si#147).
+            self._move_cursor_to(running)
         self.notify("following the running step", timeout=3)
 
     def action_next_failure(self) -> None:
@@ -820,38 +847,42 @@ class _StepApp(App):
 
     @work(thread=True)
     def _run_steps(self) -> None:
-        # The doomed step indices, not a `stopped` latch: a failure aborts the SUBTREE that declared
-        # stop_on_failure (netctl#1317), so the steps after it may be that subtree's siblings and still run.
-        aborted: set[int] = set()
-        for i, step in enumerate(self.pipeline.steps):
-            if i in aborted:
-                step.state = StepState.SKIPPED                      # its subtree stopped: do not run it
-                self.call_from_thread(self._refresh_row, i)
-                self.call_from_thread(self._maybe_refresh_details, i)   # -> the pane names the scope
-                self.call_from_thread(self._repaint_status)
-                continue
-            step.state = StepState.RUNNING
-            step.started_at = steps_module.clock()   # so the bar and the row count from HERE, not from
-            # the moment `Step.run` is reached: `_begin_details` and a repaint sit between the two, and a
-            # counter that started after them would under-report every step by that much. `Step.run` sets
-            # it again from the same clock, which is idempotent to within those microseconds.
-            self.call_from_thread(self._refresh_row, i)             # -> RUNNING shown
-            self.call_from_thread(self._follow_to, i)   # BEFORE the pane: `_begin_details` decides what to
-            # write from where the cursor IS, so moving it first is what makes the pane open on the step
-            # that just started instead of redrawing the aggregate the operator was left looking at.
-            self.call_from_thread(self._begin_details, i)
-            self.call_from_thread(self._repaint_status)
-            # stream lines live into the details pane (only rendered when this step is highlighted)
-            outcome = step.run(self._emitter(i))
-            self.call_from_thread(self._refresh_row, i)             # -> OK/FAILED
-            self.call_from_thread(self._maybe_refresh_details, i)
-            self.call_from_thread(self._repaint_status)
-            if not outcome.ok:
-                abort = abort_after(self.pipeline, i)
-                aborted |= abort.indices
-                for doomed in abort.indices:
-                    self._skipped_because.setdefault(id(self.pipeline.steps[doomed]), abort.reason)
+        """Drive the shared walk (si#147) and repaint what it reports.
+
+        The loop this replaced was the SECOND copy of that walk - the abort set, the skip marking, the
+        RUNNING/OK/FAILED transitions - and `run_headless` held the first. They agreed only because
+        somebody kept them agreeing, and a plan that declares `parallel:` is exactly the change that gets
+        made in one of them. What is left here is six callbacks, each one a repaint.
+
+        EVERY CALLBACK MAY ARRIVE ON A DIFFERENT THREAD. This worker is one thread; a fan runs its
+        branches on more, and they call these hooks directly. `call_from_thread` is what each of them
+        already did, and it is the right call from any thread that is not the UI's - which none of these
+        is."""
+        run_plan(self.pipeline, RunHooks(on_start=self._step_started, on_line=self._step_line,
+                                         on_finish=self._step_finished, on_skip=self._step_skipped))
         self.call_from_thread(self._on_done)
+
+    def _step_started(self, i: int) -> None:
+        self.call_from_thread(self._refresh_row, i)             # -> RUNNING shown
+        self.call_from_thread(self._follow_to, i)   # BEFORE the pane: `_begin_details` decides what to
+        # write from where the cursor IS, so moving it first is what makes the pane open on the step
+        # that just started instead of redrawing the aggregate the operator was left looking at.
+        self.call_from_thread(self._begin_details, i)
+        self.call_from_thread(self._repaint_status)
+
+    def _step_line(self, i: int, line: str) -> None:
+        self.call_from_thread(self._on_line, i, line)
+
+    def _step_finished(self, i: int) -> None:
+        self.call_from_thread(self._refresh_row, i)             # -> OK/FAILED
+        self.call_from_thread(self._maybe_refresh_details, i)
+        self.call_from_thread(self._repaint_status)
+
+    def _step_skipped(self, i: int, reason: str) -> None:
+        self._skipped_because.setdefault(id(self.pipeline.steps[i]), reason)
+        self.call_from_thread(self._refresh_row, i)
+        self.call_from_thread(self._maybe_refresh_details, i)    # -> the pane names the scope
+        self.call_from_thread(self._repaint_status)
 
     def _on_done(self) -> None:
         rc = overall_rc(self.pipeline)

@@ -1634,3 +1634,121 @@ def test_the_repaint_of_an_aggregate_does_not_drag_a_reader_back_to_the_bottom(m
     # assert
     assert found == 5, f"the test itself has to have scrolled, got {found}"
     assert after == found, f"a repaint must not move a reader who is not at the bottom, went to {after}"
+
+
+# --- si#147: two steps at once, and what the operator is looking at while they run --------------------
+
+_PARALLEL_MANIFEST = """
+tasks:
+  one: { impl: "demo.impls:one", help: "Image one." }
+  two: { impl: "demo.impls:two", help: "Image two." }
+
+groups:
+  build:
+    commands:
+      one: { task: "one" }
+      two: { task: "two" }
+      pair: { help: "Both images at once.", depends_on: ["one", "two"], parallel: true }
+env_groups: []
+"""
+
+
+def _parallel_pipeline(release):
+    """Two streaming steps that both emit a line of their own and then block until `release` is set - so
+    the test can read the screen with BOTH of them genuinely in flight."""
+    tree = manifest_load(_PARALLEL_MANIFEST).plan_tree_for("pair")
+    steps = []
+    for leaf in tree.leaves():
+        lines: list[str] = []
+
+        def stream(emit, name=leaf.name, lines=lines) -> Outcome:
+            for n in range(3):
+                lines.append(f"{name} line {n}")
+                emit(f"{name} line {n}")
+            release.wait(10)
+            return Outcome(rc=0, output="\n".join(lines))
+
+        steps.append(Step(label=leaf.name, command=leaf.path, stream=stream, live=lines))
+    return Pipeline("pair", steps, False, tree, tree.path)
+
+
+async def _until_all_running(pilot, pipeline: Pipeline, tries: int = 250) -> None:
+    """Wait until every step of the fan is RUNNING - bounded, failing with a sentence rather than hanging,
+    exactly as `_until_running` argues for the single-step case."""
+    for _ in range(tries):
+        if all(step.state == StepState.RUNNING for step in pipeline.steps):
+            return
+        await pilot.pause(0.02)
+    raise AssertionError(f"not every step started: {[s.state for s in pipeline.steps]}")
+
+
+def test_a_second_step_starting_beside_the_first_does_not_take_the_cursor_away(monkeypatch):
+    """si#148's follow mode moves the cursor to each step as it starts, which reads as one sentence only
+    while one step starts at a time. With a fan it would be N cursor moves in a second, each one taking
+    the pane away from a stream the reader had just been given."""
+    import threading
+
+    release = threading.Event()
+    pipeline = _parallel_pipeline(release)
+
+    async def _drive():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _until_all_running(pilot, pipeline)
+            await pilot.pause()
+            cursor = app._cursor_row()
+            following = app._follow
+            # ... and `f` still takes an operator who asks for it to one of the running steps
+            app.action_follow()
+            await pilot.pause()
+            after_f = app._cursor_row()
+            release.set()
+            await app.workers.wait_for_complete()
+            return cursor, following, after_f
+
+    # act
+    cursor, following, after_f = asyncio.run(_drive())
+
+    # assert: the cursor stayed on the aggregate above the fan, whose pane lists every child with its
+    # state - the one view that can show two steps at once - and following is still on, because a fan is
+    # not the operator having navigated. Deterministic: the refusal is membership of a fan, not a race
+    # between two threads that started microseconds apart.
+    assert cursor is not None and cursor.label == "build.pair"
+    assert following is True
+    assert after_f is not None and after_f.label in ("build.one", "build.two")
+
+
+def test_two_running_steps_keep_their_own_backlogs_so_the_pane_shows_one_stream_at_a_time(monkeypatch):
+    """The output half of si#147, on the TUI side. It needed nothing new: si#144 put a step's own lines in
+    `Step.live` and `_on_line` writes only the HIGHLIGHTED step's, so a second stream lands in a second
+    backlog. This is the test that says so rather than the comment claiming it."""
+    import threading
+
+    release = threading.Event()
+    pipeline = _parallel_pipeline(release)
+
+    async def _drive():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _until_all_running(pilot, pipeline)
+            # arrange: the operator looks at the SECOND of the two running steps
+            _focus_line(app, 2)
+            await pilot.pause()
+            second = "\n".join(str(line) for line in _details_log(app).lines)
+            # act: ... and then at the first
+            _focus_line(app, 1)
+            await pilot.pause()
+            first = "\n".join(str(line) for line in _details_log(app).lines)
+            release.set()
+            await app.workers.wait_for_complete()
+            return first, second
+
+    # act
+    first, second = asyncio.run(_drive())
+
+    # assert: each pane holds its own step's lines and none of the other's - interleaved they would be
+    # unreadable, and dropped they would be invisible
+    assert "one line 2" in first and "two line" not in first
+    assert "two line 2" in second and "one line" not in second

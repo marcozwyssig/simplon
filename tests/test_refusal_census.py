@@ -216,6 +216,7 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("manifest", "_validate_taxonomy", "impl and depends_on are mutually exclusive"): EXPRESSION,
     ("manifest", "_validate_taxonomy", "passthrough_args cannot combine with depends_on"): DIAGNOSIS,
     ("manifest", "_validate_taxonomy", "stop_on_failure applies to an aggregate"): DIAGNOSIS,
+    ("manifest", "_validate_taxonomy", "parallel applies to an aggregate"): DIAGNOSIS,
     ("manifest", "_validate_taxonomy", "keep_awake applies to an aggregate's plan"): DIAGNOSIS,
     ("manifest", "_validate_taxonomy", "hidden has no effect on a group-default namesake"): DIAGNOSIS,
     # si#60: a nested group-default group answered `KeyError` out of `cli.assemble`. The refused
