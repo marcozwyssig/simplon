@@ -130,12 +130,25 @@ def _plan(step: str) -> tuple[str, ...]:
     A command that took an argument would be a real gap, and there is none in either workflow today; the
     generator writes `./simplon.sh <group> <command>` and si#40's `with:`-pinning is what keeps it that
     way.
+
+    A step that LOOKS like one and names a command the manifest does not carry is a third case, and it
+    fails loudly rather than resolving to `()`. Swallowing it would be the quiet defect: a typo would drop
+    the step out of every population below, the job would match no spelling in VERIFIES either, and the
+    whole file would go green over a workflow that runs nothing. `ci.yml` cannot reach that state -
+    `support workflows --check` regenerates it from this manifest - but `release.yml` is hand-written, so
+    the message is written out here rather than left as a traceback into the loader.
     """
     parts = step.split()
     if len(parts) != 3 or parts[0] != "./simplon.sh":
         return ()
     _, group, command = parts
-    return _loaded().plan_for(command, group=group)
+    try:
+        return _loaded().plan_for(command, group=group)
+    except ValueError as exc:
+        raise AssertionError(
+            f"a workflow step runs `{step}`, and simplon.yaml carries no such command: {exc}. Either the "
+            f"command was renamed and the workflow was not, or the workflow has a typo - a step that "
+            f"names nothing runs nothing, and no gate in this file can see it") from exc
 
 
 def _reached(runs: list[str]) -> set[str]:
@@ -252,7 +265,8 @@ def test_theLocalGateAggregateReachesTheGate() -> None:
     `typecheck-python` from this aggregate turns it red TODAY - only because no workflow has a second
     route to the gate. That is a fact about `ci.yml` and `release.yml` this week, not about the aggregate,
     and the day a job names both the rule goes quiet again. This asks the question directly, the way
-    `test_bothPipelinesMatchThePredicateItself` does for the predicate side, and it is also the ONLY
+    `test_bothPipelinesMatchThePredicateItself_soTheRuleAboveHasSomethingToRuleOn` does for the
+    predicate side, and it is also the ONLY
     assertion behind the local gate's own promise: `test all` is what a developer runs, and no workflow
     file has anything to say about that.
 
