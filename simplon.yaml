@@ -252,6 +252,11 @@ groups:
       # placement rather than a preference.
       workflows: { task: "support:workflows" }
 
+      claude-plugins:
+        task: "support:claude-plugins"
+        params:
+          dry_run: { help: "List what is missing and install nothing.", short: "-n" }      
+
 # The documentation website's data (#2). Four values here and a fifth taken from the kernel: `source:` is
 # ABSENT on purpose since si#183, so this manifest is the first consumer of the `docs/site` default rather
 # than a product that happens to agree with it. If the default ever stopped working, `build docs` in this
@@ -461,3 +466,18 @@ workflows:
     handwritten: >-
       two-thirds prose and two multi-line shell scripts (the on-main report of si#23, the
       wheel-is-the-tag check of si#3); declaring it would move that work rather than remove it
+
+claude:
+  marketplaces:
+    claude-plugins-official:     { source: github, repo: anthropics/claude-plugins-official }
+    alexgreensh-token-optimizer: { source: github, repo: alexgreensh/token-optimizer }
+  plugins:
+    - superpowers@claude-plugins-official
+    - feature-dev@claude-plugins-official
+    - code-review@claude-plugins-official
+    - code-simplifier@claude-plugins-official
+    - security-guidance@claude-plugins-official
+    - frontend-design@claude-plugins-official
+    - github@claude-plugins-official
+    - pyright-lsp@claude-plugins-official
+    - token-optimizer@alexgreensh-token-optimizer
