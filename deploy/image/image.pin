@@ -1,0 +1,24 @@
+# THE PUBLISHED KERNEL IMAGE this checkout runs when it is run as a container (si#200), and the file
+# si#201's launcher reads.
+#
+# WHY A FILE AND NOT A MANIFEST KEY. The launcher is bash. It has to know the image reference BEFORE any
+# Python exists to parse simplon.yaml with - that is the whole premise of the second route - so the pin
+# is a plain line a shell can read:
+#
+#     ref="$(grep -v '^[[:space:]]*#' deploy/image/image.pin | grep -v '^[[:space:]]*$' | head -n1)"
+#
+# WHAT THE LINE IS. One image reference, pinned to a version. Never ':latest': a launcher that pulled a
+# moving tag would run a different kernel tomorrow against the same checkout, and `docker.pinned_image`
+# refuses the shape for that reason everywhere else in this repository. tests/test_own_image.py holds
+# both halves - that the line is pinned, and that its registry and repository are the ones simplon.yaml
+# declares under `images: kernel:` - so the pin cannot drift from the image the release actually builds.
+#
+# WHEN IT MOVES. In the commit that publishes a new image. `release:image` is on demand rather than on
+# every release (simplon.yaml says why), so publishing and pinning are already one person's single act.
+#
+# THERE IS NO LINE YET, and that is a statement rather than an omission: no simplon image has been
+# published to Docker Hub at the time of writing. si#200 was proven end to end against a local
+# `registry:2` - built, pushed, read back, purged locally, pulled by version and run - and the Docker Hub
+# account it will live in does not exist on the machine that did that work, so writing a reference here
+# would be a claim nobody has checked. A launcher that finds no line must say exactly that: this checkout
+# has no published kernel image, so the container route is not available and the venv route is.

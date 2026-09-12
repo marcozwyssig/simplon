@@ -314,3 +314,82 @@ def test_user_args_is_empty_where_the_host_has_no_uid_concept(monkeypatch):
 
     # act / assert
     assert docker.user_args() == []
+
+
+# --- the stored docker credential, asked before a push (si#200) -----------------------------------------
+
+
+def _config(path, body):
+    """A `~/.docker/config.json` at `path`, as the docker CLI writes one."""
+    import json
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "config.json").write_text(json.dumps(body), encoding="utf-8")
+    return path
+
+
+def test_a_host_with_an_entry_in_the_docker_config_counts_as_logged_in(tmp_path, monkeypatch):
+    # arrange: what `docker login registry.example.com` leaves behind
+    monkeypatch.setenv("DOCKER_CONFIG", str(_config(tmp_path / "cfg",
+                                                    {"auths": {"registry.example.com": {"auth": "eA=="}}})))
+
+    # act / assert
+    assert docker.has_stored_login("registry.example.com") is True
+
+
+def test_a_host_the_config_says_nothing_about_is_not_logged_in(tmp_path, monkeypatch):
+    # arrange
+    monkeypatch.setenv("DOCKER_CONFIG", str(_config(tmp_path / "cfg",
+                                                    {"auths": {"ghcr.io": {"auth": "eA=="}}})))
+
+    # act / assert
+    assert docker.has_stored_login("docker.io") is False
+
+
+def test_with_no_config_file_at_all_there_is_no_credential(tmp_path, monkeypatch):
+    # arrange: a fresh host, or a CI runner that never logged in. The docker CLI reads this one file and
+    # nothing else, so there is nowhere else a credential could be hiding
+    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path / "nothing-here"))
+
+    # act / assert
+    assert docker.has_stored_login("docker.io") is False
+
+
+def test_docker_hub_is_found_under_the_index_key_the_cli_writes(tmp_path, monkeypatch):
+    # arrange: `docker login` does not store Docker Hub under 'docker.io'. It stores it under docker's own
+    # IndexServer constant, and a check that looked for the host name would refuse a host that IS logged in
+    monkeypatch.setenv("DOCKER_CONFIG", str(_config(
+        tmp_path / "cfg", {"auths": {"https://index.docker.io/v1/": {"auth": "eA=="}}})))
+
+    # act / assert
+    assert docker.has_stored_login("docker.io") is True
+    assert docker.has_stored_login("index.docker.io") is True
+
+
+def test_a_credential_helper_for_the_host_counts_as_a_credential(tmp_path, monkeypatch):
+    # arrange: the helper holds the secret and the config holds no `auths` entry at all
+    monkeypatch.setenv("DOCKER_CONFIG", str(_config(
+        tmp_path / "cfg", {"credHelpers": {"docker.io": "osxkeychain"}})))
+
+    # act / assert
+    assert docker.has_stored_login("docker.io") is True
+
+
+def test_a_global_credential_store_is_unknowable_here_so_it_does_not_refuse(tmp_path, monkeypatch):
+    # arrange: with a `credsStore` every credential lives in the helper, and the file says nothing about
+    # which hosts it holds. Refusing on that would be refusing on a guess, and a guess that stops a working
+    # publish is worse than no check
+    monkeypatch.setenv("DOCKER_CONFIG", str(_config(tmp_path / "cfg", {"credsStore": "desktop"})))
+
+    # act / assert
+    assert docker.has_stored_login("docker.io") is True
+
+
+def test_a_config_that_cannot_be_read_is_not_read_as_absence(tmp_path, monkeypatch):
+    # arrange: broken JSON says nothing about credentials either way
+    path = tmp_path / "cfg"
+    path.mkdir()
+    (path / "config.json").write_text("{not json", encoding="utf-8")
+    monkeypatch.setenv("DOCKER_CONFIG", str(path))
+
+    # act / assert
+    assert docker.has_stored_login("docker.io") is True

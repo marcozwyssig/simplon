@@ -64,6 +64,28 @@ groups:
           output: docs/site/content/with-what/acceptance.md
           title: "Acceptance scenarios"
       site: { task: "docs:site" }
+      # The kernel's own container image (si#200). simplon has carried `build:image` and `release:image`
+      # in the catalogue since #31 and had never placed either for itself - the same gap si#8 found in
+      # the type gate and si#89 in the notes guard, and the same repair: a step never run in its own
+      # house rots unseen. What made it urgent is si#199, which wants a product usable as a container
+      # beside the venv; that route needs an image to exist.
+      #
+      # `with: { name: kernel }` pins WHICH image, the shape every catalogue task with a `name` uses. One
+      # image today; a product with two declares two commands rather than making the caller remember a
+      # string.
+      #
+      # NO `--tag` ANYWHERE, and that is si#200's tag decision made visible: the task derives VERSION
+      # from `git describe` and stamps it into the image, and since si#200 the tag defaults to that same
+      # number. A `tag:` under `images:` below would be a second place to keep one version, which is the
+      # arrangement #3 deleted from pyproject.toml.
+      #
+      # IT CANNOT BE RUN FROM A LINKED GIT WORKTREE, and that is worth knowing before it is discovered:
+      # the wheel is built INSIDE the image, so the context has to carry a real `.git` - deploy/image/
+      # Dockerfile states it, guards it and names the fix.
+      image:
+        task: "build:image"
+        with:
+          name: kernel
       # The documentation website, as ONE command, and an impl-less AGGREGATE rather than a leaf (#2, task
       # 3). `reference` writes docs/site/content/with-what/commands.md by reading the assembled CLI; `site`
       # runs Hugo over docs/site/ and publishes into build/website/. The first WRITES a page the second READS, so
@@ -186,6 +208,23 @@ groups:
       # `dynamic = ["version"]`, setuptools-scm derives the number from the tag, and the tag is the
       # argument - so `./simplon.sh release tag v0.1.14` IS the whole act of choosing 0.1.14.
       tag: { task: "release:tag" }
+      # Publishing that image (si#200). ON DEMAND, not from release.yml, and the reason is a credential
+      # rather than a preference: this repository publishes to PyPI through Trusted Publishing and to
+      # Pages through OIDC, so it stores no registry secret at all today, and Docker Hub has no such
+      # route - an automatic publish would mean a long-lived Hub token in the repository's secrets,
+      # standing there between releases. That is the maintainer's decision to take deliberately rather
+      # than a side effect of this ticket. The two supporting reasons: nothing consumes the image until
+      # si#201's launcher does, and the pin in deploy/image/image.pin is committed by hand, so an
+      # automatic publish would push images no checkout points at.
+      #
+      # WHAT KEEPS IT FROM ROTTING is the ci.yml step that BUILDS it on every push (see `workflows:`
+      # below). Building needs no credential; publishing needs one. So the half that can be exercised on
+      # every commit is, and the half that cannot is the one an operator runs.
+      image:
+        task: "release:image"
+        with:
+          name: kernel
+
   support:
     commands:
       doctor: { task: doctor }
@@ -229,6 +268,29 @@ site:
   output: "build/website"
   base_url: "https://marcozwyssig.github.io/simplon/"
   theme: "github.com/imfing/hextra@v0.12.3"
+
+# The container image simplon builds of itself (si#200), read by `build:image` / `release:image`.
+#
+# THE REGISTRY IS DOCKER HUB, and it is the first thing this family publishes anywhere but GitHub. That
+# is a constraint rather than a detail: `githubpackages.is_github_packages` exists to stop the GitHub
+# credential reaching any other host - its own docstring records a token that leaked into a repository's
+# history - so the token this kernel mints is not available here, by design. The credential for this
+# registry is the one `docker login docker.io` stored, the kernel reads no secret of its own for it, and
+# since si#200 a push with no stored credential is REFUSED by name instead of attempted and answered by
+# `denied: requested access to the resource is denied`.
+#
+# NO `tag:`. See the `build image` command above: the tag is the derived VERSION, and a constant here
+# would be a second place to keep one number.
+#
+# `context: .` is the product root because the wheel is built INSIDE the image from this tree, which is
+# what makes the image buildable at any commit rather than only after a PyPI release. The root
+# .dockerignore says what that costs and what it keeps (`.git`, on purpose).
+images:
+  kernel:
+    registry: docker.io/marcozwyssig
+    repository: simplon
+    dockerfile: deploy/image/Dockerfile
+    context: .
 
 # The release notes' three values (si#89), and there is nothing else the kernel may know about them.
 #
@@ -321,6 +383,16 @@ workflows:
               way is the fix. What it checks and what it excuses is stated in mypy.ini, not here.
             command: test typecheck-python
           - command: build wheel
+          - note: |
+              The kernel's own container image (si#200), BUILT here and published nowhere. Building
+              needs no credential, so the half of the loop that can run on every push does - which is
+              what keeps the Dockerfile from rotting between the on-demand publishes that are the
+              other half. It is the same argument as every other step in this file: a command a
+              developer can type, run by the pipeline rather than restated in it.
+
+              It goes after the wheel and before the prose gate for the reason the next note gives:
+              a verdict over code is read before a verdict over prose.
+            command: build image
           - note: |
               The release-notes guard (si#89), and it is LAST on purpose. A gate that fails early
               hides everything behind it, and this one rules on prose rather than on code: a

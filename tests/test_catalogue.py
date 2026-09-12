@@ -167,10 +167,16 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
     assert sorted(cat.namespace("release")) == ["artifact", "asset", "conan", "image", "nuget", "tag"]
 
 
-def test_the_two_image_coordinates_reach_the_generated_reference():
-    # arrange: #31 acceptance 1's second half. The reference is an OUTPUT, and a coordinate no product
-    # places reaches it through the closing "platform tasks this product has not placed" section - so the
-    # proof is the kernel's OWN manifest read against the kernel's own catalogue, not a fixture
+def test_an_unplaced_coordinate_reaches_the_generated_reference_and_a_placed_one_does_not():
+    """#31 acceptance 1's second half. The reference is an OUTPUT, and a coordinate no product places
+    reaches it through the closing "platform tasks this product has not placed" section - so the proof is
+    the kernel's OWN manifest read against the kernel's own catalogue, not a fixture.
+
+    IT USED TO NAME THE IMAGE PAIR, and si#200 took that example away by placing both of them here. The
+    pair is still in the test, on the other side of the assertion: `unplaced` has to stop offering a
+    coordinate the moment the product places it, or the reference would advertise a command the reader
+    can already run. The NuGet pair replaces it as the unplaced example for a reason that will not expire
+    - simplon is not a .NET product and will never publish a package to a NuGet feed."""
     from simplon.tasks import cliref
 
     root = Path(__file__).resolve().parents[1]
@@ -181,9 +187,10 @@ def test_the_two_image_coordinates_reach_the_generated_reference():
     offered = dict(cliref.unplaced(mf, cat))
 
     # assert
-    assert "build:image" in offered and "release:image" in offered
-    assert "VERSION" in offered["build:image"]
-    assert "verify" in offered["release:image"]
+    assert "build:nuget-config" in offered and "release:nuget" in offered
+    assert "nuget.config" in offered["build:nuget-config"]
+    assert "NuGet feed" in offered["release:nuget"]
+    assert "build:image" not in offered and "release:image" not in offered
 
 
 # --- placing a catalogue coordinate ---------------------------------------------------------------------

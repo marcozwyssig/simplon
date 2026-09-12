@@ -17,6 +17,7 @@ today, and the pair is measured rather than assumed (#51): netctl (`orchestrator
 """
 from __future__ import annotations
 
+import json
 import os
 import platform
 import re
@@ -262,6 +263,76 @@ def pinned_image(image: str, where: str, *, hint: str = "") -> str:
                          f"(got '{image}') - a build whose output depends on when it ran is not a "
                          f"build; {hint}")
     return image
+
+
+#: The three spellings of Docker Hub a manifest may carry. The CLI stores the Hub credential under none
+#: of them - see `has_stored_login`.
+_HUB_HOSTS: frozenset = frozenset({"docker.io", "index.docker.io", "registry-1.docker.io"})
+
+
+def _hostname(value: str) -> str:
+    """docker's own ConvertToHostname, which is how the CLI compares a registry against a config key:
+    drop the scheme, keep everything up to the first '/'. Pure.
+
+    Both sides need it because both sides are written by different hands. A manifest says `docker.io`
+    or `registry.example.com:5000`; the config file may carry `https://index.docker.io/v1/` (what the
+    CLI writes for the Hub) or a bare host (what it writes for everything else).
+    """
+    bare = value.removeprefix("https://").removeprefix("http://")
+    name = bare.split("/", 1)[0].lower()
+    return "index.docker.io" if name in _HUB_HOSTS else name
+
+
+def has_stored_login(host: str) -> bool:
+    """Whether the docker CLI already holds a credential for `host` - asked BEFORE a push to a registry
+    this kernel mints no token for (si#200).
+
+    WHY IT IS ASKED AT ALL. `simplon.tasks.image` logs in for GitHub Packages and for nothing else, and
+    `githubpackages.is_github_packages` is the reason: a GitHub token must not be handed to whatever host
+    a YAML file names. So for every other registry - Docker Hub included - the credential is the one the
+    operator stored with `docker login`, and the kernel's whole contribution is to notice that there is
+    none. Without this the release attempts the push and the operator reads docker's own answer, `denied:
+    requested access to the resource is denied`, which names no host, no account and no fix. A refusal
+    that names the registry it was about to push to and the one command that authorises it is worth the
+    thirty lines.
+
+    WHAT IS ASKED, AND WHAT CANNOT BE. `$DOCKER_CONFIG/config.json`, else `~/.docker/config.json`, which
+    is the only file the CLI reads. Three answers count as a credential, and only the first is a secret:
+
+      * an entry under `auths` - what a plain `docker login` writes;
+      * an entry under `credHelpers` for this host - the secret is in the helper, and the file names it;
+      * a global `credsStore`, where every credential lives in a helper and the file says nothing about
+        WHICH hosts it holds. That is unknowable from here, so it counts as yes: a check that refused on
+        a guess would stop a working publish, which is worse than the message it was meant to improve.
+
+    A file that cannot be parsed is the same kind of silence and gets the same answer. A file that is not
+    there at all is not silence: the CLI reads no other, so there is nowhere a credential could be.
+
+    DOCKER HUB IS THE CASE THAT MAKES THE NORMALISATION LOAD-BEARING. `docker login docker.io` does not
+    store `docker.io`; it stores docker's IndexServer constant, `https://index.docker.io/v1/`, so a check
+    comparing host names would answer no for the one registry si#200 exists to push to. This could not be
+    measured on the machine that wrote it - there is no Hub account here (the pushes were measured against
+    a local `registry:2`, which stores the plain `localhost:5000`) - so it is taken from docker's own
+    constant rather than from an observation, and `_hostname` folds all three Hub spellings onto it.
+    """
+    root = os.environ.get("DOCKER_CONFIG") or (Path.home() / ".docker")
+    path = Path(root) / "config.json"
+    if not path.is_file():
+        return False
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True
+    if not isinstance(config, dict):
+        return True
+    if config.get("credsStore"):
+        return True
+    wanted = _hostname(host)
+    for section in ("auths", "credHelpers"):
+        stored = config.get(section)
+        if isinstance(stored, dict) and any(_hostname(str(key)) == wanted for key in stored):
+            return True
+    return False
 
 
 def user_args() -> list[str]:
