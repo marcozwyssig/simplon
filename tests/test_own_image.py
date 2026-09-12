@@ -101,43 +101,75 @@ def test_the_image_declares_no_tag_so_there_is_one_source_for_the_version():
 # --- the pin si#201 reads ------------------------------------------------------------------------------
 
 
-def test_the_pin_states_a_pinned_reference_or_states_that_nothing_is_published():
+#: Pins that must be refused, and the word the refusal has to carry. Written as data because the three
+#: are the same defect at three depths: a tag that moves, no tag at all, and a tag on somebody else's
+#: image - and a launcher that pulled any of them would run a kernel this checkout never chose.
+_BAD_PINS = [
+    ("docker.io/marcozwyssig/simplon:latest", "latest"),
+    ("docker.io/marcozwyssig/simplon", "must pin a version"),
+    ("docker.io/someone-else/simplon:v0.13.0", "not the image"),
+]
+
+
+def _pin_fault(text: str, cfg) -> str:
+    """'' when the pin file `text` states something a launcher may act on, else the sentence saying why
+    not.
+
+    ONE CHECKER, USED TWICE, and that is the whole point of it existing rather than two assertions
+    (si#200, on review). The committed pin carries no reference yet - nothing has been published - so a
+    test that asserted the rule against the real file alone would be an assertion that cannot fail: this
+    repository's oldest defect, a green verdict from a check that never ran. The rule therefore lives in
+    one function, the bad cases below drive it red against synthetic pins, and the committed file is run
+    through the SAME function. The day a reference lands in the file it is checked by code already proven
+    to refuse, and no test has to be remembered and unguarded.
+
+    An empty pin is a legitimate state rather than a fault: the file's own head says what a launcher must
+    do with it, which is to say that this checkout has no published image and the venv route is the one
+    that works.
+    """
+    reference = _reference(text)
+    if not reference:
+        return ""
+    try:
+        docker.pinned_image(reference, str(PIN))
+    except ValueError as refusal:
+        return str(refusal)
+    if not reference.startswith(f"{cfg.registry}/{cfg.repository}:"):
+        return (f"{PIN} names {reference}, which is not the image simplon.yaml builds "
+                f"({cfg.registry}/{cfg.repository})")
+    return ""
+
+
+@pytest.mark.parametrize("line, word", _BAD_PINS)
+def test_a_pin_a_launcher_must_not_act_on_is_named_as_such(line, word):
     # arrange
-    reference = _reference(PIN.read_text(encoding="utf-8"))
-
-    # act / assert: an empty pin is a legitimate state (no image published yet) and the launcher must say
-    # so rather than pull something; a pin that IS there may not move under the launcher
-    if reference:
-        assert docker.pinned_image(reference, str(PIN)) == reference
-
-
-def test_a_pin_that_moves_under_the_launcher_is_refused():
-    # arrange: the failure this guard is for - a checkout that runs a different kernel tomorrow
-    # act / assert
-    with pytest.raises(ValueError, match="latest"):
-        docker.pinned_image(_reference("# a comment\ndocker.io/marcozwyssig/simplon:latest\n"), str(PIN))
-
-
-def test_a_pin_names_the_image_this_product_actually_builds():
-    # arrange
-    cfg = image.declared(_manifest(), IMAGE, source=str(MANIFEST))
-    reference = _reference(PIN.read_text(encoding="utf-8"))
-
-    # act / assert: registry and repository come from the manifest, so a pin naming somebody else's image
-    # is caught here rather than by a launcher pulling it
-    if reference:
-        assert reference.startswith(f"{cfg.registry}/{cfg.repository}:")
-
-
-def test_a_pin_naming_a_different_image_is_caught_by_that_same_rule():
-    # arrange: the mutation the test above would go red on, driven here so the check is seen failing
     cfg = image.declared(_manifest(), IMAGE, source=str(MANIFEST))
 
     # act
-    foreign = _reference("docker.io/someone-else/simplon:v0.13.0\n")
+    fault = _pin_fault(f"# the file's own comment\n{line}\n", cfg)
 
     # assert
-    assert not foreign.startswith(f"{cfg.registry}/{cfg.repository}:")
+    assert word in fault
+
+
+def test_a_pin_naming_this_products_image_at_a_version_is_accepted():
+    # arrange: the green case of the same checker, so the three reds above are not merely a function that
+    # refuses everything
+    cfg = image.declared(_manifest(), IMAGE, source=str(MANIFEST))
+
+    # act / assert
+    assert _pin_fault(f"# a comment\n{cfg.registry}/{cfg.repository}:v0.13.0\n", cfg) == ""
+
+
+def test_the_committed_pin_passes_that_same_rule():
+    # arrange
+    cfg = image.declared(_manifest(), IMAGE, source=str(MANIFEST))
+
+    # act
+    fault = _pin_fault(PIN.read_text(encoding="utf-8"), cfg)
+
+    # assert
+    assert fault == "", fault
 
 
 def test_the_pin_is_readable_by_a_shell_without_python():
