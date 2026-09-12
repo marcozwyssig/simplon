@@ -540,6 +540,9 @@ The parser's mark is reprinted rather than passed through, because `safe_load` i
 `problem_mark.name` is `<unicode string>`, never the file. So `load` takes the file's name as an optional
 argument - a name to print, not a path it reads - and `ProductContext.manifest`, the caller that has it,
 passes it. A `load` driven directly with text still refuses with the mark, under the name "the manifest".
+The one parse failure that carries no mark at all - a control character in the file, which is what half a
+written file leaves behind - prints its position for the same reason: its own `str()` would have put the
+placeholder back into the sentence, naming the file twice and agreeing with itself only once.
 
 This is why it was worth catching specifically and not as one refusal among many: a section that is wrong
 takes out one command, a document that does not parse takes out all of them, so there is no `--help` left

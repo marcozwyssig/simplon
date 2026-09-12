@@ -805,13 +805,20 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
         # STRING: `exc.problem_mark.name` is "<unicode string>" and never the file. `manifest_path` is a
         # NAME to print, not a path this loader reads - the text is already in hand, and the caller that
         # has the path (`ProductContext.manifest`) is the only one that can say it.
+        # A `ReaderError` - a control character or a lone surrogate in the file, which is what half a
+        # written file or a bad paste leaves behind - is the one YAMLError carrying no mark at all. It
+        # has `position`/`reason` instead, and its `str()` would put "<unicode string>" straight back
+        # into the message this exists to keep it out of: the file would then be named twice, once
+        # rightly and once by yaml's placeholder for the string it was handed.
         mark = getattr(exc, "problem_mark", None)
-        problem = getattr(exc, "problem", None) or str(exc)
+        position = getattr(exc, "position", None)
+        problem = getattr(exc, "problem", None) or getattr(exc, "reason", None) or str(exc)
         # `context` is yaml's "while parsing a block mapping" clause - the construct the parser was in
         # when it gave up, which for a structural error is most of the answer.
         parsing_context = getattr(exc, "context", None)
         detail = f"{parsing_context}, {problem}" if parsing_context else problem
-        where = f"line {mark.line + 1}, column {mark.column + 1}: " if mark is not None else ""
+        where = (f"line {mark.line + 1}, column {mark.column + 1}: " if mark is not None
+                 else f"position {position}: " if position is not None else "")
         raise ValueError(
             f"{manifest_path or 'the manifest'} is not valid YAML:\n  {where}{detail}") from exc
     # The flat form is gone (netctl#1469 plan 3, si#33) and a manifest still written in it is refused
