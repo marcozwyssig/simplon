@@ -520,6 +520,37 @@ there was no Windows to take it on.
 no reference - which is every checkout today, because no simplon image is published yet - is told it has
 no container route and that the venv one works.
 
+### A malformed manifest refuses in a sentence (si#222)
+
+Two stray characters pasted in front of the opening `#` of a product's `swi.yaml` made line 1 stop being a
+comment, so the `product:` key further down started a second document. Every command in that product
+disappeared at once, and what the CLI printed was eight frames of kernel internals ending in
+`yaml.safe_load` - naming neither the file, nor the line, nor what was wrong, all three of which the
+exception it swallowed was carrying. The report that arrived was that a section somebody had added "does
+not appear"; the file had not parsed for some time and nothing said so.
+
+`manifest.load` catches `yaml.YAMLError` now and refuses the way the rest of the kernel does:
+
+```
+/repo/swi.yaml is not valid YAML:
+  line 3, column 8: mapping values are not allowed here
+```
+
+The parser's mark is reprinted rather than passed through, because `safe_load` is handed a STRING and its
+`problem_mark.name` is `<unicode string>`, never the file. So `load` takes the file's name as an optional
+argument - a name to print, not a path it reads - and `ProductContext.manifest`, the caller that has it,
+passes it. A `load` driven directly with text still refuses with the mark, under the name "the manifest".
+The one parse failure that carries no mark at all - a control character in the file, which is what half a
+written file leaves behind - prints its position for the same reason: its own `str()` would have put the
+placeholder back into the sentence, naming the file twice and agreeing with itself only once.
+
+This is why it was worth catching specifically and not as one refusal among many: a section that is wrong
+takes out one command, a document that does not parse takes out all of them, so there is no `--help` left
+to consult and no `doctor` to run. It is counted in the census as diagnosis - a document that does not
+parse could not have meant anything else - which is the 130th load-time refusal.
+
+**Nothing to do.** The manifests that loaded before load unchanged.
+
 ## 0.12.0
 
 **The site shows before it argues.** Every page on this site opened with the reasoning for the thing

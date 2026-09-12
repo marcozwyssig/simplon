@@ -85,6 +85,54 @@ def test_load_rejects_a_manifest_with_no_groups():
         manifest.load("product: demo\n")
 
 
+def test_load_refuses_a_document_that_does_not_parse_by_naming_the_mark():
+    # arrange: the si#222 shape - two stray characters in front of the opening `#`, so line 1 stops
+    # being a comment and the mapping below it is a parse error rather than a section
+    text = "00# the header comment\n\nproduct: demo\n"
+
+    # act / assert: a refusal carrying the parser's OWN mark and problem, not a `yaml.YAMLError`
+    # eight frames deep (a YAMLError is not a ValueError, so this raises clause is the assertion)
+    with pytest.raises(ValueError) as caught:
+        manifest.load(text)
+    message = str(caught.value)
+    assert "is not valid YAML" in message
+    assert "line 3, column 8" in message
+    assert "mapping values are not allowed here" in message
+    # and with no file name to print, the sentence still stands on its own
+    assert message.startswith("the manifest is not valid YAML")
+
+
+def test_load_names_the_construct_the_parser_was_inside_when_it_gave_up():
+    # arrange: a tab where the indentation should be - the slip a human makes in a file they are
+    # editing, and the shape whose `problem` alone ("found character '\t'") says nothing about WHERE
+    text = "groups:\n\tcode: {}\n"
+
+    # act / assert: yaml's own context clause is carried, not dropped
+    with pytest.raises(ValueError) as caught:
+        manifest.load(text)
+    message = str(caught.value)
+    assert "while scanning for the next token" in message
+    assert "cannot start any token" in message
+
+
+def test_load_refuses_a_document_with_a_control_character_without_printing_a_placeholder():
+    # arrange: a stray control character (a bad paste, a half-written file) - the ONE parse failure
+    # that carries no mark, and whose `str()` embeds yaml's "<unicode string>" stream name
+    text = "product: demo\n\x01groups: {}\n"
+
+    # act
+    with pytest.raises(ValueError) as caught:
+        manifest.load(text, manifest_path="/repo/swi.yaml")
+
+    # assert: the file is named and yaml's placeholder for a string it was handed never appears - it
+    # is the thing `manifest_path` exists to replace, so printing both would answer with two names
+    message = str(caught.value)
+    assert "<unicode string>" not in message
+    assert "/repo/swi.yaml" in message
+    assert "special characters are not allowed" in message
+    assert "position 14" in message
+
+
 def test_load_rejects_an_env_group_that_is_not_a_declared_group():
     # arrange: env_groups names a group that does not exist
     text = ("""

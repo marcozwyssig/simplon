@@ -156,7 +156,8 @@ class ProductContext:
         from simplon import catalogue
 
         return _load_manifest(self.manifest_path.read_text(encoding="utf-8"),
-                              catalogue=catalogue.load())
+                              catalogue=catalogue.load(),
+                              manifest_path=str(self.manifest_path))
 
     @classmethod
     def resolve(cls, name: str, root: Path, manifest_path: Path) -> "ProductContext":
