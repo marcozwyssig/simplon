@@ -26,10 +26,16 @@ from simplon.tasks import typecheck
 
 
 class _Result:
-    """The one field of simplon.run.Result this module reads, so the probe needs no subprocess."""
+    """The three fields of simplon.run.Result this module reads, so the probe needs no subprocess.
 
-    def __init__(self, rc: int) -> None:
+    `out`/`err` arrived with si#203: the mypy run is CAPTURED now, because the caller classifies what it
+    printed, which is the side of `simplon.run`'s own capture rule that inspection puts it on.
+    """
+
+    def __init__(self, rc: int, out: str = "", err: str = "") -> None:
         self.rc = rc
+        self.out = out
+        self.err = err
 
 
 def test_the_argv_runs_mypy_as_a_module_of_the_given_interpreter() -> None:
@@ -37,7 +43,7 @@ def test_the_argv_runs_mypy_as_a_module_of_the_given_interpreter() -> None:
 
     argv = typecheck.mypy_argv("/venv/bin/python", config)
 
-    assert argv == ["/venv/bin/python", "-m", "mypy", "--config-file", "/repo/mypy.ini"]
+    assert argv[:5] == ["/venv/bin/python", "-m", "mypy", "--config-file", "/repo/mypy.ini"]
 
 
 def test_the_argv_names_no_source_root_because_the_config_owns_that() -> None:
@@ -136,3 +142,162 @@ def test_a_present_checker_passes_the_probe_silently(monkeypatch) -> None:
 
     # assert: the probe asks the NAMED interpreter, not this one - the whole point of the parameter
     assert probed == [["/venv/bin/python", "-c", "import mypy"]]
+
+
+# --- si#203: a checker that could not see the installed set did not rule on the product -----------------
+
+#: One real mypy transcript, trimmed. Both import wordings are here on purpose: `import-not-found` for a
+#: module mypy found nothing for, `import-untyped` for one it found without types. Lifted from the run in
+#: `typecheck.py`'s module head rather than invented, including the `note:` line - the parser has to
+#: ignore it, or every missing import is counted twice.
+_UNRESOLVED = (
+    'src/simplon/topology.py:41: error: Cannot find implementation or library stub for module named '
+    '"pydantic"  [import-not-found]\n'
+    'src/simplon/topology.py:41: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html'
+    '#missing-imports\n'
+    'src/simplon/cli.py:29: error: Cannot find implementation or library stub for module named "typer"  '
+    '[import-not-found]\n'
+    'src/simplon/tasks/toolchain.py:46: error: Library stubs not installed for "yaml"  [import-untyped]\n'
+    'Found 3 errors in 3 files (checked 87 source files)\n'
+)
+#: The same transcript's other half: an error about the product's own code.
+_FINDING = ('src/simplon/verdict.py:426: error: Incompatible return value type (got "int", expected '
+            '"str")  [return-value]\n')
+
+
+#: What mypy 1.18.2 really prints with `pretty = True` in the product's config, captured rather than
+#: written: the message WRAPS and the `[code]` bracket lands on the continuation line, for the import
+#: fault and for the real finding alike. The source line and caret come with it.
+_PRETTY = (
+    'a.py:1: error: Cannot find implementation or library stub for module named\n'
+    '"totallymissingmodule123"  [import-not-found]\n'
+    '    import totallymissingmodule123\n'
+    '    ^\n'
+    'a.py:1: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports\n'
+    'a.py:4: error: Incompatible return value type (got "int", expected "str") \n'
+    '[return-value]\n'
+    '        return 42\n'
+    '               ^~\n'
+    'Found 2 errors in 1 file (checked 1 source file)\n'
+)
+
+
+def test_the_argv_refuses_the_wrapping_a_products_pretty_setting_would_impose() -> None:
+    """A product's `pretty = True` breaks the classification and breaks it the DANGEROUS way. Measured
+    on a tree whose only fault is a missing dependency: the wrap puts `[import-not-found]` on the
+    continuation line, so `classify` sees no import fault and two findings, and the gate says "mypy
+    reported findings" about code that is clean. `--no-pretty` on the line overrides the key, measured
+    against mypy 1.18.2.
+
+    The transcript below is what that config really printed, so the assertion under it is the reason
+    for the flag rather than a restatement of it.
+    """
+    assert typecheck.classify(_PRETTY) == ([], 2), (
+        "if this ever stops being true the flag can go; today it is why the flag is there")
+    assert "--no-pretty" in typecheck.mypy_argv("/venv/bin/python", Path("/repo/mypy.ini"))
+
+
+def test_the_argv_forces_the_error_codes_the_classification_reads() -> None:
+    """A product may write `hide_error_codes = True`, and then `classify` finds no import faults and
+    reports a setup failure as findings - the confusion si#203 exists to end, reintroduced by a config
+    key. Measured against mypy 1.18.2: the flag on the line overrides the key in the file."""
+    argv = typecheck.mypy_argv("/venv/bin/python", Path("/repo/mypy.ini"))
+
+    assert "--show-error-codes" in argv, argv
+
+
+def test_import_faults_are_separated_from_findings_and_notes_are_not_counted() -> None:
+    # arrange / act
+    unresolved, findings = typecheck.classify(_UNRESOLVED + _FINDING)
+
+    # assert: three import faults by MODULE name, one finding, and the note counted as neither
+    assert unresolved == ["pydantic", "typer", "yaml"], unresolved
+    assert findings == 1
+
+
+def test_a_clean_transcript_classifies_as_nothing_at_all() -> None:
+    unresolved, findings = typecheck.classify("Success: no issues found in 87 source files\n")
+
+    assert (unresolved, findings) == ([], 0)
+
+
+def test_one_module_missing_from_four_files_is_four_faults_and_one_name() -> None:
+    """Duplicates are kept: `typer` was 4 of this kernel's own 20 errors, so a caller counting affected
+    FILES has something to count, and one that wants the names says `set`."""
+    line = ('x.py:1: error: Cannot find implementation or library stub for module named "typer"  '
+            '[import-not-found]\n')
+
+    unresolved, findings = typecheck.classify(line * 4)
+
+    assert unresolved == ["typer"] * 4 and findings == 0
+
+
+def test_a_run_that_is_ONLY_import_faults_is_refused_as_setup_not_reported_as_findings(
+        monkeypatch, tmp_path) -> None:
+    """THE load-bearing negative of si#203. Measured on this kernel in a container with its dependencies
+    absent: rc 1, 20 errors, 20 of 20 import resolution, not one about the product - the same exit code a
+    single real type error gives. Reported as findings it teaches a product that the gate is noisy."""
+    # arrange
+    (tmp_path / "mypy.ini").write_text("[mypy]\n")
+    monkeypatch.setattr(typecheck.context, "current", lambda: _Ctx(tmp_path))
+    monkeypatch.setattr(typecheck, "_require_mypy", lambda exe: None)
+    monkeypatch.setattr(typecheck, "run", lambda argv, **kw: _Result(1, out=_UNRESOLVED))
+
+    # act / assert
+    with pytest.raises(ValueError) as raised:
+        typecheck.check()
+
+    message = str(raised.value)
+    assert "not a type finding" in message, message
+    assert "pydantic, typer, yaml" in message, message
+
+
+def test_import_faults_BESIDE_findings_are_reported_and_the_findings_still_go_red(
+        monkeypatch, tmp_path) -> None:
+    """The third case, and the one a refusal must not swallow: the findings are real, so they are
+    reported, and the silence around everything the missing modules touch is named rather than read as a
+    pass. Measured: 28 errors, 27 import resolution and 1 real, on the same tree."""
+    # arrange
+    (tmp_path / "mypy.ini").write_text("[mypy]\n")
+    warned: list[str] = []
+    monkeypatch.setattr(typecheck.context, "current", lambda: _Ctx(tmp_path))
+    monkeypatch.setattr(typecheck, "_require_mypy", lambda exe: None)
+    monkeypatch.setattr(typecheck, "run", lambda argv, **kw: _Result(1, out=_UNRESOLVED + _FINDING))
+    monkeypatch.setattr(typecheck.log, "warn", lambda msg: warned.append(msg))
+    monkeypatch.setattr(typecheck.log, "die", _die)
+
+    # act / assert
+    with pytest.raises(SystemExit) as raised:
+        typecheck.check()
+
+    assert "reported findings" in str(raised.value)
+    assert warned and "pydantic, typer, yaml" in warned[0], warned
+
+
+def test_a_green_run_echoes_what_mypy_printed_and_says_so(monkeypatch, tmp_path, capsys) -> None:
+    """Capturing is what makes the classification possible, and the cost it must not have is a silent
+    gate: the output a person came for is written back out verbatim."""
+    # arrange
+    (tmp_path / "mypy.ini").write_text("[mypy]\n")
+    monkeypatch.setattr(typecheck.context, "current", lambda: _Ctx(tmp_path))
+    monkeypatch.setattr(typecheck, "_require_mypy", lambda exe: None)
+    monkeypatch.setattr(typecheck, "run",
+                        lambda argv, **kw: _Result(0, out="Success: no issues found in 3 source files\n"))
+
+    # act
+    rc = typecheck.check()
+
+    # assert
+    assert rc == 0
+    assert "Success: no issues found in 3 source files" in capsys.readouterr().out
+
+
+class _Ctx:
+    """The one attribute `check` reads off a ProductContext."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+
+def _die(msg: str):
+    raise SystemExit(msg)

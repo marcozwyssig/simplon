@@ -114,6 +114,12 @@ A `suite:` gate is the case where the kernel knows the runner. It builds the arg
 directory as the working directory so that its `conftest.py` loads, and writes into the shared results
 tree that the report step later merges and renders.
 
+**That runner is the kernel's own pytest, in a venv on the host**, which is the one thing to know before
+reaching for `suite:` for a level you want in a container. A containerised suite cannot be a `suite:`
+gate at all; it is a `command:` gate, and the section below is what that looks like. The host venv is
+built by the kernel and needs a `python3` that can create one - the gate says so by name when there is
+none, and names the container route in the same breath.
+
 An `impl:` gate is the case where it does not, and that is the seam a Gradle build, an npm suite, a
 browser journey runner or a homegrown harness comes in through. **You do not teach the kernel Gradle.**
 You write an ordinary task body that shells out to it and returns its exit code, and you declare a gate
@@ -232,6 +238,38 @@ Until si#136 that loop was closed only as a side effect - `test:gate`'s body tak
 every context-taking body was refused - which also meant the kind could not reach `toolchain:run` at all,
 and the case both the [C++](../../what/case-cpp/) and the [.NET](../../what/case-dotnet/) chapters rest
 on did not run. The refusal now says what it is about.
+
+### A containerised level names the network it is on
+
+The gate kind above is also how a level runs **in a container**: a `command:` gate naming a
+`toolchain:run` command, with [`results_from:`](#where-your-runner-put-its-results) harvesting what the
+container wrote into the run's archive. It needs nothing of the kernel that is not already here, and
+si#197 drove a Gherkin acceptance suite through it with every scenario and step intact in the report.
+
+One key decides whether such a level can rule on anything, and leaving it out is not neutral:
+
+```yaml
+      unit:
+        task: "toolchain:run"
+        with:
+          image: "python:3.12"
+          workdir: /src
+          network: none          # this level reaches nothing, and says so
+          argv: ["python", "-m", "pytest", "-q"]
+```
+
+Without it the container joins docker's default bridge, where a name that is not there **still
+resolves**. Measured on an acceptance scenario reaching a service by name with no `network:` declared:
+the name went to the host's upstream resolver, came back as `185.199.109.153` (GitHub Pages), and the
+page answered `404` - so the level reported a defect in a product it had never touched. The 404 made
+that a false red. **A 200 would have made it a false green**, which is the defect this whole page exists
+against, arriving through DNS.
+
+So name it. `none` for a level that reaches nothing - `python -m pytest` and `python -m mypy` over a
+mounted tree were both measured green with no network at all - and the network your target is actually
+on for a level that reaches a deployed product. The scaffolded python profile pins `none` on `unit` and
+`analyse` for that reason, and leaves `deps` alone, because installing from an index is the one thing
+that needs the wire.
 
 ### An `impl:` gate is opaque, and says so
 
