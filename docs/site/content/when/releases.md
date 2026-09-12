@@ -406,6 +406,55 @@ states `build_args: { VERSION: ... }` moves the tag with it.
 **Nothing to do**, unless you publish a container image: a `tag:` you already declare is unaffected, and
 a push to a non-GitHub registry now needs the `docker login` it always silently needed.
 
+### The launcher runs the kernel in a container, as a second route (si#201)
+
+`./myctl.sh` has always been Python in a virtual environment on the host. It can now be a container
+instead, running the image si#200 builds with your checkout bind-mounted at `/src`. `DELIVERY_ROUTE`
+chooses - `venv`, `container`, or the default `auto`, which prefers the venv when there is a `python3`
+and reaches for the image when there is not. **A host with a python behaves exactly as it did.**
+
+**The hard problem is that a container which runs containers passes HOST paths, and getting it wrong is
+silent.** Measured, with the tree at `/src` inside a kernel container holding the docker socket:
+`docker run -v /src:/x busybox ls -la /x` printed an EMPTY directory, exited 0, and left a root-owned
+`/src` behind on the host - the daemon resolved the path against the host, did not find it, and created
+it. A gate handed an empty tree finds nothing to fail on. So every bind mount in the kernel now goes
+through `simplon.hostpath.translate`, which rewrites a path onto the host side of the mount and REFUSES
+by name when it cannot. The launcher declares the mount as the pair it is, `DELIVERY_HOST_ROOT` and
+`DELIVERY_MOUNT_ROOT`; two other ways to obtain it were driven and rejected, and
+`src/simplon/hostpath.py` carries both numbers - `docker inspect $(hostname)` works in 11 ms and dies
+with `Error: No such object` under `--hostname`, and `/proc/self/mountinfo` reports a path relative to
+the source filesystem's root, so a tree under a tmpfs `/tmp` comes back missing its `/tmp`.
+
+**The docker client is in the image now, and oras still is not.** si#200 left both out and asked si#201
+to decide with a number. Fetching the client at runtime costs 84 MB and 15.0 s on first use and needs
+egress from a container whose premise is "bash and docker", and leaving it out changed four verdicts in
+simplon's own gate; in the layer it is 44 MB. oras is reached by two release paths, provisions itself,
+and changed no verdict, so it stays out. The version installed is
+`simplon.docker.DOCKER_CLI_VERSION` and a test holds the two together.
+
+**The two routes were diffed rather than asserted.** A scaffolded product's `build compile` - a real
+`toolchain:run` that starts a sibling container and writes into the mount - came out identical on both
+routes: same verdict, exit code 0, the artefact byte-for-byte, and the log identical bar the first run's
+image pull. simplon's own `test all` produced the same file set on disk and identical
+`test.typecheck-python` and `test.release-notes` logs.
+
+**Three differences that are real, and are exceptions rather than footnotes.** On the container route
+the kernel names paths as the container sees them, so a log line reads `/src/build/logs/...`. A linked
+git worktree is refused up front: its `.git` is a file naming a directory outside the mount, so git in
+the container sees no repository. And a container can hand a sibling only a path the daemon can resolve,
+so a task that mounts something OUTSIDE your tree refuses - in simplon's own suite that is twelve e2e
+tests which scaffold a fixture into pytest's temp directory and really run its gate.
+
+**`simplon.cmd` got the same route and it is UNDRIVEN.** There is no Windows on the machine this was
+built on. What is held is that both launchers declare the same contract - the same parameters, mount
+destinations and environment names - and two places where the batch file cannot be the shell file are
+named where they occur: cmd.exe cannot answer whether it has a terminal, so `-t` is opt-in through
+`DELIVERY_CONTAINER_TTY` rather than guessed, and a wrong guess would break every piped run.
+
+**Nothing to do.** The container route is opt-in, and a checkout whose `deploy/image/image.pin` carries
+no reference - which is every checkout today, because no simplon image is published yet - is told it has
+no container route and that the venv one works.
+
 ## 0.12.0
 
 **The site shows before it argues.** Every page on this site opened with the reasoning for the thing

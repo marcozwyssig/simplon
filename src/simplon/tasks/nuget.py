@@ -62,7 +62,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from xml.sax.saxutils import quoteattr
 
-from simplon import context, docker, githubpackages, log
+from simplon import context, docker, githubpackages, hostpath, log
 from simplon.run import stream
 
 #: The manifest section this module reads. `artifacts:` rather than a new top-level key, per design
@@ -312,7 +312,7 @@ def docker_argv(image: str, root: Path, env_file: Path, argv: list[str]) -> list
     """
     return ["docker", "run", "--rm",
             *docker.user_args(),
-            "-v", f"{root}:{WORKDIR}", "-w", WORKDIR,
+            "-v", f"{hostpath.translate(root)}:{WORKDIR}", "-w", WORKDIR,
             "--env-file", str(env_file),
             "-e", f"DOTNET_CLI_HOME={WORKDIR}/{CLI_HOME}",
             "-e", "DOTNET_CLI_TELEMETRY_OPTOUT=1", "-e", "DOTNET_NOLOGO=1",

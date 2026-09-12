@@ -57,6 +57,12 @@ def gh(monkeypatch):
         return calls.replies.get(argv[2], run.Result(rc=0, out="", err=""))
 
     monkeypatch.setattr(run, "run", _fake)
+    # `publish` gates on the TOOL before it does anything, so a fixture that scripts gh's answers and
+    # leaves the gate to the ambient PATH tests the host rather than the code. Measured on si#201's
+    # container route, where the kernel image carries no gh: thirteen of these went red with
+    # `SystemExit: 1 - missing required tool: gh`, on the same tree that is green here. That is a suite
+    # reporting where it ran, not what it read.
+    monkeypatch.setattr(asset.shutil, "which", lambda tool: f"/usr/bin/{tool}")
     return calls
 
 

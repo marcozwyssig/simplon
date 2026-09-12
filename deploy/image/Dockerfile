@@ -8,12 +8,24 @@
 # and a product's tree arrives as a bind mount at /src. si#201 inherits that boundary; it is the reason
 # the launcher's container route mounts the checkout instead of building an image per product.
 #
-# WHAT IS DELIBERATELY NOT IN IT. The docker CLI and oras, which the kernel does use. Both are already
-# PROVIDED at runtime rather than demanded (`simplon.docker.ensure_docker` with
-# DELIVERY_DOCKER_BOOTSTRAP, `simplon.oras.ensure_oras`), so baking them in would create a second,
-# older copy of a tool the kernel already knows how to get, and the version in the layer would be the
-# one nobody bumps. si#201 is the ticket that can MEASURE whether a container that fetches them on every
-# run is worth a layer; it should decide that with a number rather than this file with a guess.
+# THE DOCKER CLI IS IN IT, AND ORAS IS NOT, and si#201 measured the difference rather than reasoning it.
+# si#200 left both out on the argument that the kernel already knows how to get them
+# (`simplon.docker.ensure_docker` with DELIVERY_DOCKER_BOOTSTRAP, `simplon.oras.ensure_oras`) and that a
+# baked copy would be the one nobody bumps. The numbers split the two:
+#
+#   * DOCKER. Every task this kernel runs is a `docker run`, so on the container route the CLI is not an
+#     optional tool but the route's premise. Fetched at runtime it costs 84 MB and 15.0 s on first use
+#     (measured on this box, download.docker.com static bundle) and needs egress from a container whose
+#     selling point is "a machine with bash and docker". It also changed VERDICTS: running simplon's own
+#     `test all` through this image, three tests SKIPPED with "no docker daemon here" and one FAILED
+#     with `FileNotFoundError: 'docker'` where the venv route has neither - four differences between two
+#     routes that are required to be indistinguishable. In the layer it is 41 MB.
+#   * ORAS. Reached only by `release:artifact` and the read-back in `release:image`, provisioned by a
+#     gate that works, and it changed no verdict at all in the same run. It stays out.
+#
+# The "version nobody bumps" objection is answered rather than accepted: the version installed below is
+# `simplon.docker.DOCKER_CLI_VERSION`, the number the kernel's own bootstrap already pins, and
+# tests/test_own_image.py holds the two against each other. One source, two consumers.
 #
 # THE INTERPRETER IS THE ONE THE GATE PROVES. simplon.yaml declares python 3.12 for its own CI job, so
 # that is the interpreter every push is measured on and the one this image runs. `requires-python` is
@@ -74,8 +86,22 @@ LABEL org.opencontainers.image.title="simplon" \
 # the merge range, `release:tag` refuses a commit main does not carry, and this task's own provenance
 # runs `git describe` over the mounted product tree.
 RUN apt-get update \
- && apt-get install --yes --no-install-recommends git \
+ && apt-get install --yes --no-install-recommends ca-certificates curl git \
  && rm -rf /var/lib/apt/lists/*
+
+# THE DOCKER CLIENT, and only the client. The bundle also carries the engine binaries, which are useless
+# here: this image never runs a daemon, it talks to the host's through the socket the launcher mounts -
+# the docker-outside-of-docker shape `simplon.docker` was written for. The version is the one
+# `simplon.docker.DOCKER_CLI_VERSION` pins, so the runtime bootstrap and this layer cannot disagree.
+ARG DOCKER_CLI_VERSION=29.6.1
+RUN arch="$(uname -m)" \
+ && case "$arch" in x86_64|amd64) arch=x86_64 ;; aarch64|arm64) arch=aarch64 ;; \
+      *) echo "no static docker CLI for $arch" >&2; exit 1 ;; esac \
+ && curl -fsSL "https://download.docker.com/linux/static/stable/$arch/docker-$DOCKER_CLI_VERSION.tgz" \
+      -o /tmp/docker.tgz \
+ && tar -xzf /tmp/docker.tgz -C /usr/local/bin --strip-components=1 docker/docker \
+ && rm /tmp/docker.tgz \
+ && docker --version
 
 COPY --from=build /wheels/*.whl /tmp/wheels/
 RUN pip install --no-cache-dir /tmp/wheels/*.whl \

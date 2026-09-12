@@ -49,7 +49,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from simplon import context, docker, log
+from simplon import context, docker, hostpath, log
 from simplon.run import run
 
 #: The manifest key holding the pinned image tag. Top-level rather than a section of its own: it is one
@@ -177,7 +177,8 @@ def render() -> int:
     log.info(f"rendering docs via docToolchain ({' + '.join(GENERATORS)}) in Docker -> {OUTPUT_DIR}/")
     rc = run(["docker", "run", "--rm", "--platform", "linux/amd64", "--entrypoint", "/bin/bash",
               *user,
-              "-e", "DTC_HEADLESS=true", "-v", f"{ctx.root}:/project", "-w", "/project",
+              "-e", "DTC_HEADLESS=true", "-v", f"{hostpath.translate(ctx.root)}:/project",
+              "-w", "/project",
               f"{IMAGE_REPOSITORY}:{version}", "-c",
               f"doctoolchain . {' '.join(GENERATORS)} -PmainConfigFile={CONFIG_FILE}"],
              capture=False).rc

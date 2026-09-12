@@ -65,6 +65,15 @@ def test_suite() -> int:
     The pytest run ALONE, which is what the si#156 rename says out loud: `test all` is the aggregate
     over this and `test release-notes`, and a body that quietly ran a second gate would put the kernel's
     own "one implementation per verdict" rule back where si#89 found it.
+
+    THE ONE THING THIS SUITE CANNOT DO ON si#201's CONTAINER ROUTE, said here because it is this
+    invocation that meets it. Thirteen tests scaffold a fixture product into pytest's `tmp_path` and then
+    really run its gate, which is a `docker run -v <tmp_path>:/src`. With the kernel itself in a
+    container the daemon resolves that source against the HOST, where the container's temp directory does
+    not exist, so `simplon.hostpath.translate` refuses by name rather than let the daemon create an empty
+    one. Moving pytest's basetemp into the tree was tried and rejected: it makes those thirteen pass and
+    breaks four others that must run OUTSIDE a git repository (`init` outside a repo, the two
+    self-ignoring caches, the unreadable-checkout guard), which is a worse trade on both routes at once.
     """
     return subprocess.run([sys.executable, "-m", "pytest", "-q"],
                           cwd=ROOT / "tests").returncode

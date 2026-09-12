@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from xml.etree import ElementTree
 
-from simplon import docker, log
+from simplon import docker, hostpath, log
 from simplon.run import run
 
 
@@ -614,7 +614,8 @@ def render_report(report_dir: str, results: str | None = None, *, prefix: str = 
     elif shutil.which("docker") is not None:
         tool = "docker"
         log.info("no local allure CLI; rendering the allure HTML report via docker (single-file)")
-        ok = run(["docker", "run", "--rm", *_docker_user(), "-v", f"{report_dir}:/work", "-w", "/work",
+        ok = run(["docker", "run", "--rm", *_docker_user(),
+                  "-v", f"{hostpath.translate(report_dir)}:/work", "-w", "/work",
                   "--entrypoint", "allure", IMAGE,
                   "generate", "--single-file", "--clean",
                   os.path.join("/work", os.path.relpath(results, report_dir)), "-o", "/work/allure-report"]).ok
