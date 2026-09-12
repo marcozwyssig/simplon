@@ -1142,9 +1142,16 @@ def _skip_note(pipeline: Pipeline, skipped: Step) -> str:
     return "a previous step failed"
 
 
-def write_run_transcript(pipeline: Pipeline, started: datetime) -> Path | None:
+def write_run_transcript(pipeline: Pipeline, started: datetime,
+                         extra: Sequence[str] = ()) -> Path | None:
     """Write the run transcript beside the per-step logs; returns the path, or None when there was
     nowhere to put it.
+
+    `extra` is APPENDED to the header `steplog.run_header` composes, for a run that knows something about
+    itself the kernel cannot - si#205's walk adds who answered, against which product version, and over
+    which selection of scenarios. Appended and not substituted, so the facts si#148 and si#125 settled sit
+    on every transcript whatever wrote it, and a caller with something to add cannot lose them by
+    forgetting to restate them.
 
     CALLED ON BOTH PATHS, and that is a decision rather than an oversight. The run that most needs to be
     attachable to a ticket is a red CI run, which is exactly the headless path - a transcript written
@@ -1170,7 +1177,8 @@ def write_run_transcript(pipeline: Pipeline, started: datetime) -> Path | None:
     makes, and it goes the same way - the RUN's verdict is what a caller came for.
     """
     try:
-        text = "\n".join(transcript(pipeline, steplog.run_header(pipeline.name, started)))
+        text = "\n".join(transcript(pipeline,
+                                    list(steplog.run_header(pipeline.name, started)) + list(extra)))
     except Exception as exc:  # noqa: BLE001 - see the paragraph above; nothing here may cost a run
         log.warn(f"{pipeline.name}: the run transcript could not be composed ({exc})")
         return None

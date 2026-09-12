@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import sys
 from datetime import datetime
-from typing import Iterable
+from typing import Iterable, Protocol
 
 from . import steps as steps_module
 from .steps import (STATE_ICON, Pipeline, Row, RunHooks, Step, StepState, build_rows,
@@ -914,3 +914,129 @@ class _StepApp(App):
                 self._tree().move_cursor(self._chain_nodes[i][-1])
                 self._show_details(self._chain_rows[i][-1])
                 break
+
+
+# --- a walk: the same app, with a person where the subprocess was (si#205) ---------------------------
+
+
+class _Answerable(Protocol):
+    """What `_WalkApp` needs of the thing on the other side of a keypress - `tasks.walk.Prompt`.
+
+    STRUCTURAL AND NOT AN IMPORT, deliberately. A `tasks` module imports the orchestrator and never the
+    other way round, and a walk's vocabulary is a task's business: the runner's business is only that
+    something is waiting for a yes or a no. Taking it by shape keeps that layering intact with no
+    `TYPE_CHECKING` back-reference.
+    """
+
+    @property
+    def question(self) -> str: ...
+
+    def answer(self, accepted: bool) -> bool: ...
+
+    def abandon(self) -> None: ...
+
+
+class _WalkApp(_StepApp):
+    """The step runner with two more keys: a person's verdict instead of a subprocess's exit code.
+
+    EVERYTHING ELSE IS INHERITED, and that is the point rather than an economy. The tree, the status bar,
+    the details pane the question is written into, follow mode putting the cursor on the step being asked,
+    the copy/save keys, the transcript - a walk gets all of it because a walk IS a run. What a person
+    changes is where one step's outcome comes from, and that is the `Step` body (`tasks.walk._answering`),
+    not the app.
+
+    THE TWO KEYS COST THE SAME, and the arrangement is what makes that true rather than the claim:
+
+      * one key each, `a` and `r`, both unmodified, both single presses;
+      * no default and no confirmation on either - nothing happens until one of the two is pressed, so
+        neither is the path of least resistance and Enter is not a verdict;
+      * FIRST in the footer, before the inherited eight. Textual's footer drops entries from the right on
+        a narrow terminal, so the two keys that carry the session survive a width at which `Filter` and
+        `Next failure` do not. A refusal that scrolled off the screen would not be as cheap as an
+        acceptance that did not.
+
+    `q` still quits, and it releases the question first (`action_quit`): a walk stopped half way is a
+    legitimate outcome and it must not leave a worker thread waiting for a key nobody will press.
+    """
+
+    BINDINGS = [Binding("a", "accept", "Accept step"), Binding("r", "refuse", "Refuse step"),
+                *_StepApp.BINDINGS]
+
+    def __init__(self, pipeline: Pipeline, prompt: _Answerable) -> None:
+        super().__init__(pipeline)
+        self._prompt = prompt
+
+    def action_accept(self) -> None:
+        self._prompt.answer(True)
+
+    def action_refuse(self) -> None:
+        self._prompt.answer(False)
+
+    async def action_quit(self) -> None:
+        """Stop the walk. The waiting step is released BEFORE the app comes down, because the worker
+        thread is what holds the process open: a `@work(thread=True)` worker blocked on an event nobody
+        will set outlives `App.run()` and the interpreter waits for it at exit."""
+        self._prompt.abandon()
+        await super().action_quit()
+
+    def on_unmount(self) -> None:
+        """The same release, for every other way this app can end - a crash in a callback, `App.exit`
+        from the command palette, the terminal going away. Idempotent, so both paths may run."""
+        self._prompt.abandon()
+
+
+def run_walk(pipeline: Pipeline, prompt: _Answerable) -> int:
+    """Drive a walk in the Textual app and return its exit code. NOT a transcript writer.
+
+    THREE THINGS DIFFER FROM `run_pipeline`, and each is the reason this is not that function with a flag.
+
+    IT REFUSES INSTEAD OF FALLING BACK. `run_pipeline` drops to the headless runner when stdout is not a
+    TTY or Textual will not import, which is right for a build and catastrophic here: the headless runner
+    would call `Step.run` on forty questions with nobody to answer them, block on the first, and hang a
+    CI job that thought it was running an acceptance test. `tasks.walk.walk` has already refused the
+    non-TTY case; this refuses the other one.
+
+    IT NORMALISES THE STEP THE PERSON WAS ON. Stopping a walk raises `WalkAbandoned` out of the step body,
+    which by design is not caught by `Step.run` - so that step is left RUNNING, and a finished record must
+    not carry a state that means "in flight". It is set to PENDING here, on the calling thread, after
+    `App.run()` has returned and every worker is done: doing it from `_on_done` would race the app's own
+    shutdown for the sake of one field.
+
+    IT WRITES NO TRANSCRIPT. A walk's header is only composable once the app is down (the sitting's end
+    time, the answers it produced), so `tasks.walk.write_record` writes it one frame later. The failure
+    report is still printed here, for `run_pipeline`'s own reason: the pane that held the reason is gone
+    the moment the app exits, and a refusal is exactly what somebody wants to read afterwards.
+    """
+    try:
+        app = _WalkApp(pipeline, prompt)
+    except Exception as exc:  # noqa: BLE001 - a walk has no headless fallback; say so and refuse
+        raise ValueError(
+            f"simplon: the acceptance walk needs the Textual runner to ask its questions in and it could "
+            f"not be started ({exc}). Install the CLI's own dependencies and run it from a terminal - "
+            f"there is no unattended mode, because a walk nobody answers is a record of nothing.") from exc
+    app.run()
+    settle(pipeline)
+    for line in failure_report(pipeline):
+        print(line, flush=True)
+    return overall_rc(pipeline)
+
+
+def settle(pipeline: Pipeline) -> None:
+    """Give the step the person was stopped on the state it really has.
+
+    A walk stopped mid-question raises `WalkAbandoned` out of the step body, which by design `Step.run`
+    does not catch - so the step is left RUNNING and its rc is None. A finished record may not carry a
+    state that means "in flight": `transcript` would print `(running)` on a run that is over, and a
+    reader would take the one step everybody is asking about for work still going on.
+
+    PENDING and not SKIPPED, and the distinction is the point rather than a nicety. SKIPPED means a
+    failure declined to run this step; nothing declined this one, the walk simply ended before it. Both
+    are already distinct from OK and FAILED, so `overall_rc` calls neither green either way - what the
+    two spellings buy is a record that says which happened.
+
+    Its own function so it can be seen red without a terminal: `run_walk` cannot be called from a test
+    without one, and a normalisation only reachable through `App.run()` is a normalisation nothing checks.
+    """
+    for step in pipeline.steps:
+        if step.state is StepState.RUNNING:
+            step.state = StepState.PENDING
