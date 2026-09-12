@@ -1154,13 +1154,19 @@ def test_a_scaled_string_can_never_be_read_as_the_other_function_s():
     has one string and no call site - and the log is where si#192's publish was lost. So the unit tokens
     are disjoint the moment a scale is applied: `KB`/`MB`/`GB` against `KiB`/`MiB`/`GiB`.
 
-    Below 1024 the two agree exactly, and that is honest rather than an exception: `947 B` is the same
-    count of the same bytes on either scale, and there is no ambiguity to defend against.
+    Stated as the whole disjunction rather than as a threshold: either the two strings are IDENTICAL,
+    which may only happen below the decimal function's first scale, or their unit tokens differ. Below
+    1000 both say `947 B` - the same count of the same bytes, with no ambiguity for a unit to resolve -
+    and between 1000 and 1023 they part company on the unit (`1.0 KB` against `1000 B`) rather than
+    agreeing. Writing it as one rule leaves no third case to forget.
     """
-    for count in (0, 1, 947, 999, 1_000, 1_023, 1_024, 500_000, 450_000_000, 5_000_000_000_000):
+    for count in (0, 1, 947, 999, 1_000, 1_023, 1_024, 500_000, 999_999, 1_048_575,
+                  450_000_000, 5_000_000_000_000):
         decimal, binary = fetch.human_bytes(count), fetch.human_bytes_binary(count)
-        if count < 1_024 and count < 1_000:
-            assert decimal == binary, f"{count} disagrees below the first scale: {decimal} / {binary}"
+        if decimal == binary:
+            assert count < 1_000, (
+                f"{count} renders identically as {decimal!r} on both scales, above the point where the "
+                f"two disagree about the arithmetic - so the string is the same and the meaning is not")
             continue
         assert decimal.split()[-1] != binary.split()[-1], (
             f"{count} renders as {decimal!r} and {binary!r} - the units are the same token, so a "
@@ -1168,9 +1174,17 @@ def test_a_scaled_string_can_never_be_read_as_the_other_function_s():
 
 
 def test_the_separator_reaches_the_top_unit_only_here_too():
-    """Mirrored from `human_bytes` deliberately: every unit but the largest hands over at the next 1024,
-    so `KiB` and `MiB` carry at most four digits before the point and `GiB` is the one place a separator
-    is reachable. A pair that formatted its numbers differently would be a second thing to learn."""
-    assert fetch.human_bytes_binary(1_048_575) == "1,024.0 KiB"
+    """Mirrored from `human_bytes` deliberately, down to the wart, because a pair a reader has to learn
+    twice is a pair that gets misread.
+
+    `GiB` is the one unit with nothing above it and therefore the one place a separator is both
+    reachable and wanted. The other place it appears is the rounding edge `human_bytes` already
+    records: `.1f` rounds `1023.999` up, so the counts just under the next scale render as
+    `1,024.0 KiB` instead of handing over to `1.0 MiB`. Carried across rather than fixed - it is a
+    scale boundary in a display that is allowed to round, and a twin that rounded differently from its
+    decimal partner would be a worse answer than a shared wart.
+    """
+    assert fetch.human_bytes_binary(1_048_575) == "1,024.0 KiB", "the shared rounding edge"
+    assert fetch.human_bytes(999_999) == "1,000.0 KB", "which the decimal one has at its own boundary"
     assert fetch.human_bytes_binary(1_073_741_824) == "1.0 GiB"
     assert fetch.human_bytes_binary(1_099_511_627_776) == "1,024.0 GiB"
