@@ -838,6 +838,24 @@ def refused(taken: Sequence[tuple[Feature, tuple[Scenario, ...]]], state: State)
 REASON_PROMPT = "why did you refuse it? (one line, or Enter to say nothing) "
 
 
+def unexplained(pending: Sequence[Refused], key: RunKey, state: State) -> list[Refused]:
+    """The refusals still owed a person's words: nobody has been asked, and no ticket carries them yet.
+
+    IT ASKS THE SAME QUESTION `file_tickets` ASKS, which is why it exists rather than being a
+    comprehension at the call site. Both decide "is this refusal already filed", and the first version
+    of them disagreed: this one looked only for a url and that one compared the IDENTITY as well. On a
+    state whose recorded ticket belongs to an earlier product version the two then split - nobody was
+    asked, because a url was there, and a new ticket was opened anyway, because the identity had moved,
+    so the refusal reached the tracker with no reason on it. Unreachable today (`refuse_to_resume`
+    stops a resume across a version change, and `--restart` discards the state), which is exactly why
+    it would never have been noticed. One question, asked in one place.
+    """
+    return [one for one in pending
+            if state.filed(one.scenario.address).get("identity")
+            != tracker.identity(key.product, key.version, one.scenario.address)
+            and state.reason_for(one.scenario.address, one.index) is None]
+
+
 def ask_reasons(pending: Sequence[Refused], state: State,
                 ask: Callable[[str], str] = input) -> None:
     """Ask, after the walk and in the plain terminal, what each refusal was about.
@@ -1040,8 +1058,7 @@ def walk(source: str = DEFAULT_SOURCE, tags: str = "", by: str = "", restart: bo
         save_state(path, state)
     pending = refused(taken, state)
     if pending:
-        ask_reasons([one for one in pending if not state.filed(one.scenario.address).get("url")
-                     and state.reason_for(one.scenario.address, one.index) is None], state)
+        ask_reasons(unexplained(pending, key, state), state)
         if path is not None:
             save_state(path, state)
     filed = file_tickets(pending, key, state, state.sittings[-1]["by"])

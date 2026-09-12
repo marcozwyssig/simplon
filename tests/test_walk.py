@@ -968,3 +968,41 @@ def test_nothing_to_ask_about_says_nothing(product, capsys):
 
     # assert
     assert capsys.readouterr().out == ""
+
+
+def test_a_refusal_whose_ticket_is_for_an_older_version_is_asked_about_again(product):
+    """The two decision points have to agree. `file_tickets` compares the IDENTITY and the first version
+    of this filter looked only for a url, so a state holding a ticket from an earlier product version
+    asked nobody and then opened a new ticket with no reason on it. Unreachable today - a resume across a
+    version change is refused and `--restart` discards the state - which is why it would never have been
+    noticed."""
+    # arrange
+    state = _refused_state(product)
+    state.file(ADDRESS, tracker.identity("demo", "v0.9.0", ADDRESS), "https://x/1",
+               datetime(2026, 9, 12, 10, 0, 0))
+
+    # act
+    owed = walk_mod.unexplained(walk_mod.refused(_taken(product), state), _key(product), state)
+
+    # assert
+    assert [one.scenario.address for one in owed] == [ADDRESS]
+
+
+def test_a_refusal_whose_ticket_is_the_current_one_is_not_asked_about_again(product):
+    # arrange
+    state = _refused_state(product)
+    key = _key(product)
+    state.file(ADDRESS, tracker.identity(key.product, key.version, ADDRESS), "https://x/1",
+               datetime(2026, 9, 12, 10, 0, 0))
+
+    # act / assert: the words are in the ticket, and a second account of one event would be filed nowhere
+    assert walk_mod.unexplained(walk_mod.refused(_taken(product), state), key, state) == []
+
+
+def test_a_refusal_somebody_already_explained_is_not_asked_about_again(product):
+    # arrange
+    state = _refused_state(product)
+    state.explain(ADDRESS, 2, "")
+
+    # act / assert
+    assert walk_mod.unexplained(walk_mod.refused(_taken(product), state), _key(product), state) == []
