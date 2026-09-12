@@ -393,3 +393,50 @@ def test_a_gh_that_said_nothing_at_all_still_names_the_exit_code(monkeypatch, gh
 
     # assert
     assert "7" in ticket.problem
+
+
+@pytest.mark.parametrize("answer, why", [
+    ("not json at all", "a ValueError out of the parse"),
+    ('["a string"]', "an AttributeError, a list of the wrong thing"),
+    ("5", "a TypeError out of the `for`"),
+])
+def test_a_tracker_answer_of_the_wrong_shape_is_a_problem_whichever_way_it_is_wrong(
+        monkeypatch, gh, answer, why):
+    """One sentence over three exceptions, because `gh` answering with something other than a list of
+    objects arrives as a different one depending on what it answered with - and none of the three may
+    reach a walk."""
+    # arrange
+    monkeypatch.setattr(run, "run", _Recorder(("issue list", _ok(answer))))
+
+    # act
+    ticket = tracker.open_ticket(tracker.Destination(tracker.KIND_GITHUB, "acme/widget", (), "t", ""),
+                                 _refusal())
+
+    # assert
+    assert not ticket.url and "list of issues" in ticket.problem, why
+
+
+def test_a_creation_that_printed_no_url_is_not_reported_as_a_success(monkeypatch, gh):
+    """The one hole in "either a url or a sentence": the record would have printed `NO TICKET: ` with
+    nothing after the colon, and the state would have recorded no ticket for a ticket that may exist."""
+    # arrange
+    monkeypatch.setattr(run, "run", _Recorder(("issue list", _ok("[]")), ("issue create", _ok("  \n"))))
+
+    # act
+    ticket = tracker.open_ticket(tracker.Destination(tracker.KIND_GITHUB, "acme/widget", (), "t", ""),
+                                 _refusal())
+
+    # assert
+    assert not ticket.url and "may or may not have been filed" in ticket.problem
+
+
+def test_a_title_that_is_not_a_format_string_at_all_is_its_own_sentence(monkeypatch, gh):
+    # arrange: `{0}` is an IndexError rather than a missing field, so a list of field names would not help
+    monkeypatch.setattr(run, "run", _Recorder(("issue list", _ok("[]"))))
+    dest = tracker.Destination(tracker.KIND_GITHUB, "acme/widget", (), "{0}", "")
+
+    # act
+    ticket = tracker.open_ticket(dest, _refusal())
+
+    # assert
+    assert not ticket.url and "not a format string" in ticket.problem

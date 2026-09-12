@@ -263,6 +263,11 @@ def title_for(destination: Destination, refusal: Refusal) -> str:
     except KeyError as exc:
         raise KeyError(f"the `{SECTION}: title:` names {exc}, which is not a field of a refused step. "
                        f"It may name: {', '.join(TITLE_FIELDS)}") from exc
+    except (IndexError, ValueError) as exc:
+        # `{0}` is an IndexError and `{scenario:>{wide}}` a ValueError, and neither is a missing FIELD -
+        # so they get their own sentence rather than a list of names that would not have helped.
+        raise ValueError(f"the `{SECTION}: title:` is not a format string this can fill in ({exc}). It "
+                         f"may name: {', '.join(TITLE_FIELDS)}") from exc
 
 
 def body_for(destination: Destination, refusal: Refusal, ident: str) -> str:
@@ -349,7 +354,11 @@ def _github_find(destination: Destination, ident: str) -> tuple[str, str]:
         return "", f"the tracker could not be searched for an existing ticket ({_said(found)})"
     try:
         return _matching(found.out, ident), ""
-    except (ValueError, AttributeError) as exc:
+    except (ValueError, AttributeError, TypeError) as exc:
+        # All three, because `gh` answering with something other than a list of objects arrives as a
+        # different exception depending on WHAT it answered with: not JSON at all is a ValueError, a list
+        # of strings an AttributeError, and a bare number a TypeError out of the `for`. One sentence
+        # covers all three, and none of them may reach a walk.
         return "", f"the tracker's answer could not be read as a list of issues ({exc})"
 
 
@@ -365,7 +374,12 @@ def _github_create(destination: Destination, title: str, body: str) -> tuple[str
                     "--body-file", "-", *labels], input_text=body)
     if not made.ok:
         return "", f"the ticket could not be created ({_said(made)})"
-    return made.out.strip().splitlines()[-1].strip() if made.out.strip() else "", ""
+    url = made.out.strip().splitlines()[-1].strip() if made.out.strip() else ""
+    # A SUCCESS WITH NO URL IS NOT A SUCCESS, and without this it was the one hole in "either a url or a
+    # sentence": the ticket would carry neither, the record would print `NO TICKET: ` with nothing after
+    # the colon, and the walk state would record no ticket for a ticket that may well exist.
+    return (url, "") if url else ("", "the tracker reported success and printed no ticket url, so this "
+                                  "refusal may or may not have been filed - look before walking again")
 
 
 def open_ticket(destination: Destination, refusal: Refusal) -> Ticket:
@@ -382,7 +396,7 @@ def open_ticket(destination: Destination, refusal: Refusal) -> Ticket:
         return Ticket(refusal.address, ident, problem=_NO_GH)
     try:
         title = title_for(destination, refusal)
-    except KeyError as exc:
+    except (KeyError, ValueError) as exc:
         return Ticket(refusal.address, ident, problem=str(exc.args[0]))
 
     url, problem = _github_find(destination, ident)
