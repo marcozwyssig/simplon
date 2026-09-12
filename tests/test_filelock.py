@@ -104,17 +104,20 @@ def test_a_byte_range_lock_is_a_real_object_here(tmp_path):
 # --- the constructed half: what the kernel makes of a hold ----------------------------------------------
 
 
-@pytest.mark.parametrize("code, label", sorted(filelock.HOLDS.items()))
-def test_a_hold_becomes_a_sentence_naming_the_holder_class_and_the_remedy(code, label, tmp_path):
+@pytest.mark.parametrize("code, entry", sorted(filelock.HOLDS.items()))
+def test_a_hold_becomes_a_sentence_naming_the_holder_class_and_the_remedy(code, entry, tmp_path):
     """Both recognised codes, read off the table rather than typed twice, and the four things the
     sentence has to carry: the file, the holder class, what to change, and that no retry is coming."""
+    # arrange
+    name, _what = entry
+
     # act
     note = filelock.explain(_windows_error(code), tmp_path / "win11.iso")
 
     # assert
     assert note is not None, f"Windows error {code} was not recognised as a hold"
     assert str(tmp_path / "win11.iso") in note
-    assert label[0] in note and f"Windows error {code}" in note
+    assert name in note and f"Windows error {code}" in note
     assert "synchronisation" in note and "virus scanner" in note
     assert "does not retry" in note, "the declined retry has to be where the reader meets the failure"
 
@@ -228,6 +231,35 @@ def test_the_named_error_is_still_an_oserror_so_an_existing_except_still_catches
     assert isinstance(caught.__cause__, OSError), "the raw error was not kept as the cause"
     assert getattr(caught.__cause__, "winerror", None) == 32, (
         "the Windows error number is only reachable through the cause, and it was dropped")
+
+
+def test_the_structured_fields_survive_and_do_not_get_printed_over_the_sentence(monkeypatch, tmp_path):
+    """Found in review, and it is two claims that pull against each other.
+
+    A caller that inspects `errno`, `strerror` or `filename` on a caught `OSError` may not find three
+    `None`s where the raw failure had values, so the fields are carried over. But `OSError.__str__` does
+    not print its arguments - it REBUILDS its text out of exactly those three the moment they are set,
+    which turns the explanation back into `[Errno 13] Permission denied: '...'`, the message this whole
+    change exists to replace. Both halves are asserted here, because fixing either one alone silently
+    breaks the other.
+    """
+    # arrange
+    media = tmp_path / "win11.iso"
+    media.write_bytes(b"x" * 16)
+    monkeypatch.setattr(checksum, "_digest",
+                        lambda path: (_ for _ in ()).throw(_windows_error(33, filename=str(media))))
+
+    # act
+    with pytest.raises(filelock.FileLockedError) as raised:
+        checksum.sha256_of(media)
+
+    # assert
+    assert raised.value.errno == errno.EACCES, "errno was dropped"
+    assert raised.value.strerror == "Permission denied", "strerror was dropped"
+    assert raised.value.filename == str(media), "filename was dropped"
+    assert str(raised.value).startswith(str(media)), (
+        f"the rebuilt OSError text was printed over the sentence: {raised.value}")
+    assert "[Errno" not in str(raised.value)
 
 
 def test_a_missing_file_is_still_a_missing_file(tmp_path):

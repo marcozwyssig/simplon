@@ -136,7 +136,11 @@ sentence behind the URL and the operating system's own wording. si#155's `.simpl
 different failure (an install into a held directory, not a read of a held file) and is untouched.
 
 **Nothing to do.** No behaviour changes on Linux, and a product catching `OSError` around either call
-keeps catching what it caught.
+keeps catching what it caught, with `errno`, `strerror` and `filename` still on it. Keeping those was a
+review correction and it needed a second one: `OSError.__str__` does not print its argument, it rebuilds
+its text out of exactly those three fields the moment they are set, so carrying them over printed
+`[Errno 13] Permission denied` back over the explanation. `FileLockedError` therefore keeps the fields
+and takes its text from the argument.
 
 The proof is split and the split is stated, because this repository has no Windows runner and si#161
 set the precedent for constructing the condition instead of acquiring the platform. Real: a byte-range

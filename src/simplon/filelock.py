@@ -103,8 +103,25 @@ class FileLockedError(OSError):
 
     Constructed with the sentence as its ONLY argument, so `str(error)` is that sentence and nothing
     else. A two-argument `OSError` would prefix `[Errno 13]`, which is the number that made the original
-    message useless. The raw failure keeps every field it had and stays reachable as `__cause__`.
+    message useless. The raw failure stays reachable as `__cause__` either way.
+
+    `errno`, `strerror` and `filename` ARE carried over, because a caller that inspects them on a caught
+    `OSError` would otherwise find three `None`s where the failure used to have values - a silent
+    narrowing, found in review. That is also the whole reason `__str__` below exists; see the measurement
+    there.
     """
+
+    def __str__(self) -> str:
+        """The sentence, and only the sentence.
+
+        `OSError.__str__` does not print its arguments: it REBUILDS its text out of `errno`, `strerror`
+        and `filename` the moment those are set. Measured - setting them on an instance built from one
+        argument turns `str()` from the explanation into
+        `[Errno 13] Permission denied: 'C:/lib/win11.iso'`, which is exactly the message this class
+        exists to replace. So the fields are kept for whoever reads them and the text is taken from the
+        argument instead.
+        """
+        return str(self.args[0]) if self.args else super().__str__()
 
 
 def explain(failure: BaseException, path: Path | str) -> str | None:
@@ -143,4 +160,6 @@ def explained(path: Path | str) -> Iterator[None]:
         note = explain(failure, path)
         if note is None:
             raise
-        raise FileLockedError(note) from failure
+        held = FileLockedError(note)
+        held.errno, held.strerror, held.filename = failure.errno, failure.strerror, failure.filename
+        raise held from failure
