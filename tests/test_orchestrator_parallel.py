@@ -470,7 +470,10 @@ def test_the_status_bar_summarises_the_rest_when_a_whole_fan_is_in_flight():
 # --- the hooks -----------------------------------------------------------------------------------------
 
 
-def test_a_branch_that_raises_takes_the_run_down_rather_than_stopping_silently():
+def test_a_step_body_that_raises_inside_a_fan_is_a_verdict_and_not_the_end_of_the_run():
+    """si#182 CHANGED WHAT THIS ASSERTS, and the change is the ticket rather than a side effect. A body
+    that raises used to leave its step on RUNNING for ever and take the run down from inside a branch;
+    it is now that step's verdict, so the fan joins normally and every sibling keeps its own result."""
     # Arrange: a step whose action raises, inside a fan
     def action_for(name: str):
         def action() -> Outcome:
@@ -480,11 +483,31 @@ def test_a_branch_that_raises_takes_the_run_down_rather_than_stopping_silently()
         return action
 
     pipeline = _planned(_manifest(_FAN_MANIFEST, parallel=True), "images", action=action_for)
-    # Act / Assert: left to `threading`, the exception would print to stderr and the branch would simply
-    # stop - a partial run reporting steps that never ran, with no reason anywhere. It is re-raised on the
-    # calling thread instead, exactly as a sequential step that raises always has been.
-    with pytest.raises(RuntimeError, match="the factory broke"):
-        run_plan(pipeline)
+    # Act: no exception reaches the caller
+    run_plan(pipeline)
+    # Assert: the crashed branch has a verdict, and the ones beside it have theirs
+    crashed = next(step for step in pipeline.steps if step.label == "b")
+    assert crashed.state == StepState.FAILED and crashed.crash and crashed.duration is not None
+    assert [step.state for step in pipeline.steps if step.label != "b"] == \
+           [StepState.OK] * (len(pipeline.steps) - 1)
+
+
+def test_a_fault_in_a_branch_itself_still_takes_the_run_down_rather_than_stopping_silently():
+    """The si#147 property, on what is left of it after si#182. A step BODY raising is now a verdict, so
+    what can still leave a branch is a fault in the RUNNER - one of the six hooks, which run on the
+    branch thread. Left to `threading`, that would print to stderr and the branch would simply stop: a
+    partial run reporting steps that never ran, with no reason anywhere. It is re-raised on the calling
+    thread instead."""
+    # Arrange: an on_start hook that blows up on one branch
+    pipeline = _planned(_manifest(_FAN_MANIFEST, parallel=True), "images")
+
+    def on_start(index: int) -> None:
+        if pipeline.steps[index].label == "b":
+            raise RuntimeError("the repaint broke")
+
+    # Act / Assert
+    with pytest.raises(RuntimeError, match="the repaint broke"):
+        run_plan(pipeline, RunHooks(on_start=on_start))
 
 
 def test_the_hooks_report_every_step_exactly_once_whichever_branch_it_ran_on():
@@ -551,18 +574,18 @@ def test_a_fan_inside_a_fan_nests_rather_than_flattening_and_still_joins():
 
 
 def test_two_branches_raising_at_once_name_both_and_raise_one(capsys):
-    # Arrange: two of the three branches blow up in the same instant
-    def action_for(name: str):
-        def action() -> Outcome:
-            if name in ("a", "b"):
-                raise RuntimeError(f"{name} blew up")
-            return Outcome(rc=0, output="")
-        return action
+    # Arrange: two of the three branches' HOOKS blow up in the same instant. A step body raising is a
+    # verdict since si#182 and no longer reaches this path, so the fault is put where one still can be.
+    pipeline = _planned(_manifest(_FAN_MANIFEST, parallel=True), "images")
 
-    pipeline = _planned(_manifest(_FAN_MANIFEST, parallel=True), "images", action=action_for)
+    def on_start(index: int) -> None:
+        name = pipeline.steps[index].label
+        if name in ("a", "b"):
+            raise RuntimeError(f"{name} blew up")
+
     # Act
     with pytest.raises(RuntimeError, match="blew up"):
-        run_plan(pipeline)
+        run_plan(pipeline, RunHooks(on_start=on_start))
     printed = capsys.readouterr().out
     # Assert: an exception carries ONE cause, so the second has nowhere to go in the traceback - and
     # dropping it would be the silent partial failure this feature refuses elsewhere. It is logged.
@@ -570,8 +593,12 @@ def test_two_branches_raising_at_once_name_both_and_raise_one(capsys):
     assert ("a blew up" in printed) or ("b blew up" in printed)
 
 
-def test_a_branch_that_raises_does_not_swallow_the_output_its_siblings_already_produced(capsys):
-    # Arrange: three streamed steps in a fan; the MIDDLE one raises after the first has finished
+def test_a_branch_that_leaves_a_hole_does_not_swallow_the_output_its_siblings_already_produced(capsys):
+    """THE HOLE IS MADE BY AN INTERRUPT SINCE si#182, and that is the honest way to keep this covered.
+    An ordinary exception from a body no longer skips `on_finish` - it is caught and becomes a verdict -
+    so the shape `_flush(final=True)` exists for is what `Step.run` deliberately does NOT catch: a
+    `KeyboardInterrupt` through one branch of a fan, which is the operator pressing Ctrl-C on a build."""
+    # Arrange: three streamed steps in a fan; the MIDDLE one is interrupted after the first has finished
     text = _manifest(_FAN_MANIFEST, parallel=True)
     tree = manifest_load(text).plan_tree_for("images")
 
@@ -579,14 +606,14 @@ def test_a_branch_that_raises_does_not_swallow_the_output_its_siblings_already_p
         def stream(emit) -> Outcome:
             emit(f"{name} did useful work")
             if name == "b":
-                raise RuntimeError("b blew up")
+                raise KeyboardInterrupt
             return Outcome(rc=0, output=f"{name} did useful work")
         return stream
 
     steps = [Step(label=leaf.name, command=leaf.path, stream=stream_for(leaf.name))
              for leaf in tree.leaves()]
     # Act
-    with pytest.raises(RuntimeError, match="b blew up"):
+    with pytest.raises(KeyboardInterrupt):
         run_headless(Pipeline("images", steps, False, tree, tree.path))
     printed = re.sub(r"\x1b\[[0-9;]*m", "", capsys.readouterr().out)
     # Assert: `c` ran to completion and its output was already captured. A flusher that stopped at the
