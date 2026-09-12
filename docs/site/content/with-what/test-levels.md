@@ -42,13 +42,20 @@ are data in a manifest section rather than code.
 groups:
   test:
     commands:
-      unit:   { task: "test:gate", with: { name: "unit" },   help: "Run the unit suite." }
-      system: { task: "test:gate", with: { name: "system" }, help: "Run the system suite, against the lab." }
-      ui:     { task: "test:gate", with: { name: "ui" },     help: "Run the browser journeys." }
-      all:    { task: "test:accept", help: "Every level in order, then the report." }
+      unit:       { task: "test:gate", with: { name: "unit" },       help: "Run the unit suite." }
+      system:     { task: "test:gate", with: { name: "system" },     help: "Run the system suite, against the lab." }
+      acceptance: { task: "test:gate", with: { name: "acceptance" }, help: "Run the acceptance journeys." }
+      all:        { task: "test:accept", help: "Every level in order, then the report." }
 ```
 
 Four commands, two bodies. What each level actually *is* comes from the `suites:` section.
+
+**A level is not a way of reaching the product.** `acceptance` is a level; a browser journey and a
+dataplane probe are two SUITES of it, and netctl - the consumer carrying the most levels of any - spells
+them `acceptance-ui` and `acceptance-dataplane` beside `unit-java`, `component-db`, `integration-java`,
+`boot-java` and `unit-typescript`. A gate called `ui` would put the browser where the level goes and
+teach a taxonomy no product uses. What the third level above is really here to show is the mechanism
+further down: an acceptance journey runs through a product callable rather than through pytest.
 
 ## The `suites:` section
 
@@ -69,7 +76,7 @@ suites:
       args: true
       preamble: "orchestrator.lab:ready"
       announce: "system gate: the dataplane suite against the running lab"
-    - name: "ui"
+    - name: "acceptance"
       impl: "orchestrator.journeys:run"
 
   report:
@@ -231,8 +238,8 @@ on did not run. The refusal now says what it is about.
 Because the kernel only calls an `impl:` gate's runner for the return code, three keys make no sense on
 one, and declaring them **fails** rather than being quietly dropped:
 
-> sample.yaml: 'suites.gates[2]' ('ui'): an 'impl' gate cannot declare 'junit', 'args' - the kernel only
-> calls its runner for the rc
+> sample.yaml: 'suites.gates[2]' ('acceptance'): an 'impl' gate cannot declare 'junit', 'args' - the
+> kernel only calls its runner for the rc
 
 A `command:` gate is opaque in the same way and shares two of those three. `preamble` is the key that
 parts them: inert on an `impl:` gate, and the point of the kind on a `command:` one.
@@ -491,7 +498,7 @@ mixes two runs in one report. Both are green-looking artefacts describing someth
 
 At most one gate may take the arguments, and a second is refused:
 
-> sample.yaml: at most one gate may declare args: true; got ['system', 'ui']
+> sample.yaml: at most one gate may declare args: true; got ['system', 'acceptance']
 
 The reason is specific: both gates would receive the same `-k <expr>` verbatim, and an expression written
 for one suite filters a different suite down to zero tests **while still reporting green**. A partial run
@@ -647,7 +654,7 @@ allure would not have read them there either.
 A command bound to `test:gate` whose pinned `name` matches no declared gate is a manifest typo, not a
 runtime condition to limp along with, and the error lists what *is* declared:
 
-> 'suites.gates' declares no gate 'sytem' (declared: unit, system, ui)
+> 'suites.gates' declares no gate 'sytem' (declared: unit, system, acceptance)
 
 ## A gate that is not a level: `test:release-notes`
 

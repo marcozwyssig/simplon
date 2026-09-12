@@ -34,6 +34,7 @@ import re
 import textwrap
 
 import pytest
+import yaml
 
 from simplon import context
 from simplon.context import ProductContext
@@ -156,3 +157,138 @@ def test_the_loop_refusal_the_page_quotes_is_the_one_a_gate_really_makes(monkeyp
     # assert
     assert _flat(str(refused.value)) in _page(), (
         f"the page quotes something other than:\n  {refused.value}")
+
+
+# --- the refusals about a LEVEL rather than about a command (si#196) --------------------------------------
+#
+# THE SCOPE si#136 DID NOT REACH, and si#196 is what proved it needed reaching. Everything above derives
+# a `command:` gate's refusals; the page carries three more that are about the SUITES SECTION itself, and
+# those were still hand-typed. si#196 renamed the page's third level from `ui` to `acceptance` - `ui` is
+# not a level, it is one kind of acceptance test - and all three quotes name the level by name, so the
+# rename would have left three messages on the page that the code cannot produce. Exactly the class si#136
+# measured, one section across.
+#
+# THE MANIFEST IS READ OFF THE PAGE, which is the part that makes the next rename safe rather than merely
+# correct today. `MANIFEST` above is retyped here in the module because the C++ shape is the module's own
+# subject; this one is not - the reader copies the block that is PRINTED, so the block that is printed is
+# what has to be driven. `_example_section` lifts it out of the page, and a rename that touches the YAML
+# and forgets a quote turns these red with the message the code really makes.
+
+#: The heading the page's `suites:` example sits under. Named rather than matched on `suites:` alone: the
+#: page prints several YAML blocks and two of them mention the section, so a first-match rule would pick
+#: whichever one somebody adds next.
+EXAMPLE_HEADING = "## The `suites:` section"
+
+#: What the page calls the manifest in the refusals it quotes. Not a real file - the loader is handed the
+#: name of whatever it read - and the page picked one, so the derivation has to use the same one or every
+#: comparison fails on the prefix.
+SOURCE = "sample.yaml"
+
+
+def _example_section() -> dict:
+    """The `suites:` mapping the page prints under its own section heading, parsed.
+
+    Read off the PAGE and not restated here. The whole defect si#196 found is a quote that no longer
+    matches the block above it, so a copy of that block living in this file would be the same second
+    source one directory across - green while the page said something the loader would refuse.
+    """
+    body = PAGE.read_text(encoding="utf-8")
+    after = body.partition(f"\n{EXAMPLE_HEADING}\n")[2]
+    if not after:
+        raise ValueError(f"{PAGE} carries no section headed {EXAMPLE_HEADING!r}, so its example manifest "
+                         f"could not be read")
+    block = re.search(r"^```yaml\n(.*?)^```", after, re.S | re.M)
+    if block is None:
+        raise ValueError(f"{PAGE}: {EXAMPLE_HEADING!r} is followed by no yaml block")
+    parsed = yaml.safe_load(block.group(1))
+    if not isinstance(parsed, dict) or not isinstance(parsed.get(testrun.SECTION), dict):
+        raise ValueError(f"{PAGE}: the block under {EXAMPLE_HEADING!r} is not a '{testrun.SECTION}' "
+                         f"section; it parsed as {type(parsed).__name__}")
+    return parsed
+
+
+def _gates() -> list[dict]:
+    """The example's gate list, which every case below mutates one key of."""
+    return list(_example_section()[testrun.SECTION]["gates"])
+
+
+def _refused(data: dict) -> str:
+    """The loader's refusal of `data`, or a failure saying it loaded - a manifest that was supposed to be
+    refused and was not is the silence these tests are about."""
+    try:
+        testrun.declared(data, source=SOURCE)
+    except ValueError as refused:
+        return _flat(str(refused))
+    raise AssertionError(f"{SOURCE} loaded; the page quotes a refusal of it")
+
+
+def test_the_opaque_gate_refusal_the_page_quotes_names_the_page_s_own_third_level():
+    """The page's third level is an `impl:` gate, and the page quotes what happens when it also declares
+    the two keys the kernel cannot honour on one. Both the INDEX and the NAME in that message come from
+    the printed block, so a level renamed or reordered there and not here goes red."""
+    # arrange: the page's own section, with 'junit' and 'args' added to its impl gate - the two keys the
+    # quote lists, in the order `_gate` lists them
+    section = _example_section()
+    gates = _gates()
+    gates[2] = {**gates[2], "junit": "junit-acceptance.xml", "args": True}
+    section[testrun.SECTION]["gates"] = gates
+
+    # act
+    message = _refused(section)
+
+    # assert
+    assert message in _page(), f"the page quotes something other than:\n  {message}"
+
+
+def test_the_two_args_gates_refusal_the_page_quotes_lists_the_page_s_own_level_names():
+    """At most one gate may take the caller's arguments, and the refusal NAMES the offenders. The page
+    quotes that list, so the list has to be the one this section produces.
+
+    The third level is turned into a pytest gate to produce it, and that is not a liberty: an `impl:` gate
+    is refused `args` several lines earlier, so a section with two argument-taking gates is necessarily a
+    section with two pytest ones. The page's own words for the level survive the change, which is the half
+    a rename can break.
+    """
+    # arrange
+    section = _example_section()
+    gates = _gates()
+    gates[2] = {"name": gates[2]["name"], "suite": "test/acceptance/python",
+                "junit": "junit-acceptance.xml", "args": True}
+    section[testrun.SECTION]["gates"] = gates
+
+    # act
+    message = _refused(section)
+
+    # assert
+    assert message in _page(), f"the page quotes something other than:\n  {message}"
+
+
+def test_the_unknown_level_refusal_the_page_quotes_lists_the_page_s_own_declared_levels():
+    """A command pinned to a level the section does not declare is a manifest typo, and the refusal lists
+    what IS declared. That list is the page's three level names in the page's own order - the one thing a
+    rename touches and a hand-typed quote does not."""
+    # arrange: the section exactly as printed, loaded
+    cfg = testrun.declared(_example_section(), source=SOURCE)
+
+    # act
+    with pytest.raises(ValueError) as refused:
+        cfg.gate("sytem")
+
+    # assert
+    assert _flat(str(refused.value)) in _page(), (
+        f"the page quotes something other than:\n  {refused.value}")
+
+
+def test_the_example_section_the_page_prints_is_one_the_kernel_would_accept():
+    """And the block itself LOADS, which is the claim the three cases above rest on.
+
+    Each of them mutates one key of it and asserts the loader then refuses; that says nothing unless the
+    unmutated block is accepted, or every refusal above could be about a defect the page shipped rather
+    than about the mutation. Measured here rather than assumed - it is one call.
+    """
+    # arrange / act
+    cfg = testrun.declared(_example_section(), source=SOURCE)
+
+    # assert: three levels, and the third is the opaque one the page's prose is about
+    assert [gate.name for gate in cfg.gates] == ["unit", "system", "acceptance"]
+    assert cfg.gates[2].impl and not cfg.gates[2].suite
