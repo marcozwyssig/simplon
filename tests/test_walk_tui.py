@@ -245,6 +245,28 @@ def test_a_second_press_before_the_worker_moved_on_does_not_overwrite_the_first(
     assert taken == [True]
 
 
+def test_stopping_the_walk_does_not_take_back_a_verdict_that_already_landed():
+    """FOUND IN REVIEW, and driven as the exact interleaving rather than as a race hoped for.
+
+    `answer` sets the verdict and THEN sets the event, so there is a window between the waiter waking and
+    reading it. `abandon` used to reset the verdict to None inside that window, which turned a step the
+    person had just accepted into `WalkAbandoned` - and accepting a step and immediately pressing `q` is
+    the ordinary way to be in that window. The two calls below are the two the UI thread makes, in the
+    order that loses the answer.
+    """
+    # arrange: a prompt in exactly the state `ask` leaves it in while it waits
+    prompt = walk_mod.Prompt()
+    prompt._ready.clear()
+    prompt._question = "a step"
+
+    # act: the person accepts, then quits before the worker has read the verdict
+    prompt.answer(True)
+    prompt.abandon()
+
+    # assert: the verdict the waiter will read is still the one that was given
+    assert prompt._verdict is True
+
+
 def test_quitting_releases_the_step_so_the_worker_thread_can_end():
     """The worker is a `@work(thread=True)` thread blocked on an event. One nobody sets outlives
     `App.run()` and the interpreter waits for it at exit, so a walk stopped mid-question would hang the

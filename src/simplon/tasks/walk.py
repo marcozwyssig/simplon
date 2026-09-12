@@ -200,14 +200,22 @@ def select(found: Sequence[Feature],
 # --- what the walk was carried out against, and when it stops being true --------------------------------
 
 
-def digest(found: Sequence[Feature]) -> str:
-    """A sha256 over the QUESTIONS, not over the files.
+def digest(taken: Sequence[tuple[Feature, tuple[Scenario, ...]]]) -> str:
+    """A sha256 over the QUESTIONS THIS WALK ASKS: not over the files, and not over the scenarios it
+    leaves out.
 
-    WHAT IS IN IT: every feature in path order, and for each one its runner spelling, its title, its free
-    description and its tags, then every scenario's address and tags, then every step's keyword, text and
-    payload lines. That is the whole of what a person is shown and the whole of what an address is built
-    from, so anything that changes a question changes this - a reworded step, a renamed scenario, a new
-    Examples row, a tag that moves a scenario in or out of a selection, a docstring under a step.
+    WHAT IS IN IT: every contributing feature in path order, and for each one its runner spelling, its
+    title, its free description and its tags, then every SELECTED scenario's address and tags, then every
+    step's keyword, text and payload lines. That is the whole of what a person is shown and the whole of
+    what an address is built from, so anything that changes a question changes this - a reworded step, a
+    renamed scenario, a new Examples row, a docstring under a step.
+
+    IT TAKES THE SELECTION AND NOT EVERY FILE FOUND, which is a correction from review and is the module
+    matching its own stated rule. The first version hashed everything under `source`, so a person half way
+    through `--tags @gate` could not continue after a wording fix in a `@documents` scenario they were
+    never shown and never would be - a legitimate resume refused for a question that is not one of theirs.
+    Nothing is lost on the safe side: a tag that moves a scenario INTO or OUT OF the selection changes
+    what is hashed here on one side of the comparison or the other, so membership is still caught.
 
     WHAT IS DELIBERATELY NOT IN IT: comments, blank lines and indentation. Hashing the raw bytes would
     have been one line shorter and would invalidate a person's afternoon over a typo in a comment nobody
@@ -218,11 +226,11 @@ def digest(found: Sequence[Feature]) -> str:
     """
     sha = hashlib.sha256()
     separator = chr(0)
-    for feature in found:
+    for feature, scenarios in taken:
         sha.update(f"F{separator}{feature.rel}{separator}{feature.name}{separator}"
                    f"{'|'.join(feature.tags)}{separator}"
                    f"{separator.join(feature.description)}\n".encode())
-        for scenario in feature.scenarios:
+        for scenario in scenarios:
             sha.update(f"S{separator}{scenario.address}{separator}"
                        f"{'|'.join(scenario.tags)}\n".encode())
             for step in scenario.steps:
@@ -307,7 +315,7 @@ class RunKey:
 
 
 def run_key(product: str, root: Path, source: str, selection: str,
-            found: Sequence[Feature]) -> RunKey:
+            taken: Sequence[tuple[Feature, tuple[Scenario, ...]]]) -> RunKey:
     """The key for this walk.
 
     `provenance` warns for itself when it has nothing to give, and its wording is an image build's
@@ -322,7 +330,7 @@ def run_key(product: str, root: Path, source: str, selection: str,
                  f"product against")
     return RunKey(product=product, version=stamped.get(VERSION_ARG, ""),
                   revision=stamped.get(REVISION_ARG, ""), source=source, selection=selection,
-                  scenarios=digest(found))
+                  scenarios=digest(taken))
 
 
 # --- the state a sitting leaves behind ------------------------------------------------------------------
@@ -386,6 +394,22 @@ def _array(value: object) -> list[object]:
     return list(value)
 
 
+def _answer(value: object) -> dict[str, str]:
+    """One recorded answer, or a `TypeError` - and the VERDICT has to be one this version knows.
+
+    Found in review, and it is the same class as the coercion above: nothing checked the token, and
+    `_replay_note` and the step body both read "anything that is not `ok`" as a refusal. A state file
+    carrying a corrupted or foreign verdict would therefore have been replayed as the customer saying no,
+    silently. It cannot arise from `State.record`, which writes only the two - which is exactly why it
+    would never have been noticed.
+    """
+    answer = {name: str(item) for name, item in _object(value).items()}
+    if answer.get("verdict") not in (ANSWER_OK, ANSWER_FAILED):
+        raise ValueError(f"a recorded verdict must be {ANSWER_OK!r} or {ANSWER_FAILED!r}, "
+                         f"found {answer.get('verdict')!r}")
+    return answer
+
+
 def load_state(path: Path) -> State | None:
     """The state a previous sitting left, or None when there is none to be had - with a WARNING for every
     way that second answer can arise other than "there is no file".
@@ -419,8 +443,7 @@ def load_state(path: Path) -> State | None:
         key = RunKey(**{name: str(stated[name]) for name in RunKey.LABELS})
         sittings = [{name: str(item) for name, item in _object(entry).items()}
                     for entry in _array(document["sittings"])]
-        answers = {address: {index: {name: str(item) for name, item in _object(answer).items()}
-                             for index, answer in _object(steps).items()}
+        answers = {address: {index: _answer(answer) for index, answer in _object(steps).items()}
                    for address, steps in _object(document["answers"]).items()}
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
         log.warn(f"{path} is a walk state this simplon cannot fully check ({exc!r}), so this walk starts "
@@ -515,23 +538,37 @@ def plan(taken: Sequence[tuple[Feature, tuple[Scenario, ...]]], state: State,
 
     The SCENARIO node carries `stop_on_failure`, which is the mapping's load-bearing half (module head).
 
-    The leaf's dotted path is the step as it will be announced, numbered, so the left pane reads as a
-    scenario and not as a column of forty identical-looking addresses; the ADDRESS travels in `Step.help`,
-    which `steps.step_header` prints under every line of the transcript - so the RECORD stays unambiguous
-    while the tree stays readable. That is si#148's own division between the tree (where am I) and the
-    section header (what exactly is this), applied to a question instead of to a command.
+    A LEAF CARRIES TWO SPELLINGS, and the pair is what keeps the tree readable and the record honest at
+    once. `path` is what the left pane draws - the step numbered inside its own scenario, so a walk reads
+    as a scenario rather than as a column of forty near-identical addresses. `name` is the leaf's
+    IDENTITY, the same string with the scenario's own ordinal in front, and it is what `Step.command`
+    carries. The ADDRESS travels in `Step.help`, which `steps.step_header` prints under every line of the
+    transcript. That is si#148's own division between the tree (where am I) and the section header (what
+    exactly is this), applied to a question instead of to a command.
+
+    THE IDENTITY HAD TO BE UNIQUE ACROSS THE WHOLE WALK, and the first version was not (review). Numbering
+    inside a scenario makes `1. Given a clean checkout of simplon` the identity of the first step of EVERY
+    scenario in a feature that declares a `Background:` - which is the ordinary Gherkin case. `Step.command`
+    is not only a label: `steplog.log_name` turns it into a filename under `build/logs/`, so two colliding
+    steps overwrite each other's output the moment one crashes or somebody presses `s` on both. Prefixing
+    the scenario's ordinal makes the identity unique with one number and leaves the pane's own numbering
+    alone. `steps._pairing_fault` accepts a step naming either spelling, so the plan still verifies.
     """
     feature_nodes: list[PlanNode] = []
     steps: list[Step] = []
+    ordinal = 0
     for feature, scenarios in taken:
         scenario_nodes: list[PlanNode] = []
         for scenario in scenarios:
+            ordinal += 1
             leaves: list[PlanNode] = []
             for index, step in enumerate(scenario.steps):
-                label = f"{index + 1}. {step.announced}"
+                shown = f"{index + 1}. {step.announced}"
+                identity = f"{ordinal}.{index + 1} {step.announced}"
                 help_text = scenario.address + _replay_note(state.answer_for(scenario.address, index))
-                leaves.append(PlanNode(name=label, path=label, spec=_plan_spec(help_text, leaf=True)))
-                steps.append(Step(label=label, command=label, help=help_text,
+                leaves.append(PlanNode(name=identity, path=shown,
+                                       spec=_plan_spec(help_text, leaf=True)))
+                steps.append(Step(label=shown, command=identity, help=help_text,
                                   stream=_answering(scenario, index, step, state, prompt)))
             scenario_nodes.append(PlanNode(
                 name=scenario.name, path=scenario.name,
@@ -645,11 +682,19 @@ class Prompt:
         return True
 
     def abandon(self) -> None:
-        """Release whoever is waiting, with no verdict. Idempotent, and safe when nothing is being asked -
-        which is the case it exists for, since it is called on the way out of the app whether or not a
-        question was open."""
+        """Release whoever is waiting, with no verdict of its own. Idempotent, and safe when nothing is
+        being asked - which is the case it exists for, since it is called on the way out of the app
+        whether or not a question was open.
+
+        IT DOES NOT TOUCH `_verdict`, and that is a fix rather than an omission (review). The first
+        version reset it to None here, which is redundant - `ask` re-arms it at the top of every call -
+        and it lost a real answer in one interleaving: `answer` sets `_verdict` and THEN sets the event,
+        so an `abandon` landing between those and the waiter's read of `_verdict` turned a step the person
+        had just accepted into `WalkAbandoned`. Accepting a step and immediately pressing `q` is the
+        ordinary way to reach it. Setting only the flag and the event leaves the waiter to read whatever
+        really arrived: a verdict if one did, None if none did.
+        """
         self._abandoned = True
-        self._verdict = None
         self._ready.set()
 
 
@@ -730,7 +775,7 @@ def walk(source: str = DEFAULT_SOURCE, tags: str = "", by: str = "", restart: bo
     if not taken:
         raise ValueError(_no_selection(found, wanted, source))
 
-    key = run_key(ctx.name, ctx.root, source, selection_text(wanted), found)
+    key = run_key(ctx.name, ctx.root, source, selection_text(wanted), taken)
     path = state_path()
     earlier = None if path is None or restart else load_state(path)
     if earlier is not None:

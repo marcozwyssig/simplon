@@ -63,10 +63,15 @@ def _found(root: Path):
     return features(root, "tests/acceptance")
 
 
-def _key(root: Path, selection: str = "all scenarios") -> walk_mod.RunKey:
+def _taken(root: Path, wanted: tuple[str, ...] = ()):
+    return walk_mod.select(_found(root), wanted)[0]
+
+
+def _key(root: Path, selection: str = "all scenarios",
+         wanted: tuple[str, ...] = ()) -> walk_mod.RunKey:
     return walk_mod.RunKey(product="demo", version="v1.0.0", revision="abc123",
                            source="tests/acceptance", selection=selection,
-                           scenarios=walk_mod.digest(_found(root)))
+                           scenarios=walk_mod.digest(_taken(root, wanted)))
 
 
 # --- selection ------------------------------------------------------------------------------------------
@@ -139,7 +144,7 @@ def test_a_selection_that_matched_nothing_is_refused_with_the_tags_that_exist(pr
 
 def test_the_digest_moves_when_a_step_is_reworded(product):
     # arrange
-    before = walk_mod.digest(_found(product))
+    before = walk_mod.digest(_taken(product))
 
     # act
     path = product / "tests" / "acceptance" / "one.feature"
@@ -147,38 +152,38 @@ def test_the_digest_moves_when_a_step_is_reworded(product):
                     encoding="utf-8")
 
     # assert
-    assert walk_mod.digest(_found(product)) != before
+    assert walk_mod.digest(_taken(product)) != before
 
 
 def test_the_digest_moves_when_a_tag_moves_a_scenario_in_or_out_of_a_selection(product):
     # arrange
-    before = walk_mod.digest(_found(product))
+    before = walk_mod.digest(_taken(product))
 
     # act
     path = product / "tests" / "acceptance" / "one.feature"
     path.write_text(ONE.replace("  @fast\n", "  @slow\n"), encoding="utf-8")
 
     # assert
-    assert walk_mod.digest(_found(product)) != before
+    assert walk_mod.digest(_taken(product)) != before
 
 
 def test_the_digest_does_not_move_over_a_comment_nobody_was_shown(product):
     """Hashing the raw bytes would have been shorter and would invalidate a person's afternoon over a typo
     in a comment. The digest is over the QUESTIONS."""
     # arrange
-    before = walk_mod.digest(_found(product))
+    before = walk_mod.digest(_taken(product))
 
     # act
     path = product / "tests" / "acceptance" / "one.feature"
     path.write_text("# a note for whoever edits this\n" + ONE, encoding="utf-8")
 
     # assert
-    assert walk_mod.digest(_found(product)) == before
+    assert walk_mod.digest(_taken(product)) == before
 
 
 def test_the_digest_moves_when_a_step_gains_a_docstring_payload(product):
     # arrange
-    before = walk_mod.digest(_found(product))
+    before = walk_mod.digest(_taken(product))
 
     # act
     path = product / "tests" / "acceptance" / "one.feature"
@@ -187,7 +192,53 @@ def test_the_digest_moves_when_a_step_gains_a_docstring_payload(product):
                     encoding="utf-8")
 
     # assert
-    assert walk_mod.digest(_found(product)) != before
+    assert walk_mod.digest(_taken(product)) != before
+
+
+def test_the_digest_ignores_a_scenario_this_walk_does_not_ask(product):
+    """FOUND IN REVIEW. The first version hashed every file under `source`, so a person half way through
+    `--tags @fast` could not continue after a wording fix in a scenario they were never shown and never
+    would be - a legitimate resume refused over a question that is not one of theirs."""
+    # arrange
+    before = walk_mod.digest(_taken(product, ("fast",)))
+
+    # act: an edit inside the SAME file, to a scenario the @fast selection leaves out
+    path = product / "tests" / "acceptance" / "one.feature"
+    path.write_text(ONE.replace("Then it does not report success", "Then it reports no success"),
+                    encoding="utf-8")
+
+    # assert
+    assert walk_mod.digest(_taken(product, ("fast",))) == before
+    assert walk_mod.digest(_taken(product)) != before, "and the unselected walk still sees it"
+
+
+def test_the_digest_still_sees_a_tag_that_moves_a_scenario_into_the_selection(product):
+    """Nothing is lost on the safe side by scoping it: membership changes what is hashed."""
+    # arrange
+    before = walk_mod.digest(_taken(product, ("fast",)))
+
+    # act
+    path = product / "tests" / "acceptance" / "two.feature"
+    path.write_text(TWO.replace("  @reference\n", "  @reference @fast\n"), encoding="utf-8")
+
+    # assert
+    assert walk_mod.digest(_taken(product, ("fast",))) != before
+
+
+def test_the_run_key_takes_the_digest_of_the_selection_it_was_handed(product, monkeypatch):
+    """The wiring, not only `digest`'s own scope: a key built over every file found would reintroduce the
+    over-invalidation whatever `digest` does with what it is given. The signature makes the other spelling
+    a type error, and this makes it a red test too."""
+    # arrange: no git in the way - the version half of the key is not what this is about
+    monkeypatch.setattr(walk_mod, "provenance", lambda root: {"VERSION": "v1", "REVISION": "r1"})
+    narrow = _taken(product, ("fast",))
+
+    # act
+    key = walk_mod.run_key("demo", product, "tests/acceptance", "@fast", narrow)
+
+    # assert
+    assert key.scenarios == walk_mod.digest(narrow)
+    assert key.scenarios != walk_mod.digest(_taken(product))
 
 
 def test_a_moved_key_names_every_part_that_moved_and_both_values():
@@ -334,6 +385,11 @@ def test_a_state_that_is_not_there_is_not_a_warning(product, capsys):
      '"selection": "a", "scenarios": "x"}, "sittings": [], "answers": []}', "a list where an object goes"),
     ('{"format": 1, "key": {"product": "d", "version": "v", "revision": "r", "source": "s", '
      '"selection": "a", "scenarios": "x"}, "sittings": "one", "answers": {}}', "sittings that is a string"),
+    # FOUND IN REVIEW. Nothing checked the token, and everything downstream reads "not ok" as a refusal -
+    # so a corrupted verdict would have been replayed as the customer saying no, silently.
+    ('{"format": 1, "key": {"product": "d", "version": "v", "revision": "r", "source": "s", '
+     '"selection": "a", "scenarios": "x"}, "sittings": [], '
+     '"answers": {"a:b": {"0": {"verdict": "yes", "at": "t"}}}}', "a verdict token nobody writes"),
 ])
 def test_an_unusable_state_claims_nothing_and_says_so(product, capsys, payload, why):
     """UNUSABLE IS NOT THE SAME AS MOVED. A state the kernel cannot fully check means it does not know
@@ -423,6 +479,25 @@ def test_the_address_travels_in_the_step_header_so_the_record_is_unambiguous(pro
     assert pipeline.steps[0].label == "1. Given a clean checkout"
     assert pipeline.steps[0].help == "acceptance/one.feature:The gate runs everything"
     assert pipeline.steps[3].help == "acceptance/one.feature:A gate that found nothing is not green"
+
+
+def test_every_steps_identity_is_unique_across_the_whole_walk(product):
+    """FOUND IN REVIEW, and it is not only a label: `steplog.log_name` turns `Step.command` into a
+    filename under `build/logs/`, so two steps sharing one would overwrite each other's output the moment
+    one crashes or somebody presses `s` on both. A feature with a `Background:` - the ordinary case, and
+    this fixture - gives every scenario the same first step."""
+    # act
+    pipeline = _plan(product)
+    commands = [step.command for step in pipeline.steps]
+
+    # assert
+    assert len(set(commands)) == len(commands)
+    assert commands[:2] == ["1.1 Given a clean checkout", "1.2 When I run the gate"]
+    assert commands[3] == "2.1 Given a clean checkout"
+    # and the LEFT PANE still numbers inside its own scenario
+    assert [step.label for step in pipeline.steps][:4] == [
+        "1. Given a clean checkout", "2. When I run the gate", "3. Then it reports three steps",
+        "1. Given a clean checkout"]
 
 
 def test_the_background_is_walked_once_per_scenario(product):
