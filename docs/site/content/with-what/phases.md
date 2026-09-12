@@ -151,11 +151,11 @@ the number that says whether a rib is filled:
 | `monitor` | phase, env-first | 0 |
 | `support` | not a phase | 8 |
 | `vcs` | family | 5 |
-| `docs` | family | 3 |
+| `docs` | family | 4 |
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Thirty-six coordinates: twenty-five carrying a placement, eleven free to be filed. The numbers in this sentence, in that
+Thirty-seven coordinates: twenty-five carrying a placement, twelve free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -379,15 +379,19 @@ The catalogue places all five under `support git`.
 
 ### `docs`
 
-**In the catalogue today: 3 tasks.**
+**In the catalogue today: 4 tasks.**
 
 - `docs:render`
 - `docs:site`
 - `docs:reference`
+- `docs:acceptance`
 
-This family is the standing example of why placement is the product's call: simplon files two of
-them - `docs:reference` and `docs:site` - under `build`, and a product that publishes its site as part
-of shipping would file `docs:site` under `release` and be just as right.
+This family is the standing example of why placement is the product's call: simplon files three of
+them - `docs:reference`, `docs:acceptance` and `docs:site` - under `build`, and a product that publishes
+its site as part of shipping would file `docs:site` under `release` and be just as right. The newest
+(si#204) makes the same point from the other side: `docs:acceptance` writes the document of what a
+product's `.feature` files verify, and a product that regards that as an output of `test` rather than an
+input to its website would file it there.
 
 ### `tasks`
 

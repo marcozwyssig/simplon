@@ -29,11 +29,15 @@ from conftest import ROOT
 
 MANIFEST = ROOT / "simplon.yaml"
 
-#: The aggregate that ties the two documentation commands together, and the order it must plan them in.
+#: The aggregate that ties the documentation commands together, and the order it must plan them in.
 #: Spelled out rather than derived from the manifest, because a test that read the order out of the
 #: manifest and then asserted the manifest declares it would hold nothing.
+#:
+#: THREE SINCE si#204: `acceptance` writes a second page into the content tree, so it is a second WRITER
+#: that has to run before the reader. The two writers do not depend on each other and their relative
+#: order carries no meaning; what this tuple holds is that `site` is last.
 DOCS_AGGREGATE = "docs"
-EXPECTED_PLAN = ("reference", "site")
+EXPECTED_PLAN = ("reference", "acceptance", "site")
 
 
 @pytest.fixture(scope="module")

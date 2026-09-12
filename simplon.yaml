@@ -53,12 +53,26 @@ groups:
       # are the product's data and `docs:site` reads them through the manifest -- see
       # src/simplon/tasks/site.py, which is also where the one value that is NOT in that section lives:
       # `source:` defaults to docs/site and this manifest leaves it out.
+      # The acceptance document (si#204), generated exactly the way the reference above is and pinned for
+      # the same reason: the Hugo project exists, so where the page belongs is not an open question a
+      # caller answers on the command line. `source` is left OUT, so this manifest is the first consumer
+      # of the `tests/acceptance` default rather than a product that happens to agree with it - the same
+      # thing it does for `site: source:` below.
+      acceptance:
+        task: "docs:acceptance"
+        with:
+          output: docs/site/content/with-what/acceptance.md
+          title: "Acceptance scenarios"
       site: { task: "docs:site" }
       # The documentation website, as ONE command, and an impl-less AGGREGATE rather than a leaf (#2, task
       # 3). `reference` writes docs/site/content/with-what/commands.md by reading the assembled CLI; `site`
       # runs Hugo over docs/site/ and publishes into build/website/. The first WRITES a page the second READS, so
       # the order is not a preference - run them the other way round and the published site carries the
       # previous run's reference, or, the very first time, none at all.
+      #
+      # si#204 added a THIRD step in the same relation: `acceptance` writes
+      # docs/site/content/with-what/acceptance.md by reading tests/acceptance/*.feature, and it is the
+      # second page `site` reads. Both writers run before the reader; they do not depend on each other.
       #
       # `depends_on` is where that ordering is stated, because the manifest is the only place it can be
       # STATED rather than merely happen. A script beside the manifest that called the two in order would
@@ -73,7 +87,7 @@ groups:
       # aggregate takes the worst rc either way, so nothing is hidden by letting the second step run.
       docs:
         help: "Write the command reference, then build the website from it."
-        depends_on: [reference, site]
+        depends_on: [reference, acceptance, site]
   test:
     commands:
       # The pytest suite (si#156). It answered to `all` until that ticket; what took the name is the

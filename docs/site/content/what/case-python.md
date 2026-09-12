@@ -279,17 +279,19 @@ deployed to the machine in front of you. Beyond that, you write it yourself.
 
 ```text
 $ ./simplon.sh build docs
-[07:15:35] ==> build.reference - Write the product's command reference as Markdown, read off its BUILT command line.
-  [07:15:36]  OK command reference -> docs/site/content/with-what/commands.md
-[07:15:36] ==> build.site - Build the product's documentation website with Hugo, in Docker (HTML only).
-  [07:15:36] ==> fetching the pinned theme module github.com/imfing/hextra@v0.12.3
-  [07:15:38] ==> building the site with hugo in hugomods/hugo:exts-0.148.2: docs/site/ -> build/website/
-  [07:15:44]  OK site built -> build/website/
-[07:15:44]  OK docs: all 2 steps passed
+[12:02:12] ==> build.reference - Write the product's command reference as Markdown, read off its BUILT command line.
+  [12:02:13]  OK command reference -> docs/site/content/with-what/commands.md
+[12:02:14] ==> build.acceptance - Write the product's acceptance document as Markdown, read off its own .feature files.
+  [12:02:15]  OK acceptance document -> docs/site/content/with-what/acceptance.md (9 scenarios from 2 feature files)
+[12:02:15] ==> build.site - Build the product's documentation website with Hugo, in Docker (HTML only).
+  [12:02:15] ==> fetching the pinned theme module github.com/imfing/hextra@v0.12.3
+  [12:02:17] ==> building the site with hugo in hugomods/hugo:exts-0.148.2: docs/site/ -> build/website/
+  [12:02:20]  OK site built -> build/website/
+[12:02:20]  OK docs: all 3 steps passed
 ```
 
-One aggregate, two steps, and the order between them is a `depends_on` edge rather than a convention -
-the first writes the command reference the second publishes. Which of the three documentation commands
+One aggregate, three steps, and the order between them is a `depends_on` edge rather than a convention -
+the first two write the pages the third publishes. Which of the four documentation commands
 produces what is [a table in the examples](../examples/#8-publish-the-documentation).
 
 {{< callout type="info" >}}

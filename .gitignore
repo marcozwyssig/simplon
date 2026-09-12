@@ -23,6 +23,9 @@ src/simplon/_version.py
 # because Hugo only renders what lives under content/. It is an output that happens to sit among
 # sources, so it is named here explicitly rather than left to a directory rule.
 docs/site/content/with-what/commands.md
+# The acceptance document, written the same way by `docs:acceptance` (si#204) and gitignored for the
+# same reason: the .feature files are the source, this page is the output.
+docs/site/content/with-what/acceptance.md
 
 # Hugo's own working files inside the site directory. `resources/` is its asset cache and `public/` the
 # destination it uses when nothing passes --destination (a bare `hugo` run in docs/site/, which is what

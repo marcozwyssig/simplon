@@ -130,7 +130,11 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
     # `reference` (#2) is the third, and the only one that renders nothing a human wrote: it reads the
     # product's own assembled command line and writes it out as Markdown, so the page cannot fall behind
     # the CLI. Mechanism again - the output PATH is the product's datum and arrives as a parameter.
-    assert sorted(cat.namespace("docs")) == ["reference", "render", "site"]
+    # `acceptance` (si#204) is the fourth, and the second that renders nothing a human wrote for it: it
+    # reads the product's own `.feature` files and writes the document of what is VERIFIED beside the one
+    # saying what can be TYPED. Mechanism again - where the scenarios are and where the page goes are the
+    # product's data and arrive as parameters.
+    assert sorted(cat.namespace("docs")) == ["acceptance", "reference", "render", "site"]
     # The container image, #31's whole subject. Neither half is PLACED (the assertion below walks the
     # tree and would catch it): both read an `images:` section naming the registry, the repository, the
     # Dockerfile and the build context, so a command declared in the catalogue's own `build:` group would
