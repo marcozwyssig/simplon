@@ -62,7 +62,7 @@ from pathlib import Path
 from typing import IO, Any
 from urllib.parse import urlsplit
 
-from simplon import log
+from simplon import filelock, log
 
 #: How long a single socket operation may take. It bounds the connect AND every individual read, which
 #: is the shape this needs: a slow 60 MB download is fine and a stall of half a minute is not.
@@ -659,8 +659,17 @@ def download(url: str, dest: str | Path, *, label: str = "",
         # URL that urllib rejects with a UnicodeEncodeError out of the idna codec - which is a
         # ValueError and neither of the other two, so it escaped this function unwrapped, past a
         # docstring promising it could not. Found in review.
+        #
+        # A file HELD by another process gets the kernel's one sentence about that appended (si#193),
+        # rather than a type of its own: `DownloadError` is deliberately the only thing this function
+        # raises, so the position reaches a caller as text and not as a second class to catch. The raw
+        # message is kept in front of it, because on a download the URL and the OS's own wording are
+        # both still worth reading; `filelock.explain` adds the part neither of them says, which is
+        # which process is likely holding the file and what to exclude.
+        held = filelock.explain(failure, dest)
         raise DownloadError(f"could not download {url}: "
-                            f"{type(failure).__name__}: {failure}") from failure
+                            f"{type(failure).__name__}: {failure}"
+                            + (f" {held}" if held is not None else "")) from failure
     finally:
         if progress is not None:
             progress.close()

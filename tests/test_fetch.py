@@ -33,6 +33,7 @@ connection is produced rather than simulated: a request with no `Range` announce
 sends half of it, then closes. What every resume test finally asserts is the file, byte for byte.
 """
 import datetime
+import errno
 import fcntl
 import os
 import pty
@@ -488,6 +489,76 @@ def test_a_body_that_stops_halfway_leaves_nothing_at_all_behind(base, tmp_path):
     # with the bar still standing to its right, so a failure that did not close the line would have its
     # reason printed ON the remains of a progress bar.
     assert shown.text.endswith("\r\033[K"), f"the bar was left on the screen: {shown.text!r}"
+
+
+def test_a_destination_another_process_is_holding_says_which_process_class_to_look_for(
+        base, tmp_path, monkeypatch):
+    """si#193's position, on the WRITE side. The transfer succeeds and the rename onto the destination
+    is what meets the hold, which is where a Windows sync client actually sits in this function: the
+    temporary is a fresh `mkstemp` name nothing else knows about, so `os.replace` is the first moment
+    this download touches a name somebody else may be holding.
+
+    HALF REAL, HALF CONSTRUCTED, and the docstring of `tests/test_filelock.py` says which. Real: the
+    server, the transfer, the staging file, the funnel, the cleanup. Constructed: the `winerror` on the
+    failure, because Linux has no such field and this repository has no Windows runner - si#161's method.
+
+    What is asserted is that the message keeps BOTH halves. `fetch.download` raises `DownloadError` and
+    nothing else on purpose, so the position arrives as text: the URL and the operating system's own
+    wording first, and behind them the sentence saying who is likely holding the file, what to exclude,
+    and that no retry is coming.
+    """
+    # arrange
+    dest = tmp_path / "docker.tgz"
+    real = os.replace
+
+    def held(src, target, *args, **kwargs):
+        if Path(target) == dest:
+            failure = OSError(errno.EACCES, "Permission denied")
+            failure.winerror = 32          # ERROR_SHARING_VIOLATION
+            failure.filename = str(dest)
+            raise failure
+        return real(src, target, *args, **kwargs)
+
+    monkeypatch.setattr(os, "replace", held)
+
+    # act
+    with pytest.raises(fetch.DownloadError) as raised:
+        fetch.download(f"{base}/whole", dest)
+
+    # assert
+    message = str(raised.value)
+    assert f"could not download {base}/whole" in message, "the URL stopped being in the message"
+    assert f"{dest} is held by another process" in message
+    assert "virus scanner" in message and "does not retry" in message
+    assert isinstance(raised.value.__cause__, OSError), "the raw failure was not kept as the cause"
+    assert not dest.exists() and list(tmp_path.iterdir()) == [], (
+        "a download that could not land left something behind")
+
+
+def test_an_ordinary_failure_to_land_is_not_dressed_up_as_a_hold(base, tmp_path, monkeypatch):
+    """The other direction of the same branch, and the one that would otherwise never fail: an `OSError`
+    with no `winerror` has to reach the caller as the message it always had. A version of the branch
+    that keyed on `errno` instead would explain this one as a sync client, and the operator would go
+    looking for a process that is not there."""
+    # arrange
+    dest = tmp_path / "docker.tgz"
+
+    def refused(src, target, *args, **kwargs):
+        # EACCES deliberately, and it is the whole point of the test: Windows reports BOTH holds as
+        # EACCES, so a branch that keyed on errno rather than on `winerror` would explain this ordinary
+        # permission failure as a sync client. Seen red against exactly that mutation.
+        raise OSError(errno.EACCES, "Permission denied")
+
+    monkeypatch.setattr(os, "replace", refused)
+
+    # act
+    with pytest.raises(fetch.DownloadError) as raised:
+        fetch.download(f"{base}/whole", dest)
+
+    # assert
+    message = str(raised.value)
+    assert "Permission denied" in message
+    assert "held by another process" not in message and "virus scanner" not in message
 
 
 def test_a_server_that_accepts_and_never_answers_fails_instead_of_hanging(base, tmp_path):

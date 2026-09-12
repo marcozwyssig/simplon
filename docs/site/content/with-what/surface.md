@@ -106,6 +106,16 @@ rather than leaving it to be discovered. Anything else - an unreadable sidecar, 
 written by a version that spelled the record differently - recomputes; nothing trusts a record it could
 not fully check.
 
+On Windows the read can meet a file another process is holding, which is observed rather than
+hypothetical: a synchronisation client or an on-access virus scanner takes byte-range locks while it
+uploads or scans, and a 5 GB medium is held for minutes. si#193 gives that condition a name rather than a
+retry. `simplon.filelock` recognises the two Windows error numbers that mean it and raises
+`filelock.FileLockedError`, an `OSError` subclass whose message says which process class is likely
+holding the file, what to exclude, and that no retry is coming. `fetch.download` takes the same position
+in the spelling it already promised, appending the sentence to its `DownloadError`. **There is no retry
+schedule, on purpose**: nobody has measured how long such a hold lasts, and this kernel does not carry a
+number nothing derives.
+
 The sidecars live in `build/checksums/`, which is deliberate and not a new decision: `/build/` is already
 the first line of the `.gitignore` block si#155 scaffolds, so this module adds nothing to the list of
 what the kernel writes into your tree. A dotfile beside the media would have.

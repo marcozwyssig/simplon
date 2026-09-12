@@ -105,6 +105,50 @@ not every ticket that changed behaviour.
 branches would both rewrite rather than by subject, records the decisions already taken for the acceptance
 cluster, and states the rule that only one lane at a time may declare a catalogue coordinate - because
 that turns nine counted guards red at once. Nothing to do.
+### A locked read says what is holding it, and the retry is declined out loud (si#193)
+
+`checksum.sha256_of` reads a file, and on Windows it can meet a byte-range lock held by something that
+is not simplon. The failure is observed rather than imagined: `secure-windows-images` records
+"cannot access the file because another process has locked a portion of it" in its own troubleshooting
+table, against a directory under a synchronisation client holding 5 GB ISOs while it uploads them.
+
+**The retry was asked for and is declined, and that is the decision worth reading.** The reporting
+product answers the condition with `RETRY_DELAYS = (5, 10, 20, 30, 30)`, and si#177 had already left it
+out as speculative. Its own maintainer then put the reason better than the refusal did: the tuple has no
+comment, no reference and nothing deriving it, in a codebase where 450 MB is decimal because a channel
+rejects at 500 decimal. Ninety-five seconds over six attempts is a guess that has not failed yet, which
+is not a measurement, and **nobody has timed how long a sync client actually holds a byte range on a
+file that size**. Adopting it would have put the one unjustified number of that codebase into a kernel
+where every other number carries its reason, inside a wait a caller cannot see, shorten or interrupt.
+
+What is adopted instead needs no measurement to be worth having. `simplon.filelock` recognises the two
+Windows error numbers that mean "another process is holding this file" and turns them into a sentence
+naming the likely holder class, the directory to exclude, and the fact that no retry is coming. It is
+keyed on `OSError.winerror`, never on `errno`: Windows reports both holds as `EACCES` and so does an
+ordinary POSIX permission denial, so an errno-keyed version would tell somebody with a missing `r` bit
+to go hunting a sync client. Off Windows the module is inert by construction.
+
+One rule, two spellings, because the two call sites had already promised different things.
+`checksum.sha256_of` raises `filelock.FileLockedError`, which subclasses `OSError` so that its standing
+promise to raise what `stat` and `open` raise is narrowed rather than replaced. `fetch.download` raises
+`DownloadError` and nothing else on purpose, so it grows no second class to catch and appends the same
+sentence behind the URL and the operating system's own wording. si#155's `.simplon-toolchain` is a
+different failure (an install into a held directory, not a read of a held file) and is untouched.
+
+**Nothing to do.** No behaviour changes on Linux, and a product catching `OSError` around either call
+keeps catching what it caught.
+
+The proof is split and the split is stated, because this repository has no Windows runner and si#161
+set the precedent for constructing the condition instead of acquiring the platform. Real: a byte-range
+lock held by a second process here makes a conflicting request fail with `BlockingIOError`, errno 11
+`EAGAIN`, measured - and two descriptors inside one process do not conflict at all, because POSIX record
+locks are owned by the process. Constructed: that the failing operation is the READ and that it carries
+`winerror`, neither of which Linux can produce. Two facts came out of building it that no design would
+have supplied: a blocking `lockf` on a held range waits rather than fails, so the probe has to be
+`LOCK_NB` or it passes for the wrong reason after thirty seconds; and `fetch.download` calls `_staging`
+OUTSIDE its own `try`, so an `OSError` from `mkstemp` or from the destination `mkdir` escapes past a
+docstring promising `DownloadError` and only `DownloadError`. That last one is reported, not patched -
+it is a pre-existing gap on a path no hold in this ticket reaches.
 
 ## 0.12.0
 
