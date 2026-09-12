@@ -181,19 +181,20 @@ if [ "$DELIVERY_ROUTE" = container ]; then
     # already carries for every toolchain container, applied to the kernel's own. It also makes that
     # function's `os.getuid()` answer the caller's uid inside the container, so the sibling containers
     # inherit the right owner for free.
-    if [ -n "${DELIVERY_CONTAINER_USER:-}" ]; then
-        DOCKER_RUN+=(--user "$DELIVERY_CONTAINER_USER")
-    else
-        DOCKER_RUN+=(--user "$(id -u):$(id -g)")
-    fi
+    DOCKER_RUN+=(--user "$(id -u):$(id -g)")
     # THE SOCKET, WHEN THERE IS ONE. Every task in this kernel is a `docker run`, so without it the
     # container route can only do the work that needs no container. It is not made mandatory: the pytest
     # suite and the release-notes guard need no daemon, and refusing them would be refusing a run that
-    # works. `--group-add` is what lets a non-root caller write a socket that is root:docker 0660.
-    DOCKER_SOCK="${DELIVERY_DOCKER_SOCKET:-/var/run/docker.sock}"
-    if [ -S "$DOCKER_SOCK" ]; then
-        DOCKER_RUN+=(-v "$DOCKER_SOCK:/var/run/docker.sock")
-        SOCK_GID="$(stat -c '%g' "$DOCKER_SOCK" 2>/dev/null || stat -f '%g' "$DOCKER_SOCK" 2>/dev/null || true)"
+    # works. `--group-add` is what lets a non-root caller write a socket that is root:docker 0660; the
+    # `stat` runs twice because GNU spells the format `-c` and BSD spells it `-f`.
+    #
+    # THE DEFAULT SOCKET AND NO OTHER, deliberately. A daemon reached over tcp or ssh would break this
+    # route for a reason no flag here can fix: the host paths si#201 translates to are this machine's,
+    # and a remote daemon would resolve them against its own filesystem - which is the empty-directory
+    # failure again, one hop further away.
+    if [ -S /var/run/docker.sock ]; then
+        DOCKER_RUN+=(-v /var/run/docker.sock:/var/run/docker.sock)
+        SOCK_GID="$(stat -c '%g' /var/run/docker.sock 2>/dev/null || stat -f '%g' /var/run/docker.sock 2>/dev/null || true)"
         [ -n "$SOCK_GID" ] && DOCKER_RUN+=(--group-add "$SOCK_GID")
     fi
     # THE HOST PATH OF THE MOUNT, which is the whole of si#201. The kernel is about to start sibling

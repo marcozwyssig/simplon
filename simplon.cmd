@@ -120,6 +120,14 @@ rem strips a prefix off a variable only through delayed expansion, and the file 
 rem dir in two spellings for exactly that class of reason (see `_render_launcher`).
 set "ORCH_IN_SRC=/src/deploy/orchestrator"
 
+rem THE HOST ROOT IS A DRIVE PATH HERE, AND THE KERNEL CANNOT USE IT YET. `%LAUNCH_ROOT%` is `C:\...`,
+rem and the kernel reading it back is running in a LINUX container, where nothing joins a drive-letter
+rem path onto a POSIX one - so `simplon.hostpath` refuses it BY NAME and says to use DELIVERY_ROUTE=venv.
+rem That is the third and largest of this file's undriven gaps, and it is stated rather than papered
+rem over: what Docker Desktop's daemon accepts as a `-v` source from inside a Linux container is a
+rem measurement, and there was no Windows to take it on. Until somebody does, the Windows container route
+rem reaches the CLI and refuses at the first task that mounts anything.
+rem
 rem THE SOCKET. On Windows the engine is a named pipe, but a LINUX container reaches it through the
 rem socket Docker Desktop keeps inside its own VM, which is why this is the same path the .sh mounts and
 rem not //./pipe/docker_engine - that pipe is for Windows containers. Inherited, not driven.

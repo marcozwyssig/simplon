@@ -93,6 +93,14 @@ RUN apt-get update \
 # here: this image never runs a daemon, it talks to the host's through the socket the launcher mounts -
 # the docker-outside-of-docker shape `simplon.docker` was written for. The version is the one
 # `simplon.docker.DOCKER_CLI_VERSION` pins, so the runtime bootstrap and this layer cannot disagree.
+#
+# NOT CHECKSUM-VERIFIED, and that is a gap rather than an oversight (found on review of si#201). The
+# tarball is pinned by version and fetched over TLS from download.docker.com, and nothing here compares
+# it against a published SHA256. The same gap already exists one module away, in
+# `simplon.docker._fetch_static_cli`, which is the runtime half of the very same fetch - so closing it
+# HERE alone would leave this kernel keeping a rule in one of the two places it argues for it, which is
+# the shape si#47 exists to refuse. The fix is one digest table beside DOCKER_CLI_VERSION used by both,
+# and it is a ticket rather than a line in this file.
 ARG DOCKER_CLI_VERSION=29.6.1
 RUN arch="$(uname -m)" \
  && case "$arch" in x86_64|amd64) arch=x86_64 ;; aarch64|arm64) arch=aarch64 ;; \
