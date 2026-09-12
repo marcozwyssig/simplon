@@ -76,7 +76,7 @@ fetch.human_bytes_binary(450_000_000)  # '429.2 MiB' 1024-based, what a file man
 never again by whoever reads the log. The units differ too, and that is the part worth knowing before
 you print either one: si#192 arrived from a product that caps a channel at 450'000'000 bytes because the
 channel rejects at 500 MB decimal, and whose own 1024-based helper spelled that `429.2 MB` - comfortably
-under a cap it was in fact sitting on. That cost it a publish. Below 1024 the two produce the same
+under a cap it was in fact sitting on. That cost it a publish. Below 1000 the two produce the same
 string, because there is no ambiguity there to resolve.
 
 ### And `simplon.checksum`, which is the same argument at a different seam

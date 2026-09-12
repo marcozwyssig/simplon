@@ -271,9 +271,10 @@ a failed publish: a true division wearing the other scale's unit, reading as com
 was in fact sitting on. A distinct name keeps the pair apart where it is CALLED. Only a distinct unit
 keeps them apart where the mistake was actually made, which is in a log, where the reader has one string
 and no call site to consult. So the binary function writes `KiB`, `MiB`, `GiB`, and a test drives every
-count in a range to assert the two functions never share a unit token once a scale applies. Below 1024
+count in a range to assert the two functions never share a unit token once a scale applies. Below 1000
 the two produce the same string, which is honest: `947 B` is the same count of the same bytes either
-way. The format otherwise mirrors `human_bytes` exactly, separator included, because a pair a reader has
+way. The threshold is the decimal function's first scale rather than this one's - from 1000 to 1023 the
+two part company on the unit (`1.0 KB` against `1000 B`) instead of agreeing. The format otherwise mirrors `human_bytes` exactly, separator included, because a pair a reader has
 to learn twice is a pair that gets misread.
 
 **`log.step()` is declined, and the premise it rests on is not true.** The ticket asks for a phase

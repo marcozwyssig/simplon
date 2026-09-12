@@ -184,10 +184,17 @@ def human_bytes_binary(count: float) -> str:
     the loudness is the entire point of the function, so the two heads do not contradict each other -
     they place the same character where each is worth its cost.
 
-    BELOW 1024 THE TWO ARE THE SAME STRING, and that is honest rather than an oversight: `947 B` is the
-    same count of the same bytes on either scale, so there is no ambiguity for a unit to resolve. The
-    shape and the separator mirror `human_bytes` down to the format spec, `GiB` being the one place a
-    separator is reachable, because a pair a reader has to learn twice is a pair that gets misread.
+    BELOW 1000 THE TWO ARE THE SAME STRING, and that is honest rather than an oversight: `947 B` is the
+    same count of the same bytes on either scale, so there is no ambiguity for a unit to resolve. Note
+    the threshold is the DECIMAL function's first scale, not this one's - from 1000 to 1023 the two part
+    company (`1.0 KB` against `1000 B`) rather than agreeing, which is the case a "below 1024" reading
+    of this paragraph would get wrong.
+
+    The shape and the separator mirror `human_bytes` down to the format spec, because a pair a reader
+    has to learn twice is a pair that gets misread - so the separator is in the scaled branch only,
+    where `GiB` is the unit it is wanted for and `1,024.0 KiB` is the rounding edge it also lands on.
+    That edge is `human_bytes`'s own wart carried across rather than fixed: a display that rounds is
+    allowed to round, and a twin rounding differently from its partner would be the worse answer.
     """
     for unit, scale in (("GiB", 1024 ** 3), ("MiB", 1024 ** 2), ("KiB", 1024)):
         if count >= scale:
