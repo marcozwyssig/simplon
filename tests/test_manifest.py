@@ -85,6 +85,21 @@ def test_load_rejects_a_manifest_with_no_groups():
         manifest.load("product: demo\n")
 
 
+def test_load_refuses_a_document_that_does_not_parse_by_naming_the_mark():
+    # arrange: the si#222 shape - two stray characters in front of the opening `#`, so line 1 stops
+    # being a comment and the mapping below it is a parse error rather than a section
+    text = "00# the header comment\n\nproduct: demo\n"
+
+    # act / assert: a refusal carrying the parser's OWN mark and problem, not a `yaml.YAMLError`
+    # eight frames deep (a YAMLError is not a ValueError, so this raises clause is the assertion)
+    with pytest.raises(ValueError) as caught:
+        manifest.load(text)
+    message = str(caught.value)
+    assert "is not valid YAML" in message
+    assert "line 3, column 8" in message
+    assert "mapping values are not allowed here" in message
+
+
 def test_load_rejects_an_env_group_that_is_not_a_declared_group():
     # arrange: env_groups names a group that does not exist
     text = ("""

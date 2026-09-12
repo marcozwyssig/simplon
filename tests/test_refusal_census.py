@@ -253,6 +253,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("manifest", "walk", "dependency cycle: "): DIAGNOSIS,
     # netctl#1319. The manifest loads and runs; what is wrong is the abort scope, which is invisible.
     ("manifest", "_validate_taxonomy", "disagree on stop_on_f"): EXPRESSION,
+    # si#222. A document that does not parse could not have meant anything at all, so there is no
+    # product it would have produced - and it is the only refusal that takes out every command at
+    # once, which is why it is worth a sentence of its own rather than the parser's traceback.
+    ("manifest", "load", "is not valid YAML"): DIAGNOSIS,
     ("manifest", "load", "`groups:` is not a mapping"): DIAGNOSIS,
     ("manifest", "load", "`tasks:` is not a mapping"): DIAGNOSIS,
     ("manifest", "load", "generate names group(s)"): DIAGNOSIS,

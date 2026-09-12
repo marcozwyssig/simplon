@@ -81,6 +81,20 @@ def test_manifest_parses_and_validates_the_command_taxonomy(tmp_path):
     assert mf.groups["support.git"][0] == "commit"
 
 
+def test_manifest_names_the_file_when_the_document_does_not_parse(tmp_path):
+    # arrange: a manifest that stopped parsing - the file `load` is handed the TEXT of (si#222)
+    manifest_path = tmp_path / "swi.yaml"
+    manifest_path.write_text("00# the header comment\n\nproduct: swi\n", encoding="utf-8")
+    ctx = ProductContext("swi", tmp_path, manifest_path)
+
+    # act / assert: the file is named, which the text alone cannot say - all every other command is
+    # gone at this point, so there is no `--help` left to consult
+    with pytest.raises(ValueError) as caught:
+        ctx.manifest()
+    assert str(manifest_path) in str(caught.value)
+    assert "line 3, column 8" in str(caught.value)
+
+
 def test_manifest_data_fails_loudly_on_a_missing_file(tmp_path):
     # arrange: a manifest path that does not exist
     ctx = ProductContext("sample", tmp_path, tmp_path / "absent.yaml")
