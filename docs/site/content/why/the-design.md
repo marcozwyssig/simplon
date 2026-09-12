@@ -150,7 +150,7 @@ by the kind of work instead of by the phase it runs in:
 | the work | what the bodies shell out to | coordinates |
 |---|---|---|
 | version control | `git`, `gh` | `vcs:commit`, `vcs:push`, `vcs:prune-branches`, `vcs:submodules`, `vcs:auth-scopes`, `release:tag`, `test:release-notes` |
-| testing | pytest, mypy, Allure | `test:gate`, `test:accept`, `test:report`, `test:typecheck-python` |
+| testing | pytest, mypy, Allure - and, for `test:walk`, a person at the terminal | `test:gate`, `test:accept`, `test:report`, `test:typecheck-python`, `test:walk` |
 | documentation | Hugo, docToolchain, the assembled command line itself, the product's own `.feature` files | `docs:site`, `docs:render`, `docs:reference`, `docs:acceptance` |
 | packaging and publishing | `docker`, `oras`, `gh`, `dotnet` | `build:image`, `release:image`, `release:artifact`, `release:asset`, `release:nuget`, `release:conan`, `build:nuget-config`, `build:nuget-restore`, `build:conan-cache` |
 | the machine and its services | `oras`, `docker compose`, `claude`, `sudo`/`usermod`, a pinned toolchain image - and nothing at all for `support:environments`, which only reads the manifest | `support:install`, `support:nexus`, `support:claude-plugins`, `support:environments`, `support:ci-privileges`, `support:toolchain`, `toolchain:run` |
@@ -169,6 +169,13 @@ same work as the four beside them. Each takes something the product has already 
 a command tree, a directory of sources - and renders a file the product then commits, reaching no
 external tool at all to do it. That is why the row's middle column can say *nothing external* and be
 held to it by the suite rather than believed.
+
+The testing row's middle column names one thing that is not a tool, and that is the honest half of
+si#205's change. `test:walk` shells out to nothing: it reads the same `.feature` files the documentation
+row's `docs:acceptance` reads and asks a person to answer each step. It is testing work all the same,
+because it produces the one thing the four beside it produce - a verdict, red or green, addressed to the
+same `<feature file>:<scenario>` key the archive uses - and the row would be lying about what verifies
+this product if it left the only mode a customer can drive out of the list.
 
 The two ways of grouping cut the same coordinates differently, and the difference is the point rather
 than an untidiness. `release:tag` is version-control work that happens in the release phase;

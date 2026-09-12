@@ -258,6 +258,62 @@ that because it never claims a verdict; the verdicts are si#205's and the archiv
 
 **Products need do nothing.** The coordinate is offered, not placed. A product that wants the page
 declares one command, pins `output`, and writes `.feature` files.
+
+### A person walks the acceptance scenarios, and refusing costs one key (si#205)
+
+`test:walk` is the manual half of an acceptance test: somebody sits with the customer, the Textual runner
+puts each Given / When / Then in front of them one at a time, and they answer it before seeing the next.
+One source and two modes - the scenarios are the same `.feature` files `docs:acceptance` documents and a
+product's pytest-bdd suite executes, and what a caller chooses by typing `test walk` instead of `test
+suite` is who answers, never which scenarios exist. Both address a scenario as `<feature
+file>:<scenario>`, si#204's measured format, so a person's verdict and an Allure result join on one key.
+
+**A Gherkin scenario really is a `Pipeline` whose steps take their outcome from a person, and one part of
+that mapping is load-bearing rather than convenient.** The tree, the status bar, the run transcript, the
+failure report and the exit code all come for free, which is the easy half. The half that decides it is
+`stop_on_failure` per SCENARIO: pytest-bdd stops a scenario at its first failing step and runs the next
+scenario anyway, and `steps.abort_after` scopes a failure to the outermost ancestor whose flag is true -
+so a plan whose scenario nodes carry the flag reproduces that rule with nothing written to enforce it. A
+flat list would have had to choose between skipping everything after a refusal and asking a person a
+question whose precondition has just been denied, and either is a manual mode answering a different
+question than the automatic one. What the mapping costs is stated too: a `PlanNode` carries a
+`CommandSpec`, so the walk builds specs no manifest ever wrote.
+
+**A step nobody reached is a third state, and it turned out to be two.** A refused step makes the rest of
+ITS scenario `SKIPPED` and the walk goes on to the next one; a walk the person stopped leaves everything
+after it `PENDING`. `overall_rc` is 0 only when every step is OK, so neither reads as green, and the
+transcript already prints the two differently. Nothing was added for either.
+
+**Refusing costs exactly what accepting costs**, and that is an arrangement rather than a claim: `a` and
+`r`, one unmodified key each, no default and no confirmation on either, and both at the FRONT of the
+footer so a narrow terminal drops the navigation keys before it drops these two. A prompt whose yes is
+Enter collects signatures.
+
+**The record is the run transcript**, not a fourth artefact. si#148's header already carries when, where
+and si#125's provenance line; a walk appends who answered (claimed, not verified), the product version
+and revision it was answered against, the digest of the scenarios, the selection, one line per sitting,
+and every scenario that was NOT selected, by address - because a record saying "passed" when twelve of
+forty were walked is a false document. The limit that comes with reusing it is that `run-transcript.log`
+is one file per checkout, overwritten by the next run: a customer keeps their record by taking it away.
+
+**Resume has a rule rather than a file, and it is the si#177 shape.** The state lives beside the
+transcript in `build/logs/acceptance-walk.json`, under the `build/` a `clean` removes, so si#155's list
+gains no entry. It carries a run key of six parts - the product, its `git describe` version and its
+revision (taken through `tasks.image.provenance`, so the record names the product by the same string its
+image carries), the source directory, the selection, and a sha256 over the QUESTIONS rather than the file
+bytes. Any of them moved and the resume is REFUSED, naming which moved and both ways out; continuing
+would record Monday's twelve answers as verifications of a product rebuilt on Tuesday. An unusable state
+file is a different case and is treated differently: the kernel then knows nothing, warns, and asks every
+question again. What the rule still misses is written down - a change that leaves a dirty tree dirty
+(`--dirty` is one bit), a rebuild during one sitting, and a product whose version cannot be derived at
+all, which may be walked and may never be resumed.
+
+**Products need do nothing**, and simplon's own limit from si#204 is unchanged: its nine scenarios still
+have no step definitions, so `test suite` executes none of them and this release cannot compare the two
+modes by running both inside this repository. The comparison in the pull request was driven against a
+throwaway suite of step definitions pointed at these very files, which is the same way si#204 measured
+the format.
+
 ### The plan for the open tickets, as a document (si#207)
 
 A merge that ships no code and is named here because the notes name every ticket merged into the range,

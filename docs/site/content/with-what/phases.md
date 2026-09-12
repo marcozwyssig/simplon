@@ -145,7 +145,7 @@ the number that says whether a rib is filled:
 | namespace | kind | tasks in the catalogue today |
 |---|---|---|
 | `build` | phase, agnostic | 6 |
-| `test` | phase, agnostic | 5 |
+| `test` | phase, agnostic | 6 |
 | `release` | phase, agnostic | 6 |
 | `deploy` | phase, env-first | 0 |
 | `monitor` | phase, env-first | 0 |
@@ -155,7 +155,7 @@ the number that says whether a rib is filled:
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Thirty-seven coordinates: twenty-five carrying a placement, twelve free to be filed. The numbers in this sentence, in that
+Thirty-eight coordinates: twenty-six carrying a placement, twelve free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -225,26 +225,35 @@ four commands - `wheel`, `reference`, `site` and the `docs` aggregate - and not 
 
 *Verify them.* Over artefacts that already exist - the phase deliberately does not produce any.
 
-**In the catalogue today: 5 tasks.**
+**In the catalogue today: 6 tasks.**
 
 - `test:gate`
 - `test:accept`
 - `test:report`
 - `test:release-notes`
 - `test:typecheck-python`
+- `test:walk`
 
 **What a product brings itself.** A `suites:` section naming its levels, and a `mypy.ini` if it wants
 the type gate. `test:gate` is the clearest case in the catalogue of one body under several names: a
 product declares one command per level and pins the level with `with:`, so `test unit` and `test system`
 are two commands over one template. That mechanism is in [Test levels](../test-levels/).
 
-**Four of the five run something; the fifth reads the repository.** `test:release-notes` declares no
+**Five of the six run something; the sixth reads the repository.** `test:release-notes` declares no
 gate and calls no runner. It asks one question - does the releases page describe the releases this
 repository actually carries - and answers it out of `git tag`, `git log` and the page's own headings.
 It is in `test` because its verdict is red or green and nothing else, and it is not in `release`
 because release notes are written *before* the tag: a guard that only spoke when `release tag` was
 typed would speak after every cheap chance to fix it had passed. What is the product's own reaches it
 through a `releases:` section, in [The manifest](../../how/manifest/#releases---where-the-notes-live-and-from-when-they-are-complete).
+
+**And one of them is answered by a person.** `test:walk` puts somebody through the product's own
+`.feature` files a step at a time and records what they said - the manual half of an acceptance test, so
+a customer can verify for themselves that the functionality they asked for is there. It is in `test`
+rather than anywhere else because its verdict has to be comparable with the automatic one: both address
+a scenario as `<feature file>:<scenario>`, which is the archive's own key, so a person's answer and a
+runner's result join instead of merely resembling each other. The scenarios are the same files
+[`docs:acceptance`](#docs) documents - one source, and the mode is chosen by which command is typed.
 
 ### `release`
 

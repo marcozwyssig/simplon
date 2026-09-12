@@ -142,6 +142,20 @@ groups:
       # No `with:` - there is nothing to pin. All three values are the product's data and reach the body
       # through the manifest, which is the whole shape of the ticket.
       release-notes: { task: "test:release-notes" }
+      # The MANUAL half of the acceptance test (si#205), on the kernel that ships it - the same rule that
+      # makes simplon build its own reference and guard its own release notes with the coordinates it
+      # offers. `build acceptance` above DOCUMENTS the nine scenarios under `tests/acceptance`; this walks
+      # them with a person, and both read the very same files.
+      #
+      # NOT in `test all`, and that is the decision rather than an omission. `all` is the gate a developer
+      # types and CI types, and it must be able to run with nobody in front of it; a command that waits
+      # for a keypress in it would hang every job. The two are comparable by their ADDRESSES, which is
+      # what makes them one verdict, not by sitting under one aggregate.
+      #
+      # No `with:` - `source` takes the kernel's `tests/acceptance` default, exactly as `build acceptance`
+      # leaves it out, so this manifest goes on being the first consumer of that default rather than a
+      # product that happens to agree with it.
+      walk: { task: "test:walk" }
       # THE LOCAL GATE (si#156), and an impl-less AGGREGATE for the same reason `build docs` above is
       # one: a command either instantiates a task or plans other commands, never both.
       #

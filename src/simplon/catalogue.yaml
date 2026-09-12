@@ -242,6 +242,29 @@ tasks:
     impl: simplon.tasks.testrun:accept_cmd
     help: "Run the lab-based suites in sequence against the running lab."
     passthrough_args: true
+  # The MANUAL half of an acceptance test (si#205): a person walks the product's own `.feature` files
+  # step by step and answers each Given / When / Then, so a customer can verify for themselves that the
+  # functionality they asked for is there.
+  #
+  # ONE SOURCE, TWO MODES, and this is the second mode rather than a second artefact. The scenarios are
+  # the same files `docs:acceptance` documents and a product's pytest-bdd suite executes; what a caller
+  # chooses by typing this instead of `test suite` is WHO answers, never WHICH scenarios exist. That is
+  # si#197's stated requirement, and it is why there is no `@manual` tag: a tag here selects for one run.
+  #
+  # A `test:` NAMESPACE, so si#34 makes it a PLACEMENT - it may only sit under `test`, in every product,
+  # beside the automatic gate whose verdict it has to be comparable with.
+  #
+  # DECLARED, NOT PLACED, by si#58's bar: it needs `.feature` files to walk, so placed it would be a
+  # command that refuses on its first line in every product that writes none. A product declares it the
+  # day it has scenarios; simplon does exactly that.
+  test:walk:
+    impl: simplon.tasks.walk:walk
+    help: "Walk the product's acceptance scenarios with a person answering each step."
+    params:
+      source:  { help: "directory holding the .feature files, relative to the product root (default tests/acceptance)" }
+      tags:    { help: "walk only the scenarios carrying one of these tags (comma- or space-separated; default all)" }
+      by:      { help: "who is walking it, for the record (default: the checkout's own git identity)" }
+      restart: { help: "discard an interrupted walk's recorded answers and ask every step again" }
 
   # --- support: host and tooling upkeep ---------------------------------------------------------------
   support:nexus:
