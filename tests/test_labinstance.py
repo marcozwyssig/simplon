@@ -218,12 +218,20 @@ def test_spec_reads_the_three_product_values_from_the_manifest(monkeypatch, tmp_
     assert labinstance.spec() == labinstance.InstanceSpec("SAMPLE_INSTANCE", "dev", 2)
 
 
-def test_spec_rejects_a_manifest_without_an_instance_section(monkeypatch, tmp_path):
-    # arrange: the section is absent entirely
-    _register(monkeypatch, tmp_path, data={"product": "sample"})
+@pytest.mark.parametrize("document", [{"product": "sample"}, {"instance": 5}, {"instance": ["dev"]}],
+                         ids=["absent", "a scalar", "a list"])
+def test_spec_rejects_a_manifest_without_a_usable_instance_section(monkeypatch, tmp_path, document):
+    """A yaml typo must surface here rather than as a lab silently resolving to the wrong tenant.
+
+    THE PATTERN PINS THE SECTION SENTENCE, not the word `instance` (si#175): with the section check
+    deleted the next refusal says "is missing 'instance.env_var'", and the old `match="instance"`
+    accepted that - the check could not fail. The malformed shapes were not driven at all.
+    """
+    # arrange
+    _register(monkeypatch, tmp_path, data=document)
 
     # act / assert
-    with pytest.raises(ValueError, match="instance"):
+    with pytest.raises(ValueError, match=r"is missing the 'instance' section"):
         labinstance.spec()
 
 

@@ -191,8 +191,8 @@ def declared(data: Mapping[str, object], name: str, source: str = "manifest") ->
     Docker Hub (`simplon.imagenames.require_registry` records that failure in full). Building under one name
     and publishing under another is how an image gets pushed somewhere nobody meant.
     """
-    section = data.get(SECTION)
-    if not isinstance(section, Mapping):
+    section, blame, _ = context.section(data, SECTION)
+    if blame:
         raise ValueError(f"{source}: the '{SECTION}' section is missing or is not a mapping - declare "
                          f"the registry, the repository, the Dockerfile and the build context of every "
                          f"image this product builds")

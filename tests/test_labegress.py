@@ -41,13 +41,22 @@ def test_spec_reads_the_three_product_values_from_the_manifest(monkeypatch, tmp_
         "DEMO_LAB_ISOLATION", "DEMO_HOST_HARDEN", "democtl")
 
 
-def test_spec_rejects_a_manifest_without_a_lab_egress_section(monkeypatch, tmp_path):
-    # arrange
-    _register(monkeypatch, tmp_path, data={})
+@pytest.mark.parametrize("document", [{}, {"lab_egress": 5}, {"lab_egress": ["DEMO_LAB_ISOLATION"]}],
+                         ids=["absent", "a scalar", "a list"])
+def test_spec_rejects_a_manifest_without_a_usable_lab_egress_section(monkeypatch, tmp_path, document):
+    """Silently defaulting the env var name would make the operator's documented escape hatch do nothing.
 
-    # act / assert - silently defaulting the env var name would make the operator's documented escape
-    # hatch do nothing at all.
-    with pytest.raises(ValueError, match="lab_egress"):
+    THE PATTERN PINS THE SECTION SENTENCE, not the word `lab_egress`, and that is si#175's finding rather
+    than a preference: with the section check deleted the very next refusal says "is missing
+    'lab_egress.isolation_env'", which the old `match="lab_egress"` accepted. The check could not fail.
+    The two malformed shapes were not driven at all - a `lab_egress: 5` reaches the same refusal, and the
+    message's "is missing" is a small lie about it that this test now records rather than repairs.
+    """
+    # arrange
+    _register(monkeypatch, tmp_path, data=document)
+
+    # act / assert
+    with pytest.raises(ValueError, match=r"is missing the 'lab_egress' section"):
         labegress.spec()
 
 

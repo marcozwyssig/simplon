@@ -307,6 +307,33 @@ the key it looked for. The two that say nothing say nothing on purpose:
 
 Both are driven in the test module above, so the silence is measured rather than assumed.
 
+### Reading a section, yours or the kernel's
+
+A product's own task body reads its own section through `simplon.context.section`, the same walk the
+kernel's nine readers use:
+
+```python
+from simplon import context
+
+ctx = context.current()
+packer, blame, got = context.section(ctx.manifest_data(), "build", "packer")
+if blame:
+    raise ValueError(f"{ctx.manifest_path}: `build: packer:` is not declared")
+```
+
+It walks a **path**, because `build:` is shared and a product that wants its own data under a phase has
+to nest (the section above). It stops at the first step that is not a mapping and **names that step**:
+`buidl: packer:` blames `build`, so a typo in the outer key never reports the inner one as absent.
+`got` is what the blamed step held - `None` exactly when it is not declared at all, which is how a
+reader tells "the product said nothing" from "the product said the wrong thing". A section declared and
+empty is found, not blamed.
+
+**It never raises, and that is deliberate.** Each of the sixteen readers above says something specific
+when its section is missing, and si#159 measured that fourteen of them already refuse by name and quote
+the key. An accessor that raised would replace those fourteen sentences with one. So it answers the
+question and the reader keeps its own refusal - which is also what keeps every refusal countable where
+it is written, in [the rules chapter](../../with-what/rules/)'s census.
+
 ### `build:` is shared, and `build: targets:` is the kernel's
 
 `build` is the one name that is a **group** and a **top-level data section** at the same time: the

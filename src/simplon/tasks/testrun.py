@@ -364,8 +364,8 @@ def declared(data: Mapping[str, object], source: str = "manifest") -> Suites:
     second silently deletes the first's results, which is the failure mode the clear-versus-append rule
     exists to prevent, and none would mean every run appends onto the last one forever.
     """
-    section = data.get(SECTION)
-    if not isinstance(section, Mapping):
+    section, blame, _ = context.section(data, SECTION)
+    if blame:
         raise ValueError(f"{source}: the '{SECTION}' section is missing or is not a mapping")
     reports = _str(section, "reports", f"{source}: '{SECTION}'") or REPORTS
     filtered = _str(section, "filtered_results", f"{source}: '{SECTION}'") or f"{RESULTS}-filtered"

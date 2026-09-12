@@ -62,8 +62,8 @@ def spec() -> InstanceSpec:
     data and the environments listing use). Fails loudly naming the manifest and the missing/invalid key,
     so a yaml typo surfaces here rather than as a lab silently resolving to the wrong tenant."""
     ctx = context.current()
-    data = ctx.manifest_data().get(MANIFEST_SECTION)
-    if not isinstance(data, dict):
+    data, blame, _ = context.section(ctx.manifest_data(), MANIFEST_SECTION)
+    if blame:
         raise ValueError(f"simplon: manifest {ctx.manifest_path} is missing the '{MANIFEST_SECTION}' section")
     env_var = str(data.get("env_var") or "").strip()
     default = str(data.get("default") or "").strip()
