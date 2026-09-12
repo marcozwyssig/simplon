@@ -249,16 +249,30 @@ PROFILES: dict[str, Profile] = {
         # the manifest instead is a one-line diff the product owns, which is what the scaffold is for -
         # and it is deliberately not the default, because a starting point that dies on a file a fresh
         # product does not have is si#105's defect wearing a new hat.
+        #
+        # AND `unit` AND `analyse` NAME THEIR NETWORK: NONE (si#202). si#121 had already measured that
+        # both are green under `--network none` and treated it as a nice-to-have; si#197 measured what
+        # the default costs and it is not one. An acceptance container started with no `network:` did not
+        # fail to reach its target - the service name resolved through the HOST's upstream resolver to
+        # 185.199.109.153 (GitHub Pages), which answered 404, so the scenario reported a defect in a
+        # product it had never touched. A 404 made it a false red; a 200 would have made it a false
+        # green. A container that is not supposed to reach anything and is not TOLD so is one DNS answer
+        # away from ruling on something else.
+        #
+        # `deps` keeps the default, because it is the one command that has to reach the index - which is
+        # exactly why si#121 made it a command of its own. And a level that has to reach a DEPLOYED
+        # product names the network that product is on; the kernel cannot know it, so the profile pins
+        # only where it has measured, which is here.
         commands={
             "deps": {"workdir": "/src",
                      "env": {"PYTHONUSERBASE": "/src/.simplon-toolchain"},
                      "argv": ["python", "-m", "pip", "install", "--user", "--no-cache-dir",
                               "--disable-pip-version-check", "--no-warn-script-location",
                               "pytest==9.1.1", "mypy==2.3.1"]},
-            "unit": {"workdir": "/src",
+            "unit": {"workdir": "/src", "network": "none",
                      "env": {"PYTHONUSERBASE": "/src/.simplon-toolchain"},
                      "argv": ["python", "-m", "pytest", "-q"]},
-            "analyse": {"workdir": "/src",
+            "analyse": {"workdir": "/src", "network": "none",
                         "env": {"PYTHONUSERBASE": "/src/.simplon-toolchain"},
                         "argv": ["python", "-m", "mypy",
                                  "--exclude", "^deploy/provision/orchestrator/", "."]},

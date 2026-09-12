@@ -147,8 +147,27 @@ def run_toolchain(ctx: typer.Context, image: str = "", argv: list[str] | None = 
     key's worth of text, which is why every value goes to `declared` untouched: those two options have
     to be refused by the gate, in the command's name, rather than crash inside a coercion.
 
-    `network` is the one runtime value a manifest cannot supply - a scratch docker network exists only at
-    call time - and it is passed through untouched. `extra` is the caller's own tail, declared in the
+    `network` IS SUPPLIABLE BY A MANIFEST, and this docstring said the opposite until si#202 measured it.
+    It is an ordinary parameter, so `with: { network: none }` binds to it like every other key. Driven on
+    2026-09-12 on a scaffolded product: pinned, `ip -o link` inside the container lists 1 interface;
+    left out, 2 - the default bridge. Unpinned it also renders as a real `--network` option, which is how
+    a caller supplies the one value that genuinely only exists at call time, a scratch docker network.
+
+    WHAT THE KEY DECIDES IS BIGGER THAN IT LOOKS, and si#197 paid for the lesson. An acceptance container
+    started with no `network:` did not fail to reach its target: the service name resolved through the
+    HOST's upstream resolver to 185.199.109.153 (GitHub Pages), which answered 404, and the scenario
+    reported a defect in a product it had never touched. The 404 made that a false red. A 200 would have
+    made it a false green, which is this repository's own recurring defect arriving through DNS.
+
+    So the key is DOCUMENTED (`params:` in the catalogue) rather than made mandatory. A mandatory
+    `network:` would refuse `build compile`, which wants no statement about networking at all, and
+    `rules.md`'s own question - would the refused manifest have produced a working product - answers yes
+    for every compile command in the four profiles. What the kernel can say truthfully it says in the
+    table it owns: `profiles.PROFILES["python"]`'s `unit` and `analyse` pin `none`, because si#121
+    measured both green without a network. A level that has to REACH something names the network that
+    something is on, and this paragraph is why.
+
+    `extra` is the caller's own tail, declared in the
     catalogue as a variadic positional (`argument: true`) and paired there with `passthrough_args: true`
     so a flag reaches it instead of being refused as an unknown option: without both halves the appending
     rule the whole design rests on has no command line at all.

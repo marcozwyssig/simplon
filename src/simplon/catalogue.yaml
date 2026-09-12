@@ -177,6 +177,25 @@ tasks:
   # invocation name (transitional, see `gate`'s own docstring) - `params.name` below only documents the
   # option for that unpinned case; a command that pins it drops the presentation, since the value is off
   # the command line (`treeform.resolve`).
+  #
+  # IT STAYS PYTEST IN A HOST VENV, DECIDED AGAINST THE MEASUREMENT (si#202). si#199's rule is that a
+  # product depends on no application installed on the system, and this is one of the two commands that
+  # did not. It is not moved into a container, and the reason is that the container route already exists
+  # and is better: a containerised suite CANNOT be a `suite:` gate, because that kind's runner is the
+  # kernel's own pytest - so it is a `command:` gate naming a `toolchain:run` command, with
+  # `results_from:` (si#133) harvesting what the container wrote. Driven green in si#197 with the
+  # scenario and its steps intact in the archive, and it needed no kernel change at all. Making
+  # `test:gate` a second containerised runner would be a second way to one verdict, which is the shape
+  # si#8 already cost this repository.
+  #
+  # That is also the answer for a product whose suite is Java or .NET: it was never this command's, and
+  # `results_from:` is how a non-pytest runner has contributed since si#133.
+  #
+  # WHAT THE HOST ROUTE OWES ITS USER is an honest refusal, and si#202 measured that it did not give one.
+  # With python3 off PATH and the suite venv already built the gate is GREEN (the venv's interpreter is
+  # an absolute path); with the venv gone it ended in a rendered `FileNotFoundError` naming neither the
+  # tool nor the way out, having first wiped the venv it might have reused. Both refusals now live in
+  # `simplon.pyvenv`, with the measurement.
   test:gate:
     impl: simplon.tasks.testrun:gate
     help: "Run a declared pytest suite against the running lab."
@@ -499,5 +518,13 @@ tasks:
     # `passthrough_args` is what lets a FLAG reach that positional instead of being refused as an unknown
     # option. The manifest's argv still comes first, and an empty tail changes the line by not one byte.
     passthrough_args: true
+    # `network:` IS DOCUMENTED HERE SINCE si#202, and the entry is a correction rather than an addition:
+    # the parameter always bound from `with:` and rendered as a real `--network` option with no help text
+    # at all, so the one key that decides whether a container can reach the public internet was the one
+    # key the generated command reference said nothing about. si#197 measured what that costs - an
+    # acceptance container with no network named got the default bridge, the service name resolved
+    # through the host's upstream resolver to an address that answered 404, and the scenario reported a
+    # defect in a product it never touched.
     params:
-      extra: { help: "appended to the manifest's argv, verbatim", argument: true }
+      extra:   { help: "appended to the manifest's argv, verbatim", argument: true }
+      network: { help: "the docker network the container joins ('none' for no networking); pin it with `with:` on a command whose verdict depends on what it can or cannot reach" }

@@ -286,3 +286,24 @@ def test_an_unknown_language_is_refused_and_lists_what_exists(monkeypatch):
     with pytest.raises(RuntimeError) as e:
         profiles.profile("cobol")
     assert "cobol" in str(e.value) and "cpp" in str(e.value)
+
+
+def test_the_python_unit_and_analyse_name_no_network_and_deps_keeps_one():
+    """si#202. si#121 measured that both `unit` and `analyse` are green under `--network none` and left
+    it as a note; si#197 measured what the DEFAULT costs and it is not a note. An acceptance container
+    with no `network:` got the default bridge, the service name resolved through the host's upstream
+    resolver to 185.199.109.153 (GitHub Pages), which answered 404, and the scenario reported a defect in
+    a product it had never touched. A 404 made it a false red; a 200 would have made it a false green.
+
+    `deps` keeps the default because it is the one command that has to reach the index, which is why
+    si#121 gave it a command of its own in the first place.
+    """
+    # arrange / act
+    commands = profiles.profile("python", version="3.12").commands
+
+    # assert
+    assert commands["unit"]["network"] == "none", commands["unit"]
+    assert commands["analyse"]["network"] == "none", commands["analyse"]
+    assert "network" not in commands["deps"], (
+        "deps installs from the index; pinning it offline makes the one command that needs a network "
+        "the one command that cannot have one")

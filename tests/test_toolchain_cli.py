@@ -155,7 +155,9 @@ def test_an_empty_caller_argv_changes_the_line_by_not_one_byte(product, docker_l
 
 
 def test_the_network_is_the_commands_own_option_and_not_the_tools(product, docker_lines):
-    # arrange: the one runtime value a manifest cannot supply (the design's section 5)
+    # arrange: the CALLER's half of the key - a scratch docker network really does only exist at call
+    # time, which is what the design's section 5 was about. What it also said, and si#202 measured false,
+    # is that a manifest cannot supply one; the test below is that half.
     _write(product, _COMPILE)
 
     # act
@@ -165,6 +167,28 @@ def test_the_network_is_the_commands_own_option_and_not_the_tools(product, docke
     assert result.exit_code == 0, result.output
     assert ["--network", "scratch-net"] == docker_lines[0][3:5]
     assert docker_lines[0][-1] == "-q"
+
+
+def test_a_manifest_may_pin_the_network_and_it_reaches_the_docker_line(product, docker_lines):
+    """si#202: `run_toolchain`'s docstring said `network` is the one runtime value a manifest cannot
+    supply. It is an ordinary parameter and it always bound. Driven on a scaffolded product on
+    2026-09-12: pinned, `ip -o link` inside the container lists 1 interface; left out, 2.
+
+    It matters because of what the default is. si#197's acceptance container, given no network, did not
+    fail to reach its target - the service name resolved through the host's upstream resolver to
+    185.199.109.153, which answered 404, and the scenario reported a defect in a product it never
+    touched. A 200 would have made that a false green.
+    """
+    # arrange
+    _write(product, _COMPILE.replace('          argv:', '          network: none\n          argv:'))
+
+    # act
+    result = CliRunner().invoke(_app(product), ["build", "compile"])
+
+    # assert: the pin reached docker, and it left the command line (a pinned parameter is not an option)
+    assert result.exit_code == 0, result.output
+    assert ["--network", "none"] == docker_lines[0][3:5], docker_lines[0]
+    assert "--network" not in CliRunner().invoke(_app(product), ["build", "compile", "--help"]).output
 
 
 # --- defect 4: no `instance:` section until a cache needs one -----------------------------------------

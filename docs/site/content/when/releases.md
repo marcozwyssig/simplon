@@ -97,6 +97,94 @@ service name resolved through the host's upstream resolver to an address on the 
 answered, and the scenario reported a defect in a product it had never reached. The full measurement is
 in the pull request for si#196; the plan si#197 becomes is written against it.
 
+### The two gates that stood on the host, decided against the measurement (si#202, si#203)
+
+si#199's rule is that a product depends on no application installed on the system, and two gates did
+not: `test:gate` builds a per-suite venv on the host with `pyvenv`, and `test:typecheck-python` runs
+mypy in the host venv. They were answered in one pass because they stand behind one wall, si#121's
+measurement that **no prebuilt image can carry a product's wheels**, and answering it twice is how two
+answers appear.
+
+**The proof was to remove Python from the host's PATH for the length of a run**, which named the
+boundary better than any reading of the source could. `simplon.sh` itself is the boundary and si#199
+already states it as one: without `python3` the launcher refuses on its own line, because the kernel IS
+host Python until the launcher gets its container route. Past that line the two gates part company.
+
+| with `python3` off PATH | outcome |
+| --- | --- |
+| `test typecheck-python` | **green.** `Success: no issues found in 87 source files`, rc 0 |
+| `test:gate`, suite venv already built | **green.** `1 passed`, rc 0 |
+| `test:gate`, suite venv absent | `FileNotFoundError: [Errno 2] No such file or directory: 'python3'` |
+
+**`test:gate` stays pytest in a host venv, and the containerised suite is a `command:` gate.** That was
+si#202's open question and the cheaper answer is also the more honest one: a containerised suite cannot
+be a `suite:` gate at all, because that kind's runner is the kernel's own pytest, so it is a `command:`
+gate naming a `toolchain:run` command with `results_from:` harvesting what the container wrote. si#197
+drove exactly that, green, with the scenario and its Gherkin steps intact in the archive, and it needed
+no kernel change. Making `test:gate` a second containerised runner would be a second way to one verdict,
+which is the shape si#8 already cost this repository. It is also the answer for a suite that is Java or
+.NET: `results_from:` has been how a non-pytest runner contributes since si#133.
+
+What the host route owed its user was an honest refusal, and it gave none. **Two refusals are new**, both
+from that run. A host with no `python3` is now told so by name, *before* the half-built venv it might
+have reused is wiped, and the message names the container route rather than only `apt install
+python3-venv`, because "install python3" is the wrong advice on the machine si#199 is about. And a
+suite's dependency install that FAILS no longer hands back a venv without the suite's tools in it: with
+a bad pin in a product's own `requirements.txt` the rc was dropped, `pip`'s reason went nowhere, pytest
+was started out of that venv anyway, and the gate recorded `unit: failed (rc 1) - the suite ran and
+reported failures`. The suite never ran, and the record named the product for the kernel's own silence.
+
+**The one key that decides what a suite container can reach is now documented.** si#197 measured a false
+verdict in it: an acceptance container started with no `network:` did not fail to connect - the service
+name resolved through the host's upstream resolver to 185.199.109.153 (GitHub Pages), which answered
+404, so the scenario reported a defect in a product it had never touched. A 404 made it a false red; a
+**200 would have made it a false green**. `run_toolchain`'s docstring claimed a manifest cannot supply
+`network:`; it always could, measured on a scaffolded product - pinned, `ip -o link` inside the container
+lists 1 interface, left out, 2 - and the parameter rendered as a real `--network` option with no help
+text at all. It carries help now, and the python profile's `unit` and `analyse` pin `none`, which si#121
+had already measured green. `deps` keeps its network, because it is the one command that has to reach an
+index. It is **not** made mandatory: `build compile` wants no statement about networking, and a refusal
+there would fail `rules.md`'s own question.
+
+**`test:typecheck-python` does not move into a container either, and it is the one that looked hardest.**
+It was already off the host: the gate runs `sys.executable`, an absolute path to the interpreter the
+kernel is running in, and runs mypy as a *module* of it, so nothing is looked up on PATH. It therefore
+travels with the kernel - the day the launcher gets si#199's second route, this command is inside that
+container, reading exactly the installed set the kernel runs against, which is the property
+`tasks/typecheck.py` argues for. What a container of its own would have cost, measured on a real product
+(this kernel, 87 source files) rather than estimated, because si#163's 3.4 seconds is the gate's own
+runtime and not the number this turns on:
+
+```text
+mypy 1.18.2 + types-PyYAML into the bind mount            55 MB
+   plus the product's own dependencies (-e .[typecheck])  108 MB, 9.0s
+python -m mypy --config-file mypy.ini after that          3.7s, Success: no issues found in 87 source files
+the same verdict from the host gate                       0.39s warm, 4.7s cold
+```
+
+and the editable install needed `SETUPTOOLS_SCM_PRETEND_VERSION` to run at all, because the mount is a
+git worktree whose `.git` is a file pointing outside it.
+
+**A missing installed set is refused now rather than reported as findings**, which was si#203's other
+open question. The module already drew that line once, for a missing checker, and had not drawn it for
+the missing *dependencies*, which is the same class one level in. Measured in that container with the
+product's dependencies absent: **rc 1, 20 errors, 20 of 20 import resolution, not one about the
+product** - si#121's five-of-five on a scaffold, at kernel scale. With one deliberate `return 42` added:
+rc 1, 28 errors, 27 import resolution and 1 real. A reader holding only the exit code cannot tell those
+from a clean tree with one type error, and `1` is what a CI step reads. So the run is classified: all
+import faults is a setup refusal naming the modules and the interpreter, findings alone is the ordinary
+red, and both prints the findings *and* says that the silence around everything the missing modules
+touch was never a verdict. `--show-error-codes` is on the argv rather than left to the config, because a
+product writing `hide_error_codes = True` would otherwise switch the classification off - measured
+against mypy 1.18.2, the flag on the line wins.
+
+**What a product has to do.** Nothing, unless one of the two new refusals is describing it. A product
+whose `test typecheck-python` starts refusing was never checking the code it thought it was: install the
+product's dependencies into the interpreter the gate runs in, or point it at the one that has them with
+`with: { python: ... }`. A product that re-runs `support toolchain python` gets `network: none` on the
+two commands that were already measured not to need one; a scaffolded manifest that is already in a tree
+is untouched, because a profile is written once and then owned by the product.
+
 ### The plan for the open tickets, as a document (si#207)
 
 A merge that ships no code and is named here because the notes name every ticket merged into the range,
