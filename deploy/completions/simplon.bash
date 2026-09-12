@@ -21,9 +21,9 @@ _simplon_nodes() {
     _simplon_reply=()
     case "$1" in
         '') _simplon_reply=('build' 'test' 'release' 'support') ;;
-        'build') _simplon_reply=('wheel' 'reference' 'acceptance' 'site' 'docs') ;;
+        'build') _simplon_reply=('wheel' 'reference' 'acceptance' 'site' 'image' 'docs') ;;
         'test') _simplon_reply=('suite' 'typecheck-python' 'release-notes' 'all') ;;
-        'release') _simplon_reply=('tag') ;;
+        'release') _simplon_reply=('tag' 'image') ;;
         'support') _simplon_reply=('git' 'tasks' 'install' 'completion' 'doctor' 'workflows') ;;
         'support.git') _simplon_reply=('commit' 'push' 'prune-branches' 'submodules' 'auth-scopes') ;;
         'support.tasks') _simplon_reply=('catalogue' 'generate') ;;

@@ -323,6 +323,33 @@ subject states. The sweep that missed it looked for umlauts and for German funct
 has neither - a measurement that answered honestly about what it asked and was asked the wrong question.
 It reads *act of merging* now, in both places. **Nothing to do.**
 
+### simplon builds a container image of itself (si#200)
+
+`build:image` and `release:image` have been in the catalogue since #31, declared and never placed here,
+so the kernel that ships them built no image of its own. It does now: `./simplon.sh build image` builds
+the wheel inside a `python:3.12-slim` layer and installs it, and `./simplon.sh release image` pushes that
+image and reads the tag back out of the registry. ci.yml builds it on every push, which is what keeps a
+Dockerfile nobody publishes weekly from rotting.
+
+**What is in the image is the kernel and nothing of any product.** si#121 measured why no prebuilt image
+can carry a product's wheels, so the product's tree arrives as a bind mount at `/src` instead. si#201's
+launcher route inherits that boundary.
+
+**The registry is Docker Hub, and the GitHub credential does not go there.**
+`githubpackages.is_github_packages` was not widened - its docstring records a token that leaked into a
+repository's history. The credential for any other registry is the one `docker login <host>` already
+stored, the kernel reads no secret of its own for it, and a push with none is now REFUSED by name
+instead of attempted and answered by docker's `denied: requested access to the resource is denied`,
+which names no host, no account and no fix.
+
+**The tag is the version, from one source.** The task already derived `VERSION` from the product's own
+`git describe` and stamped it into the image; the tag now defaults to that same string rather than to a
+constant somebody keeps in the manifest. A declared `tag:` or a `--tag` still wins, and a product that
+states `build_args: { VERSION: ... }` moves the tag with it.
+
+**Nothing to do**, unless you publish a container image: a `tag:` you already declare is unaffected, and
+a push to a non-GitHub registry now needs the `docker login` it always silently needed.
+
 ## 0.12.0
 
 **The site shows before it argues.** Every page on this site opened with the reasoning for the thing

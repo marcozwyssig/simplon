@@ -1,0 +1,19 @@
+# The build context for deploy/image/Dockerfile, which is the product ROOT - so what is excluded here is
+# what would otherwise be streamed to the daemon on every build.
+#
+# `.git` IS NOT EXCLUDED, deliberately and against the usual advice: setuptools-scm derives the kernel's
+# version from the git tag, so a context without it produces a wheel labelled with the no-tag sentinel
+# and an image whose version is a guess. Measured on this tree: 28 MB of history against a 0.6 MB source
+# tree, once per build, and the alternative (passing the number in as a build argument) is the second
+# source for one number that si#200 removed.
+#
+# The venv is the entry that matters: deploy/orchestrator/.venv holds an installed toolchain and dwarfs
+# everything else in the repository.
+deploy/orchestrator/.venv
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+**/__pycache__/
+*.egg-info/

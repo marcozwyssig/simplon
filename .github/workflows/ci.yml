@@ -53,6 +53,15 @@ jobs:
       # way is the fix. What it checks and what it excuses is stated in mypy.ini, not here.
       - run: ./simplon.sh test typecheck-python
       - run: ./simplon.sh build wheel
+      # The kernel's own container image (si#200), BUILT here and published nowhere. Building
+      # needs no credential, so the half of the loop that can run on every push does - which is
+      # what keeps the Dockerfile from rotting between the on-demand publishes that are the
+      # other half. It is the same argument as every other step in this file: a command a
+      # developer can type, run by the pipeline rather than restated in it.
+      #
+      # It goes after the wheel and before the prose gate for the reason the next note gives:
+      # a verdict over code is read before a verdict over prose.
+      - run: ./simplon.sh build image
       # The release-notes guard (si#89), and it is LAST on purpose. A gate that fails early
       # hides everything behind it, and this one rules on prose rather than on code: a
       # release section still to be written must not stop a reader from seeing whether the

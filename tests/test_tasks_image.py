@@ -247,10 +247,68 @@ def test_an_argument_tag_wins_over_the_declared_one(cli, _no_provenance):
     assert "ghcr.io/owner/demo-worker:0.4.149" in cli.argv_starting("docker", "build")[0]
 
 
-def test_without_a_tag_anywhere_it_names_both_places_one_could_be(cli):
+def test_without_a_tag_anywhere_and_nothing_to_derive_it_names_the_places_one_could_be(cli):
+    # arrange: the `cli` fixture answers every git call with empty output, so the derivation below finds
+    # no checkout and contributes nothing - which is the only state in which there is nothing to tag with
     # act / assert
     with pytest.raises(ValueError, match="--tag"):
         image.build(name="app")
+
+
+def test_with_no_tag_declared_the_version_the_build_stamps_is_the_tag(monkeypatch, cli):
+    """si#200. `git describe` already produces the number the image is STAMPED with (VERSION), so taking
+    the tag from anywhere else would be a second source for one number - and the second source is the one
+    that goes stale. The tag IS the derived version, verbatim: no leading 'v' stripped, no normalisation,
+    because a rule that rewrites the number is a third statement about it."""
+    # arrange
+    monkeypatch.setattr(image, "provenance", lambda root: {"VERSION": "v0.13.0", "REVISION": "abc"})
+
+    # act
+    rc = image.build(name="app")
+
+    # assert
+    assert rc == 0
+    assert "ghcr.io/owner/demo-app:v0.13.0" in cli.argv_starting("docker", "build")[0]
+
+
+def test_a_declared_tag_still_beats_the_derived_one(monkeypatch, cli):
+    # arrange: the same precedence `build_args` has - a product that stated its tag means it, and a
+    # derivation that silently won over a manifest would make the manifest a suggestion
+    monkeypatch.setattr(image, "provenance", lambda root: {"VERSION": "v0.13.0"})
+
+    # act
+    image.build(name="worker")
+
+    # assert
+    assert "ghcr.io/owner/demo-worker:latest" in cli.argv_starting("docker", "build")[0]
+
+
+def test_a_declared_version_build_argument_carries_the_tag_with_it(monkeypatch, cli):
+    # arrange: `build_args: { VERSION: ... }` is a product saying where its version really comes from, and
+    # the image tag follows the version WHEREVER it was decided - one number, one place, still
+    monkeypatch.setattr(image, "provenance", lambda root: {"VERSION": "v0.13.0"})
+    data = image.declared({"images": {"app": {"registry": "ghcr.io/owner", "repository": "demo-app",
+                                              "dockerfile": "Dockerfile", "context": ".",
+                                              "build_args": {"VERSION": "4.2.0"}}}}, "app")
+
+    # act
+    tag = image.resolve_tag(data, "", image.build_arguments(data, Path("/nowhere")).get("VERSION", ""))
+
+    # assert
+    assert tag == "4.2.0"
+
+
+def test_a_release_tags_what_the_build_tagged_without_being_told_twice(monkeypatch, cli, logins):
+    # arrange: build and release are two commands, so the number would otherwise be typed twice - and the
+    # release.yml check that the wheel IS the tag exists because two typed numbers drift
+    monkeypatch.setattr(image, "provenance", lambda root: {"VERSION": "v0.13.0"})
+
+    # act
+    rc = image.release(name="app")
+
+    # assert
+    assert rc == 0
+    assert cli.argv_starting("docker", "push")[0] == ["docker", "push", "ghcr.io/owner/demo-app:v0.13.0"]
 
 
 def test_without_a_name_it_says_how_a_product_pins_one(cli):
@@ -660,6 +718,8 @@ def test_a_registry_that_is_not_github_gets_no_github_token(cli, monkeypatch, ca
                                         encoding="utf-8")
     monkeypatch.setattr(githubpackages, "docker_login",
                         lambda registry, **kw: pytest.fail("a GitHub token must not leave GitHub"))
+    # ... and the operator has stored one, which si#200 made a precondition rather than an assumption
+    monkeypatch.setattr(docker, "has_stored_login", lambda host: True)
 
     # act
     rc = image.release(name="app", tag="1.0")
@@ -668,6 +728,57 @@ def test_a_registry_that_is_not_github_gets_no_github_token(cli, monkeypatch, ca
     assert rc == 0
     assert cli.argv_starting("docker", "push")[0][-1] == "registry.example.com/team/demo-app:1.0"
     assert "no GitHub token is minted" in capsys.readouterr().out
+
+
+def test_a_push_to_a_registry_with_no_stored_credential_is_refused_rather_than_attempted(
+        monkeypatch, capsys, _product, cli):
+    """si#200, and it is the other half of `is_github_packages`. That check stops the GitHub token from
+    reaching a third-party host; it leaves the third-party host with no credential story at all, and the
+    push went out anyway - to be answered by `denied: requested access to the resource is denied`, which
+    names no host, no account and no fix. Docker Hub is the registry that made this concrete."""
+    # arrange
+    (_product / "demo.yaml").write_text(_MANIFEST.replace("registry: ghcr.io/owner",
+                                                          "registry: docker.io/team"), encoding="utf-8")
+    monkeypatch.setattr(docker, "has_stored_login", lambda host: False)
+
+    # act
+    rc = image.release(name="app", tag="1.0")
+
+    # assert: refused BEFORE the push, and the message names the host and the command that fixes it
+    assert rc == 1
+    assert cli.argv_starting("docker", "push") == []
+    said = capsys.readouterr().err
+    assert "docker login docker.io" in said and "docker.io/team/demo-app:1.0" in said
+
+
+def test_the_credential_is_asked_about_the_host_and_not_about_the_whole_registry(monkeypatch, cli,
+                                                                                 _product):
+    # arrange: `registry:` carries the namespace too (`docker.io/team`), and `docker login` knows only
+    # hosts - asking about the namespace would answer no for a host that IS logged in
+    (_product / "demo.yaml").write_text(_MANIFEST.replace("registry: ghcr.io/owner",
+                                                          "registry: docker.io/team"), encoding="utf-8")
+    asked: list = []
+    monkeypatch.setattr(docker, "has_stored_login", lambda host: asked.append(host) or True)
+
+    # act
+    image.release(name="app", tag="1.0")
+
+    # assert
+    assert asked == ["docker.io"]
+
+
+def test_github_packages_still_mints_its_own_credential_rather_than_demanding_a_stored_one(monkeypatch,
+                                                                                           cli, logins):
+    # arrange: the GHCR path logs in for itself, so demanding a stored credential there would refuse the
+    # one registry this kernel CAN authenticate to on its own
+    monkeypatch.setattr(docker, "has_stored_login",
+                        lambda host: pytest.fail("the GHCR path mints its own credential"))
+
+    # act
+    rc = image.release(name="app", tag="1.0")
+
+    # assert
+    assert rc == 0 and logins == ["ghcr.io/owner"]
 
 
 def test_a_failing_push_to_a_registry_that_is_not_github_says_nothing_about_gh(monkeypatch, capsys,
@@ -679,6 +790,7 @@ def test_a_failing_push_to_a_registry_that_is_not_github_says_nothing_about_gh(m
     fake = _Cli(verdict={("docker", "push"): 1})
     monkeypatch.setattr(image, "run", fake.run)
     monkeypatch.setattr(image, "stream", fake.stream)
+    monkeypatch.setattr(docker, "has_stored_login", lambda host: True)
 
     # act
     rc = image.release(name="app", tag="1.0")

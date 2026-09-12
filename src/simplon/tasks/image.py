@@ -253,18 +253,38 @@ def missing_declared_paths(cfg: Image, root: Path) -> list[str]:
     return missing
 
 
-def resolve_tag(cfg: Image, tag: str) -> str:
-    """The tag to build and publish under: the argument, else the section's own `tag:`.
+def resolve_tag(cfg: Image, tag: str, derived: str = "") -> str:
+    """The tag to build and publish under: the argument, else the section's own `tag:`, else the VERSION
+    the image is being STAMPED with.
 
-    Both sides, for the reason `release:artifact` gives and then reuses here: most products know their
+    The first two, for the reason `release:artifact` gives and then reuses here: most products know their
     tag as a constant and should not retype it on every call, while some only learn it after a build and
     could not have declared one. A task that supported only the manifest would exclude the second kind.
+
+    THE THIRD IS si#200's, and it is what makes a product that declares neither work at all. This module
+    already derives a VERSION from the product's own `git describe` and stamps it into the image; taking
+    the TAG from a different statement would be two sources for one number, which is the shape this
+    repository removes wherever it finds it - simplon's own version is derived from the git tag by
+    setuptools-scm for exactly that reason, and release.yml carries a step whose only job is to catch the
+    two drifting apart. So the tag is the version, verbatim: `v0.13.0` stays `v0.13.0`, because stripping
+    the 'v' would be a third rule about the same number and the reader would then have to know which of
+    the three they are looking at.
+
+    `derived` is passed in rather than computed here because the caller has already computed it -
+    `build_arguments` runs `provenance` once, and running git a second time to answer the same question
+    would also print its warnings twice.
+
+    Precedence is `build_arguments`': anything DECLARED beats anything derived. It follows that a product
+    stating `build_args: { VERSION: ... }` moves the tag with it, which is the property that keeps one
+    number in one place whichever place that turns out to be.
     """
-    resolved = tag or cfg.tag
+    resolved = tag or cfg.tag or derived
     if not resolved:
         raise ValueError(
             f"no tag: declare `tag:` in the `{SECTION}:` section for a constant one, or pass --tag for a "
-            f"version that is only known after a build")
+            f"version that is only known after a build. Neither is needed in a git checkout - the tag "
+            f"then defaults to the derived {VERSION_ARG} - and this tree is not one, or has no commit "
+            f"yet (the warning above says which)")
     return resolved
 
 
@@ -331,14 +351,16 @@ def reference(cfg: Image, tag: str) -> str:
     return githubpackages.reference(cfg.registry, cfg.repository, tag)
 
 
-def build_image(cfg: Image, tag: str, root: Path) -> int:
+def build_image(cfg: Image, tag: str, root: Path, args: dict[str, str]) -> int:
     """Build the declared image under `root` and return docker's real rc.
 
     `--file` and the context are joined onto the product root rather than passed as the manifest wrote
     them, so the command means the same thing whatever directory the CLI was invoked from.
+
+    `args` is handed in rather than computed here since si#200: the tag may BE the derived VERSION, so
+    the caller has to hold the arguments before it can name the reference to build.
     """
     ref = reference(cfg, tag)
-    args = build_arguments(cfg, root)
     argv = ["docker", "build", "--file", str(root / cfg.dockerfile), "--tag", ref]
     for key in sorted(args):
         argv += ["--build-arg", f"{key}={args[key]}"]
@@ -391,8 +413,9 @@ def build(name: str = "", tag: str = "") -> int:
                     f"failed later, about something else")
         return 1
     docker.ensure_docker()
-    resolved = resolve_tag(cfg, tag)
-    rc = build_image(cfg, resolved, root)
+    args = build_arguments(cfg, root)
+    resolved = resolve_tag(cfg, tag, args.get(VERSION_ARG, ""))
+    rc = build_image(cfg, resolved, root, args)
     if rc != 0:
         log.error(f"docker build failed (rc={rc}); {reference(cfg, resolved)} was not built "
                   f"(see output above)")
@@ -417,7 +440,10 @@ def release(name: str = "", tag: str = "") -> int:
     """
     docker.ensure_docker()
     cfg, root = _declared_for(name)
-    resolved = resolve_tag(cfg, tag)
+    # The same derivation the build used, so the two commands name one reference without the number being
+    # typed twice - and a checkout that has moved since the build says so, by naming a tag that is not on
+    # this machine, rather than by publishing the wrong one.
+    resolved = resolve_tag(cfg, tag, build_arguments(cfg, root).get(VERSION_ARG, ""))
     ref = reference(cfg, resolved)
 
     if not present_locally(ref):
@@ -450,6 +476,24 @@ def release(name: str = "", tag: str = "") -> int:
         # and hand it to a third party - and then answer the 401 with `gh auth refresh`, advice that
         # means nothing there. The module this credential comes from exists because a token leaked once;
         # sending it to whatever host a YAML file names is the same mistake with more steps.
+        #
+        # si#200 added the second half of that sentence. Refusing to MINT a credential left the push with
+        # none, and it went out anyway: docker answered `denied: requested access to the resource is
+        # denied`, which names neither the host nor the account nor the fix. So the stored credential is a
+        # PRECONDITION now, checked before anything is pushed and answered by naming the host and the one
+        # command that authorises it. The kernel still holds no secret for this host - it reads no token,
+        # writes no config and logs nobody in; it only declines to push into a registry that is going to
+        # refuse it. Rejected on the way: a DOCKERHUB_TOKEN read here. It would put a second registry
+        # secret into the process that `is_github_packages` exists to keep down to one, for no gain over
+        # `docker login`, which every CI already has an action for.
+        if not docker.has_stored_login(host):
+            log.error(f"no credential for {host}, so {ref} was not pushed - the push would have been "
+                      f"answered by `denied: requested access to the resource is denied`.\n"
+                      f"  run `docker login {host}` first (in CI: log in with the registry's own token, "
+                      f"never with a GitHub one).\n"
+                      f"  this kernel mints a token for GitHub Packages and for nothing else, on "
+                      f"purpose - see simplon.githubpackages.is_github_packages")
+            return 1
         log.info(f"{host} is not GitHub Packages, so no GitHub token is minted for it - the push uses "
                  f"the credential `docker login {host}` has already stored")
 
