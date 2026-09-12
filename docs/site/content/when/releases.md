@@ -249,6 +249,71 @@ the text of the block.
 **Nothing to do.** A new module on the library surface; no command, manifest key or existing signature
 changes.
 
+### A size in binary units, and a phase heading that was declined (si#192)
+
+A consuming product on 0.11.0 measured its own console module against the kernel and found two functions
+with nowhere to go. One of them is here; the other is not, and the ticket said in as many words that
+"declined, and here is why" would be a good answer.
+
+**`fetch.human_bytes_binary(n)` is the 1024-based twin.** `human_bytes` sits beside a `Content-Length`
+and stays decimal for the reasons si#178 argued; what was missing is the other scale, for a size a file
+manager reports. Two names rather than `human_bytes(n, binary=True)`, because a flag is read once at the
+call site and never again by anyone reading the log.
+
+```
+450'000'000 bytes   human_bytes         450.0 MB
+                    human_bytes_binary  429.2 MiB
+```
+
+**The unit is the half si#192 did not ask for, and it is the half that mattered.** The ticket's own
+worked example renders the binary figure as `429.2 MB`, which is the exact string that cost that product
+a failed publish: a true division wearing the other scale's unit, reading as comfortably under a cap it
+was in fact sitting on. A distinct name keeps the pair apart where it is CALLED. Only a distinct unit
+keeps them apart where the mistake was actually made, which is in a log, where the reader has one string
+and no call site to consult. So the binary function writes `KiB`, `MiB`, `GiB`, and a test drives every
+count in a range to assert the two functions never share a unit token once a scale applies. Below 1024
+the two produce the same string, which is honest: `947 B` is the same count of the same bytes either
+way. The format otherwise mirrors `human_bytes` exactly, separator included, because a pair a reader has
+to learn twice is a pair that gets misread.
+
+**`log.step()` is declined, and the premise it rests on is not true.** The ticket asks for a phase
+heading on the grounds that `==>` "belongs to the runner and a product's own body cannot reach it". It
+is `log.info`. The headless runner heads every step with a plain `log.info` call, `log` is on the
+library surface, and a product body calling it produces the same line the runner does. Measured under
+the runner, with a real body:
+
+```
+[08:57:14] ==> probe.loginfo - the kernel's info line     <- the runner's entry line
+  [08:57:14] ==> Setup                                    <- log.info, from inside the body
+```
+
+Three more measurements say why a second spelling would be worse than none.
+
+*The word is taken twice over.* A `step` in this kernel is a `Step`: a row in the tree, an rc, a
+duration, a `build/logs/<step>.log` and a line in the run transcript. And `phase` is the name of the
+five delivery groups. A `log.step()` producing none of those would be named after all of them.
+
+*si#174 moved where a body's output goes.* Since a step's body is captured into that step's pane, a
+heading printed from a body no longer heads a phase of the run; it subdivides one step. Driven both
+ways with the ticket's own five phases: printed inside one body they are five lines of text under a tree
+with one row, one duration, one rc and one log file. Declared as five steps they are five rows, five
+durations, five rcs and five log files, and the runner prints `==> Setup` for each of them anyway. A
+phase in Simplon is a step, and a printed heading is a second phase structure the runner cannot see.
+
+*si#190 discards the style.* The product's heading is `style="bold cyan"`, and captured lines have their
+escape sequences stripped, so it arrives as plain text in the pane, in the step log and in the
+transcript. The kernel could not offer the styled version regardless: `rich` is not a declared
+dependency.
+
+So a product that wants a heading inside a step body writes `print()` and `log.info("Setup")`, in the
+kernel's own alphabet, timestamped, telling nothing apart from the runner's line except the two-space
+indent that already separates every body line from its step. What a product wanting a heading for a
+PHASE writes is a step. `tests/test_orchestrator_capturing.py` pins the whole entry line, clock included,
+so this answer cannot quietly stop being true - the first version of that test pinned the `==>` marker
+alone and stayed green against a runner rewritten to `print(f"==> {title}")`.
+
+**What to do.** Nothing. `human_bytes_binary` is additive and no existing signature moves.
+
 ### The `why` chapter is a page, not an essay (si#186)
 
 `why/why.md` was 3992 words and opened by announcing how it would take itself apart noun by noun. It is

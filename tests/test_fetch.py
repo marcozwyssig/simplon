@@ -1111,3 +1111,66 @@ def test_a_thousands_separator_is_reachable_in_the_top_unit_and_at_one_rounding_
 def test_the_rate_carries_the_same_shape():
     assert fetch.human_rate(2_400_000) == "2.4 MB/s"
     assert fetch.human_rate(5_000_000_000_000) == "5,000.0 GB/s"
+
+
+# --- the binary twin, and why it is a second name rather than a flag (si#192) -------------------------
+
+
+@pytest.mark.parametrize("count, decimal, binary", [
+    (0, "0 B", "0 B"),
+    (947, "947 B", "947 B"),
+    (999, "999 B", "999 B"),
+    (1_000, "1.0 KB", "1000 B"),
+    (1_024, "1.0 KB", "1.0 KiB"),
+    (450_000_000, "450.0 MB", "429.2 MiB"),
+    (1_100_000_000, "1.1 GB", "1.0 GiB"),
+    (11_240_000_000, "11.2 GB", "10.5 GiB"),
+    (5_000_000_000_000, "5,000.0 GB", "4,656.6 GiB"),
+])
+def test_the_rendered_strings_of_both_scales(count, decimal, binary):
+    """The pair written out side by side rather than described, because si#192 is a request about which
+    of two numbers a reader is looking at, and that is only arguable against the actual output."""
+    assert fetch.human_bytes(count) == decimal
+    assert fetch.human_bytes_binary(count) == binary
+
+
+def test_the_ticket_s_own_number_renders_as_neither_of_the_two_strings_that_cost_a_publish():
+    """si#192's whole case, driven. That product caps a channel at 450'000'000 bytes because the channel
+    rejects at 500 MB decimal, and a 1024-based helper spelling its units `MB` called that `429.2 MB` -
+    comfortably under a cap it was in fact sitting on. That confusion cost a failed publish.
+
+    So the danger is not the arithmetic, it is the LABEL: `429.2 MB` is the string that lies. Neither
+    function may produce it, and the binary one says `MiB` precisely so that the two outputs disagree
+    about the unit and not only about the digits."""
+    assert fetch.human_bytes(450_000_000) == "450.0 MB"
+    assert fetch.human_bytes_binary(450_000_000) == "429.2 MiB"
+    assert "429.2 MB" not in (fetch.human_bytes(450_000_000), fetch.human_bytes_binary(450_000_000))
+
+
+def test_a_scaled_string_can_never_be_read_as_the_other_function_s():
+    """THE PROPERTY THE NAME ALONE DOES NOT BUY, and the reason this is not `human_bytes(n, binary=True)`.
+
+    A distinct name keeps the two apart at the CALL SITE. It does nothing for the reader of a LOG, who
+    has one string and no call site - and the log is where si#192's publish was lost. So the unit tokens
+    are disjoint the moment a scale is applied: `KB`/`MB`/`GB` against `KiB`/`MiB`/`GiB`.
+
+    Below 1024 the two agree exactly, and that is honest rather than an exception: `947 B` is the same
+    count of the same bytes on either scale, and there is no ambiguity to defend against.
+    """
+    for count in (0, 1, 947, 999, 1_000, 1_023, 1_024, 500_000, 450_000_000, 5_000_000_000_000):
+        decimal, binary = fetch.human_bytes(count), fetch.human_bytes_binary(count)
+        if count < 1_024 and count < 1_000:
+            assert decimal == binary, f"{count} disagrees below the first scale: {decimal} / {binary}"
+            continue
+        assert decimal.split()[-1] != binary.split()[-1], (
+            f"{count} renders as {decimal!r} and {binary!r} - the units are the same token, so a "
+            f"reader with one of these strings cannot tell which function produced it")
+
+
+def test_the_separator_reaches_the_top_unit_only_here_too():
+    """Mirrored from `human_bytes` deliberately: every unit but the largest hands over at the next 1024,
+    so `KiB` and `MiB` carry at most four digits before the point and `GiB` is the one place a separator
+    is reachable. A pair that formatted its numbers differently would be a second thing to learn."""
+    assert fetch.human_bytes_binary(1_048_575) == "1,024.0 KiB"
+    assert fetch.human_bytes_binary(1_073_741_824) == "1.0 GiB"
+    assert fetch.human_bytes_binary(1_099_511_627_776) == "1,024.0 GiB"

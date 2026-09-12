@@ -10,15 +10,17 @@ Every test below is one of those, plus the three ways a body reports and the hal
 """
 from __future__ import annotations
 
+import re
 import sys
 import threading
 import time
 
 import pytest
 
-from simplon import context, steplog
+from simplon import context, log, steplog
 from simplon.context import ProductContext
-from simplon.orchestrator.steps import CRASH_RC, StepState, capturing
+from simplon.orchestrator.steps import (CRASH_RC, Pipeline, StepState, capturing,
+                                        run_headless)
 
 
 @pytest.fixture(autouse=True)
@@ -459,3 +461,56 @@ def test_a_captured_rich_console_puts_no_escape_sequences_into_the_record():
     assert seen == ["a warning"]
     assert not any("\x1b" in line for line in seen)
     assert step.output == "a warning"      # and the step log and the transcript get the same text
+
+
+# --- the phase heading si#192 asked for, and why it was declined --------------------------------------
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+#: What a `log.info` line looks like once the colour is gone: an indent, the clock, the marker, the
+#: message. The WHOLE line, deliberately - an earlier version of this pinned the marker alone, and a
+#: runner rewritten to head its steps with a bare `print(f"==> {title}")` passed it. The marker is the
+#: half both spellings share; the clock is the half only `log.info` produces.
+_INFO_LINE = re.compile(r"^(?P<indent> *)\[\d\d:\d\d:\d\d\] ==> (?P<message>.*)$")
+
+
+def _info_shape(line: str) -> tuple[str, str] | None:
+    """(indent, message) when `line` is a `log.info` line, else None."""
+    found = _INFO_LINE.match(_ANSI.sub("", line).rstrip())
+    return (found.group("indent"), found.group("message")) if found else None
+
+
+def test_a_body_that_wants_a_phase_heading_already_has_one_and_it_is_the_runners_own(capsys):
+    """si#192 (DECLINED) asked for a `log.step()` phase heading, on the premise that the runner's `==>`
+    "belongs to the runner and a product's own body cannot reach it". It is `log.info`: the headless
+    runner heads every step with a plain `log.info` call, and a product body calling that same public
+    function under the same runner produces the same line, set apart only by the two-space indent the
+    capture gives every line of a body.
+
+    So the answer to the ticket is a fact about the kernel rather than a new function - and a fact in
+    prose is exactly what rots. If the runner is ever changed to head a step with something else, the
+    reply written into the release notes stops being true and nothing else in this suite would notice.
+
+    SEEN RED TWICE, and the first attempt is worth keeping in view because it is this project's
+    recurring defect. Pinning the MARKER alone (`==>`) stayed green when the runner's entry line was
+    replaced by `print(f"==> {title}")` - the half both spellings share. The whole line is pinned
+    instead, clock included, which is the half only `log.info` produces; that breakage is red now, and
+    so is dropping the capture's two-space indent.
+    """
+    # Arrange
+    pipeline = Pipeline(name="build",
+                        steps=[capturing("win2019", lambda: log.info("Setup"),
+                                         command="build.win2019")])
+    # Act
+    run_headless(pipeline, verbose=True)
+    printed = capsys.readouterr().out.splitlines()
+
+    # Assert
+    entry = next(line for line in printed if line.rstrip().endswith("build.win2019"))
+    heading = next(line for line in printed if line.rstrip().endswith("Setup"))
+    assert _info_shape(entry) == ("", "build.win2019"), (
+        f"the runner no longer heads a step with log.info, so a product body can no longer reach the "
+        f"runner's own spelling by calling it: {entry!r}")
+    assert _info_shape(heading) == ("  ", "Setup"), (
+        f"a body calling log.info no longer produces that same line under the capture: {heading!r}")

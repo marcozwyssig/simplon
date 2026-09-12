@@ -159,6 +159,42 @@ def human_bytes(count: float) -> str:
     return f"{int(count)} B"
 
 
+def human_bytes_binary(count: float) -> str:
+    """`947 B`, `429.2 MiB`, `1.0 GiB` - 1024-based, and the UNIT says so out loud.
+
+    THE TWIN OF `human_bytes`, AND DELIBERATELY NOT A FLAG ON IT (si#192). A `binary=True` keyword would
+    be two ways to reach one verdict, which is the shape this repository refuses: the caller writes the
+    flag once and every reader afterwards has to go and look it up. Two names decide it where it is
+    read.
+
+    THE UNIT IS THE HALF THE TICKET DID NOT ASK FOR, and it is the half that mattered. si#192 arrived
+    with the measurement that settles the scale question and, read again, settles the spelling too: the
+    product it comes from caps a channel at 450'000'000 bytes because the channel rejects at 500 MB
+    decimal, and its own 1024-based helper called that `429.2 MB` - comfortably under a cap it was in
+    fact sitting on. That confusion cost it a failed publish. The arithmetic was never the defect. The
+    LABEL was: `429.2 MB` is a true division wearing the other scale's unit. A second function that
+    reproduced that string would have shipped the defect into the kernel under a safer name.
+
+    So a distinct NAME keeps the pair apart at the call site, and `KiB`/`MiB`/`GiB` keeps them apart in
+    the log - where si#192's publish was actually lost, and where the reader has a string and no call
+    site to consult. `450.0 MB` against `429.2 MiB` disagree about the unit, not only about the digits.
+
+    `human_bytes` argues that writing `MiB` everywhere is louder than a progress bar deserves, and that
+    still holds where it stands: beside a `Content-Length`, decimal is what the server advertised. Here
+    the loudness is the entire point of the function, so the two heads do not contradict each other -
+    they place the same character where each is worth its cost.
+
+    BELOW 1024 THE TWO ARE THE SAME STRING, and that is honest rather than an oversight: `947 B` is the
+    same count of the same bytes on either scale, so there is no ambiguity for a unit to resolve. The
+    shape and the separator mirror `human_bytes` down to the format spec, `GiB` being the one place a
+    separator is reachable, because a pair a reader has to learn twice is a pair that gets misread.
+    """
+    for unit, scale in (("GiB", 1024 ** 3), ("MiB", 1024 ** 2), ("KiB", 1024)):
+        if count >= scale:
+            return f"{count / scale:,.1f} {unit}"
+    return f"{int(count)} B"
+
+
 def human_rate(per_second: float) -> str:
     return f"{human_bytes(per_second)}/s"
 
