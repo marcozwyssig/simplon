@@ -364,6 +364,15 @@ def read(text: str, path: str, rel: str = "") -> Feature:
                                    "nothing on the page could say what these scenarios are about")
 
         if stripped.startswith("Background:"):
+            if pending_tags:
+                # Gherkin puts no tags on a Background, and pytest-bdd ignores a line that tries. Left
+                # unclaimed they would sit in `pending_tags` and be picked up by the NEXT scenario, which
+                # is how this was found: `@leaked` above a Background arrived on the scenario after it.
+                # A tag becomes an Allure label and a selection criterion, so the quiet version of this
+                # puts a scenario in a run somebody filtered it out of.
+                _refuse(path, line_no, f"tags {list(pending_tags)} on a 'Background:' - Gherkin puts none "
+                                       f"there and the runner ignores them, so they would only mislead "
+                                       f"the page; tag the feature or the scenarios instead")
             if scenarios or block == "scenario":
                 _refuse(path, line_no, "a 'Background:' after a scenario - the runner applies it to every "
                                        "scenario in the file, so a page honouring the file order would "

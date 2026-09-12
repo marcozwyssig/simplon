@@ -220,8 +220,11 @@ The reader is a keyword scan of the constructs pytest-bdd 8 executes, and **no G
 added**. The reason is agreement rather than thrift: `gherkin-official` parses a grammar WIDER than
 pytest-bdd executes, so the kernel would have had the deeper answer and every construct in the gap would
 have reached the page and never run. What it cannot honour it refuses - a `Rule:`, a non-English
-`# language:` header - and thirteen constructs are refused in all, each one because it would otherwise
-produce a document describing something no run executes. Driven against a real run of this repository's
+`# language:` header - and seventeen refusals in all, each one because it would otherwise produce a
+document describing something no run executes. One of them came from driving the artefact rather than
+from reasoning about it: the first real feature file carried an outline whose title held no placeholder,
+and the page came out with three rows on one identical address. That is pytest-bdd's own naming - the
+archive collides the same way - so refusing here is the only place it is visible at all. Driven against a real run of this repository's
 own nine scenarios, the reader reproduces all nine addresses and all nine step lists **byte for byte**,
 and that transcript is pinned in the suite as a second source rather than trusted.
 

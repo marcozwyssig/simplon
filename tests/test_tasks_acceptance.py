@@ -18,8 +18,10 @@ WHAT THIS SUITE HOLDS, in the order it matters.
      scenario is on it, the count in the lead sentence has gone up by exactly one, and no other line of
      the page moved.
 
-  3. EVERY REFUSAL WAS SEEN RED. Each one below is driven with the construct it refuses and with the
-     nearest legal neighbour, so it is an assertion rather than a decoration.
+  3. EVERY REFUSAL WAS SEEN RED - seventeen of them: fourteen constructs of a feature file, a ragged
+     Examples row, and the two ways a `source:` can be nothing. Each is driven with the input it refuses,
+     and `test_the_legal_neighbour_of_every_refusal_below_is_accepted` drives the nearest legal one, so
+     none of them is passing merely because the reader refuses everything.
 
 AAA throughout. `read()` is driven with text rather than with files wherever the file system is not the
 subject, because a feature file's TEXT is what the reader is about.
@@ -378,9 +380,18 @@ Feature: A file
       | a     |
       | b     |
 """, "carries no placeholder that differs between rows", id="outline-title-without-placeholder"),
+    pytest.param("""\
+Feature: A file
+  @leaked
+  Background:
+    Given a product
+
+  Scenario: One
+    When it runs
+""", "on a 'Background:'", id="tags-on-a-background"),
 ])
 def test_a_feature_file_that_would_describe_something_no_run_honours_is_refused(text, fragment):
-    """Twelve constructs, each either unexecutable by pytest-bdd or unaddressable once expanded.
+    """Fourteen constructs, each either unexecutable by pytest-bdd or unaddressable once expanded.
 
     THE COMMON SHAPE is this project's recurring defect rather than pedantry: every one of them would
     otherwise produce a PAGE - a document headed "acceptance scenarios" describing something no run ever
