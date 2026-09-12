@@ -294,8 +294,8 @@ def test_a_resumed_walk_asks_only_the_steps_nobody_answered():
     key = walk_mod.RunKey("demo", "v1", "abc", "tests/acceptance", "all scenarios", "sha256:aa")
     state = walk_mod.State(key=key)
     address = "acceptance/one.feature:The gate runs everything"
-    state.record(address, 0, True, datetime(2026, 9, 12, 10, 0, 0))
-    state.record(address, 1, True, datetime(2026, 9, 12, 10, 1, 0))
+    state.record(address, 0, True, datetime(2026, 9, 12, 10, 0, 0), "Ada")
+    state.record(address, 1, True, datetime(2026, 9, 12, 10, 1, 0), "Ada")
     pipeline, prompt = _pipeline(state)
     asked: list[str] = []
 
@@ -325,7 +325,7 @@ def test_a_resumed_walk_keeps_an_earlier_refusal_and_its_consequence():
     key = walk_mod.RunKey("demo", "v1", "abc", "tests/acceptance", "all scenarios", "sha256:aa")
     state = walk_mod.State(key=key)
     state.record("acceptance/one.feature:The gate runs everything", 0, False,
-                 datetime(2026, 9, 12, 10, 0, 0))
+                 datetime(2026, 9, 12, 10, 0, 0), "Ada")
     pipeline, prompt = _pipeline(state)
 
     async def _drive():
@@ -350,7 +350,7 @@ def test_a_resumed_walk_records_who_answered_what_and_when_on_every_line():
     key = walk_mod.RunKey("demo", "v1", "abc", "tests/acceptance", "all scenarios", "sha256:aa")
     state = walk_mod.State(key=key)
     state.record("acceptance/one.feature:The gate runs everything", 0, True,
-                 datetime(2026, 9, 12, 10, 0, 0))
+                 datetime(2026, 9, 12, 10, 0, 0), "Ada")
     pipeline, _ = _pipeline(state)
 
     # act

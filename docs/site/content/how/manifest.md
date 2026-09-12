@@ -303,7 +303,7 @@ repository. Adding a key nobody here has heard of is a supported thing to do.
 What was missing is the other half: **which names are already taken**. The product si#159 was reported
 from builds three Windows Server *releases*, and it learned that `releases:` already means
 `{page, from, complete_from}` to `test:release-notes` by reading `src/simplon/tasks/releasenotes.py`. A
-reserved name that can only be found in the source is a trap with a delay on it, so the sixteen are
+reserved name that can only be found in the source is a trap with a delay on it, so the seventeen are
 published here and `tests/test_manifest_top_level.py` holds this table to the kernel in both directions.
 
 | key | read by | what it carries |
@@ -323,9 +323,10 @@ published here and `tests/test_manifest_top_level.py` holds this table to the ke
 | `releases:` | `test:release-notes` | `page:`, `from:` and `complete_from:`, the three values that gate says what it measures against |
 | `site:` | `docs:site` | the pinned Hugo image, where the sources live, where the site is built to |
 | `suites:` | `test:*` | the test-level taxonomy: the gates, their order, and which one clears the shared results |
+| `tracker:` | `test:walk` | where a refused acceptance step becomes a bug ticket, and the product's own wording for it: `title:`, plus `kind:`, `repo:`, `labels:` and `preamble:` |
 | `workflows:` | `release:workflows` | one entry per generated CI file |
 
-A key that is **mistyped** is therefore not the silent no-op it looks like. Fourteen of the sixteen are
+A key that is **mistyped** is therefore not the silent no-op it looks like. Fifteen of the seventeen are
 named by the reader that wanted them, the moment that reader runs: `sietv:` instead of `site:` answers
 `the 'site' section is missing or is not a mapping`, and every other reader refuses the same way, naming
 the key it looked for. The two that say nothing say nothing on purpose:
@@ -342,7 +343,7 @@ Both are driven in the test module above, so the silence is measured rather than
 ### Reading a section, yours or the kernel's
 
 A product's own task body reads its own section through `simplon.context.section`, the same walk the
-kernel's nine readers use:
+kernel's ten readers use:
 
 ```python
 from simplon import context
@@ -360,9 +361,9 @@ to nest (the section above). It stops at the first step that is not a mapping an
 reader tells "the product said nothing" from "the product said the wrong thing". A section declared and
 empty is found, not blamed.
 
-**It never raises, and that is deliberate.** Each of the sixteen readers above says something specific
-when its section is missing, and si#159 measured that fourteen of them already refuse by name and quote
-the key. An accessor that raised would replace those fourteen sentences with one. So it answers the
+**It never raises, and that is deliberate.** Each of the seventeen readers above says something specific
+when its section is missing, and si#159 measured that fourteen of the sixteen it measured already refuse
+by name and quote the key. An accessor that raised would replace those sentences with one. So it answers the
 question and the reader keeps its own refusal - which is also what keeps every refusal countable where
 it is written, in [the rules chapter](../../with-what/rules/)'s census.
 
