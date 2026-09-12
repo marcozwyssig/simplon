@@ -45,7 +45,7 @@ from typing import NoReturn
 import typer
 import yaml
 
-from simplon import context, docker, labinstance, log
+from simplon import context, docker, hostpath, labinstance, log
 from simplon.tasks import profiles
 from simplon.run import run
 
@@ -123,7 +123,7 @@ def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
     return ["docker", "run", "--rm",
             *(["--network", network] if network else []),
             *docker.user_args(),
-            "-v", f"{root}:{cfg.workdir}", "-w", cfg.workdir,
+            "-v", f"{hostpath.translate(root)}:{cfg.workdir}", "-w", cfg.workdir,
             *volumes, *env,
             cfg.image, *cfg.argv, *extra]
 

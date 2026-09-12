@@ -34,12 +34,20 @@ def test_no_shim_reaches_for_a_submodule(tmp_path):
         # product's own orchestrator path may sit on PYTHONPATH. A kernel path prepended
         # ahead of it would silently shadow the installed package - on every call, with no
         # error - so pin the whole assignment, not a substring a renamed variable would dodge.
+        #
+        # TWO ASSIGNMENTS SINCE si#201, one per route, and the list is ordered rather than a set: the
+        # container route's comes first because it is decided before the venv route is reached. Both
+        # still derive from LAUNCH_ORCH_DIR and from nothing else, which is the half of the rule that
+        # matters - a second route that hardcoded the block path would make `--orch-dir` move one route
+        # and leave the other pointing at a directory that is not there.
         expected = {
-            "democtl.sh": 'export PYTHONPATH="$LAUNCH_ORCH_DIR/src/python${PYTHONPATH:+:$PYTHONPATH}"',
-            "democtl.cmd": 'set "PYTHONPATH=%LAUNCH_ORCH_DIR%\\src\\python;%PYTHONPATH%"',
+            "democtl.sh": ['DOCKER_RUN+=(-e "PYTHONPATH=$ORCH_IN_SRC/src/python")',
+                           'export PYTHONPATH="$LAUNCH_ORCH_DIR/src/python${PYTHONPATH:+:$PYTHONPATH}"'],
+            "democtl.cmd": ['set "DOCKER_ENV=%DOCKER_ENV% -e PYTHONPATH=%ORCH_IN_SRC%/src/python"',
+                            'set "PYTHONPATH=%LAUNCH_ORCH_DIR%\\src\\python;%PYTHONPATH%"'],
         }
         lines = [l.strip() for l in text.splitlines() if "PYTHONPATH=" in l]
-        assert lines == [expected[name]], f"{name}: {lines}"
+        assert lines == expected[name], f"{name}: {lines}"
 
 
 def test_requirements_pin_the_kernel_by_version(tmp_path):

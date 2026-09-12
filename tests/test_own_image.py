@@ -224,6 +224,47 @@ def test_the_image_carries_the_kernel_from_this_tree_rather_than_from_a_release(
     assert "pip install --no-cache-dir simplon" not in dockerfile
 
 
+def test_the_docker_client_in_the_image_is_the_version_the_kernel_already_pins():
+    """One source for the docker CLI version, two consumers (si#201).
+
+    si#200 kept the client out of the image on the argument that a baked copy would be the version nobody
+    bumps. si#201 measured that leaving it out costs 84 MB and 15.0 s on first use, needs egress from a
+    container whose premise is "bash and docker", and changes four verdicts in simplon's own gate - so
+    the client went in. This is the half that answers the original objection: the Dockerfile installs
+    `simplon.docker.DOCKER_CLI_VERSION` and nothing else, so bumping the kernel's pin bumps the layer or
+    this goes red.
+    """
+    # arrange
+    dockerfile = (ROOT / "deploy" / "image" / "Dockerfile").read_text(encoding="utf-8")
+
+    # act
+    declared = [line.split("=", 1)[1].strip() for line in dockerfile.splitlines()
+                if line.startswith("ARG DOCKER_CLI_VERSION=")]
+
+    # assert
+    assert declared == [docker.DOCKER_CLI_VERSION], declared
+    # and the CLIENT only: the static bundle also carries the engine binaries, which have nothing to do
+    # in an image that talks to the host's daemon through a mounted socket
+    assert "docker/docker" in dockerfile
+    assert "dockerd" not in dockerfile
+
+
+def test_oras_is_still_out_of_the_image_because_nothing_measured_asked_for_it():
+    # arrange: the other half of si#201's split, asserted because an absence is what a reviewer cannot
+    # see. oras is reached only by `release:artifact` and the read-back in `release:image`, it has a
+    # provisioning gate that works (`simplon.oras.ensure_oras`), and it changed no verdict in the
+    # both-routes gate run - so the argument si#200 made against baking a tool in still holds for it
+    dockerfile = (ROOT / "deploy" / "image" / "Dockerfile").read_text(encoding="utf-8")
+
+    # act: the INSTRUCTIONS only - this file argues its decisions in prose, and a sweep that read
+    # the comments would be asking whether the word appears rather than whether the tool is there
+    instructions = [line for line in dockerfile.splitlines()
+                    if line.strip() and not line.strip().startswith("#")]
+
+    # assert
+    assert not any("oras" in line.lower() for line in instructions), instructions
+
+
 def test_the_image_is_built_on_every_push_so_the_dockerfile_cannot_rot():
     # arrange
     steps = _manifest()["workflows"]["ci"]["jobs"]["self-build"]["steps"]

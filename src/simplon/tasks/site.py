@@ -44,12 +44,11 @@ from __future__ import annotations
 
 import re
 import shutil
-import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from simplon import context, docker, log
+from simplon import context, docker, hostpath, log
 from simplon.bootstrap import validate_relative_dir
 from simplon.run import run
 
@@ -326,7 +325,7 @@ def _hugo(cfg: Site, root: Path, argv: list[str]) -> bool:
     # is hand hugo a HUGO_CACHEDIR that is not there.
     (root / CACHE_DIR).mkdir(parents=True, exist_ok=True)
     return run(["docker", "run", "--rm", *docker.user_args(),
-                "-v", f"{root}:{MOUNT}", "-w", str(MOUNT / cfg.source),
+                "-v", f"{hostpath.translate(root)}:{MOUNT}", "-w", str(MOUNT / cfg.source),
                 "-e", f"HUGO_CACHEDIR={MOUNT / CACHE_DIR}",
                 "--entrypoint", "hugo", cfg.image, *argv], capture=False).ok
 
@@ -464,7 +463,7 @@ def _renders(diagram: Diagram, scratch: Path) -> bool:
     out.unlink(missing_ok=True)
     src.write_text(diagram.body, encoding="utf-8")
     ok = run(["docker", "run", "--rm", *docker.user_args(),
-              "-v", f"{scratch}:{MERMAID_MOUNT}", MERMAID_IMAGE,
+              "-v", f"{hostpath.translate(scratch)}:{MERMAID_MOUNT}", MERMAID_IMAGE,
               "-i", str(MERMAID_MOUNT / src.name), "-o", str(MERMAID_MOUNT / out.name)],
              capture=False).ok
     return ok and out.is_file()
@@ -494,13 +493,21 @@ def render_diagrams(cfg: Site, root: Path) -> tuple[int, tuple[str, ...]]:
         return 0, ()
     log.info(f"checking {len(found)} mermaid diagram(s) with {MERMAID_IMAGE}")
     broken = []
-    scratch = Path(tempfile.mkdtemp(prefix="simplon-mermaid-"))
+    # UNDER THE PRODUCT ROOT rather than in /tmp, and si#201 measured why. This directory is
+    # bind-mounted into the mermaid container, and on the container route the mount source has to
+    # be a path the DAEMON can resolve - which is the host path of something inside the tree, the
+    # only thing mounted from the host. A `/tmp/simplon-mermaid-xyz` exists in the kernel container
+    # and nowhere else, so the daemon would create an empty directory of that name on the host and
+    # mount that: rc 0, no diagram, no message. build/ is the right home anyway - it is a build
+    # scratch, `clean` wipes it with the rest, and .gitignore already covers it.
+    scratch = root / "build" / "mermaid"
+    scratch.mkdir(parents=True, exist_ok=True)
     try:
         for diagram in found:
             if not _renders(diagram, scratch):
                 broken.append(diagram.where(root))
     finally:
-        shutil.rmtree(scratch, ignore_errors=True)   # our own temp dir; nothing of the product's is in it
+        shutil.rmtree(scratch, ignore_errors=True)   # our own scratch; nothing of the product's is in it
     return len(found), tuple(broken)
 
 

@@ -173,7 +173,18 @@ def test_the_cmd_shim_spells_the_chosen_dir_with_windows_separators():
     # `%LAUNCH_ROOT%\deploy/provision/orchestrator`, which is the kind of path that half-works
     # until it reaches a tool that does not normalise it.
     assert 'set "LAUNCH_ORCH_DIR=%LAUNCH_ROOT%\\deploy\\provision\\orchestrator"' in cmd
-    assert "/provision/" not in cmd, "a POSIX separator survived into the cmd shim"
+
+    # ... in every line that names a path WINDOWS will resolve. Since si#201 the file also carries two
+    # paths that a LINUX container resolves - the block dir inside the mount, and the requirements file
+    # under it - and those must stay POSIX or the container gets a path with backslashes in it. So the
+    # sweep is over the lines that are about the host, and the container line is asserted for the
+    # opposite property one assertion down; a sweep over the whole file would now be asking cmd.exe's
+    # question of a path cmd.exe never sees.
+    windows_lines = [line for line in cmd.splitlines() if "ORCH_IN_SRC" not in line]
+    assert not any("/provision/" in line for line in windows_lines), \
+        "a POSIX separator survived into a line the Windows host resolves"
+    assert 'set "ORCH_IN_SRC=/src/deploy/provision/orchestrator"' in cmd, \
+        "the container-side block dir must be a POSIX path: a Linux container resolves it"
 
     # assert: the derived paths hang off the variable, as on the sh side
     assert 'set "VENV=%LAUNCH_ORCH_DIR%\\.venv"' in cmd

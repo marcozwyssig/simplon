@@ -532,11 +532,21 @@ def _render_launcher(name: str, template: str, orch_dir: str) -> str:
     normalise it. Only `LAUNCH_ORCH_DIR` is substituted -- the venv, the
     requirements file and PYTHONPATH DERIVE from that variable inside the
     template, which is what keeps a half-parametrised shim from being possible.
+
+    THE BATCH LAUNCHER IS THE EXCEPTION, and si#201 widened it rather than
+    introduced it. Its container route needs the block dir in POSIX form (the
+    path inside a Linux container) and the product's environment-variable
+    prefix, and cmd.exe strips a prefix off a variable only through delayed
+    expansion -- the `endlocal & set "X=!Y!"` shape, which is the kind of batch
+    a reader debugging a broken checkout should not have to hold in their head.
+    So `{{ orch_dir }}` and `{{ product_env_prefix }}` are substituted there
+    too, for the same reason `{{ orch_dir_win }}` already was.
     """
     # files("simplon") and then joinpath -- not files("simplon.templates"):
     # the templates directory is not a package and has no __init__.py.
     raw = files("simplon").joinpath("templates", template).read_text(encoding="utf-8")
     return (raw.replace("{{ product }}", name)
+               .replace("{{ product_env_prefix }}", env_var_name(name).removesuffix("_ENV"))
                .replace("{{ orch_dir_win }}", orch_dir.replace("/", "\\"))
                .replace("{{ orch_dir }}", orch_dir))
 

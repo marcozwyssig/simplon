@@ -68,6 +68,34 @@ identifier resolved on `PYTHONPATH`, not a location.
 Pass the same flag on a later refresh, and note that `--force` overwrites the launchers: a hand-edit
 does not survive one.
 
+## Two routes, one CLI
+
+The launcher runs the kernel either as Python in a virtual environment on this host or as a container,
+and the user chooses with `DELIVERY_ROUTE`. The default is `auto`, which takes the venv when there is a
+`python3` and the container when there is not - so a machine with bash and docker runs your product, and
+a machine with a python behaves exactly as it always did.
+
+The container route runs the published kernel image with your checkout bind-mounted at `/src` and the
+host's docker socket handed in, so the kernel can still start the toolchain containers your commands are
+made of. Which image is a fifth parameter, `LAUNCH_IMAGE_PIN`, pointing at `deploy/image/image.pin` - a
+plain line, because bash has to know the reference before any Python exists to read your manifest with. A
+checkout with no such file, or one whose file carries no reference, has no container route and is told so
+by name.
+
+Two things stay yours on that route. The image carries the KERNEL and nothing of any product, so your
+`requirements.txt` is still installed - into `build/container/python`, not into the venv, because the two
+routes' interpreters differ and a venv built by one is a broken interpreter link to the other. And the
+route needs a real checkout: a linked git worktree's `.git` is a file naming a directory outside the
+mount, so git inside the container would see no repository, and the launcher refuses rather than let the
+release-notes guard and `release tag` fail one at a time.
+
+The two routes are held to producing the same verdict, the same exit code, the same files on disk and the
+same log. There is one difference a user sees and it is this: on the container route the kernel names
+paths as the container sees them, so a log line reads `/src/build/logs/...` where the venv route writes
+your checkout's own path. And there is one thing the route cannot do: hand a sibling container a
+directory OUTSIDE your tree, because the tree is the only thing mounted from the host. That refuses by
+name; it never mounts an empty directory and calls it green.
+
 ## The `.gitignore`, and what it does not claim
 
 The kernel writes into your tree, so `init` writes the rules for what it writes. Without them the first
