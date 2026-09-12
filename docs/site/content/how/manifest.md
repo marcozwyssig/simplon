@@ -484,7 +484,7 @@ moves. Both are the gate working; neither used to be said. Every run now prints 
 to, and names GitHub's own merge in as many words when that is what it found.
 
 **A pull request never has to name its own PR number.** GitHub's `Merge pull request #N from <branch>`
-is a statement about the *vorgang*, not about the work, so the gate reads the commits that merge brought
+is a statement about the *act of merging*, not about the work, so the gate reads the commits that merge brought
 in instead. The number the notes have to carry is the *ticket* number in your own commit subjects - one
 you had before the branch existed. Without that rule a release-notes PR would demand a note about
 itself, and a follow-up PR would bring its own number too: the regress has no floor.

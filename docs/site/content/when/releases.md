@@ -106,6 +106,14 @@ branches would both rewrite rather than by subject, records the decisions alread
 cluster, and states the rule that only one lane at a time may declare a catalogue coordinate - because
 that turns nine counted guards red at once. Nothing to do.
 
+### The last German word on the site (si#213)
+
+si#195 removed a German aphorism and reported the site English-only. It was not: `how/manifest.md` and
+`how/releasing.md` both carried *vorgang* in the same italicised sentence about what a GitHub merge
+subject states. The sweep that missed it looked for umlauts and for German function words, and this word
+has neither - a measurement that answered honestly about what it asked and was asked the wrong question.
+It reads *act of merging* now, in both places. **Nothing to do.**
+
 ## 0.12.0
 
 **The site shows before it argues.** Every page on this site opened with the reasoning for the thing

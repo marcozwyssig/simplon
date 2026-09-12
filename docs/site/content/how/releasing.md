@@ -293,7 +293,7 @@ in the prepared section. The merge is in range from the second it lands, which i
 being prepared really does now carry it.
 
 **You never have to name your own pull request number.** GitHub's `Merge pull request #N from <branch>`
-is a statement about the *vorgang*, not about the work, so the gate reads the commits that merge brought
+is a statement about the *act of merging*, not about the work, so the gate reads the commits that merge brought
 in instead. The number your notes have to carry is the ticket number in your own commit subjects - one
 you had before the branch existed. Without that rule a release-notes pull request would demand a note
 about itself, and the follow-up would bring its own number too: the regress has no floor.
