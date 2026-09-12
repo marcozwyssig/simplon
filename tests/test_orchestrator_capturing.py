@@ -481,6 +481,21 @@ def _info_shape(line: str) -> tuple[str, str] | None:
     return (found.group("indent"), found.group("message")) if found else None
 
 
+def _line_ending_in(printed: list[str], tail: str) -> str:
+    """The first printed line ending in `tail`, or a failure that says what WAS printed.
+
+    A bare `next(...)` was the first spelling and it is the wrong one here: the day this test earns its
+    keep is the day the runner stops printing one of these lines, and `next` answers that day with a
+    `StopIteration` and no message. The regression this test exists to catch would arrive as an error
+    with nothing in it - which is this repository's recurring defect wearing a test's clothes.
+    """
+    found = next((line for line in printed if line.rstrip().endswith(tail)), None)
+    assert found is not None, (
+        f"nothing printed by the run ends in {tail!r}, so the line this test is about was not "
+        f"produced at all. What the run printed:\n" + "\n".join(repr(line) for line in printed))
+    return found
+
+
 def test_a_body_that_wants_a_phase_heading_already_has_one_and_it_is_the_runners_own(capsys):
     """si#192 (DECLINED) asked for a `log.step()` phase heading, on the premise that the runner's `==>`
     "belongs to the runner and a product's own body cannot reach it". It is `log.info`: the headless
@@ -507,8 +522,8 @@ def test_a_body_that_wants_a_phase_heading_already_has_one_and_it_is_the_runners
     printed = capsys.readouterr().out.splitlines()
 
     # Assert
-    entry = next(line for line in printed if line.rstrip().endswith("build.win2019"))
-    heading = next(line for line in printed if line.rstrip().endswith("Setup"))
+    entry = _line_ending_in(printed, "build.win2019")
+    heading = _line_ending_in(printed, "Setup")
     assert _info_shape(entry) == ("", "build.win2019"), (
         f"the runner no longer heads a step with log.info, so a product body can no longer reach the "
         f"runner's own spelling by calling it: {entry!r}")
