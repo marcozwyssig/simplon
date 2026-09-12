@@ -151,6 +151,23 @@ def test_a_path_outside_the_mount_is_refused_rather_than_mounted(tmp_path, monke
     assert "/src" in said and "/home/marco/simplon" in said
 
 
+def test_a_windows_drive_path_is_refused_as_the_undriven_route_it_is(tmp_path, monkeypatch):
+    # arrange: `<product>.cmd` sets the host root from `%~dp0`, so on Windows it is `C:\...`. The kernel
+    # reading it is in a LINUX container, and nothing there joins a drive path onto a POSIX one. Found on
+    # review, and the point of the test is the WORDING: without it the check one line down blamed a named
+    # volume, which is a true sentence about the wrong problem
+    _mounted(monkeypatch, "C:\\Users\\marco\\proj")
+    monkeypatch.setattr(hostpath.log, "die", _boom)
+    _here(tmp_path)
+
+    # act / assert
+    with pytest.raises(RuntimeError) as refusal:
+        hostpath.translate("/src/build")
+    said = str(refusal.value)
+    assert "Windows drive path" in said
+    assert "DELIVERY_ROUTE=venv" in said
+
+
 def test_a_relative_host_root_is_refused_because_the_daemon_would_invent_one(tmp_path, monkeypatch):
     # arrange: docker reads a `-v` source with no leading slash as a NAMED VOLUME, so a relative value
     # here would silently mount an empty volume instead of the tree

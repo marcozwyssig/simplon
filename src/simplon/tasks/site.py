@@ -42,6 +42,7 @@ and the home page is checked for afterwards.
 """
 from __future__ import annotations
 
+import os
 import re
 import shutil
 from collections.abc import Mapping
@@ -500,7 +501,12 @@ def render_diagrams(cfg: Site, root: Path) -> tuple[int, tuple[str, ...]]:
     # and nowhere else, so the daemon would create an empty directory of that name on the host and
     # mount that: rc 0, no diagram, no message. build/ is the right home anyway - it is a build
     # scratch, `clean` wipes it with the rest, and .gitignore already covers it.
-    scratch = root / "build" / "mermaid"
+    #
+    # PER PROCESS, because moving out of `tempfile.mkdtemp` would otherwise have dropped an isolation
+    # nobody would miss until it bit (found on review): the `finally` below wipes this directory, so two
+    # renders of one product root sharing a fixed path would delete each other's work in flight. The pid
+    # restores what the temp directory gave for free.
+    scratch = root / "build" / f"mermaid-{os.getpid()}"
     scratch.mkdir(parents=True, exist_ok=True)
     try:
         for diagram in found:

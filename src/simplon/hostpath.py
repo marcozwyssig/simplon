@@ -101,6 +101,11 @@ def in_a_container() -> bool:
     return any(os.path.exists(marker) for marker in CONTAINER_MARKERS)
 
 
+def _drive_letter(value: str) -> bool:
+    """Whether `value` is a Windows drive path (`C:\\...` or `C:/...`). Pure."""
+    return len(value) > 1 and value[0].isalpha() and value[1] == ":"
+
+
 def declared_mount() -> tuple[str, str]:
     """The declared bind mount as `(host side, container side)`, `("", "")` when none was declared."""
     return (os.environ.get(HOST_ROOT_ENV, "").strip(),
@@ -131,6 +136,18 @@ def translate(path: str | Path) -> str:
                 f"{MOUNT_ROOT_ENV}='{mount}'). Half a mapping cannot be applied to {given}, and guessing "
                 f"the other half is how a container gets handed the wrong tree")
     for name, value in ((HOST_ROOT_ENV, host), (MOUNT_ROOT_ENV, mount)):
+        if _drive_letter(value):
+            # THE WINDOWS GAP, named where somebody meets it rather than left to the message below,
+            # which would blame a named volume for something else entirely. `<product>.cmd` sets
+            # HOST_ROOT from `%~dp0`, so on Windows it is `C:\...`; this kernel is then running in a
+            # LINUX container, where nothing joins a drive-letter path onto a POSIX one and where the
+            # daemon-side spelling Docker Desktop wants for such a mount is not a thing that can be
+            # decided without a Windows to drive it. There was none for si#201.
+            log.die(f"{name} is '{value}', a Windows drive path, and this kernel is running in a Linux "
+                    f"container - so there is no path it can hand the daemon for {given}. The container "
+                    f"route's Windows half is UNDRIVEN (see the launcher's own note); use "
+                    f"DELIVERY_ROUTE=venv there until somebody can measure what Docker Desktop's daemon "
+                    f"accepts as a `-v` source from inside a Linux container")
         if not value.startswith("/"):
             log.die(f"{name} is '{value}', which is not an absolute path - docker reads a `-v` source "
                     f"without a leading slash as a NAMED VOLUME, so this would mount an empty volume "
@@ -148,5 +165,4 @@ def translate(path: str | Path) -> str:
         log.die(f"cannot mount {given} from inside this container: it is not under {mount}, which is the "
                 f"only directory bind-mounted from the host ({host}), so the daemon has no path for it. "
                 f"A directory a container hands to another container has to live in the mount")
-        raise SystemExit(1)          # pragma: no cover - log.die exits; this is for the type checker
     return str(Path(host).joinpath(*inside.parts))

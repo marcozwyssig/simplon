@@ -11,6 +11,7 @@ below is about the module rather than about the line: a `-v <product>-gradle-cac
 a docker VOLUME, which the daemon owns on both routes and which must not be translated into a path.
 """
 import ast
+import os
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,13 @@ import pytest
 from conftest import ROOT
 
 from simplon import hostpath
+from simplon.run import Result
 from simplon.tasks import toolchain
+
+
+def _Ok() -> Result:
+    """What a stubbed `run` hands back: a call that happened and succeeded."""
+    return Result(rc=0, out="", err="")
 
 SRC = ROOT / "src" / "simplon"
 
@@ -87,16 +94,48 @@ def test_the_toolchain_mount_is_unchanged_on_the_venv_route(tmp_path, monkeypatc
     assert f"{tmp_path}:{cfg.workdir}" in argv
 
 
-def test_the_mermaid_scratch_lives_in_the_tree_so_it_can_be_mounted_from_a_container():
-    # arrange: the one mount source that used to be outside the product root. A tempfile.mkdtemp() path
-    # exists in the kernel container and nowhere else, so on the container route the daemon would create
-    # an empty directory of that name on the HOST and mount that - the measured silent failure
+def test_the_mermaid_scratch_is_inside_the_tree_so_it_can_be_mounted_from_a_container(tmp_path,
+                                                                                      monkeypatch):
+    """The one mount source that used to be outside the product root, asserted through the argv.
+
+    A `tempfile.mkdtemp()` path exists in the kernel container and nowhere else, so on the container
+    route the daemon would create an empty directory of that name on the HOST and mount that - rc 0, no
+    diagram, no message. Held by DRIVING `render_diagrams` and reading the mount out of the line it
+    built, rather than by searching the module's text: this file's own prose says `tempfile` while
+    explaining why the code no longer calls it, and a substring check cannot tell the two apart.
+    """
+    # arrange: the product root IS the mount, and the host knows it by another name
+    from simplon import context
     from simplon.tasks import site
+    monkeypatch.setenv(hostpath.HOST_ROOT_ENV, "/home/marco/proj")
+    monkeypatch.setenv(hostpath.MOUNT_ROOT_ENV, str(tmp_path))
+    context.set_current(context.ProductContext("democtl", tmp_path, tmp_path / "democtl.yaml"))
+    page = tmp_path / "website" / "content" / "p.md"
+    page.parent.mkdir(parents=True)
+    page.write_text("# a page\n\n```mermaid\nflowchart TD\n  a-->b\n```\n", encoding="utf-8")
+    seen: list[list[str]] = []
+
+    def _fake(argv, **kw):
+        seen.append(list(argv))
+        # the render is judged on the SVG appearing, so write it where the argv says it goes - mapped
+        # back through the translation, which is the whole point: the argv names the HOST path, and this
+        # test IS the host
+        host, container = argv[argv.index("-v") + 1].split(":", 1)
+        here = tmp_path / Path(host).relative_to("/home/marco/proj")
+        out = here / Path(str(argv[argv.index("-o") + 1])).name
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text("<svg/>", encoding="utf-8")
+        return Result(rc=0, out="", err="")
+
+    monkeypatch.setattr(site, "run", _fake)
+    monkeypatch.setattr(site.docker, "user_args", lambda: [])
 
     # act
-    source = (SRC / "tasks" / "site.py").read_text(encoding="utf-8")
+    found, broken = site.render_diagrams(site.Site(image="hugomods/hugo:exts-0.148.2",
+                                                   source="website", output="build"), tmp_path)
 
-    # assert
-    assert "tempfile" not in source, "the mermaid scratch is outside the mount again"
-    assert 'scratch = root / "build" / "mermaid"' in source
-    assert site.MERMAID_MOUNT      # the destination is still declared, so the pair is still a pair
+    # assert: one diagram, none broken, and the mount source is the HOST spelling of a directory inside
+    # the tree - never a path that exists only in this container
+    assert (found, broken) == (1, ())
+    source = seen[0][seen[0].index("-v") + 1].split(":", 1)[0]
+    assert source.startswith("/home/marco/proj/build/mermaid-")

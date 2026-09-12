@@ -395,6 +395,13 @@ destinations and environment names - and two places where the batch file cannot 
 named where they occur: cmd.exe cannot answer whether it has a terminal, so `-t` is opt-in through
 `DELIVERY_CONTAINER_TTY` rather than guessed, and a wrong guess would break every piped run.
 
+**The Windows container route reaches the CLI and refuses at the first task that mounts anything**, and
+that is the largest of the undriven gaps rather than a bug to be found later. `%LAUNCH_ROOT%` is
+`C:\...`, and the kernel reading it back runs in a LINUX container where nothing joins a drive-letter
+path onto a POSIX one, so `simplon.hostpath` refuses it by name and says to use `DELIVERY_ROUTE=venv`.
+What Docker Desktop's daemon accepts as a `-v` source from inside a Linux container is a measurement, and
+there was no Windows to take it on.
+
 **Nothing to do.** The container route is opt-in, and a checkout whose `deploy/image/image.pin` carries
 no reference - which is every checkout today, because no simplon image is published yet - is told it has
 no container route and that the venv one works.
