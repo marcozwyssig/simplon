@@ -567,6 +567,70 @@ parse could not have meant anything else - which is the 130th load-time refusal.
 
 **Nothing to do.** The manifests that loaded before load unchanged.
 
+### The container route can file a ticket now, and the rule that let it slip (si#225)
+
+si#206 gave the manual walk a tracker: a customer's refusal becomes a bug ticket carrying the step, their
+words and the version. On the container route it opened none. The kernel's own image carried `git` and
+the docker client and no `gh`, so a walk driven there asked its questions, recorded its refusals, printed
+that no ticket was filed, and stopped - one of the "differences between two routes that are required to
+be indistinguishable" si#200's own Dockerfile counts.
+
+**What is worth reading here is why no gate found it.** si#200 decided what goes into that image by
+measuring which verdicts a tool changes: the docker client moved four in a `test all` driven through both
+routes, so it went in; oras moved none, so it stayed out. That rule is right. Its method could not see
+this case, because `simplon.tracker` is unreachable from `test suite` BY DESIGN - the walk runs after a
+person has said no, and si#206 refused to build an automatic gate that files tickets. So the difference
+was real from the day si#206 landed and invisible to every run of everything.
+
+`gh` is in the image now, pinned to one exact release. It costs 42,188,962 bytes - 40 MiB in the layer,
+14 MiB on the wire - which is slightly LESS than the docker client already sitting beside it.
+
+**Baking the tool in was only half of it, and the other half was quieter.** `simplon.sh` forwards a named
+list of variables across the container boundary and nothing else, and `GH_TOKEN` was not on it. That is
+the variable `gh` reads first, and the one si#206's own broken-tracker proof was driven with; only its
+fallback `GITHUB_TOKEN` was crossing. With the tool present and the token stopping at the boundary, a
+walk would have found `gh` on PATH, skipped the sentence that says the tool is missing, and failed with a
+401 - a worse message than the one si#206 wrote, reached by fixing half the problem.
+
+**Nothing asserted that list before.** It does now, in both places it is written: the kernel's own
+launcher and the template every scaffolded product is rendered from, held against each other so a
+capability cannot be kept for simplon and withheld from its products. The prose above the list is held
+against the list too - it had already drifted one name short of the code beneath it.
+
+**And a third layer under the second, which is the one worth reading twice.** With the tool in the image
+and the variable crossing, the route still files nothing on a developer's machine - because `gh` on a
+developer's machine is not authenticated by a variable at all. `gh auth login` writes a token to
+`~/.config/gh/hosts.yml`, the launcher mounts `~/.gitconfig` and nothing else of a home directory, and
+that is deliberate: forwarding a whole home is how a credential reaches a place nobody looked. So CI,
+where the token IS a variable, works; a person running the same command does not.
+
+That one is **not** repaired by mounting the credential, and the decision is written down rather than
+implied. What the container route says instead is the one thing `gh` cannot know. Measured inside the
+image, `gh` already answers `To get started with GitHub CLI, please run: gh auth login` and
+`Alternatively, populate the GH_TOKEN environment variable...` - it names the variable itself, so the
+kernel repeats none of it. What it adds is where: `gh auth login` cannot help on this route, because the
+host's login stays on the host and a container's home is discarded when the command ends. A wrong token
+gets no such sentence - a 401 means GH_TOKEN crossed and was refused, and telling that reader to export
+it is advice for a problem they do not have.
+
+The sentence printed when `gh` is missing no longer explains the container route, and the removal is the
+change rather than an omission: it was true when si#206 wrote it and si#225 made it false, and a message
+that names a cause which no longer exists sends its reader to look in the wrong place.
+
+**Driven through the container route, four sittings over one scenario**, which is the proof si#206 was
+held to and could not produce for this route. With no credential: the walk asked, recorded the refusal and
+the reason, and said why no ticket was filed. With `GH_TOKEN`: it opened
+[#227](https://github.com/marcozwyssig/simplon/issues/227) without asking a single question again, because
+the answer and the words were already in the record. After a `clean` with the walk state deleted and the
+same step refused again: the search found that ticket from inside the container and opened nothing. And
+read back off the tracker with `gh api` - the product's title, the product's label, and the kernel's
+evidence block naming the step, the version, the revision, who, when and what they said.
+`gh issue list --search "<digest> in:body" --state all` returns exactly one issue after all of it. #227 is
+closed as "not planned" with a comment saying it was this proof; it is still readable.
+
+**Nothing to do.** A product that declares no `tracker:` section is unaffected, and one that does now
+files from either route.
+
 ## 0.12.0
 
 **The site shows before it argues.** Every page on this site opened with the reasoning for the thing

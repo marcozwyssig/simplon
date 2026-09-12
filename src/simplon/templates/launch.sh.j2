@@ -229,14 +229,21 @@ if [ "$DELIVERY_ROUTE" = container ]; then
     # WHICH VARIABLES CROSS. The venv route inherits the caller's whole environment and this one inherits
     # nothing, so the difference has to be named rather than left to be discovered. Two namespaces plus
     # the handful of variables a CI runner speaks: the kernel's own DELIVERY_*, this product's, and
-    # CI/NO_COLOR/TERM/TZ/GITHUB_TOKEN. Anything else stays on the host on purpose - PATH and HOME from
-    # the host mean nothing in the image, and forwarding an unbounded environment is how a secret travels
-    # somewhere nobody meant it to.
+    # CI/NO_COLOR/TERM/TZ/GITHUB_TOKEN/GH_TOKEN. Anything else stays on the host on purpose - PATH and
+    # HOME from the host mean nothing in the image, and forwarding an unbounded environment is how a
+    # secret travels somewhere nobody meant it to.
+    #
+    # GH_TOKEN JOINS THAT LIST IN si#225, and leaving it off would have been the quieter half of the same
+    # bug. si#206 drove its broken-tracker proof with GH_TOKEN, which is the variable `gh` reads FIRST;
+    # GITHUB_TOKEN was already crossing and is only its fallback. So with `gh` now in the image but
+    # GH_TOKEN stopping at the boundary, a walk on the container route would have found the tool present,
+    # skipped the sentence that says the tool is missing, and failed with a 401 instead - a worse
+    # message than the one si#206 wrote, reached by fixing half the problem.
     ENV_PREFIX="$(printf '%s' "$LAUNCH_PRODUCT" | tr '[:lower:]-' '[:upper:]_')"
     while read -r _name; do
         case "$_name" in
             DELIVERY_ROUTE|DELIVERY_HOST_ROOT|DELIVERY_MOUNT_ROOT|PYTHONPATH|PYTHONUSERBASE|HOME) ;;
-            DELIVERY_*|CI|NO_COLOR|TERM|TZ|GITHUB_TOKEN) DOCKER_RUN+=(-e "$_name") ;;
+            DELIVERY_*|CI|NO_COLOR|TERM|TZ|GITHUB_TOKEN|GH_TOKEN) DOCKER_RUN+=(-e "$_name") ;;
             "$ENV_PREFIX"_*) DOCKER_RUN+=(-e "$_name") ;;
         esac
     done < <(compgen -e)
