@@ -102,6 +102,40 @@ def test_a_string_path_is_accepted_because_two_call_sites_build_one(tmp_path, mo
 # --- the two refusals ------------------------------------------------------------------------------------
 
 
+def test_a_path_that_only_looks_like_a_prefix_is_not_inside_the_mount(tmp_path, monkeypatch):
+    # arrange: `/srcfoo` shares five characters with `/src` and none of its components. A string prefix
+    # test would have handed the daemon `<host>foo`
+    _mounted(monkeypatch, "/home/marco/simplon")
+    monkeypatch.setattr(hostpath.log, "die", _boom)
+    _here(tmp_path)
+
+    # act / assert
+    with pytest.raises(RuntimeError):
+        hostpath.translate("/srcfoo/build")
+
+
+def test_a_path_that_climbs_out_of_the_mount_is_refused_rather_than_carried_over(tmp_path, monkeypatch):
+    # arrange: `..` is not folded away by `relative_to`, so before si#201 normalised the input this came
+    # through as `<host>/a/../../etc` - a source the daemon resolves OUTSIDE the mount
+    _mounted(monkeypatch, "/home/marco/simplon")
+    monkeypatch.setattr(hostpath.log, "die", _boom)
+    _here(tmp_path)
+
+    # act / assert
+    with pytest.raises(RuntimeError):
+        hostpath.translate("/src/a/../../etc")
+
+
+def test_a_path_that_climbs_and_comes_back_is_the_path_it_normalises_to(tmp_path, monkeypatch):
+    # arrange: the Gegenprobe, so the refusal above is about leaving the mount rather than about the
+    # characters `..`
+    _mounted(monkeypatch, "/home/marco/simplon")
+    _here(tmp_path)
+
+    # act / assert
+    assert hostpath.translate("/src/build/../build/logs") == "/home/marco/simplon/build/logs"
+
+
 def test_a_path_outside_the_mount_is_refused_rather_than_mounted(tmp_path, monkeypatch):
     # arrange: the measured trap. `/tmp/simplon-mermaid-xyz` exists in the container and nowhere else,
     # so the daemon would create an empty directory of that name on the host and mount it

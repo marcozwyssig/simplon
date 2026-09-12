@@ -135,8 +135,15 @@ def translate(path: str | Path) -> str:
             log.die(f"{name} is '{value}', which is not an absolute path - docker reads a `-v` source "
                     f"without a leading slash as a NAMED VOLUME, so this would mount an empty volume "
                     f"instead of the tree")
+    # NORMALISED FIRST, lexically. `relative_to` compares path COMPONENTS, which is right for the case
+    # that matters - `/srcfoo` is refused against a `/src` mount, where a string prefix test would have
+    # passed it - but it does not fold `..` away: `/src/a/../../etc` came through as `<host>/a/../../etc`,
+    # which the daemon then resolves OUTSIDE the mount. No caller in this kernel builds such a path;
+    # `normpath` costs one call and removes the question rather than leaving it to the next one who does.
+    # Lexical rather than `resolve()` on purpose: resolve() reads the filesystem and would answer about
+    # the CONTAINER's symlinks, which are not the ones the daemon will follow.
     try:
-        inside = Path(given).relative_to(mount)
+        inside = Path(os.path.normpath(given)).relative_to(mount)
     except ValueError:
         log.die(f"cannot mount {given} from inside this container: it is not under {mount}, which is the "
                 f"only directory bind-mounted from the host ({host}), so the daemon has no path for it. "
