@@ -34,13 +34,15 @@ THE IDENTITY, AND WHY THE LOOKUP HAS TWO LEVELS. One ticket per scenario per ver
 identity is sha256 over exactly (product, version, address) and it is written into the body as
 `marker_line`. `open_ticket` searches the tracker for that digest before creating anything.
 
-That search alone is NOT enough, and the reason was measured rather than assumed: GitHub's issue search
-is an INDEX, not a read of the table, and it is not read-your-writes. An issue created and searched for a
-few seconds later comes back as no result, so two walks in one afternoon over the same refusal would open
-two tickets - the exact defect this is here to prevent. So `tasks.walk` keeps what was opened in the walk
-state and consults that first; this module's search is the level that survives a `clean`, a second
-checkout or a colleague's machine, where the index has long since caught up. Neither level alone is
-right: the state is immediately consistent and local, the search is global and late.
+THE SEARCH ALONE IS NOT THE WHOLE LOOKUP, and the reason is a number rather than a worry. GitHub's issue
+search is an INDEX and not a read of the table, so it is not read-your-writes. Measured on 2026-09-12
+against this repository: an issue created at t=0 was invisible to `gh issue list --search "<digest>
+in:body" --state all` for the first four one-second polls and appeared at 5.97 s. One sample, a small
+repository, and short - but not zero, and nothing bounds it upward. So `tasks.walk` keeps what was opened
+in the walk state and consults that first, which is immediately consistent and costs no request; this
+module's search is the level that survives a `clean`, a second checkout or a colleague's machine, where
+the index has long since caught up. Neither level alone is right: the state is local and exact, the
+search is global and late.
 
 AND THE SEARCH RESULT IS VERIFIED HERE rather than trusted. GitHub's issue search tokenises, so a query
 for one digest can return neighbours; `_matching` keeps only an issue whose body really contains the
@@ -90,6 +92,20 @@ MARKER = "simplon-walk-id:"
 #: answered with the list of what exists.
 TITLE_FIELDS = ("product", "version", "revision", "address", "feature", "scenario", "step",
                 "step_number", "step_total")
+
+#: What is said when the one tool this backend needs is not there, and it names the case that is not a
+#: broken host. MEASURED on 2026-09-12 against the kernel's own image (si#200/si#201): `gh` is ABSENT,
+#: `docker` and `textual` are both present, and `simplon.sh`'s container route allocates a `-t` whenever
+#: the caller has one. So a walk driven through the container route asks its questions and records its
+#: refusals exactly as the venv route does, and then cannot file them - which is one of the "differences
+#: between two routes that are required to be indistinguishable" si#200's Dockerfile counts. It is named
+#: here rather than repaired here: what goes into that image was decided by measuring which verdicts a
+#: tool changes, and adding one is that ticket's decision and not si#206's. The refusal is never lost
+#: either way, and the next sitting on a host with `gh` files it.
+_NO_GH = ("`gh` is not on this host's PATH, so no ticket could be opened. The kernel's own container "
+          "image carries docker and not `gh`, so a walk driven through the container route records its "
+          "refusals and files none of them; run `test walk` where `gh` is, or file them from there on "
+          "the next sitting")
 
 #: The byte the identity's three parts are joined by. NUL cannot occur in a product name, a
 #: `git describe` output or a Gherkin address, so `wid` + `get` and `widget` + `` cannot produce one
@@ -290,6 +306,18 @@ def body_for(destination: Destination, refusal: Refusal, ident: str) -> str:
 # --- reaching the tracker ---------------------------------------------------------------------------------
 
 
+def _said(result: run.Result) -> str:
+    """What `gh` complained about, on ONE line.
+
+    FOUND BY DRIVING A WRONG TOKEN: `gh` answers `HTTP 401: Bad credentials (...)\nTry authenticating
+    with: gh auth login`, and that newline goes straight into the record, where the walk's header is a
+    label column - the second line hangs outside it and reads as a line of the transcript rather than as
+    part of the reason. A problem is one sentence wherever it is printed, so it is folded here rather
+    than at each of the three places that print it.
+    """
+    return " ".join((result.err or result.out).split()) or f"gh exited {result.rc}"
+
+
 def _where(destination: Destination) -> list[str]:
     """`--repo owner/name`, or nothing at all so `gh` reads the checkout's own remote."""
     return ["--repo", destination.repo] if destination.repo else []
@@ -318,8 +346,7 @@ def _github_find(destination: Destination, ident: str) -> tuple[str, str]:
     found = run.run(["gh", "issue", "list", *_where(destination), "--state", "all", "--search",
                      f"{ident} in:body", "--limit", "50", "--json", "number,url,body"])
     if not found.ok:
-        return "", (f"the tracker could not be searched for an existing ticket "
-                    f"({(found.err or found.out).strip() or f'gh exited {found.rc}'})")
+        return "", f"the tracker could not be searched for an existing ticket ({_said(found)})"
     try:
         return _matching(found.out, ident), ""
     except (ValueError, AttributeError) as exc:
@@ -337,8 +364,7 @@ def _github_create(destination: Destination, title: str, body: str) -> tuple[str
     made = run.run(["gh", "issue", "create", *_where(destination), "--title", title,
                     "--body-file", "-", *labels], input_text=body)
     if not made.ok:
-        return "", (f"the ticket could not be created "
-                    f"({(made.err or made.out).strip() or f'gh exited {made.rc}'})")
+        return "", f"the ticket could not be created ({_said(made)})"
     return made.out.strip().splitlines()[-1].strip() if made.out.strip() else "", ""
 
 
@@ -353,8 +379,7 @@ def open_ticket(destination: Destination, refusal: Refusal) -> Ticket:
     """
     ident = identity(refusal.product, refusal.version, refusal.address)
     if shutil.which("gh") is None:
-        return Ticket(refusal.address, ident,
-                      problem="`gh` is not on this host's PATH, so no ticket could be opened")
+        return Ticket(refusal.address, ident, problem=_NO_GH)
     try:
         title = title_for(destination, refusal)
     except KeyError as exc:

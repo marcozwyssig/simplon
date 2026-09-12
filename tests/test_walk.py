@@ -954,3 +954,17 @@ def test_the_reasons_and_the_tickets_survive_the_state_file(product):
     assert back.reason_for(ADDRESS, 2) == "it showed two rows"
     assert back.filed(ADDRESS) == {"identity": "ident-1", "url": "https://x/5",
                                    "at": "2026-09-12 11:00:00"}
+
+
+def test_nothing_to_ask_about_says_nothing(product, capsys):
+    """FOUND BY DRIVING A RESUMED WALK: the header printed "0 step(s) were refused" and then asked
+    nothing, on a sitting whose one refusal already carried a ticket. A heading over an empty list is a
+    sentence that cannot be true."""
+    # arrange
+    state = _refused_state(product)
+
+    # act
+    walk_mod.ask_reasons([], state, ask=lambda prompt: pytest.fail("nobody should have been asked"))
+
+    # assert
+    assert capsys.readouterr().out == ""

@@ -381,9 +381,10 @@ class State:
     reasons: dict[str, dict[str, str]] = field(default_factory=dict)
     #: address -> `{"identity", "url", "at"}` for the ticket a refusal became (si#206). THE FIRST LEVEL
     #: OF THE IDEMPOTENCE, and the one that is immediately consistent: GitHub's issue search is an index
-    #: and not a read of the table, so a ticket opened a minute ago can still be invisible to the search
-    #: `tracker.open_ticket` does. This is what stops two walks in one afternoon opening two tickets; the
-    #: search is what survives a `clean`, a second checkout or a colleague's machine.
+    #: and not a read of the table, and a ticket was measured invisible to it for 5.97 s after creation
+    #: (2026-09-12, this repository, `tracker`'s head has the method). This level does not depend on that
+    #: window at all; the search is the level that survives a `clean`, a second checkout or a colleague's
+    #: machine.
     tickets: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def answer_for(self, address: str, index: int) -> dict[str, str]:
@@ -861,7 +862,14 @@ def ask_reasons(pending: Sequence[Refused], state: State,
     IT IS INTERRUPTIBLE AND LOSES NOTHING. The answers already given are in the state before this runs
     (`walk`), and each one typed here is recorded as it arrives, so `Ctrl-C` or a closed terminal costs
     the reasons not yet typed and no verdict at all.
+
+    NOTHING TO ASK IS NOTHING SAID. Found by driving a resumed walk: the header printed `0 step(s) were
+    refused. A ticket carries what you said about them:` and then asked nothing, on a sitting whose one
+    refusal already had a ticket. A heading over an empty list is the shape this repository calls a check
+    that cannot fail, wearing the other hat - it is a sentence that cannot be true.
     """
+    if not pending:
+        return
     print(f"\n{len(pending)} step(s) were refused. A ticket carries what you said about them:",
           flush=True)
     for refusal in pending:

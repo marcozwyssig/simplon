@@ -362,3 +362,34 @@ def test_a_title_the_product_mis_spelled_is_a_problem_on_the_ticket_and_not_a_cr
 
     # assert: the walk goes on and the record says why the ticket is missing
     assert not ticket.url and "sceanrio" in ticket.problem
+
+
+def test_a_multi_line_complaint_from_gh_is_folded_onto_one_line(monkeypatch, gh):
+    """FOUND BY DRIVING A WRONG TOKEN. `gh` answers `HTTP 401: Bad credentials (...)` and then `Try
+    authenticating with: gh auth login` on a second line, and that newline landed in the walk's record,
+    where the header is a label column - the second line hung outside it and read as a line of the
+    transcript rather than as part of the reason."""
+    # arrange
+    monkeypatch.setattr(run, "run", _Recorder(
+        ("issue list", _bad("HTTP 401: Bad credentials (https://api.github.com/graphql)\n"
+                            "Try authenticating with:  gh auth login"))))
+
+    # act
+    ticket = tracker.open_ticket(tracker.Destination(tracker.KIND_GITHUB, "acme/widget", (), "t", ""),
+                                 _refusal())
+
+    # assert
+    assert "\n" not in ticket.problem
+    assert "401" in ticket.problem and "gh auth login" in ticket.problem
+
+
+def test_a_gh_that_said_nothing_at_all_still_names_the_exit_code(monkeypatch, gh):
+    # arrange: a tool that fails silently is the case where "no problem text" would read as no problem
+    monkeypatch.setattr(run, "run", _Recorder(("issue list", run.Result(rc=7, out="", err=""))))
+
+    # act
+    ticket = tracker.open_ticket(tracker.Destination(tracker.KIND_GITHUB, "acme/widget", (), "t", ""),
+                                 _refusal())
+
+    # assert
+    assert "7" in ticket.problem

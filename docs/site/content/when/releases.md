@@ -329,11 +329,12 @@ is reachable from `test suite`; `test walk` is its only caller and it runs after
 **One ticket per scenario per version, and the lookup has two levels because one is not enough.** The
 identity is a sha256 over exactly the product, the `git describe` version and the scenario address,
 written into the ticket body as `simplon-walk-id: <digest>`, and the tracker is searched for it before
-anything is created. That search alone was measured and is not sufficient: GitHub's issue search is an
-index rather than a read of the table, so a ticket opened seconds ago comes back as no result and two
-walks in one afternoon would file it twice. So the walk state keeps what it opened and is consulted
-first - immediately consistent, local - and the search is the level that survives a `clean`, a second
-checkout or a colleague's machine. What the search returns is verified here as well: an issue is only
+anything is created. That search alone is not the whole lookup, and the reason is a number: GitHub's
+issue search is an index rather than a read of the table, and an issue created here on 2026-09-12 was
+invisible to a search for its own digest for the first four one-second polls and appeared at 5.97 s. One
+sample and short, but not zero and not bounded. So the walk state keeps what it opened and is consulted
+first - immediately consistent, local, no request - and the search is the level that survives a `clean`,
+a second checkout or a colleague's machine. What the search returns is verified here as well: an issue is only
 "already open" when its body really carries the marker line, because a fuzzy hit accepted as a duplicate
 would file a customer's refusal against somebody else's bug and report success.
 
