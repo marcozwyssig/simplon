@@ -314,6 +314,63 @@ modes by running both inside this repository. The comparison in the pull request
 throwaway suite of step definitions pointed at these very files, which is the same way si#204 measured
 the format.
 
+### A refused step becomes a bug ticket (si#206)
+
+A customer's no was a line in a run transcript that the next command in the same tree overwrites. It is
+now also a ticket on the product's tracker, carrying the step they refused, their reason in their words,
+the product version and revision it was refused against, the scenario address and the selection, who
+said it and when.
+
+**Manual mode only, and that is a decision rather than a first slice.** The symmetrical feature - the
+automatic gate filing a ticket per red scenario - turns one broken build into forty tickets and a flaky
+scenario into a new one every night, which is how a tracker stops being read. Nothing in the new module
+is reachable from `test suite`; `test walk` is its only caller and it runs after a person has said no.
+
+**One ticket per scenario per version, and the lookup has two levels because one is not enough.** The
+identity is a sha256 over exactly the product, the `git describe` version and the scenario address,
+written into the ticket body as `simplon-walk-id: <digest>`, and the tracker is searched for it before
+anything is created. That search alone was measured and is not sufficient: GitHub's issue search is an
+index rather than a read of the table, so a ticket opened seconds ago comes back as no result and two
+walks in one afternoon would file it twice. So the walk state keeps what it opened and is consulted
+first - immediately consistent, local - and the search is the level that survives a `clean`, a second
+checkout or a colleague's machine. What the search returns is verified here as well: an issue is only
+"already open" when its body really carries the marker line, because a fuzzy hit accepted as a duplicate
+would file a customer's refusal against somebody else's bug and report success.
+
+**A tracker that cannot be reached costs a ticket and never a refusal.** The order in `test walk` is the
+requirement rather than a promise about it: the verdicts are written to the state before anybody is asked
+to type a word, the words are written before the network is touched, and only then is the tracker tried.
+A wrong token, an unreachable host, a missing `gh`, an answer that is not JSON or a `title:` the product
+mis-spelled all come back as a `problem` with no url - the run says which refusal has no ticket and why,
+in the record and on the terminal, and the next sitting picks up exactly what is missing. A lookup that
+FAILED is also not a lookup that found nothing: nothing is created after one, because treating "I could
+not ask" as "there is none" is how a broken token opens a duplicate every run.
+
+**The kernel does not know which tracker a product uses.** The destination, the labels and the wording
+arrive through a `tracker:` section, the way `releases:` and `claude:` do; `title:` is a format string
+over the refusal's own fields and has no kernel fallback, because a kernel-invented title is the kernel
+wording somebody else's bug. What is NOT general is the backend: `github` is the one kind implemented,
+`kind:` is refused for anything else naming what exists, and `tracker.KINDS` is the named seam - a second
+tracker is two functions in that mapping and no change at any call site.
+
+**Where the reason is asked, and the principle it collided with.** si#205 decided that refusing must cost
+exactly what accepting costs: one key, no default, no confirmation. A text field opening on `r` and not
+on `a` breaks that, so the words are collected after the walk instead, once, for every refusal at a time
+when the Textual app is down. The collision is recorded rather than bent around: what is lost is
+immediacy, and what is kept is the property the manual mode exists for. A person who is asked and says
+nothing is recorded as having said nothing, so the next sitting does not ask again, and the ticket says
+"no reason was given" rather than leaving a blank that reads as no comment.
+
+**The walk state format is 2.** It gained `reasons` and `tickets`, and the version moved rather than the
+two keys being read as optional: two documents with one version number, differing in what they can carry,
+is the ambiguity a version exists to remove. An interrupted walk started on format 1 starts again with a
+warning naming the format, and the population of those is zero - si#205 and si#206 both landed before
+either was released.
+
+**Products need do nothing.** A product that declares no `tracker:` section walks exactly as before; a
+walk with a refusal in it then says by name that there is nowhere to file it, in the record and on the
+terminal, rather than passing over it.
+
 ### The plan for the open tickets, as a document (si#207)
 
 A merge that ships no code and is named here because the notes name every ticket merged into the range,

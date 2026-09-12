@@ -1,4 +1,4 @@
-"""A person walks the product's acceptance scenarios and answers each step (si#205).
+"""A person walks the product's acceptance scenarios and answers each step (si#205, si#206).
 
 ONE SOURCE, TWO MODES, and the mode is a choice at RUN TIME. The scenarios are the `.feature` files
 si#204's reader already reads for the acceptance document; nothing here is a second list. A product's
@@ -52,6 +52,23 @@ tree, and a customer keeps it by taking it away. Keeping it for good is a questi
 si#133's Allure path already owns for the automatic side; joining the two there beats a second log file
 here.
 
+AND THE REFUSAL OUTLIVES THAT RECORD, since si#206. The transcript is overwritten by the next run in the
+same tree, so a customer's no had a lifetime of one command; it now also becomes a bug ticket on the
+product's tracker, one per scenario per product version, through `simplon.tracker`. Three things about it
+belong here rather than there, because they are decisions this module takes:
+
+  * THE WORDS ARE COLLECTED AFTER THE WALK, not at the moment of the refusal, and that is a collision with
+    si#205 resolved rather than avoided. Refusing must cost exactly what accepting costs - one key, no
+    default, no confirmation - and a text field opening on `r` and not on `a` breaks that outright. So the
+    verdict stays one key, the app comes down, and `ask_reasons` puts the question once per refusal in the
+    plain terminal. What is lost is immediacy; what is kept is the property the manual mode exists for.
+  * THE STATE IS WRITTEN BEFORE THE TRACKER IS TOUCHED, three times and each with its own reason (see
+    `walk`). The record is the source of truth and the ticket is derived from it, so a tracker that is
+    down costs a ticket and never an answer.
+  * IT IS MANUAL MODE ONLY. Nothing here is reachable from `test suite`, deliberately: an automatic gate
+    filing a ticket per red scenario turns one broken build into forty and a flaky scenario into a new
+    ticket every night.
+
 AND THE LIMIT si#204 LEFT IS STILL OPEN. Simplon's own nine scenarios have no step definitions, so
 `test suite` executes none of them and the two modes cannot be compared inside this repository by running
 both. This command does not change that and does not pretend to. What it ASSUMES is only that the address
@@ -73,7 +90,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import ClassVar
 
-from simplon import context, log, steplog
+from simplon import context, log, steplog, tracker
 from simplon.orchestrator.manifest import CommandSpec, PlanNode
 from simplon.orchestrator.steps import (Emit, Outcome, Pipeline, Step, StepState,
                                         write_run_transcript)
@@ -95,7 +112,14 @@ STATE_FILE = "acceptance-walk.json"
 
 #: The state document's own version. A file written by a format this version does not know is not read
 #: and not silently deleted either: `load_state` says which it found. si#177's rule, other sidecar.
-STATE_FORMAT = 1
+#:
+#: 2 SINCE si#206, which added `reasons` and `tickets` to the document. Additive keys read through
+#: `.get(..., {})` would have kept format 1 valid and were rejected: two documents with one version
+#: number, differing in what they can carry, is exactly the ambiguity a version exists to remove, and
+#: this module's whole safety is that a state it cannot fully check claims nothing. What the bump costs
+#: is an interrupted walk started on 1, which starts again with a warning naming the format - and the
+#: population of those is zero, because si#205 landed and si#206 followed it before either was released.
+STATE_FORMAT = 2
 
 #: The two verdicts a person can give. A SKIPPED or PENDING step is ABSENT from the record rather than
 #: carrying a third value, because both are derived - the first by `abort_after` from the refusal above
@@ -349,10 +373,40 @@ class State:
     #: The instant is per STEP rather than per sitting: it is what lets the record say, on the one line
     #: that carries the verdict, that this step was answered on Monday and its neighbour on Wednesday.
     answers: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict)
+    #: address -> step index -> what the person SAID about refusing it, in their words (si#206). Kept
+    #: apart from `answers` rather than added as a third key inside one, because the two are written by
+    #: different moments: a verdict arrives on a keypress during the walk, a reason is typed after it,
+    #: and a person who is asked and declines to say anything records `""` - present, and not the same
+    #: as a step nobody has been asked about yet.
+    reasons: dict[str, dict[str, str]] = field(default_factory=dict)
+    #: address -> `{"identity", "url", "at"}` for the ticket a refusal became (si#206). THE FIRST LEVEL
+    #: OF THE IDEMPOTENCE, and the one that is immediately consistent: GitHub's issue search is an index
+    #: and not a read of the table, so a ticket opened a minute ago can still be invisible to the search
+    #: `tracker.open_ticket` does. This is what stops two walks in one afternoon opening two tickets; the
+    #: search is what survives a `clean`, a second checkout or a colleague's machine.
+    tickets: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def answer_for(self, address: str, index: int) -> dict[str, str]:
         """The recorded answer for one step, or `{}` when nobody has answered it."""
         return self.answers.get(address, {}).get(str(index), {})
+
+    def reason_for(self, address: str, index: int) -> str | None:
+        """What the person said about refusing this step, or None when they have not been asked yet.
+
+        None and "" are different answers and the caller acts on the difference: "" is a person who was
+        asked and chose to say nothing, and asking them again on the next sitting would be nagging.
+        """
+        return self.reasons.get(address, {}).get(str(index))
+
+    def explain(self, address: str, index: int, said: str) -> None:
+        self.reasons.setdefault(address, {})[str(index)] = said
+
+    def filed(self, address: str) -> dict[str, str]:
+        """The ticket recorded for this scenario, or `{}`."""
+        return self.tickets.get(address, {})
+
+    def file(self, address: str, ident: str, url: str, when: datetime) -> None:
+        self.tickets[address] = {"identity": ident, "url": url, "at": f"{when:%Y-%m-%d %H:%M:%S}"}
 
     def record(self, address: str, index: int, accepted: bool, when: datetime) -> None:
         self.answers.setdefault(address, {})[str(index)] = {
@@ -363,7 +417,7 @@ class State:
 
     def as_document(self) -> dict[str, object]:
         return {"format": STATE_FORMAT, "key": self.key.as_dict(), "sittings": self.sittings,
-                "answers": self.answers}
+                "answers": self.answers, "reasons": self.reasons, "tickets": self.tickets}
 
 
 def state_path() -> Path | None:
@@ -445,11 +499,15 @@ def load_state(path: Path) -> State | None:
                     for entry in _array(document["sittings"])]
         answers = {address: {index: _answer(answer) for index, answer in _object(steps).items()}
                    for address, steps in _object(document["answers"]).items()}
+        reasons = {address: {index: str(said) for index, said in _object(steps).items()}
+                   for address, steps in _object(document["reasons"]).items()}
+        tickets = {address: {name: str(item) for name, item in _object(entry).items()}
+                   for address, entry in _object(document["tickets"]).items()}
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
         log.warn(f"{path} is a walk state this simplon cannot fully check ({exc!r}), so this walk starts "
                  f"from the beginning rather than trusting half of it")
         return None
-    return State(key=key, sittings=sittings, answers=answers)
+    return State(key=key, sittings=sittings, answers=answers, reasons=reasons, tickets=tickets)
 
 
 def save_state(path: Path, state: State) -> Path | None:
@@ -730,6 +788,166 @@ def header(key: RunKey, state: State, taken: Sequence[tuple[Feature, tuple[Scena
     return lines
 
 
+# --- a refusal becomes a ticket (si#206) --------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Refused:
+    """One refused step, located in the scenarios this walk selected.
+
+    It carries the FEATURE and the SCENARIO objects rather than their strings, because the reason prompt
+    needs the step's own text in front of the person and the ticket needs the address, the title and the
+    ordinal - all of which are already on these two and none of which the state file holds.
+    """
+
+    feature: Feature
+    scenario: Scenario
+    index: int
+    at: str
+
+    @property
+    def step(self) -> GherkinStep:
+        return self.scenario.steps[self.index]
+
+
+def refused(taken: Sequence[tuple[Feature, tuple[Scenario, ...]]], state: State) -> list[Refused]:
+    """Every refusal the state holds, in walk order, located in the scenarios this walk asked.
+
+    IT READS THE WHOLE STATE AND NOT THIS SITTING, which is what makes "a failed ticket creation can be
+    opened later" a property of the ordinary command rather than a repair command nobody would write: a
+    refusal recorded on Monday whose ticket the network ate is picked up again on Wednesday's sitting,
+    because it is still in the state and `state.filed` still has nothing for it.
+
+    AT MOST ONE PER SCENARIO in practice, and that is the plan's `stop_on_failure` rather than a rule
+    here - the loop still visits every step, because a rule enforced somewhere else is not one this
+    function may assume.
+    """
+    found: list[Refused] = []
+    for feature, scenarios in taken:
+        for scenario in scenarios:
+            for index in range(len(scenario.steps)):
+                answer = state.answer_for(scenario.address, index)
+                if answer.get("verdict") == ANSWER_FAILED:
+                    found.append(Refused(feature=feature, scenario=scenario, index=index,
+                                         at=answer.get("at", "an unrecorded time")))
+    return found
+
+
+#: What the person is asked, once per refusal that has neither a reason nor a ticket yet.
+REASON_PROMPT = "why did you refuse it? (one line, or Enter to say nothing) "
+
+
+def ask_reasons(pending: Sequence[Refused], state: State,
+                ask: Callable[[str], str] = input) -> None:
+    """Ask, after the walk and in the plain terminal, what each refusal was about.
+
+    WHY IT IS NOT ASKED AT THE MOMENT OF THE REFUSAL, which is where it would be freshest and where the
+    first design put it. si#205 decided a property this would have broken: refusing must be EXACTLY as
+    cheap as accepting - one key, no default, no confirmation - because a prompt whose no is work
+    collects signatures rather than verifying anything. A text field opening on `r` and not on `a` makes
+    the no cost a sentence and the yes cost nothing, which is the same asymmetry wearing a helpful face.
+
+    So the verdict stays one key and the words are collected afterwards, once, for every refusal at once.
+    The collision is recorded rather than bent around: what is lost is immediacy, and what is kept is the
+    property the whole manual mode exists for. It also buys two things that were not the reason but are
+    real - the person sees their refusals as a list and can weigh them against each other, and the
+    prompt runs with the Textual app down, so a walk needs no modal screen and no second input path.
+
+    ASKED ONCE. A recorded `""` is a person who was asked and said nothing, so the next sitting does not
+    ask again; `None` is a refusal nobody has been put in front of yet. A refusal that already HAS a
+    ticket is not asked at all - its words are in the ticket, and asking again would collect a second
+    account of one event that nothing would ever file.
+
+    IT IS INTERRUPTIBLE AND LOSES NOTHING. The answers already given are in the state before this runs
+    (`walk`), and each one typed here is recorded as it arrives, so `Ctrl-C` or a closed terminal costs
+    the reasons not yet typed and no verdict at all.
+    """
+    print(f"\n{len(pending)} step(s) were refused. A ticket carries what you said about them:",
+          flush=True)
+    for refusal in pending:
+        print(f"\n  {refusal.scenario.address}\n"
+              f"    step {refusal.index + 1} of {len(refusal.scenario.steps)}: "
+              f"{refusal.step.announced}", flush=True)
+        try:
+            said = ask(f"    {REASON_PROMPT}").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("", flush=True)
+            log.warn("no more reasons were collected; the refusals themselves are recorded, and the "
+                     "next sitting asks about the ones still unexplained")
+            return
+        state.explain(refusal.scenario.address, refusal.index, said)
+
+
+def _refusal_for(refusal: Refused, key: RunKey, state: State, by: str) -> tracker.Refusal:
+    """One `Refused` as the value the tracker files, with the run key's provenance folded in."""
+    said = state.reason_for(refusal.scenario.address, refusal.index)
+    return tracker.Refusal(
+        address=refusal.scenario.address, feature=refusal.feature.name,
+        scenario=refusal.scenario.name, step=refusal.step.announced, step_number=refusal.index + 1,
+        step_total=len(refusal.scenario.steps), said=said or "", at=refusal.at, by=by,
+        product=key.product, version=key.version, revision=key.revision, source=key.source,
+        selection=key.selection)
+
+
+def file_tickets(pending: Sequence[Refused], key: RunKey, state: State,
+                 by: str) -> list[tracker.Ticket]:
+    """Turn every refusal into at most one ticket, and record in the state what came of each.
+
+    THE STATE IS CONSULTED FIRST and the tracker second - the two levels `State.tickets` explains. A
+    recorded ticket is only accepted when its IDENTITY matches the one this version of the product would
+    produce: the identity carries the version, so a state that somehow survived a version change files a
+    new ticket rather than pointing at the old one.
+
+    A PRODUCT WITH NO `tracker:` SECTION gets a `problem` per refusal rather than silence, because the
+    record has to be able to say "no ticket was opened, and this is why". `tracker.declared` has already
+    printed the sentence; this is what puts it in the file.
+    """
+    destination = tracker.declared() if pending else None
+    filed: list[tracker.Ticket] = []
+    for refusal in pending:
+        address = refusal.scenario.address
+        ident = tracker.identity(key.product, key.version, address)
+        known = state.filed(address)
+        if known.get("identity") == ident and known.get("url"):
+            filed.append(tracker.Ticket(address=address, identity=ident, url=known["url"],
+                                        existed=True))
+            continue
+        if destination is None:
+            filed.append(tracker.Ticket(
+                address=address, identity=ident,
+                problem=f"{context.current().manifest_path.name} declares no `{tracker.SECTION}:` "
+                        f"section, so there is nowhere to file it"))
+            continue
+        ticket = tracker.open_ticket(destination, _refusal_for(refusal, key, state, by))
+        if ticket.url:
+            state.file(address, ident, ticket.url, datetime.now())
+        filed.append(ticket)
+    return filed
+
+
+def ticket_lines(filed: Sequence[tracker.Ticket]) -> list[str]:
+    """What the record says about the tickets, in si#148's label column.
+
+    A REFUSAL WITH NO TICKET IS NAMED, not counted. The whole point of si#206's third requirement is that
+    a run which could not reach the tracker says so plainly; a summary line reading "2 of 3 filed" would
+    leave the reader to work out which one is missing from a document that is the only place it exists.
+    """
+    if not filed:
+        return []
+    opened = [ticket for ticket in filed if ticket.url and not ticket.existed]
+    already = [ticket for ticket in filed if ticket.existed]
+    missing = [ticket for ticket in filed if not ticket.url]
+    lines = [f"{'tickets:':<{_LABEL}}{len(filed)} refusal(s): {len(opened)} ticket(s) opened, "
+             f"{len(already)} already open, {len(missing)} NOT filed"]
+    for ticket in filed:
+        lines.append(f"{'':<{_LABEL}}  {ticket.address}")
+        lines.append(f"{'':<{_LABEL}}    " + (
+            f"opened {ticket.url}" if ticket.url and not ticket.existed else
+            f"already open at {ticket.url}" if ticket.url else
+            f"NO TICKET: {ticket.problem}"))
+    return lines
+
+
 # --- the task ---------------------------------------------------------------------------------------------
 
 
@@ -762,6 +980,12 @@ def walk(source: str = DEFAULT_SOURCE, tags: str = "", by: str = "", restart: bo
       * A STATE THAT MOVED, or one that cannot be checked. `refuse_to_resume`, and the argument is on
         `RunKey`.
       * TEXTUAL MISSING, which `tui.run_walk` refuses for itself where the import is.
+
+    A TRACKER PROBLEM IS NOT ONE OF THE FOUR, and that is si#206's third requirement rather than an
+    inconsistency: the four above are checked BEFORE anybody has answered anything, so refusing costs
+    nothing. Everything after `run_walk` returns has a person's afternoon behind it, so no failure there
+    may raise - a missing `tracker:` section, a dead network or a token without scope is reported and the
+    record is still written.
     """
     ctx = context.current()
     if not sys.stdout.isatty():
@@ -797,13 +1021,37 @@ def walk(source: str = DEFAULT_SOURCE, tags: str = "", by: str = "", restart: bo
     from simplon.orchestrator.tui import run_walk    # local: Textual is not a kernel-wide import
     rc = run_walk(pipeline, prompt)
     state.sittings[-1]["ended"] = f"{datetime.now():%Y-%m-%d %H:%M:%S}"
+    # THE STATE IS WRITTEN THREE TIMES AND EACH ONE HAS A REASON, which is si#206's third requirement
+    # expressed as an order rather than promised in prose: the record is the source of truth and the
+    # ticket is derived from it, so nothing that could fail may run before the thing it would lose is on
+    # disk. First the verdicts, before a person is asked to type anything. Then their words, before the
+    # network is touched at all. Then what came of the tickets. A tracker that is down, a token without
+    # scope or a Ctrl-C at the reason prompt therefore costs a ticket and never an answer, and the next
+    # sitting picks up exactly what is missing.
     if path is not None:
         save_state(path, state)
-    write_record(pipeline, started, header(key, state, taken, left))
+    pending = refused(taken, state)
+    if pending:
+        ask_reasons([one for one in pending if not state.filed(one.scenario.address).get("url")
+                     and state.reason_for(one.scenario.address, one.index) is None], state)
+        if path is not None:
+            save_state(path, state)
+    filed = file_tickets(pending, key, state, state.sittings[-1]["by"])
+    if pending and path is not None:
+        save_state(path, state)
+    write_record(pipeline, started, header(key, state, taken, left) + ticket_lines(filed))
     total = sum(len(scenario.steps) for _, scenarios in taken for scenario in scenarios)
     unreached = sum(1 for step in pipeline.steps if step.state is StepState.PENDING)
     log.ok(f"acceptance walk: {state.answered()} of {total} step(s) answered by "
            f"{state.sittings[-1]['by']}" + (f", {unreached} never reached" if unreached else ""))
+    unfiled = [ticket for ticket in filed if not ticket.url]
+    if unfiled:
+        log.warn(f"{len(unfiled)} of {len(filed)} refusal(s) opened NO ticket: "
+                 + "; ".join(f"{ticket.address} ({ticket.problem})" for ticket in unfiled)
+                 + ". The refusals are recorded, and the next sitting tries again")
+    elif filed:
+        log.ok(f"{len(filed)} refusal(s) carry a ticket: "
+               + ", ".join(ticket.url for ticket in filed))
     return rc
 
 

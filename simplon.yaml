@@ -333,6 +333,32 @@ releases:
   from: "0.4.0"
   complete_from: "0.5.0"
 
+# Where a refused acceptance step becomes a bug ticket (si#206), on the kernel that ships it - the same
+# rule that makes simplon build its own reference and guard its own release notes with the coordinates it
+# offers. `test walk` reads this when, and only when, a person has actually refused something.
+#
+# THE WORDING IS THIS PRODUCT'S AND THE EVIDENCE IS THE KERNEL'S, which is the split si#206 draws. `title:`
+# and `preamble:` are the two halves a product may word; the block naming the scenario, the step, the
+# version, the provenance, who and when is the kernel's and is not configurable, because "a ticket reading
+# 'acceptance test failed' is worse than none" is a rule about what a ticket must carry and a rule a
+# product can word away is not one.
+#
+# NO `repo:` - `gh` resolves the repository from this checkout's own remote, which is where simplon's
+# tickets live. A product whose tracker is a different repository names it here.
+#
+# `kind:` IS STATED even though `github` is the default, because it is the seam si#206 named: the day a
+# product declares something else, this line is what makes it obvious that a choice was being made rather
+# than a default being inherited.
+tracker:
+  kind: github
+  repo: ""
+  labels: ["bug"]
+  title: "Acceptance refused: {scenario} ({version})"
+  preamble: >
+    A person walked simplon's acceptance scenarios with `./simplon.sh test walk` and refused this step.
+    The verdict is a human judgement rather than a measurement, and the walk's own record (the run
+    transcript under `build/logs/`) is where the rest of that sitting is.
+
 # The workflow declarations (si#40). "One source, two outputs" has stood in
 # src/simplon/orchestrator/manifest.py since it was written: the same manifest assembles the runtime CLI,
 # and - this is that second output - the CI workflows.

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from simplon import context
+from simplon import context, tracker
 from simplon.orchestrator.steps import StepState, build_rows, summarise
 from simplon.tasks import walk as walk_mod
 from simplon.tasks.acceptance import features, read
@@ -377,19 +377,35 @@ def test_a_state_that_is_not_there_is_not_a_warning(product, capsys):
     ("not json at all", "unreadable"),
     ('["a", "list"]', "not an object"),
     ('{"format": 99, "key": {}, "sittings": [], "answers": {}}', "a format from the future"),
-    ('{"format": 1, "sittings": [], "answers": {}}', "a key that is not there"),
-    ('{"format": 1, "key": {"product": "demo"}, "sittings": [], "answers": {}}', "half a key"),
+    ('{"format": 2, "sittings": [], "answers": {}}', "a key that is not there"),
+    ('{"format": 2, "key": {"product": "demo"}, "sittings": [], "answers": {}}', "half a key"),
     # FOUND BY DRIVING IT, and it was accepted before: `dict([])` is `{}`, so a document whose `answers`
     # was a LIST read as a state with no answers - and `[["a", {}]]` would have read as a real one.
-    ('{"format": 1, "key": {"product": "d", "version": "v", "revision": "r", "source": "s", '
-     '"selection": "a", "scenarios": "x"}, "sittings": [], "answers": []}', "a list where an object goes"),
-    ('{"format": 1, "key": {"product": "d", "version": "v", "revision": "r", "source": "s", '
-     '"selection": "a", "scenarios": "x"}, "sittings": "one", "answers": {}}', "sittings that is a string"),
+    ('{"format": 2, "key": {"product": "d", "version": "v", "revision": "r", "source": "s", '
+     '"selection": "a", "scenarios": "x"}, "sittings": [], "answers": [], "reasons": {}, '
+     '"tickets": {}}', "a list where an object goes"),
+    ('{"format": 2, "key": {"product": "d", "version": "v", "revision": "r", "source": "s", '
+     '"selection": "a", "scenarios": "x"}, "sittings": "one", "answers": {}, "reasons": {}, '
+     '"tickets": {}}', "sittings that is a string"),
     # FOUND IN REVIEW. Nothing checked the token, and everything downstream reads "not ok" as a refusal -
     # so a corrupted verdict would have been replayed as the customer saying no, silently.
-    ('{"format": 1, "key": {"product": "d", "version": "v", "revision": "r", "source": "s", '
+    ('{"format": 2, "key": {"product": "d", "version": "v", "revision": "r", "source": "s", '
      '"selection": "a", "scenarios": "x"}, "sittings": [], '
-     '"answers": {"a:b": {"0": {"verdict": "yes", "at": "t"}}}}', "a verdict token nobody writes"),
+     '"answers": {"a:b": {"0": {"verdict": "yes", "at": "t"}}}, "reasons": {}, '
+     '"tickets": {}}', "a verdict token nobody writes"),
+    # si#206 ADDED THE TWO RECORDS AND BUMPED THE FORMAT. A document written by the version before it is
+    # therefore refused by number, not read as a state with no reasons in it - and a document claiming
+    # the current format while missing one of them is half a state, which is the same fault as half a
+    # key above.
+    ('{"format": 1, "key": {"product": "d", "version": "v", "revision": "r", "source": "s", '
+     '"selection": "a", "scenarios": "x"}, "sittings": [], "answers": {}}',
+     "the format si#205 wrote, before the two records existed"),
+    ('{"format": 2, "key": {"product": "d", "version": "v", "revision": "r", "source": "s", '
+     '"selection": "a", "scenarios": "x"}, "sittings": [], "answers": {}, "tickets": {}}',
+     "no reasons record at all"),
+    ('{"format": 2, "key": {"product": "d", "version": "v", "revision": "r", "source": "s", '
+     '"selection": "a", "scenarios": "x"}, "sittings": [], "answers": {}, "reasons": {}, '
+     '"tickets": []}', "a list where the tickets object goes"),
 ])
 def test_an_unusable_state_claims_nothing_and_says_so(product, capsys, payload, why):
     """UNUSABLE IS NOT THE SAME AS MOVED. A state the kernel cannot fully check means it does not know
@@ -696,6 +712,245 @@ def test_the_state_document_is_json_a_person_can_read(product):
     document = json.loads(walk_mod.state_path().read_text(encoding="utf-8"))
 
     # assert
-    assert document["format"] == 1
+    assert document["format"] == walk_mod.STATE_FORMAT
     assert document["key"]["selection"] == "all scenarios"
     assert document["answers"]["a:b"]["0"] == {"verdict": "ok", "at": "2026-09-12 10:00:00"}
+
+
+# --- a refusal becomes a ticket (si#206) ----------------------------------------------------------------
+
+
+ADDRESS = "acceptance/one.feature:The gate runs everything"
+SECOND = "acceptance/two.feature:The reference names every command"
+
+
+def _refused_state(product, *, address: str = ADDRESS, index: int = 2) -> walk_mod.State:
+    """A state in which one step of one scenario was refused."""
+    state = walk_mod.State(key=_key(product), sittings=[{"started": "s", "ended": "e", "by": "Ada"}])
+    state.record(address, index, False, datetime(2026, 9, 12, 10, 0, 0))
+    return state
+
+
+def _manifest(product, section: dict | None) -> None:
+    """Give the registered product a real manifest, with or without a `tracker:` section."""
+    document = {"groups": {}} if section is None else {"groups": {}, "tracker": section}
+    (product / "demo.yaml").write_text(json.dumps(document), encoding="utf-8")
+
+
+TRACKER = {"kind": "github", "repo": "acme/demo", "labels": ["bug"],
+           "title": "Refused: {scenario}"}
+
+
+def test_every_refusal_the_state_holds_is_found_and_located_in_its_scenario(product):
+    # arrange
+    state = _refused_state(product)
+
+    # act
+    found = walk_mod.refused(_taken(product), state)
+
+    # assert: the step's own text is there, which the state file does not carry
+    assert [(one.scenario.address, one.index, one.step.announced) for one in found] == [
+        (ADDRESS, 2, "Then it reports three steps")]
+    assert found[0].at == "2026-09-12 10:00:00"
+
+
+def test_a_refusal_from_an_earlier_sitting_is_still_found_so_its_ticket_can_be_opened_later(product):
+    """The whole of si#206's 'can open it later': the retry path is the ordinary command, because the
+    refusal is still in the state and `State.filed` still has nothing against it."""
+    # arrange: written by one sitting, read back by the next
+    walk_mod.save_state(walk_mod.state_path(), _refused_state(product))
+    later = walk_mod.load_state(walk_mod.state_path())
+
+    # act
+    found = walk_mod.refused(_taken(product), later)
+
+    # assert
+    assert [one.scenario.address for one in found] == [ADDRESS]
+    assert later.filed(ADDRESS) == {}
+
+
+def test_an_accepted_step_is_not_a_refusal(product):
+    # arrange
+    state = walk_mod.State(key=_key(product))
+    state.record(ADDRESS, 0, True, datetime(2026, 9, 12, 10, 0, 0))
+
+    # act / assert
+    assert walk_mod.refused(_taken(product), state) == []
+
+
+def test_the_person_is_asked_what_each_refusal_was_about_and_it_is_recorded(product, capsys):
+    # arrange
+    state = _refused_state(product)
+    pending = walk_mod.refused(_taken(product), state)
+
+    # act
+    walk_mod.ask_reasons(pending, state, ask=lambda prompt: "  it showed two rows, not three  ")
+
+    # assert
+    assert state.reason_for(ADDRESS, 2) == "it showed two rows, not three"
+    shown = capsys.readouterr().out
+    assert ADDRESS in shown and "Then it reports three steps" in shown
+
+
+def test_somebody_who_says_nothing_is_not_asked_again_on_the_next_sitting(product):
+    """"" is a person who was asked and declined; None is one nobody has put the question to. The
+    difference is what stops the next sitting nagging about a refusal already dealt with."""
+    # arrange
+    state = _refused_state(product)
+    pending = walk_mod.refused(_taken(product), state)
+    walk_mod.ask_reasons(pending, state, ask=lambda prompt: "")
+
+    # act
+    asked: list[str] = []
+    still_unexplained = [one for one in walk_mod.refused(_taken(product), state)
+                         if state.reason_for(one.scenario.address, one.index) is None]
+    walk_mod.ask_reasons(still_unexplained, state, ask=lambda prompt: asked.append(prompt) or "late")
+
+    # assert
+    assert state.reason_for(ADDRESS, 2) == ""
+    assert asked == []
+
+
+def test_an_interrupted_reason_prompt_keeps_what_was_typed_and_says_so(product, capsys):
+    # arrange: two refusals, and the person walks away after the first
+    state = _refused_state(product)
+    state.record(SECOND, 0, False, datetime(2026, 9, 12, 10, 5, 0))
+    pending = walk_mod.refused(_taken(product), state)
+    answers = iter(["the third row was blank"])
+
+    def _ask(prompt: str) -> str:
+        try:
+            return next(answers)
+        except StopIteration:
+            raise KeyboardInterrupt from None
+
+    # act
+    walk_mod.ask_reasons(pending, state, ask=_ask)
+
+    # assert: nothing raised, the first answer kept, the second still unasked and said out loud
+    assert state.reason_for(ADDRESS, 2) == "the third row was blank"
+    assert state.reason_for(SECOND, 0) is None
+    assert "next sitting" in capsys.readouterr().out
+
+
+def test_a_ticket_already_in_the_state_is_not_looked_up_again(product, monkeypatch):
+    """The immediately consistent half of the idempotence. GitHub's issue search is an index and not a
+    read of the table, so a second walk minutes after the first must not depend on it having caught up."""
+    # arrange
+    _manifest(product, TRACKER)
+    state = _refused_state(product)
+    key = _key(product)
+    ident = tracker.identity(key.product, key.version, ADDRESS)
+    state.file(ADDRESS, ident, "https://x/1", datetime(2026, 9, 12, 10, 0, 0))
+    monkeypatch.setattr(tracker, "open_ticket", lambda *a: pytest.fail("the tracker was reached"))
+
+    # act
+    filed = walk_mod.file_tickets(walk_mod.refused(_taken(product), state), key, state, "Ada")
+
+    # assert
+    assert [(one.url, one.existed) for one in filed] == [("https://x/1", True)]
+
+
+def test_a_recorded_ticket_for_another_version_does_not_answer_for_this_one(product, monkeypatch):
+    """One ticket per scenario per VERSION. A refusal that survives a release is a new ticket, not a
+    comment on an old one, so an identity that does not match is not a hit."""
+    # arrange
+    _manifest(product, TRACKER)
+    state = _refused_state(product)
+    state.file(ADDRESS, tracker.identity("demo", "v0.9.0", ADDRESS), "https://x/1",
+               datetime(2026, 9, 12, 10, 0, 0))
+    monkeypatch.setattr(tracker, "open_ticket",
+                        lambda destination, refusal: tracker.Ticket(refusal.address, "i", "https://x/2"))
+
+    # act
+    filed = walk_mod.file_tickets(walk_mod.refused(_taken(product), state), _key(product), state, "Ada")
+
+    # assert
+    assert [(one.url, one.existed) for one in filed] == [("https://x/2", False)]
+
+
+def test_what_the_tracker_opened_is_written_into_the_state(product, monkeypatch):
+    # arrange
+    _manifest(product, TRACKER)
+    state = _refused_state(product)
+    key = _key(product)
+    monkeypatch.setattr(tracker, "open_ticket",
+                        lambda destination, refusal: tracker.Ticket(refusal.address, "i", "https://x/3"))
+
+    # act
+    walk_mod.file_tickets(walk_mod.refused(_taken(product), state), key, state, "Ada")
+
+    # assert
+    assert state.filed(ADDRESS)["url"] == "https://x/3"
+    assert state.filed(ADDRESS)["identity"] == tracker.identity(key.product, key.version, ADDRESS)
+
+
+def test_the_evidence_the_walk_hands_the_tracker_is_the_whole_of_it(product, monkeypatch):
+    # arrange
+    _manifest(product, TRACKER)
+    state = _refused_state(product)
+    state.explain(ADDRESS, 2, "it showed two rows")
+    sent: list[tracker.Refusal] = []
+    monkeypatch.setattr(tracker, "open_ticket",
+                        lambda destination, refusal: sent.append(refusal)
+                        or tracker.Ticket(refusal.address, "i", "https://x/4"))
+
+    # act
+    walk_mod.file_tickets(walk_mod.refused(_taken(product), state), _key(product), state, "Ada")
+
+    # assert
+    assert sent[0] == tracker.Refusal(
+        address=ADDRESS, feature="One verdict", scenario="The gate runs everything",
+        step="Then it reports three steps", step_number=3, step_total=3, said="it showed two rows",
+        at="2026-09-12 10:00:00", by="Ada", product="demo", version="v1.0.0", revision="abc123",
+        source="tests/acceptance", selection="all scenarios")
+
+
+def test_a_product_with_no_tracker_section_still_records_the_refusal_and_says_no_ticket(product):
+    # arrange
+    _manifest(product, None)
+    state = _refused_state(product)
+
+    # act
+    filed = walk_mod.file_tickets(walk_mod.refused(_taken(product), state), _key(product), state, "Ada")
+
+    # assert
+    assert not filed[0].url and "tracker" in filed[0].problem
+    assert state.filed(ADDRESS) == {}
+
+
+def test_the_record_names_the_refusal_whose_ticket_is_missing_rather_than_counting_it(product):
+    # arrange
+    filed = [tracker.Ticket(ADDRESS, "i", url="https://x/1"),
+             tracker.Ticket(SECOND, "j", problem="HTTP 401: Bad credentials")]
+
+    # act
+    lines = walk_mod.ticket_lines(filed)
+
+    # assert
+    written = "\n".join(lines)
+    assert "1 ticket(s) opened, 0 already open, 1 NOT filed" in written
+    assert f"{SECOND}" in written and "NO TICKET: HTTP 401: Bad credentials" in written
+
+
+def test_a_walk_with_no_refusal_says_nothing_about_tickets():
+    # act / assert: a record that mentions tickets on a green walk is noise in the one document that
+    # must be readable
+    assert walk_mod.ticket_lines([]) == []
+
+
+def test_the_reasons_and_the_tickets_survive_the_state_file(product):
+    # arrange
+    state = _refused_state(product)
+    state.explain(ADDRESS, 2, "it showed two rows")
+    state.file(ADDRESS, "ident-1", "https://x/5", datetime(2026, 9, 12, 11, 0, 0))
+
+    # act
+    walk_mod.save_state(walk_mod.state_path(), state)
+    back = walk_mod.load_state(walk_mod.state_path())
+
+    # assert
+    assert back is not None
+    assert back.reason_for(ADDRESS, 2) == "it showed two rows"
+    assert back.filed(ADDRESS) == {"identity": "ident-1", "url": "https://x/5",
+                                   "at": "2026-09-12 11:00:00"}

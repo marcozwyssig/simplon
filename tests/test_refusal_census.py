@@ -182,6 +182,11 @@ READS_INLINE = {
                    "tasks.artifact - which is deliberate: si#127 extends that section rather than "
                    "inventing one, so it reads it the way its neighbour does",
     "tasks.conan": "`_declared(name)`, same shape as tasks.nuget and tasks.artifact",
+    "tracker": "`declared()` reads the `tracker:` section inline at the front of the one function that "
+               "reaches a tracker, the same shape as tasks.releasenotes - and it refuses the same way, "
+               "with `log.error` and a None, because it is called after a person has answered a walk "
+               "and a raise there would cost the sitting the record it exists for (si#206). The walk "
+               "would collect nothing from it even if it could follow it.",
     "tasks.releasenotes": "`declared()` reads the `releases:` section inline at the front of the gate "
                           "body, the same shape as tasks.artifact - and it refuses with `log.error` and "
                           "a return code rather than a raise, because the caller is a gate whose whole "

@@ -37,8 +37,8 @@ re-derive it:
     of their own, one character from the kernel's `releases:`, and both are read by the product. A rule
     that refuses the legitimate case is worse than the silence it replaces.
 
-AND THE PREMISE ITSELF DID NOT SURVIVE. A mistyped kernel section is NOT silent today. Fourteen of the
-sixteen top-level keys the kernel reads are NAMED by the reader that wanted them, the moment that reader
+AND THE PREMISE ITSELF DID NOT SURVIVE. A mistyped kernel section is NOT silent today. Fifteen of the
+seventeen top-level keys the kernel reads are NAMED by the reader that wanted them, the moment that reader
 runs - `test_a_mistyped_section_is_named_by_the_reader_that_wanted_it` drives every one of them through a
 real manifest on disk and a real `ProductContext` to prove it, rather than reading the source and
 believing it. So what si#159 found is not an enforcement gap. It is two smaller things, and this module
@@ -77,7 +77,7 @@ import re
 import pytest
 import yaml
 
-from simplon import context, labegress, labinstance, nexusproxy, workflowgen
+from simplon import context, labegress, labinstance, nexusproxy, tracker, workflowgen
 from simplon.tasks import (artifact, asset, buildfiles, claudeplugins, docs, env, image, releasenotes,
                            site, testrun)
 
@@ -126,6 +126,7 @@ MODULES: dict[str, tuple[str, ...]] = {
     "tasks.site": ("site",),
     "tasks.testrun": ("suites",),
     "tasks.workflows": ("workflows",),  # hands the document to `workflowgen.parse`
+    "tracker": ("tracker",),
 }
 
 #: The two keys whose ABSENCE says nothing, each with the reason it was written that way. Both are driven
@@ -150,7 +151,7 @@ SILENT_ON_ABSENCE = {
 #:
 #: Every driver goes through a manifest FILE on disk and a registered `ProductContext`, including the ones
 #: whose function takes the document as an argument. A uniform front door is what makes the two halves
-#: comparable: the loud fourteen and the silent two are driven by the same harness.
+#: comparable: the loud fifteen and the silent two are driven by the same harness.
 DRIVERS: dict[str, tuple[dict, object]] = {
     "images": ({"images": {"web": {}}},
                lambda: image.declared(context.current().manifest_data(), "web")),
@@ -177,6 +178,7 @@ DRIVERS: dict[str, tuple[dict, object]] = {
               lambda: buildfiles._declared_targets(context.current())),
     "env_var": ({"environments": {"dev": {}}, "default": "dev", "env_var": "SAMPLE_ENV"},
                 env.environments),
+    "tracker": ({"tracker": {"title": "Refused: {scenario}"}}, tracker.declared),
 }
 
 KEYS = tuple(sorted({key for keys in MODULES.values() for key in keys}))
