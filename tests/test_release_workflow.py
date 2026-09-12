@@ -41,7 +41,8 @@ PYPROJECT = ROOT / "pyproject.toml"
 #: hold nothing.
 DOCS_JOB = "docs"
 THE_ONE_COMMAND = "./simplon.sh build docs"
-EXPECTED_PLAN = ("reference", "site")
+#: si#204 added `acceptance` between them - a second page written into the content tree before Hugo runs.
+EXPECTED_PLAN = ("reference", "acceptance", "site")
 
 #: Actions whose whole purpose is to answer "which files changed". Any of them in this workflow would be
 #: the `paths:` filter wearing a different hat.
@@ -49,7 +50,7 @@ CHANGED_FILES_ACTIONS = ("dorny/paths-filter", "tj-actions/changed-files", "tech
 
 #: What the workflow may reach for to make the site. Anything else here - a hugo call, a docker run, a
 #: script beside the manifest - would be the second route this job exists to not have.
-FORBIDDEN_IN_RUNS = ("hugo", "docker run", "build site", "build reference")
+FORBIDDEN_IN_RUNS = ("hugo", "docker run", "build site", "build reference", "build acceptance")
 
 
 @pytest.fixture(scope="module")

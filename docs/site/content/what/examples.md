@@ -299,29 +299,33 @@ the whole point of the run.
 
 ## 8. Publish the documentation
 
-Three documentation commands, three different outputs, and choosing wrongly wastes an afternoon:
+Four documentation commands, four different outputs, and choosing wrongly wastes an afternoon:
 
 | You want | Command | What comes out |
 |---|---|---|
 | Architecture documentation for people working **on** the system | `docs:render` | HTML **and PDF**, from AsciiDoc through docToolchain |
 | A product website for people working **with** it | `docs:site` | HTML only, from Markdown through Hugo |
 | The command reference | `docs:reference` | One Markdown page, read off the assembled CLI |
+| The list of what is verified | `docs:acceptance` | One Markdown page, read off the product's own `.feature` files |
 
-They are not three candidates for one job, and a product may want all three. The PDF is the point of the
+They are not four candidates for one job, and a product may want all four. The PDF is the point of the
 first one - it is what gets handed over, filed and reviewed - and Hugo does not produce one, which is
-why the website did not simply absorb it.
+why the website did not simply absorb it. The last two are the same mechanism pointed at two different
+sources: what can be **typed**, and what is **verified**. Both are generated because the
+hand-maintained version of either goes stale in silence.
 
-This site is built by the last two:
+This site is built by the last three:
 
 ```text
 $ ./simplon.sh build docs
 ```
 
-That is an aggregate over `build reference` and `build site`, in that order, and the order is a
-`depends_on` edge in the manifest rather than a convention in a script. It has to be: the site's
-`content/with-what/commands.md` is written by the first step and read by the second, so a wrong order
-produces a site with a stale reference on it - and, the first time round, no reference at all. Both
-steps run in Docker, which is a decision with [its own rule](../../with-what/rules/#a-container-that-writes-into-a-mount-runs-as---user).
+That is an aggregate over `build reference`, `build acceptance` and `build site`, in that order, and the
+order is a `depends_on` edge in the manifest rather than a convention in a script. It has to be: the
+site's `content/with-what/commands.md` and `content/with-what/acceptance.md` are written by the first two
+steps and read by the third, so a wrong order produces a site with stale pages on it - and, the first
+time round, no pages at all. The Hugo step runs in Docker, which is a decision with [its own
+rule](../../with-what/rules/#a-container-that-writes-into-a-mount-runs-as---user).
 
 If Docker is not installed on your machine, that run is a hint and a zero exit code, not a failure. The
 machine that runs the loop is not always the machine that publishes the page - and that distinction has

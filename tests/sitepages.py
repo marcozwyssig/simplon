@@ -52,12 +52,18 @@ CONTENT = ROOT / "docs" / "site" / "content"
 #: The product manifest, which is where a GENERATED content page is declared.
 MANIFEST = ROOT / "simplon.yaml"
 
-#: The catalogue coordinate whose task writes a Markdown page INTO the content tree. Named rather than
-#: matched on an impl string: the coordinate is the kernel's own vocabulary, the impl behind it is an
+#: The catalogue coordinates whose tasks write a Markdown page INTO the content tree. Named rather than
+#: matched on an impl string: a coordinate is the kernel's own vocabulary, the impl behind it is an
 #: implementation detail that `catalogue.yaml` may change without changing what the task does.
-REFERENCE_TASK = "docs:reference"
+#:
+#: A SET SINCE si#204, and the plural is what the ticket cost this helper. `docs:acceptance` writes
+#: `with-what/acceptance.md` exactly the way `docs:reference` writes `with-what/commands.md`, and with one
+#: coordinate named here the second page would have been a dead link on every card that points at it -
+#: green in a working tree where the build had run, red in a fresh clone, which is the order-dependent
+#: verdict this whole function exists to rule out.
+GENERATING_TASKS = ("docs:reference", "docs:acceptance")
 
-#: The `with:` key that task takes for the file it writes.
+#: The `with:` key those tasks take for the file they write.
 REFERENCE_OUTPUT = "output"
 
 #: The five sections the site is divided into (si#170), in the order the navigation offers them: one per
@@ -262,21 +268,23 @@ def generated_pages() -> frozenset[Path]:
     building the site first makes a unit suite depend on docker.
 
     So a generated target is checked against its SOURCE instead. The manifest is what promises the page:
-    a command that instantiates `docs:reference` and pins `output:` with `with:` is the declaration that
-    the file will exist, and it is read here rather than remembered. Delete that command, rename the
-    coordinate or move the output, and every link to `../commands/` goes red with the reason - which is
-    exactly what a link checker owes its reader, and what "exempt it" would never have said.
+    a command that instantiates one of `GENERATING_TASKS` and pins `output:` with `with:` is the
+    declaration that the file will exist, and it is read here rather than remembered. Delete that
+    command, rename the coordinate or move the output, and every link to `../commands/` or
+    `../acceptance/` goes red with the reason - which is exactly what a link checker owes its reader, and
+    what "exempt it" would never have said.
     """
     catalogue = catalogue_mod.load()
-    if REFERENCE_TASK not in catalogue.tasks:
-        raise ValueError(f"the catalogue carries no '{REFERENCE_TASK}', so no generated page could be "
+    missing = [task for task in GENERATING_TASKS if task not in catalogue.tasks]
+    if missing:
+        raise ValueError(f"the catalogue carries no {missing}, so no generated page could be "
                          f"identified from the manifest")
-    impl = catalogue.tasks[REFERENCE_TASK]["impl"]
+    impls = {catalogue.tasks[task]["impl"] for task in GENERATING_TASKS}
     parsed = manifest_mod.load(MANIFEST.read_text(encoding="utf-8"), catalogue=catalogue)
     found: set[Path] = set()
     for members in parsed.commands.values():
         for spec in members.values():
-            output = spec.with_.get(REFERENCE_OUTPUT) if spec.impl == impl else None
+            output = spec.with_.get(REFERENCE_OUTPUT) if spec.impl in impls else None
             if isinstance(output, str) and output:
                 page = (ROOT / output).resolve()
                 if page.is_relative_to(CONTENT.resolve()):

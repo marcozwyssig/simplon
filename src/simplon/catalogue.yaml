@@ -327,6 +327,29 @@ tasks:
       output: { help: "where the Markdown page goes, relative to the product root" }
       title:  { help: "the page title in the front matter (default: '<product> command reference')" }
 
+  # The FOURTH documentation shape, and the second that renders nothing a human wrote for it (si#204):
+  # the product's acceptance document, read off its own `.feature` files. `reference` lists what can be
+  # TYPED, this lists what is VERIFIED, and both exist because the hand-maintained version of either goes
+  # stale in silence. The mechanism is `reference`'s, deliberately - a reader, a Markdown render, a file
+  # written - because si#204 asked whether the two are nearly the same before anything was designed and
+  # they are.
+  #
+  # A FAMILY and not a placement, and here that is load-bearing rather than habitual: this product files
+  # it under `build` beside `reference`, because the page is an input to the website build, and a product
+  # that regards its acceptance document as part of what `test` produces would file it there and be just
+  # as right. `docs:` names what the task IS.
+  #
+  # `source` HAS A DEFAULT AND `output` DOES NOT, which is si#183's asymmetry unchanged: the feature files
+  # are only ever read, so the kernel may assume where to look, while the output path is written and the
+  # kernel may not assume what to overwrite in a product's tree.
+  docs:acceptance:
+    impl: simplon.tasks.acceptance:document
+    help: "Write the product's acceptance document as Markdown, read off its own .feature files."
+    params:
+      output: { help: "where the Markdown page goes, relative to the product root" }
+      source: { help: "the directory holding the .feature files (default: tests/acceptance)" }
+      title:  { help: "the page title in the front matter (default: '<product> acceptance scenarios')" }
+
   # --- build: what a product produces ------------------------------------------------------------------
   # The container image, and a TASK rather than a placed command for the same reason `release:artifact`
   # is one: it needs an `images:` section naming the registry, the repository, the Dockerfile and the

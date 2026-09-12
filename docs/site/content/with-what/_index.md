@@ -21,4 +21,5 @@ what was intended.
   {{< card link="environments/" title="Environments" subtitle="Env-first groups, the environment matrix, and why `build` refuses a target." >}}
   {{< card link="rules/" title="The rules" subtitle="Six rules the kernel is built on, each with the mechanism that forces it." >}}
   {{< card link="commands/" title="Command reference" subtitle="Generated from the assembled application on every build." >}}
+  {{< card link="acceptance/" title="Acceptance scenarios" subtitle="Generated from the product's own .feature files on every build: every scenario, every step, and the address a verdict is recorded against." >}}
 {{< /cards >}}

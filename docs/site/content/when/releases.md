@@ -185,6 +185,67 @@ product's dependencies into the interpreter the gate runs in, or point it at the
 two commands that were already measured not to need one; a scaffolded manifest that is already in a tree
 is untouched, because a profile is written once and then owned by the product.
 
+
+### A document of every acceptance test, generated (si#204)
+
+si#197's primary ask, split out: **a document listing all acceptance tests, so somebody can bring
+evidence of what exactly is verified.** It is `docs:acceptance`, a fourth `docs:` coordinate, and it is
+`docs:reference` one level over - the reference reads the ASSEMBLED command line and lists what can be
+TYPED, this reads the product's own `.feature` files and lists what is VERIFIED. Same split inside the
+module, same Hugo front matter, same do-not-edit banner, same `validate_relative_dir` on the output. The
+ticket asked whether the two are nearly the same before anything was designed; they are, so nothing new
+was invented for the second one. Simplon generates its own at `with-what/acceptance.md`, from
+`tests/acceptance/`.
+
+**The format was measured, not chosen, and the measurement corrected it twice.** si#204 says the format
+is what si#205 will be built against, so pytest 9.1.1, pytest-bdd 8.1.0 and allure-pytest-bdd 2.16.0 were
+driven over real feature files and the Allure results read back. Three of the five findings decide the
+page:
+
+- a scenario's address is `<feature file>:<scenario>`, which is the archive's own `fullName` - so a
+  person's verdict (si#205) and a run's result join on one key rather than on a resemblance;
+- **the feature file in that address is NOT its path in the repository.**
+  `pytest_bdd.parser.FeatureParser` sets `rel_filename = basename(basedir) + "/" + filename`, so
+  `tests/acceptance/one-verdict.feature` is `acceptance/one-verdict.feature` to the runner. The first
+  version of the module had it root-relative and the second run of the measurement killed that. The page
+  prints both spellings, because an address that is not a repository path has to say where the file is
+  somewhere;
+- **a Scenario Outline is one result per Examples row, with the placeholders substituted in the title.**
+  A page listing the outline once would carry an address matching nothing that ever ran, so the page
+  expands them. Background steps are prepended to every scenario's walk for the matching reason: the
+  archive carries them that way, and a person who performed them once per scenario must produce evidence
+  at the same granularity.
+
+The reader is a keyword scan of the constructs pytest-bdd 8 executes, and **no Gherkin dependency was
+added**. The reason is agreement rather than thrift: `gherkin-official` parses a grammar WIDER than
+pytest-bdd executes, so the kernel would have had the deeper answer and every construct in the gap would
+have reached the page and never run. What it cannot honour it refuses - a `Rule:`, a non-English
+`# language:` header - and thirteen constructs are refused in all, each one because it would otherwise
+produce a document describing something no run executes. Driven against a real run of this repository's
+own nine scenarios, the reader reproduces all nine addresses and all nine step lists **byte for byte**,
+and that transcript is pinned in the suite as a second source rather than trusted.
+
+**The page carries the steps, not only the scenario names**, because a customer reads it to decide
+whether their functionality is covered and a title is the author's summary of its own body. It also
+states, in generated prose, the one requirement PR #198 found: the archive carries a step at all only
+when the product's suite requirements name **`allure-pytest-bdd`**. With plain `allure-pytest` a result
+has the mangled pytest function name and `steps: []`, so without the plugin there is no per-step evidence
+on the automatic side either and si#205's manual mode has nothing to be comparable with.
+
+**Where the scenarios live is si#183's asymmetry, unchanged.** `source` defaults to `tests/acceptance`
+because it is only ever read; `output` gets no default because it is written. The one thing si#183 could
+measure and this cannot is the value: it had three consumer manifests declaring a `site:` section, and
+here the population is zero, so the default is a convention offered to the first product rather than
+consumer agreement.
+
+**What the page does not claim, and this is a real limit rather than a caveat.** It says what the
+scenarios ARE, and it says so on its own face. Simplon's nine scenarios have no step definitions in this
+release, so nothing in simplon's own gate executes them - the automatic half is a product's choice
+(pytest-bdd in its suite requirements, PR #198) and simplon has not made it yet. The page is honest about
+that because it never claims a verdict; the verdicts are si#205's and the archive's.
+
+**Products need do nothing.** The coordinate is offered, not placed. A product that wants the page
+declares one command, pins `output`, and writes `.feature` files.
 ### The plan for the open tickets, as a document (si#207)
 
 A merge that ships no code and is named here because the notes name every ticket merged into the range,
