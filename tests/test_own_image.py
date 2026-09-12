@@ -16,6 +16,7 @@ moving tag under a launcher, a version that stops being derived, or a Dockerfile
 
 AAA throughout; nothing here builds, pushes or reaches a network.
 """
+import re
 import subprocess
 
 import pytest
@@ -247,6 +248,56 @@ def test_the_docker_client_in_the_image_is_the_version_the_kernel_already_pins()
     # in an image that talks to the host's daemon through a mounted socket
     assert "docker/docker" in dockerfile
     assert "dockerd" not in dockerfile
+
+
+def test_gh_is_in_the_image_because_without_it_a_container_walk_files_nothing():
+    """si#225, and the other half of the oras test below: an absence is what a reviewer cannot see, so a
+    PRESENCE somebody argued for should be asserted too.
+
+    si#206 shipped a walk that turns a customer's refusal into a ticket, and measured that on the
+    container route it asked its questions, recorded its refusals and filed none of them, because the
+    image carried `docker` and not `gh`. That is a difference between two routes si#200 requires to be
+    indistinguishable, and it survived every gate: `simplon.tracker` is unreachable from `test suite` by
+    design, so no `test all` run through either route could move a verdict over it. This is the guard
+    that would not have needed a human to notice it twice.
+    """
+    # arrange
+    dockerfile = (ROOT / "deploy" / "image" / "Dockerfile").read_text(encoding="utf-8")
+
+    # act: the INSTRUCTIONS only, the same reading the oras test uses - this file argues in prose, and a
+    # sweep over the comments would be asking whether the word appears rather than whether the tool is
+    # there. `gh` is fetched by the release tarball the same way the docker client is.
+    instructions = [line for line in dockerfile.splitlines()
+                    if line.strip() and not line.strip().startswith("#")]
+
+    # assert
+    assert any("cli/cli/releases/download" in line for line in instructions), instructions
+    assert any(line.strip() == "&& gh --version" for line in instructions), instructions
+
+
+def test_the_gh_version_in_the_image_is_pinned_to_one_exact_release():
+    """The "version nobody bumps" objection, answered the only way it can be here.
+
+    docker's pin has two consumers - `simplon.docker.DOCKER_CLI_VERSION` and the layer - so the test
+    above holds them against each other. `gh` has ONE: there is no bootstrap and no version expectation
+    anywhere in the kernel, all four call sites reach it through a bare `shutil.which("gh")`, and a
+    Python constant mirroring this ARG would be a second source with nothing reading it. So what can
+    still be asserted is the property that actually matters - the number is an exact release and not a
+    moving target, which is what would make two builds of one commit carry two different tools.
+    """
+    # arrange
+    dockerfile = (ROOT / "deploy" / "image" / "Dockerfile").read_text(encoding="utf-8")
+
+    # act
+    declared = [line.split("=", 1)[1].strip() for line in dockerfile.splitlines()
+                if line.startswith("ARG GH_VERSION=")]
+
+    # assert
+    assert len(declared) == 1, declared
+    assert re.fullmatch(r"\d+\.\d+\.\d+", declared[0]), declared
+    # and nothing reaches for a moving one beside it: `latest` in a download URL is the same defect
+    # wearing a different word
+    assert "releases/latest" not in dockerfile
 
 
 def test_oras_is_still_out_of_the_image_because_nothing_measured_asked_for_it():

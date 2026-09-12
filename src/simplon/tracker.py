@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -97,19 +98,18 @@ MARKER = "simplon-walk-id:"
 TITLE_FIELDS = ("product", "version", "revision", "address", "feature", "scenario", "step",
                 "step_number", "step_total")
 
-#: What is said when the one tool this backend needs is not there, and it names the case that is not a
-#: broken host. MEASURED on 2026-09-12 against the kernel's own image (si#200/si#201): `gh` is ABSENT,
-#: `docker` and `textual` are both present, and `simplon.sh`'s container route allocates a `-t` whenever
-#: the caller has one. So a walk driven through the container route asks its questions and records its
-#: refusals exactly as the venv route does, and then cannot file them - which is one of the "differences
-#: between two routes that are required to be indistinguishable" si#200's Dockerfile counts. It is named
-#: here rather than repaired here: what goes into that image was decided by measuring which verdicts a
-#: tool changes, and adding one is that ticket's decision and not si#206's. The refusal is never lost
-#: either way, and the next sitting on a host with `gh` files it.
-_NO_GH = ("`gh` is not on this host's PATH, so no ticket could be opened. The kernel's own container "
-          "image carries docker and not `gh`, so a walk driven through the container route records its "
-          "refusals and files none of them; run `test walk` where `gh` is, or file them from there on "
-          "the next sitting")
+#: What is said when the one tool this backend needs is not there. It no longer names the container
+#: route, and the removal is the point: si#206 measured on 2026-09-12 that the kernel's own image
+#: (si#200/si#201) carried `docker` but not `gh`, so a walk driven through that route asked its
+#: questions, recorded its refusals and could file none of them - and this sentence carried that fact
+#: because nothing else did. si#225 put `gh` in the image and `GH_TOKEN` across the launcher's boundary,
+#: so the sentence would now be false on the very route it was written for, and a message that explains
+#: a cause which no longer exists sends its reader to look in the wrong place. What is left is the case
+#: that remains true anywhere: the tool is not here, the refusal is not lost, and the identity it keeps
+#: is what lets a later sitting file it without asking anybody a second time.
+_NO_GH = ("`gh` is not on this host's PATH, so no ticket could be opened. The refusal is in the record "
+          "and keeps the identity it would be filed under, so a later sitting on a host that has `gh` "
+          "files it without asking anybody again")
 
 #: The byte the identity's three parts are joined by. NUL cannot occur in a product name, a
 #: `git describe` output or a Gherkin address, so `wid` + `get` and `widget` + `` cannot produce one
@@ -321,6 +321,39 @@ def body_for(destination: Destination, refusal: Refusal, ident: str) -> str:
 # --- reaching the tracker ---------------------------------------------------------------------------------
 
 
+#: The words `gh` uses when it has NO credential at all, as opposed to a wrong one. MEASURED on
+#: 2026-09-12 inside the kernel's own image (si#225): `gh issue list --repo ... --search ...` exits 4 and
+#: says, on two lines,
+#:
+#:     To get started with GitHub CLI, please run:  gh auth login
+#:     Alternatively, populate the GH_TOKEN environment variable with a GitHub API authentication token.
+#:
+#: A WRONG token says `HTTP 401: Bad credentials ... Try authenticating with: gh auth login` instead, so
+#: matching on `gh auth login` would catch both and the two cases want different advice. This phrase
+#: appears only when there is nothing to authenticate with.
+_NO_CREDENTIAL = "To get started with GitHub CLI"
+
+#: What is added to that complaint on the container route, and ONLY there. `gh` already names GH_TOKEN
+#: itself, so nothing here repeats it; what `gh` cannot know is where it is running, and its first
+#: suggestion is the one piece of advice that cannot work here. si#225 measured the shape: the launcher
+#: mounts `~/.gitconfig` and nothing else of a home directory - deliberately, because forwarding a whole
+#: home is how a credential reaches a place nobody looked - so a developer who ran `gh auth login` on the
+#: host has a token in `~/.config/gh/hosts.yml` that does not cross, and running it again inside a
+#: container that is discarded at the end of the command would not help either.
+_INSIDE_HINT = (" - and `gh auth login` cannot help here: this is the container route, and the host's own "
+                "gh login stays on the host. GH_TOKEN is what crosses, so export it before the run")
+
+
+def _inside_the_container() -> bool:
+    """Whether this kernel is the one `simplon.sh` started in its own image.
+
+    `DELIVERY_ROUTE=inside` is the value a user never types - the launcher sets it on the way in, and
+    si#201 documents it as exactly that. Reading it here is reading the launcher's own statement about
+    which route this is, rather than guessing from /proc or from a missing HOME.
+    """
+    return os.environ.get("DELIVERY_ROUTE") == "inside"
+
+
 def _said(result: run.Result) -> str:
     """What `gh` complained about, on ONE line.
 
@@ -329,8 +362,12 @@ def _said(result: run.Result) -> str:
     label column - the second line hangs outside it and reads as a line of the transcript rather than as
     part of the reason. A problem is one sentence wherever it is printed, so it is folded here rather
     than at each of the three places that print it.
+
+    THE ONE THING ADDED TO WHAT GH SAID (si#225) is where it is saying it. Everything else here forwards
+    the tool's own words, because a wrapper that rewrites them is a second source for a string.
     """
-    return " ".join((result.err or result.out).split()) or f"gh exited {result.rc}"
+    said = " ".join((result.err or result.out).split()) or f"gh exited {result.rc}"
+    return said + _INSIDE_HINT if _NO_CREDENTIAL in said and _inside_the_container() else said
 
 
 def _where(destination: Destination) -> list[str]:

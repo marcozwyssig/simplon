@@ -8,7 +8,7 @@
 # and a product's tree arrives as a bind mount at /src. si#201 inherits that boundary; it is the reason
 # the launcher's container route mounts the checkout instead of building an image per product.
 #
-# THE DOCKER CLI IS IN IT, AND ORAS IS NOT, and si#201 measured the difference rather than reasoning it.
+# WHAT TOOLS ARE IN IT: docker and gh, not oras - and each of the three was measured rather than reasoned.
 # si#200 left both out on the argument that the kernel already knows how to get them
 # (`simplon.docker.ensure_docker` with DELIVERY_DOCKER_BOOTSTRAP, `simplon.oras.ensure_oras`) and that a
 # baked copy would be the one nobody bumps. The numbers split the two:
@@ -22,10 +22,20 @@
 #     routes that are required to be indistinguishable. In the layer it is 41 MB.
 #   * ORAS. Reached only by `release:artifact` and the read-back in `release:image`, provisioned by a
 #     gate that works, and it changed no verdict at all in the same run. It stays out.
+#   * GH. Out when si#201 wrote this list and in since si#225, and the gap between those two dates is the
+#     point rather than an embarrassment: the rule above is sound and the method behind it could not see
+#     this case. `test all` through both routes moves no verdict when `gh` is missing, because si#206's
+#     tracker is unreachable from `test suite` BY DESIGN - it runs after a person has said no. So the
+#     difference was real from the day si#206 landed and invisible to every gate: a walk driven through
+#     the container route asked its questions, recorded its refusals and filed none of them. Measured in
+#     this image: 42,188,962 bytes, 40 MiB in the layer and 14 MiB on the wire - slightly LESS than the
+#     docker client beside it. The block above that layer says the rest.
 #
-# The "version nobody bumps" objection is answered rather than accepted: the version installed below is
-# `simplon.docker.DOCKER_CLI_VERSION`, the number the kernel's own bootstrap already pins, and
-# tests/test_own_image.py holds the two against each other. One source, two consumers.
+# The "version nobody bumps" objection is answered rather than accepted: the docker version installed
+# below is `simplon.docker.DOCKER_CLI_VERSION`, the number the kernel's own bootstrap already pins, and
+# tests/test_own_image.py holds the two against each other. One source, two consumers. `gh` is pinned
+# differently and its own block says why - there is no second consumer for it to agree with, and
+# inventing one would be a source nothing reads.
 #
 # THE INTERPRETER IS THE ONE THE GATE PROVES. simplon.yaml declares python 3.12 for its own CI job, so
 # that is the interpreter every push is measured on and the one this image runs. `requires-python` is
@@ -110,6 +120,38 @@ RUN arch="$(uname -m)" \
  && tar -xzf /tmp/docker.tgz -C /usr/local/bin --strip-components=1 docker/docker \
  && rm /tmp/docker.tgz \
  && docker --version
+
+# THE GITHUB CLI, added by si#225, and the interesting part is why si#200's own rule did not catch it.
+# That rule is sound: a tool goes in when it changes a VERDICT, which is why the docker client is above
+# and oras is not. But the measurement behind it was `test all` driven through both routes, and si#206's
+# tracker is unreachable from `test suite` BY DESIGN - `tasks.walk` runs after a person has said no, and
+# an automatic gate filing tickets is the thing that ticket refused to build. So a walk driven through
+# the container route asked its questions, recorded its refusals and filed none of them, and no verdict
+# in any gate run moved. The rule was right and its method could not see this; a route difference that
+# only a human-driven command can expose needs a human-driven measurement to find it.
+#
+# THE PIN HAS ONE CONSUMER HERE, AND THAT IS THE HONEST DIFFERENCE FROM DOCKER ABOVE. The docker version
+# is `simplon.docker.DOCKER_CLI_VERSION` because a runtime bootstrap fetches the same binary and the two
+# must not disagree - one source, two consumers. `gh` has no bootstrap and no version expectation
+# anywhere in the kernel: all four call sites (`tracker`, `tasks.asset`, `tasks.gitops`,
+# `githubpackages`) reach it through a bare `shutil.which("gh")`. A Python constant mirroring this ARG
+# would be a second source with nothing reading it, which is the shape si#46 says to delete rather than
+# guard. So the number lives here, and tests/test_own_image.py asserts it is an EXACT version rather
+# than asserting agreement with a constant nobody would consult.
+#
+# NOT CHECKSUM-VERIFIED, the same gap as the docker layer above and for the same reason: pinned by
+# version, fetched over TLS, and no comparison against a published digest. Closing it for one of the two
+# fetches in this file and not the other would be worse than leaving both, which is the si#47 shape the
+# docker block already names. One digest table serving both is that ticket, not this one.
+ARG GH_VERSION=2.100.0
+RUN arch="$(uname -m)" \
+ && case "$arch" in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; \
+      *) echo "no gh release for $arch" >&2; exit 1 ;; esac \
+ && curl -fsSL "https://github.com/cli/cli/releases/download/v$GH_VERSION/gh_${GH_VERSION}_linux_$arch.tar.gz" \
+      -o /tmp/gh.tgz \
+ && tar -xzf /tmp/gh.tgz -C /usr/local/bin --strip-components=2 "gh_${GH_VERSION}_linux_$arch/bin/gh" \
+ && rm /tmp/gh.tgz \
+ && gh --version
 
 COPY --from=build /wheels/*.whl /tmp/wheels/
 RUN pip install --no-cache-dir /tmp/wheels/*.whl \

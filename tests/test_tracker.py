@@ -543,3 +543,75 @@ def test_declared_validates_against_the_seams_own_keys(monkeypatch, tmp_path, ca
     # act / assert: a kind the mapping knows is accepted, so the validation reads the mapping and not a list
     declared = tracker.declared()
     assert declared is not None and declared.kind == "invented"
+
+
+# --- si#225: where the tool is running, added to what the tool said -------------------------------------
+
+#: `gh`'s OWN words when it holds no credential, copied from a real run rather than paraphrased. MEASURED
+#: on 2026-09-12 inside the kernel's own image: `gh issue list --repo ... --search ...` exits 4 and prints
+#: exactly these two lines. It is a second source for the string `tracker._NO_CREDENTIAL` matches on, and
+#: it is the reason that constant is a phrase and not a guess.
+_GH_SAYS_NO_CREDENTIAL = (
+    "To get started with GitHub CLI, please run:  gh auth login\n"
+    "Alternatively, populate the GH_TOKEN environment variable with a GitHub API authentication token.")
+
+#: And what it says when the credential is WRONG rather than missing - the shape si#206 drove with an
+#: invalid GH_TOKEN. Both mention `gh auth login`, which is why the match above is on the other phrase.
+_GH_SAYS_BAD_CREDENTIAL = ("HTTP 401: Bad credentials (https://api.github.com/search/issues)\n"
+                           "Try authenticating with: gh auth login")
+
+
+def test_on_the_container_route_a_missing_credential_says_gh_auth_login_cannot_help(monkeypatch, gh):
+    """si#225. `gh` names GH_TOKEN itself, so the kernel does not repeat it; what `gh` cannot know is that
+    it is inside a container whose home is discarded, where its first suggestion is the one that cannot
+    work. The host's `gh auth login` state stays on the host by the launcher's deliberate design."""
+    # arrange
+    monkeypatch.setenv("DELIVERY_ROUTE", "inside")
+    monkeypatch.setattr(run, "run", _Recorder(("issue list", run.Result(rc=4, out="",
+                                                                        err=_GH_SAYS_NO_CREDENTIAL))))
+
+    # act
+    ticket = tracker.open_ticket(tracker.Destination(tracker.KIND_GITHUB, "acme/widget", (), "t", ""),
+                                 _refusal())
+
+    # assert
+    assert not ticket.url
+    assert "the container route" in ticket.problem
+    assert "GH_TOKEN is what crosses" in ticket.problem
+    # gh's own words survive: the kernel adds where, it does not rewrite what
+    assert "populate the GH_TOKEN environment variable" in ticket.problem
+
+
+def test_on_the_venv_route_the_same_complaint_gains_nothing(monkeypatch, gh):
+    """The hint is about one route, so it must not appear on the other - a sentence about containers in a
+    venv run sends its reader somewhere there is nothing to find."""
+    # arrange
+    monkeypatch.delenv("DELIVERY_ROUTE", raising=False)
+    monkeypatch.setattr(run, "run", _Recorder(("issue list", run.Result(rc=4, out="",
+                                                                        err=_GH_SAYS_NO_CREDENTIAL))))
+
+    # act
+    ticket = tracker.open_ticket(tracker.Destination(tracker.KIND_GITHUB, "acme/widget", (), "t", ""),
+                                 _refusal())
+
+    # assert
+    assert "the container route" not in ticket.problem
+    assert "populate the GH_TOKEN environment variable" in ticket.problem
+
+
+def test_a_wrong_credential_is_not_told_to_export_the_variable_it_already_has(monkeypatch, gh):
+    """Both of gh's complaints mention `gh auth login`, and only one of them means "there is nothing here".
+    A 401 on the container route means GH_TOKEN crossed and was refused, so telling that reader to export
+    it is advice for a problem they do not have."""
+    # arrange
+    monkeypatch.setenv("DELIVERY_ROUTE", "inside")
+    monkeypatch.setattr(run, "run", _Recorder(("issue list", run.Result(rc=1, out="",
+                                                                        err=_GH_SAYS_BAD_CREDENTIAL))))
+
+    # act
+    ticket = tracker.open_ticket(tracker.Destination(tracker.KIND_GITHUB, "acme/widget", (), "t", ""),
+                                 _refusal())
+
+    # assert
+    assert "the container route" not in ticket.problem
+    assert "Bad credentials" in ticket.problem
