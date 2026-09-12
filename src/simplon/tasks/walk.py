@@ -75,7 +75,8 @@ from typing import ClassVar
 
 from simplon import context, log, steplog
 from simplon.orchestrator.manifest import CommandSpec, PlanNode
-from simplon.orchestrator.steps import Emit, Outcome, Pipeline, Step, StepState
+from simplon.orchestrator.steps import (Emit, Outcome, Pipeline, Step, StepState,
+                                        write_run_transcript)
 from simplon.run import run
 from simplon.tasks.acceptance import DEFAULT_SOURCE, Feature, Scenario
 from simplon.tasks.acceptance import Step as GherkinStep
@@ -363,6 +364,28 @@ def state_path() -> Path | None:
     return None if directory is None else directory / STATE_FILE
 
 
+def _object(value: object) -> dict[str, object]:
+    """`value` as a JSON object, or a `TypeError` naming what stood there instead.
+
+    IT REPLACED `dict(value)`, AND THE DIFFERENCE WAS MEASURED RATHER THAN REASONED ABOUT: a state file
+    whose `answers` was written as `[]` was ACCEPTED, because `dict([])` is `{}`. Benign in that one
+    spelling and not in the next - `[["a", {}]]` is a dict to the same call - so the reader was COERCING
+    where its whole job is to refuse anything it cannot fully check (si#177's rule). The coercion also
+    swallowed the shape into the message: the warning said "dictionary update sequence element #0 has
+    length 1" for a document whose real fault was that a list stood where an object belongs.
+    """
+    if not isinstance(value, dict):
+        raise TypeError(f"expected an object, found {type(value).__name__}")
+    return {str(name): item for name, item in value.items()}
+
+
+def _array(value: object) -> list[object]:
+    """`value` as a JSON array, or a `TypeError` naming what stood there instead. `_object`'s twin."""
+    if not isinstance(value, list):
+        raise TypeError(f"expected an array, found {type(value).__name__}")
+    return list(value)
+
+
 def load_state(path: Path) -> State | None:
     """The state a previous sitting left, or None when there is none to be had - with a WARNING for every
     way that second answer can arise other than "there is no file".
@@ -392,11 +415,13 @@ def load_state(path: Path) -> State | None:
                  f"{STATE_FORMAT}), so this walk starts from the beginning")
         return None
     try:
-        key = RunKey(**{name: str(document["key"][name]) for name in RunKey.LABELS})
-        sittings = [{str(k): str(v) for k, v in dict(entry).items()} for entry in document["sittings"]]
-        answers = {str(address): {str(index): {str(k): str(v) for k, v in dict(answer).items()}
-                                  for index, answer in dict(steps).items()}
-                   for address, steps in dict(document["answers"]).items()}
+        stated = _object(document["key"])
+        key = RunKey(**{name: str(stated[name]) for name in RunKey.LABELS})
+        sittings = [{name: str(item) for name, item in _object(entry).items()}
+                    for entry in _array(document["sittings"])]
+        answers = {address: {index: {name: str(item) for name, item in _object(answer).items()}
+                             for index, answer in _object(steps).items()}
+                   for address, steps in _object(document["answers"]).items()}
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
         log.warn(f"{path} is a walk state this simplon cannot fully check ({exc!r}), so this walk starts "
                  f"from the beginning rather than trusting half of it")
@@ -744,5 +769,4 @@ def write_record(pipeline: Pipeline, started: datetime, extra: Sequence[str]) ->
     last sitting's end time and the answers it produced are part of it, and a header written while the
     person was still answering would say `in progress` on the run it is the record of.
     """
-    from simplon.orchestrator.steps import write_run_transcript
     return write_run_transcript(pipeline, started, extra=extra)

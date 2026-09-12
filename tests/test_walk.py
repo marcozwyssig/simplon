@@ -328,6 +328,12 @@ def test_a_state_that_is_not_there_is_not_a_warning(product, capsys):
     ('{"format": 99, "key": {}, "sittings": [], "answers": {}}', "a format from the future"),
     ('{"format": 1, "sittings": [], "answers": {}}', "a key that is not there"),
     ('{"format": 1, "key": {"product": "demo"}, "sittings": [], "answers": {}}', "half a key"),
+    # FOUND BY DRIVING IT, and it was accepted before: `dict([])` is `{}`, so a document whose `answers`
+    # was a LIST read as a state with no answers - and `[["a", {}]]` would have read as a real one.
+    ('{"format": 1, "key": {"product": "d", "version": "v", "revision": "r", "source": "s", '
+     '"selection": "a", "scenarios": "x"}, "sittings": [], "answers": []}', "a list where an object goes"),
+    ('{"format": 1, "key": {"product": "d", "version": "v", "revision": "r", "source": "s", '
+     '"selection": "a", "scenarios": "x"}, "sittings": "one", "answers": {}}', "sittings that is a string"),
 ])
 def test_an_unusable_state_claims_nothing_and_says_so(product, capsys, payload, why):
     """UNUSABLE IS NOT THE SAME AS MOVED. A state the kernel cannot fully check means it does not know
