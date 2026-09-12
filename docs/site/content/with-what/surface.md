@@ -65,6 +65,20 @@ and the object version those bytes came from, the request carries `If-Range`, an
 `206` confirming the exact offset asked for truncates the partial file and downloads the whole object
 again. A server with no range support is therefore a fresh download, never an append.
 
+It also owns the pair that says how big something is, and the pair is two functions on purpose:
+
+```python
+fetch.human_bytes(450_000_000)         # '450.0 MB'  decimal, what a Content-Length announces
+fetch.human_bytes_binary(450_000_000)  # '429.2 MiB' 1024-based, what a file manager reports
+```
+
+`human_bytes(n, binary=True)` would have been one function, and a flag is read once at the call site and
+never again by whoever reads the log. The units differ too, and that is the part worth knowing before
+you print either one: si#192 arrived from a product that caps a channel at 450'000'000 bytes because the
+channel rejects at 500 MB decimal, and whose own 1024-based helper spelled that `429.2 MB` - comfortably
+under a cap it was in fact sitting on. That cost it a publish. Below 1000 the two produce the same
+string, because there is no ambiguity there to resolve.
+
 ### And `simplon.checksum`, which is the same argument at a different seam
 
 si#177 added it for the same reason si#142 added `fetch`: the kernel had no way to hash a file, so the
