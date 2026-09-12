@@ -70,10 +70,20 @@ sidecar that cannot be WRITTEN (read-only media directory, full disk) is not an 
 asked for a digest, and it gets one.
 
 WHAT IS DELIBERATELY NOT HERE. No algorithm choice - one function, sha256, because a second algorithm has
-no caller and `hashlib` is one line away for anybody who needs one. No retry around the read: the ported
-version had one because a Windows sync client can hold a file open, and that is a measurement from
-another operating system that this repository has not taken. And no dependency; si#142 records why the
-kernel adds none.
+no caller and `hashlib` is one line away for anybody who needs one. And no dependency; si#142 records
+why the kernel adds none.
+
+STILL NO RETRY, AND IT IS NOW A POSITION RATHER THAN A GAP (si#193). The ported version retried on a
+schedule because a Windows sync client can hold a file open. That schedule has no measurement under it
+and is not adopted. What the read DOES do now is say what it met: it runs inside
+`filelock.explained(path)`, so a Windows hold leaves as a `filelock.FileLockedError` naming the likely
+holder, the directory to exclude and the fact that no retry is coming, rather than as an `OSError` whose
+text is a number and a sentence about "a portion of it". The whole argument lives in
+`simplon/filelock.py`.
+
+The two sidecar paths are deliberately NOT wrapped. `_read` and `_write` already swallow every `OSError`
+and answer "recompute" or "no cache", which is the right answer for a held sidecar too: a cache that
+cannot be reached is not a checksum that failed.
 """
 from __future__ import annotations
 
@@ -84,6 +94,8 @@ import os
 import re
 import time
 from pathlib import Path
+
+from simplon import filelock
 
 #: How far the sidecar's `looked_at_ns` has to sit AFTER the mtime it records before the pair is
 #: trusted (rule 3 in the head). One second, because that is the coarsest timestamp granularity a tool
@@ -149,20 +161,21 @@ def sha256_of(path: Path, *, cache: Path | None = None) -> str:
     that is not there has no answer, and returning one would be the "cannot tell nothing-to-do from
     failed" defect this repository hunts.
     """
-    if cache is None:
-        return _digest(path)
+    with filelock.explained(path):
+        if cache is None:
+            return _digest(path)
 
-    sidecar = _sidecar(cache, path)
-    looked_at = _now_ns()
-    stat = path.stat()
+        sidecar = _sidecar(cache, path)
+        looked_at = _now_ns()
+        stat = path.stat()
 
-    cached = _read(sidecar, path, stat)
-    if cached is not None:
-        return cached
+        cached = _read(sidecar, path, stat)
+        if cached is not None:
+            return cached
 
-    digest = _digest(path)
-    _write(sidecar, path, stat, digest, looked_at)
-    return digest
+        digest = _digest(path)
+        _write(sidecar, path, stat, digest, looked_at)
+        return digest
 
 
 def _digest(path: Path) -> str:
