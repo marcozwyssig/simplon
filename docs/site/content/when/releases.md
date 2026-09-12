@@ -97,6 +97,15 @@ service name resolved through the host's upstream resolver to an address on the 
 answered, and the scenario reported a defect in a product it had never reached. The full measurement is
 in the pull request for si#196; the plan si#197 becomes is written against it.
 
+### The plan for the open tickets, as a document (si#207)
+
+A merge that ships no code and is named here because the notes name every ticket merged into the range,
+not every ticket that changed behaviour.
+`docs/superpowers/plans/2026-09-12-the-open-tickets.md` orders the eleven open tickets by which files two
+branches would both rewrite rather than by subject, records the decisions already taken for the acceptance
+cluster, and states the rule that only one lane at a time may declare a catalogue coordinate - because
+that turns nine counted guards red at once. Nothing to do.
+
 ## 0.12.0
 
 **The site shows before it argues.** Every page on this site opened with the reasoning for the thing
