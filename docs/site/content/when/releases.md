@@ -631,6 +631,35 @@ closed as "not planned" with a comment saying it was this proof; it is still rea
 **Nothing to do.** A product that declares no `tracker:` section is unaffected, and one that does now
 files from either route.
 
+### Which runner runs, and who chose it (si#223)
+
+A pipeline is either drawn in the Textual runner or walked headless, and until now that choice was made
+by two accidents and announced by nobody. `--no-tui` is the first way to ask for headless ON PURPOSE:
+`./myctl.sh --no-tui build all` sets `SIMPLON_NO_TUI=1`, which is what a workflow can export directly and
+what actually travels, because every planned step is a `./myctl.sh <leaf>` subprocess that no flag on the
+parent process reaches. Redirection still works exactly as before; it is no longer the only lever.
+
+**The ticket asked for a `kind:` in the manifest and it was declined, which is the larger half of this
+entry.** The proposal was to declare each task a RunTask or a StatusTask - one that acts, one that prints
+- and a consumer really does make that distinction by hand, in a docstring, for fourteen of its sixteen
+commands. What the measurement found is that the distinction is decided by a branch INSIDE a body: one
+task is placed twice, once with `check: false` and once with `check: true`, and the body reports or acts
+on that pin. A `kind:` beside it could never be a second source anything could CHECK - only one that can
+drift, with `kind: status` and `check: false` declaring a command that reports and building one that
+acts. So `steps.dispatch` is the declaration instead: a command that reaches it renders, and one that
+never reaches it cannot render a pipeline it never built. The cost is stated rather than hidden - nothing
+can now say BEFORE a run which commands render, so no help listing or generated document can carry it.
+
+**A broken Textual install was indistinguishable from a CI run.** The construction of the app sat behind
+`except Exception`, so a half-installed Textual, an incompatible version and a fault in the app itself all
+arrived where a deliberate redirection arrives: a clean-looking headless run, exit code and all. That is
+this repository's recurring defect - an outcome that cannot tell "chosen" from "failed" - sitting in the
+mechanism that chooses. Only `ImportError` falls back now, because a kernel without Textual installed is
+a configuration that is supported on purpose; everything else is a break and reads as one.
+
+**Nothing to do**, unless a product was relying on a broken Textual quietly becoming a headless run - in
+which case it now says so, and `SIMPLON_NO_TUI=1` is the way to ask for what it was getting by accident.
+
 ## 0.12.0
 
 **The site shows before it argues.** Every page on this site opened with the reasoning for the thing

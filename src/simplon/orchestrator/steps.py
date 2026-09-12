@@ -1637,6 +1637,35 @@ MAX_PARALLEL_ENV = "SIMPLON_MAX_PARALLEL"
 DEFAULT_MAX_PARALLEL = 4
 
 
+#: HEADLESS BECAUSE SOMEBODY SAID SO, not because a pipe happened to be there (si#223 point 3).
+#: Until this existed the only way to get the headless runner was to not be a TTY, which is a side effect
+#: rather than a choice - and a side effect cannot be told apart from an accident afterwards.
+#:
+#: A VARIABLE AND NOT ONLY THE FLAG, and this is the half that is load-bearing. Every planned step is a
+#: `./<product>.sh <leaf>` SUBPROCESS (`simplon.orchestrator.product.run_command`), so a flag parsed by the
+#: parent process reaches exactly none of the runs that would draw a UI. `simplon.cli.consume_no_tui` takes
+#: the flag off the argv and sets this; the variable is what actually travels.
+NO_TUI_ENV = "SIMPLON_NO_TUI"
+
+
+def tui_disabled() -> bool:
+    """Whether this run was ASKED to stay headless.
+
+    A value that is not one of the two it understands WARNS and leaves the runner exactly where it was,
+    which is `max_parallel`'s rule applied to a boolean and for its reason: an operator who exported
+    `SIMPLON_NO_TUI=true` asked for something, and reading that silently as "off" is this repository's
+    recurring defect wearing a word instead of a number. Guessing the other way is no better - it would
+    turn a typo into a UI that never appears - so the run is unchanged and the operator is told."""
+    raw = os.environ.get(NO_TUI_ENV, "").strip()
+    if raw in ("", "0"):
+        return False
+    if raw == "1":
+        return True
+    log.warn(f"{NO_TUI_ENV}={raw!r} is not 0 or 1; the runner is unchanged - "
+             f"export {NO_TUI_ENV}=1 to ask for the headless runner")
+    return False
+
+
 def max_parallel() -> int:
     """How many steps may RUN at once, from the environment or the default above.
 
@@ -2232,7 +2261,20 @@ def dispatch(pipeline: Pipeline) -> int:
     """Run a pipeline in the Textual TUI when it is importable, else headless - the one tui-or-headless
     dispatcher shared by every command that renders a Pipeline (build, up, doctor, bringup). Named
     `dispatch` (not `run`) to avoid colliding with the subprocess helpers this module imports. Kept in
-    the lowest layer so callers depend downward on it, not on each other."""
+    the lowest layer so callers depend downward on it, not on each other.
+
+    THIS IS THE DECLARATION (si#223). A command that reaches this function renders; one that never reaches
+    it is a status command and cannot render a pipeline it never built. The ticket proposed a `kind:` in
+    the manifest instead, and it was declined for a reason worth keeping next to the door: the kind is
+    decided by a branch INSIDE a body - a consumer's `publish(..., check=False)` reports or acts on that
+    pin - so a declaration beside it could never be a second source that is CHECKABLE, only one that can
+    drift. There is nothing to declare here that the seam does not already know.
+
+    An ASKED-FOR headless run (`tui_disabled`) is answered BEFORE the TUI is reached, and not as an
+    optimisation: the machine whose Textual is broken is exactly the one where the lever has to work, and
+    an import that came first would be the one thing it could not rescue."""
+    if tui_disabled():
+        return run_headless(pipeline)
     try:
         from simplon.orchestrator.tui import run_pipeline
         return run_pipeline(pipeline)

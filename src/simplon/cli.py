@@ -33,6 +33,7 @@ from simplon import clitaxonomy, log, signatures
 from simplon.context import ENVIRONMENT_ENV, ProductContext, launcher
 from simplon.orchestrator import manifest
 from simplon.orchestrator.product import StepFactoryContext, run_command
+from simplon.orchestrator.steps import NO_TUI_ENV
 from simplon.taskgen import _docstring
 
 # The passthrough context settings: a passthrough command forwards unrecognised trailing args to its
@@ -540,6 +541,42 @@ def _skipped_groups(mf: manifest.Manifest, skip: frozenset[tuple[str, str]]) -> 
     return frozenset(named)
 
 
+#: What a person types to ask for the headless runner; `simplon.orchestrator.steps.NO_TUI_ENV` is what
+#: actually travels (si#223 point 3).
+NO_TUI_FLAG = "--no-tui"
+
+
+def consume_no_tui(argv: list[str]) -> bool:
+    """Take `--no-tui` off the argv IN PLACE and say whether it was there.
+
+    CONSUMED HERE RATHER THAN REGISTERED ON A ROOT CALLBACK, deliberately. The root app belongs to the
+    PRODUCT - `assemble` is handed one and registers no callback on it - so declaring a global option the
+    Typer way would mean writing `app.callback(...)`, which silently REPLACES a callback a product wrote
+    for itself. A flag that costs a product its own root callback on a kernel upgrade is not worth its
+    discoverability, so the flag is stripped before Click ever sees the line and documented where
+    `SIMPLON_MAX_PARALLEL` is documented.
+
+    THE LEADING OPTION RUN AND NOTHING ELSE. A `passthrough_args` command forwards its unrecognised
+    trailing args to an underlying tool, so `<product> test unit --no-tui` is pytest's token and not this
+    kernel's - taking it would silently change what somebody's test runner was asked to do. Scanning only
+    the options BEFORE the first ordinary token also has to happen before the env-first dispatch pops its
+    own leading token, which is why this runs first in `main`: `<product> --no-tui dev build` must still
+    leave `dev` where that code looks for it.
+
+    Never UNSETS: the flag can only add to what the environment already said, so the two cannot contradict
+    each other and there is no precedence rule to remember.
+    """
+    asked = False
+    index = 1
+    while index < len(argv) and argv[index].startswith("-"):
+        if argv[index] == NO_TUI_FLAG:
+            del argv[index]
+            asked = True
+            continue
+        index += 1
+    return asked
+
+
 def main(*, app: typer.Typer, context: ProductContext,
          environments: EnvironmentProvider, aliases: Mapping[str, str]) -> None:
     """Env-first dispatch for an assembled product app. Consumes a leading `dev|test|uat|prod` env token,
@@ -551,6 +588,12 @@ def main(*, app: typer.Typer, context: ProductContext,
     The engine hardcodes no product name, no env list and no alias table; that is why a second product runs
     the same dispatcher unchanged.
     """
+    # BEFORE the env token is popped, because `<product> --no-tui dev build` has to leave `dev` where the
+    # selection below looks for it. Setting the VARIABLE rather than passing a flag down is what makes it
+    # reach the `./<product>.sh <leaf>` subprocesses a plan is made of (si#223).
+    if consume_no_tui(sys.argv):
+        os.environ[NO_TUI_ENV] = "1"
+
     taxonomy = context.manifest().taxonomy()
 
     # Environment-first selection (#15): a leading `dev|test|uat|prod` token picks the target
