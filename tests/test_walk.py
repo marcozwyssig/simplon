@@ -348,8 +348,8 @@ def test_the_state_lives_beside_the_run_transcript(product):
 def test_a_state_written_is_a_state_read_back(product):
     # arrange
     state = walk_mod.State(key=_key(product), sittings=[{"started": "a", "ended": "b", "by": "c"}])
-    state.record("acceptance/one.feature:x", 0, True, datetime(2026, 9, 12, 10, 0, 0))
-    state.record("acceptance/one.feature:x", 1, False, datetime(2026, 9, 12, 10, 1, 0))
+    state.record("acceptance/one.feature:x", 0, True, datetime(2026, 9, 12, 10, 0, 0), "Ada")
+    state.record("acceptance/one.feature:x", 1, False, datetime(2026, 9, 12, 10, 1, 0), "Ada")
     path = walk_mod.state_path()
 
     # act
@@ -360,7 +360,8 @@ def test_a_state_written_is_a_state_read_back(product):
     assert back is not None
     assert back.key == state.key
     assert back.sittings == state.sittings
-    assert back.answer_for("acceptance/one.feature:x", 0) == {"verdict": "ok", "at": "2026-09-12 10:00:00"}
+    assert back.answer_for("acceptance/one.feature:x", 0) == {
+        "verdict": "ok", "at": "2026-09-12 10:00:00", "by": "Ada"}
     assert back.answer_for("acceptance/one.feature:x", 1)["verdict"] == "failed"
 
 
@@ -532,7 +533,7 @@ def test_a_step_answered_in_an_earlier_sitting_says_so_on_its_own_line(product):
     # arrange
     state = walk_mod.State(key=_key(product))
     state.record("acceptance/one.feature:The gate runs everything", 1, False,
-                 datetime(2026, 9, 12, 10, 30, 0))
+                 datetime(2026, 9, 12, 10, 30, 0), "Ada")
 
     # act
     pipeline = _plan(product, state)
@@ -548,9 +549,9 @@ def test_a_replayed_step_takes_its_verdict_from_the_record_and_asks_nobody(produ
     # arrange
     state = walk_mod.State(key=_key(product))
     state.record("acceptance/one.feature:The gate runs everything", 0, True,
-                 datetime(2026, 9, 12, 10, 0, 0))
+                 datetime(2026, 9, 12, 10, 0, 0), "Ada")
     state.record("acceptance/one.feature:The gate runs everything", 1, False,
-                 datetime(2026, 9, 12, 10, 1, 0))
+                 datetime(2026, 9, 12, 10, 1, 0), "Ada")
     pipeline = _plan(product, state)
 
     # act: no Prompt is ever answered, so a body that asked would block here
@@ -705,7 +706,7 @@ def test_a_pipeline_nobody_answered_is_not_green(product):
 def test_the_state_document_is_json_a_person_can_read(product):
     # arrange
     state = walk_mod.State(key=_key(product), sittings=[{"started": "s", "ended": "e", "by": "x"}])
-    state.record("a:b", 0, True, datetime(2026, 9, 12, 10, 0, 0))
+    state.record("a:b", 0, True, datetime(2026, 9, 12, 10, 0, 0), "Ada")
 
     # act
     walk_mod.save_state(walk_mod.state_path(), state)
@@ -714,7 +715,8 @@ def test_the_state_document_is_json_a_person_can_read(product):
     # assert
     assert document["format"] == walk_mod.STATE_FORMAT
     assert document["key"]["selection"] == "all scenarios"
-    assert document["answers"]["a:b"]["0"] == {"verdict": "ok", "at": "2026-09-12 10:00:00"}
+    assert document["answers"]["a:b"]["0"] == {"verdict": "ok", "at": "2026-09-12 10:00:00",
+                                              "by": "Ada"}
 
 
 # --- a refusal becomes a ticket (si#206) ----------------------------------------------------------------
@@ -727,7 +729,7 @@ SECOND = "acceptance/two.feature:The reference names every command"
 def _refused_state(product, *, address: str = ADDRESS, index: int = 2) -> walk_mod.State:
     """A state in which one step of one scenario was refused."""
     state = walk_mod.State(key=_key(product), sittings=[{"started": "s", "ended": "e", "by": "Ada"}])
-    state.record(address, index, False, datetime(2026, 9, 12, 10, 0, 0))
+    state.record(address, index, False, datetime(2026, 9, 12, 10, 0, 0), "Ada")
     return state
 
 
@@ -772,7 +774,7 @@ def test_a_refusal_from_an_earlier_sitting_is_still_found_so_its_ticket_can_be_o
 def test_an_accepted_step_is_not_a_refusal(product):
     # arrange
     state = walk_mod.State(key=_key(product))
-    state.record(ADDRESS, 0, True, datetime(2026, 9, 12, 10, 0, 0))
+    state.record(ADDRESS, 0, True, datetime(2026, 9, 12, 10, 0, 0), "Ada")
 
     # act / assert
     assert walk_mod.refused(_taken(product), state) == []
@@ -814,7 +816,7 @@ def test_somebody_who_says_nothing_is_not_asked_again_on_the_next_sitting(produc
 def test_an_interrupted_reason_prompt_keeps_what_was_typed_and_says_so(product, capsys):
     # arrange: two refusals, and the person walks away after the first
     state = _refused_state(product)
-    state.record(SECOND, 0, False, datetime(2026, 9, 12, 10, 5, 0))
+    state.record(SECOND, 0, False, datetime(2026, 9, 12, 10, 5, 0), "Ada")
     pending = walk_mod.refused(_taken(product), state)
     answers = iter(["the third row was blank"])
 
@@ -845,7 +847,7 @@ def test_a_ticket_already_in_the_state_is_not_looked_up_again(product, monkeypat
     monkeypatch.setattr(tracker, "open_ticket", lambda *a: pytest.fail("the tracker was reached"))
 
     # act
-    filed = walk_mod.file_tickets(walk_mod.refused(_taken(product), state), key, state, "Ada")
+    filed = walk_mod.file_tickets(walk_mod.refused(_taken(product), state), key, state)
 
     # assert
     assert [(one.url, one.existed) for one in filed] == [("https://x/1", True)]
@@ -863,7 +865,7 @@ def test_a_recorded_ticket_for_another_version_does_not_answer_for_this_one(prod
                         lambda destination, refusal: tracker.Ticket(refusal.address, "i", "https://x/2"))
 
     # act
-    filed = walk_mod.file_tickets(walk_mod.refused(_taken(product), state), _key(product), state, "Ada")
+    filed = walk_mod.file_tickets(walk_mod.refused(_taken(product), state), _key(product), state)
 
     # assert
     assert [(one.url, one.existed) for one in filed] == [("https://x/2", False)]
@@ -878,7 +880,7 @@ def test_what_the_tracker_opened_is_written_into_the_state(product, monkeypatch)
                         lambda destination, refusal: tracker.Ticket(refusal.address, "i", "https://x/3"))
 
     # act
-    walk_mod.file_tickets(walk_mod.refused(_taken(product), state), key, state, "Ada")
+    walk_mod.file_tickets(walk_mod.refused(_taken(product), state), key, state)
 
     # assert
     assert state.filed(ADDRESS)["url"] == "https://x/3"
@@ -896,7 +898,7 @@ def test_the_evidence_the_walk_hands_the_tracker_is_the_whole_of_it(product, mon
                         or tracker.Ticket(refusal.address, "i", "https://x/4"))
 
     # act
-    walk_mod.file_tickets(walk_mod.refused(_taken(product), state), _key(product), state, "Ada")
+    walk_mod.file_tickets(walk_mod.refused(_taken(product), state), _key(product), state)
 
     # assert
     assert sent[0] == tracker.Refusal(
@@ -912,7 +914,7 @@ def test_a_product_with_no_tracker_section_still_records_the_refusal_and_says_no
     state = _refused_state(product)
 
     # act
-    filed = walk_mod.file_tickets(walk_mod.refused(_taken(product), state), _key(product), state, "Ada")
+    filed = walk_mod.file_tickets(walk_mod.refused(_taken(product), state), _key(product), state)
 
     # assert
     assert not filed[0].url and "tracker" in filed[0].problem
@@ -1006,3 +1008,77 @@ def test_a_refusal_somebody_already_explained_is_not_asked_about_again(product):
 
     # act / assert
     assert walk_mod.unexplained(walk_mod.refused(_taken(product), state), _key(product), state) == []
+
+
+def test_a_refusal_nobody_was_asked_about_is_held_back_rather_than_filed_without_a_reason(product):
+    """FOUND IN REVIEW. `ask_reasons` returns early when the person walks away, so a refusal can still be
+    unasked afterwards - and a ticket opened for it reads "no reason was given", which cannot be told
+    from somebody who WAS asked and declined. `unexplained` would then treat it as filed for ever, so
+    their words would be lost rather than collected on the next sitting."""
+    # arrange: two refusals, one explained and one nobody reached
+    state = _refused_state(product)
+    state.record(SECOND, 0, False, datetime(2026, 9, 12, 10, 5, 0), "Ada")
+    state.explain(ADDRESS, 2, "it showed two rows")
+    pending = walk_mod.refused(_taken(product), state)
+
+    # act
+    ready, owed = walk_mod.ready_to_file(pending, _key(product), state)
+
+    # assert
+    assert [one.scenario.address for one in ready] == [ADDRESS]
+    assert [one.scenario.address for one in owed] == [SECOND]
+
+
+def test_a_refusal_that_already_carries_a_ticket_is_still_reported_rather_than_held_back(product):
+    """It is not owed a reason - its words are in the ticket - so it belongs in the ready half, or the
+    record would stop saying that it is already open."""
+    # arrange
+    state = _refused_state(product)
+    key = _key(product)
+    state.file(ADDRESS, tracker.identity(key.product, key.version, ADDRESS), "https://x/1",
+               datetime(2026, 9, 12, 10, 0, 0))
+
+    # act
+    ready, owed = walk_mod.ready_to_file(walk_mod.refused(_taken(product), state), key, state)
+
+    # assert
+    assert [one.scenario.address for one in ready] == [ADDRESS] and owed == []
+
+
+def test_the_ticket_names_who_refused_the_step_and_not_who_is_driving_this_sitting(product, monkeypatch):
+    """FOUND IN REVIEW, and it is wrong exactly where the retry path is right: `refused` reads the whole
+    state, so Ada refuses on Monday, the tracker is unreachable, and Bob resumes on Wednesday from his
+    own machine. With the driver taken from the current sitting, Bob's ticket said Bob."""
+    # arrange
+    _manifest(product, TRACKER)
+    state = walk_mod.State(key=_key(product),
+                           sittings=[{"started": "s", "ended": "e", "by": "Ada"},
+                                     {"started": "s", "ended": "", "by": "Bob"}])
+    state.record(ADDRESS, 2, False, datetime(2026, 9, 12, 10, 0, 0), "Ada")
+    state.explain(ADDRESS, 2, "it showed two rows")
+    sent: list[tracker.Refusal] = []
+    monkeypatch.setattr(tracker, "open_ticket",
+                        lambda destination, refusal: sent.append(refusal)
+                        or tracker.Ticket(refusal.address, "i", "https://x/6"))
+
+    # act
+    walk_mod.file_tickets(walk_mod.refused(_taken(product), state), _key(product), state)
+
+    # assert
+    assert sent[0].by == "Ada"
+
+
+def test_an_answer_with_no_author_is_a_state_this_version_cannot_fully_check(product, capsys):
+    # arrange: format 2 with an answer that names no `by`
+    path = walk_mod.state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "format": 2, "key": _key(product).as_dict(), "sittings": [], "reasons": {}, "tickets": {},
+        "answers": {"a:b": {"0": {"verdict": "ok", "at": "2026-09-12 10:00:00"}}}}), encoding="utf-8")
+
+    # act
+    back = walk_mod.load_state(path)
+
+    # assert: a ticket naming the wrong person is worse than a walk asked again
+    assert back is None
+    assert "walk state" in capsys.readouterr().out

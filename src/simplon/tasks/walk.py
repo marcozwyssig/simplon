@@ -409,9 +409,18 @@ class State:
     def file(self, address: str, ident: str, url: str, when: datetime) -> None:
         self.tickets[address] = {"identity": ident, "url": url, "at": f"{when:%Y-%m-%d %H:%M:%S}"}
 
-    def record(self, address: str, index: int, accepted: bool, when: datetime) -> None:
+    def record(self, address: str, index: int, accepted: bool, when: datetime, by: str) -> None:
+        """One person's verdict on one step, with WHO gave it.
+
+        `by` is on the ANSWER and not only on the sitting, which review found and which matters in
+        exactly the case si#206's retry path exists for. `refused` reads the whole state, so a refusal
+        recorded by Ada on Monday can be filed by Bob on Wednesday - and with the driver taken from the
+        current sitting, Bob's ticket said "refused on Monday by Bob". That is the "who" evidence being
+        wrong precisely where the feature is built to survive.
+        """
         self.answers.setdefault(address, {})[str(index)] = {
-            "verdict": ANSWER_OK if accepted else ANSWER_FAILED, "at": f"{when:%Y-%m-%d %H:%M:%S}"}
+            "verdict": ANSWER_OK if accepted else ANSWER_FAILED, "at": f"{when:%Y-%m-%d %H:%M:%S}",
+            "by": by}
 
     def answered(self) -> int:
         return sum(len(steps) for steps in self.answers.values())
@@ -462,6 +471,12 @@ def _answer(value: object) -> dict[str, str]:
     if answer.get("verdict") not in (ANSWER_OK, ANSWER_FAILED):
         raise ValueError(f"a recorded verdict must be {ANSWER_OK!r} or {ANSWER_FAILED!r}, "
                          f"found {answer.get('verdict')!r}")
+    # `by` is required rather than defaulted, si#177's rule again: an answer whose author is missing is
+    # an answer this version cannot fully check, and a ticket naming the wrong person is worse than a
+    # walk asked again. Format 2 is defined by si#206 as a whole and has never shipped without it.
+    for name in ("at", "by"):
+        if not answer.get(name):
+            raise ValueError(f"a recorded answer must carry `{name}`, and this one does not: {answer}")
     return answer
 
 
@@ -592,7 +607,7 @@ def _plan_spec(help_text: str, *, leaf: bool = False, stop: bool = False) -> Com
 
 
 def plan(taken: Sequence[tuple[Feature, tuple[Scenario, ...]]], state: State,
-         prompt: "Prompt") -> Pipeline:
+         prompt: "Prompt", by: str = "") -> Pipeline:
     """The walk as a `Pipeline` the ordinary runner drives: root -> feature -> scenario -> step.
 
     The SCENARIO node carries `stop_on_failure`, which is the mapping's load-bearing half (module head).
@@ -628,7 +643,7 @@ def plan(taken: Sequence[tuple[Feature, tuple[Scenario, ...]]], state: State,
                 leaves.append(PlanNode(name=identity, path=shown,
                                        spec=_plan_spec(help_text, leaf=True)))
                 steps.append(Step(label=shown, command=identity, help=help_text,
-                                  stream=_answering(scenario, index, step, state, prompt)))
+                                  stream=_answering(scenario, index, step, state, prompt, by)))
             scenario_nodes.append(PlanNode(
                 name=scenario.name, path=scenario.name,
                 spec=_plan_spec(f"{len(leaves)} step(s), walked by a person", stop=True),
@@ -657,7 +672,7 @@ def _replay_note(answer: dict[str, str]) -> str:
 
 
 def _answering(scenario: Scenario, index: int, step: GherkinStep, state: State,
-               prompt: "Prompt") -> Callable[[Emit], Outcome]:
+               prompt: "Prompt", by: str = "") -> Callable[[Emit], Outcome]:
     """One step's body: show the question, then take its verdict from the person - or from the record.
 
     A REPLAY GOES THROUGH THE SAME BODY, which is why a resumed walk has no second path anywhere. What
@@ -678,7 +693,7 @@ def _answering(scenario: Scenario, index: int, step: GherkinStep, state: State,
                            output="\n".join(lines))
         accepted = prompt.ask(f"{scenario.address} - {step.announced}")
         answered_at = datetime.now()
-        state.record(scenario.address, index, accepted, answered_at)
+        state.record(scenario.address, index, accepted, answered_at, by)
         lines.append(f"answered: {'accepted' if accepted else 'REFUSED'} at "
                      f"{answered_at:%Y-%m-%d %H:%M:%S}")
         emit(lines[-1])
@@ -805,6 +820,8 @@ class Refused:
     scenario: Scenario
     index: int
     at: str
+    #: Who refused it, off the ANSWER rather than off the current sitting - see `State.record`.
+    by: str
 
     @property
     def step(self) -> GherkinStep:
@@ -830,7 +847,7 @@ def refused(taken: Sequence[tuple[Feature, tuple[Scenario, ...]]], state: State)
                 answer = state.answer_for(scenario.address, index)
                 if answer.get("verdict") == ANSWER_FAILED:
                     found.append(Refused(feature=feature, scenario=scenario, index=index,
-                                         at=answer.get("at", "an unrecorded time")))
+                                         at=answer["at"], by=answer["by"]))
     return found
 
 
@@ -854,6 +871,22 @@ def unexplained(pending: Sequence[Refused], key: RunKey, state: State) -> list[R
             if state.filed(one.scenario.address).get("identity")
             != tracker.identity(key.product, key.version, one.scenario.address)
             and state.reason_for(one.scenario.address, one.index) is None]
+
+
+def ready_to_file(pending: Sequence[Refused], key: RunKey,
+                  state: State) -> tuple[list[Refused], list[Refused]]:
+    """Split the refusals into the ones that may be filed now and the ones still owed a person's words.
+
+    ITS OWN FUNCTION SO THE RULE CAN BE SEEN RED. Review found the first version filing everything:
+    `ask_reasons` returns early when the person walks away from the prompt, so a second refusal can still
+    be unasked afterwards, and a ticket opened for it reads "no reason was given" - indistinguishable
+    from somebody who WAS asked and declined. `unexplained` would then treat it as filed for ever, so
+    their words would be lost rather than collected on the next sitting. As a comprehension inside
+    `walk` the rule could only have been checked by driving a terminal.
+    """
+    owed = unexplained(pending, key, state)
+    held = {(one.scenario.address, one.index) for one in owed}
+    return [one for one in pending if (one.scenario.address, one.index) not in held], owed
 
 
 def ask_reasons(pending: Sequence[Refused], state: State,
@@ -904,19 +937,21 @@ def ask_reasons(pending: Sequence[Refused], state: State,
         state.explain(refusal.scenario.address, refusal.index, said)
 
 
-def _refusal_for(refusal: Refused, key: RunKey, state: State, by: str) -> tracker.Refusal:
-    """One `Refused` as the value the tracker files, with the run key's provenance folded in."""
+def _refusal_for(refusal: Refused, key: RunKey, state: State) -> tracker.Refusal:
+    """One `Refused` as the value the tracker files, with the run key's provenance folded in.
+
+    `by` is the refusal's OWN, not the sitting's - see `State.record` for the case that separates them.
+    """
     said = state.reason_for(refusal.scenario.address, refusal.index)
     return tracker.Refusal(
         address=refusal.scenario.address, feature=refusal.feature.name,
         scenario=refusal.scenario.name, step=refusal.step.announced, step_number=refusal.index + 1,
-        step_total=len(refusal.scenario.steps), said=said or "", at=refusal.at, by=by,
+        step_total=len(refusal.scenario.steps), said=said or "", at=refusal.at, by=refusal.by,
         product=key.product, version=key.version, revision=key.revision, source=key.source,
         selection=key.selection)
 
 
-def file_tickets(pending: Sequence[Refused], key: RunKey, state: State,
-                 by: str) -> list[tracker.Ticket]:
+def file_tickets(pending: Sequence[Refused], key: RunKey, state: State) -> list[tracker.Ticket]:
     """Turn every refusal into at most one ticket, and record in the state what came of each.
 
     THE STATE IS CONSULTED FIRST and the tracker second - the two levels `State.tickets` explains. A
@@ -944,7 +979,7 @@ def file_tickets(pending: Sequence[Refused], key: RunKey, state: State,
                 problem=f"{context.current().manifest_path.name} declares no `{tracker.SECTION}:` "
                         f"section, so there is nowhere to file it"))
             continue
-        ticket = tracker.open_ticket(destination, _refusal_for(refusal, key, state, by))
+        ticket = tracker.open_ticket(destination, _refusal_for(refusal, key, state))
         if ticket.url:
             state.file(address, ident, ticket.url, datetime.now())
         filed.append(ticket)
@@ -1043,7 +1078,7 @@ def walk(source: str = DEFAULT_SOURCE, tags: str = "", by: str = "", restart: bo
                            "by": by or who(ctx.root)})
 
     prompt = Prompt()
-    pipeline = plan(taken, state, prompt)
+    pipeline = plan(taken, state, prompt, state.sittings[-1]["by"])
     from simplon.orchestrator.tui import run_walk    # local: Textual is not a kernel-wide import
     rc = run_walk(pipeline, prompt)
     state.sittings[-1]["ended"] = f"{datetime.now():%Y-%m-%d %H:%M:%S}"
@@ -1061,9 +1096,14 @@ def walk(source: str = DEFAULT_SOURCE, tags: str = "", by: str = "", restart: bo
         ask_reasons(unexplained(pending, key, state), state)
         if path is not None:
             save_state(path, state)
-    filed = file_tickets(pending, key, state, state.sittings[-1]["by"])
+    # A REFUSAL NOBODY WAS ASKED ABOUT IS NOT FILED THIS SITTING - see `ready_to_file`.
+    ready, owed = ready_to_file(pending, key, state)
+    filed = file_tickets(ready, key, state)
     if pending and path is not None:
         save_state(path, state)
+    for one in owed:
+        log.warn(f"{one.scenario.address} was refused and nobody said why, so no ticket was opened for "
+                 f"it - the refusal is recorded and the next sitting asks again")
     write_record(pipeline, started, header(key, state, taken, left) + ticket_lines(filed))
     total = sum(len(scenario.steps) for _, scenarios in taken for scenario in scenarios)
     unreached = sum(1 for step in pipeline.steps if step.state is StepState.PENDING)

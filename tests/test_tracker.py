@@ -440,3 +440,106 @@ def test_a_title_that_is_not_a_format_string_at_all_is_its_own_sentence(monkeypa
 
     # assert
     assert not ticket.url and "not a format string" in ticket.problem
+
+
+@pytest.mark.parametrize("template, why", [
+    ("{0}", "IndexError - a positional field"),
+    ("{product.attr}", "AttributeError - an attribute of a field"),
+    ("{product[bad]}", "TypeError - an index into a string field"),
+    ("{", "ValueError - not a format string at all"),
+    ("{scenario:>{wide}}", "ValueError - a nested field width"),
+])
+def test_no_way_of_mis_writing_a_title_reaches_the_walk_as_an_exception(monkeypatch, gh, template, why):
+    """FOUND IN REVIEW, which measured all five out of the same one-line call. `str.format` is a small
+    language and a product's `title:` is an untrusted program in it; only the missing-FIELD case was
+    caught, so the other four escaped `open_ticket` into a walk whose answers were already on disk and
+    whose record had not been written."""
+    # arrange
+    monkeypatch.setattr(run, "run", _Recorder(("issue list", _ok("[]"))))
+    dest = tracker.Destination(tracker.KIND_GITHUB, "acme/widget", (), template, "")
+
+    # act
+    ticket = tracker.open_ticket(dest, _refusal())
+
+    # assert
+    assert not ticket.url and ticket.problem, why
+    assert "title" in ticket.problem
+
+
+def test_a_persons_own_words_cannot_claim_another_scenarios_ticket(monkeypatch, gh):
+    """FOUND IN REVIEW. The body embeds the person's free text and appends the marker LAST, so a refusal
+    whose words happen to carry `simplon-walk-id: <another digest>` made a substring check true for a
+    scenario this ticket is not about - and the next walk of THAT scenario would have found this one
+    "already open" and filed nothing. The marker's position is a property of `body_for`, so checking the
+    position closes it."""
+    # arrange: an issue whose body quotes a foreign marker and ends with its own
+    mine = tracker.identity("widget", "v1", "a.feature:Mine")
+    theirs = tracker.identity("widget", "v1", "b.feature:Theirs")
+    body = f"> I refused it, and the log said {tracker.marker_line(theirs)}\n\n{tracker.marker_line(mine)}"
+
+    # act / assert
+    assert tracker._declares(body, mine)
+    assert not tracker._declares(body, theirs)
+
+
+def test_a_tracker_that_never_answers_is_a_problem_and_not_a_walk_that_never_returns(monkeypatch, gh):
+    """"Nothing in here raises at the caller" is a promise about the PROCESS and not only about the exit
+    code: a `gh` blocked on a stalled connection is not refused, it is a walk that never ends, and the
+    record is written after this."""
+    # arrange
+    import subprocess
+
+    def _hang(argv, **kwargs):
+        raise subprocess.TimeoutExpired(argv, tracker.TIMEOUT)
+
+    monkeypatch.setattr(run, "run", _hang)
+
+    # act
+    ticket = tracker.open_ticket(tracker.Destination(tracker.KIND_GITHUB, "acme/widget", (), "t", ""),
+                                 _refusal())
+
+    # assert
+    assert not ticket.url and "did not answer" in ticket.problem
+
+
+def test_a_gh_that_vanished_between_the_lookup_and_the_call_is_a_problem_too(monkeypatch, gh):
+    # arrange: `shutil.which` said yes and the PATH changed under it
+    def _gone(argv, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", "gh")
+
+    monkeypatch.setattr(run, "run", _gone)
+
+    # act
+    ticket = tracker.open_ticket(tracker.Destination(tracker.KIND_GITHUB, "acme/widget", (), "t", ""),
+                                 _refusal())
+
+    # assert
+    assert not ticket.url and "gh" in ticket.problem
+
+
+def test_the_backend_is_reached_through_the_seam_and_not_by_name(monkeypatch, gh):
+    """FOUND IN REVIEW: `KINDS` was a tuple of one string and the comment above it claimed `open_ticket`
+    dispatched through it, which was false - a second tracker would have meant editing `open_ticket` too.
+    This is what makes the sentence true."""
+    # arrange: a kind whose two functions are this test's
+    monkeypatch.setitem(tracker.KINDS, "invented",
+                        (lambda destination, ident: ("", ""),
+                         lambda destination, title, body: ("https://invented/1", "")))
+
+    # act
+    ticket = tracker.open_ticket(tracker.Destination("invented", "acme/widget", (), "t", ""), _refusal())
+
+    # assert: no `gh` was reached at all
+    assert ticket.url == "https://invented/1" and not ticket.problem
+
+
+def test_declared_validates_against_the_seams_own_keys(monkeypatch, tmp_path, capsys):
+    # arrange
+    monkeypatch.setitem(tracker.KINDS, "invented",
+                        (lambda destination, ident: ("", ""),
+                         lambda destination, title, body: ("", "")))
+    _register(monkeypatch, tmp_path, {"tracker": {**SECTION, "kind": "invented"}})
+
+    # act / assert: a kind the mapping knows is accepted, so the validation reads the mapping and not a list
+    declared = tracker.declared()
+    assert declared is not None and declared.kind == "invented"

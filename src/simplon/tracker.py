@@ -62,6 +62,8 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from simplon import context, log, run
@@ -74,13 +76,15 @@ SECTION = "tracker"
 #: The one tracker this kernel implements, and the value `kind:` takes when a product leaves it out.
 KIND_GITHUB = "github"
 
-#: kind -> the pair of functions that reach it: (find an issue carrying this identity, open one).
-#: THE SEAM, named rather than built out. A second tracker is an entry here; nothing above it changes,
-#: because `open_ticket` already talks to this mapping and not to `gh`. It is a mapping of one on purpose:
-#: si#206 says to build the narrow version with the seam named if the general one is more than the ticket
-#: can carry, and a plugin protocol for a population of one is the abstraction this repository removes.
-#: The day a product declares `kind: gitlab`, the work is two functions and no redesign.
-KINDS = (KIND_GITHUB,)
+#: How long one `gh` call may take before it is a tracker that is down.
+#:
+#: A NUMBER RATHER THAN `None`, and it is this module's promise rather than tidiness. Everything here is
+#: reached AFTER a person has answered a walk, and the whole shape is that a tracker which cannot be
+#: reached costs a ticket and never an answer - but a `gh` blocked on a stalled connection is not
+#: refused, it is a walk that never returns, and the record is written after this. 60 s is far above the
+#: measured cost of both calls on this box (well under 2 s each, five driven walks on 2026-09-12) and far
+#: below a person's patience.
+TIMEOUT = 60.0
 
 #: The line the identity travels in, and the line the lookup verifies. Visible prose rather than an HTML
 #: comment, because a person reading the ticket is the other consumer of it: they should be able to see
@@ -161,7 +165,7 @@ def declared() -> Destination | None:
     kind = str(section.get("kind", "") or KIND_GITHUB).strip()
     if kind not in KINDS:
         log.error(f"{where}'s `{SECTION}: kind:` is '{kind}', which this simplon cannot reach. It "
-                  f"implements: {', '.join(KINDS)}")
+                  f"implements: {', '.join(sorted(KINDS))}")
         return None
 
     title = str(section.get("title", "") or "").strip()
@@ -263,11 +267,17 @@ def title_for(destination: Destination, refusal: Refusal) -> str:
     except KeyError as exc:
         raise KeyError(f"the `{SECTION}: title:` names {exc}, which is not a field of a refused step. "
                        f"It may name: {', '.join(TITLE_FIELDS)}") from exc
-    except (IndexError, ValueError) as exc:
-        # `{0}` is an IndexError and `{scenario:>{wide}}` a ValueError, and neither is a missing FIELD -
-        # so they get their own sentence rather than a list of names that would not have helped.
-        raise ValueError(f"the `{SECTION}: title:` is not a format string this can fill in ({exc}). It "
-                         f"may name: {', '.join(TITLE_FIELDS)}") from exc
+    except Exception as exc:      # noqa: BLE001 - see below; the caller turns this into a `problem`
+        # EVERY OTHER WAY A FORMAT STRING CAN BLOW UP, and the list is why it is caught by base class
+        # rather than enumerated. `str.format` is a small language and a product's `title:` is an
+        # untrusted program in it: review measured `{0}` -> IndexError, `{product.attr}` ->
+        # AttributeError, `{product[bad]}` -> TypeError, `{` -> ValueError, and `{scenario:>{wide}}` ->
+        # ValueError, all from the same one-line call and none of them a missing FIELD. Naming five
+        # classes here would be a list to keep correct against a language nobody here owns, and the sixth
+        # would escape into a walk that has already collected a person's answers.
+        raise ValueError(f"the `{SECTION}: title:` is not a format string this can fill in "
+                         f"({type(exc).__name__}: {exc}). It may name: "
+                         f"{', '.join(TITLE_FIELDS)}") from exc
 
 
 def body_for(destination: Destination, refusal: Refusal, ident: str) -> str:
@@ -328,6 +338,21 @@ def _where(destination: Destination) -> list[str]:
     return ["--repo", destination.repo] if destination.repo else []
 
 
+def _declares(body: str, ident: str) -> bool:
+    """Whether this issue body's own marker is `ident` - its LAST non-blank line, not a substring of it.
+
+    A SUBSTRING SEARCH WAS WRONG AND REVIEW FOUND IT. `body_for` embeds `refusal.said` - a person's free
+    text - and appends the marker last, so a refusal whose words happen to contain the line
+    `simplon-walk-id: <some other digest>` (pasted, quoted, or typed on purpose) made
+    `marker_line(other) in body` true for a scenario this ticket is not about. The next walk of THAT
+    scenario would have found this ticket "already open" and filed nothing: the fuzzy match this function
+    exists to prevent, entering through the free-text field instead of through GitHub's tokeniser. The
+    marker's position is a property of `body_for`, so checking the position costs nothing and closes it.
+    """
+    lines = [line for line in body.splitlines() if line.strip()]
+    return bool(lines) and lines[-1].strip() == marker_line(ident)
+
+
 def _matching(listing: str, ident: str) -> str:
     """The url of the issue in `listing` whose body really carries this identity, or "".
 
@@ -336,9 +361,26 @@ def _matching(listing: str, ident: str) -> str:
     alone would file a customer's refusal against somebody else's bug and report success.
     """
     for issue in json.loads(listing) or []:
-        if marker_line(ident) in str(issue.get("body", "")):
+        if _declares(str(issue.get("body", "")), ident):
             return str(issue.get("url", ""))
     return ""
+
+
+def _gh(argv: list[str], *, input_text: str | None = None) -> tuple[run.Result | None, str]:
+    """Run one `gh` call. `(result, "")` when it exited, `(None, problem)` when it could not be run.
+
+    ONE PLACE, because "nothing in here raises at the caller" is a promise about the process and not only
+    about the exit code. A `gh` that hangs on a stalled connection never returns at all, and a `gh` the
+    PATH lost between `shutil.which` and here raises `FileNotFoundError` - neither is an rc, and both
+    would reach a walk whose answers are on disk and whose record has not been written.
+    """
+    try:
+        return run.run(argv, timeout=TIMEOUT, input_text=input_text), ""
+    except subprocess.TimeoutExpired:
+        return None, (f"the tracker did not answer within {TIMEOUT:.0f}s, so this refusal was not filed "
+                      f"and the walk went on rather than waiting on it")
+    except OSError as exc:
+        return None, f"`gh` could not be run ({exc})"
 
 
 def _github_find(destination: Destination, ident: str) -> tuple[str, str]:
@@ -348,8 +390,10 @@ def _github_find(destination: Destination, ident: str) -> tuple[str, str]:
     would arrive with no memory of why the first was closed, which is the duplicate this exists to
     prevent wearing a different hat.
     """
-    found = run.run(["gh", "issue", "list", *_where(destination), "--state", "all", "--search",
-                     f"{ident} in:body", "--limit", "50", "--json", "number,url,body"])
+    found, problem = _gh(["gh", "issue", "list", *_where(destination), "--state", "all", "--search",
+                          f"{ident} in:body", "--limit", "50", "--json", "number,url,body"])
+    if found is None:
+        return "", f"the tracker could not be searched for an existing ticket ({problem})"
     if not found.ok:
         return "", f"the tracker could not be searched for an existing ticket ({_said(found)})"
     try:
@@ -370,8 +414,10 @@ def _github_create(destination: Destination, title: str, body: str) -> tuple[str
     shell's.
     """
     labels = [flag for label in destination.labels for flag in ("--label", label)]
-    made = run.run(["gh", "issue", "create", *_where(destination), "--title", title,
-                    "--body-file", "-", *labels], input_text=body)
+    made, problem = _gh(["gh", "issue", "create", *_where(destination), "--title", title,
+                         "--body-file", "-", *labels], input_text=body)
+    if made is None:
+        return "", f"the ticket could not be created ({problem})"
     if not made.ok:
         return "", f"the ticket could not be created ({_said(made)})"
     url = made.out.strip().splitlines()[-1].strip() if made.out.strip() else ""
@@ -399,11 +445,30 @@ def open_ticket(destination: Destination, refusal: Refusal) -> Ticket:
     except (KeyError, ValueError) as exc:
         return Ticket(refusal.address, ident, problem=str(exc.args[0]))
 
-    url, problem = _github_find(destination, ident)
+    find, create = KINDS[destination.kind]
+    url, problem = find(destination, ident)
     if problem:
         return Ticket(refusal.address, ident, problem=problem)
     if url:
         return Ticket(refusal.address, ident, url=url, existed=True)
 
-    url, problem = _github_create(destination, title, body_for(destination, refusal, ident))
+    url, problem = create(destination, title, body_for(destination, refusal, ident))
     return Ticket(refusal.address, ident, url=url, problem=problem)
+
+
+#: kind -> the pair of functions that reach it: (find an issue carrying this identity, open one).
+#:
+#: THE SEAM, and it is a real dispatch rather than a comment saying so. Review caught the first version
+#: overclaiming: it was a tuple of one string, `open_ticket` called `_github_find` and `_github_create`
+#: by name, and the comment said "a second tracker is an entry here; nothing above it changes" - which
+#: was false, because adding one would also have meant editing `open_ticket`. A dict of one costs four
+#: lines and makes the sentence true. It stays a dict of ONE deliberately: si#206 says to build the
+#: narrow version with the seam named where the general one is more than the ticket can carry, and a
+#: plugin protocol for a population of one is the abstraction this repository removes.
+#:
+#: Below the two functions and below `open_ticket`, because it names them; `declared()` reads only its
+#: keys and runs long after import.
+KINDS: dict[str, tuple[Callable[[Destination, str], tuple[str, str]],
+                       Callable[[Destination, str, str], tuple[str, str]]]] = {
+    KIND_GITHUB: (_github_find, _github_create),
+}
