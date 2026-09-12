@@ -57,6 +57,14 @@ against what was announced, because `HTTPResponse.read` on a truncated body retu
 nothing. And it reports differently depending on who is reading: one line repainted in a terminal, two
 lines and a rare heartbeat in a log, never a carriage return into CI.
 
+`resume=True` (si#176) is the one thing it does not do by default. With it, a transfer that dies keeps
+what arrived under `<dest>.part` and the next call continues from there, which is what a product
+fetching a five-gigabyte medium over a link that sometimes drops needs, and what the three small
+artefacts the kernel itself fetches do not. It resumes only what it can prove: a sidecar records the URL
+and the object version those bytes came from, the request carries `If-Range`, and anything that is not a
+`206` confirming the exact offset asked for truncates the partial file and downloads the whole object
+again. A server with no range support is therefore a fresh download, never an append.
+
 ### What `simplon/tasks/` is, stated carefully
 
 The obvious phrasing — *"a product may not import a task body"* — is **false**, and it is worth being
