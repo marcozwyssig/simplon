@@ -135,7 +135,7 @@ def test_declared_acceptsAnImplGateThatClaimsTheClear_becauseItNowActuallyClears
     # could write no loadable section at all (si#61). The branch honours it now - see
     # tests/test_suites_impl_only.py, which measures the clearing - so the declaration is no longer inert
     data = _data()
-    data["suites"]["gates"] = [{"name": "ui", "impl": "product.tooling:ui", "results": "clear"},
+    data["suites"]["gates"] = [{"name": "acceptance", "impl": "product.tooling:ui", "results": "clear"},
                                data["suites"]["gates"][1]]
 
     # act
@@ -149,7 +149,7 @@ def test_declared_acceptsAnImplGateThatClaimsTheClear_becauseItNowActuallyClears
 def test_declared_rejectsAnImplGateThatDeclaresPytestOnlyKeys():
     # arrange: the same reasoning for the other three keys the impl branch never reads
     data = _data()
-    data["suites"]["gates"].append({"name": "ui", "impl": "product.tooling:ui", "args": True,
+    data["suites"]["gates"].append({"name": "acceptance", "impl": "product.tooling:ui", "args": True,
                                     "preamble": "product.lab:ready"})
 
     # act / assert: both are named, so the author sees every offending key at once
@@ -1433,7 +1433,7 @@ def test_report_leavesTheArchiveAloneForARunOfGatesThatTookNothing(monkeypatch, 
     results = tmp_path / "test/reports/allure-results"
     results.mkdir(parents=True)
     allure.write_environment(str(results), {"verdict": "failed", "verdict.summary": "last run was red"})
-    run = RunVerdict((GateVerdict("ui", Verdict.PASSED, 0),))
+    run = RunVerdict((GateVerdict("acceptance", Verdict.PASSED, 0),))
 
     # act
     assert not run.owns_results
@@ -1733,13 +1733,13 @@ def test_gate_handsOnAnImplRunnersNegativeReturnValueWithoutCallingItASignal(mon
     # `simplon.waits.device_count` means by it in this repository - not a child killed by SIGHUP
     data = _data()
     data["suites"]["gates"] = [data["suites"]["gates"][0],
-                               {"name": "ui", "impl": "product.tooling:ui"}]
+                               {"name": "acceptance", "impl": "product.tooling:ui"}]
     _register(monkeypatch, tmp_path, data)
     monkeypatch.setattr(testrun, "resolve_ref", lambda ref, where: (lambda: -1))
     cfg = testrun.config()
 
     # act
-    rc = testrun.run_gate(cfg.gate("ui"), cfg, [], filtered=False)
+    rc = testrun.run_gate(cfg.gate("acceptance"), cfg, [], filtered=False)
 
     # assert: red, and not 129 - the translation belongs to a wait status and this is a return value
     assert rc == -1, f"a product runner's return value was translated as a signal status: {rc}"

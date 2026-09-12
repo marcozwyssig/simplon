@@ -228,7 +228,7 @@ def test_an_appending_impl_gate_clears_nothing(monkeypatch, tmp_path):
     results = _results_dir(tmp_path)
     results.mkdir(parents=True)
     (results / "EARLIER-GATE-of-this-run-result.json").write_text("{}", encoding="utf-8")
-    gate = testrun.Gate(name="ui", suite="", impl="orchestrator.journeys:run")
+    gate = testrun.Gate(name="acceptance", suite="", impl="orchestrator.journeys:run")
 
     # act
     assert not gate.clears
@@ -312,7 +312,7 @@ def test_a_run_of_only_impl_gates_does_not_claim_an_archive_it_never_filled(monk
     monkeypatch.setattr(testrun, "resolve_ref", lambda ref, where: (lambda: 0))
     results = _results_dir(tmp_path)
     results.mkdir(parents=True)
-    appending = testrun.Gate(name="ui", suite="", impl="orchestrator.journeys:run")
+    appending = testrun.Gate(name="acceptance", suite="", impl="orchestrator.journeys:run")
     gv = testrun.assess_gate(appending, _cfg(appending), [], filtered=False)
 
     # act

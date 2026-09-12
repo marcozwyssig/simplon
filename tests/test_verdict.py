@@ -231,8 +231,8 @@ def test_owns_results_asksTheGatesAndDoesNotInferOwnershipFromAVerdict():
     # `passed` says nothing about a results dir. The old rule - anything but NOT_RUN owned the dir - was
     # true of a gate the kernel runs and false of this one, and it was held out of reach by a load-time
     # refusal rather than by being right
-    took_nothing = GateVerdict("ui", Verdict.PASSED, 0)
-    took_the_dir = GateVerdict("ui", Verdict.PASSED, 0, owned_results=True)
+    took_nothing = GateVerdict("acceptance", Verdict.PASSED, 0)
+    took_the_dir = GateVerdict("acceptance", Verdict.PASSED, 0, owned_results=True)
 
     # act / assert: the verdict is identical in both and the ownership is not
     assert took_nothing.verdict is took_the_dir.verdict
@@ -244,7 +244,7 @@ def test_owns_results_asksTheGatesAndDoesNotInferOwnershipFromAVerdict():
     # result file either
     for outcome, rc in ((Verdict.FAILED, 1), (Verdict.SETUP_FAILED, 1), (Verdict.KILLED, -15)):
         stage = "provision" if outcome is Verdict.SETUP_FAILED else ""
-        assert not RunVerdict((GateVerdict("ui", outcome, rc, stage),)).owns_results
+        assert not RunVerdict((GateVerdict("acceptance", outcome, rc, stage),)).owns_results
 
 
 # --- an exploratory run's record says so (#30, review 1) --------------------------------------------------
@@ -409,7 +409,7 @@ def test_exit_code_ofAKilledGateIsThe128PlusNAShellWouldReport():
 def test_exit_code_leavesAProductRunnersNegativeReturnValueAlone():
     # arrange: `simplon.waits.device_count` answers -1 for "could not read" in this very repository, and a
     # product body may do the same. A gate whose runner is the product's own reports FAILED with that rc
-    gv = GateVerdict("ui", Verdict.FAILED, -1, detail="the product's own runner returned this rc")
+    gv = GateVerdict("acceptance", Verdict.FAILED, -1, detail="the product's own runner returned this rc")
 
     # act / assert: no signal is invented - it stays the number the body returned
     assert gv.exit_code == -1, (

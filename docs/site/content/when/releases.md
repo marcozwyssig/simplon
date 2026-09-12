@@ -23,6 +23,80 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.13.0
+
+**A word that was not a level, and three quotes nothing could check.** `with-what/test-levels.md`
+taught the test levels with an example whose third level was `ui`, sitting beside `unit` and `system`.
+UI is not a level; it is one kind of acceptance test, and the products spell it that way already.
+Renaming it was the easy half. The hard half was that three of the page's five occurrences were quoted
+REFUSALS, hand-typed, so a rename would have left three messages on the page that the code cannot
+produce.
+
+### The site is in one language (si#195)
+
+`with-what/rules.md` stated the missing-tool rule twice - a German aphorism with its English translation
+underneath. It was the only non-English prose on the site, established by sweeping every page for umlauts
+(zero hits) and for a list of German function words that cannot be English (one hit, on that line). The
+device was deliberate; on a site written in English it still cost a reader a sentence to skip before
+reaching the one they could read, so the translation became the quote.
+
+**Nothing to do.**
+
+### `ui` is a suite of the `acceptance` level, not a level beside it (si#196)
+
+The page's third level is `acceptance` now, and the pedagogy is untouched: it is still the level that
+shows how a non-pytest runner attaches, through `impl:` rather than `suite:`. What the page gained is a
+paragraph saying why the word matters - netctl, the consumer carrying the most levels of any, spells
+them `acceptance-ui` and `acceptance-dataplane` beside `unit-java`, `component-db`, `integration-java`,
+`boot-java` and `unit-typescript`, so a gate called `ui` puts a way of REACHING the product where the
+level goes.
+
+The three quoted refusals are DERIVED now rather than retyped, and that is the part that outlives this
+rename. `tests/test_test_levels_refusals.py` already did this for the page's `command:` gate messages
+(si#136, after two of them turned out to be unproducible as written); these three were about the
+`suites:` section itself and were out of its scope. They are produced by lifting the page's own example
+manifest out of the page - parsed from the yaml block under its own heading, not copied into the test -
+and driving it through `testrun.declared`, once unmutated to prove the printed block loads at all and
+then three times with one key changed. Each of the three was seen red against the old wording before it
+was seen green against the new. A fourth test asserts the unmutated block is one the kernel accepts, so
+the three refusals are about the mutation rather than about a defect the page shipped.
+
+The neighbouring fixtures moved with it. `tests/test_verdict.py`, `tests/test_suites_impl_only.py` and
+`tests/test_tasks_testrun.py` each used `ui` as a level name in a fixture; those are internal and the
+ticket left them optional, and they were renamed anyway - a fixture is what the next reader copies. The
+`product.tooling:ui` impl refs in the same files were left alone: they name a product's callable, not a
+level.
+
+### What a Gherkin acceptance suite already does, measured rather than designed (si#197)
+
+si#197 asks for acceptance scenarios that read as Gherkin and can be run automatically or by a person.
+Before designing anything, the automatic half was DRIVEN, because `test:gate` runs pytest and
+`pytest-bdd` is an ordinary pytest plugin. It works today, with no kernel change at all: a product that
+puts `pytest-bdd` in its suite's own `requirements.txt` and its `.feature` files beside that suite gets
+Gherkin execution through the gate it already declares, and the run reports `passed` / `failed (rc 1)`
+like any other level.
+
+One thing decides whether the archive is worth having, and it is a choice inside the product's
+requirements rather than anything the kernel can make. With `allure-pytest`, an Allure result carries the
+pytest function name (`test_the_gateway_refuses_a_page_nobody_published`), `steps: []`, and the scenario
+sentence only inside a `description` prefixed with an absolute path. With **`allure-pytest-bdd`**, the
+result's `name` is the scenario sentence verbatim, its `fullName` is `<feature file>:<scenario>`, every
+Given / When / Then is an Allure step carrying its own status, the failing step is named with its
+assertion, the `Feature:` line becomes a `feature` label and each Gherkin tag becomes a `tag` label. All
+of it survives into the rendered single-file archive.
+
+It was then driven a second time in a pinned container, because this platform's rule is that nothing
+depends on what is installed on the machine. A containerised acceptance level cannot be a `suite:` gate -
+that kind's runner is the kernel's own pytest in a host venv - so it is a `command:` gate naming a
+`toolchain:run` command, with `results_from:` harvesting what the container wrote, and that reaches the
+archive with the scenario and its steps intact. Three things came out of getting it to run:
+`toolchain:run` mounts the product ROOT at `workdir:`, so pointing `workdir:` at a subdirectory hides the
+tree rather than entering it; `network:` binds from a `with:` block although the body's own docstring says
+a manifest cannot supply it; and an acceptance container given no network did not fail to connect - the
+service name resolved through the host's upstream resolver to an address on the public internet, which
+answered, and the scenario reported a defect in a product it had never reached. The full measurement is
+in the pull request for si#196; the plan si#197 becomes is written against it.
+
 ## 0.12.0
 
 **The site shows before it argues.** Every page on this site opened with the reasoning for the thing
