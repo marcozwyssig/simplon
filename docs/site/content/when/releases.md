@@ -73,8 +73,19 @@ sentence only inside a `description` prefixed with an absolute path. With **`all
 result's `name` is the scenario sentence verbatim, its `fullName` is `<feature file>:<scenario>`, every
 Given / When / Then is an Allure step carrying its own status, the failing step is named with its
 assertion, the `Feature:` line becomes a `feature` label and each Gherkin tag becomes a `tag` label. All
-of it survives into the rendered single-file archive. The measurement is in the pull request for si#196;
-the plan si#197 becomes is written against it.
+of it survives into the rendered single-file archive.
+
+It was then driven a second time in a pinned container, because this platform's rule is that nothing
+depends on what is installed on the machine. A containerised acceptance level cannot be a `suite:` gate -
+that kind's runner is the kernel's own pytest in a host venv - so it is a `command:` gate naming a
+`toolchain:run` command, with `results_from:` harvesting what the container wrote, and that reaches the
+archive with the scenario and its steps intact. Three things came out of getting it to run:
+`toolchain:run` mounts the product ROOT at `workdir:`, so pointing `workdir:` at a subdirectory hides the
+tree rather than entering it; `network:` binds from a `with:` block although the body's own docstring says
+a manifest cannot supply it; and an acceptance container given no network did not fail to connect - the
+service name resolved through the host's upstream resolver to an address on the public internet, which
+answered, and the scenario reported a defect in a product it had never reached. The full measurement is
+in the pull request for si#196; the plan si#197 becomes is written against it.
 
 ## 0.12.0
 
