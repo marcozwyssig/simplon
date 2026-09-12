@@ -32,6 +32,16 @@ Renaming it was the easy half. The hard half was that three of the page's five o
 REFUSALS, hand-typed, so a rename would have left three messages on the page that the code cannot
 produce.
 
+### The site is in one language (si#195)
+
+`with-what/rules.md` stated the missing-tool rule twice - a German aphorism with its English translation
+underneath. It was the only non-English prose on the site, established by sweeping every page for umlauts
+(zero hits) and for a list of German function words that cannot be English (one hit, on that line). The
+device was deliberate; on a site written in English it still cost a reader a sentence to skip before
+reaching the one they could read, so the translation became the quote.
+
+**Nothing to do.**
+
 ### `ui` is a suite of the `acceptance` level, not a level beside it (si#196)
 
 The page's third level is `acceptance` now, and the pedagogy is untouched: it is still the level that
