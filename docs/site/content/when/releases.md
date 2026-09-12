@@ -348,6 +348,15 @@ wrote](../../how/what-init-wrote/), which is offered from the same section.
 `with-what/phases.md` and `how/manifest.md` each open with a jump list for the question a reader
 actually arrived with. The word counts barely move; what moves is how long it takes to find one fact.
 
+### The site is in one language (no ticket)
+
+`with-what/rules.md` stated the missing-tool rule twice: once as a German aphorism, once as its English
+translation underneath. It was the only non-English prose on the site, measured by sweeping every page
+for German function words and for umlauts. The English line stays and the German one goes, so a reader
+never meets a sentence they have to skip.
+
+**Nothing to do.**
+
 ## 0.11.0
 
 **Three things a real run showed, and two that had quietly stopped being true.** The first three came
