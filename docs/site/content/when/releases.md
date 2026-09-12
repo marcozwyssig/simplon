@@ -35,10 +35,16 @@ produce.
 ### The site is in one language (si#195)
 
 `with-what/rules.md` stated the missing-tool rule twice - a German aphorism with its English translation
-underneath. It was the only non-English prose on the site, established by sweeping every page for umlauts
-(zero hits) and for a list of German function words that cannot be English (one hit, on that line). The
-device was deliberate; on a site written in English it still cost a reader a sentence to skip before
-reaching the one they could read, so the translation became the quote.
+underneath. The device was deliberate; on a site written in English it still cost a reader a sentence to
+skip before reaching the one they could read, so the translation became the quote.
+
+**What was measured, and what it does not say.** Every page was swept for umlauts (zero hits) and for a
+list of German function words that cannot be English (one hit, on that line). That is a statement about
+those two patterns and not about the site. This note first read that the aphorism was *the only
+non-English prose on the site*; it was not, and si#213 found *vorgang* twice - a German noun carrying
+neither an umlaut nor a place on the list. The claim is withdrawn rather than re-measured, because no word
+list closes this class: the next German noun without an umlaut escapes it the same way. Reading the prose
+is the check, and it is a human one.
 
 **Nothing to do.**
 
@@ -435,7 +441,17 @@ si#195 removed a German aphorism and reported the site English-only. It was not:
 `how/releasing.md` both carried *vorgang* in the same italicised sentence about what a GitHub merge
 subject states. The sweep that missed it looked for umlauts and for German function words, and this word
 has neither - a measurement that answered honestly about what it asked and was asked the wrong question.
-It reads *act of merging* now, in both places. **Nothing to do.**
+It reads *act of merging* now, in both places.
+
+**The claim is what was withdrawn, and no check replaces it.** The choice was a dictionary to lint the
+prose against, or an end to saying the sweep is exhaustive; the second is cheaper and more honest, and it
+is the one taken. A dictionary would be a second source that needs bumping and it would still not close
+the class - the first loanword or proper noun it does not carry is another *vorgang*. So si#195's note now
+says which two patterns were swept for instead of what the site is, and neither release ever committed a
+sweep: both were measured by hand, once, and only the prose carried the claim. That is the honest shape -
+a narrow check that says what it checked beats a broad one that is green for the wrong reason.
+
+**Nothing to do.**
 
 ### simplon builds a container image of itself (si#200)
 
