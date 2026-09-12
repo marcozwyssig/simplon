@@ -13,7 +13,8 @@ manifest is not a reference entry, and calling it one would be a lie about what 
 everything that EXPLAINS is here, and [With what](../with-what/) keeps only what you look a value up in.
 
 {{< cards >}}
-  {{< card link="getting-started/" title="Getting started" subtitle="`simplon init`, what it writes, and the first run - line by line." >}}
+  {{< card link="getting-started/" title="Getting started" subtitle="Four commands from an empty repository to a working delivery CLI." >}}
+  {{< card link="what-init-wrote/" title="What `init` wrote" subtitle="The rest of the scaffold: the product name rules, the ignore block, the starter manifest line by line, and shell completion." >}}
   {{< card link="task-and-command/" title="Task and command" subtitle="A template and a placement of it. Which keys belong to which, and the five things the loader refuses." >}}
   {{< card link="manifest/" title="The manifest" subtitle="The command tree, the group lock, pinning with `with:`, aggregates and the product data sections." >}}
   {{< card link="tasks/" title="Writing a task" subtitle="A body is a plain function. Where it goes, what it may assume, and how it reaches product data." >}}

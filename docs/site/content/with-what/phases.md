@@ -5,6 +5,12 @@ aliases:
   - "/building/phases/"
 ---
 
+**Six groups, five phases.** [The table](#the-five-and-the-one-beside-them) is the short answer; the rest
+of this page is why. If you came to look something up: [what the catalogue offers
+today](#what-the-catalogue-offers-today) lists every coordinate by group, [the families](#the-families-and-where-they-land)
+say which half of a coordinate decides its placement, and [the two empty ribs](#the-two-empty-ribs) is
+the honest answer to "why is there nothing under `deploy`".
+
 Every Simplon product hangs its commands off the same six top-level groups, and it cannot invent a
 seventh. Five of them are the **phases of the delivery loop** - `build`, `test`, `release`, `deploy`,
 `monitor` - and `support` is the group that supports those five rather than a sixth of them.
@@ -88,7 +94,7 @@ handed *along* it. It is the bench the other five stand on.
 Because a product cannot declare a group the platform does not already declare - and the refusal is not
 a rule layered over the merge, it **is** the merge. A product's tree is merged onto the platform's, so a
 path the platform does not declare has nowhere to land. That mechanism, and the load error it produces,
-are set out in [What Simplon is](../../why/why/#the-cicd-process-is-a-closed-vocabulary) and are not
+are set out in [The design, noun by noun](../../why/the-design/#the-cicd-process-is-a-closed-vocabulary) and are not
 repeated here.
 
 What follows from it is the thing this chapter is about: `test` means *verify* in every product built on

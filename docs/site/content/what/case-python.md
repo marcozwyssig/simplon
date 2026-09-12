@@ -5,6 +5,31 @@ aliases:
   - "/using/case-python/"
 ---
 
+## The commands, in order
+
+This chapter is the delivery loop itself, followed through all five verbs on a real Python
+product. Here is what a person types, in order:
+
+```text
+./simplon.sh build wheel            build the artefact - the version comes off the git tag
+./simplon.sh test all               the pytest suite, then the type gate, then the release-note gate
+./simplon.sh build docs             write the command reference, then render the website from it
+./simplon.sh release tag v0.4.0     tag it; the tag IS the version, and CI publishes to PyPI
+```
+
+Four support commands sit beside those steps rather than in a phase of their own.
+`./simplon.sh test typecheck-python` runs alone what `test all` runs as its second step, which is what
+you want while fixing one file. `./simplon.sh support workflows --check` and
+`./simplon.sh support completion --check` belong immediately before a commit: both are generated from
+the manifest, so both go stale silently, and each exits 1 when it has. And `simplon init` is the one
+command that comes before all of them - it is in [Getting started](../../how/getting-started/).
+
+The fifth verb is missing here, and deliberately: simplon has nothing to deploy. agile-cockpit does,
+and its `deploy up` is in the table below. Everything under this heading is the same table read as a
+sequence; the table is what says which rows were really run.
+
+## The product, and what it proves
+
 Everything else on this half of the site shows one part at a time: how to get a command line, what to
 type for a job that comes up, how a release is cut. This chapter is the loop itself - one Python
 product, followed through all five verbs in the order they happen, with the manifest lines that make
@@ -82,7 +107,7 @@ do" and "nothing to say", and it is the defect this kernel hunts.
 
 What each of those files contains, and how to declare them, is not repeated here:
 [`workflows:` in the manifest](../../how/manifest/#workflows---the-ci-files-generated-from-this-same-manifest)
-and [Make TAB work](../../how/getting-started/#make-tab-work).
+and [Make TAB work](../../how/what-init-wrote/#make-tab-work).
 
 ## build
 

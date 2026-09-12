@@ -5,6 +5,34 @@ aliases:
   - "/building/test-levels/"
 ---
 
+## Look it up
+
+A **level** is one entry under `suites: gates:`, and this chapter is what the keys in it mean.
+
+| key | on a gate | what it decides |
+|---|---|---|
+| `name` | required | the level's name, and what `with: { name: ... }` pins on the command |
+| `suite` | one of three | a pytest directory the kernel runs itself |
+| `impl` | one of three | [an opaque body](#an-impl-gate-is-opaque-and-says-so): your runner, your verdict |
+| `command` | one of three | [a command in your own tree](#a-gate-may-name-a-command-in-your-own-tree) |
+| `junit` | optional | where the runner left its JUnit XML, [relative to `reports`](#where-your-runner-put-its-results) |
+| `results` | optional | [`clear` or `append`](#order-and-who-clears) - who empties the allure archive |
+| `args` | optional | whether the gate forwards the caller's trailing arguments |
+| `preamble` | optional | [a callable run before the suite](#hooks-precondition-preamble-and-the-one-rule-that-governs-them) |
+| `announce` | optional | the line printed when the level starts |
+
+Beside `gates:` the section takes `reports:` (where the whole report tree lives, default
+`tests/reports`), `filtered_results:` (default `allure-results-filtered`, see [Exploratory runs are
+quarantined](#exploratory-runs-are-quarantined)), `precondition:` and `report:`.
+
+Three questions this chapter answers, if one of them is yours:
+
+- *How do I attach a runner that is not pytest?* [`suite:` against `impl:`](#suite-against-impl---and-this-is-how-you-attach-gradle).
+- *Why does my level report green when nothing ran?* [When a level does not exist](#when-a-level-does-not-exist).
+- *What do I have to write to add one?* [Checklist for adding a level](#checklist-for-adding-a-level).
+
+---
+
 A gate is a command that instantiates a task - the [same model as everywhere
 else](../../how/task-and-command/) - and the task is `test:gate`. What makes the test half of the loop worth its
 own chapter is that one body backs *every* level a product has, and the differences between the levels

@@ -5,6 +5,23 @@ aliases:
   - "/building/rules/"
 ---
 
+## The six, at a glance
+
+| the rule | what it means in one line |
+|---|---|
+| [A missing tool is not a failed tool](#a-missing-tool-is-not-a-failed-tool) | A step that shells out has three outcomes, not two, and "not installed" is its own verdict. |
+| [A container that writes into a mount runs as `--user`](#a-container-that-writes-into-a-mount-runs-as---user) | Whatever uid the image runs as is the uid that ends up owning your files. Pass `--user uid:gid`, always. |
+| [The catalogue travels inside the package](#the-catalogue-travels-inside-the-package) | A package resolves its own data as package data, never by counting directory levels up to a repository root. |
+| [A group with no commands does not appear](#a-group-with-no-commands-does-not-appear) | Your own empty group is a load error; a catalogue group you never mention is dropped silently. Who promised decides. |
+| [A name collision breaks loudly](#a-name-collision-breaks-loudly) | Two different bodies on one command name stops the load and names both. `override: true` is the explicit yes. |
+| [A step runs `sys.executable`, not `python`](#a-step-runs-sysexecutable-not-python) | A planned step is spawned with the interpreter that is running, by absolute path. |
+
+Each of the six below carries the **mechanism** that forces it and a closing check you can run in
+ten minutes. [What a rule costs, and how many there are](#what-a-rule-costs-and-how-many-there-are) is
+the arithmetic behind the number six.
+
+---
+
 Everything else on this site can be derived. The command reference is read off the assembled
 application; the manifest's shape is in the loader; the environment gate is in the dispatch. This
 chapter cannot be derived from anything, and that is exactly why it exists.

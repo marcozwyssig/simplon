@@ -1,6 +1,6 @@
 ---
 title: "Writing a task"
-weight: 4
+weight: 5
 aliases:
   - "/building/tasks/"
 ---

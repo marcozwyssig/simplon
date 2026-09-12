@@ -1,4 +1,4 @@
-"""The two sections si#29 added to `using/why.md`, held against the sources they describe.
+"""The two sections si#29 added to the why chapter, held against the sources they describe.
 
 WHY A TEST AND NOT PROOFREADING. Both new sections make claims that are already stated somewhere the
 program reads: the kinds-of-work table is a second grouping of `catalogue.yaml`'s coordinate set, the
@@ -55,8 +55,11 @@ from simplon.tasks import site as site_mod
 import sitepages
 from conftest import ROOT
 
-#: The chapter under test.
-CHAPTER = sitepages.chapter("why.md")
+#: The chapter under test. si#186 split `why.md` in two: the short page a reader lands on keeps the
+#: title and the URL, and the noun-by-noun argument - which is everything this suite holds - moved to
+#: `the-design.md` beside it. The suite followed the CONTENT rather than the file name; every property
+#: below is asserted over the same prose it was written against.
+CHAPTER = sitepages.chapter("the-design.md")
 
 #: The chapter that owns the OTHER meaning of "discipline", and has to keep owning it alone.
 TASKS_CHAPTER = sitepages.chapter("tasks.md")
@@ -252,7 +255,7 @@ def test_the_new_sections_are_not_empty():
     assert len([line for line in container if line.strip()]) > 25
 
     # assert: and the chapter they were added to is still the chapter, not something else
-    assert _text().startswith("---\ntitle: \"What Simplon is\"\n")
+    assert _text().startswith("---\ntitle: \"The design, noun by noun\"\n")
 
 
 # --- the kinds of work, against the catalogue ----------------------------------------------------------

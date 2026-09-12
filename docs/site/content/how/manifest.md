@@ -1,8 +1,40 @@
 ---
 title: "The manifest"
-weight: 3
+weight: 4
 aliases:
   - "/building/manifest/"
+---
+
+## The file, at a glance
+
+The whole top level of a manifest, and where each part is explained:
+
+```yaml
+product: myctl            # the product's name
+tasks:                    # the BODIES, each a module:function, declared once
+groups:                   # the COMMAND TREE - build, test, release, deploy, monitor, support
+default: dev              # the environment used when no env token is given
+environments:             # the environment matrix
+site:                     # ... and any other product data section a catalogue task reads
+```
+
+| what you want to do | where |
+|---|---|
+| add a command, or a sub-group | [The command tree](#the-command-tree) |
+| point a command at a body | [`task:`, and what the command adds](#task-and-what-the-command-adds) |
+| place the same body twice with different values | [Pinning values with `with:`](#pinning-values-with-with) |
+| rename or re-help a command the catalogue placed | [Refining a platform command](#refining-a-platform-command-and-replacing-one) |
+| make one command run several others | [Aggregates: `depends_on`](#aggregates-depends_on) |
+| run steps side by side | [`parallel`](#parallel-the-one-key-that-suspends-list-order) |
+| declare the environments a product deploys to | [Environments](#environments) |
+| give a catalogue task its values | [Product data sections](#product-data-sections) |
+| find out whether a name is already taken | [The names the kernel has claimed](#the-names-the-kernel-has-claimed) |
+| move an old flat manifest onto the tree | [The flat form](#the-flat-form-and-how-to-leave-it) |
+
+Two rules hold everywhere below, and most load errors are one of them: **a command never writes
+`impl:`** - it names a `task:` and the body is declared once - and **the platform owns which groups
+exist**, so a product adds to a group and never rewrites its `help:` or its `env_first:`.
+
 ---
 
 One YAML file per product. It declares what commands exist, what they run, what they are called and

@@ -5,6 +5,35 @@ aliases:
   - "/using/case-cpp/"
 ---
 
+## The commands, in order
+
+This chapter is the delivery loop on a C++ product whose manifest declares **no task body at all**.
+Here is what a person types, in order:
+
+```text
+./cppdemo.sh support toolchain cpp 19    write the four toolchain commands into the manifest, once
+./cppdemo.sh build configure             generate the build system, cmake inside the pinned image
+./cppdemo.sh build compile               compile in the same image
+./cppdemo.sh build unit                  the ctest suite
+./cppdemo.sh build analyse               clang-tidy over the compile database configure wrote
+./cppdemo.sh release tag v0.1.0          tag it
+./cppdemo.sh dev deploy up               env-first: run the compiled binary on this host
+```
+
+The first line is the support command, and here it really is the first step rather than a hint beside
+one: until it has run, the product has no build commands at all. `./cppdemo.sh support install` is the
+host preflight beside it.
+
+Two things a C++ reader will look for and not find in that list. The `CMakeLists.txt` files are written
+by `build:cmake-files`, which cppdemo predates and does not declare - the section below has the walk
+that produced it. And there is no documentation command, because cppdemo declares no `site:` section;
+the [Java chapter](../case-java/) drove the documentation render instead.
+
+Everything under this heading is the table below read as a sequence; the table is what says which rows
+were really run, on which date, and which of them did not work.
+
+## The product, and what it proves
+
 The [Python chapter](../case-python/) walks one delivery loop with the kernel's own language underneath
 it. The [Java chapter](../case-java/) walks the same loop with no Python in the product at all - and its
 product still writes a build body of its own, a Python function ending in a `docker run`, because when it

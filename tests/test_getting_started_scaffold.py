@@ -14,6 +14,11 @@ a test added to a file another branch is rewriting buys a conflict for nothing.
 THE SWEEP IS THE HALF WITH TEETH. Asserting that the new path appears would pass on a page that shows
 both - which is exactly what a half-finished edit produces. So the pages are also swept for the two
 spellings that MEAN "the block", and every occurrence has to hang off the default's parent.
+
+AND THE SWEEP RULES ON A WIDER POPULATION THAN THE POSITIVE CHECKS (si#186). Splitting
+`getting-started.md` moved the orchestrator-block prose onto a second page, and a negative claim that
+only looks at two files stops being a claim about the site the moment a third one can carry the string.
+`SWEPT` is that population; `PAGES` stays the two pages that really do show and count the tree.
 """
 import re
 
@@ -27,7 +32,19 @@ PRODUCT = "myctl"
 #: The two pages that describe what a scaffold produces. Not a sweep of the site: every other page
 #: legitimately shows a grown product's own layout, and `case-java.md` describing javademo's tree is not
 #: a claim about the default.
+#:
+#: These two are the pages that show the TREE and count it, which is why si#186 did not simply add the
+#: page it split out of `getting-started.md` here: `what-init-wrote.md` shows neither, and the three
+#: positive assertions below would then demand of it what it never claimed.
 PAGES = [sitepages.chapter("getting-started.md"), ROOT / "README.md"]
+
+#: The pages the NEGATIVE sweep rules on, which is a wider population than the three positive checks and
+#: has to be (si#186). "No page still shows the block at the target root" is a property of every page
+#: that names the block at all, and si#186 moved half of what `getting-started.md` said about the
+#: scaffold onto a second page - so a stale `orchestrator/requirements.txt` could now land somewhere the
+#: sweep was not looking, which is exactly the silence the sweep exists to end. The positive checks stay
+#: on `PAGES`; only the thing that must never be true anywhere widens.
+SWEPT = [*PAGES, sitepages.chapter("what-init-wrote.md")]
 
 #: The two spellings that mean "the orchestrator block", the same pair `test_own_orch_block.py` sweeps
 #: this repository's own configuration for. Each has to be prefixed by everything the default puts in
@@ -86,7 +103,7 @@ def test_no_page_still_shows_the_block_at_the_target_root():
     old one three paragraphs below, and every positive assertion above would still hold."""
     # arrange / act
     stray = []
-    for page in PAGES:
+    for page in SWEPT:
         body = _text(page)
         for tail in TAILS:
             for match in re.finditer(re.escape(tail), body):

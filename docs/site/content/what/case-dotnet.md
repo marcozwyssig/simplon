@@ -5,6 +5,32 @@ aliases:
   - "/using/case-dotnet/"
 ---
 
+## The commands, in order
+
+This chapter is the delivery loop on a .NET product whose build is **data rather than a function**.
+Here is what a person types, in order:
+
+```text
+./dotnetdemo.sh support toolchain dotnet 9.0   write the three toolchain commands into the manifest
+./dotnetdemo.sh build compile                  dotnet build, inside the pinned SDK image
+./dotnetdemo.sh build unit                     the xUnit suite, in the same image
+./dotnetdemo.sh build analyse                  the formatting check, in the same image
+./dotnetdemo.sh release tag v0.1.0             tag it
+./dotnetdemo.sh dev deploy up                  env-first: the environment is the outer token
+```
+
+As on the C++ product, the support command is the first real step and not a hint: before it has run
+there are no build commands. `./dotnetdemo.sh support install` is the host preflight beside it.
+
+The unit suite sits under `build` rather than under `test`, and that is this chapter's finding rather
+than a typo: `test unit` does not exist on this product, because the toolchain profile writes all three
+of its commands into `build`. What that costs is one section below.
+
+Everything under this heading is the table below read as a sequence; the table is what says which rows
+were really run, and which did not.
+
+## The product, and what it proves
+
 The [Java chapter](../case-java/) walks one delivery loop over a toolchain the kernel has never met, and
 its product pays for that with a task body: `impl: orchestrator.gradle:build`, a function that ends in a
 `docker run`, written by hand because there was nothing else to write. This one walks the same loop with

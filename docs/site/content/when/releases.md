@@ -25,6 +25,12 @@ it is the one section held only to existing.
 
 ## 0.12.0
 
+**The site shows before it argues.** Every page on this site opened with the reasoning for the thing
+before the thing, and the maintainer's verdict after reading it end to end was that it is still too
+complicated. The house style that produces that - prose argues WHY - is right in the source and wrong on
+a web page, so the correction is a move rather than a deletion: **no measured fact, quoted refusal or
+worked example was dropped**, each one gained a short form above it or a page of its own behind a link.
+
 ### One accessor for a data section, and it refuses nothing (si#175)
 
 `ProductContext.manifest_data()` handed back the raw mapping and stopped there, so every reader wrote
@@ -242,6 +248,39 @@ the text of the block.
 
 **Nothing to do.** A new module on the library surface; no command, manifest key or existing signature
 changes.
+
+### The `why` chapter is a page, not an essay (si#186)
+
+`why/why.md` was 3992 words and opened by announcing how it would take itself apart noun by noun. It is
+now a short page carrying four claims - **Einfach, Strukturiert, Agnostisch, Erweiterbar** - with one
+piece of evidence each rather than an adjective, plus the three things Simplon is explicitly **not** (not
+a CI server, not a build system, not a framework you write against) and what it costs to run. The
+noun-by-noun argument moved intact to [The design, noun by noun](../../why/the-design/), and
+`test_why_chapter.py` moved with it: the same assertions over the same prose, against the file the prose
+now lives in.
+
+The old URL is unchanged, so no bookmark and no alias moved.
+
+### The four worked cases start with what you type (si#186)
+
+Each of `case-python`, `case-java`, `case-cpp` and `case-dotnet` now opens with **the command sequence a
+reader can type**, in the order of the five verbs, with the support commands as hints beside the step
+they help with. The dated evidence tables - every row labelled `run`, `derived` or `does not exist yet`
+with the ticket or transcript behind it - are unchanged and sit directly below. **No row was relabelled;
+moving a table is not re-verifying it.**
+
+### `getting-started` is four commands (si#186)
+
+The shortest path from nothing to a running command is now four numbered steps. The ignore block, the
+starter manifest read line by line, shell completion and the product-name rules moved to [What `init`
+wrote](../../how/what-init-wrote/), which is offered from the same section.
+
+### The lookup chapters answer before they justify (si#186)
+
+`with-what/rules.md` opens with the six rules in a table, one line each, linked to their own section.
+`with-what/test-levels.md` opens with every key a gate takes and what it decides.
+`with-what/phases.md` and `how/manifest.md` each open with a jump list for the question a reader
+actually arrived with. The word counts barely move; what moves is how long it takes to find one fact.
 
 ## 0.11.0
 
