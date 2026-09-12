@@ -139,6 +139,9 @@ _PLACEHOLDER = re.compile(r"<([^<>]+)>")
 #: A `# language:` header. Only `en` is read, because every keyword this module matches is English.
 _LANGUAGE = re.compile(r"^#\s*language\s*:\s*(\S+)", re.I)
 
+#: A run of backticks inside a step payload, so `_steps` can open a fence longer than any of them.
+_BACKTICKS = re.compile(r"`+")
+
 
 @dataclass(frozen=True)
 class Step:
@@ -244,20 +247,52 @@ def _substitute(text: str, values: dict[str, str]) -> str:
     return _PLACEHOLDER.sub(lambda m: values.get(m.group(1), m.group(0)), text)
 
 
-def _row_values(headers: Sequence[str], cells: Sequence[str]) -> dict[str, str]:
-    """An Examples row as a lookup. `strict=True` because a row with the wrong number of cells is the
-    silent-wrong-answer shape: zip would drop the surplus, the page would print a half-substituted title,
-    and that title is the ADDRESS - so it would match nothing in the archive and say why nowhere."""
+def _row_values(path: str, line_no: int, headers: Sequence[str], cells: Sequence[str]) -> dict[str, str]:
+    """An Examples row as a lookup, or a refusal that names the file and the line.
+
+    A row with the wrong number of cells is the silent-wrong-answer shape: a plain `zip` drops the
+    surplus, the page prints a half-substituted title, and that title is the ADDRESS - so it matches
+    nothing in the archive and says why nowhere. `zip(strict=True)` catches it and its own message says
+    only "argument 2 is shorter than argument 1", with no file and no line, so it is caught here and
+    re-raised through the same `_refuse` contract every other refusal in this module keeps.
+    """
+    if len(headers) != len(cells):
+        _refuse(path, line_no, f"an Examples row with {len(cells)} cells under {len(headers)} headers "
+                               f"({list(headers)} against {list(cells)}) - the row would substitute only "
+                               f"part of the title, and the title is the address")
     return dict(zip(headers, cells, strict=True))
 
 
 def _table_row(line: str) -> tuple[str, ...]:
-    """The cells of a `| a | b |` line. The leading and trailing empties the split produces are dropped."""
-    return tuple(cell.strip() for cell in line.strip().strip("|").split("|"))
+    """The cells of a `| a | b |` line, honouring Gherkin's `\\|` escape.
+
+    NOT `str.split("|")`, which counts an escaped separator as a column break. On an Examples row that is
+    not cosmetic: the cell count is what pairs a row with its headers, so a row carrying one escaped pipe
+    would be refused as ragged - or, before that refusal existed, half-substituted into a title that is
+    the address. `\\\\` is an escaped backslash and `\\n` a newline, both of Gherkin's other two escapes.
+    """
+    body = line.strip()
+    body = body[1:] if body.startswith("|") else body
+    body = body[:-1] if body.endswith("|") and not body.endswith("\\|") else body
+    cells, current, escaped = [], [], False
+    for char in body:
+        if escaped:
+            current.append({"n": "\n", "|": "|", "\\": "\\"}.get(char, char))
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == "|":
+            cells.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+    cells.append("".join(current).strip())
+    return tuple(cells)
 
 
-def _expand(name: str, tags: tuple[str, ...], path: str, rel: str, background: tuple[Step, ...],
-            steps: tuple[Step, ...], examples: list[tuple[Sequence[str], Sequence[str]]]) -> list[Scenario]:
+def _expand(name: str, tags: tuple[str, ...], path: str, rel: str, line_no: int,
+            background: tuple[Step, ...], steps: tuple[Step, ...],
+            examples: list[tuple[Sequence[str], Sequence[str]]]) -> list[Scenario]:
     """A parsed scenario block as the scenarios a run will really execute.
 
     With no Examples this is one scenario; with them it is one per row, substituted. The background is
@@ -268,7 +303,7 @@ def _expand(name: str, tags: tuple[str, ...], path: str, rel: str, background: t
         return [Scenario(path=path, rel=rel, name=name, tags=tags, steps=background + steps)]
     found = []
     for index, (headers, cells) in enumerate(examples, start=1):
-        values = _row_values(headers, cells)
+        values = _row_values(path, line_no, headers, cells)
         walked = background + tuple(
             Step(keyword=step.keyword, text=_substitute(step.text, values), payload=step.payload,
                  background=step.background) for step in steps)
@@ -296,6 +331,10 @@ def read(text: str, path: str, rel: str = "") -> Feature:
     scenarios: list[Scenario] = []
 
     line_no = 0
+    # The line the CURRENT block opened on. `close()` runs when the NEXT construct starts, so a refusal
+    # raised from inside it would otherwise name the line that ended the block rather than the line the
+    # broken block began on - which makes the reader do the search `_refuse` exists to have already done.
+    block_line = 0
     pending_tags: tuple[str, ...] = ()
     # The block currently being filled: "" before the Feature line, "description", "background", or
     # "scenario". A step's home is decided by this and never by how far it is indented, because Gherkin
@@ -314,9 +353,10 @@ def read(text: str, path: str, rel: str = "") -> Feature:
         nonlocal steps, examples, in_examples, example_headers
         if block == "scenario":
             if outline and not examples:
-                _refuse(path, line_no, f"the outline {name!r} has no Examples row, so it describes a "
-                                       f"scenario no run will ever execute")
-            scenarios.extend(_expand(name, tags, path, rel, tuple(background), tuple(steps), examples))
+                _refuse(path, block_line, f"the outline {name!r} has no Examples row, so it describes a "
+                                          f"scenario no run will ever execute")
+            scenarios.extend(_expand(name, tags, path, rel, block_line, tuple(background), tuple(steps),
+                                     examples))
         steps, examples, in_examples, example_headers = [], [], False, ()
 
     for line_no, raw in enumerate(lines, start=1):
@@ -347,7 +387,11 @@ def read(text: str, path: str, rel: str = "") -> Feature:
                 _refuse(path, line_no, f"{keyword!r} is not supported: {instead}")
 
         if stripped.startswith("@"):
-            pending_tags = _tags(stripped)
+            # ACCUMULATED, not replaced. Two tag lines above one scenario is ordinary Gherkin style, and
+            # overwriting kept only the last: `@fast` then `@wip` gave `("wip",)`. A tag becomes an Allure
+            # label AND a selection criterion, so a dropped one is a scenario missing from the run
+            # somebody selected it into - the same reason a tag on a Background is refused below.
+            pending_tags += _tags(stripped)
             continue
 
         if stripped.startswith("Feature:"):
@@ -356,7 +400,7 @@ def read(text: str, path: str, rel: str = "") -> Feature:
                                        f"reads only the first, so the page would list scenarios under a "
                                        f"title nothing ran them under")
             feature_name = stripped[len("Feature:"):].strip()
-            feature_tags, pending_tags, block = pending_tags, (), "description"
+            feature_tags, pending_tags, block, block_line = pending_tags, (), "description", line_no
             continue
 
         if not feature_name:
@@ -377,14 +421,22 @@ def read(text: str, path: str, rel: str = "") -> Feature:
                 _refuse(path, line_no, "a 'Background:' after a scenario - the runner applies it to every "
                                        "scenario in the file, so a page honouring the file order would "
                                        "print a shorter walk than the one that runs")
+            if block == "background":
+                # Two Background headers in one file, before any scenario. The steps would simply pile up
+                # in one list and every scenario would walk both, with nothing on the page saying two
+                # headers were involved - and pytest-bdd is not obliged to agree with that merge, so the
+                # page and the run would part on the length of every walk in the file.
+                _refuse(path, line_no, "a second 'Background:' - one file has one background, and merging "
+                                       "the two would put steps in every scenario's walk that the runner "
+                                       "need not agree are there")
             close()
-            block, name, tags, outline = "background", "", (), False
+            block, name, tags, outline, block_line = "background", "", (), False, line_no
             continue
 
         keyword = next((k for k in _SCENARIO_KEYWORDS + _OUTLINE_KEYWORDS if stripped.startswith(k)), "")
         if keyword:
             close()
-            block, outline = "scenario", keyword in _OUTLINE_KEYWORDS
+            block, outline, block_line = "scenario", keyword in _OUTLINE_KEYWORDS, line_no
             name, tags, pending_tags = stripped[len(keyword):].strip(), pending_tags, ()
             if not name:
                 _refuse(path, line_no, f"{keyword} with no title - the title IS the address a verdict is "
@@ -440,6 +492,13 @@ def read(text: str, path: str, rel: str = "") -> Feature:
         # steps.
 
     line_no = len(lines)
+    if docstring is not None:
+        # EOF inside a `"""` payload. Left unchecked the whole payload is simply abandoned - the step is
+        # rendered with no argument at all and nothing says a closing delimiter was missing, which is a
+        # truncated file being read as a shorter but valid one.
+        _refuse(path, line_no, "the file ends inside a docstring payload - its closing '\"\"\"' is "
+                               "missing, and the step's whole argument would silently disappear from the "
+                               "page")
     close()
 
     if not feature_name:
@@ -483,13 +542,25 @@ def features(root: Path, source: str) -> list[Feature]:
     """Every feature file under `source`, in path order, or a refusal saying which of the two nothings it
     found.
 
+    THE SHAPE OF `source` IS CHECKED BEFORE ANYTHING IS READ, with the same rule `output` uses. That was
+    missing until review and the gap was not theoretical: `root / source` with an ABSOLUTE source
+    discards `root` entirely (pathlib's rule), and a `../..` source walks out of the product and reads
+    feature files from wherever it lands - in both cases with no error at all, the content baked into the
+    published page. si#183's asymmetry is about whether the kernel may supply a DEFAULT for a key, never
+    about whether the value a manifest wrote has to be a path under the product; `output` is checked
+    because it is written to, and this is checked because what it reads is published.
+
     THE TWO REFUSALS ARE THE POINT and they are separate on purpose. A directory that is not there is a
     manifest pointing at nothing; a directory that is there and empty is a product that has not written
     its scenarios yet. Both are red, because a page listing no scenarios reads as "this product has none
     to verify" and is published as evidence of it, but they are not the same mistake and the message says
     which one happened.
     """
-    where = root / source
+    relative = validate_relative_dir(
+        source, "the acceptance scenarios' source directory",
+        f"give a plain relative path under the product root, e.g. {DEFAULT_SOURCE!r}",
+        inside="the product root")
+    where = root / relative
     if not where.is_dir():
         raise ValueError(f"simplon: {source} is not a directory under the product root, so no acceptance "
                          f"scenario could be read - point `source:` at the directory holding the "
@@ -559,10 +630,16 @@ def _steps(scenario: Scenario) -> list[str]:
         note = "  *(background)*" if step.background else ""
         out.append(f"{index}. **{step.keyword}** {step.text}{note}")
         if step.payload:
+            # THE FENCE IS SIZED TO THE PAYLOAD. A docstring in a feature file may legitimately hold a
+            # fenced code block of its own, and a literal ``` inside a ```-fenced block closes it early
+            # under CommonMark - so the rest of the page renders as prose from there down. The title is
+            # YAML-escaped for the same class of reason; this is the Markdown half of it.
+            fence = "`" * max(3, 1 + max((len(run) for run in _BACKTICKS.findall("\n".join(step.payload))),
+                                         default=0))
             out.append("")
-            out.append("   ```text")
+            out.append(f"   {fence}text")
             out += [f"   {line.strip()}" for line in step.payload]
-            out.append("   ```")
+            out.append(f"   {fence}")
     return out
 
 

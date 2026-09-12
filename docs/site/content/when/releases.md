@@ -220,11 +220,20 @@ The reader is a keyword scan of the constructs pytest-bdd 8 executes, and **no G
 added**. The reason is agreement rather than thrift: `gherkin-official` parses a grammar WIDER than
 pytest-bdd executes, so the kernel would have had the deeper answer and every construct in the gap would
 have reached the page and never run. What it cannot honour it refuses - a `Rule:`, a non-English
-`# language:` header - and seventeen refusals in all, each one because it would otherwise produce a
-document describing something no run executes. One of them came from driving the artefact rather than
-from reasoning about it: the first real feature file carried an outline whose title held no placeholder,
-and the page came out with three rows on one identical address. That is pytest-bdd's own naming - the
-archive collides the same way - so refusing here is the only place it is visible at all. Driven against a real run of this repository's
+`# language:` header - and twenty refusals in all, each one because it would otherwise produce a
+document describing something no run executes. Two came from driving the artefact rather than from
+reasoning about it, and eight more from review. The first real feature file carried an outline whose
+title held no placeholder, and the page came out with three rows on one identical address - that is
+pytest-bdd's own naming, the archive collides the same way, so refusing here is the only place it is
+visible at all. And a tag line above a `Background:` landed on the scenario after it, which is a label
+and a selection criterion arriving on a scenario the runner never gave it to.
+
+**The review found one that was not a wrong page but a wrong directory.** `source:` was never checked for
+shape, and `root / source` DISCARDS root when source is absolute - so `/etc` or `../..` read feature
+files from outside the product and baked them into a published page with no error at all. It goes
+through the same `validate_relative_dir` `output` uses now. si#183's asymmetry is about whether the
+kernel supplies a DEFAULT for a key; it was never about whether the value a manifest wrote has to be a
+path under the product. Driven against a real run of this repository's
 own nine scenarios, the reader reproduces all nine addresses and all nine step lists **byte for byte**,
 and that transcript is pinned in the suite as a second source rather than trusted.
 

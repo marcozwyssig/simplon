@@ -18,10 +18,16 @@ WHAT THIS SUITE HOLDS, in the order it matters.
      scenario is on it, the count in the lead sentence has gone up by exactly one, and no other line of
      the page moved.
 
-  3. EVERY REFUSAL WAS SEEN RED - seventeen of them: fourteen constructs of a feature file, a ragged
-     Examples row, and the two ways a `source:` can be nothing. Each is driven with the input it refuses,
-     and `test_the_legal_neighbour_of_every_refusal_below_is_accepted` drives the nearest legal one, so
-     none of them is passing merely because the reader refuses everything.
+  3. EVERY REFUSAL WAS SEEN RED - twenty of them: seventeen constructs of a feature file, a `source:`
+     that escapes the product root, and the two ways a `source:` can be nothing. Each is driven with the
+     input it refuses, and `test_the_legal_neighbour_of_every_refusal_below_is_accepted` drives the
+     nearest legal one, so none of them is passing merely because the reader refuses everything.
+
+     EIGHT OF THEM CAME FROM REVIEW rather than from writing the reader, and each is marked FOUND IN
+     REVIEW at its own test. Two are worth naming here because they were silent rather than loud: a
+     `source:` of `/etc` or `../..` read feature files from outside the product and baked them into a
+     published page with no error at all, and a file ending inside an unterminated docstring payload
+     dropped that payload and reported a valid feature.
 
 AAA throughout. `read()` is driven with text rather than with files wherever the file system is not the
 subject, because a feature file's TEXT is what the reader is about.
@@ -389,9 +395,32 @@ Feature: A file
   Scenario: One
     When it runs
 """, "on a 'Background:'", id="tags-on-a-background"),
+    pytest.param("""\
+Feature: A file
+  Background:
+    Given a
+
+  Background:
+    Given b
+
+  Scenario: One
+    Then c
+""", "a second 'Background:'", id="two-backgrounds"),
+    pytest.param(
+        'Feature: A file\n  Scenario: One\n    Given a\n      """\n      no closing delimiter arrives\n',
+        "ends inside a docstring payload", id="unterminated-docstring"),
+    pytest.param("""\
+Feature: A file
+  Scenario Outline: A <a> and a <b>
+    Given a <a>
+
+    Examples:
+      | a | b |
+      | 1 |
+""", "an Examples row with 1 cells under 2 headers", id="ragged-examples-row"),
 ])
 def test_a_feature_file_that_would_describe_something_no_run_honours_is_refused(text, fragment):
-    """Fourteen constructs, each either unexecutable by pytest-bdd or unaddressable once expanded.
+    """Seventeen constructs, each either unexecutable by pytest-bdd or unaddressable once expanded.
 
     THE COMMON SHAPE is this project's recurring defect rather than pedantry: every one of them would
     otherwise produce a PAGE - a document headed "acceptance scenarios" describing something no run ever
@@ -402,22 +431,77 @@ def test_a_feature_file_that_would_describe_something_no_run_honours_is_refused(
         acceptance.read(text, "bad.feature")
 
 
-def test_a_ragged_examples_row_is_refused_rather_than_half_substituted():
-    """`zip` would drop the surplus and the page would print a half-filled title - which IS the address,
-    so it would match nothing in the archive and say why nowhere."""
+def test_a_refusal_from_inside_a_closed_block_names_the_line_the_block_opened_on():
+    """FOUND IN REVIEW. `close()` runs when the NEXT construct starts, so an unguarded `line_no` names
+    the line that ENDED the block. `_refuse` exists so a reader does not have to search for what the
+    parser already found, and a message pointing three lines past the fault is that search handed back.
+    """
+    # arrange: the outline is on line 2, the scenario that closes it on line 5
+    text = """\
+Feature: A file
+  Scenario Outline: Bad
+    Given a
+
+  Scenario: Good
+    Then b
+"""
+    # act / assert
+    with pytest.raises(ValueError, match=r"bad\.feature:2: the outline 'Bad'"):
+        acceptance.read(text, "bad.feature")
+
+
+def test_two_tag_lines_above_one_scenario_both_survive():
+    """FOUND IN REVIEW. Ordinary Gherkin style, and `pending_tags = ...` kept only the last of them. A
+    tag becomes an Allure label AND a selection criterion, so a dropped one is a scenario missing from
+    the run somebody selected it into - the same harm the Background-tag refusal above exists for."""
     # arrange
     text = """\
 Feature: A file
-  Scenario Outline: A <a> and a <b>
-    Given a <a>
+  @fast
+  @wip
+  Scenario: One
+    Given a product
+"""
+    # act
+    feature = acceptance.read(text, "f.feature")
+
+    # assert
+    assert feature.scenarios[0].tags == ("fast", "wip")
+
+
+def test_an_escaped_separator_inside_a_table_cell_is_one_cell():
+    """FOUND IN REVIEW. Gherkin escapes `|` inside a cell and a plain split counts it as a column break -
+    which on an Examples row changes the CELL COUNT, so a legal row is refused as ragged."""
+    # arrange
+    text = """\
+Feature: A file
+  Scenario Outline: A <verdict>
+    Given a product
 
     Examples:
-      | a | b |
-      | 1 |
+      | verdict     |
+      | green \\| red |
 """
+    # act
+    feature = acceptance.read(text, "f.feature")
+
+    # assert
+    assert [s.name for s in feature.scenarios] == ["A green | red"]
+
+
+@pytest.mark.parametrize("source", ["/etc", "../outside", "sub/../../outside"])
+def test_a_source_outside_the_product_root_is_refused_before_anything_is_read(tmp_path, source):
+    """FOUND IN REVIEW, and it was not theoretical. `root / source` DISCARDS root when source is absolute
+    (pathlib's rule), and a `..` walks out of the product - in both cases the feature files found out
+    there were read and their content baked into a published page, with no error at all.
+
+    si#183's asymmetry is about whether the kernel supplies a DEFAULT for a key, never about whether the
+    value a manifest wrote has to be a path under the product. `output` is checked because it is written
+    to; this is checked because what it reads is published.
+    """
     # act / assert
-    with pytest.raises(ValueError):
-        acceptance.read(text, "bad.feature")
+    with pytest.raises(ValueError, match="source directory"):
+        acceptance.features(tmp_path, source)
 
 
 def test_a_source_that_is_not_there_and_a_source_that_is_empty_refuse_differently(tmp_path):
@@ -516,6 +600,23 @@ def test_an_outlines_own_title_is_printed_in_a_code_span_so_hugo_keeps_the_place
     # assert
     assert "the outline `A gate named <level> reports <verdict>`" in page
     assert "*A gate named <level>" not in page
+
+
+def test_a_docstring_holding_a_fence_does_not_close_the_pages_own_fence():
+    """FOUND IN REVIEW. A literal ``` inside a ```-fenced block ends it under CommonMark, so everything
+    below it renders as prose. The front-matter title is YAML-escaped for the same class of reason; this
+    is the Markdown half of it, and a feature file documenting a code block is not exotic."""
+    # arrange
+    text = ('Feature: A file\n  Scenario: One\n    Given the readme says:\n      """\n'
+            '      ```\n      code\n      ```\n      """\n')
+
+    # act
+    page = _render(text)
+
+    # assert: the page's own fence is longer than the payload's
+    assert "   ````text" in page
+    inside = page.split("   ````text", 1)[1].split("   ````", 1)[0]
+    assert "code" in inside, "the payload was cut short by its own fence"
 
 
 def test_a_scenario_title_carrying_a_column_separator_does_not_break_the_index_table():
