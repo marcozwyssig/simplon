@@ -37,7 +37,14 @@ def run_pipeline(pipeline: Pipeline) -> int:
         return run_headless(pipeline)     # which writes its own transcript
     try:
         app = _StepApp(pipeline)
-    except Exception:  # noqa: BLE001 - any Textual import/construct issue -> safe fallback
+    except ImportError:
+        # ABSENCE ONLY, and the narrowing is si#223's point 2. This was `except Exception`, which made a
+        # half-installed Textual, an incompatible version and a fault in the app's own construction
+        # arrive at exactly the place a deliberate CI redirection arrives at - a clean-looking headless
+        # run, announced to nobody. Four causes, one outcome, and this repository's recurring defect is
+        # precisely an outcome that cannot tell "chosen" from "failed". Textual being ABSENT stays a
+        # fallback because this module's head says it must (the headless path does not hard-require it);
+        # everything else is a break and now reads as one.
         return run_headless(pipeline)
     app.run()
     # AFTER the app, not from `_on_done`: quitting is a normal way for `App.run` to return, and a run the

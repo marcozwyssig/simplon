@@ -199,6 +199,14 @@ How MANY run at once is the machine's answer rather than the manifest's, because
 between machines and the number does not: `SIMPLON_MAX_PARALLEL` sets it, and the default is four or the
 CPU count, whichever is smaller.
 
+WHICH RUNNER draws the plan is the machine's answer too, and for the same reason. Attached to a terminal
+a plan is drawn as a live tree; piped or redirected it is walked headless, so CI logs stay flat. What was
+missing was a way to ask for headless *on purpose* rather than by arranging for a redirection:
+`./myctl.sh --no-tui <command>` does, and it works by setting `SIMPLON_NO_TUI=1`, which a workflow can
+export directly. The variable is the one that travels - each planned step is a `./myctl.sh <leaf>`
+subprocess, which no flag on the parent process reaches - and a value that is neither `0` nor `1` leaves
+the runner exactly where it was and says so.
+
 Every `depends_on` entry must name a known, unambiguous command, and the graph must be acyclic. Both are
 checked at load, not at run: a dependency naming a command that does not exist is a manifest error, and
 it should not wait until the eleventh minute of a pipeline to say so.
