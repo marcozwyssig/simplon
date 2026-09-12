@@ -176,9 +176,7 @@ The census, the three questions and the reasoning behind them are [#48](https://
 
 ## A missing tool is not a failed tool
 
-> Ein Werkzeug, das fehlt, ist nicht dasselbe wie ein Werkzeug, das gescheitert ist.
->
-> *A tool that is missing is not the same as a tool that failed.*
+> A tool that is missing is not the same as a tool that failed.
 
 A step that shells out has **three** outcomes, not two: the tool is not installed, the tool ran and
 failed, the tool ran and worked. A step that collapses the first two into one has an answer that is
