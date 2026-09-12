@@ -65,6 +65,37 @@ and the object version those bytes came from, the request carries `If-Range`, an
 `206` confirming the exact offset asked for truncates the partial file and downloads the whole object
 again. A server with no range support is therefore a fresh download, never an append.
 
+### And `simplon.checksum`, which is the same argument at a different seam
+
+si#177 added it for the same reason si#142 added `fetch`: the kernel had no way to hash a file, so the
+first product that pins media by hash wrote its own - and the interesting half is not the hashing, it is
+the cache beside it.
+
+```python
+from pathlib import Path
+from simplon import checksum
+
+digest = checksum.sha256_of(Path("media/win11.iso"), cache=checksum.cache_dir(root))
+```
+
+A command whose whole job is to report what is present should not read five gigabytes to answer, so the
+digest is written to a sidecar and read back - and **a cache that can be wrong is worse than no cache**,
+because a checksum is the one place where being wrong is silent. Three conditions have to hold before a
+sidecar is believed: the size is unchanged, `st_mtime_ns` is unchanged, and the sidecar's stat was taken
+at least a second after the mtime it records. The third is git's own answer to its "racily clean" index
+entries, and it is what survives a write inside the same second - the case a sync client, `touch -d`,
+`unzip` and `tar` all produce by stamping whole seconds, and the class of defect si#86 and si#169 both
+were in one week.
+
+What it still cannot see is a rewrite that restores **both** size and mtime, and the module says so
+rather than leaving it to be discovered. Anything else - an unreadable sidecar, a malformed one, one
+written by a version that spelled the record differently - recomputes; nothing trusts a record it could
+not fully check.
+
+The sidecars live in `build/checksums/`, which is deliberate and not a new decision: `/build/` is already
+the first line of the `.gitignore` block si#155 scaffolds, so this module adds nothing to the list of
+what the kernel writes into your tree. A dotfile beside the media would have.
+
 ### What `simplon/tasks/` is, stated carefully
 
 The obvious phrasing — *"a product may not import a task body"* — is **false**, and it is worth being
