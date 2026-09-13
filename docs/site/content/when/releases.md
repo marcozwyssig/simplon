@@ -27,14 +27,13 @@ it is the one section held only to existing.
 
 ### The four claims are in English (si#232)
 
-`why/why.md` answers "what is this" with four claims, and their headings were still German: *Einfach*,
-*Strukturiert*, *Agnostisch*, *Erweiterbar*. They read **Simple**, **Modular**, **Agnostic** and
-**Evolve**. The one link that pointed at the renamed anchor moved with them; the si#186 note below keeps
+`why/why.md` answers "what is this" with four claims, and all four headings were still German. They
+read **Simple**, **Modular**, **Agnostic** and **Evolve**. The one link that pointed at the renamed anchor moved with them; the si#186 note below keeps
 the old spellings, because it describes the page as it was in 0.11.0.
 
 **This is the class si#213 said no check would close, arriving on schedule.** That ticket withdrew the
 claim that the site is English-only rather than buy a dictionary to lint against, and said why: the first
-word a list does not carry is another *vorgang*. These four have no umlaut and are not function words, so
+word a list does not carry is another one like it. These four have no umlaut and are not function words, so
 both earlier sweeps answered honestly about what they were asked. Three of them are near-cognates of the
 English word that replaces them, which is presumably how they survived two readings by people who knew
 they were looking for German.
@@ -62,8 +61,8 @@ skip before reaching the one they could read, so the translation became the quot
 **What was measured, and what it does not say.** Every page was swept for umlauts (zero hits) and for a
 list of German function words that cannot be English (one hit, on that line). That is a statement about
 those two patterns and not about the site. This note first read that the aphorism was *the only
-non-English prose on the site*; it was not, and si#213 found *vorgang* twice - a German noun carrying
-neither an umlaut nor a place on the list. The claim is withdrawn rather than re-measured, because no word
+non-English prose on the site*; it was not, and si#213 found a German noun twice, carrying neither an
+umlaut nor a place on the list. The claim is withdrawn rather than re-measured, because no word
 list closes this class: the next German noun without an umlaut escapes it the same way. Reading the prose
 is the check, and it is a human one.
 
@@ -459,15 +458,15 @@ it is a pre-existing gap on a path no hold in this ticket reaches.
 ### The last German word on the site (si#213)
 
 si#195 removed a German aphorism and reported the site English-only. It was not: `how/manifest.md` and
-`how/releasing.md` both carried *vorgang* in the same italicised sentence about what a GitHub merge
-subject states. The sweep that missed it looked for umlauts and for German function words, and this word
+`how/releasing.md` both carried the same German noun in the same italicised sentence about what a
+GitHub merge subject states. The sweep that missed it looked for umlauts and for German function words, and this word
 has neither - a measurement that answered honestly about what it asked and was asked the wrong question.
 It reads *act of merging* now, in both places.
 
 **The claim is what was withdrawn, and no check replaces it.** The choice was a dictionary to lint the
 prose against, or an end to saying the sweep is exhaustive; the second is cheaper and more honest, and it
 is the one taken. A dictionary would be a second source that needs bumping and it would still not close
-the class - the first loanword or proper noun it does not carry is another *vorgang*. So si#195's note now
+the class - the first loanword or proper noun it does not carry is another one of these. So si#195's note now
 says which two patterns were swept for instead of what the site is, and neither release ever committed a
 sweep: both were measured by hand, once, and only the prose carried the claim. That is the honest shape -
 a narrow check that says what it checked beats a broad one that is green for the wrong reason.
@@ -1003,8 +1002,7 @@ alone and stayed green against a runner rewritten to `print(f"==> {title}")`.
 ### The `why` chapter is a page, not an essay (si#186)
 
 `why/why.md` was 3992 words and opened by announcing how it would take itself apart noun by noun. It is
-now a short page carrying four claims - then spelled *Einfach*, *Strukturiert*, *Agnostisch* and
-*Erweiterbar*, and in English since 0.14.0 - with one
+now a short page carrying four claims - **Simple**, **Modular**, **Agnostic**, **Evolve** - with one
 piece of evidence each rather than an adjective, plus the three things Simplon is explicitly **not** (not
 a CI server, not a build system, not a framework you write against) and what it costs to run. The
 noun-by-noun argument moved intact to [The design, noun by noun](../../why/the-design/), and
@@ -2193,7 +2191,7 @@ notes can anticipate their own merge. A follow-up PR would have brought its own 
 had no floor.
 
 Both rest on one distinction. An **authored** merge subject is a statement about the WORK; GitHub's
-wording is a statement about the VORGANG. The guard now reads the first as written, and for the second
+wording is a statement about the ACT OF MERGING. The guard now reads the first as written, and for the second
 reads the commits that merge BROUGHT IN, which is where the author put the number. The unit stays the
 merge; only the place the statement is looked for moves one level down. With a floor: several merges
 from before the convention name nothing in their commits either, and dropping those would excuse work
