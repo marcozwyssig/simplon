@@ -25,6 +25,42 @@ it is the one section held only to existing.
 
 ## 0.14.0
 
+### A deployment can say which version it is deploying (si#235)
+
+Thirty-two deploy commands across the five products this kernel can reach, and not one of them could
+say. What went up was decided by `IMAGE_VERSION` if it happened to be exported, and by whatever the
+product's build file said otherwise - an environment variable no manifest mentions and no command
+documents. A deployment now names its version, and there are three kinds of answer:
+
+```text
+--version 1.4.0     this exact published version
+--version latest    the newest published version
+--version local     the current code base, built now
+```
+
+**Three values for three meanings**, which is the design rather than a convenience. One value that
+silently meant two of them - `latest` quietly becoming a build when nothing is published - is the defect
+this repository keeps finding, and the resolution its own rules prescribe is to widen the range until
+each meaning has its own value. `local` touches no registry at all; a version the registry does not serve
+is refused before anything starts; and asking for nothing is refused rather than defaulted, because
+"whatever is newest" is a choice somebody makes.
+
+**The section points at an entry you already have.** `images:` and `artifacts:` carry the registry and
+the repository already, so `deploy: source: { images: app }` names one of them instead of writing a
+registry down twice. Where the entry cannot serve - a bare string rather than a mapping, or no
+`registry:` at all, both shapes measured in real manifests - it is refused by name, with the keys it does
+carry in the message.
+
+This is the **eighteenth** top-level section, and its eight refusals are all diagnosis; the census on
+[Rules](../../with-what/rules/) carries them.
+
+**Still to come on this ticket:** the catalogue's own `deploy` tasks. The vocabulary and the lookup
+landed first because everything else rests on them, and because the kernel already owns the machinery -
+`compose`, `portainer`, `backend`, `docker`, `healthgate` and `waits` are all on the library surface
+already. What is not yet measured is how much of those 32 commands is really the same work.
+
+**Nothing to do.** A product that declares no `deploy:` section is unaffected.
+
 ### The four claims are in English (si#232)
 
 `why/why.md` answers "what is this" with four claims, and all four headings were still German. They
