@@ -114,8 +114,13 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
     # `toolchain` is the newest (si#95): a FAMILY rather than a placement, because a containerised
     # toolchain is needed by `build` AND by `test` - ctest, dotnet test and gradle test all belong under
     # the latter, which `build:toolchain` would have forbidden.
-    assert cat.namespaces() == ["build", "docs", "release", "support", "tasks", "test", "toolchain",
-                                "vcs"]
+    # `deploy` is the newest (si#235), and it is the last of the six groups to get one: until it did,
+    # `deploy` was the only group the catalogue contributed nothing to, and 32 deploy commands across
+    # five products each said which version they were rolling out by not saying it. What the two tasks
+    # add is that half - resolve a version, prove it exists, hand it on - while the rollout itself stays
+    # the product's, through the backend it registers.
+    assert cat.namespaces() == ["build", "deploy", "docs", "release", "support", "tasks", "test",
+                                "toolchain", "vcs"]
     assert sorted(cat.namespace("vcs")) == ["auth-scopes", "commit", "prune-branches", "push",
                                             "submodules"]
     # `support:install` provisions the host tooling the kernel cannot work without (oras), and

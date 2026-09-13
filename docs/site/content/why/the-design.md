@@ -154,9 +154,10 @@ by the kind of work instead of by the phase it runs in:
 | documentation | Hugo, docToolchain, the assembled command line itself, the product's own `.feature` files | `docs:site`, `docs:render`, `docs:reference`, `docs:acceptance` |
 | packaging and publishing | `docker`, `oras`, `gh`, `dotnet` | `build:image`, `release:image`, `release:artifact`, `release:asset`, `release:nuget`, `release:conan`, `build:nuget-config`, `build:nuget-restore`, `build:conan-cache` |
 | the machine and its services | `oras`, `docker compose`, `claude`, `sudo`/`usermod`, a pinned toolchain image - and nothing at all for `support:environments`, which only reads the manifest | `support:install`, `support:nexus`, `support:claude-plugins`, `support:environments`, `support:ci-privileges`, `support:toolchain`, `toolchain:run` |
+| running things | the backend a product registers, and `oras` for a client install | `deploy:up`, `deploy:down` |
 | the declarations themselves | nothing external | `tasks:generate`, `tasks:catalogue`, `support:workflows`, `support:completion`, `build:cmake-files`, `build:dotnet-solution` |
 
-Six kinds of work, and the middle column barely intersects. Every one of them is reached through
+Seven kinds of work, and the middle column barely intersects. Every one of them is reached through
 `build`, `test`, `release`, `deploy`, `monitor`, `support` and nothing else. That is the claim the fixed
 verb list is worth making - not that five verbs are elegant, but that they are the only thing six
 unrelated toolchains can all be addressed by at once. Take the list apart per team and you have not
@@ -201,11 +202,14 @@ throughout. Two meanings of one word across one site is worse than a plainer wor
 **kinds of work**, and "discipline" keeps meaning rigour.
 {{< /callout >}}
 
-The row that is *not* in the table is worth naming too. **Running things** - putting a component into an
-environment and watching it there - is a kind of work like the others, and the catalogue carries nothing
-for it at all. Not because it is not real work, but because its tools belong to the shared environment
-rather than to the product, and who should own them is still open. Those are the two empty ribs, in
-[The five phases](../../with-what/phases/#the-two-empty-ribs).
+**Running things** was the row that used to be missing, and half of it still is. si#235 put `deploy:up`
+and `deploy:down` in the table: they say which version goes out and prove it exists. **Watching** things
+is what the catalogue still carries nothing for - and so is the provider half of running them, the part
+that talks to a Portainer or a Proxmox. Not because it is not real work, but because those tools belong
+to the shared environment
+rather than to the product, and who should own them is still open. `deploy` has since gained the two
+tasks that say WHICH version goes out, which is not that half; `monitor` still carries nothing. See
+[The five phases](../../with-what/phases/#the-empty-rib).
 
 ## Why the technology travels in a container
 

@@ -449,6 +449,25 @@ tasks:
   # directory and the media type, so a command declared here would die on its first line in a product
   # that publishes nothing. A product declares the command the day it has something to publish, and pins
   # WHICH artefact with `with: { name: ... }`.
+  # THE DEPLOY FAMILY (si#235). The one group the catalogue contributed nothing to until now, and what
+  # these two add is the half none of the 32 product deploy commands does: say WHICH version is going
+  # out, prove it exists, and only then hand it on. What they do NOT do is replace a product's rollout -
+  # a server's `deploy` goes through the backend the product registered, which is `simplon.backend`'s
+  # extension axis and names no product here.
+  #
+  # A TASK and not a placed command, for `release:artifact`'s reason: both need a `deploy:` section
+  # naming what is deployed and whether this is a client or a server, so a command declared here would
+  # die on its first line in a product that deploys nothing.
+  deploy:up:
+    impl: simplon.tasks.deploy:up
+    help: "Deploy a version - a published one, `latest`, or `local` for the current code base."
+    params:
+      version: { help: "the version to deploy: a published tag, `latest`, or `local`" }
+  deploy:down:
+    impl: simplon.tasks.deploy:down
+    help: "Remove a deployment - a client's installed version, or a server's environment."
+    params:
+      version: { help: "which installed version to remove (a client install; a server takes none)" }
   release:artifact:
     impl: simplon.tasks.artifact:publish
     help: "Publish a declared directory to a registry as an OCI artifact."

@@ -392,10 +392,10 @@ One task body, one `docker run`, and that is the whole deploy story. The runtime
 the JDK the build ran in - what ships is the jar, and the thing that runs it is not the thing that made
 it - and it goes through the same pin gate as the build image.
 
-What does not exist is everything past that host. `deploy` is one of the two ribs the catalogue draws
-empty on purpose: the group name, the env-first gate, and no tasks at all.
+What does not exist is everything past that host. `deploy` is the rib the catalogue draws all but
+empty: the group name, the env-first gate, and two tasks that say which version goes out.
 [simplon#5](https://github.com/marcozwyssig/simplon/issues/5) is where that decision is open, and
-[the two empty ribs](../../with-what/phases/#the-two-empty-ribs) is why leaving them empty is the expensive
+[the empty rib](../../with-what/phases/#the-empty-rib) is why leaving the rest of it empty is the expensive
 choice rather than the lazy one.
 
 ## docs

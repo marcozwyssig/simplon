@@ -393,8 +393,13 @@ def test_the_two_counts_the_chapter_takes_from_the_catalogue_are_the_catalogues_
     assert docs and empty, "the catalogue offers no docs tasks or has no empty group, so this is vacuous"
     assert f"the {_WORDS[len(docs)]} documentation commands" in body, (
         f"the catalogue carries {len(docs)} docs coordinates: {sorted(docs)}")
-    assert f"one of the {_WORDS[len(empty)]} ribs" in body, (
-        f"the catalogue draws {len(empty)} groups empty: {sorted(empty)}")
+    # si#235 gave `deploy` two tasks, so the chapter no longer names it as one of a pair of empty ribs -
+    # it says ALL BUT empty, and the assertion moved with the sentence rather than the sentence being
+    # bent to keep an assertion alive.
+    assert "deploy" not in empty, (
+        "`deploy` is empty again - the chapter's sentence says it is not, and one of the two is wrong")
+    assert "the rib the catalogue draws all but" in body, (
+        f"the catalogue draws {len(empty)} group(s) empty: {sorted(empty)}")
 
 
 # --- the version transcript ----------------------------------------------------------------------------
