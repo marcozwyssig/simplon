@@ -77,7 +77,8 @@ import re
 import pytest
 import yaml
 
-from simplon import context, labegress, labinstance, nexusproxy, tracker, workflowgen
+from simplon import (context, deployment, labegress, labinstance, nexusproxy, tracker,
+                     workflowgen)
 from simplon.tasks import (artifact, asset, buildfiles, claudeplugins, docs, env, image, releasenotes,
                            site, testrun)
 
@@ -108,6 +109,10 @@ PUBLISHED_UNDER = "### The names the kernel has claimed"
 #: document on too, to `workflowgen.parse`, but `workflows:` is read for that command and nobody else's,
 #: so it is declared here rather than left to a module that does not appear in the walk at all.)
 MODULES: dict[str, tuple[str, ...]] = {
+    # `deploy:` is its own; `images:`/`artifacts:` are READ BUT NOT OWNED - si#235's section POINTS at an
+    # entry of one of them rather than restating the registry a second time, so this module reads three
+    # keys and declares one.
+    "deployment": ("deploy", "images", "artifacts"),
     "environments": ("environments", "default"),
     "labegress": ("lab_egress",),
     "labinstance": ("instance",),
@@ -168,6 +173,12 @@ DRIVERS: dict[str, tuple[dict, object]] = {
     "releases": ({"releases": {"page": "releases.md"}}, releasenotes.declared),
     "assets": ({"assets": {"bundle": {}}}, lambda: asset._declared("bundle")),
     "artifacts": ({"artifacts": {"site": {}}}, lambda: artifact._declared("site")),
+    # si#235. The document carries BOTH halves because the section points rather than restates: a
+    # `deploy:` that named a section the document does not declare is one of this reader's own refusals,
+    # so driving it with a complete pair is what makes a MISTYPED `deploy:` the thing under test here.
+    "deploy": ({"images": {"app": {"registry": "r", "repository": "d"}},
+                "deploy": {"source": {"images": "app"}}},
+               deployment.declared),
     "instance": ({"instance": {"env_var": "X", "max_id_len": 2}}, labinstance.spec),
     "lab_egress": ({"lab_egress": {"interface": "eth0"}}, labegress.spec),
     "doctoolchain_version": ({"doctoolchain_version": "docker/x:1"},

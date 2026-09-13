@@ -218,6 +218,24 @@ REACH_KERNEL_EXEMPT = "the kernel exempts itself"
 # that is no longer there.
 
 CENSUS: dict[tuple[str, str, str], str] = {
+    # --- deployment.py (si#235) ------------------------------------------------------------------
+    # Eight, and every one of them DIAGNOSIS: each refuses a manifest that could not have produced a
+    # working deployment at all. A `source:` naming a section the document does not declare, or an entry
+    # that is a bare string rather than a mapping, or one carrying no registry, does not describe a
+    # different deployment - it describes none. Two of the shapes are measured rather than imagined:
+    # netctl's `images:` entries are bare strings and biz-cockpit's carry `name` and no registry, so both
+    # are refused by name with the keys the entry does have.
+    #
+    # None of them is an expression rule, so none needs a REACH entry: there is no manifest a product
+    # might legitimately want that any of these forbids.
+    ("deployment", "source_of", "cannot say which version it is deploying"): DIAGNOSIS,
+    ("deployment", "source_of", "there is nowhere to look a version up"): DIAGNOSIS,
+    ("deployment", "source_of", "it takes exactly one of"): DIAGNOSIS,
+    ("deployment", "source_of", "names no entry"): DIAGNOSIS,
+    ("deployment", "source_of", "carries no registry to deploy from: a deployable entry needs"): DIAGNOSIS,
+    ("deployment", "_entry", "does not declare as a section"): DIAGNOSIS,
+    ("deployment", "_entry", "which carries"): DIAGNOSIS,
+    ("deployment", "_entry", "is not a mapping"): DIAGNOSIS,
     # --- manifest.py -----------------------------------------------------------------------------
     ("manifest", "_split_impl", "impl must be 'module:function'"): DIAGNOSIS,
     ("manifest", "_short_first_needs_a_short_flag_to_order", "needs a `short:` flag to put first"): DIAGNOSIS,

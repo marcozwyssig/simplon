@@ -307,7 +307,7 @@ repository. Adding a key nobody here has heard of is a supported thing to do.
 What was missing is the other half: **which names are already taken**. The product si#159 was reported
 from builds three Windows Server *releases*, and it learned that `releases:` already means
 `{page, from, complete_from}` to `test:release-notes` by reading `src/simplon/tasks/releasenotes.py`. A
-reserved name that can only be found in the source is a trap with a delay on it, so the seventeen are
+reserved name that can only be found in the source is a trap with a delay on it, so the eighteen are
 published here and `tests/test_manifest_top_level.py` holds this table to the kernel in both directions.
 
 | key | read by | what it carries |
@@ -317,6 +317,7 @@ published here and `tests/test_manifest_top_level.py` holds this table to the ke
 | `build:` | `build:cmake-files`, `build:dotnet-solution` | `targets:`, the dependency edges between build targets that a directory layout cannot show |
 | `claude:` | `support:claude-plugins` | the marketplaces and plugin ids an agent host installs |
 | `default:` | the environment selector | the environment a command targets when no env token is given |
+| `deploy:` | the deploy commands | `source:`, naming the `images:` or `artifacts:` entry a deployment's versions are looked up in |
 | `doctoolchain_version:` | `docs:render` | the pinned docToolchain image tag |
 | `env_var:` | `support:environments` | the variable a product's env-first CLI publishes the active environment into |
 | `environments:` | the environment selector | the environment matrix: name, backend, description |
@@ -330,7 +331,7 @@ published here and `tests/test_manifest_top_level.py` holds this table to the ke
 | `tracker:` | `test:walk` | where a refused acceptance step becomes a bug ticket, and the product's own wording for it: `title:`, plus `kind:`, `repo:`, `labels:` and `preamble:` |
 | `workflows:` | `release:workflows` | one entry per generated CI file |
 
-A key that is **mistyped** is therefore not the silent no-op it looks like. Fifteen of the seventeen are
+A key that is **mistyped** is therefore not the silent no-op it looks like. Sixteen of the eighteen are
 named by the reader that wanted them, the moment that reader runs: `sietv:` instead of `site:` answers
 `the 'site' section is missing or is not a mapping`, and every other reader refuses the same way, naming
 the key it looked for. The two that say nothing say nothing on purpose:
@@ -365,7 +366,7 @@ to nest (the section above). It stops at the first step that is not a mapping an
 reader tells "the product said nothing" from "the product said the wrong thing". A section declared and
 empty is found, not blamed.
 
-**It never raises, and that is deliberate.** Each of the seventeen readers above says something specific
+**It never raises, and that is deliberate.** Each of the eighteen readers above says something specific
 when its section is missing, and si#159 measured that fourteen of the sixteen it measured already refuse
 by name and quote the key. An accessor that raised would replace those sentences with one. So it answers the
 question and the reader keeps its own refusal - which is also what keeps every refusal countable where
@@ -614,6 +615,47 @@ Other sections work the same way: `suites:` is the test-level taxonomy a product
 defines, `environments:` the deployment matrix, `nexus:` and `claude:` the data their respective tasks
 read. A task that needs a section it does not find fails on its first line, which is why such tasks stay
 *tasks* in the catalogue rather than being placed as commands for everybody.
+
+### `deploy:` - which version a deployment is deploying
+
+A deployment names its version, and it has three kinds of answer:
+
+```text
+./myctl.sh prod deploy up --version 1.4.0     this exact published version
+./myctl.sh prod deploy up --version latest    the newest published version
+./myctl.sh prod deploy up --version local     the current code base, built now
+```
+
+**Three values for three meanings**, rather than one value that sometimes means a lookup and sometimes a
+build. `local` touches no registry at all - that is the point of it - while the other two resolve against
+one, and a version the registry does not serve is refused *before* anything starts:
+
+> ghcr.io/acme/demo-app does not serve '9.9.9', so nothing was deployed. Published versions are what
+> `latest` resolves against; `local` deploys the current code base without needing one
+
+Asking for nothing is refused too. "Whatever is newest" is a choice somebody makes, and a deployment that
+made it silently would be exactly the accident this section exists to remove.
+
+**The section points at an entry you already have**, rather than naming a registry a second time:
+
+```yaml
+images:
+  app: { registry: ghcr.io/acme, repository: demo-app, dockerfile: Dockerfile }
+
+deploy:
+  source: { images: app }        # or { artifacts: <name> }
+```
+
+Everything about *where* comes from that entry, so there is one place a registry is written down. An
+entry that cannot serve as a deployment source says so by name - one that is a bare string rather than a
+mapping, or that carries no `registry:` - and the message lists the keys it does carry, because the next
+question is what to add.
+
+{{< callout type="info" >}}
+**One source, many targets.** `dev|test|uat|prod` choose where a deployment goes, not where the artefact
+comes from. Build once, deploy often - and a promotion is only provable if the number that went to test
+is the number that goes to prod.
+{{< /callout >}}
 
 ### `tracker:` - where a refused step becomes a ticket
 
