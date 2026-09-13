@@ -307,7 +307,7 @@ repository. Adding a key nobody here has heard of is a supported thing to do.
 What was missing is the other half: **which names are already taken**. The product si#159 was reported
 from builds three Windows Server *releases*, and it learned that `releases:` already means
 `{page, from, complete_from}` to `test:release-notes` by reading `src/simplon/tasks/releasenotes.py`. A
-reserved name that can only be found in the source is a trap with a delay on it, so the eighteen are
+reserved name that can only be found in the source is a trap with a delay on it, so the nineteen are
 published here and `tests/test_manifest_top_level.py` holds this table to the kernel in both directions.
 
 | key | read by | what it carries |
@@ -320,6 +320,7 @@ published here and `tests/test_manifest_top_level.py` holds this table to the ke
 | `deploy:` | the deploy commands | `source:`, naming the `images:` or `artifacts:` entry a deployment's versions are looked up in |
 | `doctoolchain_version:` | `docs:render` | the pinned docToolchain image tag |
 | `env_var:` | `support:environments` | the variable a product's env-first CLI publishes the active environment into |
+| `generated:` | `test:generated` | one entry per committed generated file: its `path:` and the `by:` command that produces it |
 | `environments:` | the environment selector | the environment matrix: name, backend, description |
 | `images:` | `build:image`, `release:image` | one entry per container image: registry, repository, Dockerfile, context |
 | `instance:` | the multi-tenant lab | the env var naming the lab instance, and the product's id-length budget |
@@ -331,7 +332,7 @@ published here and `tests/test_manifest_top_level.py` holds this table to the ke
 | `tracker:` | `test:walk` | where a refused acceptance step becomes a bug ticket, and the product's own wording for it: `title:`, plus `kind:`, `repo:`, `labels:` and `preamble:` |
 | `workflows:` | `release:workflows` | one entry per generated CI file |
 
-A key that is **mistyped** is therefore not the silent no-op it looks like. Sixteen of the eighteen are
+A key that is **mistyped** is therefore not the silent no-op it looks like. Seventeen of the nineteen are
 named by the reader that wanted them, the moment that reader runs: `sietv:` instead of `site:` answers
 `the 'site' section is missing or is not a mapping`, and every other reader refuses the same way, naming
 the key it looked for. The two that say nothing say nothing on purpose:
@@ -366,7 +367,7 @@ to nest (the section above). It stops at the first step that is not a mapping an
 reader tells "the product said nothing" from "the product said the wrong thing". A section declared and
 empty is found, not blamed.
 
-**It never raises, and that is deliberate.** Each of the eighteen readers above says something specific
+**It never raises, and that is deliberate.** Each of the nineteen readers above says something specific
 when its section is missing, and si#159 measured that fourteen of the sixteen it measured already refuse
 by name and quote the key. An accessor that raised would replace those sentences with one. So it answers the
 question and the reader keeps its own refusal - which is also what keeps every refusal countable where
@@ -656,6 +657,37 @@ question is what to add.
 comes from. Build once, deploy often - and a promotion is only provable if the number that went to test
 is the number that goes to prod.
 {{< /callout >}}
+
+### `generated:` - the files that must be what their command produces
+
+A generated file you commit carries one fact twice: the source it comes from, and the bytes in the tree.
+They drift, and the drift is visible only to somebody who regenerates - which is exactly the person who
+was not going to.
+
+```yaml
+generated:
+  completion: { path: deploy/completions/myctl.bash, by: support completion }
+  reference:  { path: docs/site/content/with-what/commands.md, by: docs reference }
+```
+
+`./myctl.sh test generated` runs each `by:` and fails if the file it produced is not the file that was
+committed, naming which one and what to run. `by:` is the command a person would type, without the
+launcher.
+
+{{< callout type="warning" >}}
+**It regenerates into your working tree.** That is what makes the comparison real - generating into a
+temporary directory would compare two files your own command never produced side by side. A CI checkout
+is disposable; on your own machine, expect the files to be rewritten.
+{{< /callout >}}
+
+**A file git does not track is a failure, not a pass.** The obvious implementation of this gate is
+`git diff --exit-code`, and over an untracked path that exits 0 - so the artefact that was never
+committed at all, which is this mistake in its most complete form, would come back green. Each entry is
+checked for being tracked before anything is regenerated.
+
+**And a regeneration that fails is not freshness either.** A command that could not run leaves the file
+exactly as it was, so the diff is empty. The gate reads the return code, because "regenerated, and it
+matched" and "did not regenerate, and nothing changed" are two different things.
 
 ### `tracker:` - where a refused step becomes a ticket
 

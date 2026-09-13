@@ -247,6 +247,14 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # refuse a key that does nothing where it is written, and all four are diagnosis. The declaration had
     # no working meaning THERE, which is the test - not whether the rest of the manifest still runs.
     ("deployment", "source_of", "would do nothing where it is written"): DIAGNOSIS,
+    # --- tasks/generated.py (si#240) -----------------------------------------------------------------
+    # Four, all diagnosis: a staleness gate handed no section, an entry that is not a mapping, or one
+    # missing either half of "which file" and "which command" has nothing to rule on. None of them
+    # forbids a manifest a product might want - they refuse one that says nothing.
+    ("generated", "entries_of", "there is nothing to check for staleness"): DIAGNOSIS,
+    ("generated", "entries_of", "is not a mapping"): DIAGNOSIS,
+    ("generated", "entries_of", "there is no file to compare"): DIAGNOSIS,
+    ("generated", "entries_of", "nothing says how to regenerate"): DIAGNOSIS,
     # --- environments.py, PULLED IN by si#235 rather than written for it ------------------------------
     # These four are not new code. They became LOAD-TIME refusals the day `tasks.deploy` handed the
     # manifest document to `parse_data`: before it, nothing walked from a manifest seam into this

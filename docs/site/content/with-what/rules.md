@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 123 | nothing - the declaration had no working meaning |
+| diagnosis | 127 | nothing - the declaration had no working meaning |
 | expression rule | 22 | something it could otherwise have said |
-| **all load-time refusals** | **145** | |
+| **all load-time refusals** | **149** | |
 
 A **load-time refusal** is one raised on the way from the manifest to a decision, with no tool consulted
 in between. Refusals that happen later - a task whose tool is missing, a build the daemon rejected - are a
@@ -137,7 +137,7 @@ being talked about? The second one is the one that keeps going missing.
 **What replaces it is a measurement rather than a label.** The reach column above was hand-written, and a
 hand-written word beside a rule is exactly the kind of thing that was wrong. So the kernel's own manifest is
 now loaded against the real catalogue with every rule-bearing function on the merge path recorded, and each
-rule is asked what it was actually handed. The catalogue holds **40** coordinates and its own tree places
+rule is asked what it was actually handed. The catalogue holds **41** coordinates and its own tree places
 **9** of them; those 9 are the platform's half - in the merged tree because the catalogue put them there,
 not because this product asked - and all 9 reach every rule the table calls *held to it too*. Exactly two
 functions never see them, `check_no_old_form` (which rules on the product's document alone; it was shown

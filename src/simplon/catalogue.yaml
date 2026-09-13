@@ -232,6 +232,17 @@ tasks:
   # NO `params:`, because there is nothing for a `with:` block to pin: all three values are the product's
   # DATA and arrive through the manifest, and si#105's rule means a key here that no parameter answers to
   # is refused at load anyway.
+  # THE STALENESS GATE (si#240). A generated artefact that is COMMITTED carries one fact twice - the
+  # source it comes from and the bytes in the tree - and they drift silently. The question was invented
+  # twice before this task existed (biz-cockpit's `verify_spec` over its OpenAPI contract, this
+  # repository's `test_own_completion.py` over its shell completion) and it has drawn blood once: si#6ddecaf
+  # left `main` red with an uncompletable command because a manifest change never reached the completion.
+  #
+  # In `test` and not in `build`, because its verdict is red or green and nothing else - the same reason
+  # `test:release-notes` sits here rather than beside the thing it rules on.
+  test:generated:
+    impl: simplon.tasks.generated:check
+    help: "Fail if a committed generated file is not what its own command produces."
   test:release-notes:
     impl: simplon.tasks.releasenotes:check
     help: "Check the product's releases page against the tags and merges its repository carries."
