@@ -23,6 +23,27 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.14.0
+
+### The four claims are in English (si#232)
+
+`why/why.md` answers "what is this" with four claims, and their headings were still German: *Einfach*,
+*Strukturiert*, *Agnostisch*, *Erweiterbar*. They read **Simple**, **Modular**, **Agnostic** and
+**Evolve**. The one link that pointed at the renamed anchor moved with them; the si#186 note below keeps
+the old spellings, because it describes the page as it was in 0.11.0.
+
+**This is the class si#213 said no check would close, arriving on schedule.** That ticket withdrew the
+claim that the site is English-only rather than buy a dictionary to lint against, and said why: the first
+word a list does not carry is another *vorgang*. These four have no umlaut and are not function words, so
+both earlier sweeps answered honestly about what they were asked. Three of them are near-cognates of the
+English word that replaces them, which is presumably how they survived two readings by people who knew
+they were looking for German.
+
+**No check is being built for it either**, and the reasoning is unchanged by a fourth instance: a reader
+is what finds these. What the fourth instance buys is the count, and the count is now on the record.
+
+**Nothing to do.** The old URL and every other anchor are unchanged.
+
 ## 0.13.0
 
 **A word that was not a level, and three quotes nothing could check.** `with-what/test-levels.md`
@@ -982,7 +1003,8 @@ alone and stayed green against a runner rewritten to `print(f"==> {title}")`.
 ### The `why` chapter is a page, not an essay (si#186)
 
 `why/why.md` was 3992 words and opened by announcing how it would take itself apart noun by noun. It is
-now a short page carrying four claims - **Einfach, Strukturiert, Agnostisch, Erweiterbar** - with one
+now a short page carrying four claims - then spelled *Einfach*, *Strukturiert*, *Agnostisch* and
+*Erweiterbar*, and in English since 0.14.0 - with one
 piece of evidence each rather than an adjective, plus the three things Simplon is explicitly **not** (not
 a CI server, not a build system, not a framework you write against) and what it costs to run. The
 noun-by-noun argument moved intact to [The design, noun by noun](../../why/the-design/), and

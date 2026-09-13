@@ -37,7 +37,7 @@ groups:
 A product fills those groups. It cannot invent a seventh, and the refusal is not a rule layered over the
 merge - it *is* the merge. A product's tree is merged onto the platform's, so a path the platform does
 not already declare has nowhere to land, and the loader says so in as many words - the message is quoted
-in full under [Strukturiert](../why/#strukturiert), where it is this site's only copy of it.
+in full under [Modular](../why/#modular), where it is this site's only copy of it.
 
 There is one tree, so there is no second way to bring a group into existence. That is what makes the
 vocabulary hold: `test` means *verify* in every product that uses the kernel, and `deploy prod up` reads

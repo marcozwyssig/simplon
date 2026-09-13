@@ -15,7 +15,7 @@ learn this team's way of saying it.
 commands in one YAML file; the kernel assembles the command line from that declaration and runs the
 steps. Somebody who has worked on the Java product can operate the C++ one without being told anything.
 
-## Einfach
+## Simple
 
 One file and a command exists - with its help text, its options and its place in the tree. Nobody writes
 an argument parser:
@@ -29,7 +29,7 @@ build:
 `simplon init` writes the launcher, and the launcher provisions its own virtual environment and installs
 the pinned kernel on first use. A fresh clone plus that one script is the whole setup.
 
-## Strukturiert
+## Modular
 
 Six groups exist - `build`, `test`, `release`, `deploy`, `monitor`, and `support` for the machine itself
 - and that is all there are. A seventh is not refused by a rule bolted on top; it has nowhere to land,
@@ -43,7 +43,7 @@ because a product's tree is merged onto the platform's:
 So `test` means *verify* in every product, and `deploy prod up` reads the same to somebody who has never
 seen that product before.
 
-## Agnostisch
+## Agnostic
 
 The vocabulary names no technology. pytest, Hugo, Docker, Gradle, .NET, clang, Allure, mypy, a package
 registry: every one of them sits behind a **task**, named by a coordinate, and the kernel knows nothing
@@ -57,7 +57,7 @@ docs:site:
 
 Swapping the tool behind `docs:site` is a kernel change. It is not a change to six manifests.
 
-## Erweiterbar
+## Evolve
 
 A task written once is available to every product that names its coordinate, and a product adds its own
 data sections freely. Measured over every manifest this kernel can reach - its own and six in other
