@@ -460,7 +460,14 @@ def test_the_four_commands_the_chapter_counts_are_the_kernels_own_profile():
     # act / assert
     ruled = 0
     for name, declared in profile.commands.items():
-        assert name in bodies, f"the profile carries '{name}'; cppdemo declares {sorted(bodies)}"
+        if name not in bodies:
+            # A command the profile has gained SINCE this chapter's run was measured. The chapter keeps
+            # what the run really wrote and names the addition instead of restating it, so this stays a
+            # comparison rather than becoming a licence to drift: the name has to appear on the page.
+            assert f"`{name}`" in _text(), (
+                f"the profile carries '{name}', cppdemo declares {sorted(bodies)}, and the chapter does "
+                f"not name it as a later addition")
+            continue
         assert bodies[name]["argv"] == declared["argv"], (
             f"cppdemo's '{name}' runs {bodies[name]['argv']}, the profile says {declared['argv']}")
         assert bodies[name]["workdir"] == declared["workdir"]
@@ -473,7 +480,8 @@ def test_the_four_commands_the_chapter_counts_are_the_kernels_own_profile():
     assert f"{word} commands" in _text(), (
         f"the C++ profile carries {ruled} commands ({', '.join(profile.commands)}); the chapter does not "
         f"say '{word} commands'")
-    assert ruled == len(profile.commands) >= 4
+    # `ruled` counts the commands the chapter really shows; a later addition is named instead (si#238).
+    assert ruled >= 4 and ruled <= len(profile.commands)
 
 
 def test_the_languages_the_chapter_says_the_kernel_carries_are_the_ones_in_the_table():

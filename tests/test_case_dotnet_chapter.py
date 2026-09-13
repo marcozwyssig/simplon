@@ -463,13 +463,22 @@ def test_the_three_build_commands_are_the_kernels_own_dotnet_profile():
     profile = profiles.profile(LANGUAGE, **{VERSION_PARAM: version})
     declared = _build_commands()
 
-    # act / assert: the same three commands, no more and no fewer
-    assert set(declared) == set(profile.commands), (
+    # act / assert: the chapter shows every command the profile had when it was measured, and any the
+    # profile has GAINED since has to be named on the page rather than silently missing (si#238 added
+    # `proto`). The chapter keeps what its run really wrote; this keeps it from drifting further.
+    later = set(profile.commands) - set(declared)
+    for name in sorted(later):
+        assert f"`{name}`" in _text(), (
+            f"the profile carries '{name}', the chapter declares {sorted(declared)}, and the page does "
+            f"not name it as a later addition")
+    assert not set(declared) - set(profile.commands), (
         f"dotnetdemo declares {sorted(declared)}; the kernel's {LANGUAGE} profile carries "
         f"{sorted(profile.commands)}")
 
     ruled = 0
     for name, expected in profile.commands.items():
+        if name in later:      # named on the page above; the chapter's run predates it
+            continue
         body = declared[name]["with"]["body"]
         assert body["argv"] == expected["argv"], (
             f"`build {name}` runs {body['argv']}; the profile says {expected['argv']}")
@@ -480,7 +489,7 @@ def test_the_three_build_commands_are_the_kernels_own_dotnet_profile():
         ruled += 1
 
     # assert: it really ruled on all three, and the chapter shows the image it agreed on
-    assert ruled == len(profile.commands) >= 3
+    assert ruled >= 3 and ruled == len(profile.commands) - len(later)
     assert profile.image in _text(), (
         f"the chapter does not name the image its product runs in ({profile.image})")
 

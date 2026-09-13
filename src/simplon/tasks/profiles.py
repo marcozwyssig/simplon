@@ -43,6 +43,29 @@ PROFILES: dict[str, Profile] = {
     "cpp": Profile(
         image="silkeh/clang:{version}",
         commands={
+            # gRPC AND PROTOBUF (si#238), and it is the one command here that names its OWN image.
+            # That is not a special case in the scaffolder - `{"image": prof.image, **body}` has always
+            # let a body override the profile's - it is simply the first command that needs to, because
+            # a language SDK image carries neither `protoc` nor its plugin.
+            #
+            # ONE IMAGE SERVES ALL FOUR cppUAGES, measured rather than assumed: on 2026-09-13
+            # `namely/protoc-all` generated real stubs for all four from one `.proto` - `greeter_pb2.py`
+            # + `greeter_pb2_grpc.py`, `GreeterOuterClass.java` + `GreeterGrpc.java`, `greeter.pb.h/.cc`
+            # + `greeter.grpc.pb.h/.cc`, `Greeter.cs` + `GreeterGrpc.cs`. Four profiles name the same
+            # image with a different `-l`, which is what "an integration into all four technologies"
+            # means when the table is per language.
+            #
+            # `workdir: /defs` because that is where this image reads definitions from, and
+            # `toolchain:run` mounts the product tree at whatever `workdir` says.
+            #
+            # OUT TO `build/`, NOT INTO THE TREE (si#238's second decision). Generated code is not
+            # source: nothing in the tree can go stale, no diff ever shows generated lines, and
+            # `depends_on` can plan generation before the build.
+            "proto": {
+                "image": "namely/protoc-all:1.51_2",
+                "workdir": "/defs",
+                "argv": ["-d", "proto", "-l", "cpp", "-o", "build/proto/cpp"],
+            },
             # THE BUILD TYPE IS SAID HERE AND NOWHERE ELSE (si#132). With a single-config generator an
             # EMPTY `CMAKE_BUILD_TYPE` means no optimisation and no `-g` at all, so the binary si#102
             # compiled and ran carried no debug symbols; nothing set it, and the generated
@@ -101,6 +124,29 @@ PROFILES: dict[str, Profile] = {
     "java": Profile(
         image="gradle:jdk{version}",
         commands={
+            # gRPC AND PROTOBUF (si#238), and it is the one command here that names its OWN image.
+            # That is not a special case in the scaffolder - `{"image": prof.image, **body}` has always
+            # let a body override the profile's - it is simply the first command that needs to, because
+            # a language SDK image carries neither `protoc` nor its plugin.
+            #
+            # ONE IMAGE SERVES ALL FOUR javaUAGES, measured rather than assumed: on 2026-09-13
+            # `namely/protoc-all` generated real stubs for all four from one `.proto` - `greeter_pb2.py`
+            # + `greeter_pb2_grpc.py`, `GreeterOuterClass.java` + `GreeterGrpc.java`, `greeter.pb.h/.cc`
+            # + `greeter.grpc.pb.h/.cc`, `Greeter.cs` + `GreeterGrpc.cs`. Four profiles name the same
+            # image with a different `-l`, which is what "an integration into all four technologies"
+            # means when the table is per language.
+            #
+            # `workdir: /defs` because that is where this image reads definitions from, and
+            # `toolchain:run` mounts the product tree at whatever `workdir` says.
+            #
+            # OUT TO `build/`, NOT INTO THE TREE (si#238's second decision). Generated code is not
+            # source: nothing in the tree can go stale, no diff ever shows generated lines, and
+            # `depends_on` can plan generation before the build.
+            "proto": {
+                "image": "namely/protoc-all:1.51_2",
+                "workdir": "/defs",
+                "argv": ["-d", "proto", "-l", "java", "-o", "build/proto/java"],
+            },
             # TWO TASKS, AND THE SECOND ONE IS THE MEASUREMENT (si#122). `compile` used to be
             # `gradle build`, which depends on `check` and therefore RUNS THE TESTS - so a broken
             # assertion made the COMPILE red, and si#106's gate shape (`command: "build unit"` with
@@ -149,6 +195,29 @@ PROFILES: dict[str, Profile] = {
     "dotnet": Profile(
         image="mcr.microsoft.com/dotnet/sdk:{version}",
         commands={
+            # gRPC AND PROTOBUF (si#238), and it is the one command here that names its OWN image.
+            # That is not a special case in the scaffolder - `{"image": prof.image, **body}` has always
+            # let a body override the profile's - it is simply the first command that needs to, because
+            # a language SDK image carries neither `protoc` nor its plugin.
+            #
+            # ONE IMAGE SERVES ALL FOUR csharpUAGES, measured rather than assumed: on 2026-09-13
+            # `namely/protoc-all` generated real stubs for all four from one `.proto` - `greeter_pb2.py`
+            # + `greeter_pb2_grpc.py`, `GreeterOuterClass.java` + `GreeterGrpc.java`, `greeter.pb.h/.cc`
+            # + `greeter.grpc.pb.h/.cc`, `Greeter.cs` + `GreeterGrpc.cs`. Four profiles name the same
+            # image with a different `-l`, which is what "an integration into all four technologies"
+            # means when the table is per language.
+            #
+            # `workdir: /defs` because that is where this image reads definitions from, and
+            # `toolchain:run` mounts the product tree at whatever `workdir` says.
+            #
+            # OUT TO `build/`, NOT INTO THE TREE (si#238's second decision). Generated code is not
+            # source: nothing in the tree can go stale, no diff ever shows generated lines, and
+            # `depends_on` can plan generation before the build.
+            "proto": {
+                "image": "namely/protoc-all:1.51_2",
+                "workdir": "/defs",
+                "argv": ["-d", "proto", "-l", "csharp", "-o", "build/proto/csharp"],
+            },
             "compile": {"workdir": "/src", "argv": ["dotnet", "build"]},
             "unit": {"workdir": "/src", "argv": ["dotnet", "test"]},
             # `dotnet format --verify-no-changes` EXITS 2, not 1, on a formatting fault - measured
@@ -264,6 +333,29 @@ PROFILES: dict[str, Profile] = {
         # product names the network that product is on; the kernel cannot know it, so the profile pins
         # only where it has measured, which is here.
         commands={
+            # gRPC AND PROTOBUF (si#238), and it is the one command here that names its OWN image.
+            # That is not a special case in the scaffolder - `{"image": prof.image, **body}` has always
+            # let a body override the profile's - it is simply the first command that needs to, because
+            # a language SDK image carries neither `protoc` nor its plugin.
+            #
+            # ONE IMAGE SERVES ALL FOUR pythonUAGES, measured rather than assumed: on 2026-09-13
+            # `namely/protoc-all` generated real stubs for all four from one `.proto` - `greeter_pb2.py`
+            # + `greeter_pb2_grpc.py`, `GreeterOuterClass.java` + `GreeterGrpc.java`, `greeter.pb.h/.cc`
+            # + `greeter.grpc.pb.h/.cc`, `Greeter.cs` + `GreeterGrpc.cs`. Four profiles name the same
+            # image with a different `-l`, which is what "an integration into all four technologies"
+            # means when the table is per language.
+            #
+            # `workdir: /defs` because that is where this image reads definitions from, and
+            # `toolchain:run` mounts the product tree at whatever `workdir` says.
+            #
+            # OUT TO `build/`, NOT INTO THE TREE (si#238's second decision). Generated code is not
+            # source: nothing in the tree can go stale, no diff ever shows generated lines, and
+            # `depends_on` can plan generation before the build.
+            "proto": {
+                "image": "namely/protoc-all:1.51_2",
+                "workdir": "/defs",
+                "argv": ["-d", "proto", "-l", "python", "-o", "build/proto/python"],
+            },
             "deps": {"workdir": "/src",
                      "env": {"PYTHONUSERBASE": "/src/.simplon-toolchain"},
                      "argv": ["python", "-m", "pip", "install", "--user", "--no-cache-dir",
