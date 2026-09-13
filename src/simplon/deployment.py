@@ -56,14 +56,39 @@ LATEST = "latest"
 #: The current code base, built now.
 LOCAL = "local"
 
+#: WHAT A DEPLOYMENT IS, and it is one axis rather than a taxonomy: a CLIENT application is installed
+#: into a directory on the machine in front of you; a SERVER application is brought up on a target
+#: through the product's backend. Every product falls on one side, and si#235 asks that the two read the
+#: same everywhere rather than each product inventing its own verb.
+#:
+#: THE SCOPE BOUNDARY, stated because it is the half that is easy to assume. `client` means installing a
+#: version HERE. Distributing one to a FLEET of machines - an SCCM, an MDM, a software deployment server
+#: - is out of Simplon's scope and is not what this declares. A product that needs that drives its own
+#: tool; what the kernel offers is the same version vocabulary in front of it.
+#:
+#: WHY THIS IS A DECLARATION AND si#223's `kind:` WAS NOT. That ticket refused to let a manifest declare
+#: what a body already decides - `publish(..., check=False)` reports or acts on a pin, so a `kind:`
+#: beside it could only drift. Client-or-server is not decided anywhere else: it is a fixed property of
+#: what the product IS, it does not change per invocation, and nothing in the code states it today. A
+#: declaration is the only place it can live.
+CLIENT = "client"
+SERVER = "server"
+KINDS = (CLIENT, SERVER)
+
 
 class Source(NamedTuple):
-    """Where a deployment's artefacts come from, read off the section the `deploy:` section points at."""
+    """Where a deployment's artefacts come from, read off the section the `deploy:` section points at.
+
+    `application` is the client-or-server axis; `into` is the directory a CLIENT lands in and is empty
+    for a server, whose target is its backend's business rather than a path on this machine.
+    """
 
     kind: str
     name: str
     registry: str
     repository: str
+    application: str = SERVER
+    into: str = ""
 
     @property
     def reference(self) -> str:
@@ -155,7 +180,23 @@ def source_of(document: dict, where: str) -> Source:
         raise ValueError(
             f"{where}'s `{kind}: {name}:` carries no registry to deploy from: a deployable entry needs "
             f"`registry:` and `repository:`, and this one has {', '.join(sorted(entry)) or 'no keys'}")
-    return Source(kind=kind, name=name, registry=registry, repository=repository)
+    application = str(section.get("kind", "") or "").strip()
+    if application not in KINDS:
+        raise ValueError(
+            f"{where}'s `{SECTION}:` section declares `kind: {application or '(nothing)'}`; it takes "
+            f"{' or '.join(KINDS)}. A {CLIENT} is installed into a directory on this machine, a "
+            f"{SERVER} is brought up on a target through the product's backend")
+    into = str(section.get("into", "") or "").strip()
+    if application == CLIENT and not into:
+        raise ValueError(
+            f"{where} declares `{SECTION}: kind: {CLIENT}` but no `into:`, so there is nowhere to "
+            f"install it. A client application names the directory a version lands in")
+    if application == SERVER and into:
+        raise ValueError(
+            f"{where} declares `{SECTION}: kind: {SERVER}` and an `into:`, which would do nothing where "
+            f"it is written: a server's target is its backend's business, not a path on this machine")
+    return Source(kind=kind, name=name, registry=registry, repository=repository,
+                  application=application, into=into)
 
 
 def _newest(source: Source) -> str:

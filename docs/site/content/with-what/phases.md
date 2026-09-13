@@ -8,7 +8,7 @@ aliases:
 **Six groups, five phases.** [The table](#the-five-and-the-one-beside-them) is the short answer; the rest
 of this page is why. If you came to look something up: [what the catalogue offers
 today](#what-the-catalogue-offers-today) lists every coordinate by group, [the families](#the-families-and-where-they-land)
-say which half of a coordinate decides its placement, and [the two empty ribs](#the-two-empty-ribs) is
+say which half of a coordinate decides its placement, and [the empty rib](#the-empty-rib) is
 the honest answer to "why is there nothing under `deploy`".
 
 Every Simplon product hangs its commands off the same six top-level groups, and it cannot invent a
@@ -59,7 +59,7 @@ flowchart LR
     build["build"]
     test["test"]
     release["release"]
-    deploy["deploy<br/>env-first<br/>no catalogue task yet"]
+    deploy["deploy<br/>env-first"]
     monitor["monitor<br/>env-first<br/>no catalogue task yet"]
 
     build -- "artefacts" --> test
@@ -147,7 +147,7 @@ the number that says whether a rib is filled:
 | `build` | phase, agnostic | 6 |
 | `test` | phase, agnostic | 6 |
 | `release` | phase, agnostic | 6 |
-| `deploy` | phase, env-first | 0 |
+| `deploy` | phase, env-first | 2 |
 | `monitor` | phase, env-first | 0 |
 | `support` | not a phase | 8 |
 | `vcs` | family | 5 |
@@ -155,7 +155,7 @@ the number that says whether a rib is filled:
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Thirty-eight coordinates: twenty-six carrying a placement, twelve free to be filed. The numbers in this sentence, in that
+Forty coordinates: twenty-eight carrying a placement, twelve free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -298,11 +298,19 @@ resolved - that distinction is spelled out in [Handing a package over](../../wha
 
 *Put them into an environment.* Env-first: the environment is the outer token, before the group.
 
-**In the catalogue today: 0 tasks.**
+**In the catalogue today: 2 tasks.**
 
-**What a product brings itself.** All of it - the commands and the bodies both. See [the two empty
-ribs](#the-two-empty-ribs) below, because this emptiness is the one worth explaining rather than
-listing.
+- `deploy:down`
+- `deploy:up`
+
+**What a product brings itself.** The rollout. What these two add is the half no product had: *which*
+version is going out, whether it exists, and - for a server - handing it to the backend the product
+registered. A `deploy:` section says whether this is a client application installed into a directory here
+or a server brought up on a target, and which `images:` or `artifacts:` entry the versions are looked up
+in. See [`deploy:` in the manifest](../../how/manifest/#deploy---which-version-a-deployment-is-deploying).
+
+Distributing a client application to a *fleet* of machines - an SCCM, an MDM - is out of scope and is not
+what these grow into.
 
 ### `monitor`
 
@@ -347,23 +355,30 @@ something a product asked for, not something it received with the kernel. It is 
 that refuses unless it is run as root, and says so: the privilege it hands out is the one the kernel
 needs in order to be allowed to do anything, so it cannot take it from inside a job.
 
-## The two empty ribs
+## The empty rib
 
-`deploy` and `monitor` have **no catalogue tasks**. Not few: none. A product that deploys writes every
-line of its deployment itself, and the kernel contributes the group name, the env-first gate and nothing
-else.
+`monitor` has **no catalogue tasks**. Not few: none. A product that watches an environment writes every
+line of it itself, and the kernel contributes the group name, the env-first gate and nothing else.
 
-That is not a gap the way a missing feature is a gap. It is the *most expensive* two ribs to leave
-empty, and the reason is exactly why they are the env-first pair. Every other phase is about the
-product's own material - only this product knows what its artefact is or which suites it has. Deploying
-and monitoring are about **the environment**, and the environments are shared: three products pointing
-at the same Portainer, the same Proxmox, the same Exoscale account are three products writing the same
-provider three times. Repetition of that exact shape is what the kernel was extracted to remove.
+**This section used to be called "the two empty ribs", and the half that changed is worth keeping.** The
+claim was that the empty ribs were *exactly* the env-first pair - the two phases about the shared
+environment rather than about the product's own material - and that this made them the most expensive
+two to leave empty. Three products pointing at the same Portainer, the same Proxmox, the same Exoscale
+account are three products writing the same provider three times, and repetition of that exact shape is
+what the kernel was extracted to remove.
 
-So these two are where reuse would be worth the most and where there is none - and the honest thing to
-do is draw the rib empty. A documentation page that showed a filled `deploy` because a filled `deploy`
-is what the picture wants would be worse than no page: the reader would go looking for a command that
-does not exist and conclude they had misread the site.
+That equality stopped being true when `deploy` grew two tasks, and it is **withdrawn rather than
+repaired**. What survives is the implication that was carrying the argument: an empty rib is always an
+env-first one, because a phase about the product's own material never sits empty. `test_phases_chapter`
+holds that direction and no longer the equality.
+
+**And what `deploy` gained is not the expensive half.** `deploy:up` and `deploy:down` answer *which
+version* is going out and prove it exists; the provider - the thing three products would otherwise write
+three times - is still each product's own. The rib is less empty and the argument is unchanged.
+
+A documentation page that showed a filled `monitor` because a filled `monitor` is what the picture wants
+would be worse than no page: the reader would go looking for a command that does not exist and conclude
+they had misread the site.
 
 What has to be decided before those ribs can be filled - provider in the kernel behind an extra,
 provider as a separate package, or provider in the product - is open as
@@ -467,6 +482,6 @@ to read: the tree, the group lock, and the product data sections each of the tas
 
 For what this looks like on a real product, the [command reference](../commands/) is simplon's
 own, generated from the assembled application on every build - and worth reading for what is *not* in
-it. There is no `deploy` and no `monitor` in that reference at all, because a group with no command
-anywhere under it does not render, and simplon deploys nothing and watches nothing. The two empty ribs
-are visible from the other side there.
+it. There is no `deploy` and no `monitor` in that reference at all, because a group with no command anywhere
+under it does not render, and simplon neither deploys nor watches anything of its own - it OFFERS the two
+deploy tasks without placing them. The emptiness is visible from the other side there.

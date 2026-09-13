@@ -265,11 +265,11 @@ sentence was read out of the product's task body, not observed. Starting a conta
 else's checkout to be able to write *run* here would have been a run staged for the documentation, and
 a staged run is the thing the label is supposed to rule out.
 
-What does not exist is everything past that host. `deploy` is one of the two ribs the catalogue draws
+What does not exist is everything past that host. `deploy` is the rib the catalogue draws all but
 empty on purpose: it carries the group name, the env-first gate and **no tasks at all**. Proxmox,
 Portainer and a cloud account are not implemented, not stubbed and not planned in code -
 [simplon#5](https://github.com/marcozwyssig/simplon/issues/5) is where the decision is open, and
-[the two empty ribs](../../with-what/phases/#the-two-empty-ribs) is why leaving them empty is the
+[the empty rib](../../with-what/phases/#the-empty-rib) is why leaving the rest of it empty is the
 expensive choice rather than the lazy one.
 
 So: a Python product can be built, tested, released and documented by this kernel today, and it can be

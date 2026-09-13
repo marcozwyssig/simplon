@@ -25,6 +25,42 @@ it is the one section held only to existing.
 
 ## 0.14.0
 
+### The deploy family, and the rib that is no longer empty (si#235)
+
+`deploy` was the one group of the six the catalogue contributed nothing to. It now offers two tasks, and
+they are the same for every product:
+
+```text
+./myctl.sh prod deploy up --version 1.4.0
+./myctl.sh prod deploy down --version 1.4.0
+```
+
+**One shape, and the axis is what the product IS.** A `deploy: kind:` says `client` or `server`. A CLIENT
+application is installed into a directory on this machine, one directory per version, so a rollback is a
+second `up` rather than a re-fetch. A SERVER is brought up on a target through the backend the product
+registers - `simplon.backend` has always been the seam for that and gained only a REGISTRATION, because a
+catalogue task is called with manifest-pinned parameters and cannot be handed a registry as an argument.
+
+**Out of scope, said once so nobody waits for it:** distributing a client application to a FLEET of
+machines - an SCCM, an MDM, a software deployment server. `client` means installing a version *here*.
+
+**The page's own argument changed, and it was withdrawn rather than repaired.** `with-what/phases.md`
+said the empty ribs were *exactly* the env-first pair, and its test said so "where it can stop being
+true". It stopped. What survives is the implication that carried it - an empty rib is always env-first -
+and `monitor` is the one left. What `deploy` gained is the VERSION half; the provider half, the thing
+three products would otherwise write three times, is still open as
+[simplon#5](https://github.com/marcozwyssig/simplon/issues/5).
+
+**Four refusals were pulled into the census without a rule being written.** `environments.parse_data` has
+always refused a matrix that is not a mapping, is empty, names an unimplemented backend or defaults to an
+environment it does not declare - and until a deploy task handed it the manifest document, nothing walked
+there from a manifest seam, so nothing counted them. The count moved 116 -> 123 for that reason and for
+three new ones, and the sum growing in the open is exactly what the census exists for.
+
+**What a product has to do.** Nothing, unless it wants these commands. A product that does declares
+`deploy: kind:` and `source:`, and - for a server - registers its backends with
+`simplon.backend.register({...})`. Its own `deploy up` keeps working untouched until it places the task.
+
 ### A deployment can say which version it is deploying (si#235)
 
 Thirty-two deploy commands across the five products this kernel can reach, and not one of them could

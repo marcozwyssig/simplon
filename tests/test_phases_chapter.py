@@ -453,21 +453,25 @@ def test_every_catalogue_coordinate_appears_somewhere_on_the_page():
 
     # assert
     assert listed == set(cat.tasks)
-    assert len(listed) == 38, "the count moved - update the page, then this number"
+    assert len(listed) == 40, "the count moved - update the page, then this number"
 
 
-# --- the two empty ribs --------------------------------------------------------------------------------
+# --- the empty rib --------------------------------------------------------------------------------
 
 
 def test_the_empty_phases_are_shown_as_empty():
-    """Acceptance 4. `deploy` and `monitor` carry nothing, and the page has to say nothing rather than
-    leaving the reader to infer it from a section with no table in it."""
+    """Acceptance 4. A phase that carries nothing has to SAY so, rather than leaving the reader to infer
+    it from a section with no list in it.
+
+    This read `{"deploy", "monitor"}` with a comment calling itself the reminder if the catalogue ever
+    filled one. si#235 filled `deploy`, the reminder fired, and the set moved with the page - the diagram
+    node, the section, the overview row and the rib chapter all in one commit."""
     # arrange
     expected = _catalogue_coordinates()
     empty = {name for name in PHASES if not expected[name]}
 
-    # assert: it is still these two - if the catalogue fills one, this test is the reminder
-    assert empty == {"deploy", "monitor"}
+    # assert: still the reminder, now for the one that is left
+    assert empty == {"monitor"}
 
     # assert: and each says so in its own words, and in the overview
     for name in empty:
@@ -475,10 +479,21 @@ def test_the_empty_phases_are_shown_as_empty():
         assert _overview()[name][1] == 0
 
 
-def test_the_empty_ribs_are_exactly_the_env_first_phases():
-    """The ticket's actual point, stated where it can stop being true: the two phases with no reusable
-    task are the two where reuse would be worth the most, because they are the two about the shared
-    environment rather than about the product's own material."""
+def test_every_empty_rib_is_an_env_first_phase():
+    """The surviving half of the ticket's point, and the equality it replaces is worth recording.
+
+    This assertion used to read `empty == env_first` - the two phases with no reusable task were exactly
+    the two about the shared environment - and its own docstring said it was "stated where it can stop
+    being true". si#235 is when it did: `deploy` grew `deploy:up` and `deploy:down`, so the two sets are
+    no longer equal and THE EQUALITY IS WITHDRAWN rather than repaired.
+
+    What is left is the implication that was carrying the argument: an empty rib is always an env-first
+    one. Reuse is worth most where the environment is shared, so a phase about the product's own material
+    never sits empty - only a phase about the environment can. That is still falsifiable: fill `monitor`
+    and it stays green, empty `build` and it goes red.
+
+    What si#235 filled is the VERSION half - which version is going out, and does it exist. What it did
+    not fill is the provider half, which is why si#5 is still named on the page below."""
     # arrange
     cat = catalogue_mod.load()
     expected = _catalogue_coordinates()
@@ -488,7 +503,8 @@ def test_the_empty_ribs_are_exactly_the_env_first_phases():
     env_first = {name for name in PHASES if cat.groups[name].get("env_first")}
 
     # assert
-    assert empty == env_first
+    assert empty, "no rib is empty at all - the claim below has nothing left to describe"
+    assert empty <= env_first
 
     # assert: and the page names the open question rather than leaving the gap unexplained
     body = _text()

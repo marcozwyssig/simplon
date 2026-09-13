@@ -236,6 +236,29 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("deployment", "_entry", "does not declare as a section"): DIAGNOSIS,
     ("deployment", "_entry", "which carries"): DIAGNOSIS,
     ("deployment", "_entry", "is not a mapping"): DIAGNOSIS,
+    # The client-or-server axis. Neither side is a safe default - assuming `server` reaches for a backend
+    # a client product does not have, assuming `client` installs a server's artefact onto the operator's
+    # own machine - so an absent or unknown `kind:` is refused rather than guessed.
+    ("deployment", "source_of", "is installed into a directory on this machine"): DIAGNOSIS,
+    ("deployment", "source_of", "so there is nowhere to install it"): DIAGNOSIS,
+    # A `server` with an `into:` WOULD deploy - the key would simply be ignored - so this looks like an
+    # expression rule at first reading. It is filed as diagnosis on this repository's own precedent: the
+    # four neighbours above (`stop_on_failure`, `parallel`, `keep_awake`, `hidden` on a namesake) all
+    # refuse a key that does nothing where it is written, and all four are diagnosis. The declaration had
+    # no working meaning THERE, which is the test - not whether the rest of the manifest still runs.
+    ("deployment", "source_of", "would do nothing where it is written"): DIAGNOSIS,
+    # --- environments.py, PULLED IN by si#235 rather than written for it ------------------------------
+    # These four are not new code. They became LOAD-TIME refusals the day `tasks.deploy` handed the
+    # manifest document to `parse_data`: before it, nothing walked from a manifest seam into this
+    # function, so the census did not count them. That is the sum growing without a rule being written,
+    # which is precisely what si#53 derived the population to make visible - and it is visible.
+    # All four are diagnosis: an environment matrix that is not a mapping, is empty, names a backend no
+    # product implements, or defaults to an environment it does not declare, describes no working
+    # deployment at all.
+    ("environments", "parse_data", "must be a mapping of environment name"): DIAGNOSIS,
+    ("environments", "parse_data", "defines no environments"): DIAGNOSIS,
+    ("environments", "parse_data", "backend must be"): DIAGNOSIS,
+    ("environments", "parse_data", "is not a defined environment"): DIAGNOSIS,
     # --- manifest.py -----------------------------------------------------------------------------
     ("manifest", "_split_impl", "impl must be 'module:function'"): DIAGNOSIS,
     ("manifest", "_short_first_needs_a_short_flag_to_order", "needs a `short:` flag to put first"): DIAGNOSIS,

@@ -733,14 +733,14 @@ def test_the_empty_ribs_count_the_chapter_names_is_the_catalogues_own():
     empty = {group for group in catalogue.groups
              if not any(coordinate.startswith(f"{group}:") for coordinate in catalogue.tasks)}
 
-    # act / assert
+    # act / assert: `deploy` is no longer one of them - si#235 gave it `deploy:up` and `deploy:down` -
+    # so the chapter says ALL BUT empty rather than naming it as one of a pair. The count is still read
+    # off the catalogue, because the sentence that replaced it can go stale exactly as easily.
     assert empty, "the catalogue draws no group empty, so this test is ruling on nothing"
-    word = sitepages.number_word(len(empty))
-    assert f"one of the {word} ribs" in _text(), (
-        f"the catalogue draws {len(empty)} groups empty: {sorted(empty)}")
-
-    # assert: and `deploy` - the rib this chapter's own section is about - is really one of them
-    assert "deploy" in empty
+    assert "deploy" not in empty, (
+        "`deploy` is empty again - the chapter's sentence says it is not, and one of the two is wrong")
+    assert "the rib the catalogue draws all but" in _text(), (
+        f"the catalogue draws {len(empty)} group(s) empty: {sorted(empty)}")
 
 
 # --- the chapter's own design ---------------------------------------------------------------------------

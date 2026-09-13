@@ -301,8 +301,8 @@ def test_the_page_says_how_many_kinds_of_work_there_are_and_the_table_agrees():
     prose = "\n".join(_section(KINDS_HEADING))
 
     # assert
-    assert len(rows) == 6
-    assert "Six kinds of work" in prose
+    assert len(rows) == 7
+    assert "Seven kinds of work" in prose
 
 
 def test_the_two_ways_of_grouping_are_genuinely_different_groupings():
@@ -332,17 +332,21 @@ def test_the_two_ways_of_grouping_are_genuinely_different_groupings():
 
 
 def test_the_kind_of_work_with_no_catalogue_task_is_still_the_empty_one():
-    """The section names running things as the kind of work the catalogue carries nothing for, and links
-    the two empty ribs for it. The day a `deploy:` or `monitor:` task lands, that paragraph is wrong."""
+    """The section named RUNNING THINGS as the kind of work the catalogue carried nothing for, and its
+    own docstring said: the day a `deploy:` or `monitor:` task lands, that paragraph is wrong.
+
+    si#235 landed two. The paragraph was rewritten rather than the assertion loosened: running things is
+    now a row of the table, and what carries nothing is WATCHING - `monitor:` - plus the provider half of
+    running, which is the expensive half and still open as si#5."""
     # arrange
     coordinates = set(_catalogue_helps())
 
     # act
-    running = {c for c in coordinates if c.split(":", 1)[0] in ("deploy", "monitor")}
+    watching = {c for c in coordinates if c.split(":", 1)[0] == "monitor"}
 
     # assert
-    assert running == set()
-    assert "../../with-what/phases/#the-two-empty-ribs" in "\n".join(_section(KINDS_HEADING))
+    assert watching == set()
+    assert "../../with-what/phases/#the-empty-rib" in "\n".join(_section(KINDS_HEADING))
 
 
 def test_the_bodies_the_page_says_reach_no_external_tool_really_do_not():

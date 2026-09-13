@@ -47,6 +47,7 @@ images:
     repository: demo-app
     dockerfile: Dockerfile
 deploy:
+  kind: server
   source: { images: app }
 """
 
@@ -74,7 +75,7 @@ def test_a_manifest_with_no_deploy_section_says_what_it_needs(tmp_path, monkeypa
 
 def test_a_deploy_section_with_no_source_says_so(tmp_path, monkeypatch):
     # Arrange
-    _product(tmp_path, monkeypatch, "deploy:\n  default: latest\n")
+    _product(tmp_path, monkeypatch, "deploy:\n  kind: server\n  default: latest\n")
     # Act / Assert
     with pytest.raises(ValueError, match=r"source:"):
         deployment.declared()
@@ -94,7 +95,7 @@ def test_a_source_naming_an_entry_the_section_does_not_carry_lists_the_entries(t
     # Arrange
     _product(tmp_path, monkeypatch,
              "images:\n  app: { registry: r, repository: d }\n  sidecar: {}\n"
-             "deploy:\n  source: { images: web }\n")
+             "deploy:\n  kind: server\n  source: { images: web }\n")
     # Act / Assert
     with pytest.raises(ValueError, match=r"web.*app, sidecar"):
         deployment.declared()
@@ -104,7 +105,7 @@ def test_an_entry_that_is_not_a_mapping_is_refused_by_name(tmp_path, monkeypatch
     """netctl's shape, measured: its `images:` entries are bare strings like `netctl:local`."""
     # Arrange
     _product(tmp_path, monkeypatch,
-             "images:\n  web: netctl:local\ndeploy:\n  source: { images: web }\n")
+             "images:\n  web: netctl:local\ndeploy:\n  kind: server\n  source: { images: web }\n")
     # Act / Assert
     with pytest.raises(ValueError, match=r"images: web"):
         deployment.declared()
@@ -115,7 +116,7 @@ def test_an_entry_without_a_registry_names_what_it_does_carry(tmp_path, monkeypa
     # Arrange
     _product(tmp_path, monkeypatch,
              "images:\n  backend: { context: ., dockerfile: Dockerfile, name: bc-backend }\n"
-             "deploy:\n  source: { images: backend }\n")
+             "deploy:\n  kind: server\n  source: { images: backend }\n")
     # Act / Assert: the keys it has are in the message, so the reader can see what to add
     with pytest.raises(ValueError, match=r"registry.*context, dockerfile, name"):
         deployment.declared()
@@ -182,3 +183,62 @@ def test_asking_for_nothing_is_refused_rather_than_defaulted(tmp_path, monkeypat
     # Act / Assert
     with pytest.raises(ValueError, match=r"latest.*local"):
         deployment.resolve("", deployment.declared())
+
+
+# --- the client-or-server axis (si#235) ---------------------------------------------------------------
+
+
+_CLIENT = """
+artifacts:
+  bundle: { registry: ghcr.io/acme, repository: demo-bundle }
+deploy:
+  kind: client
+  into: ~/demo
+  source: { artifacts: bundle }
+"""
+
+
+def test_a_client_application_carries_the_directory_it_lands_in(tmp_path, monkeypatch):
+    # Arrange
+    _product(tmp_path, monkeypatch, _CLIENT)
+    # Act
+    source = deployment.declared()
+    # Assert
+    assert source.application == deployment.CLIENT and source.into == "~/demo"
+
+
+def test_a_kind_that_is_neither_says_which_two_there_are(tmp_path, monkeypatch):
+    # Arrange
+    _product(tmp_path, monkeypatch, _GOOD.replace("kind: server", "kind: fleet"))
+    # Act / Assert
+    with pytest.raises(ValueError, match=r"client or server"):
+        deployment.declared()
+
+
+def test_a_missing_kind_is_refused_rather_than_assumed(tmp_path, monkeypatch):
+    """Neither side is the safe default: assuming `server` would try to reach a backend a client product
+    does not have, and assuming `client` would install a server's artefact onto the operator's own
+    machine."""
+    # Arrange
+    _product(tmp_path, monkeypatch, _GOOD.replace("  kind: server\n", ""))
+    # Act / Assert
+    with pytest.raises(ValueError, match=r"kind: \(nothing\)"):
+        deployment.declared()
+
+
+def test_a_client_without_a_directory_is_refused(tmp_path, monkeypatch):
+    # Arrange
+    _product(tmp_path, monkeypatch, _CLIENT.replace("  into: ~/demo\n", ""))
+    # Act / Assert
+    with pytest.raises(ValueError, match=r"nowhere to install it"):
+        deployment.declared()
+
+
+def test_a_server_that_names_a_directory_is_refused_because_it_would_do_nothing(tmp_path, monkeypatch):
+    """The house rule `keep_awake` on a leaf already follows: a key that does nothing where it is written
+    is worse than no key, because it reads as a promise."""
+    # Arrange
+    _product(tmp_path, monkeypatch, _GOOD.replace("  source:", "  into: /opt/demo\n  source:"))
+    # Act / Assert
+    with pytest.raises(ValueError, match=r"would do nothing where it is written"):
+        deployment.declared()

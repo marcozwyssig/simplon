@@ -113,6 +113,8 @@ MODULES: dict[str, tuple[str, ...]] = {
     # entry of one of them rather than restating the registry a second time, so this module reads three
     # keys and declares one.
     "deployment": ("deploy", "images", "artifacts"),
+    # reads the document and hands it to `environments.parse_data`, the same shape as tasks.completion
+    "tasks.deploy": (),
     "environments": ("environments", "default"),
     "labegress": ("lab_egress",),
     "labinstance": ("instance",),

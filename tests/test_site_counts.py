@@ -223,7 +223,10 @@ def test_the_card_for_the_phases_chapter_counts_the_empty_ribs_off_the_catalogue
     word = number_word(len(empty))
 
     # assert
-    assert f"the {word} ribs that are still empty" in _text(WITH_WHAT_INDEX), (
+    # Singular since si#235: one empty rib reads "the one rib that is still empty", not "the one ribs".
+    phrase = (f"the {word} rib that is still empty" if len(empty) == 1
+              else f"the {word} ribs that are still empty")
+    assert phrase in _text(WITH_WHAT_INDEX), (
         f"the phases card must say 'the {word} ribs that are still empty'; the catalogue draws "
         f"{sorted(empty)} empty")
 
