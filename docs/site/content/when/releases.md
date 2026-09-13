@@ -25,6 +25,38 @@ it is the one section held only to existing.
 
 ## 0.14.0
 
+### A committed generated file has to be what its command produces (si#240)
+
+`./myctl.sh test generated` regenerates every file a `generated:` section declares and fails if what came
+out is not what was committed, naming the file and the command that refreshes it.
+
+```yaml
+generated:
+  completion: { path: deploy/completions/myctl.bash, by: support completion }
+  reference:  { path: docs/site/content/with-what/commands.md, by: docs reference }
+```
+
+**The question had been invented twice already, and it has drawn blood here.** biz-cockpit wrote
+`verify_spec` over its OpenAPI contract and called it its CI staleness gate; this repository wrote
+`test_own_completion.py` over its shell completion. And `6ddecaf` is the gap between them: a command was
+added to `simplon.yaml` without regenerating the completion, and `main` stood red - with an uncompletable
+command - until somebody noticed.
+
+**The obvious implementation had this repository's own recurring defect in it.** `git diff --exit-code`
+over a path git does not track exits **0**, so an artefact that was never committed at all - the mistake
+in its most complete form - would have passed green. Every entry is checked for being tracked first. The
+same shape one step later is why the regenerating command's exit code is read: a command that could not
+run leaves the file alone, the diff is empty, and "regenerated and matched" would be indistinguishable
+from "did not regenerate".
+
+**Where this came from, and what is deliberately not in it.** The ticket asked for REST/OpenAPI support.
+Reading the one product that does it showed two halves: an export that is three lines of the product's
+own app factory in a container, and a verify that is not product-specific at all. Only the second is
+here. A scaffolded `spec` command would have to guess an argv - biz-cockpit's runs its own factory
+against a temp database - and a starting point nobody runs is worse than none.
+
+**Nothing to do.** A product that declares no `generated:` section is unaffected.
+
 ### The deploy family, and the rib that is no longer empty (si#235)
 
 `deploy` was the one group of the six the catalogue contributed nothing to. It now offers two tasks, and

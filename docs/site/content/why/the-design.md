@@ -150,7 +150,7 @@ by the kind of work instead of by the phase it runs in:
 | the work | what the bodies shell out to | coordinates |
 |---|---|---|
 | version control | `git`, `gh` | `vcs:commit`, `vcs:push`, `vcs:prune-branches`, `vcs:submodules`, `vcs:auth-scopes`, `release:tag`, `test:release-notes` |
-| testing | pytest, mypy, Allure - and, for `test:walk`, a person at the terminal | `test:gate`, `test:accept`, `test:report`, `test:typecheck-python`, `test:walk` |
+| testing | pytest, mypy, Allure - and, for `test:walk`, a person at the terminal | `test:gate`, `test:accept`, `test:report`, `test:typecheck-python`, `test:walk`, `test:generated` |
 | documentation | Hugo, docToolchain, the assembled command line itself, the product's own `.feature` files | `docs:site`, `docs:render`, `docs:reference`, `docs:acceptance` |
 | packaging and publishing | `docker`, `oras`, `gh`, `dotnet` | `build:image`, `release:image`, `release:artifact`, `release:asset`, `release:nuget`, `release:conan`, `build:nuget-config`, `build:nuget-restore`, `build:conan-cache` |
 | the machine and its services | `oras`, `docker compose`, `claude`, `sudo`/`usermod`, a pinned toolchain image - and nothing at all for `support:environments`, which only reads the manifest | `support:install`, `support:nexus`, `support:claude-plugins`, `support:environments`, `support:ci-privileges`, `support:toolchain`, `toolchain:run` |

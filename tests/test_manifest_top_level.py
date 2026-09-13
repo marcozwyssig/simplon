@@ -79,7 +79,8 @@ import yaml
 
 from simplon import (context, deployment, labegress, labinstance, nexusproxy, tracker,
                      workflowgen)
-from simplon.tasks import (artifact, asset, buildfiles, claudeplugins, docs, env, image, releasenotes,
+from simplon.tasks import (artifact, asset, buildfiles, claudeplugins, docs, env, generated, image,
+                           releasenotes,
                            site, testrun)
 
 import sitepages
@@ -115,6 +116,7 @@ MODULES: dict[str, tuple[str, ...]] = {
     "deployment": ("deploy", "images", "artifacts"),
     # reads the document and hands it to `environments.parse_data`, the same shape as tasks.completion
     "tasks.deploy": (),
+    "tasks.generated": ("generated",),
     "environments": ("environments", "default"),
     "labegress": ("lab_egress",),
     "labinstance": ("instance",),
@@ -178,6 +180,8 @@ DRIVERS: dict[str, tuple[dict, object]] = {
     # si#235. The document carries BOTH halves because the section points rather than restates: a
     # `deploy:` that named a section the document does not declare is one of this reader's own refusals,
     # so driving it with a complete pair is what makes a MISTYPED `deploy:` the thing under test here.
+    "generated": ({"generated": {"completion": {"path": "out/c.sh", "by": "support completion"}}},
+                  generated.declared),
     "deploy": ({"images": {"app": {"registry": "r", "repository": "d"}},
                 "deploy": {"source": {"images": "app"}}},
                deployment.declared),
