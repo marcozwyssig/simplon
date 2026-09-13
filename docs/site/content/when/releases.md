@@ -25,6 +25,29 @@ it is the one section held only to existing.
 
 ## 0.14.0
 
+### One contract, two products (si#239)
+
+A new chapter, and the first on this site about two products rather than one: [One contract, two
+products](../../what/one-contract-two-products/). A Java product and a Python product agree on one
+`.proto`, and a Java client built from one product's stubs calls a service running the other's.
+
+**The same four words on both sides.** `./pysvc.sh build proto` and `./javasvc.sh build proto` read
+identically, because what differs - `protoc`, the plugin, the output layout - sits behind a command the
+kernel scaffolds and the product owns. That is the platform's whole claim, demonstrated across a language
+boundary for the first time.
+
+**And the chapter names what the platform does NOT do.** The `.proto` was copied into both trees: one
+contract, two files, and nothing keeping them equal - the second-source shape this repository removes
+everywhere else, sitting in the middle of a page about two products agreeing. Three ways out are named
+and none is chosen, because closing it is a decision about somebody's repositories rather than a
+documentation change.
+
+It is filed beside [Handing a package over](../../what/handing-a-package-over/) rather than as a fifth
+`case-*` chapter, and deliberately: the four case studies are each one product through the loop, and this
+one is about the seam between two.
+
+**Nothing to do.**
+
 ### gRPC and Protobuf, in all four toolchains (si#238)
 
 `support toolchain <language>` now writes a `proto` command too, in every one of the four profiles:
