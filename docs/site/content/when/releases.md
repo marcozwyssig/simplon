@@ -55,6 +55,16 @@ own app factory in a container, and a verify that is not product-specific at all
 here. A scaffolded `spec` command would have to guess an argv - biz-cockpit's runs its own factory
 against a temp database - and a starting point nobody runs is worse than none.
 
+**simplon rules on itself**, and the gate is proved against the run that caused it. `simplon.yaml`
+declares the two files this repository really commits - the shell completion and `ci.yml`, both carrying
+*"GENERATED ... do not edit"* at the top, a promise nothing checked until now. `0794e24` changed the
+manifest by twenty lines and touched no completion; `git show --name-only` on it lists one file. The
+gate, running in CI on that push, would have been red on the spot.
+
+It also caught a mistake while being wired up, which is the sort of thing it is for: the first draft of
+the section said `by: release workflows` and the command is `support workflows`. A wrong `by:` regenerates
+nothing and would report freshness - except that the gate reads the command's return code, so it said so.
+
 **Nothing to do.** A product that declares no `generated:` section is unaffected.
 
 ### The deploy family, and the rib that is no longer empty (si#235)

@@ -52,6 +52,13 @@ jobs:
       # never run mypy at all. Two ways to reach one verdict is the shape that produced that; one
       # way is the fix. What it checks and what it excuses is stated in mypy.ini, not here.
       - run: ./simplon.sh test typecheck-python
+      # The staleness gate (si#240), and CI is where it earns its keep: it regenerates the two
+      # committed generated files and fails if either is not what its own command produces. 0794e24
+      # is why - a manifest change that never reached the shell completion, and `main` red with an
+      # uncompletable command until a person noticed. It runs AFTER the type gate and before the
+      # wheel, because a stale completion is a fact about the tree rather than about the build, and
+      # a reader looking at a red run should see it beside the other verdicts about the tree.
+      - run: ./simplon.sh test generated
       - run: ./simplon.sh build wheel
       # The kernel's own container image (si#200), BUILT here and published nowhere. Building
       # needs no credential, so the half of the loop that can run on every push does - which is
