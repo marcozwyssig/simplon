@@ -25,6 +25,46 @@ it is the one section held only to existing.
 
 ## 0.14.0
 
+### gRPC and Protobuf, in all four toolchains (si#238)
+
+`support toolchain <language>` now writes a `proto` command too, in every one of the four profiles:
+
+```yaml
+build:
+  commands:
+    proto:
+      task: "toolchain:run"
+      with:
+        image: namely/protoc-all:1.51_2
+        workdir: /defs
+        argv: ["-d", "proto", "-l", "python", "-o", "build/proto/python"]
+```
+
+**No new catalogue coordinate.** gRPC arrives the way every other language tool here arrives - as a
+ready-made command the scaffolder splices into your manifest, which you then own. That was the decision
+and it is why none of the counted guards moved: a coordinate would have turned about twenty of them red,
+and this needed none.
+
+**One image serves all four languages, measured rather than assumed.** `namely/protoc-all` generated real
+stubs for each from one `.proto`: `greeter_pb2.py` + `greeter_pb2_grpc.py`, `GreeterOuterClass.java` +
+`GreeterGrpc.java`, `greeter.pb.h/.cc` + `greeter.grpc.pb.h/.cc`, `Greeter.cs` + `GreeterGrpc.cs`. The
+four profiles name that image with a different `-l`.
+
+**It is the first command that brings its own image**, because a language SDK carries neither `protoc`
+nor its plugin. That needed no change: the scaffolder has always written `{"image": profile, **body}`, so
+a body that names an image wins. The capability was there and unused, and `test_profiles` now proves the
+override through the real toolchain gate instead of by reading the table.
+
+**Stubs go to `build/proto/`, regenerated every run.** Generated code is not source: nothing in the tree
+can go stale, no diff ever shows generated lines, and `depends_on` can plan generation before the build.
+
+Two questions were deliberately left: whether `.proto` files should be named in a manifest section rather
+than found under `proto/` by convention, and whether a breaking-change check becomes a `test` half. Both
+are cheaper to answer against a product that has placed this than in the abstract.
+
+**Nothing to do.** A product that has already scaffolded keeps its commands untouched - the scaffolder
+never overwrites - and gets `proto` by running `support toolchain <language>` again.
+
 ### A committed generated file has to be what its command produces (si#240)
 
 `./myctl.sh test generated` regenerates every file a `generated:` section declares and fails if what came

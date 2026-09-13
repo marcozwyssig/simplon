@@ -128,7 +128,15 @@ here.
 `simplon.tasks.profiles` is a table, and that is a design decision rather than an implementation detail:
 the kernel learns no CMake and no MSBuild, it learns to run a pinned image over a product tree as the
 calling user. What it carries per language is argv and paths, nothing callable. There are four profiles -
-`cpp`, `java`, `dotnet` and `python` - and the C++ one carries four commands:
+`cpp`, `java`, `dotnet` and `python` - and the C++ one carried four commands when this
+chapter was measured:
+
+{{< callout type="info" >}}
+The run recorded here predates si#238, which gave every profile a fifth command, `proto` -
+`protoc` and its plugin in an image of its own, generating gRPC stubs into `build/proto/`. The
+scaffolder writes it alongside the ones below; nothing above changes.
+{{< /callout >}}
+
 
 | command | what it runs in `silkeh/clang:19` |
 |---|---|

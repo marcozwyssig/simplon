@@ -197,9 +197,17 @@ def test_the_python_profile_installs_its_own_tools_before_it_runs_them():
     # arrange / act
     python = profiles.profile("python", version="3.12")
 
-    # assert: three commands, and the two that check the product run offline once the first has run
-    assert set(python.commands) == {"deps", "unit", "analyse"}, sorted(python.commands)
-    for name, body in python.commands.items():
+    # assert: three commands in the PYTHON image, and the two that check the product run offline once
+    # the first has run. si#238 added a fourth, `proto`, and it is exempt from everything below BY
+    # CONSTRUCTION rather than by exception: it names its own image (`namely/protoc-all`), so there is no
+    # `python:3.12` in it to be missing pytest, no user base to place, and no `python -m` to get wrong.
+    # The exemption is computed from the body rather than spelled as a name, so a second command that
+    # brings its own image inherits it and a `proto` that lost its image would be caught here.
+    in_the_python_image = {name: body for name, body in python.commands.items() if "image" not in body}
+    assert set(in_the_python_image) == {"deps", "unit", "analyse"}, sorted(in_the_python_image)
+    assert python.commands["proto"]["image"].startswith("namely/protoc-all:"), (
+        "the proto command is only exempt because it brings its own image")
+    for name, body in in_the_python_image.items():
         base = body["env"]["PYTHONUSERBASE"]
         assert base.startswith(body["workdir"] + "/."), (
             f"{name}: the user base must sit INSIDE the mount, and start with a dot so neither pytest "
@@ -268,14 +276,21 @@ def test_the_python_bodies_survive_the_toolchain_gate():
     prof = profiles.profile("python", version="3.12")
 
     for name, body in prof.commands.items():
-        # act
+        # act: exactly what the scaffolder writes - the profile's image, then the body over it
         cfg = toolchain.declared({"image": prof.image, **body}, f"build {name}")
 
-        # assert: the image is pinned, the env survives, and the argv arrives word for word
-        assert cfg.image == "python:3.12"
-        assert cfg.env == body["env"]
+        # assert: the env survives and the argv arrives word for word
+        assert cfg.env == body.get("env", {})
         assert cfg.argv == body["argv"]
         assert cfg.workdir == body["workdir"]
+
+        # assert: and the image is the BODY's where it names one, the profile's otherwise. This is the
+        # override si#238 rests on, proved through the real gate rather than by reading the dict: the
+        # scaffolder spreads the body after the profile's image, so a command that brings its own wins -
+        # which is how a `protoc` command lives in a profile whose image is a Python interpreter.
+        assert cfg.image == body.get("image", "python:3.12"), name
+        if name == "proto":
+            assert cfg.image != prof.image, "the proto command did not override the profile's image"
 
 
 def test_an_unknown_language_is_refused_and_lists_what_exists(monkeypatch):

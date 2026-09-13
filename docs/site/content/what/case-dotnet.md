@@ -269,8 +269,15 @@ second .NET run.
 
 Two separate things put it there. The first is placement, and
 [simplon#111](https://github.com/marcozwyssig/simplon/issues/111) settled it rather than leaving it
-open: `support toolchain` writes all three commands under `build`, the design's own command table
+open: `support toolchain` wrote all three commands under `build`, the design's own command table
 promised `test unit` and `test analyse`, and **the scaffolder is the one that is right**.
+
+{{< callout type="info" >}}
+The run recorded here predates si#238, which gave every profile a further command, `proto` -
+`protoc` and its plugin in an image of its own, generating gRPC stubs into `build/proto/`. The
+scaffolder writes it alongside the ones below; nothing above changes.
+{{< /callout >}}
+
 
 `build` is where a raw toolchain invocation belongs. It runs a pinned image over the tree and hands back
 the container's exit code, nothing else. `test` is where a *verdict* belongs, and since
