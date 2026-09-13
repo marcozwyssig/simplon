@@ -254,6 +254,8 @@ rather than anywhere else because its verdict has to be comparable with the auto
 a scenario as `<feature file>:<scenario>`, which is the archive's own key, so a person's answer and a
 runner's result join instead of merely resembling each other. The scenarios are the same files
 [`docs:acceptance`](#docs) documents - one source, and the mode is chosen by which command is typed.
+A step the person REFUSES becomes a bug ticket, worded by the product through a
+[`tracker:` section](../../how/manifest/#tracker---where-a-refused-step-becomes-a-ticket).
 
 ### `release`
 

@@ -199,13 +199,9 @@ How MANY run at once is the machine's answer rather than the manifest's, because
 between machines and the number does not: `SIMPLON_MAX_PARALLEL` sets it, and the default is four or the
 CPU count, whichever is smaller.
 
-WHICH RUNNER draws the plan is the machine's answer too, and for the same reason. Attached to a terminal
-a plan is drawn as a live tree; piped or redirected it is walked headless, so CI logs stay flat. What was
-missing was a way to ask for headless *on purpose* rather than by arranging for a redirection:
-`./myctl.sh --no-tui <command>` does, and it works by setting `SIMPLON_NO_TUI=1`, which a workflow can
-export directly. The variable is the one that travels - each planned step is a `./myctl.sh <leaf>`
-subprocess, which no flag on the parent process reaches - and a value that is neither `0` nor `1` leaves
-the runner exactly where it was and says so.
+WHICH RUNNER draws the plan is the machine's answer too, and asking for the plain one is `--no-tui`. That
+belongs with what a run looks like rather than with what a manifest declares: [Running a
+command](../running/).
 
 Every `depends_on` entry must name a known, unambiguous command, and the graph must be acyclic. Both are
 checked at load, not at run: a dependency naming a command that does not exist is a manifest error, and
@@ -618,6 +614,43 @@ Other sections work the same way: `suites:` is the test-level taxonomy a product
 defines, `environments:` the deployment matrix, `nexus:` and `claude:` the data their respective tasks
 read. A task that needs a section it does not find fails on its first line, which is why such tasks stay
 *tasks* in the catalogue rather than being placed as commands for everybody.
+
+### `tracker:` - where a refused step becomes a ticket
+
+`test:walk` puts a person through the product's `.feature` files one step at a time. When they refuse a
+step, that refusal is a bug report somebody has to write - so the kernel writes it, and this section is
+what it needs to know:
+
+```yaml
+tracker:
+  kind: github                 # the only one implemented; the default
+  repo: ""                     # "owner/name", or "" for the checkout's own remote
+  labels: ["bug"]
+  title: "Acceptance refused: {scenario} ({version})"
+  preamble: >
+    A person walked the acceptance scenarios and refused this step. The verdict is a
+    human judgement rather than a measurement.
+```
+
+**`title:` is the one key with no default**, on purpose: a kernel-invented title is the first thing a
+maintainer reads and the last thing the kernel should be guessing. It may name `product`, `version`,
+`revision`, `address`, `feature`, `scenario`, `step`, `step_number` and `step_total`; a field that is not
+on that list is answered with the list.
+
+**`preamble:` is the product's own wording**, put above the evidence the kernel writes underneath - the
+step, the version, the revision, who walked it, when, and what they said.
+
+A second walk that refuses the same step again **does not open a second ticket**. Each one carries a
+`simplon-walk-id:` line in visible prose, and the search for it is what makes the walk idempotent - the
+line is prose rather than an HTML comment so the person reading the ticket can see why, too.
+
+{{< callout type="info" >}}
+**Nothing here ever costs a refusal.** A section that is missing, incomplete or wrong - no `title:`, a
+`kind:` this simplon cannot reach, a manifest that will not parse - is said out loud and names what it
+wanted, and then the walk carries on: the refusals stay in the record and the run is still red. That is
+why none of it raises. The sitting has a person's afternoon behind it, and a manifest typo must not throw
+it away.
+{{< /callout >}}
 
 ## The flat form, and how to leave it
 
