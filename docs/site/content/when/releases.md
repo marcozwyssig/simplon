@@ -660,6 +660,33 @@ a configuration that is supported on purpose; everything else is a break and rea
 **Nothing to do**, unless a product was relying on a broken Textual quietly becoming a headless run - in
 which case it now says so, and `SIMPLON_NO_TUI=1` is the way to ask for what it was getting by accident.
 
+### The runner gets a chapter, and `tracker:` stops being one table row (si#230)
+
+Before this release was cut, the site was measured against the sixteen tickets in it: for each one, does
+a reader who wants to USE the thing find it on a page, or only here? Most held. Two did not.
+
+**There is a chapter about running a command now** — [Running a
+command](../../how/running/). The tree on the left, the step's output on the right, the seven keys, where
+the per-step logs and the run transcript land, what the flat log looks like and how to ask for it. The
+most visible surface of the whole tool had been described in `tui.py`'s module head and in five sections
+of this page, which is the one place somebody looking for it does not read.
+
+That chapter is also where `--no-tui` now lives. si#223 had put it in the manifest chapter, inside the
+paragraph about `parallel:`, because the neighbouring `SIMPLON_MAX_PARALLEL` happened to be explained
+there — and nobody asking how to turn the UI off opens the manifest chapter.
+
+**`tracker:` has a section of its own** beside `releases:` and `workflows:`, with the example, the nine
+placeholders `title:` may use, why a second walk does not open a second ticket, and what happens when the
+section is missing. It had been one cell in a table since si#206 shipped it.
+
+One claim was withdrawn while measuring, and it is the more useful half. The container route (si#200,
+si#201) read as a third gap and is not one: **Two routes, one CLI** explains it properly, it is simply
+filed under the scaffold chapter where somebody asking "how do I run this on a host with no python" will
+not look. A cross-reference was the whole fix. Absence from a *search* and absence from the *site* are
+two different findings, and only one of them is worth a chapter.
+
+**Nothing to do.** No command, flag or manifest key changed.
+
 ## 0.12.0
 
 **The site shows before it argues.** Every page on this site opened with the reasoning for the thing
