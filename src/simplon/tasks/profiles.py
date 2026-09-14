@@ -36,6 +36,35 @@ class Profile:
     commands: dict[str, dict[str, object]]
 
 
+#: THE OPENAPI EXPORT, as a program rather than a tool, because for a Python web framework there is no
+#: tool (si#240). Named here rather than inlined in the table below so it can be read: a five-line
+#: program is still data - it decides nothing, it has no branch on the product - but a five-line
+#: program folded into an `argv` list is unreadable in the manifest the scaffolder writes it into.
+#:
+#: `hasattr(target, "openapi")` AND NOT `callable(target)`, which is the first thing this was written as
+#: and which this repository's recurring defect explains: a FastAPI app IS callable - it is the ASGI
+#: entry point - so `callable` means "a factory" here and "an app" to the framework, and the first
+#: draft called the app with no arguments. Measured on 2026-09-14 in `python:3.12`:
+#: `TypeError: FastAPI.__call__() missing 3 required positional arguments: 'scope', 'receive', 'send'`.
+#: Asking for the method the next line actually calls excludes the ambiguous value at the seam.
+#:
+#: WHAT IT DOES WHEN IT IS POINTED AT THE WRONG THING, measured the same day, because a generator that
+#: writes a half-built contract is worse than one that writes none. A missing attribute
+#: (`AttributeError: module 'app.main' has no attribute 'make_app'`), a missing module
+#: (`ModuleNotFoundError`) and an object that is not an app at all each exit 1 **and leave the output
+#: file untouched** - the write is the last statement, so a failed export cannot hand the staleness
+#: gate a file to compare.
+#: RAW, and it has to be: the last line ends the document with a newline, and in an ordinary
+#: triple-quoted string that `\\n` would be consumed HERE - the program would reach the
+#: interpreter carrying a real line break inside a quoted string and die of a syntax error
+#: before it imported anything. Seen on 2026-09-14, in the first run of the test below.
+EXPORT_OPENAPI = r"""import importlib, json, pathlib, sys
+module, _, attribute = sys.argv[1].partition(":")
+target = getattr(importlib.import_module(module), attribute)
+app = target if hasattr(target, "openapi") else target()
+pathlib.Path(sys.argv[2]).write_text(json.dumps(app.openapi(), indent=2) + "\n")
+"""
+
 #: The kernel's starting points, one per language. Data, not behaviour: nothing here runs, and after
 #: `support:toolchain` has written a copy into a product's manifest, nothing here reaches that product
 #: again either.
@@ -190,6 +219,30 @@ PROFILES: dict[str, Profile] = {
             # NPE. SpotBugs, PMD, Checkstyle and ErrorProne are all plugins the product's own
             # `build.gradle` applies, so a product that wants one adds a `build analyse` command of its
             # own - which is a manifest line, exactly like everything else the scaffolder writes.
+            # THE API CONTRACT AS A GENERATED FILE (si#240), and the Java half is a PLUGIN'S task rather
+            # than a program, because for Spring there is a tool and the community uses it. The product
+            # applies `org.springdoc.openapi-gradle-plugin` and says in its own `openApi { }` block where
+            # the document lands; the kernel's line is the invocation and nothing else.
+            #
+            # WHAT IT COSTS, AND IT IS NOT THE SAME COST AS PYTHON'S. Measured on 2026-09-14 in
+            # `gradle:jdk21` against a Spring Boot 3.3.4 tree: the plugin STARTS THE APPLICATION
+            # (`Tomcat started on port 8080`), reads `/v3/api-docs`, stops it again
+            # (`> Task :forkedSpringBootStop`), BUILD SUCCESSFUL in 30s, and writes a 624-byte
+            # `api/rest/openapi.json`. So no `network: none` here and no pretending otherwise: this
+            # export runs the product, the Python one does not.
+            #
+            # AND IT GOES RED WHEN THE PLUGIN IS ABSENT, which is the property that makes the line worth
+            # writing at all - the slot above stays empty precisely because `gradle check -x test` runs
+            # nothing and reports success. Measured on the same day against a tree carrying only the
+            # `java` plugin: `Task 'generateOpenApiDocs' not found in root project 'demo'.`, BUILD
+            # FAILED, rc 1. A missing prerequisite names itself; it does not pass.
+            #
+            # ONE MEASURED SURPRISE FOR WHOEVER COMMITS THE RESULT: the document carries
+            # `"servers": [{"url": "http://localhost:8080"}]`, because that is where it was read from.
+            # That is the export method showing through into the artefact, and a product that diffs the
+            # contract in CI will see it. The plugin's own configuration is where it is dealt with.
+            "spec": {"workdir": "/work",
+                     "argv": ["gradle", "generateOpenApiDocs", "--no-daemon", "--console=plain"]},
         },
     ),
     "dotnet": Profile(
@@ -368,6 +421,25 @@ PROFILES: dict[str, Profile] = {
                         "env": {"PYTHONUSERBASE": "/src/.simplon-toolchain"},
                         "argv": ["python", "-m", "mypy",
                                  "--exclude", "^deploy/provision/orchestrator/", "."]},
+            # THE API CONTRACT AS A GENERATED FILE (si#240). Two positional arguments and both are the
+            # product's: the app, spelled the way uvicorn spells it (`MODULE:ATTRIBUTE`, and the product
+            # already types that string to run its own server), and where the contract is committed.
+            # Everything before them is fixed. That is the profile's whole contract - a starting point
+            # the scaffolder writes into the manifest, where a one-word diff changes either.
+            #
+            # `network: none` LIKE `unit` AND `analyse`, and unlike the Java entry, because this export
+            # never starts a server: it calls `app.openapi()` on an app object in memory. Measured on
+            # 2026-09-14 - the whole export ran under `--network none` and wrote a 3.1.0 document - and
+            # the difference is worth knowing before comparing the two languages' costs.
+            #
+            # BOTH FORMS WORK, measured the same day: a factory (`app.main:create_app`, which is what
+            # biz-cockpit writes by hand today) and a module-level app object (`app.main:app`) each
+            # produced the identical 656-byte document. See `EXPORT_OPENAPI` for why the predicate that
+            # tells them apart is not `callable`.
+            "spec": {"workdir": "/src", "network": "none",
+                     "env": {"PYTHONUSERBASE": "/src/.simplon-toolchain"},
+                     "argv": ["python", "-c", EXPORT_OPENAPI,
+                              "app.main:create_app", "api/rest/openapi.json"]},
         },
     ),
 }

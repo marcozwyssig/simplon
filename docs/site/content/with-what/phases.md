@@ -462,6 +462,31 @@ exactly the one that reports last week's binaries as a full green suite. `toolch
 family for the reason above and not for this one: a product may file it anywhere it needs, and the C++
 use case files the very same coordinate under `deploy up` to run the binary it compiled.
 
+**One of the scaffolded commands writes an API contract** (si#240). The `python` and `java` profiles
+carry a `spec` command that exports the product's OpenAPI document into a file it commits - because an
+API contract is a *build* output like any other generated file, and the group its one real consumer
+already placed it in.
+
+The two languages cost different things, and the table says which:
+
+| | Python | Java |
+|---|---|---|
+| what runs | `app.openapi()` on the app object, in memory | the product's `springdoc-openapi` Gradle plugin |
+| the product supplies | the app, spelled the way uvicorn spells it, and where the file goes | the plugin, and its own `openApi { }` block |
+| network | `none` - the export never starts a server | needed; the plugin starts the application and stops it again |
+| without the prerequisite | `ModuleNotFoundError`, rc 1, no file written | `Task 'generateOpenApiDocs' not found`, BUILD FAILED, rc 1 |
+
+Both were measured on 2026-09-14 against real trees rather than read off a manual, and the last row is
+the one that decided the Java line was worth writing at all: the slot beside it stays empty because
+`gradle check -x test` runs nothing and reports success, and a command that cannot go red is worse than
+a missing one.
+
+**And then the contract is a file that can go stale, which is the other half.** An exported document
+committed beside the code carries the same fact twice, so it goes in the manifest's `generated:` section
+and `test:generated` rules on it - the same gate, the same six lines, for a contract as for a shell
+completion. That half is not a profile entry and not a language's: see
+[`generated:`](../../how/manifest/#generated---the-files-that-must-be-what-their-command-produces).
+
 **Read the exit code against 0, never against 1.** The kernel returns what the container returned and
 interprets nothing, and the tools disagree about what failure is worth: a failing `ctest` run exits **8**,
 `dotnet format --verify-no-changes` exits **2** on a formatting fault, `gradle test` and `mypy` exit 1.

@@ -421,17 +421,48 @@ def _newline(raw: list[str], index: int) -> str:
     return line[len(line.rstrip("\r\n")):]
 
 
+class _BlockDumper(yaml.SafeDumper):
+    """`safe_dump`, with one exception: a string that contains a newline is written as a literal block.
+
+    WHY THE EXCEPTION IS NOT THE RESHAPING THE DOCSTRING BELOW REFUSES. si#240 put the first multi-line
+    value into the profile table - the OpenAPI export program - and `safe_dump`'s default for one is a
+    single-quoted FOLDED scalar, where every line break becomes a blank line:
+
+        - 'import importlib, json, pathlib, sys
+        <blank>
+          module, _, attribute = sys.argv[1].partition(":")
+        ...
+
+    It round-trips exactly, and it is unreadable in the file a product is then supposed to own and edit -
+    which is the whole premise of scaffolding rather than resolving. `|` renders the same five lines as
+    five lines.
+
+    AND IT MOVES NOTHING THAT EXISTED. Measured rather than asserted: no value in any profile carried a
+    newline before today, so this representer cannot change one byte of what the scaffolder wrote for
+    any earlier command. `test_toolchain_scaffold` holds that.
+    """
+
+
+def _literal_block(dumper: yaml.SafeDumper, value: str) -> yaml.ScalarNode:
+    return dumper.represent_scalar("tag:yaml.org,2002:str", value, style="|" if "\n" in value else None)
+
+
+_BlockDumper.add_representer(str, _literal_block)
+
+
 def _entries(additions: Mapping[str, object], indent: int) -> list[str]:
     """The commands as manifest text, one block each, indented to sit under `commands:`.
 
-    THE SHAPE IS `safe_dump`'s, unchanged, and deliberately so: si#110 is about not destroying what
-    somebody else wrote, and the block this writes is its own. What that block should look like is
-    si#105's question, and answering it here would put a second change in a diff whose whole claim is
-    that nothing but the addition moved (`test_case_cpp_chapter` pins the current shape).
+    THE SHAPE IS `safe_dump`'s, unchanged apart from `_BlockDumper` above, and deliberately so: si#110 is
+    about not destroying what somebody else wrote, and the block this writes is its own. What that block
+    should look like is si#105's question, and answering it here would put a second change in a diff
+    whose whole claim is that nothing but the addition moved (`test_case_cpp_chapter` pins the current
+    shape).
     """
     out: list[str] = []
     for name, body in additions.items():
-        dumped = yaml.safe_dump({name: body}, sort_keys=False, width=96)
+        dumped = yaml.dump({name: body}, Dumper=_BlockDumper, sort_keys=False, width=96,
+                           default_flow_style=False)
         out += [" " * indent + line if line else line for line in dumped.rstrip("\n").split("\n")]
     return out
 
