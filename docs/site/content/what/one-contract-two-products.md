@@ -1,38 +1,34 @@
 ---
-title: "One contract, two products"
+title: "One contract, two languages"
 weight: 7
 ---
 
-Every other chapter here follows one product through the loop. This one is about the seam *between* two:
-a Java product and a Python product that have to agree on an interface, and what the platform does and
-does not do about it.
+Every other chapter here follows one product through the loop in one language. This one is about a
+product whose interface has two sides - a Python service and a Java client, one `.proto` between them -
+and what it takes to drive both from a single launcher.
 
-## What was driven
-
-Two products scaffolded with `simplon init`, one `.proto`, and a call that crossed the wire. Every line
-below was run on 2026-09-13.
+## Two commands, one script
 
 ```text
-$ ./pysvc.sh   support toolchain python 3.12     python: wrote 4 command(s) - proto, deps, unit, analyse
-$ ./javasvc.sh support toolchain java 21         java: wrote 3 command(s) - proto, compile, unit
-$ ./pysvc.sh   build proto                       build/proto/python/greeter_pb2.py, greeter_pb2_grpc.py
-$ ./javasvc.sh build proto                       build/proto/java/demo/grpc/GreeterGrpc.java + 5 more
+$ ./greeter.sh build proto
+  ✓ build.proto-python  0.5s
+  ✓ build.proto-java    0.4s
+  OK proto: all 2 steps passed
+
+$ ./greeter.sh test wire
+  ==> service up at 172.17.0.3:50051 - calling it with the java client
+  OK  REPLY: hello the java client, from the python service
 ```
 
-Then a Java client, built from `javasvc`'s stubs, against a Python service running `pysvc`'s:
+Driven on 2026-09-14. `build proto` generated `greeter_pb2.py` + `greeter_pb2_grpc.py` and
+`GreeterGrpc.java` + five more; `test wire` started the Python service from the first set and called it
+with a Java client built from the second.
 
-```text
-REPLY: hello javasvc, from the python service
-```
+**Nothing above was run by hand.** The service is a container and so is the client, and both are started
+by the command rather than by the reader - which is this repository's own rule about CI steps applied to
+a documentation page: a step that only exists in a transcript cannot be run by the person reading it.
 
-That is the whole claim of this page, and it is a measurement rather than a diagram: **the same four
-words on both sides.** `build proto` reads identically in a Java product and a Python one, because what
-differs - `protoc`, the plugin, the output layout - sits behind a command the kernel scaffolds and the
-product owns.
-
-## The contract
-
-Seven lines, and neither product owns them:
+## The contract, and why it is one file
 
 ```proto
 syntax = "proto3";
@@ -44,33 +40,57 @@ message HelloRequest { string name = 1; }
 message HelloReply { string text = 1; }
 ```
 
-Each side generated from it into `build/proto/`, regenerated on every run and committed by nobody -
-generated code is not source, so nothing in either tree can go stale against the contract.
+One tree, one `proto/greeter.proto`, two stub sets under `build/proto/`. Generated code is not source, so
+neither set is committed and neither can go stale against the contract.
 
-## What is *not* shared, and it is the interesting half
+{{< callout type="info" >}}
+An earlier draft of this chapter used **two** products with a launcher each, and it had to end by
+admitting that the `.proto` was copied into both trees - one contract, two files, and nothing keeping
+them equal. That is the second-source shape this repository removes everywhere else. One launcher over
+one tree removes it instead of describing it.
+{{< /callout >}}
 
-**The `.proto` was copied into both trees.** There is one contract in this chapter and two files, and
-nothing in the kernel keeps them equal. That is the second-source shape this platform removes everywhere
-else - and here it is, in the middle of a page about two products agreeing.
+## What the scaffolder does and does not do here
 
-What the kernel does today is make both sides *generate* identically. What it does not do is give the
-contract a home: no section names it, no command fetches it, and a `greeter.proto` that drifts in one
-repository produces two stub sets that compile and disagree at run time.
+`support toolchain <language>` writes a `proto` command per language, and a product that wants two
+languages meets something worth knowing:
 
-Three ways out exist and none is chosen here: a submodule, a published artefact both products fetch (the
-shape [handing a package over](../handing-a-package-over/) already describes for libraries), or one
-repository owning the contract and the other generating from a pinned copy. Naming the gap is what this
-page can honestly do; closing it is a decision about somebody's repositories, not a documentation change.
+```text
+$ ./greeter.sh support toolchain python 3.12    python: wrote 4 command(s) - proto, deps, unit, analyse
+$ ./greeter.sh support toolchain java 21        kept your own 'proto' - scaffolding never overwrites
+```
 
-**Also not shared:** the servers, the tests, and the deployments. The Java product builds a jar and the
-Python one does not; each has its own suites and its own `deploy:` answer. The interface is the only
-thing in common, which is the point of an interface.
+**The second language keeps the first one's command.** That is the scaffolder working as designed - it
+never overwrites what a product has - and it means one tree with two languages declares its generations
+itself, under names that say which is which:
+
+```yaml
+build:
+  commands:
+    proto-python:
+      task: toolchain:run
+      with: { image: namely/protoc-all:1.51_2, workdir: /defs,
+              argv: ["-d", "proto", "-l", "python", "-o", "build/proto/python"] }
+    proto-java:
+      task: toolchain:run
+      with: { image: namely/protoc-all:1.51_2, workdir: /defs,
+              argv: ["-d", "proto", "-l", "java", "-o", "build/proto/java"] }
+    proto:
+      help: "Generate the stubs for both sides of the contract."
+      depends_on: [proto-python, proto-java]
+```
+
+Three declarations and one plan: `build proto` is the aggregate, and what a person types stays one
+command however many languages the contract has.
 
 ## What this does not say
 
-The run above proves that both sides generate from one contract and that the generated code interoperates
-over the wire. It says nothing about versioning: nothing here detects that a field was renumbered, and a
-breaking change to the contract would produce two stub sets that build and fail at run time exactly as
-the drift above would. A contract check belongs under `test`, and there is none yet - it is named as open
-work in [simplon#238](https://github.com/marcozwyssig/simplon/issues/238) rather than implied by this
-page.
+The run proves that both sides generate from one contract and that the generated code interoperates over
+the wire. It says nothing about **versioning**: nothing here detects a renumbered field, and a breaking
+change to the contract would produce two stub sets that build and fail at run time. A contract check
+belongs under `test` and there is none yet - it is named as open work in
+[simplon#238](https://github.com/marcozwyssig/simplon/issues/238) rather than implied by this page.
+
+It also says nothing about two *repositories*. Everything above is one tree. A contract shared across
+repositories needs a home neither of them owns - a submodule, or a published artefact both fetch, which
+is the shape [handing a package over](../handing-a-package-over/) already describes for libraries.

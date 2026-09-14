@@ -25,26 +25,30 @@ it is the one section held only to existing.
 
 ## 0.14.0
 
-### One contract, two products (si#239)
+### One contract, two languages (si#239)
 
-A new chapter, and the first on this site about two products rather than one: [One contract, two
-products](../../what/one-contract-two-products/). A Java product and a Python product agree on one
-`.proto`, and a Java client built from one product's stubs calls a service running the other's.
+A new chapter: [One contract, two languages](../../what/one-contract-two-products/). A product whose
+interface has two sides - a Python service and a Java client over one `.proto` - driven from a single
+launcher.
 
-**The same four words on both sides.** `./pysvc.sh build proto` and `./javasvc.sh build proto` read
-identically, because what differs - `protoc`, the plugin, the output layout - sits behind a command the
-kernel scaffolds and the product owns. That is the platform's whole claim, demonstrated across a language
-boundary for the first time.
+```text
+$ ./greeter.sh build proto     ->  both stub sets, as one plan with two steps
+$ ./greeter.sh test wire       ->  REPLY: hello the java client, from the python service
+```
 
-**And the chapter names what the platform does NOT do.** The `.proto` was copied into both trees: one
-contract, two files, and nothing keeping them equal - the second-source shape this repository removes
-everywhere else, sitting in the middle of a page about two products agreeing. Three ways out are named
-and none is chosen, because closing it is a decision about somebody's repositories rather than a
-documentation change.
+**Nothing in it was run by hand.** The service is a container and so is the client, and both are started
+by the command rather than by the reader - this repository's own rule about CI steps, applied to a
+documentation page: a step that exists only in a transcript cannot be run by the person reading it.
 
-It is filed beside [Handing a package over](../../what/handing-a-package-over/) rather than as a fifth
-`case-*` chapter, and deliberately: the four case studies are each one product through the loop, and this
-one is about the seam between two.
+**The first draft needed two products and had to end by admitting a gap**: the `.proto` was copied into
+both trees, one contract and two files with nothing keeping them equal - the second-source shape removed
+everywhere else in this repository. One launcher over one tree removes it rather than describing it, and
+the chapter says so where the admission used to be.
+
+It also records what the scaffolder does here: a second language **keeps** the first one's `proto`
+command, because scaffolding never overwrites. One tree with two languages therefore declares
+`proto-python` and `proto-java` itself and plans them under one `proto` - so what a person types stays
+one command however many languages the contract has.
 
 **Nothing to do.**
 
