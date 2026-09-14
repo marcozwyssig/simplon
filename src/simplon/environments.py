@@ -11,11 +11,25 @@ from typing import Iterable, Mapping, NamedTuple
 
 import yaml
 
+from simplon import carriers
+
 
 class Environment(NamedTuple):
+    """One named environment.
+
+    `carrier`, `stack` and `repository` arrived with si#5 and all three DEFAULT TO EMPTY, which is what
+    keeps the six products that declare none of them working unchanged. They are the chain: what this
+    environment is realised on, what the deployment is called there, and where the compose document is
+    pulled from - by Portainer itself, which is the owner decision of 2026-09-05 and the reason the
+    repository is named here rather than resolved by the orchestrator.
+    """
+
     name: str
     backend: str
     description: str
+    carrier: str = ""
+    stack: str = ""
+    repository: str = ""
 
 
 class Registry(NamedTuple):
@@ -35,6 +49,10 @@ def parse_data(data: Mapping[str, object], valid_backends: Iterable[str]) -> Reg
     that every backend is one of valid_backends and that `default` names a real environment, so a bad
     descriptor fails loudly here, not deep in a deployment."""
     valid = tuple(valid_backends)
+    # The carriers are read FIRST so an environment pointing at one that is not declared is refused by
+    # name rather than failing later with an empty lookup. `declared` returns nothing for an absent
+    # section, which is why a product that names no carrier is unaffected by any of this.
+    carrier_names = set(carriers.declared(data))
     envs: dict[str, Environment] = {}
     declared = data.get("environments") or {}
     if not isinstance(declared, Mapping):
@@ -45,7 +63,24 @@ def parse_data(data: Mapping[str, object], valid_backends: Iterable[str]) -> Reg
         if backend not in valid:
             allowed = " or ".join(f"'{b}'" for b in valid)
             raise ValueError(f"environment '{name}': backend must be {allowed}, got '{backend}'")
-        envs[str(name)] = Environment(str(name), backend, str(spec.get("description", "")))
+        carrier = str(spec.get("carrier", "")).strip()
+        if carrier and carrier not in carrier_names:
+            known = ", ".join(sorted(carrier_names)) or "none"
+            raise ValueError(
+                f"environment '{name}': carrier '{carrier}' is not declared - the '{carriers.SECTION}' "
+                f"section declares: {known}")
+        stack = str(spec.get("stack", "")).strip()
+        if stack and not carrier:
+            raise ValueError(
+                f"environment '{name}': declares `stack: {stack}` and no `carrier:`, so there is "
+                f"nowhere for that stack to go")
+        repository = str(spec.get("repository", "")).strip()
+        if repository and not stack:
+            raise ValueError(
+                f"environment '{name}': declares a `repository:` and no `stack:`, so nothing says what "
+                f"the compose document pulled from it would be deployed as")
+        envs[str(name)] = Environment(str(name), backend, str(spec.get("description", "")),
+                                      carrier=carrier, stack=stack, repository=repository)
     if not envs:
         raise ValueError("environment registry defines no environments")
     default = str(data.get("default", "")).strip()

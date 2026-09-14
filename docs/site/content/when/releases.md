@@ -25,6 +25,38 @@ it is the one section held only to existing.
 
 ## 0.16.0
 
+### An environment can say what it stands on (si#5)
+
+The first slice of the deployment-provider work, and it is the vocabulary rather than a provider. A new
+`carriers:` section names what an environment is realised on; environments point at it:
+
+```yaml
+carriers:
+  hausportainer:
+    proxmox: { node: pve1, kind: lxc }
+    portainer: { url_from: PORTAINER, endpoint: 1 }
+
+environments:
+  test: { backend: portainer, carrier: hausportainer, stack: myctl-test, repository: github.com/you/myctl }
+  prod: { backend: portainer, carrier: hausportainer, stack: myctl-prod, repository: github.com/you/myctl }
+```
+
+**One carrier, many environments** - which is the shape both waiting consumers described: a Portainer
+serves several applications and, on one instance, several environments. Writing the chain into each
+environment instead would put the carrier in the file two or three times, and two environments on the
+same Portainer could drift apart with nothing comparing them.
+
+**No secret may be written there, and the section has no field for one.** `url_from: PORTAINER` names the
+prefix; the URL and the token are read from `PORTAINER_URL` and `PORTAINER_TOKEN`. A key the section does
+not take is **refused rather than ignored** - because a parser that skipped what it did not recognise
+would let a `token: ghp_...` sit quietly in a committed file, which has happened once in this family
+already. That one refusal is counted as an **expression rule**: a manifest carrying a stray `token:`
+would have worked, so refusing it costs flexibility and is billed as such.
+
+**Nothing to do.** Every field defaults to empty and an absent `carriers:` section is not a refusal - the
+six products this kernel can reach declare `backend: local` and nothing else, and none of them has a line
+to change.
+
 ### The kernel renders a report of its own suite (si#248)
 
 The catalogue has carried `test:report` since long before this release, `with-what/test-levels.md`
