@@ -689,6 +689,22 @@ checked for being tracked before anything is regenerated.
 exactly as it was, so the diff is empty. The gate reads the return code, because "regenerated, and it
 matched" and "did not regenerate, and nothing changed" are two different things.
 
+**An API contract is one of these, and that is the whole of the answer** (si#240). A product that exports
+its OpenAPI document and commits it has a generated file like any other - so the export is a `build`
+command the `spec` entry of the python and java toolchain profiles scaffolds, and the *checking* is this
+section:
+
+```yaml
+generated:
+  contract: { path: api/rest/openapi.json, by: build spec }
+```
+
+Nothing about that is REST-specific, and nothing about it is a language's. The question had been asked
+twice in this family before it was answered once: a Python product wrote `git diff --exit-code` over its
+contract and called it its CI staleness gate, and this kernel wrote a suite for its own shell completion.
+Both are the same six lines - and the first of them is the version that passes green over a contract
+nobody ever committed.
+
 ### `tracker:` - where a refused step becomes a ticket
 
 `test:walk` puts a person through the product's `.feature` files one step at a time. When they refuse a

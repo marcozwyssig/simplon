@@ -163,3 +163,30 @@ def test_a_shape_the_splice_cannot_place_is_refused_with_the_block_to_paste(tmp_
         toolchain.scaffold("cpp", version="19")
     assert path.read_text(encoding="utf-8") == before
     assert "toolchain:run" in capsys.readouterr().out
+
+
+def test_the_literal_block_representer_moves_nothing_that_was_already_scaffolded():
+    """si#240 taught the dumper to write a multi-line value as `|` instead of a folded single-quoted
+    scalar, because the OpenAPI export program is unreadable in the other form - and a manifest a product
+    cannot read is a scaffolder that has missed its own point.
+
+    The claim that goes with it is that the change cannot move an EARLIER command's block, and the claim
+    is checkable rather than plausible: the representer only fires on a string containing a newline, and
+    the export program is the first value in the whole table that has one. Put a newline into a second
+    profile value and this goes red, which is the right moment to look at the diff.
+    """
+    # arrange
+    from simplon.tasks import profiles
+
+    # act: every scalar any profile ships, including the ones nested in `env:`
+    multiline = []
+    for language, prof in profiles.PROFILES.items():
+        for command, body in prof.commands.items():
+            values = [body.get("workdir"), body.get("image"), *(body.get("argv") or [])]
+            values += list((body.get("env") or {}).values())
+            multiline += [f"{language}:{command}" for value in values
+                          if isinstance(value, str) and "\n" in value]
+
+    # assert
+    assert multiline == ["python:spec"], (
+        f"exactly one profile value is multi-line, and the representer exists for it: {multiline}")

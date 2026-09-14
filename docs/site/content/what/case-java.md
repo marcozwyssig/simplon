@@ -375,6 +375,12 @@ $ ./javademo.sh release tag v0.1.0
 same for both, and both read a manifest section javademo does not declare. Rows 8 and 9 say *derived* for that
 reason and not because anything is missing.
 
+**And there is no Maven publishing task, which is a decision rather than the obvious omission.** Measured over
+the six products that install this kernel, none publishes a language package at all - the family's one
+publishing Java product is an Eclipse/p2 tree with no Maven build. What that measurement found, and why a
+fourth publishing task would make the tally worse rather than better, is in
+[Handing a package over](../handing-a-package-over/#why-there-is-no-maven-task-and-no-pypi-task).
+
 ## deploy
 
 **Same answer as the Python chapter, and it is the state of the kernel rather than an omission here.**

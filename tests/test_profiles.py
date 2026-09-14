@@ -197,14 +197,20 @@ def test_the_python_profile_installs_its_own_tools_before_it_runs_them():
     # arrange / act
     python = profiles.profile("python", version="3.12")
 
-    # assert: three commands in the PYTHON image, and the two that check the product run offline once
-    # the first has run. si#238 added a fourth, `proto`, and it is exempt from everything below BY
+    # assert: the commands that run in the PYTHON image, and the ones that check the product run offline
+    # once the first has run. si#238 added `proto`, and it is exempt from everything below BY
     # CONSTRUCTION rather than by exception: it names its own image (`namely/protoc-all`), so there is no
     # `python:3.12` in it to be missing pytest, no user base to place, and no `python -m` to get wrong.
     # The exemption is computed from the body rather than spelled as a name, so a second command that
     # brings its own image inherits it and a `proto` that lost its image would be caught here.
+    #
+    # si#240 added `spec`, and it is NOT exempt: it runs in the same image, over the same mount, and it
+    # IMPORTS THE PRODUCT - which is the one thing `python -m` and `python -c` have in common and a
+    # console script does not, both putting the working directory on `sys.path`. It is offline for the
+    # same reason `unit` and `analyse` are: reading a contract off an app object in memory needs no
+    # index and no server, measured under `--network none` on 2026-09-14.
     in_the_python_image = {name: body for name, body in python.commands.items() if "image" not in body}
-    assert set(in_the_python_image) == {"deps", "unit", "analyse"}, sorted(in_the_python_image)
+    assert set(in_the_python_image) == {"deps", "unit", "analyse", "spec"}, sorted(in_the_python_image)
     assert python.commands["proto"]["image"].startswith("namely/protoc-all:"), (
         "the proto command is only exempt because it brings its own image")
     for name, body in in_the_python_image.items():
@@ -219,6 +225,9 @@ def test_the_python_profile_installs_its_own_tools_before_it_runs_them():
             f"on the same tree with the user base's bin on PATH, `pytest -q` is `ModuleNotFoundError: "
             f"No module named 'pydemo'` rc 2 where `python -m pytest -q` is `2 passed` rc 0, because a "
             f"product tree in a container was never installed: {python.commands[name]['argv']}")
+    assert python.commands["spec"]["argv"][:2] == ["python", "-c"], (
+        "the export has to import the product's own module, so it runs through the interpreter for the "
+        "same reason the other two do - not as a console script that would not have the tree on its path")
 
 
 def test_the_python_deps_command_pins_the_tools_it_installs():

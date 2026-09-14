@@ -164,3 +164,58 @@ gh auth refresh -h github.com -s read:packages,write:packages
 
 `read:packages` is the one a **consumer** needs, which is worth knowing because the first person to hit
 it is usually not the person who published.
+
+## Why there is no Maven task and no PyPI task
+
+The obvious next question about this chapter is why it has two rows and not four. .NET gets a task, C++
+gets a task, and the two languages with the biggest package ecosystems on earth get nothing - which
+reads as a gap, and was filed as one.
+
+It was measured before it was filled. On 2026-09-14, over the six products that install this kernel -
+their manifests, their build files and all **fifteen** of their CI workflows, read through the GitHub
+API:
+
+| looked for | found |
+|---|---|
+| `twine` or a PyPI publish action | none |
+| a Gradle or Maven publish | none |
+| `dotnet nuget push` | none |
+| `conan upload` | none |
+| a manifest placing `release:nuget` or `release:conan` | none |
+
+**Not one product in the family publishes a language package.** Not a wheel, not a jar, not a nupkg, not
+a Conan package. The two tasks this chapter documents are placed by nobody, and the demos they were
+shown on are throwaway trees.
+
+The candidate the ticket named did not survive the measurement either. cleon is the family's Java
+product that publishes, so it was the one to ask what a Maven publishing task would be worth - and cleon has
+no Maven build at all: it is an Eclipse/p2 project that publishes an **update site**. netctl's Gradle
+build names `mavenCentral()` once, to *read* dependencies. The count of reachable products that could
+place a Maven publishing task is zero.
+
+### What every product does publish, and it is already the same for all four languages
+
+- **a container image** - `release:image`
+- **a directory a pipeline pulls** - `release:artifact`
+- **files a person downloads** - `release:asset`
+
+None of the three knows what language built what it moves, and all twelve publishing commands across the
+family bind one of them or the product's own body. **That is where the symmetry is**: Python and Java
+hand things over exactly the way .NET and C++ do. The asymmetry runs the other way - two languages have
+*two extra* tasks that nothing uses.
+
+### And Python's answer was already given, on purpose
+
+simplon publishes its own wheel and not through a task: `.github/workflows/release.yml` ends in
+`pypa/gh-action-pypi-publish`, and the manifest declares that workflow hand-written with its reason.
+PyPI's trusted publishing exists only inside a CI run, so a publishing task a person could type would
+need an API token - the exact credential trusted publishing removes. A task there would not add a
+capability; it would add a secret.
+
+{{< callout type="info" >}}
+**Publishing a language package is a `release` task when a registry serves it and a workflow otherwise.**
+`release:nuget` exists because GitHub Packages serves NuGet. `release:conan` exists because it does
+*not* serve Conan and a file had to be moved instead. Neither reason applies to a wheel. A third and a
+fourth task would make the family symmetric and the tally worse: four coordinates nobody places instead
+of two.
+{{< /callout >}}
