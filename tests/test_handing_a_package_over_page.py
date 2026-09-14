@@ -123,3 +123,33 @@ def test_the_page_quotes_the_command_that_grants_the_package_scopes():
 
     # assert
     assert f"gh auth refresh -h github.com -s {','.join(githubpackages.PACKAGE_SCOPES)}" in body
+
+
+def test_no_coordinate_the_page_names_is_fiction():
+    """THE RULE THE FOUR CASE CHAPTERS ALREADY HAVE, and this page did not - with a measured cause.
+
+    si#234 answered "why is there no Maven task and no PyPI task" by adding a section here, and the first
+    draft of that section spelled both of them as coordinates in backticks. `test_case_java_chapter.py`
+    caught the same words on the Java chapter within the minute; this suite let them stand, because the
+    assertion above only rules on the five coordinates the page is ABOUT and says nothing about a sixth
+    the prose invents. A chapter explaining why a task does not exist is exactly the chapter that will
+    write its name, so the rule belongs here more than anywhere.
+
+    Generalised rather than copied: every `group:task` in backticks is checked against the catalogue,
+    whatever the group.
+    """
+    # arrange
+    import re
+
+    known = set(catalogue_mod.load().tasks)
+    namespaces = {coordinate.split(":")[0] for coordinate in known}
+    assert namespaces, "the catalogue carries no task at all, so this test is ruling on nothing"
+
+    # act
+    named = set(re.findall(rf"`(?:(?:{'|'.join(sorted(namespaces))}):[a-z][a-z0-9-]*)`", _text()))
+    named = {coordinate.strip("`") for coordinate in named}
+
+    # assert
+    assert named, "the page names no coordinate, so this test is ruling on nothing"
+    for coordinate in sorted(named):
+        assert coordinate in known, f"the page names '{coordinate}', the catalogue does not carry it"
