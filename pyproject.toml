@@ -73,6 +73,19 @@ typecheck = [
   "types-PyYAML~=6.0.12",  # a stub for a kernel dependency belongs beside the checker that reads it
 ]
 
+# The report step's pytest plugin, optional for the SAME reason `typecheck` is, and the reasoning above
+# transfers word for word: `test:report` is the kernel's task, so the tool it needs belongs beside it -
+# but a product that never renders a report should not be told which allure-pytest it may have.
+#
+# ONLY THE PLUGIN. The allure CLI that renders the HTML is not a wheel and cannot be one; `simplon.tasks
+# .allure` shells out to it and falls back to a pinned container when the host has none, which is why a
+# report step is green on a machine with neither.
+report = [
+  "allure-pytest~=2.16.0",  # >=2.16.0, <2.17. The raw-results FORMAT is what the kernel's merge reads,
+                            # and allure versions it with the minor; the renderer is pinned separately
+                            # in `tasks/allure.py`, so both halves of the pair move deliberately.
+]
+
 [project.scripts]
 simplon = "simplon.bootstrap:main"
 

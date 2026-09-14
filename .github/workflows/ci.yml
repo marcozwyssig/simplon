@@ -84,3 +84,28 @@ jobs:
       # of surprising. `fetch-depth: 0` above is a precondition for it too: with no tags
       # there is no released version to measure the page against.
       - run: ./simplon.sh test release-notes
+      # THE REPORT (si#248), and the two `if: always()` below are the whole point of it. A GitHub
+      # job stops at its first failed step, so without them the archive would exist for exactly
+      # the runs nobody needs it for - the green ones - and be missing from every red one. The
+      # report step itself runs no tests and carries no verdict: it merges what the suite wrote
+      # and renders it, and it is green on a machine with no renderer at all.
+      #
+      # It sits after the gates rather than beside the suite because it archives THEIR verdict.
+      # A report rendered before the type gate ran would be a true report of an incomplete run,
+      # which is the kind of half-truth an archive is worst at carrying.
+      - if: always()
+        run: ./simplon.sh test report
+      # The archive as a CI artefact and deliberately NOT on the website: a published report is
+      # the last green run frozen in public, including while `main` is red. Ninety days on the
+      # run that produced it is the retention this needs.
+      #
+      # `if: always()` for the same reason as the step above, and `if-no-files-found: error`
+      # because an upload that finds nothing and says so is this repository's recurring defect at
+      # its most ordinary - a step that cannot tell "no report" from "report uploaded".
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: allure-report
+          path: tests/reports/*.html
+          if-no-files-found: error
+          retention-days: 90
