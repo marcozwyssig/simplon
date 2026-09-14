@@ -25,6 +25,32 @@ it is the one section held only to existing.
 
 ## 0.15.0
 
+### The notes were written before the tag, and had to name themselves (si#246)
+
+The [release procedure](../../how/releasing/) says the notes go in before the tag, because the tag points
+at a tree that already carries them. This time they went in as a pull request of their own, after the
+work they describe had already merged - and `test:release-notes` immediately refused the section it had
+passed a minute earlier:
+
+```text
+ERR the v0.15.0 section names 2 of the 3 tickets merged into v0.14.0..HEAD; missing: si#246
+```
+
+**The gate was right and the commit was wrong.** A merge GitHub's button composed is read one level down,
+at the commits it brought in - precisely so that a notes PR cannot name itself. That commit's subject
+named no ticket at all, so the only number left was the pull request's own, and the rule fell back to it.
+
+**The fallback stays, and that is measured rather than assumed.** Removing it would silently excuse
+fourteen merges in older ranges whose only ticket source is their pull request's number - #1, #7, #9,
+#10, #11, #25, #36, #72, #73, #84, #95, #96, #195 and #207 - and two of those are already section
+headings on this page, for exactly this reason. A rule that drops work from the record to make a present
+run pass is the opposite of what this gate is for.
+
+So the section names it, the way 0.13.0 names si#195 and si#207. What it costs a reader is one heading;
+what it buys is that no change went out undescribed - which is the whole claim the page makes.
+
+**Nothing to do.**
+
 ### The API contract, in the Python and the Java profile (si#240)
 
 `support toolchain python` and `support toolchain java` now write a `spec` command as well. An OpenAPI
