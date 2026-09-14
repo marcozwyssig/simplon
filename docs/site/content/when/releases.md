@@ -23,6 +23,82 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.15.0
+
+### The API contract, in the Python and the Java profile (si#240)
+
+`support toolchain python` and `support toolchain java` now write a `spec` command as well. An OpenAPI
+document is a **build** output, so it is scaffolded like every other language command rather than given a
+catalogue coordinate:
+
+```yaml
+build:
+  commands:
+    spec:
+      task: "toolchain:run"
+      with:
+        image: python:3.12
+        workdir: /src
+        network: none
+        argv:
+        - python
+        - -c
+        - |
+          import importlib, json, pathlib, sys
+          module, _, attribute = sys.argv[1].partition(":")
+          target = getattr(importlib.import_module(module), attribute)
+          app = target if hasattr(target, "openapi") else target()
+          pathlib.Path(sys.argv[2]).write_text(json.dumps(app.openapi(), indent=2) + "\n")
+        - app.main:create_app
+        - api/rest/openapi.json
+```
+
+Two positional arguments and both are yours: the app - spelled the way uvicorn spells it - and where the
+contract is committed. A factory and a module-level app object both work.
+
+**The two languages do not cost the same, and the profile says which.** The Python export calls
+`app.openapi()` on an app in memory and runs with `network: none`. The Java entry is
+`gradle generateOpenApiDocs`, and the `springdoc-openapi` Gradle plugin **starts your application**,
+reads `/v3/api-docs` and stops it again - so it needs the network, and the document it writes carries
+`"servers": [{"url": "http://localhost:8080"}]`, because that is where it was read from.
+
+**Without the prerequisite, each goes red rather than quiet.** A Java tree with no plugin answers
+`Task 'generateOpenApiDocs' not found`, BUILD FAILED, rc 1; a Python export pointed at the wrong module
+exits 1 and **writes no file at all**, so a broken export can never hand the staleness gate a
+half-written contract to report as a stale one.
+
+**Then commit it and let `test:generated` rule on it** - the same section, the same gate, the same six
+lines as for a shell completion:
+
+```yaml
+generated:
+  contract: { path: api/rest/openapi.json, by: build spec }
+```
+
+**Nothing to do.** A product that does not run `support toolchain` again keeps the commands it has.
+
+### Why there is no Maven task and no PyPI task (si#234)
+
+The catalogue publishes a .NET package and a C++ one and nothing for Python or Java, which reads as a gap.
+It was measured over the six products that install this kernel - their manifests, their build files and
+all fifteen of their CI workflows - and **not one of them publishes a language package**: no wheel, no
+jar, no nupkg, no Conan package. The two tasks that do exist are placed by nobody.
+
+**The parity was already there, in the direction nobody was looking.** Every product publishes through
+`release:image`, `release:artifact` or `release:asset`, and none of the three knows what language built
+what it moves. The asymmetry runs the other way: two languages have two *extra* tasks nothing uses.
+
+The reasoning is now on the site rather than in a ticket:
+[Handing a package over](../../what/handing-a-package-over/#why-there-is-no-maven-task-and-no-pypi-task).
+
+**Nothing to do.** No coordinate was added or removed.
+
+### Scaffolded commands keep their line breaks
+
+A multi-line value used to be written into your manifest as a folded single-quoted scalar - one blank
+line between every program line. It is a literal `|` block now. Nothing that was scaffolded before this
+release can move: the export program above is the first multi-line value the profile table has ever had.
+
 ## 0.14.0
 
 ### One contract, two languages (si#239)
