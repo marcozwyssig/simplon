@@ -23,6 +23,53 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.16.0
+
+### The kernel renders a report of its own suite (si#248)
+
+The catalogue has carried `test:report` since long before this release, `with-what/test-levels.md`
+describes the Allure report at length - and `simplon.yaml` placed none of it. Measured on 2026-09-14:
+`test:gate`, `test:accept`, `test:report` and `docs:acceptance`, all offered, none placed. The two
+workflows ran the suite, the type gate, the staleness gate, the wheel, the image and the notes guard, and
+rendered nothing.
+
+That is the shape si#8 found in the type gate: a capability shipped to every other product and never
+adopted at home. It is adopted now, in both workflows, with the archive uploaded as a run artefact:
+
+```yaml
+suites:
+  gates:
+    - name: unit
+      command: test suite
+      results: clear
+      results_from: tests/allure-results
+  report:
+    merge: [tests/allure-results]
+```
+
+**A `command:` gate, not a `suite:` one**, because this suite runs from inside `tests/` so its conftest
+applies - si#106's kind exists exactly so a product keeps the runner it has.
+
+**The report is a CI artefact and not a page on this site**, which was a decision rather than a default:
+a published report is the last green run frozen in public, including while `main` is red.
+
+**And both steps carry `if: always()`.** A GitHub job stops at its first failed step, so without it the
+archive would exist for exactly the runs nobody needs it for.
+
+### What the first draft shipped, and the one line that fixed it
+
+Worth reading if you adopt this, because the failure is silent. The first draft declared only the gate's
+`results_from:` and ran `test suite` then `test report` - which is what both workflows do. The report
+step arrives there with no gate run behind it, so it merged nothing, rendered a **2.5 MB Allure archive
+of zero tests**, and printed `OK` beside it.
+
+`report: merge:` is the line that was missing. `results_from:` is merged when the KERNEL runs that gate;
+`merge:` is what a standalone report step reads. Declaring both is not redundancy - the two routes to the
+archive are real, and a product may take either.
+
+**Nothing to do.** A product that declares no `suites:` section is unaffected, and `simplon[report]` is
+an optional extra: nothing is added to what a consumer must install.
+
 ## 0.15.0
 
 ### The notes were written before the tag, and had to name themselves (si#246)

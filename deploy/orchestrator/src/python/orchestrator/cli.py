@@ -59,6 +59,14 @@ def build_wheel() -> int:
     return _run("-m", "build", "--wheel")
 
 
+#: Where the suite leaves its raw Allure results (si#248), ABSOLUTE because pytest runs with `cwd` inside
+#: `tests/` and a relative `--alluredir` would land wherever the runner happened to stand. The manifest's
+#: `suites:` gate names the same directory as `results_from:`, relative to the product root - two
+#: spellings of one path, which is a second source; what keeps them together is that `test report` says
+#: out loud when a declared source directory is not there, rather than merging nothing and reporting
+#: green.
+ALLURE_RESULTS = ROOT / "tests" / "allure-results"
+
 def test_suite() -> int:
     """Run the pytest suite. Runs from tests/, so conftest applies.
 
@@ -75,7 +83,7 @@ def test_suite() -> int:
     breaks four others that must run OUTSIDE a git repository (`init` outside a repo, the two
     self-ignoring caches, the unreadable-checkout guard), which is a worse trade on both routes at once.
     """
-    return subprocess.run([sys.executable, "-m", "pytest", "-q"],
+    return subprocess.run([sys.executable, "-m", "pytest", "-q", f"--alluredir={ALLURE_RESULTS}"],
                           cwd=ROOT / "tests").returncode
 
 

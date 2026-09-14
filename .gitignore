@@ -33,3 +33,11 @@ docs/site/content/with-what/acceptance.md
 docs/site/resources/
 docs/site/public/
 docs/site/.hugo_build.lock
+
+# The test report and the raw results behind it (si#248). Both are OUTPUTS of a run: `test suite` writes
+# the raw allure results and `test report` merges them into a timestamped single-file archive. They sit
+# beside the suite rather than under build/ because that is where `suites:` declares them, and they are
+# ignored for the same reason build/ is - committing a report would put a run's verdict in the tree,
+# where the next reader cannot tell which run it belongs to.
+tests/allure-results/
+tests/reports/

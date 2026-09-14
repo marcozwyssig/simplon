@@ -317,9 +317,19 @@ def test_theWorkflowsStillBuildAndTestAroundTheGate() -> None:
 def test_theHostVenvAsksForTheCheckerTheGateNeeds() -> None:
     # The gate runs mypy from the host venv and reports a SETUP error, not findings, when it is absent -
     # which is a green-looking red nobody would chase. The extra is what stops that happening.
+    #
+    # THE EXTRA, NOT THE WHOLE LINE. This read `"-e .[typecheck]" in text` until si#248 added a second
+    # extra beside it, and the assertion went red over a line that still asks for exactly what this test
+    # is about. A guard that breaks when an unrelated extra joins is testing the spelling rather than the
+    # property - and the repair is not to loosen it to a substring of `typecheck`, which `[typechecker]`
+    # would satisfy too, but to read the extras as the list they are.
     text = REQUIREMENTS.read_text(encoding="utf-8")
+    editable = [line for line in text.splitlines() if line.strip().startswith("-e .[")]
 
-    assert "-e .[typecheck]" in text
+    assert len(editable) == 1, f"exactly one editable install of this tree is expected: {editable}"
+    extras = [name.strip() for name in editable[0].split("[", 1)[1].rstrip("]").split(",")]
+    assert "typecheck" in extras, (
+        f"the host venv must ask for the type gate's checker; it asks for {extras}")
 
 
 def test_theConfigurationExistsAndCoversTheTreesThisRepositoryShips() -> None:

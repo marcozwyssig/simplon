@@ -142,6 +142,21 @@ groups:
       # No `with:` - there is nothing to pin. All three values are the product's data and reach the body
       # through the manifest, which is the whole shape of the ticket.
       release-notes: { task: "test:release-notes" }
+      # THE REPORT OVER THE KERNEL'S OWN SUITE (si#248), and the reason it exists is the one this
+      # repository keeps finding in itself: the catalogue carried `test:report` and simplon placed it
+      # nowhere, while `with-what/test-levels.md` describes the report at length. A reader can only
+      # conclude the kernel renders one on itself. It does now.
+      #
+      # IT RUNS NO TESTS, which is why it is not in `all` above. It merges the raw results `test suite`
+      # wrote into the shared results dir and renders the archive, so putting it inside the aggregate
+      # would make one command mean two things - run the tests, and archive whatever ran last. The
+      # workflows call it AFTER the suite, by name, which is the ordering the CI note already argues for.
+      #
+      # AND IT IS GREEN ON A MACHINE WITH NO RENDERER. `test:report` is red only when a render tool was
+      # present and failed; with neither the allure CLI nor Docker it writes what it can and says so.
+      # That is deliberate in the task and worth repeating here: archiving carries no verdict, the gate
+      # does.
+      report: { task: "test:report" }
       # THE KERNEL RULES ON ITSELF (si#240). This gate was built because a committed generated file had
       # drifted - and the file was THIS repository's own shell completion, in 0794e24, which left `main`
       # red with an uncompletable command until somebody noticed. A gate written for that and not placed
@@ -313,6 +328,41 @@ site:
 # `context: .` is the product root because the wheel is built INSIDE the image from this tree, which is
 # what makes the image buildable at any commit rather than only after a PyPI release. The root
 # .dockerignore says what that costs and what it keeps (`.git`, on purpose).
+# THE TEST TAXONOMY, AND IT IS ONE LEVEL DEEP ON PURPOSE (si#248). This kernel has ONE suite - the
+# pytest run under `tests/` - so the section that exists for products with three or four levels declares
+# exactly one gate here. That is not the section being misused: what it buys is the half beside the
+# gates, `test:report`, which merges the run's raw results into a single-file Allure archive.
+#
+# WHY THE GATE NAMES A COMMAND RATHER THAN A SUITE. A `suite:` gate would hand the pytest root to the
+# kernel and let it run pytest itself - and this suite cannot be run that way. `orchestrator.cli
+# :test_suite` runs from INSIDE `tests/` so the conftest there applies, and its docstring records what
+# happens on the container route when thirteen tests bind a `tmp_path` into a `docker run`. A
+# `command:` gate (si#106) keeps that body exactly as it is and takes its rc, which is the whole of what
+# a gate needs from it.
+#
+# `results: clear` BECAUSE IT IS THE ONLY GATE. Exactly one gate must clear the shared results, and with
+# one gate there is no choice to make - but the rule is what stops the second gate, when there is one,
+# from silently appending onto last week's run forever.
+suites:
+  gates:
+    - name: unit
+      command: test suite
+      results: clear
+      # Where `test suite`'s own pytest wrote its raw results - the product's runner put them there, and
+      # this is the line that tells the report step to merge them. `orchestrator.cli:ALLURE_RESULTS` is
+      # the same path spelled absolutely, and a directory that is not there is NAMED by the report step
+      # rather than quietly contributing nothing.
+      results_from: tests/allure-results
+      announce: "unit gate: the pytest suite under tests/, run from inside it so its conftest applies"
+  # WHAT THE REPORT STEP MERGES, and the gate's `results_from:` above is NOT it - measured on
+  # 2026-09-14, because the first draft declared only the gate and shipped a 2.5 MB archive of nothing
+  # with an `OK` beside it. `results_from:` is merged when the KERNEL runs that gate (`test:gate`);
+  # simplon's workflows run its own `test suite` and then `test report`, so the report step arrives with
+  # no run behind it and merges what this list names. One path, declared in both places, because the two
+  # routes to the archive are real and a product may take either.
+  report:
+    merge: [tests/allure-results]
+
 # WHICH GENERATED FILES THIS REPOSITORY COMMITS (si#240). Two, and both carry "GENERATED ... do not
 # edit" at the top - which is a promise to a reader and, until this section existed, a promise nothing
 # checked. `docs/site/content/with-what/commands.md` is generated too and is deliberately NOT here: it is
@@ -483,6 +533,33 @@ workflows:
               of surprising. `fetch-depth: 0` above is a precondition for it too: with no tags
               there is no released version to measure the page against.
             command: test release-notes
+          - note: |
+              THE REPORT (si#248), and the two `if: always()` below are the whole point of it. A GitHub
+              job stops at its first failed step, so without them the archive would exist for exactly
+              the runs nobody needs it for - the green ones - and be missing from every red one. The
+              report step itself runs no tests and carries no verdict: it merges what the suite wrote
+              and renders it, and it is green on a machine with no renderer at all.
+
+              It sits after the gates rather than beside the suite because it archives THEIR verdict.
+              A report rendered before the type gate ran would be a true report of an incomplete run,
+              which is the kind of half-truth an archive is worst at carrying.
+            command: test report
+            if: always()
+          - note: |
+              The archive as a CI artefact and deliberately NOT on the website: a published report is
+              the last green run frozen in public, including while `main` is red. Ninety days on the
+              run that produced it is the retention this needs.
+
+              `if: always()` for the same reason as the step above, and `if-no-files-found: error`
+              because an upload that finds nothing and says so is this repository's recurring defect at
+              its most ordinary - a step that cannot tell "no report" from "report uploaded".
+            uses: actions/upload-artifact@v4
+            if: always()
+            with:
+              name: allure-report
+              path: tests/reports/*.html
+              if-no-files-found: error
+              retention-days: 90
 
   # DECLARED HAND-WRITTEN, which is a decision and not a gap - si#40 asked for exactly this to be an
   # explained possibility rather than an emergency exit. The generator carries comments, so prose is not

@@ -173,7 +173,25 @@ jobs:
             echo "not point at this commit."
             exit 1
           }
+      # THE REPORT (si#248), on the release path as well as on CI, and it is the same two steps there.
+      # What differs is what they are for: CI's archive explains a red run to whoever has to fix it,
+      # this one is the record of what was green when a version went out - the answer to "which tests
+      # passed for 0.15.0", asked months later.
+      #
+      # AFTER the publish, not before. `test all` above already decided whether this release happens;
+      # putting an archiving step in front of the upload would let a render failure hold back a wheel
+      # whose tests all passed, which is a step carrying a verdict it was explicitly given none of.
+      # `if: always()` so the archive still exists when something above went red.
       - uses: pypa/gh-action-pypi-publish@release/v1
+      - if: always()
+        run: ./simplon.sh test report
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: allure-report
+          path: tests/reports/*.html
+          if-no-files-found: error
+          retention-days: 90
 
   # The documentation website, published to GitHub Pages by the SAME tag that published the wheel.
   #
