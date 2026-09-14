@@ -25,6 +25,33 @@ it is the one section held only to existing.
 
 ## 0.14.0
 
+### One contract, two languages (si#239)
+
+A new chapter: [One contract, two languages](../../what/one-contract-two-products/). A product whose
+interface has two sides - a Python service and a Java client over one `.proto` - driven from a single
+launcher.
+
+```text
+$ ./greeter.sh build proto     ->  both stub sets, as one plan with two steps
+$ ./greeter.sh test wire       ->  REPLY: hello the java client, from the python service
+```
+
+**Nothing in it was run by hand.** The service is a container and so is the client, and both are started
+by the command rather than by the reader - this repository's own rule about CI steps, applied to a
+documentation page: a step that exists only in a transcript cannot be run by the person reading it.
+
+**The first draft needed two products and had to end by admitting a gap**: the `.proto` was copied into
+both trees, one contract and two files with nothing keeping them equal - the second-source shape removed
+everywhere else in this repository. One launcher over one tree removes it rather than describing it, and
+the chapter says so where the admission used to be.
+
+It also records what the scaffolder does here: a second language **keeps** the first one's `proto`
+command, because scaffolding never overwrites. One tree with two languages therefore declares
+`proto-python` and `proto-java` itself and plans them under one `proto` - so what a person types stays
+one command however many languages the contract has.
+
+**Nothing to do.**
+
 ### gRPC and Protobuf, in all four toolchains (si#238)
 
 `support toolchain <language>` now writes a `proto` command too, in every one of the four profiles:

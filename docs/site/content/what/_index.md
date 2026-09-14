@@ -19,5 +19,6 @@ What any of it *means* is [How](../how/); what a value is called is [With what](
   {{< card link="case-java/" title="A Java product, end to end" subtitle="The same loop with no Python in the product at all: Gradle in Docker, JUnit XML in the Allure report, and a label on every step." >}}
   {{< card link="case-cpp/" title="A C++ product, end to end" subtitle="The same loop again with no task body at all: four commands, one coordinate, one pinned clang image - and the four steps between that promise and a product that can use it." >}}
   {{< card link="case-dotnet/" title="A .NET product, end to end" subtitle="The same loop again, with no task body for the build at all: one pinned SDK image, the kernel's own argv - and the four places that path does not reach yet." >}}
+  {{< card link="one-contract-two-products/" title="One contract, two languages" subtitle="A Python service and a Java client over one .proto, both driven from a single launcher - two commands, one script, and a call that crossed the wire." >}}
   {{< card link="handing-a-package-over/" title="Handing a package over" subtitle="Publishing a NuGet library so a second product resolves it - and why the Conan half is a transport rather than a remote, with the measurement that settles it." >}}
 {{< /cards >}}
