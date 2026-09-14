@@ -218,6 +218,50 @@ REACH_KERNEL_EXEMPT = "the kernel exempts itself"
 # that is no longer there.
 
 CENSUS: dict[tuple[str, str, str], str] = {
+    # --- carriers.py (si#5) -----------------------------------------------------------------------
+    # Eight, and SEVEN of them diagnosis: a carrier with no node names no host, one with no `url_from:`
+    # says nothing about where its URL and token are read from, a `kind:` that is neither lxc nor vm
+    # names a thing Proxmox cannot make, and a block that is a string rather than a mapping describes
+    # no carrier at all. None of those manifests deploys anywhere.
+    #
+    # THE EIGHTH IS AN EXPRESSION RULE AND IS COUNTED AS ONE, which is worth spelling out because the
+    # temptation is to file it under diagnosis and be done. `_block` refuses a key the block does not
+    # take, and CLAUDE.md's sorting question decides it: would the refused manifest have produced a
+    # WORKING product, merely a different one? For a typo - `endpint: 2` - no: the value is dropped and
+    # the deployment silently goes to endpoint 1, which is a broken product and diagnosis. But for the
+    # case the rule was actually written for - a `token:` typed into the file - YES: the token is
+    # ignored, the real one arrives from the environment as designed, and the product works. One refusal
+    # fires on both populations and the census takes one answer, so it takes the honest one, the one
+    # that costs flexibility.
+    #
+    # The three questions, answered:
+    #   - does it forbid something a product might legitimately want? No product declares a carrier at
+    #     all today - all eight environments of all six reachable products are `backend: local` - so
+    #     there is no manifest to bill. That is a zero over an empty set and is said as one.
+    #   - diagnosis or expression rule? Expression, for the reason above.
+    #   - would deleting be cheaper than guarding? No, and this is the one place in this file where the
+    #     answer is not "yes by default". `credentials.py` records the measured cause: a product
+    #     repository leaked a token out of a committed YAML file, and the fix was to leave no field one
+    #     could be written into. A parser that ignored what it did not recognise puts that field back.
+    ("carriers", "declared", "must be a mapping of name -> carrier"): DIAGNOSIS,
+    ("carriers", "_carrier", "must be a mapping, not"): DIAGNOSIS,
+    ("carriers", "_carrier", "so no host is named"): DIAGNOSIS,
+    ("carriers", "_carrier", "is a container on the node, a"): DIAGNOSIS,
+    ("carriers", "_carrier", "so nothing says where the URL and the token are read from"): DIAGNOSIS,
+    ("carriers", "_carrier", "must be a number, got"): DIAGNOSIS,
+    ("carriers", "_block", "so nothing says"): DIAGNOSIS,
+    ("carriers", "_block", "must be a mapping, not"): DIAGNOSIS,
+    ("carriers", "_block", "does not take"): EXPRESSION,
+
+    # --- environments.py, the chain (si#5) ---------------------------------------------------------
+    # Three, all diagnosis. An environment pointing at a carrier nobody declared has no target; a
+    # `stack:` with no carrier has nowhere to be created; a `repository:` with no stack says where a
+    # compose document comes from and nothing about what it would become. None of the three describes a
+    # deployment that merely differs from the one intended - each describes none.
+    ("environments", "parse_data", "is not declared - the"): DIAGNOSIS,
+    ("environments", "parse_data", "so there is nowhere for that stack to go"): DIAGNOSIS,
+    ("environments", "parse_data", "so nothing says what the compose document"): DIAGNOSIS,
+
     # --- deployment.py (si#235) ------------------------------------------------------------------
     # Eight, and every one of them DIAGNOSIS: each refuses a manifest that could not have produced a
     # working deployment at all. A `source:` naming a section the document does not declare, or an entry
@@ -517,6 +561,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
 
 #: For each EXPRESSION rule only, the third kind `CLAUDE.md` names: how far the rule reaches.
 REACH: dict[tuple[str, str, str], str] = {
+    # si#5's one expression rule. MERGED: this kernel's own manifest goes through the same parser, so a
+    # stray key under a carrier of simplon's own would be refused exactly the same way. It declares no
+    # carrier today, which is why the claim is about the parser rather than about a placement.
+    ("carriers", "_block", "does not take"): REACH_MERGED,
     ("manifest", "_single_dashed_letter", "must be a single dash plus one letter"): REACH_MERGED,
     ("manifest", "_validate_taxonomy", "impl and depends_on are mutually exclusive"): REACH_MERGED,
     ("manifest", "_validate_taxonomy", "missing help"): REACH_MERGED,

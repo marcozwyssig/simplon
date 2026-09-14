@@ -314,6 +314,7 @@ published here and `tests/test_manifest_top_level.py` holds this table to the ke
 | --- | --- | --- |
 | `artifacts:` | `release:artifact`, `release:nuget-*`, `release:conan-*` | one entry per published artefact: registry, repository, source directory, media type |
 | `assets:` | `release:asset` | one entry per file attached to a GitHub release |
+| `carriers:` | the environment selector | one entry per thing an environment is realised ON: its `proxmox:` node and kind, and the `portainer:` on it |
 | `build:` | `build:cmake-files`, `build:dotnet-solution` | `targets:`, the dependency edges between build targets that a directory layout cannot show |
 | `claude:` | `support:claude-plugins` | the marketplaces and plugin ids an agent host installs |
 | `default:` | the environment selector | the environment a command targets when no env token is given |
@@ -616,6 +617,58 @@ Other sections work the same way: `suites:` is the test-level taxonomy a product
 defines, `environments:` the deployment matrix, `nexus:` and `claude:` the data their respective tasks
 read. A task that needs a section it does not find fails on its first line, which is why such tasks stay
 *tasks* in the catalogue rather than being placed as commands for everybody.
+
+### `carriers:` - what an environment is realised on
+
+An environment says *where* it deploys with `backend:`. It says *onto what* by naming a **carrier** - and
+a carrier is named once and pointed at many times, because one Portainer serves several applications and,
+on the same instance, several environments.
+
+```yaml
+carriers:
+  hausportainer:
+    proxmox:
+      node: pve1
+      kind: lxc                 # or vm - the choice is per environment
+    portainer:
+      url_from: PORTAINER       # a PREFIX, never a value
+      endpoint: 1               # Portainer's own id; 1 is what a single-host install has
+
+environments:
+  test:
+    backend: portainer
+    carrier: hausportainer
+    stack: myctl-test
+    repository: github.com/you/myctl
+  prod:
+    backend: portainer
+    carrier: hausportainer      # the SAME carrier
+    stack: myctl-prod
+    repository: github.com/you/myctl
+```
+
+**Why a section rather than more keys on each environment.** Written into the environments, the carrier
+above would stand in the file twice - and the two could drift apart with nothing comparing them. Stated
+once, they cannot.
+
+**`carrier:` is not a second `backend:`.** They answer different questions and both are needed:
+`backend:` says who deploys, `carrier:` says onto what. The backend stays what it has always been - the
+one axis a product extends by registering an implementation.
+
+**`repository:` is where Portainer pulls the compose document from, itself.** Which means Portainer needs
+read access to it; the orchestrator does not.
+
+{{< callout type="warning" >}}
+**No secret may be written here, and the section has no field for one.** `url_from: PORTAINER` names the
+prefix, so the URL is read from `PORTAINER_URL` and the token from `PORTAINER_TOKEN`. A key this section
+does not take is **refused, not ignored** - because a parser that skipped what it did not recognise would
+let a `token: ghp_...` sit quietly in a committed file, which is a thing that has already happened once
+in this family.
+{{< /callout >}}
+
+**An absent section is not a refusal.** A product that deploys nowhere yet has no carrier to describe,
+and every field above defaults to empty. The section becomes required the moment an environment points at
+one - and then a `carrier:` naming nothing declared is refused, and told which carriers exist.
 
 ### `deploy:` - which version a deployment is deploying
 

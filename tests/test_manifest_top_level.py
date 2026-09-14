@@ -77,7 +77,8 @@ import re
 import pytest
 import yaml
 
-from simplon import (context, deployment, labegress, labinstance, nexusproxy, tracker,
+from simplon import (context, deployment, environments, labegress, labinstance, nexusproxy,
+                     tracker,
                      workflowgen)
 from simplon.tasks import (artifact, asset, buildfiles, claudeplugins, docs, env, generated, image,
                            releasenotes,
@@ -117,7 +118,11 @@ MODULES: dict[str, tuple[str, ...]] = {
     # reads the document and hands it to `environments.parse_data`, the same shape as tasks.completion
     "tasks.deploy": (),
     "tasks.generated": ("generated",),
-    "environments": ("environments", "default"),
+    # `carriers:` is read HERE and not in `carriers.py`, which is the same shape as `deployment`'s inner
+    # half: that module is handed the document and validates it, this one is what reaches the document
+    # and cross-checks an environment's `carrier:` against what it declares. The key belongs to whoever
+    # can name it when it is mistyped, and that is the reader with the document in its hand.
+    "environments": ("environments", "default", "carriers"),
     "labegress": ("lab_egress",),
     "labinstance": ("instance",),
     "nexusproxy": ("nexus",),
@@ -174,6 +179,14 @@ DRIVERS: dict[str, tuple[dict, object]] = {
               lambda: nexusproxy.declared(context.current().manifest_data(), context.current().root)),
     "workflows": ({"workflows": {"ci": {}}},
                   lambda: workflowgen.parse(context.current().manifest_data())),
+    # Driven through `environments`, and the document has to carry an ENVIRONMENT POINTING AT the
+    # carrier: an unreferenced `carriers:` section is legitimately optional, so the mistyped form is only
+    # loud when somebody asked for what the typo hid. That is the real failure and this drives it.
+    "carriers": ({"carriers": {"haus": {"proxmox": {"node": "pve1", "kind": "lxc"},
+                                        "portainer": {"url_from": "PORTAINER"}}},
+                  "environments": {"prod": {"backend": "local", "carrier": "haus"}},
+                  "default": "prod"},
+                 lambda: environments.parse_data(context.current().manifest_data(), ("local",))),
     "releases": ({"releases": {"page": "releases.md"}}, releasenotes.declared),
     "assets": ({"assets": {"bundle": {}}}, lambda: asset._declared("bundle")),
     "artifacts": ({"artifacts": {"site": {}}}, lambda: artifact._declared("site")),
