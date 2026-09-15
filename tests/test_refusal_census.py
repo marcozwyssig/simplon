@@ -302,6 +302,36 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("environments", "_repository", "declares no `url:`"): DIAGNOSIS,
     ("environments", "_repository", "does not take"): EXPRESSION,
 
+    # --- environments.py, the values a deployment must be given (si#5, from biz-cockpit#263) ---------
+    # Four. Three diagnosis and one expression rule, and the interesting one is which is which.
+    #
+    # Diagnosis: a `required:` that is not a list names no variables; an entry that is empty or carries an
+    # `=` names no variable either - `TOGGL_API_TOKEN=4c2b9f` would be looked up as a variable of that
+    # whole name, nothing would ever set it, and every deployment would refuse. And `required:` with no
+    # `stack:` has no deployment for the values to be given to. None of those manifests deploys.
+    #
+    # THE FOURTH IS AN EXPRESSION RULE AND IT WAS TEMPTING TO FILE AS DIAGNOSIS. Naming SIMPLON_VERSION in
+    # `required:` is refused - and CLAUDE.md's sorting question says what that costs: would the refused
+    # manifest have produced a WORKING product, merely a different one? Yes. The kernel's value wins over
+    # the operator's, so the deployment runs, the right version goes out, and the exported value is simply
+    # ignored. A working deployment from a refused manifest is an expression rule, and it is billed as one
+    # rather than dressed up as a broken manifest.
+    #
+    # The three questions, answered:
+    #   - does it forbid something a product might legitimately want? Only this: exporting SIMPLON_VERSION
+    #     and having it reach the stack. That is wanting `--version` to mean something other than what the
+    #     command printed, which no product has asked for and one has asked AGAINST (biz-cockpit#263 asked
+    #     for MORE refusals on empty values, not fewer).
+    #   - would deleting be cheaper than guarding? No - what is deleted would be the guarantee that the
+    #     version the command names is the version deployed, which is why the variable exists at all.
+    #   - what would the fix cost a product that violated it? One line removed from the list. The value it
+    #     was exporting is what `--version` takes.
+    ("environments", "_required", "must be a list of variable NAMES"): DIAGNOSIS,
+    ("environments", "_required", "is not one"): DIAGNOSIS,
+    ("environments", "_required", "may not name"): EXPRESSION,
+    ("environments", "parse_data", "no deployment for those values to be given to"): DIAGNOSIS,
+
+
     # --- environments.py, the chain (si#5) ---------------------------------------------------------
     # Three, all diagnosis. An environment pointing at a carrier nobody declared has no target; a
     # `stack:` with no carrier has nowhere to be created; a `repository:` with no stack says where a
@@ -615,6 +645,7 @@ REACH: dict[tuple[str, str, str], str] = {
     # carrier today, which is why the claim is about the parser rather than about a placement.
     ("carrierspec", "_block", "does not take"): REACH_MERGED,
     ("environments", "_repository", "does not take"): REACH_MERGED,
+    ("environments", "_required", "may not name"): REACH_MERGED,
     ("manifest", "_single_dashed_letter", "must be a single dash plus one letter"): REACH_MERGED,
     ("manifest", "_validate_taxonomy", "impl and depends_on are mutually exclusive"): REACH_MERGED,
     ("manifest", "_validate_taxonomy", "missing help"): REACH_MERGED,

@@ -661,6 +661,10 @@ environments:
       ref: release/2.x          # default: main; `refs/tags/v2.1.0` deploys a tag
       compose: deploy/docker-compose.yml
       credential_from: GIT      # a PREFIX -> GIT_USER, GIT_PASSWORD; omit it for a public repository
+    required:                   # the values this deployment is given, by NAME
+      - COCKPIT_DATA_DIR
+      - BACKUP_DIR
+      - HTTP_BIND
 ```
 
 **The sizes you leave out are the ones the community Proxmox helper script uses** - 2 cores, 2048 MB,
@@ -717,10 +721,35 @@ fails - so the deployment is read back until Portainer says it is up, and three 
 it is up, it failed *(with Portainer's own sentence)*, or it is still deploying when the wait ran out.
 {{< /callout >}}
 
+**`required:` names the variables a deployment is given, and every one of them must have a value.** The
+values come from the environment the deploy command runs in, on *every* deployment - not from a copy
+maintained by hand in Portainer. Portainer stores them either way; the question is only whether its copy
+is an image something refreshes or an original nobody does, and two masters of one set of values drift.
+
+**An empty value fails the deployment.** It is the one place a consuming product asked for *more*
+strictness than was offered, and the case is worth the refusal:
+
+```yaml
+# in the compose document
+- "${COCKPIT_DATA_DIR:-${HOME}/.biz-cockpit}:/data"
+```
+
+A missing value does not make compose fail - it falls back, and the bind mount lands in the *carrier's*
+`/root/.biz-cockpit` instead of `/srv/biz-cockpit/prod`. The container writes happily, the deployment
+looks green, and the database sits outside everything the product's own `backup` knows about. An instance
+that runs and is not backed up is this project's recurring defect exactly: green because nobody looks. So
+every missing value is named, all of them at once - repairing eight variables one run at a time is the
+kernel's work handed to an operator.
+
+**A name that is not in the list does not reach the deployment**, which is what keeps the manifest
+readable as the answer to "what goes over". And a manifest names variables here, never holds one:
+`TOGGL_API_TOKEN=4c2b9f` is refused rather than read as a name with an equals sign in it.
+
 **The version reaches the stack as `SIMPLON_VERSION`.** A compose document writes
 `image: ghcr.io/acme/app:${SIMPLON_VERSION}`, so `deploy up --version 1.4.0` deploys 1.4.0 rather than
-whatever the document happened to name. `local` is refused here: Portainer clones, and there is nothing
-on your machine for it to clone.
+whatever the document happened to name. It is the kernel's variable and `required:` may not claim it -
+two answers to one question, and nothing would print which had been used. `local` is refused here:
+Portainer clones, and there is nothing on your machine for it to clone.
 
 {{< callout type="warning" >}}
 **No secret may be written here, and the section has no field for one.** `url_from: PORTAINER` names the

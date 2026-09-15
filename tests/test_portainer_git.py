@@ -478,3 +478,103 @@ def test_the_whole_module_never_writes_a_compose_document(monkeypatch, target) -
 
     # assert
     assert not any("stackFileContent" in (body or {}) for _m, _p, body in recorder.calls)
+
+
+# --- the values a deployment must be given (si#5, from biz-cockpit#263) ------------------------------
+
+REQUIRED = ("COCKPIT_DATA_DIR", "BACKUP_DIR", "HTTP_BIND")
+
+
+def test_the_named_values_are_read_out_of_the_environment_the_command_runs_in() -> None:
+    """The consumer's own answer: from the deploy command, at EVERY deploy, not once into Portainer's
+    web interface. Portainer stores them either way - the question is whether its copy is an image
+    something refreshes or an original nobody does."""
+    # arrange
+    environ = {"COCKPIT_DATA_DIR": "/srv/biz-cockpit/prod/data", "BACKUP_DIR": "/srv/biz-cockpit/prod/backups",
+               "HTTP_BIND": "127.0.0.1", "UNRELATED": "not sent"}
+
+    # act
+    values = portainer.stack_values(_environment(required=REQUIRED), environ)
+
+    # assert
+    assert values == {"COCKPIT_DATA_DIR": "/srv/biz-cockpit/prod/data",
+                      "BACKUP_DIR": "/srv/biz-cockpit/prod/backups", "HTTP_BIND": "127.0.0.1"}
+    assert "UNRELATED" not in values, (
+        "only what the manifest names reaches the deployment - a reader has to be able to see what goes")
+
+
+def test_an_empty_value_fails_the_deployment_rather_than_falling_back(monkeypatch) -> None:
+    """THE CASE THE CONSUMER ASKED FOR, and it is worth the refusal because of how it fails without one.
+    Their document writes `${COCKPIT_DATA_DIR:-${HOME}/.biz-cockpit}:/data`: a missing value does not
+    crash compose, it falls back - and the bind mount lands in the CARRIER's /root instead of
+    /srv/biz-cockpit/prod. The container writes happily, the deployment looks green, and the database sits
+    outside everything `backup` knows about. Green because nobody looks."""
+    # arrange
+    environ = {"COCKPIT_DATA_DIR": "/srv/prod/data", "BACKUP_DIR": "   ", "HTTP_BIND": ""}
+
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        portainer.stack_values(_environment(required=REQUIRED), environ)
+
+    message = str(refused.value)
+    assert "BACKUP_DIR" in message and "HTTP_BIND" in message, (
+        f"every missing one at once - repairing eight variables one run at a time is the kernel's work "
+        f"being handed to an operator: {message}")
+    assert "COCKPIT_DATA_DIR" not in message, "the ones that ARE set are not named as problems"
+
+
+def test_the_values_and_the_version_travel_together(monkeypatch) -> None:
+    # arrange
+    sent: dict = {}
+    monkeypatch.setattr(portainer, "_target_for",
+                        lambda env: (portainer.PortainerTarget("u", "t", 1, "s"), REPOSITORY))
+    monkeypatch.setattr(portainer, "deploy_from_repository",
+                        lambda t, r, c, env_vars: sent.update(env_vars) or "created")
+    monkeypatch.setenv("HTTP_BIND", "127.0.0.1")
+
+    # act
+    portainer.PortainerBackend().deploy(
+        _environment(required=("HTTP_BIND",)),
+        deployment.Version(selector="1.4.0", tag="1.4.0", builds=False))
+
+    # assert
+    assert sent == {"HTTP_BIND": "127.0.0.1", portainer.VERSION_VAR: "1.4.0"}
+
+
+# --- what the manifest may and may not say about those values ---------------------------------------
+
+def test_a_manifest_names_variables_and_never_holds_one() -> None:
+    """The same guarantee `credential_from:` gives one line up. Somebody writing `NAME=value` here is
+    writing a value into a committed file, and it must not be read as a name containing an equals sign."""
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        environments._required(["TOGGL_API_TOKEN=4c2b9f"], "environment 'prod'")
+
+    assert "never holds its value" in str(refused.value)
+
+
+def test_the_manifest_may_not_claim_the_variable_the_kernel_sets() -> None:
+    """Two answers to one question. Whichever won, `--version` would mean whatever happened to be
+    exported - and nothing would print which of the two had been used."""
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        environments._required([portainer.VERSION_VAR], "environment 'prod'")
+
+    assert "the kernel sets it from the version being deployed" in str(refused.value)
+
+
+def test_required_values_with_no_stack_have_nowhere_to_go() -> None:
+    # arrange
+    document = {"environments": {"prod": {"backend": "portainer", "required": ["A"]}}, "default": "prod"}
+
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        environments.parse_data(document, ("portainer",))
+
+    assert "no deployment for those values to be given to" in str(refused.value)
+
+
+def test_a_product_that_names_no_values_is_given_none() -> None:
+    """An absent `required:` is not a refusal: the six products that predate all of this declare none."""
+    # act / assert
+    assert portainer.stack_values(_environment(), {}) == {}

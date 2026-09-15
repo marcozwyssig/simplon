@@ -40,7 +40,9 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Mapping
+
+from simplon import environments
 
 if TYPE_CHECKING:  # local: keeps the module head free of the manifest layer, the way `backend` does
     from simplon.carrierspec import Carrier
@@ -61,12 +63,11 @@ BACKEND = "portainer"
 #: The resolved version, handed to the stack as ONE variable. A compose document writes
 #: `image: ghcr.io/acme/app:${SIMPLON_VERSION}` and the deployment means what it says.
 #:
-#: WHY EXACTLY ONE. si#5's third slice deploys; passing a PRODUCT's own environment values through is a
-#: slice of its own, waiting on biz-cockpit#263 (where should ~40 `${VAR}` values come from, three of them
-#: secrets). This variable is not one of those - it is the kernel's own vocabulary, and without it
-#: `deploy up --version 1.4.0` would print "deploying 1.4.0" and deploy whatever the compose document
-#: happened to name. That is the defect this repository hunts, one command earlier.
-VERSION_VAR = "SIMPLON_VERSION"
+#: IT IS THE KERNEL'S, and `environments` owns the name because that is the module a manifest is refused
+#: by for claiming it: the resolved version and an operator's exported value are two answers to one
+#: question. Without this variable `deploy up --version 1.4.0` would print "deploying 1.4.0" and deploy
+#: whatever the compose document happened to name - the defect this repository hunts, one command earlier.
+VERSION_VAR = environments.KERNEL_VARIABLE
 
 _TIMEOUT_S = 30.0
 
@@ -462,11 +463,11 @@ class PortainerBackend:
                 f"environment '{env.name}' is deployed by Portainer, which clones {repository.url} "
                 f"itself - so there is nothing on this machine for it to deploy. Publish the version and "
                 f"deploy that")
+        values = {**stack_values(env), VERSION_VAR: version.tag}
         log.info(f"{env.stack} <- {repository.url} ({repository.ref}), {repository.compose}")
         message = deploy_from_repository(
-            target, repository, _clone_credential(repository, env),
-            env_vars={VERSION_VAR: version.tag})
-        log.ok(f"{message}, {VERSION_VAR}={version.tag}")
+            target, repository, _clone_credential(repository, env), env_vars=values)
+        log.ok(f"{message}, {len(values)} value(s) incl. {VERSION_VAR}={version.tag}")
         return 0
 
     def destroy(self, env: "Environment") -> int:
@@ -479,6 +480,38 @@ class PortainerBackend:
     def status(self, env: "Environment") -> str:
         target, _ = _target_for(env)
         return describe(target)
+
+
+def stack_values(env: "Environment", environ: "Mapping[str, str] | None" = None) -> dict[str, str]:
+    """The values this deployment is given, read out of the environment the command runs in.
+
+    WHY THE COMMAND'S OWN ENVIRONMENT AND NOT PORTAINER'S STORED COPY (biz-cockpit#263, their answer):
+    Portainer stores the stack's environment either way. The question is only whether its copy is an IMAGE
+    that every deployment refreshes, or an ORIGINAL that nobody refreshes. Two sets of values, one in a
+    repository and one maintained by hand in a web interface, are two masters of one thing - and once they
+    drift the instance runs on values that are written down nowhere. So every deployment sends them again.
+
+    AN EMPTY VALUE IS A FAILURE AND NOT A DEFAULT, and the consumer asked for this specifically, with the
+    case that makes it worth the refusal. Their compose document writes
+    `${COCKPIT_DATA_DIR:-${HOME}/.biz-cockpit}:/data`. If that variable does not arrive, compose does not
+    fail - it falls back, and the bind mount lands in the CARRIER's `/root/.biz-cockpit` instead of
+    `/srv/biz-cockpit/prod`. The container writes happily, the deployment looks green, and the database is
+    outside everything `backup` knows about. An instance that runs and is not backed up is exactly this
+    repository's recurring defect: green because nobody looks.
+
+    ALL OF THEM AT ONCE. An operator repairing eight variables one run at a time is being made to do the
+    kernel's work; the refusal names every missing one.
+    """
+    source = os.environ if environ is None else environ
+    missing = [name for name in env.required if not (source.get(name) or "").strip()]
+    if missing:
+        raise ValueError(
+            f"environment '{env.name}' requires {len(env.required)} value(s) and "
+            f"{len(missing)} of them {'is' if len(missing) == 1 else 'are'} not set: "
+            f"{', '.join(missing)}. They are exported where the deploy command runs; a value that is "
+            f"missing would let the deployed document fall back to its own default, which is how an "
+            f"instance ends up running somewhere nobody is looking")
+    return {name: source[name].strip() for name in env.required}
 
 
 def _target_for(env: "Environment") -> "tuple[PortainerTarget, Repository]":

@@ -53,6 +53,13 @@ class Repository(NamedTuple):
 class Environment(NamedTuple):
     """One named environment.
 
+    `required` is the list of environment variables whose values are handed to the deployment, and the
+    name says what it ENFORCES rather than what it contains (the consuming product asked for exactly that,
+    biz-cockpit#263: "nennt sie nach dem, was sie erzwingt"). Every name in it must have a non-empty value
+    when the deployment runs, and a name that is not in it does not reach the deployment at all - so the
+    document being deployed falls back to its own default, which is where a default belongs. One list
+    rather than two, because a variable worth naming in a manifest is a variable the deployment needs.
+
     `carrier`, `stack` and `repository` arrived with si#5 and all three DEFAULT TO EMPTY, which is what
     keeps the six products that declare none of them working unchanged. They are the chain: what this
     environment is realised on, what the deployment is called there, and where the compose document is
@@ -66,6 +73,7 @@ class Environment(NamedTuple):
     carrier: str = ""
     stack: str = ""
     repository: "Repository | None" = None
+    required: tuple[str, ...] = ()
 
 
 class Registry(NamedTuple):
@@ -111,6 +119,47 @@ def _repository(raw: object, where: str) -> "Repository | None":
     )
 
 
+#: The one variable name the KERNEL owns in a deployment's environment. A manifest may not also claim it:
+#: the resolved version and an operator's exported value are two answers to one question, and whichever
+#: won would make `--version` mean something different depending on a variable nobody printed.
+#:
+#: Spelled here rather than imported from `simplon.portainer`, which is the reader of it - this module is
+#: the leaf that every backend's vocabulary goes through, and importing a backend into it would turn the
+#: seam around.
+KERNEL_VARIABLE = "SIMPLON_VERSION"
+
+
+def _required(raw: object, where: str) -> tuple[str, ...]:
+    """The variables a deployment must be given, validated as NAMES and never as values.
+
+    A manifest names variables here; it never holds one. That is the same guarantee `credential_from:` and
+    `url_from:` give one line up, and it is why a value that looks like `NAME=value` is refused - somebody
+    writing a value into this list is writing a secret into a committed file, and it must not be read as a
+    variable name that happens to contain an equals sign.
+    """
+    if raw is None:
+        return ()
+    if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
+        raise ValueError(
+            f"{where}: `required:` must be a list of variable NAMES, not {type(raw).__name__}. It says "
+            f"which variables the deployment is given, and the values come from the environment the "
+            f"deploy command runs in")
+    names = []
+    for entry in raw:
+        name = str(entry).strip()
+        if not name or "=" in name:
+            raise ValueError(
+                f"{where}: `required:` takes variable names, and {entry!r} is not one. A manifest names a "
+                f"variable and never holds its value - the value is exported where the command runs")
+        if name == KERNEL_VARIABLE:
+            raise ValueError(
+                f"{where}: `required:` may not name {KERNEL_VARIABLE} - the kernel sets it from the "
+                f"version being deployed, and a second answer to that question would make `--version` "
+                f"mean whatever happened to be exported")
+        names.append(name)
+    return tuple(names)
+
+
 def parse_data(data: Mapping[str, object], valid_backends: Iterable[str]) -> Registry:
     """Build the registry from an ALREADY-parsed mapping - a product's standalone environments.yml OR the
     `environments:`/`default:` section of its one manifest (simplon.context.manifest_data()). Validates
@@ -147,8 +196,14 @@ def parse_data(data: Mapping[str, object], valid_backends: Iterable[str]) -> Reg
             raise ValueError(
                 f"environment '{name}': declares a `repository:` and no `stack:`, so nothing says what "
                 f"the compose document pulled from it would be deployed as")
+        required = _required(spec.get("required"), f"environment '{name}'")
+        if required and not stack:
+            raise ValueError(
+                f"environment '{name}': declares `required:` and no `stack:`, so there is no deployment "
+                f"for those values to be given to")
         envs[str(name)] = Environment(str(name), backend, str(spec.get("description", "")),
-                                      carrier=carrier, stack=stack, repository=repository)
+                                      carrier=carrier, stack=stack, repository=repository,
+                                      required=required)
     if not envs:
         raise ValueError("environment registry defines no environments")
     default = str(data.get("default", "")).strip()
