@@ -506,9 +506,16 @@ def stack_values(env: "Environment", environ: "Mapping[str, str] | None" = None)
     AN ABSENT `optional:` VALUE IS NOT THE SAME THING AND MUST NOT BE MADE ONE. The same product writes
     `${SMALLINVOICE_CLIENT_SECRET:-}`, where empty is a STATEMENT - the integration is not connected, the
     composition root does not wire the port, and the route answers 409 with a reason. So an optional name
-    with no value is left out of the payload entirely rather than sent as an empty string: sending `""`
-    and sending nothing are the same to that document today, and the day they differ, the one this kernel
-    chose would be the one nobody wrote down.
+    with no value is left out of the payload entirely rather than sent as an empty string.
+
+    THE CONDITION UNDER WHICH THAT CHOICE BECOMES VISIBLE IS WORTH NAMING, because it is this
+    repository's own seam question - what meaning does a value carry on the far side that it did not carry
+    on this side? Absent and `""` are the same to a consumer whose setting is a `str` defaulting to empty
+    and whose decisions are truth tests. They stop being the same the moment a setting distinguishes "not
+    said" from "explicitly empty" - a `None` beside a `""` - and that pattern is in deliberate use
+    elsewhere in this family for exactly that distinction. Leaving the name out keeps the far side's
+    two meanings two, where sending `""` would collapse them into one and nobody would have written down
+    which.
 
     ALL OF THEM AT ONCE. An operator repairing eight variables one run at a time is being made to do the
     kernel's work; the refusal names every missing one.
