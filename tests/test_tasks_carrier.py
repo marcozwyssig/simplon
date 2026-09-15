@@ -228,3 +228,60 @@ def test_the_password_is_read_off_the_same_prefix_the_url_is(monkeypatch):
 
     # act / assert
     assert carrier.portainer_password(CARRIER) == "long-enough-password"
+
+
+# --- no secret is written to a file or onto a command line ------------------------------------------
+
+def test_the_rendered_playbook_carries_no_password():
+    """THE DEFECT THIS EXISTS FOR, and it was mine. The first version interpolated the admin password
+    into the playbook, which the kernel then wrote into `build/carrier/<name>/carrier.yml` at mode
+    0644 - world-readable on the operator's machine, and the exact thing `credentials.py` exists to
+    prevent, committed by the code that cites it.
+
+    The play reads the value with `lookup('env', ...)` now, so the rendered file carries the NAME and
+    never the value.
+    """
+    # arrange
+    secret = "a-password-nobody-should-find"
+
+    # act
+    rendered = carrier.PLAYBOOK.format(image=carrier.PORTAINER_IMAGE, port=carrier.PORTAINER_PORT)
+
+    # assert
+    assert secret not in rendered
+    assert "lookup('env', 'PORTAINER_PASSWORD')" in rendered, (
+        "the play has to NAME the variable, or it reads nothing and Portainer starts uninitialised")
+    assert "{password}" not in carrier.PLAYBOOK, (
+        "a format field for the value is the defect itself, waiting for a caller to fill it")
+
+
+def test_no_secret_is_put_on_a_docker_command_line():
+    """`credentials.py`'s own rule: argv is world-readable - `/proc/<pid>/cmdline` on Linux, `ps` on
+    macOS - and a command line lands in the shell history. `docker run -e NAME` takes the value out of
+    this process's environment; `-e NAME=value` writes it where anyone on the host can read it for as
+    long as the container runs.
+
+    Read off the SOURCE rather than by running docker, because what is being held is how the argv is
+    built, and a test that needed a daemon would not run in this suite at all.
+    """
+    # arrange
+    import inspect as _inspect
+    import re
+
+    # arrange: the variables that carry a SECRET, and only those. The first draft of this test flagged
+    # every interpolated `-e NAME=value` and therefore flagged the node name, the datastore and the
+    # PUBLIC ssh key - configuration, all of it, and none of it a problem on a command line. A rule that
+    # reports configuration as a leak is a rule somebody loosens on the day it is inconvenient, and then
+    # it no longer catches the real case.
+    secret_bearing = {carrier.CARRIER_TOKEN_ENV, carrier.PULUMI_PASSPHRASE_ENV,
+                      f"PORTAINER{carrier.PASSWORD_SUFFIX}"}
+
+    # act
+    source = _inspect.getsource(carrier._pulumi) + _inspect.getsource(carrier._ansible)
+    with_value = {name for name in re.findall(r'"-e",\s*f?"([A-Z_]+)=', source)}
+
+    # assert
+    leaked = sorted(secret_bearing & with_value)
+    assert leaked == [], (
+        f"these put a secret's VALUE on the command line: {leaked}. Set it in os.environ and pass the "
+        f"bare name, which is what `docker run -e NAME` is for")
