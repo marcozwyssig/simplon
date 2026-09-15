@@ -628,8 +628,17 @@ on the same instance, several environments.
 carriers:
   hausportainer:
     proxmox:
+      endpoint: https://10.0.0.6:8006/
+      token_from: PROXMOX       # a PREFIX -> PROXMOX_API_TOKEN; never the token itself
+      insecure: true            # only for a self-signed certificate; the default verifies
       node: pve1
       kind: lxc                 # or vm - the choice is per environment
+      template: local:vztmpl/debian-13-standard_amd64.tar.zst
+      storage: local-lvm
+      cores: 2                  # these three may be left out
+      memory: 2048
+      disk: 4
+      ssh_key: "ssh-ed25519 AAAAC3Nz... you@host"
     portainer:
       url_from: PORTAINER       # a PREFIX, never a value
       endpoint: 1               # Portainer's own id; 1 is what a single-host install has
@@ -646,6 +655,25 @@ environments:
     stack: myctl-prod
     repository: github.com/you/myctl
 ```
+
+**The sizes you leave out are the ones the community Proxmox helper script uses** - 2 cores, 2048 MB,
+4 GB - read off `ct/docker.sh` rather than invented, so a carrier that says nothing gets what that tool
+would have given it.
+
+**`ssh_key:` is a PUBLIC key and belongs in the file.** It is not a secret, and putting it here is what
+makes the carrier fully described by the manifest. The private half never appears.
+
+**Two things the kernel sets and you cannot get wrong:** an unprivileged LXC will not start a Docker
+daemon without `nesting` and `keyctl`, so they are not fields - they are what a carrier *is*, set on
+every container the kernel creates. Whoever has set them by hand once has also forgotten them once.
+
+**`insecure:` must be `true` or `false`, never a string.** Every non-empty string is truthy, so
+`insecure: "no"` would mean the opposite of what it says. It is the one value here that is refused
+rather than read leniently.
+
+**A lower-case prefix is accepted.** `token_from: proxmox` reading `proxmox_API_TOKEN` is legal on every
+platform the kernel runs on, and a rule against it was written and struck: it would have refused a
+manifest that works.
 
 **Why a section rather than more keys on each environment.** Written into the environments, the carrier
 above would stand in the file twice - and the two could drift apart with nothing comparing them. Stated

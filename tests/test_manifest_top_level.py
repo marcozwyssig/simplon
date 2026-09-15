@@ -77,7 +77,7 @@ import re
 import pytest
 import yaml
 
-from simplon import (context, deployment, environments, labegress, labinstance, nexusproxy,
+from simplon import (carrierspec, context, deployment, environments, labegress, labinstance, nexusproxy,
                      tracker,
                      workflowgen)
 from simplon.tasks import (artifact, asset, buildfiles, claudeplugins, docs, env, generated, image,
@@ -117,8 +117,11 @@ MODULES: dict[str, tuple[str, ...]] = {
     "deployment": ("deploy", "images", "artifacts"),
     # reads the document and hands it to `environments.parse_data`, the same shape as tasks.completion
     "tasks.deploy": (),
+    # hands the document to `environments.parse_data` and `carrierspec.declared`, the same shape as
+    # `tasks.deploy` - it declares no key of its own
+    "tasks.carrier": (),
     "tasks.generated": ("generated",),
-    # `carriers:` is read HERE and not in `carriers.py`, which is the same shape as `deployment`'s inner
+    # `carriers:` is read HERE and not in `carrierspec.py`, which is the same shape as `deployment`'s inner
     # half: that module is handed the document and validates it, this one is what reaches the document
     # and cross-checks an environment's `carrier:` against what it declares. The key belongs to whoever
     # can name it when it is mistyped, and that is the reader with the document in its hand.

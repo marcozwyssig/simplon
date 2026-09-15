@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import pytest
 
-from simplon import carriers, environments
+from simplon import carrierspec, environments
 
 HAUS = {
     "proxmox": {"node": "pve1", "kind": "lxc"},
@@ -41,12 +41,12 @@ def _document(**environs: dict) -> dict:
 
 def test_a_carrier_is_read_as_the_two_halves_it_declares():
     # act
-    declared = carriers.declared({"carriers": {"hausportainer": HAUS}}, "simplon.yaml")
+    declared = carrierspec.declared({"carriers": {"hausportainer": HAUS}}, "simplon.yaml")
 
     # assert
     carrier = declared["hausportainer"]
-    assert carrier.proxmox == carriers.Proxmox(node="pve1", kind="lxc")
-    assert carrier.portainer == carriers.Portainer(url_from="PORTAINER", endpoint=1)
+    assert carrier.proxmox == carrierspec.Proxmox(node="pve1", kind="lxc")
+    assert carrier.portainer == carrierspec.Portainer(url_from="PORTAINER", endpoint=1)
 
 
 def test_the_endpoint_a_carrier_does_not_state_is_portainers_own_default():
@@ -56,10 +56,10 @@ def test_the_endpoint_a_carrier_does_not_state_is_portainers_own_default():
     spec = {"proxmox": {"node": "pve1", "kind": "vm"}, "portainer": {"url_from": "P"}}
 
     # act
-    carrier = carriers.declared({"carriers": {"c": spec}}, "x")["c"]
+    carrier = carrierspec.declared({"carriers": {"c": spec}}, "x")["c"]
 
     # assert
-    assert carrier.portainer.endpoint == carriers.DEFAULT_ENDPOINT == 1
+    assert carrier.portainer.endpoint == carrierspec.DEFAULT_ENDPOINT == 1
 
 
 def test_one_carrier_really_serves_two_environments():
@@ -90,7 +90,7 @@ def test_a_secret_typed_into_the_manifest_is_refused_rather_than_ignored():
 
     # act / assert
     with pytest.raises(ValueError) as refused:
-        carriers.declared({"carriers": {"hausportainer": leaking}}, "simplon.yaml")
+        carrierspec.declared({"carriers": {"hausportainer": leaking}}, "simplon.yaml")
 
     message = str(refused.value)
     assert "token" in message, "the refusal has to name the key, or the reader hunts for it"
@@ -113,7 +113,7 @@ def test_every_incomplete_carrier_is_refused_by_the_line_it_is_missing(spec, fra
     names the key."""
     # act / assert
     with pytest.raises(ValueError) as refused:
-        carriers.declared({"carriers": {"hausportainer": spec}}, "simplon.yaml")
+        carrierspec.declared({"carriers": {"hausportainer": spec}}, "simplon.yaml")
 
     assert fragment in str(refused.value)
 
@@ -158,7 +158,106 @@ def test_a_product_that_declares_no_carrier_is_untouched():
     registry = environments.parse_data(before, ("local",))
 
     # assert
-    assert carriers.declared(before, "x") == {}
+    assert carrierspec.declared(before, "x") == {}
     environment = registry.environments["dev"]
     assert (environment.carrier, environment.stack, environment.repository) == ("", "", "")
     assert environment.backend == "local"
+
+
+# --- the configuration a carrier states (owner, 2026-09-14) -----------------------------------------
+
+FULL = {
+    "proxmox": {
+        "endpoint": "https://10.0.0.6:8006/",
+        "token_from": "PROXMOX",
+        "insecure": True,
+        "node": "pve",
+        "kind": "lxc",
+        "template": "local:vztmpl/debian-13-standard_amd64.tar.zst",
+        "storage": "local-lvm",
+        "ssh_key": "ssh-ed25519 AAAAC3Nz notarealkey",
+    },
+    "portainer": {"url_from": "PORTAINER"},
+}
+
+
+def test_the_manifest_carries_the_configuration_and_never_the_token():
+    """The owner's rule: *"die Konfiguration muss im manifest stehen"*. Where the API is, which node,
+    which datastore, how big - all of it in the file a reviewer reads. The token is the one thing that
+    is not configuration, and `token_from:` is the prefix rather than a field it could be typed into."""
+    # act
+    proxmox = carrierspec.declared({"carriers": {"haus": FULL}}, "simplon.yaml")["haus"].proxmox
+
+    # assert
+    assert proxmox.endpoint == "https://10.0.0.6:8006/"
+    assert proxmox.token_from == "PROXMOX"
+    assert proxmox.storage == "local-lvm"
+    assert "PROXMOX_API_TOKEN" not in str(FULL), "the token itself is nowhere in the document"
+
+
+def test_the_sizes_a_carrier_leaves_out_are_the_helper_scripts_own():
+    """Read off `ct/docker.sh` on 2026-09-14 - `var_cpu=2`, `var_ram=2048`, `var_disk=4` - rather than
+    invented, so a carrier that says nothing gets what the tool the owner named would have given it."""
+    # arrange
+    quiet = {"proxmox": {"node": "pve", "kind": "lxc"}, "portainer": {"url_from": "P"}}
+
+    # act
+    proxmox = carrierspec.declared({"carriers": {"c": quiet}}, "x")["c"].proxmox
+
+    # assert
+    assert (proxmox.cores, proxmox.memory, proxmox.disk) == (2, 2048, 4)
+
+
+def test_insecure_may_not_be_a_string():
+    """THE NASTIEST OF THE THREE. `insecure:` turns TLS verification off, and every non-empty string is
+    truthy - so `insecure: "no"` would mean the opposite of what it says and deploy happily."""
+    # arrange
+    spec = {"proxmox": {"node": "pve", "kind": "lxc", "insecure": "no"},
+            "portainer": {"url_from": "P"}}
+
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        carrierspec.declared({"carriers": {"c": spec}}, "simplon.yaml")
+
+    assert "true or false" in str(refused.value)
+
+
+def test_verification_is_on_unless_the_manifest_turns_it_off():
+    """A default that weakens a check is a kernel deciding something a product should have to say in
+    its own file."""
+    # act
+    quiet = {"proxmox": {"node": "pve", "kind": "lxc"}, "portainer": {"url_from": "P"}}
+
+    # assert
+    assert carrierspec.declared({"carriers": {"c": quiet}}, "x")["c"].proxmox.insecure is False
+
+
+@pytest.mark.parametrize("value", [0, -1, "zwei"])
+def test_a_size_that_is_not_a_positive_number_is_refused(value):
+    """Zero is refused with the rest: a container with no cores and a container with the default number
+    of cores are two different statements, and `int` would quietly make the first mean the second."""
+    # arrange
+    spec = {"proxmox": {"node": "pve", "kind": "lxc", "cores": value},
+            "portainer": {"url_from": "P"}}
+
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        carrierspec.declared({"carriers": {"c": spec}}, "simplon.yaml")
+
+    assert "cores" in str(refused.value)
+
+
+def test_a_lower_case_prefix_is_accepted_because_the_rule_against_it_was_struck():
+    """WRITTEN AND WITHDRAWN, and asserted so it cannot come back unnoticed. A lower-case environment
+    variable is legal, so a manifest saying `token_from: proxmox` and exporting `proxmox_API_TOKEN`
+    would have worked - which makes a refusal an expression rule with no measured cause, the shape si#53
+    struck `check_every_task_is_used` for."""
+    # arrange
+    spec = {"proxmox": {"node": "pve", "kind": "lxc", "token_from": "proxmox"},
+            "portainer": {"url_from": "P"}}
+
+    # act
+    carrier = carrierspec.declared({"carriers": {"c": spec}}, "x")["c"]
+
+    # assert
+    assert carrier.proxmox.token_from == "proxmox"

@@ -174,6 +174,11 @@ READS_INLINE = {
     "tasks.artifact": "`_declared(name)` reads its section inline and is the front half of a task body",
     "tasks.asset": "`_declared(name)`, same shape as tasks.artifact",
     "tasks.env": "`environments()` reads the document inline to answer a listing",
+    "tasks.carrier": "reads `environments:` and `carriers:` through `environments.parse_data` and "
+                     "`carrierspec.declared`, both of which the walk already follows, then holds the "
+                     "document nowhere. Its own refusals are RUN-time - a missing token, a storage the "
+                     "node cannot use, a key file that is not there - and every one of them is reached "
+                     "after a tool has been asked something, which is the line the census draws",
     "tasks.buildfiles": "`_declared_targets(product)` fetches the document itself to read `build: "
                         "targets:`, the same shape as tasks.artifact - and it refuses the way the rest "
                         "of that module refuses, with `log.die`, so the walk would collect nothing from "
@@ -218,7 +223,7 @@ REACH_KERNEL_EXEMPT = "the kernel exempts itself"
 # that is no longer there.
 
 CENSUS: dict[tuple[str, str, str], str] = {
-    # --- carriers.py (si#5) -----------------------------------------------------------------------
+    # --- carrierspec.py (si#5) -----------------------------------------------------------------------
     # Eight, and SEVEN of them diagnosis: a carrier with no node names no host, one with no `url_from:`
     # says nothing about where its URL and token are read from, a `kind:` that is neither lxc nor vm
     # names a thing Proxmox cannot make, and a block that is a string rather than a mapping describes
@@ -243,15 +248,30 @@ CENSUS: dict[tuple[str, str, str], str] = {
     #     answer is not "yes by default". `credentials.py` records the measured cause: a product
     #     repository leaked a token out of a committed YAML file, and the fix was to leave no field one
     #     could be written into. A parser that ignored what it did not recognise puts that field back.
-    ("carriers", "declared", "must be a mapping of name -> carrier"): DIAGNOSIS,
-    ("carriers", "_carrier", "must be a mapping, not"): DIAGNOSIS,
-    ("carriers", "_carrier", "so no host is named"): DIAGNOSIS,
-    ("carriers", "_carrier", "is a container on the node, a"): DIAGNOSIS,
-    ("carriers", "_carrier", "so nothing says where the URL and the token are read from"): DIAGNOSIS,
-    ("carriers", "_carrier", "must be a number, got"): DIAGNOSIS,
-    ("carriers", "_block", "so nothing says"): DIAGNOSIS,
-    ("carriers", "_block", "must be a mapping, not"): DIAGNOSIS,
-    ("carriers", "_block", "does not take"): EXPRESSION,
+    ("carrierspec", "declared", "must be a mapping of name -> carrier"): DIAGNOSIS,
+    ("carrierspec", "_carrier", "must be a mapping, not"): DIAGNOSIS,
+    ("carrierspec", "_carrier", "so no host is named"): DIAGNOSIS,
+    ("carrierspec", "_carrier", "is a container on the node, a"): DIAGNOSIS,
+    ("carrierspec", "_carrier", "so nothing says where the URL and the token are read from"): DIAGNOSIS,
+    ("carrierspec", "_carrier", "must be a number, got"): DIAGNOSIS,
+    ("carrierspec", "_block", "so nothing says"): DIAGNOSIS,
+    ("carrierspec", "_block", "must be a mapping, not"): DIAGNOSIS,
+    ("carrierspec", "_block", "does not take"): EXPRESSION,
+
+    # si#5's second half: the CONFIGURATION a carrier states (owner, 2026-09-14 - "die Konfiguration
+    # muss im manifest stehen"). Three more, all diagnosis, and every one of them refuses a manifest
+    # that could not have produced a working carrier: a size that is not a number or is zero describes
+    # a container Proxmox will not create, and an `insecure:` that is a STRING is the nastiest of the
+    # three - `"no"` is truthy, so without the refusal a manifest meaning "verify TLS" would have
+    # turned verification off and deployed happily.
+    #
+    # ONE RULE WAS WRITTEN HERE AND STRUCK BEFORE IT SHIPPED: that `token_from:` be upper case. A
+    # lower-case environment variable is legal, so the refused manifest would have WORKED - which makes
+    # it an expression rule, and an expression rule with no measured cause is what si#53 struck
+    # `check_every_task_is_used` for. It is documented as a convention instead.
+    ("carrierspec", "_positive", "must be a number, got"): DIAGNOSIS,
+    ("carrierspec", "_positive", "must be greater than zero"): DIAGNOSIS,
+    ("carrierspec", "_proxmox", "must be true or false"): DIAGNOSIS,
 
     # --- environments.py, the chain (si#5) ---------------------------------------------------------
     # Three, all diagnosis. An environment pointing at a carrier nobody declared has no target; a
@@ -564,7 +584,7 @@ REACH: dict[tuple[str, str, str], str] = {
     # si#5's one expression rule. MERGED: this kernel's own manifest goes through the same parser, so a
     # stray key under a carrier of simplon's own would be refused exactly the same way. It declares no
     # carrier today, which is why the claim is about the parser rather than about a placement.
-    ("carriers", "_block", "does not take"): REACH_MERGED,
+    ("carrierspec", "_block", "does not take"): REACH_MERGED,
     ("manifest", "_single_dashed_letter", "must be a single dash plus one letter"): REACH_MERGED,
     ("manifest", "_validate_taxonomy", "impl and depends_on are mutually exclusive"): REACH_MERGED,
     ("manifest", "_validate_taxonomy", "missing help"): REACH_MERGED,

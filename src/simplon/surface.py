@@ -139,7 +139,7 @@ NOT_CONSUMERS = {
 #: rather than recited here; the modules with no consumer yet are library by INTENT - each says so in its
 #: own head and names no product.
 LIBRARY = frozenset({
-    "awake", "backend", "carriers", "checksum", "clablifecycle", "clabrender", "cli", "completiongen",
+    "awake", "backend", "carrierspec", "checksum", "clablifecycle", "clabrender", "cli", "completiongen",
     "compose", "context", "deployment",
     "credentials", "degraded", "disk", "docker", "environments", "fetch", "filelock",
     "githubpackages", "healthgate", "host", "hostpath",

@@ -1,5 +1,12 @@
 """What an environment is realised ON, named once and pointed at many times (si#5).
 
+THE NAME IS `carrierspec` AND NOT `carriers`, which is si#37's rule rather than a preference: a promised
+module may not share a name with a task body, and `simplon.tasks.carrier` is the body that builds one.
+`simplon.images` against `simplon.tasks.image` were one character of path apart and the reader at the
+call site had nothing to go on; the library half is the half that gets renamed, because it is the half a
+product types. The manifest section is still `carriers:` - what is renamed is the module, not the
+vocabulary.
+
 WHY A SECTION OF ITS OWN AND NOT MORE KEYS ON AN ENVIRONMENT. A Portainer serves several applications
 and, on the same instance, several environments - the owner's own shape, and biz-cockpit's: their `test`
 and `prod` share ONE carrier and are separated by directory. Written into each environment, the carrier
@@ -41,8 +48,26 @@ KINDS = (LXC, VM)
 
 #: The keys each block accepts. Named rather than implied, because the refusal of everything else is the
 #: whole of the no-secret guarantee: a key that is not here is a key that fails.
-PROXMOX_KEYS = ("node", "kind")
+#:
+#: WHAT IS HERE IS CONFIGURATION AND ONLY CONFIGURATION (owner, 2026-09-14: "die Konfiguration muss im
+#: manifest stehen"). The endpoint, the node, the datastores and the sizes are facts about a machine and
+#: belong in the file a reviewer reads. The API token is not, and has no key: `token_from:` names the
+#: PREFIX it is read from, exactly as `url_from:` does for Portainer.
+#:
+#: `nesting` AND `keyctl` ARE NOT HERE, AND THAT IS THE POINT. An unprivileged LXC will not start a
+#: Docker daemon without both, and si#5 recorded the failure mode in one sentence: whoever sets them by
+#: hand once forgets them. They are therefore not a field a product may get wrong - they are what a
+#: carrier IS, set by the kernel on every container it creates.
+PROXMOX_KEYS = ("endpoint", "token_from", "insecure", "node", "kind",
+                "template", "storage", "cores", "memory", "disk", "ssh_key")
 PORTAINER_KEYS = ("url_from", "endpoint")
+
+#: The defaults, READ OFF the community helper script rather than invented (`ct/docker.sh`, measured
+#: 2026-09-14): `var_cpu=2`, `var_ram=2048`, `var_disk=4` for its Debian path. A carrier that says
+#: nothing gets what the tool the owner named would have given it.
+DEFAULT_CORES = 2
+DEFAULT_MEMORY_MB = 2048
+DEFAULT_DISK_GB = 4
 
 #: Portainer's own default endpoint id, the local Docker environment it manages. A carrier that says
 #: nothing means the one Portainer creates for itself, which is what a single-host install has.
@@ -50,10 +75,28 @@ DEFAULT_ENDPOINT = 1
 
 
 class Proxmox(NamedTuple):
-    """The Proxmox half: which node, and what kind of thing to put on it."""
+    """The Proxmox half: where the API is, which node, and what to put on it.
+
+    `token_from` is a credential PREFIX like Portainer's `url_from` - `PROXMOX` means the token is read
+    from `PROXMOX_API_TOKEN` - so this tuple carries no secret and the manifest has no field for one.
+
+    `insecure` skips TLS verification, which a fresh Proxmox needs because it answers with a
+    self-signed certificate. It defaults to FALSE: a product that wants the weaker check has to say so
+    in its own file, where a reviewer sees it, rather than inheriting it from a kernel that decided
+    verification was inconvenient.
+    """
 
     node: str
     kind: str
+    endpoint: str = ""
+    token_from: str = ""
+    insecure: bool = False
+    template: str = ""
+    storage: str = ""
+    cores: int = DEFAULT_CORES
+    memory: int = DEFAULT_MEMORY_MB
+    disk: int = DEFAULT_DISK_GB
+    ssh_key: str = ""
 
 
 class Portainer(NamedTuple):
@@ -130,8 +173,60 @@ def _carrier(name: str, spec: object, where: str) -> Carrier:
             f"{where}'s `portainer: endpoint:` must be a number, got {raw_endpoint!r} - it is "
             f"Portainer's own id for the Docker environment it manages") from None
 
-    return Carrier(name=name, proxmox=Proxmox(node=node, kind=kind),
+    return Carrier(name=name, proxmox=_proxmox(proxmox, node, kind, where),
                    portainer=Portainer(url_from=url_from, endpoint=endpoint))
+
+
+def _positive(block: Mapping, key: str, default: int, where: str) -> int:
+    """A size the manifest may state, refused when it is not a positive number.
+
+    Zero is refused with the rest: a container with no cores and a container with a default number of
+    cores are two different statements, and `int("0")` would quietly make the first mean the second.
+    """
+    raw = block.get(key, default)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise ValueError(f"{where}'s `proxmox: {key}:` must be a number, got {raw!r}") from None
+    if value <= 0:
+        raise ValueError(f"{where}'s `proxmox: {key}:` must be greater than zero, got {value}")
+    return value
+
+
+def _proxmox(block: Mapping, node: str, kind: str, where: str) -> Proxmox:
+    """The whole Proxmox block, validated - built HERE rather than splatted from a mapping, because a
+    `**dict[str, object]` hands mypy nothing and the type gate said so on the first run.
+
+    Every one of these is CONFIGURATION - where the API is, which datastore, how big - and every one of
+    them has a default, because the only field the provider itself requires is the node. A carrier
+    states what it wants differently and stays silent about the rest.
+    """
+    insecure = block.get("insecure", False)
+    if not isinstance(insecure, bool):
+        raise ValueError(
+            f"{where}'s `proxmox: insecure:` must be true or false, got {insecure!r} - it turns TLS "
+            f"verification OFF, so it is the one value here that may not be guessed from a string")
+    # NO RULE THAT THE PREFIX BE UPPER CASE, and it was written and then struck rather than never
+    # considered. CLAUDE.md's first question is whether it forbids something a product might
+    # legitimately want: a lower-case environment variable is perfectly legal on every platform this
+    # kernel runs on, so a manifest saying `token_from: proxmox` and exporting `proxmox_API_TOKEN`
+    # would have WORKED. That makes it an expression rule, and an expression rule with no measured
+    # cause is what si#53 struck `check_every_task_is_used` for. Convention is documented on the site
+    # instead, where it costs nobody a refusal.
+    token_from = str(block.get("token_from", "")).strip()
+    return Proxmox(
+        node=node,
+        kind=kind,
+        endpoint=str(block.get("endpoint", "")).strip(),
+        token_from=token_from,
+        insecure=insecure,
+        template=str(block.get("template", "")).strip(),
+        storage=str(block.get("storage", "")).strip(),
+        cores=_positive(block, "cores", DEFAULT_CORES, where),
+        memory=_positive(block, "memory", DEFAULT_MEMORY_MB, where),
+        disk=_positive(block, "disk", DEFAULT_DISK_GB, where),
+        ssh_key=str(block.get("ssh_key", "")).strip(),
+    )
 
 
 def declared(data: Mapping[str, object], source: str = "manifest") -> dict[str, Carrier]:

@@ -11,7 +11,7 @@ from typing import Iterable, Mapping, NamedTuple
 
 import yaml
 
-from simplon import carriers
+from simplon import carrierspec
 
 
 class Environment(NamedTuple):
@@ -52,7 +52,7 @@ def parse_data(data: Mapping[str, object], valid_backends: Iterable[str]) -> Reg
     # The carriers are read FIRST so an environment pointing at one that is not declared is refused by
     # name rather than failing later with an empty lookup. `declared` returns nothing for an absent
     # section, which is why a product that names no carrier is unaffected by any of this.
-    carrier_names = set(carriers.declared(data))
+    carrier_names = set(carrierspec.declared(data))
     envs: dict[str, Environment] = {}
     declared = data.get("environments") or {}
     if not isinstance(declared, Mapping):
@@ -67,7 +67,7 @@ def parse_data(data: Mapping[str, object], valid_backends: Iterable[str]) -> Reg
         if carrier and carrier not in carrier_names:
             known = ", ".join(sorted(carrier_names)) or "none"
             raise ValueError(
-                f"environment '{name}': carrier '{carrier}' is not declared - the '{carriers.SECTION}' "
+                f"environment '{name}': carrier '{carrier}' is not declared - the '{carrierspec.SECTION}' "
                 f"section declares: {known}")
         stack = str(spec.get("stack", "")).strip()
         if stack and not carrier:
