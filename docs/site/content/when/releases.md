@@ -25,6 +25,66 @@ it is the one section held only to existing.
 
 ## 0.16.0
 
+### The values a deployment must be given (si#5)
+
+`required:` names the variables a deployment is handed, and every one of them must have a value. They are
+read out of the environment the deploy command runs in, on *every* deployment.
+
+```yaml
+  prod:
+    backend: portainer
+    stack: bc-prod
+    required:                 # must have a value, or the deployment stops
+      - COCKPIT_DATA_DIR
+      - BACKUP_DIR
+      - HTTP_BIND
+    optional:                 # travels when set, absent when not
+      - SMALLINVOICE_CLIENT_SECRET
+      - APP_TITLE
+```
+
+**Why not once into Portainer, by hand.** Portainer stores the stack's environment either way. The only
+question is whether its copy is an *image* that every deployment refreshes or an *original* that nobody
+does - and two masters of one set of values drift, after which the instance runs on values written down
+nowhere. The consuming product put it that way, and it is the better formulation of a rule this kernel
+already had: a manifest names a variable, never a value.
+
+**An empty value fails the deployment**, and this is the one place a consumer asked for *more* strictness
+than was offered. Their document writes `${COCKPIT_DATA_DIR:-${HOME}/.biz-cockpit}:/data`. A missing value
+does not make compose fail - it falls back, and the bind mount lands in the *carrier's* `/root` instead of
+`/srv/biz-cockpit/prod`. The container writes happily, the deployment is green, and the database sits
+outside everything their `backup` knows about. An instance that runs and is not backed up is this
+project's recurring defect exactly: green because nobody looks.
+
+Every missing value is named at once. Repairing eight variables one run at a time is the kernel's work
+handed to an operator:
+
+```text
+environment 'prod' requires 3 value(s) and 1 of them is not set: BACKUP_DIR. They are exported where the
+deploy command runs; a value that is missing would let the deployed document fall back to its own
+default, which is how an instance ends up running somewhere nobody is looking
+```
+
+**There are two lists because "travels" and "may not be empty" are two statements**, and the first form
+had quietly made them one. It took a real product to show it: theirs writes
+`${SMALLINVOICE_CLIENT_SECRET:-}`, where *empty means "not connected"* and the integration is deliberately
+optional. In `required:` that product becomes uninstallable without a Smallinvoice account - undoing the
+very ticket that made the integration optional. In neither list the secret never reaches the stack, so the
+integration is not optional but impossible. An `optional:` name with no value is left **out** of the
+payload rather than sent as an empty string: to a document writing `${X:-}` those are the same today, and
+the day they differ the kernel would have chosen for it. A name in both lists is refused rather than
+ranked.
+
+**The lists are named after what they enforce, not after what they hold** - the consumer's request, and the
+right one: the rule is "this variable must have a value", which is a statement about obligation and not
+about a datatype. A secret can join the same list without it being renamed.
+
+**`SIMPLON_VERSION` may not be in it.** The kernel sets it from the version being deployed, and a second
+answer to that question would make `--version` mean whatever happened to be exported - with nothing
+printing which of the two had been used. That refusal is counted as an **expression rule** rather than
+diagnosis, because the honest answer to the sorting question is that the refused manifest would have
+deployed perfectly well; the exported value would simply have been ignored.
+
 ### `backend: portainer` deploys, and the 200 that did not mean deployed (si#5)
 
 A product writes four lines and the kernel deploys it - no backend class, no registration. The chain

@@ -661,6 +661,13 @@ environments:
       ref: release/2.x          # default: main; `refs/tags/v2.1.0` deploys a tag
       compose: deploy/docker-compose.yml
       credential_from: GIT      # a PREFIX -> GIT_USER, GIT_PASSWORD; omit it for a public repository
+    required:                   # must have a value, or the deployment stops
+      - COCKPIT_DATA_DIR
+      - BACKUP_DIR
+      - HTTP_BIND
+    optional:                   # travels when set, absent when not
+      - SMALLINVOICE_CLIENT_SECRET
+      - APP_TITLE
 ```
 
 **The sizes you leave out are the ones the community Proxmox helper script uses** - 2 cores, 2048 MB,
@@ -717,10 +724,47 @@ fails - so the deployment is read back until Portainer says it is up, and three 
 it is up, it failed *(with Portainer's own sentence)*, or it is still deploying when the wait ran out.
 {{< /callout >}}
 
+**`required:` and `optional:` name the variables a deployment is given.** The values come from the
+environment the deploy command runs in, on *every* deployment - not from a copy maintained by hand in
+Portainer. Portainer stores them either way; the question is only whether its copy is an image something
+refreshes or an original nobody does, and two masters of one set of values drift.
+
+**Two lists, because "travels" and "may not be empty" are two statements.** A name in `required:` must
+have a value when the deployment runs. A name in `optional:` travels when it has one and is left out when
+it has not - and *left out*, not sent as an empty string, because to a document that writes `${X:-}` those
+are the same today and the day they differ the kernel would have decided for it. A name in neither list
+does not reach the deployment at all, so the two lists are the whole answer to "what goes over".
+
+It was one list first, and the second one is not symmetry - it is a case one list could not say. A real
+product writes `${SMALLINVOICE_CLIENT_SECRET:-}` where **empty means "not connected"**: the integration is
+deliberately optional. In `required:` the product becomes uninstallable without a Smallinvoice account; in
+neither list the secret never arrives and the integration is not optional but impossible. A name in *both*
+lists is refused rather than ranked.
+
+**An empty value fails the deployment.** It is the one place a consuming product asked for *more*
+strictness than was offered, and the case is worth the refusal:
+
+```yaml
+# in the compose document
+- "${COCKPIT_DATA_DIR:-${HOME}/.biz-cockpit}:/data"
+```
+
+A missing value does not make compose fail - it falls back, and the bind mount lands in the *carrier's*
+`/root/.biz-cockpit` instead of `/srv/biz-cockpit/prod`. The container writes happily, the deployment
+looks green, and the database sits outside everything the product's own `backup` knows about. An instance
+that runs and is not backed up is this project's recurring defect exactly: green because nobody looks. So
+every missing value is named, all of them at once - repairing eight variables one run at a time is the
+kernel's work handed to an operator.
+
+**A name that is not in the list does not reach the deployment**, which is what keeps the manifest
+readable as the answer to "what goes over". And a manifest names variables here, never holds one:
+`TOGGL_API_TOKEN=4c2b9f` is refused rather than read as a name with an equals sign in it.
+
 **The version reaches the stack as `SIMPLON_VERSION`.** A compose document writes
 `image: ghcr.io/acme/app:${SIMPLON_VERSION}`, so `deploy up --version 1.4.0` deploys 1.4.0 rather than
-whatever the document happened to name. `local` is refused here: Portainer clones, and there is nothing
-on your machine for it to clone.
+whatever the document happened to name. It is the kernel's variable and `required:` may not claim it -
+two answers to one question, and nothing would print which had been used. `local` is refused here:
+Portainer clones, and there is nothing on your machine for it to clone.
 
 {{< callout type="warning" >}}
 **No secret may be written here, and the section has no field for one.** `url_from: PORTAINER` names the
