@@ -10,10 +10,17 @@ installing a version HERE. Distributing one to a FLEET - an SCCM, an MDM, a soft
 is not Simplon's business and is not what these commands grow into. A product that needs it drives its
 own tool, with this vocabulary in front of it.
 
-THE SERVER PATH NAMES NO BACKEND, which is the whole of `simplon.backend`'s design: the product registers
-one implementation per backend tag and the kernel resolves the environment to an instance. What si#235
-added there is a REGISTRATION seam, because a catalogue task is called by the CLI with manifest-pinned
-parameters and nothing else - it cannot be handed a registry as an argument the way `backend.resolve` is.
+THE SERVER PATH DISPATCHES ON NOTHING, which is the whole of `simplon.backend`'s design: the product
+registers one implementation per backend tag and the kernel resolves the environment to an instance. What
+si#235 added there is a REGISTRATION seam, because a catalogue task is called by the CLI with
+manifest-pinned parameters and nothing else - it cannot be handed a registry as an argument the way
+`backend.resolve` is.
+
+THIS MODULE NOW NAMES ONE BACKEND, and the sentence above used to say it named none. si#5 made
+`backend: portainer` work with no product code at all, because the whole chain under it is the kernel's
+own - `deploy carrier` builds the Portainer and `carriers:` describes it. `_backends` is where that is
+said out loud, in one place, merged UNDER whatever the product registered. `simplon.backend` itself still
+names nobody: the seam is unchanged, it simply arrives with something in it.
 
 THE CLIENT PATH INSTALLS INTO `into/<version>`, one directory per version rather than one directory
 overwritten. Two reasons, and neither is tidiness: a rollback is then a second `up` rather than a
@@ -25,7 +32,19 @@ import os
 import shutil
 from pathlib import Path
 
-from simplon import backend, context, deployment, environments, githubpackages, log
+from simplon import backend, context, deployment, environments, githubpackages, log, portainer
+
+
+def _backends() -> dict[str, backend.Backend]:
+    """Every backend this run may resolve: the ones the kernel ships, with the product's own on top.
+
+    THE ORDER IS THE DECISION. A product's registration wins on a name collision, because a product that
+    writes its own `portainer` backend has a reason the kernel cannot know - and the alternative, refusing
+    the collision, would mean the kernel shipping a backend could break a product that already had one.
+    The kernel ships exactly one today (si#5); everything else is still the product's to register.
+    """
+    shipped: dict[str, backend.Backend] = {portainer.BACKEND: portainer.PortainerBackend()}
+    return {**shipped, **backend.product_registry()}
 
 
 def _environment() -> environments.Environment:
@@ -35,12 +54,11 @@ def _environment() -> environments.Environment:
     own comment says the product's variable arrives through an injected provider, "so no kernel leaf can
     read the answer back out of it". This is such a leaf.
 
-    The MATRIX comes off the manifest, and the valid backends are the registered ones: a product's
-    registry is the list of backends it really implements, so an environment naming one nobody registered
-    is refused by `parse_data` with both names in the message rather than failing later.
+    The MATRIX comes off the manifest, and the valid backends are the RESOLVABLE ones - what the kernel
+    ships plus what the product registered - so an environment naming one nobody implements is refused by
+    `parse_data` with both names in the message rather than failing later.
     """
-    registered = backend.registered()
-    matrix = environments.parse_data(context.current().manifest_data(), tuple(registered))
+    matrix = environments.parse_data(context.current().manifest_data(), tuple(_backends()))
     name = os.environ.get(context.ENVIRONMENT_ENV, "").strip() or matrix.default
     env = matrix.environments.get(name)
     if env is None:
@@ -82,7 +100,7 @@ def up(version: str = "") -> int:
         return 0
     env = _environment()
     log.info(f"deploying {resolved.tag} to {env.name} ({env.backend})")
-    return backend.resolve(env, backend.registered()).deploy(env, resolved)
+    return backend.resolve(env, _backends()).deploy(env, resolved)
 
 
 def down(version: str = "") -> int:
@@ -105,4 +123,4 @@ def down(version: str = "") -> int:
         return 0
     env = _environment()
     log.info(f"destroying {env.name} ({env.backend})")
-    return backend.resolve(env, backend.registered()).destroy(env)
+    return backend.resolve(env, _backends()).destroy(env)

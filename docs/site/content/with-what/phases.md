@@ -319,9 +319,10 @@ carrier up needs the environment; `support` is environment-less by taxonomy and 
 environment-first. The alternatives on the table were opening `support` to environments, reaching the
 environment through a variable, and a seventh group. None was needed.
 
-**What a product brings itself.** The rollout. What `up` and `down` add is the half no product had: *which*
-version is going out, whether it exists, and - for a server - handing it to the backend the product
-registered. A `deploy:` section says whether this is a client application installed into a directory here
+**What a product brings itself.** The rollout - unless it deploys to a Portainer, which is the one backend
+the kernel ships, because the whole chain under it is the kernel's own. What `up` and `down` add is the
+half no product had: *which* version is going out, whether it exists, and - for a server - handing it to
+the backend, the product's own where it registered one. A `deploy:` section says whether this is a client application installed into a directory here
 or a server brought up on a target, and which `images:` or `artifacts:` entry the versions are looked up
 in. See [`deploy:` in the manifest](../../how/manifest/#deploy---which-version-a-deployment-is-deploying).
 

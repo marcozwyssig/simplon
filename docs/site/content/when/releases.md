@@ -25,6 +25,62 @@ it is the one section held only to existing.
 
 ## 0.16.0
 
+### `backend: portainer` deploys, and the 200 that did not mean deployed (si#5)
+
+A product writes four lines and the kernel deploys it - no backend class, no registration. The chain
+under it was already the kernel's: `deploy carrier` builds the Portainer, `carriers:` describes it,
+`environments:` points at it. What was missing was the far end.
+
+```yaml
+environments:
+  prod:
+    backend: portainer
+    carrier: hausportainer
+    stack: myctl-prod
+    repository:
+      url: github.com/you/myctl
+      compose: deploy/docker-compose.yml
+      credential_from: GIT      # a PREFIX; omit it for a public repository
+```
+
+**Portainer clones the repository itself**, rather than being handed a compose document somebody's
+orchestrator assembled. What ran is then a commit, and the stack can be redeployed from Portainer with no
+orchestrator running at all. Creating and redeploying are two different calls with different bodies, and
+the second deliberately re-sends none of the description: Portainer already holds it, and sending it twice
+would put a second copy of it where nothing compares it with the manifest.
+
+**The credential travels with every deployment and is never stored.** So a stack somebody opens in the
+Portainer UI carries no usable read access to your source.
+
+**The find, and it was found by driving the real API rather than a double.** `POST .../repository` answers
+`200` for *accepting* the stack, not for running it. A repository whose compose file does not exist is
+accepted with a 200 and then fails - and the first draft of this returned "created" and would have exited
+`0` over a deployment that pulled nothing. That is the defect this project hunts, one seam before the
+operator. The deployment is now read back until Portainer stops working on it, and three outcomes are told
+apart rather than folded into two:
+
+```text
+stack myctl-prod was created from github.com/you/myctl (main), and Portainer could not bring it up:
+failed to deploy a stack: failed to create compose project: failed to load the compose file :
+open /data/compose/7/docker-compose.yml: no such file or directory
+```
+
+Still deploying when the wait runs out is the third, and it is neither of the others: a slow image pull is
+not a failure, and an operator told the wait ended knows to look rather than to deploy again. The status
+numbers behind that are measured, not read off a document - a stack sat in "deploying" for roughly twenty
+seconds while one image pulled, and came up afterwards.
+
+**`SIMPLON_VERSION` is what reaches the stack**, so `deploy up --version 1.4.0` deploys 1.4.0 rather than
+whatever the compose document happened to name. It is one variable and it is the kernel's own; passing a
+*product's* environment values through is a slice of its own. `local` is refused: Portainer clones, and
+there is nothing on this machine for it to clone.
+
+**Two smaller things the measurement forced.** `repository:` is a block rather than the bare URL the
+vocabulary shipped with, because the first real consumer's compose document is not at the repository root
+and a string cannot say so - widened before the vocabulary was ever released, so no manifest had to be
+migrated. And `portainer:` took an `insecure:` of its own: Portainer generates its own certificate on
+first start, so a carrier the kernel had just built was unreachable without it.
+
 ### The carrier's Portainer is usable when the command finishes (si#5)
 
 Two gaps, both measured against a real carrier the day after it was built, and both of which left

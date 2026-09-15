@@ -642,18 +642,25 @@ carriers:
     portainer:
       url_from: PORTAINER       # a PREFIX, never a value
       endpoint: 1               # Portainer's own id; 1 is what a single-host install has
+      insecure: true            # Portainer makes its own certificate on first start
 
 environments:
   test:
     backend: portainer
     carrier: hausportainer
     stack: myctl-test
-    repository: github.com/you/myctl
+    repository:
+      url: github.com/you/myctl
+      compose: deploy/docker-compose.yml   # default: docker-compose.yml at the root
   prod:
     backend: portainer
     carrier: hausportainer      # the SAME carrier
     stack: myctl-prod
-    repository: github.com/you/myctl
+    repository:
+      url: github.com/you/myctl
+      ref: release/2.x          # default: main; `refs/tags/v2.1.0` deploys a tag
+      compose: deploy/docker-compose.yml
+      credential_from: GIT      # a PREFIX -> GIT_USER, GIT_PASSWORD; omit it for a public repository
 ```
 
 **The sizes you leave out are the ones the community Proxmox helper script uses** - 2 cores, 2048 MB,
@@ -689,7 +696,31 @@ once, they cannot.
 one axis a product extends by registering an implementation.
 
 **`repository:` is where Portainer pulls the compose document from, itself.** Which means Portainer needs
-read access to it; the orchestrator does not.
+read access to it; the orchestrator does not. It is a block rather than a bare URL because the first real
+consumer's compose document is not at the repository root, and `compose:` is the only place that can say
+so. `credential_from:` names a PREFIX like every other credential here, and the credential is **sent with
+every deployment** rather than stored in Portainer - so a stack somebody opens in the Portainer UI carries
+no usable read access to your source.
+
+**`backend: portainer` needs no product code.** It is the one backend the kernel ships, because the whole
+chain under it is already the kernel's: `deploy carrier` builds the Portainer, `carriers:` describes it,
+and this section points at it. A product that registers its own implementation under that name still wins.
+
+**`portainer: insecure:` is the same value as the Proxmox one and is there for a measured reason.**
+Portainer generates its own certificate on first start, so a carrier the kernel has just built answers
+only with verification off. Give it a real certificate and leave this out.
+
+{{< callout type="warning" >}}
+**`deploy up` does not report success on a deployment that did not come up.** Portainer answers `200` to
+accepting a stack, not to running one - a stack whose compose file does not exist is accepted and then
+fails - so the deployment is read back until Portainer says it is up, and three outcomes are told apart:
+it is up, it failed *(with Portainer's own sentence)*, or it is still deploying when the wait ran out.
+{{< /callout >}}
+
+**The version reaches the stack as `SIMPLON_VERSION`.** A compose document writes
+`image: ghcr.io/acme/app:${SIMPLON_VERSION}`, so `deploy up --version 1.4.0` deploys 1.4.0 rather than
+whatever the document happened to name. `local` is refused here: Portainer clones, and there is nothing
+on your machine for it to clone.
 
 {{< callout type="warning" >}}
 **No secret may be written here, and the section has no field for one.** `url_from: PORTAINER` names the

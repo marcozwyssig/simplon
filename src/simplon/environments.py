@@ -14,6 +14,42 @@ import yaml
 from simplon import carrierspec
 
 
+#: What a `repository:` block accepts, and - as in `carrierspec` - everything else is REFUSED rather than
+#: ignored. The reason is the same one and it is not tidiness: this block is where somebody reaches for a
+#: `password:` when the clone needs one, and a parser that skipped what it did not recognise would let
+#: that sit in a committed file. `credential_from:` is the field that is there instead, and it names a
+#: PREFIX.
+REPOSITORY_KEYS = ("url", "ref", "compose", "credential_from")
+
+#: What a repository that states neither means. `main` is the branch; `docker-compose.yml` in the root is
+#: where Portainer itself looks when a stack names no file, so a product that puts it there says nothing.
+DEFAULT_REF = "main"
+DEFAULT_COMPOSE = "docker-compose.yml"
+
+
+class Repository(NamedTuple):
+    """Where the compose document is pulled from - by Portainer itself, not by the orchestrator.
+
+    WHY THIS IS A BLOCK AND NOT THE ONE STRING IT WAS. si#5's vocabulary slice wrote `repository:` as a
+    bare URL and left the file path implied, because Portainer defaults it. The first real consumer broke
+    that: biz-cockpit's compose document lives at `deploy/provision/docker-compose.yml`, and a string
+    cannot say so. `ref:` joins it for the same reason one level along - a product that deploys from a
+    release branch has nowhere else to write it. The form was widened before the vocabulary was ever
+    released, so no manifest had to be migrated; what it costs is that the simple case now writes `url:`.
+
+    `credential_from` is the PREFIX the clone credential is read from - `GIT` means `GIT_USER` and
+    `GIT_PASSWORD`, `credentials.py`'s convention unchanged - and it is EMPTY by default, because a public
+    repository needs none. It is sent with every deployment rather than stored in Portainer (owner
+    decision, 2026-09-15): a credential Portainer keeps is one the next reader of that stack inherits
+    without asking for it.
+    """
+
+    url: str
+    ref: str = DEFAULT_REF
+    compose: str = DEFAULT_COMPOSE
+    credential_from: str = ""
+
+
 class Environment(NamedTuple):
     """One named environment.
 
@@ -29,7 +65,7 @@ class Environment(NamedTuple):
     description: str
     carrier: str = ""
     stack: str = ""
-    repository: str = ""
+    repository: "Repository | None" = None
 
 
 class Registry(NamedTuple):
@@ -41,6 +77,38 @@ def parse(text: str, valid_backends: Iterable[str]) -> Registry:
     """Parse an environments.yml TEXT document into the registry (pure; unit-tested). Thin wrapper over
     parse_data for the standalone-file form; the validation lives in parse_data."""
     return parse_data(yaml.safe_load(text) or {}, valid_backends)
+
+
+def _repository(raw: object, where: str) -> "Repository | None":
+    """The `repository:` block of one environment, or None when it declares none.
+
+    ABSENT IS NOT EMPTY, which is why this answers None rather than a `Repository("")`: an environment
+    that names no repository and one that names a repository with no URL are two different mistakes, and
+    the second has to be told apart from the first or the refusal blames the wrong line.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise ValueError(
+            f"{where}: `repository:` must be a mapping with a `url:`, not {type(raw).__name__}. It says "
+            f"where PORTAINER pulls the compose document from, and `compose:` says which file in there")
+    unknown = sorted(str(k) for k in raw if str(k) not in REPOSITORY_KEYS)
+    if unknown:
+        raise ValueError(
+            f"{where}: `repository:` does not take {', '.join(unknown)} - it takes "
+            f"{', '.join(REPOSITORY_KEYS)}. A credential does not belong in a manifest at all: name the "
+            f"environment-variable prefix with `credential_from:` and keep the secret out of the file")
+    url = str(raw.get("url", "")).strip()
+    if not url:
+        raise ValueError(
+            f"{where}: `repository:` declares no `url:`, so nothing says where the compose document is "
+            f"pulled from")
+    return Repository(
+        url=url,
+        ref=str(raw.get("ref", "") or DEFAULT_REF).strip(),
+        compose=str(raw.get("compose", "") or DEFAULT_COMPOSE).strip(),
+        credential_from=str(raw.get("credential_from", "")).strip(),
+    )
 
 
 def parse_data(data: Mapping[str, object], valid_backends: Iterable[str]) -> Registry:
@@ -74,7 +142,7 @@ def parse_data(data: Mapping[str, object], valid_backends: Iterable[str]) -> Reg
             raise ValueError(
                 f"environment '{name}': declares `stack: {stack}` and no `carrier:`, so there is "
                 f"nowhere for that stack to go")
-        repository = str(spec.get("repository", "")).strip()
+        repository = _repository(spec.get("repository"), f"environment '{name}'")
         if repository and not stack:
             raise ValueError(
                 f"environment '{name}': declares a `repository:` and no `stack:`, so nothing says what "

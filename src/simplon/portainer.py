@@ -1,12 +1,27 @@
-"""Put a compose stack into an existing Portainer (platform#155, from biz-cockpit#154).
+"""Put a compose stack into an existing Portainer (platform#155, from biz-cockpit#154; si#5 slice 3).
 
 An operator who already runs Portainer does not want a second deployment path beside it. This module is
-that path: it sends a RESOLVED compose document to Portainer's API and lets Portainer pull the images.
-Nothing here installs Portainer, and nothing here knows which product is being deployed.
+that path. Nothing here installs Portainer - `simplon.tasks.carrier` does that - and nothing here knows
+which product is being deployed.
 
-Why the caller sends the compose file instead of letting Portainer fetch it from a repository: this way
-there is still ONE place the truth lives - the file in the repository, resolved against the target's
-environment - and Portainer needs no read access to the source.
+TWO ROUTES, AND THE SECOND ONE IS NOT A SECOND SOURCE. `deploy` sends a RESOLVED compose document as a
+string; `deploy_from_repository` gives Portainer a repository and lets Portainer clone it. They are two
+Portainer APIs for two different arrangements, not two ways of saying one thing:
+
+  - the STRING route needs the caller to resolve the document and needs Portainer to have no read access
+    to the source. It is what platform#155 built and what a consumer in this family calls today, through
+    `PortainerTarget.from_env` and `deploy` - which is why those two are still here unchanged.
+  - the GIT route is the owner's decision of 2026-09-15 for the kernel's own backend: Portainer holds the
+    repository and re-clones it on every redeploy, so what ran is a commit rather than a string somebody's
+    orchestrator assembled. It is also the only one of the two that survives an orchestrator that is not
+    running - Portainer can redeploy the stack by itself.
+
+The git route was MEASURED against a real Portainer before it was written (2026-09-15, carrier
+`hausportainer`): a private repository with no credential answers *"Failed to download git repository:
+authentication required: Repository not found."*, the same request with `repositoryAuthentication` and a
+username and password answers 200 and creates the stack, a duplicate name answers 409 naming the
+normalised name, and `PUT /stacks/{id}/git/redeploy` answers 200. Every one of those four is a branch
+below.
 
 NOTHING HERE IS AN ADDRESS (the kernel's rule 8 equivalent). Portainer URL, token, endpoint and stack
 name arrive at runtime from the environment; the module knows only the mechanism. The one product-shaped
@@ -20,16 +35,61 @@ from __future__ import annotations
 
 import json
 import os
+import ssl
+import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Callable
+
+if TYPE_CHECKING:  # local: keeps the module head free of the manifest layer, the way `backend` does
+    from simplon.carrierspec import Carrier
+    from simplon.deployment import Version
+    from simplon.environments import Environment, Repository
 
 # The registry Portainer pulls the images from. A private package needs credentials stored IN Portainer;
 # without them the pull fails with "unauthorized", and it fails at START time - the kind of failure worth
 # announcing beforehand. Overridable, because not every product publishes to GHCR.
 GHCR_HOST = "ghcr.io"
 
+#: The backend tag this module answers to - the value an environment writes as `backend: portainer`. A
+#: constant rather than a literal in two files, because `tasks.deploy` registers under it and the class
+#: below must answer to the same string or `backend.resolve` finds an instance that says it is something
+#: else.
+BACKEND = "portainer"
+
+#: The resolved version, handed to the stack as ONE variable. A compose document writes
+#: `image: ghcr.io/acme/app:${SIMPLON_VERSION}` and the deployment means what it says.
+#:
+#: WHY EXACTLY ONE. si#5's third slice deploys; passing a PRODUCT's own environment values through is a
+#: slice of its own, waiting on biz-cockpit#263 (where should ~40 `${VAR}` values come from, three of them
+#: secrets). This variable is not one of those - it is the kernel's own vocabulary, and without it
+#: `deploy up --version 1.4.0` would print "deploying 1.4.0" and deploy whatever the compose document
+#: happened to name. That is the defect this repository hunts, one command earlier.
+VERSION_VAR = "SIMPLON_VERSION"
+
 _TIMEOUT_S = 30.0
+
+#: What Portainer's `Status` means, MEASURED against the real carrier on 2026-09-16 rather than read off
+#: a document, because the numbers decide whether a deployment is reported as having worked:
+#:
+#:   1  the stack is up - a container of it was really running when this was seen
+#:   3  Portainer is still working on it; it sat here for roughly twenty seconds while an image pulled
+#:   4  it failed, and the last `DeploymentStatus` entry carries the sentence saying why
+#:
+#: The one that cost something to find is 3. `POST .../repository` answers **200 before any of this**:
+#: the 200 means Portainer accepted the stack, not that the stack runs. A first draft of this module
+#: returned "created" on that 200 and would have exited 0 on a deployment that failed to pull its images
+#: - the defect this repository hunts, found by driving the real API instead of a double.
+STATUS_UP = 1
+STATUS_DEPLOYING = 3
+STATUS_FAILED = 4
+
+#: How long a deployment may take before the run stops waiting, and how often it looks. Pulling several
+#: images over a home line is minutes, not seconds, so the wait is generous; what matters is that running
+#: out of it is its own outcome and not silently one of the other two.
+SETTLE_TIMEOUT_S = 600.0
+_POLL_S = 2.0
 
 
 class PortainerError(RuntimeError):
@@ -44,6 +104,28 @@ class PortainerTarget:
     token: str
     endpoint_id: int
     stack_name: str
+    insecure: bool = False
+
+    @staticmethod
+    def from_carrier(carrier: "Carrier", stack_name: str,
+                     environ: "dict[str, str] | None" = None) -> "PortainerTarget":
+        """The target a manifest describes: the carrier says where and how, the environment says what.
+
+        The carrier carries a PREFIX and never a value, so this is where the prefix becomes the two
+        variables `credentials.py`'s convention stands for. It goes through `from_env` rather than beside
+        it, because the refusal that names the missing variable is the half worth not having twice.
+        """
+        source = dict(os.environ if environ is None else environ)
+        prefix = carrier.portainer.url_from
+        for suffix in ("_URL", "_TOKEN"):
+            if source.get(f"{prefix}{suffix}") and not source.get(f"PORTAINER{suffix}"):
+                source[f"PORTAINER{suffix}"] = source[f"{prefix}{suffix}"]
+        target = PortainerTarget.from_env(
+            carrier.name, stack_name, environ=source,
+            secrets_hint=f"The carrier names `url_from: {prefix}`, so it is read from "
+                         f"{prefix}_URL and {prefix}_TOKEN.")
+        return replace(target, endpoint_id=carrier.portainer.endpoint,
+                       insecure=carrier.portainer.insecure)
 
     @staticmethod
     def from_env(
@@ -82,6 +164,18 @@ class PortainerTarget:
         )
 
 
+def _context(target: PortainerTarget) -> "ssl.SSLContext | None":
+    """The TLS context a target needs, or None for the default verifying one.
+
+    MEASURED, not assumed (2026-09-16, against the Portainer `deploy carrier` had built): a verifying
+    request to https://10.0.0.124:9443 fails with `CERTIFICATE_VERIFY_FAILED: self-signed certificate`
+    and the same request with verification off answers 200. Portainer generates its own certificate on
+    first start, so a carrier the kernel installed and did not give a certificate to is unreachable
+    without this - and the manifest has to SAY so, which is what `portainer: insecure:` is for.
+    """
+    return ssl._create_unverified_context() if target.insecure else None
+
+
 def _request(target: PortainerTarget, method: str, path: str, body: dict | None = None) -> object:
     request = urllib.request.Request(
         f"{target.url}/api{path}",
@@ -93,7 +187,8 @@ def _request(target: PortainerTarget, method: str, path: str, body: dict | None 
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=_TIMEOUT_S) as response:  # noqa: S310
+        with urllib.request.urlopen(  # noqa: S310
+                request, timeout=_TIMEOUT_S, context=_context(target)) as response:
             payload = response.read()
     except urllib.error.HTTPError as error:
         detail = error.read().decode(errors="replace")[:400]
@@ -163,3 +258,272 @@ def deploy(target: PortainerTarget, compose_yaml: str, env_vars: dict[str, str])
         },
     )
     return f"stack {target.stack_name} updated (images pulled again)"
+
+
+# --- the git route: Portainer holds the repository and re-clones it (si#5) ---------------------------
+
+def _repository_url(url: str) -> str:
+    """The URL Portainer clones, from what a manifest writes.
+
+    A manifest says `url: github.com/you/myctl` because that is how a person writes a repository, and
+    Portainer needs a scheme. Adding it here rather than refusing the short form keeps the manifest
+    reading like the thing it describes; anything that already carries a scheme is passed through, so an
+    ssh:// or a self-hosted https:// URL is untouched.
+    """
+    return url if "://" in url else f"https://{url}"
+
+
+def _reference(ref: str) -> str:
+    """The full git reference Portainer wants, from the branch name a manifest writes.
+
+    `main` becomes `refs/heads/main`; anything already spelled as a reference is passed through, which is
+    what lets a product deploy from a TAG (`refs/tags/v1.4.0`) without a second manifest key for the kind
+    of reference it is.
+    """
+    return ref if ref.startswith("refs/") else f"refs/heads/{ref}"
+
+
+def _authentication(credential: "tuple[str, str] | None") -> dict:
+    """The three fields that decide whether Portainer authenticates the clone, or none of them.
+
+    A public repository must not be sent `repositoryAuthentication: true` with two empty strings: the
+    clone then fails on a credential nobody meant to supply, which is the same "nothing to do read as
+    failed" shape this repository hunts everywhere else.
+    """
+    if credential is None:
+        return {}
+    user, password = credential
+    return {"repositoryAuthentication": True,
+            "repositoryUsername": user,
+            "repositoryPassword": password}
+
+
+def deploy_from_repository(target: PortainerTarget, repository: "Repository",
+                           credential: "tuple[str, str] | None" = None,
+                           env_vars: "dict[str, str] | None" = None) -> str:
+    """Create the stack from its repository, or redeploy the one that is there. Returns what happened.
+
+    THE TWO CALLS ARE NOT THE SAME CALL with a different verb, which is why this is not `deploy`'s shape
+    with a URL swapped in. Creating takes the whole description - where the repository is, which
+    reference, which file in it. Redeploying takes none of that: Portainer already holds it, and
+    `PUT /stacks/{id}/git/redeploy` means "clone that again". Sending the description twice would put a
+    second copy of it in Portainer's database, where nothing compares it with the manifest.
+
+    The credential is sent with EVERY deployment rather than stored in Portainer (owner decision,
+    2026-09-15), so a stack somebody opens in the Portainer UI carries no usable read access to the
+    source repository.
+    """
+    payload_env = [{"name": name, "value": value}
+                   for name, value in sorted((env_vars or {}).items())]
+    existing = find_stack(target)
+    if existing is None:
+        _request(
+            target,
+            "POST",
+            f"/stacks/create/standalone/repository?endpointId={target.endpoint_id}",
+            {
+                "name": target.stack_name,
+                "repositoryURL": _repository_url(repository.url),
+                "repositoryReferenceName": _reference(repository.ref),
+                "composeFile": repository.compose,
+                "env": payload_env,
+                **_authentication(credential),
+            },
+        )
+        _settled(target, find_stack(target), f"created from {repository.url} ({repository.ref})")
+        return f"stack {target.stack_name} created from {repository.url} ({repository.ref})"
+    stack_id = existing["Id"]
+    _request(
+        target,
+        "PUT",
+        f"/stacks/{stack_id}/git/redeploy?endpointId={target.endpoint_id}",
+        {
+            "env": payload_env,
+            "prune": True,
+            "pullImage": True,
+            **_authentication(credential),
+        },
+    )
+    _settled(target, find_stack(target), f"redeployed from {repository.url} ({repository.ref})")
+    return f"stack {target.stack_name} redeployed from {repository.url} ({repository.ref})"
+
+
+def _message(stack: dict) -> str:
+    """The last thing Portainer said about this deployment, or nothing.
+
+    The entries arrive oldest first and only the failing one carries a message, so the last non-empty one
+    is the sentence a person needs. An empty answer is left empty rather than filled with "unknown error":
+    a caller that invents a reason sends the reader looking for something that was never said.
+    """
+    said = [str(entry.get("Message") or "") for entry in (stack.get("DeploymentStatus") or [])]
+    return next((message for message in reversed(said) if message), "")
+
+
+def _settled(target: PortainerTarget, stack: "dict | None", what: str,
+             timeout: float = SETTLE_TIMEOUT_S, now: "Callable[[], float]" = time.monotonic,
+             sleep: "Callable[[float], None]" = time.sleep) -> dict:
+    """Wait until the stack has stopped deploying, and refuse if it failed.
+
+    WHY THIS EXISTS AT ALL, since the create call already answered 200. It answered 200 for accepting the
+    stack. Against the real carrier a stack whose compose file did not exist was accepted with a 200 and
+    then failed, and without this the command would have printed "created" and exited 0 over a deployment
+    that pulled nothing - the recurring defect of this repository, at the last seam before the operator.
+
+    THREE OUTCOMES, EACH WITH ITS OWN VALUE, which is the resolution this repository always reaches: up,
+    failed with Portainer's own sentence, and still deploying when the wait ran out. The third is not
+    folded into either of the others - a slow pull is not a failure, and an operator who is told the wait
+    ended knows to look rather than to redeploy.
+    """
+    deadline = now() + timeout
+    while stack is not None and stack.get("Status") == STATUS_DEPLOYING:
+        if now() >= deadline:
+            raise PortainerError(
+                f"stack {target.stack_name} was {what} and is still deploying after {timeout:.0f}s, so "
+                f"this run cannot say whether it came up. Portainer is still working on it - look there "
+                f"rather than deploying again")
+        sleep(_POLL_S)
+        stack = find_stack(target)
+    if stack is None:
+        raise PortainerError(
+            f"stack {target.stack_name} was {what} and is not there any more, so nothing of this "
+            f"deployment survived to be reported on")
+    if stack.get("Status") == STATUS_FAILED:
+        raise PortainerError(
+            f"stack {target.stack_name} was {what}, and Portainer could not bring it up: "
+            f"{_message(stack) or 'it reports no reason'}")
+    return stack
+
+
+def remove(target: PortainerTarget) -> str:
+    """Remove the stack, or say that it was not there.
+
+    REFUSES rather than reporting success on an absent stack, the same way the kernel's client `down`
+    refuses a version it never installed. "Removed nothing" and "removed the stack" are two outcomes and
+    an operator tearing an environment down has to be able to tell them apart - especially here, where
+    the likely cause is a `stack:` that does not say what they think it says.
+    """
+    existing = find_stack(target)
+    if existing is None:
+        raise PortainerError(
+            f"there is no stack named '{target.stack_name}' on endpoint {target.endpoint_id}, so nothing "
+            f"was removed. This Portainer carries: {_names(target) or '(no stacks)'}")
+    _request(target, "DELETE", f"/stacks/{existing['Id']}?endpointId={target.endpoint_id}")
+    return f"stack {target.stack_name} removed"
+
+
+def _names(target: PortainerTarget) -> str:
+    stacks = _request(target, "GET", "/stacks")
+    return ", ".join(sorted(str(s.get("Name")) for s in stacks)) if isinstance(stacks, list) else ""
+
+
+def describe(target: PortainerTarget) -> str:
+    """What is deployed under this name, as a sentence a person reads.
+
+    An absent stack is an ANSWER here and not a refusal, which is the opposite of `remove` on purpose:
+    asking what is deployed and being told "nothing" is a complete answer to the question that was asked.
+    """
+    existing = find_stack(target)
+    if existing is None:
+        return (f"{target.stack_name}: not deployed on endpoint {target.endpoint_id} "
+                f"({target.url} carries: {_names(target) or 'no stacks'})")
+    origin = existing.get("GitConfig") or {}
+    where = f" from {origin.get('URL')} ({origin.get('ReferenceName')})" if origin else ""
+    return f"{target.stack_name}: stack {existing.get('Id')} on endpoint {target.endpoint_id}{where}"
+
+
+# --- the backend the kernel ships (si#5 slice 3) -----------------------------------------------------
+
+class PortainerBackend:
+    """`backend: portainer` - a deployment the kernel itself can drive, with no product code at all.
+
+    WHY THE KERNEL SHIPS THIS ONE AND NAMES NO OTHER. `simplon.backend` is the seam and stays what it is:
+    a product registers an implementation per backend tag and nothing in that module names a backend. This
+    class is not a hole in that design, it is the first thing the seam carries by default (owner decision,
+    2026-09-15: "Backend im Kernel"). The reason is that the chain underneath it is already the kernel's:
+    `deploy carrier` builds the Portainer, `carriers:` describes it, and `environments:` points at it. A
+    product that had to write this class would be writing the far end of a pipe the kernel owns both ends
+    of. A product that wants a DIFFERENT portainer backend still registers one and wins - see
+    `tasks.deploy._backends`.
+
+    WHAT IT DOES NOT DO YET, said here rather than discovered: it passes the product's own environment
+    values to nothing. `VERSION_VAR` is the one variable it sends, and it is the kernel's. The ~40 values
+    a real consumer's compose document interpolates - three of them secrets - are a slice of their own,
+    open as biz-cockpit#263.
+    """
+
+    name = BACKEND
+
+    def deploy(self, env: "Environment", version: "Version") -> int:
+        from simplon import log
+
+        target, repository = _target_for(env)
+        if version.builds:
+            raise ValueError(
+                f"environment '{env.name}' is deployed by Portainer, which clones {repository.url} "
+                f"itself - so there is nothing on this machine for it to deploy. Publish the version and "
+                f"deploy that")
+        log.info(f"{env.stack} <- {repository.url} ({repository.ref}), {repository.compose}")
+        message = deploy_from_repository(
+            target, repository, _clone_credential(repository, env),
+            env_vars={VERSION_VAR: version.tag})
+        log.ok(f"{message}, {VERSION_VAR}={version.tag}")
+        return 0
+
+    def destroy(self, env: "Environment") -> int:
+        from simplon import log
+
+        target, _ = _target_for(env)
+        log.ok(remove(target))
+        return 0
+
+    def status(self, env: "Environment") -> str:
+        target, _ = _target_for(env)
+        return describe(target)
+
+
+def _target_for(env: "Environment") -> "tuple[PortainerTarget, Repository]":
+    """The carrier and the repository this environment names, resolved against the manifest.
+
+    Each of the three refusals names the key that is missing, because an environment is half a chain until
+    all three are there and "portainer backend failed" would send the reader through the whole file.
+    """
+    from simplon import carrierspec, context  # local: this module is a leaf, the manifest layer is not
+
+    if not env.carrier:
+        raise ValueError(
+            f"environment '{env.name}' has `backend: {BACKEND}` and no `carrier:`, so nothing says which "
+            f"Portainer it is deployed to")
+    if not env.stack:
+        raise ValueError(
+            f"environment '{env.name}' names a carrier and no `stack:`, so nothing says what the "
+            f"deployment is called on it")
+    if env.repository is None:
+        raise ValueError(
+            f"environment '{env.name}' names no `repository:`, and this backend deploys by handing "
+            f"Portainer one to clone. It takes a `url:`, and a `compose:` when the document is not at "
+            f"the repository root")
+    carriers = carrierspec.declared(context.current().manifest_data())
+    return PortainerTarget.from_carrier(carriers[env.carrier], env.stack), env.repository
+
+
+def _clone_credential(repository: "Repository", env: "Environment") -> "tuple[str, str] | None":
+    """The read credential Portainer clones with, or None for a public repository.
+
+    A prefix that is NAMED and not set is refused rather than silently dropped: the manifest saying
+    `credential_from: GIT` is a statement that this repository needs one, and deploying without it would
+    fail inside Portainer with *"authentication required: Repository not found"* - a message that blames
+    the repository for a variable that was never exported.
+    """
+    from simplon import credentials
+
+    if not repository.credential_from:
+        return None
+    found = credentials.credential(repository.credential_from, os.environ)
+    if found is None:
+        user_var, password_var = credentials.variables(repository.credential_from)
+        raise ValueError(
+            f"environment '{env.name}' says the compose document is cloned with `credential_from: "
+            f"{repository.credential_from}`, so {user_var} and {password_var} have to be set. Without "
+            f"them Portainer answers 'authentication required: Repository not found', which names the "
+            f"repository for a missing variable")
+    return found

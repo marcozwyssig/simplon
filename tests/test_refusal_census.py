@@ -271,7 +271,36 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # `check_every_task_is_used` for. It is documented as a convention instead.
     ("carrierspec", "_positive", "must be a number, got"): DIAGNOSIS,
     ("carrierspec", "_positive", "must be greater than zero"): DIAGNOSIS,
-    ("carrierspec", "_proxmox", "must be true or false"): DIAGNOSIS,
+    # ONE ENTRY, NOT TWO, AND THE MOVE IS WHY. si#5's third slice gave `portainer:` an `insecure:` of its
+    # own - measured, not symmetrical: the Portainer `deploy carrier` installs answers on 9443 with a
+    # certificate it made for itself, and a verifying request to the real carrier failed with
+    # CERTIFICATE_VERIFY_FAILED while the same request with verification off answered 200. Rather than
+    # write the refusal a second time it moved into `_insecure`, which both halves call - so the census
+    # key moved with it and the count did not grow. A refusal shared by two callers is one rule.
+    ("carrierspec", "_insecure", "must be true or false"): DIAGNOSIS,
+
+    # --- environments.py, the repository block (si#5 slice 3) ---------------------------------------
+    # The `repository:` block Portainer clones from. Two diagnosis and one expression rule, and the split
+    # is the same one `carrierspec._block` records because it is the same rule one section along.
+    #
+    # Diagnosis: a `repository:` that is a string rather than a mapping carries no `compose:` and names
+    # no file, and a block with no `url:` names nothing to clone. Neither manifest deploys anything.
+    #
+    # THE UNKNOWN-KEY REFUSAL IS THE EXPRESSION RULE, for the reason `_block`'s entry gives at length: a
+    # `password:` typed into this block would be IGNORED and the deployment would work, because the
+    # credential arrives from the environment as designed. That is a working product from a refused
+    # manifest, which is the sorting question's yes. The three questions:
+    #   - does it forbid something a product might legitimately want? No product declares a repository
+    #     today; the one consumer that is preparing to (biz-cockpit#263) asked for MORE strictness here,
+    #     not less. Zero over a set of one, and said as one.
+    #   - would deleting be cheaper than guarding? No: what is guarded is a secret in a committed file,
+    #     which is the thing that already happened once in this family and the reason `credentials.py`
+    #     exists.
+    #   - what would the fix cost a product that violated it? One line - the key moves out of the file
+    #     and into an exported variable, which is where it has to be for the clone to work at all.
+    ("environments", "_repository", "must be a mapping with a"): DIAGNOSIS,
+    ("environments", "_repository", "declares no `url:`"): DIAGNOSIS,
+    ("environments", "_repository", "does not take"): EXPRESSION,
 
     # --- environments.py, the chain (si#5) ---------------------------------------------------------
     # Three, all diagnosis. An environment pointing at a carrier nobody declared has no target; a
@@ -585,6 +614,7 @@ REACH: dict[tuple[str, str, str], str] = {
     # stray key under a carrier of simplon's own would be refused exactly the same way. It declares no
     # carrier today, which is why the claim is about the parser rather than about a placement.
     ("carrierspec", "_block", "does not take"): REACH_MERGED,
+    ("environments", "_repository", "does not take"): REACH_MERGED,
     ("manifest", "_single_dashed_letter", "must be a single dash plus one letter"): REACH_MERGED,
     ("manifest", "_validate_taxonomy", "impl and depends_on are mutually exclusive"): REACH_MERGED,
     ("manifest", "_validate_taxonomy", "missing help"): REACH_MERGED,
