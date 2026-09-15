@@ -429,3 +429,52 @@ def test_running_out_of_the_wait_is_its_own_outcome(monkeypatch, target) -> None
     message = str(refused.value)
     assert "still deploying" in message and "rather than deploying again" in message
     assert "could not bring it up" not in message, "a wait that ran out is not a failure"
+
+
+# --- what this backend does NOT do, pinned rather than described (biz-cockpit#263) -------------------
+
+def test_a_deployment_sends_no_compose_document_and_therefore_no_ports(monkeypatch, target) -> None:
+    """A CONSUMER ASKED FOR THIS AS A PROBE RATHER THAN A SENTENCE, and the reason is the better half of
+    the request: a description ages silently, a probe breaks loudly.
+
+    biz-cockpit is VPN-only with no authentication (their ADR 0009), so anything that made a service
+    publicly reachable would be a blocker rather than a feature. The guarantee they needed is that
+    `deploy up` decides nothing about ports: what a service binds is written in THEIR compose document,
+    and this backend never sends, rewrites or generates one. It hands over a repository and a name.
+
+    The assertion is therefore on the whole key set and not on `ports` alone - a future key that carried a
+    port, an override or a second compose document would have to pass through here, and this test is what
+    makes adding one a decision somebody takes rather than a line somebody writes.
+    """
+    # arrange
+    recorder = Creating({"Name": "app-prod", "EndpointId": 3, "Id": 9, "Status": portainer.STATUS_UP})
+    monkeypatch.setattr(portainer, "_request", recorder)
+
+    # act
+    portainer.deploy_from_repository(target, REPOSITORY, credential=("reader", "pat"),
+                                     env_vars={portainer.VERSION_VAR: "1.4.0"})
+
+    # assert
+    body = _sent(recorder, "POST")[2]
+    assert set(body) == {"name", "repositoryURL", "repositoryReferenceName", "composeFile", "env",
+                         "repositoryAuthentication", "repositoryUsername", "repositoryPassword"}, (
+        "a new key in this body is a new thing the kernel decides about somebody's deployment")
+    assert "stackFileContent" not in body, (
+        "the git route never sends a document - that is the string route, and the two must not blur")
+
+
+def test_the_whole_module_never_writes_a_compose_document(monkeypatch, target) -> None:
+    """The same promise one level up, so it cannot be kept by this file alone. `stackFileContent` is the
+    one field through which a compose document could reach Portainer, and on the git route nothing may
+    build one - not from a template, not from a product's file, not from the version."""
+    # arrange
+    recorder = Creating({"Name": "app-prod", "EndpointId": 3, "Id": 9, "Status": portainer.STATUS_UP})
+    monkeypatch.setattr(portainer, "_request", recorder)
+    monkeypatch.setattr(portainer, "_target_for", lambda env: (target, REPOSITORY))
+
+    # act
+    portainer.PortainerBackend().deploy(
+        _environment(), deployment.Version(selector="1.4.0", tag="1.4.0", builds=False))
+
+    # assert
+    assert not any("stackFileContent" in (body or {}) for _m, _p, body in recorder.calls)
