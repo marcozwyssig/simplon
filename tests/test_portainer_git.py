@@ -548,7 +548,7 @@ def test_a_manifest_names_variables_and_never_holds_one() -> None:
     writing a value into a committed file, and it must not be read as a name containing an equals sign."""
     # act / assert
     with pytest.raises(ValueError) as refused:
-        environments._required(["TOGGL_API_TOKEN=4c2b9f"], "environment 'prod'")
+        environments._names(["TOGGL_API_TOKEN=4c2b9f"], "required", "environment 'prod'")
 
     assert "never holds its value" in str(refused.value)
 
@@ -558,7 +558,7 @@ def test_the_manifest_may_not_claim_the_variable_the_kernel_sets() -> None:
     exported - and nothing would print which of the two had been used."""
     # act / assert
     with pytest.raises(ValueError) as refused:
-        environments._required([portainer.VERSION_VAR], "environment 'prod'")
+        environments._names([portainer.VERSION_VAR], "optional", "environment 'prod'")
 
     assert "the kernel sets it from the version being deployed" in str(refused.value)
 
@@ -578,3 +578,71 @@ def test_a_product_that_names_no_values_is_given_none() -> None:
     """An absent `required:` is not a refusal: the six products that predate all of this declare none."""
     # act / assert
     assert portainer.stack_values(_environment(), {}) == {}
+
+
+# --- the third state one list could not say (biz-cockpit#263, their correction) ----------------------
+
+def test_an_optional_value_travels_when_it_is_set() -> None:
+    """THE CASE THE FIRST FORM COULD NOT EXPRESS, and it was a real product's, not a hypothetical. Their
+    compose writes `${SMALLINVOICE_CLIENT_SECRET:-}`: the integration is deliberately optional. In
+    `required:` the product becomes uninstallable without a Smallinvoice account; in neither list the
+    secret never reaches the stack and the integration is not optional but impossible."""
+    # arrange
+    env = _environment(required=("HTTP_BIND",), optional=("SMALLINVOICE_CLIENT_SECRET", "APP_TITLE"))
+    environ = {"HTTP_BIND": "127.0.0.1", "SMALLINVOICE_CLIENT_SECRET": "si_live"}
+
+    # act
+    values = portainer.stack_values(env, environ)
+
+    # assert
+    assert values == {"HTTP_BIND": "127.0.0.1", "SMALLINVOICE_CLIENT_SECRET": "si_live"}
+    assert "APP_TITLE" not in values, (
+        "an optional name with no value is left OUT rather than sent as an empty string - sending \"\" "
+        "and sending nothing are the same to that document today, and the day they differ the kernel "
+        "would have chosen for it")
+
+
+def test_an_absent_optional_value_does_not_fail_the_deployment() -> None:
+    """The whole point of the second list: `deploy up` must work for an operator who has no Smallinvoice
+    account at all, which is what their ticket #201 made possible in the first place."""
+    # arrange
+    env = _environment(required=("HTTP_BIND",),
+                       optional=("SMALLINVOICE_CLIENT_SECRET", "TOGGL_API_TOKEN"))
+
+    # act
+    values = portainer.stack_values(env, {"HTTP_BIND": "127.0.0.1"})
+
+    # assert
+    assert values == {"HTTP_BIND": "127.0.0.1"}
+
+
+def test_a_name_in_both_lists_is_refused_rather_than_ranked() -> None:
+    """"Must have a value" and "may be absent" about one variable is not a precedence question with a
+    right answer - it is a manifest that says two things, and the kernel picking one would decide it
+    silently."""
+    # arrange
+    document = {"carriers": {"haus": {"proxmox": {"node": "pve", "kind": "lxc"},
+                                      "portainer": {"url_from": "P"}}},
+                "environments": {"prod": {"backend": "portainer", "carrier": "haus", "stack": "s",
+                                          "required": ["TOGGL_API_TOKEN"],
+                                          "optional": ["TOGGL_API_TOKEN"]}},
+                "default": "prod"}
+
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        environments.parse_data(document, ("portainer",))
+
+    message = str(refused.value)
+    assert "TOGGL_API_TOKEN" in message and "One of the two lists is the answer" in message
+
+
+def test_optional_alone_still_needs_somewhere_to_go() -> None:
+    # arrange
+    document = {"environments": {"prod": {"backend": "portainer", "optional": ["APP_TITLE"]}},
+                "default": "prod"}
+
+    # act / assert
+    with pytest.raises(ValueError) as refused:
+        environments.parse_data(document, ("portainer",))
+
+    assert "no deployment for those values to be given to" in str(refused.value)

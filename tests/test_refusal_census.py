@@ -326,9 +326,19 @@ CENSUS: dict[tuple[str, str, str], str] = {
     #     version the command names is the version deployed, which is why the variable exists at all.
     #   - what would the fix cost a product that violated it? One line removed from the list. The value it
     #     was exporting is what `--version` takes.
-    ("environments", "_required", "must be a list of variable NAMES"): DIAGNOSIS,
-    ("environments", "_required", "is not one"): DIAGNOSIS,
-    ("environments", "_required", "may not name"): EXPRESSION,
+    #
+    # THE FIFTH ARRIVED FROM THE CONSUMER, and it is why there are two lists rather than one. A name in
+    # BOTH `required:` and `optional:` says a value must be there and may be absent. Diagnosis: the
+    # manifest states two things about one variable, and a kernel that ranked them would be deciding
+    # silently which half of the document to believe.
+    #
+    # ONE VALIDATOR FOR BOTH LISTS, so the four rules above are four and not eight. The difference between
+    # the lists is read at deployment time - one must have a value, the other may not - and nothing about
+    # what a manifest may WRITE differs between them.
+    ("environments", "_names", "must be a list of variable NAMES"): DIAGNOSIS,
+    ("environments", "_names", "is not one"): DIAGNOSIS,
+    ("environments", "_names", "may not name"): EXPRESSION,
+    ("environments", "parse_data", "stand(s) in both"): DIAGNOSIS,
     ("environments", "parse_data", "no deployment for those values to be given to"): DIAGNOSIS,
 
 
@@ -645,7 +655,7 @@ REACH: dict[tuple[str, str, str], str] = {
     # carrier today, which is why the claim is about the parser rather than about a placement.
     ("carrierspec", "_block", "does not take"): REACH_MERGED,
     ("environments", "_repository", "does not take"): REACH_MERGED,
-    ("environments", "_required", "may not name"): REACH_MERGED,
+    ("environments", "_names", "may not name"): REACH_MERGED,
     ("manifest", "_single_dashed_letter", "must be a single dash plus one letter"): REACH_MERGED,
     ("manifest", "_validate_taxonomy", "impl and depends_on are mutually exclusive"): REACH_MERGED,
     ("manifest", "_validate_taxonomy", "missing help"): REACH_MERGED,

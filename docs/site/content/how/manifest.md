@@ -661,10 +661,13 @@ environments:
       ref: release/2.x          # default: main; `refs/tags/v2.1.0` deploys a tag
       compose: deploy/docker-compose.yml
       credential_from: GIT      # a PREFIX -> GIT_USER, GIT_PASSWORD; omit it for a public repository
-    required:                   # the values this deployment is given, by NAME
+    required:                   # must have a value, or the deployment stops
       - COCKPIT_DATA_DIR
       - BACKUP_DIR
       - HTTP_BIND
+    optional:                   # travels when set, absent when not
+      - SMALLINVOICE_CLIENT_SECRET
+      - APP_TITLE
 ```
 
 **The sizes you leave out are the ones the community Proxmox helper script uses** - 2 cores, 2048 MB,
@@ -721,10 +724,22 @@ fails - so the deployment is read back until Portainer says it is up, and three 
 it is up, it failed *(with Portainer's own sentence)*, or it is still deploying when the wait ran out.
 {{< /callout >}}
 
-**`required:` names the variables a deployment is given, and every one of them must have a value.** The
-values come from the environment the deploy command runs in, on *every* deployment - not from a copy
-maintained by hand in Portainer. Portainer stores them either way; the question is only whether its copy
-is an image something refreshes or an original nobody does, and two masters of one set of values drift.
+**`required:` and `optional:` name the variables a deployment is given.** The values come from the
+environment the deploy command runs in, on *every* deployment - not from a copy maintained by hand in
+Portainer. Portainer stores them either way; the question is only whether its copy is an image something
+refreshes or an original nobody does, and two masters of one set of values drift.
+
+**Two lists, because "travels" and "may not be empty" are two statements.** A name in `required:` must
+have a value when the deployment runs. A name in `optional:` travels when it has one and is left out when
+it has not - and *left out*, not sent as an empty string, because to a document that writes `${X:-}` those
+are the same today and the day they differ the kernel would have decided for it. A name in neither list
+does not reach the deployment at all, so the two lists are the whole answer to "what goes over".
+
+It was one list first, and the second one is not symmetry - it is a case one list could not say. A real
+product writes `${SMALLINVOICE_CLIENT_SECRET:-}` where **empty means "not connected"**: the integration is
+deliberately optional. In `required:` the product becomes uninstallable without a Smallinvoice account; in
+neither list the secret never arrives and the integration is not optional but impossible. A name in *both*
+lists is refused rather than ranked.
 
 **An empty value fails the deployment.** It is the one place a consuming product asked for *more*
 strictness than was offered, and the case is worth the refusal:

@@ -34,10 +34,13 @@ read out of the environment the deploy command runs in, on *every* deployment.
   prod:
     backend: portainer
     stack: bc-prod
-    required:
+    required:                 # must have a value, or the deployment stops
       - COCKPIT_DATA_DIR
       - BACKUP_DIR
       - HTTP_BIND
+    optional:                 # travels when set, absent when not
+      - SMALLINVOICE_CLIENT_SECRET
+      - APP_TITLE
 ```
 
 **Why not once into Portainer, by hand.** Portainer stores the stack's environment either way. The only
@@ -62,7 +65,17 @@ deploy command runs; a value that is missing would let the deployed document fal
 default, which is how an instance ends up running somewhere nobody is looking
 ```
 
-**The list is named after what it enforces, not after what it holds** - the consumer's request, and the
+**There are two lists because "travels" and "may not be empty" are two statements**, and the first form
+had quietly made them one. It took a real product to show it: theirs writes
+`${SMALLINVOICE_CLIENT_SECRET:-}`, where *empty means "not connected"* and the integration is deliberately
+optional. In `required:` that product becomes uninstallable without a Smallinvoice account - undoing the
+very ticket that made the integration optional. In neither list the secret never reaches the stack, so the
+integration is not optional but impossible. An `optional:` name with no value is left **out** of the
+payload rather than sent as an empty string: to a document writing `${X:-}` those are the same today, and
+the day they differ the kernel would have chosen for it. A name in both lists is refused rather than
+ranked.
+
+**The lists are named after what they enforce, not after what they hold** - the consumer's request, and the
 right one: the rule is "this variable must have a value", which is a statement about obligation and not
 about a datatype. A secret can join the same list without it being renamed.
 

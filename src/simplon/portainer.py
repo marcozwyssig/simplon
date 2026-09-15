@@ -446,10 +446,14 @@ class PortainerBackend:
     of. A product that wants a DIFFERENT portainer backend still registers one and wins - see
     `tasks.deploy._backends`.
 
-    WHAT IT DOES NOT DO YET, said here rather than discovered: it passes the product's own environment
-    values to nothing. `VERSION_VAR` is the one variable it sends, and it is the kernel's. The ~40 values
-    a real consumer's compose document interpolates - three of them secrets - are a slice of their own,
-    open as biz-cockpit#263.
+    WHAT IT PASSES TO THE DEPLOYMENT is `VERSION_VAR` plus whatever the environment's `required:` names,
+    read out of the environment the command runs in. It carries NO COUNT of a consumer's variables here,
+    and the omission is deliberate: this docstring used to say "~40, three of them secrets", taken off
+    another repository's compose document on a day. The number was wrong within two days - a search for
+    `[A-Z_]*` had stopped at a digit and missed four names - and nothing here could have noticed, because
+    the truth lives in a repository this module cannot see. `surface.py` records the same lesson at
+    length: a fact about somebody else's repository, copied into a comment, is a second source with no
+    comparison. The ticket is biz-cockpit#263; read the count there, where it is measurable.
     """
 
     name = BACKEND
@@ -491,19 +495,30 @@ def stack_values(env: "Environment", environ: "Mapping[str, str] | None" = None)
     repository and one maintained by hand in a web interface, are two masters of one thing - and once they
     drift the instance runs on values that are written down nowhere. So every deployment sends them again.
 
-    AN EMPTY VALUE IS A FAILURE AND NOT A DEFAULT, and the consumer asked for this specifically, with the
-    case that makes it worth the refusal. Their compose document writes
+    AN EMPTY `required:` VALUE IS A FAILURE AND NOT A DEFAULT, and the consumer asked for this
+    specifically, with the case that makes it worth the refusal. Their compose document writes
     `${COCKPIT_DATA_DIR:-${HOME}/.biz-cockpit}:/data`. If that variable does not arrive, compose does not
     fail - it falls back, and the bind mount lands in the CARRIER's `/root/.biz-cockpit` instead of
     `/srv/biz-cockpit/prod`. The container writes happily, the deployment looks green, and the database is
     outside everything `backup` knows about. An instance that runs and is not backed up is exactly this
     repository's recurring defect: green because nobody looks.
 
+    AN ABSENT `optional:` VALUE IS NOT THE SAME THING AND MUST NOT BE MADE ONE. The same product writes
+    `${SMALLINVOICE_CLIENT_SECRET:-}`, where empty is a STATEMENT - the integration is not connected, the
+    composition root does not wire the port, and the route answers 409 with a reason. So an optional name
+    with no value is left out of the payload entirely rather than sent as an empty string: sending `""`
+    and sending nothing are the same to that document today, and the day they differ, the one this kernel
+    chose would be the one nobody wrote down.
+
     ALL OF THEM AT ONCE. An operator repairing eight variables one run at a time is being made to do the
     kernel's work; the refusal names every missing one.
     """
     source = os.environ if environ is None else environ
-    missing = [name for name in env.required if not (source.get(name) or "").strip()]
+
+    def value(name: str) -> str:
+        return (source.get(name) or "").strip()
+
+    missing = [name for name in env.required if not value(name)]
     if missing:
         raise ValueError(
             f"environment '{env.name}' requires {len(env.required)} value(s) and "
@@ -511,7 +526,8 @@ def stack_values(env: "Environment", environ: "Mapping[str, str] | None" = None)
             f"{', '.join(missing)}. They are exported where the deploy command runs; a value that is "
             f"missing would let the deployed document fall back to its own default, which is how an "
             f"instance ends up running somewhere nobody is looking")
-    return {name: source[name].strip() for name in env.required}
+    return {name: value(name)
+            for name in (*env.required, *env.optional) if value(name)}
 
 
 def _target_for(env: "Environment") -> "tuple[PortainerTarget, Repository]":
