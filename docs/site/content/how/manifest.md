@@ -660,6 +660,11 @@ environments:
 4 GB - read off `ct/docker.sh` rather than invented, so a carrier that says nothing gets what that tool
 would have given it.
 
+**Two secrets are read from the environment and neither has a field here.** `token_from: PROXMOX` means
+`PROXMOX_API_TOKEN`; `url_from: PORTAINER` means `PORTAINER_URL`, `PORTAINER_TOKEN` and - because
+Portainer needs an admin account *at start* or it locks itself after five minutes - `PORTAINER_PASSWORD`,
+which must be at least twelve characters.
+
 **`ssh_key:` is a PUBLIC key and belongs in the file.** It is not a secret, and putting it here is what
 makes the carrier fully described by the manifest. The private half never appears.
 

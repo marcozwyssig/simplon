@@ -25,6 +25,38 @@ it is the one section held only to existing.
 
 ## 0.16.0
 
+### The carrier's Portainer is usable when the command finishes (si#5)
+
+Two gaps, both measured against a real carrier the day after it was built, and both of which left
+`deploy carrier` delivering something nobody could use.
+
+**A Portainer with no admin account locks itself after five minutes.**
+
+```text
+the Portainer instance timed out for security purposes, to re-enable your Portainer instance,
+you will need to restart Portainer
+```
+
+`/api/users/admin/init` then answers 403, because 2.45 wants a setup token it prints into its own log.
+Parsing a log for a token is fragile; starting Portainer already initialised is not. It is started with
+`--admin-password-file` now, and `/api/users/admin/check` answers 204 from the first second.
+
+The password is read from the environment off the same prefix the carrier's `url_from:` names -
+`url_from: PORTAINER` means `PORTAINER_PASSWORD`. **It is required**, and short ones are refused before
+anything runs: Portainer will not start on fewer than twelve characters, and one that never starts never
+initialises.
+
+**A fresh Portainer manages nothing.** `GET /api/endpoints` comes back empty while a carrier declares
+`endpoint: 1` - so that number was a promise nobody kept, and the first stack deployment would have
+failed against an environment that did not exist. The local Docker environment is created now, once.
+
+**A carrier built before this release is repaired rather than left alone.** A play that acted only on a
+*missing* container would leave every existing Portainer locked forever. This one notices how the
+container was started and rebuilds it - driven by putting the trap back by hand and watching the command
+take it down and replace it.
+
+**Nothing to do** beyond exporting the password before the next `deploy carrier`.
+
 ### `deploy carrier` makes the thing an environment stands on (si#5)
 
 The second slice: the vocabulary of 0.16.0's first entry now has a command behind it. One `deploy

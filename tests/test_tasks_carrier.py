@@ -99,7 +99,7 @@ def test_the_playbook_names_a_pinned_portainer_and_fetches_no_compose_file():
     """The community addon does `curl https://downloads.portainer.io/ce-sts/portainer-compose.yaml` - a
     moving channel - and runs compose. Both are what a pin exists to stop."""
     # act
-    playbook = carrier.PLAYBOOK.format(image=carrier.PORTAINER_IMAGE, port=carrier.PORTAINER_PORT)
+    playbook = _play()
 
     # assert
     steps = _code(playbook)
@@ -137,3 +137,94 @@ def test_a_storage_serves_containers_only_when_all_three_fields_say_so(storage, 
     'this node knows of it'."""
     # assert
     assert storage.serves_containers is (why == "serves containers")
+
+
+# --- the two gaps that left a carrier unusable (si#5, measured 2026-09-15) --------------------------
+
+def _play() -> str:
+    return carrier.PLAYBOOK.format(image=carrier.PORTAINER_IMAGE, port=carrier.PORTAINER_PORT,
+                                   password="not-a-real-password")
+
+
+def test_portainer_is_started_already_initialised():
+    """THE FIVE-MINUTE TRAP. A Portainer with no admin account locks itself - *"the Portainer instance
+    timed out for security purposes"* - and `/api/users/admin/init` then answers 403 because 2.45 wants
+    a setup token it prints into its own log. Measured: with the password file, `/api/users/admin/check`
+    answers 204 from the first second."""
+    # act
+    steps = _code(_play())
+
+    # assert
+    assert "--admin-password-file" in steps
+    assert "/run/secrets/adminpw" in steps
+
+
+def test_a_portainer_that_was_started_without_it_is_replaced():
+    """A play that acted only on a MISSING container would leave every carrier built before this change
+    locked forever. That is the difference between converging and merely doing nothing twice - and it
+    was driven: the trap was recreated by hand, the command took the instance down and rebuilt it."""
+    # act
+    steps = _code(_play())
+
+    # assert
+    assert "docker rm -f portainer" in steps
+    assert steps.count('"admin-password-file" not in container_present.stdout') == 2, (
+        "both the removal and the creation have to test it, or one of the two runs on its own")
+
+
+def test_the_local_docker_environment_is_created():
+    """A fresh Portainer manages NOTHING - `GET /api/endpoints` comes back empty while the carrier
+    declares `endpoint: 1`. Without this, that number is a promise nobody keeps."""
+    # act
+    steps = _code(_play())
+
+    # assert
+    assert "EndpointCreationType" in steps
+    assert "endpoints.json | length == 0" in steps, (
+        "creating it unconditionally would add a second environment on every run")
+
+
+def test_the_playbook_uses_no_go_template():
+    """`{{ ... }}` is a Go template AND Jinja, so a `docker --format` string is read by Ansible before
+    docker ever sees it. Measured: the play failed to parse at all - *"Values starting with a quote must
+    end with the same quote"*. Searching the raw inspect JSON costs nothing and cannot be misread."""
+    # act
+    steps = _code(_play())
+
+    # assert
+    assert "--format" not in steps and "join .Config" not in steps
+
+
+def test_the_host_may_not_share_the_groups_name():
+    """Ansible warns *"Found both group and host with same name: carrier"* and the two then shadow each
+    other in ways that surface as a missing variable three tasks later."""
+    # arrange
+    import inspect as _inspect
+
+    # act
+    source = _inspect.getsource(carrier._ansible)
+
+    # assert
+    assert "{carrier.name} ansible_host=" in source
+
+
+@pytest.mark.parametrize("value, why", [("", "not set at all"), ("kurz", "shorter than Portainer takes")])
+def test_a_missing_or_short_admin_password_is_refused_before_anything_runs(monkeypatch, value, why):
+    """Refusing here beats delivering a carrier whose Portainer nobody can ever log into: Portainer
+    refuses to start on a short password, and one that never starts never initialises."""
+    # arrange
+    monkeypatch.setenv("PORTAINER_PASSWORD", value)
+
+    # act / assert
+    with pytest.raises(SystemExit):
+        carrier.portainer_password(CARRIER)
+
+
+def test_the_password_is_read_off_the_same_prefix_the_url_is(monkeypatch):
+    """One prefix, the credentials beside it - which is what keeps a carrier from needing a second field
+    for every secret it touches."""
+    # arrange
+    monkeypatch.setenv("PORTAINER_PASSWORD", "long-enough-password")
+
+    # act / assert
+    assert carrier.portainer_password(CARRIER) == "long-enough-password"
