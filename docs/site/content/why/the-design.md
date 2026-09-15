@@ -154,7 +154,7 @@ by the kind of work instead of by the phase it runs in:
 | documentation | Hugo, docToolchain, the assembled command line itself, the product's own `.feature` files | `docs:site`, `docs:render`, `docs:reference`, `docs:acceptance` |
 | packaging and publishing | `docker`, `oras`, `gh`, `dotnet` | `build:image`, `release:image`, `release:artifact`, `release:asset`, `release:nuget`, `release:conan`, `build:nuget-config`, `build:nuget-restore`, `build:conan-cache` |
 | the machine and its services | `oras`, `docker compose`, `claude`, `sudo`/`usermod`, a pinned toolchain image - and nothing at all for `support:environments`, which only reads the manifest | `support:install`, `support:nexus`, `support:claude-plugins`, `support:environments`, `support:ci-privileges`, `support:toolchain`, `toolchain:run` |
-| running things | the backend a product registers, and `oras` for a client install | `deploy:up`, `deploy:down` |
+| running things | the backend a product registers, `oras` for a client install, and - for the machine underneath - Pulumi and Ansible, each in a pinned container | `deploy:up`, `deploy:down`, `deploy:carrier` |
 | the declarations themselves | nothing external | `tasks:generate`, `tasks:catalogue`, `support:workflows`, `support:completion`, `build:cmake-files`, `build:dotnet-solution` |
 
 Seven kinds of work, and the middle column barely intersects. Every one of them is reached through
@@ -203,7 +203,9 @@ throughout. Two meanings of one word across one site is worse than a plainer wor
 {{< /callout >}}
 
 **Running things** was the row that used to be missing, and half of it still is. si#235 put `deploy:up`
-and `deploy:down` in the table: they say which version goes out and prove it exists. **Watching** things
+and `deploy:down` in the table: they say which version goes out and prove it exists. si#5 added the
+third, `deploy:carrier`, which makes the machine the other two deploy onto - and it is the first place
+the kernel drives a tool it does not ship, in a container, the way `docs:render` does. **Watching** things
 is what the catalogue still carries nothing for - and so is the provider half of running them, the part
 that talks to a Portainer or a Proxmox. Not because it is not real work, but because those tools belong
 to the shared environment

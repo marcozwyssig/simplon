@@ -25,6 +25,53 @@ it is the one section held only to existing.
 
 ## 0.16.0
 
+### `deploy carrier` makes the thing an environment stands on (si#5)
+
+The second slice: the vocabulary of 0.16.0's first entry now has a command behind it. One `deploy
+carrier` reads the `carriers:` section an environment points at, makes the machine on Proxmox, and puts
+Portainer on it.
+
+```text
+$ ./myctl.sh prod deploy carrier
+==> carrier 'hausportainer' for environment 'prod' on pve-2 (lxc)
+    ...
+    "msg": "Portainer 2.45.0 on 10.0.0.124:9443"
+```
+
+**Two tools, each in a pinned container, each doing the half it is good at.** Pulumi describes a goal and
+keeps state; Ansible describes steps and keeps none. Neither is installed on your machine - the same
+arrangement `docs:render` uses.
+
+**It is its own command and not a preamble to `deploy up`**: two verbs, two verdicts. And it sits under
+`deploy` rather than `support`, because setting a carrier up needs the environment and `deploy` is
+already environment-first.
+
+**Run it twice.** Measured on a real cluster: `3 unchanged` from Pulumi, `changed=0` from Ansible, one
+container on the machine.
+
+### Three facts in it that each cost a measurement
+
+Worth reading before you change any of them, because each is a line that looks like tidying up.
+
+**`nesting` and not `keyctl`.** The design this came from named both as preconditions for Docker in an
+unprivileged container. Proxmox refuses every feature flag except `nesting` to an **API token** - HTTP
+403, *"only allowed for root@pam"* - even a root token made with `--privsep 0`. And Docker does not need
+it: Debian 13, kernel 7.0, overlay2, cgroup v2, `docker run hello-world` green with nesting alone.
+
+**A public key and never a password.** Pulumi encrypts only values that are *marked* secret. The provider
+marks its own `apiToken` and `password`; the container resource marks nothing. So a container created
+with a root password would put that password in clear text into the state file - which is the file you
+are asked to commit. Measured on a real run: the API token appears **zero** times in clear, the public
+key once, which is correct because it is public.
+
+**Your carrier's storage is checked before anything runs.** `/nodes/<node>/storage` lists storages the
+node cannot actually use - one defined for a *different* node comes back with `enabled: 0, active: 0`.
+Creating a container on it fails with an HTTP 500 three minutes in. The kernel asks first, and tells you
+which storages that node really offers for containers.
+
+**Nothing to do.** A product that declares no `carriers:` section has no new command and no new
+requirement.
+
 ### An environment can say what it stands on (si#5)
 
 The first slice of the deployment-provider work, and it is the vocabulary rather than a provider. A new

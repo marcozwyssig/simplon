@@ -147,7 +147,7 @@ the number that says whether a rib is filled:
 | `build` | phase, agnostic | 6 |
 | `test` | phase, agnostic | 7 |
 | `release` | phase, agnostic | 6 |
-| `deploy` | phase, env-first | 2 |
+| `deploy` | phase, env-first | 3 |
 | `monitor` | phase, env-first | 0 |
 | `support` | not a phase | 8 |
 | `vcs` | family | 5 |
@@ -155,7 +155,7 @@ the number that says whether a rib is filled:
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Forty-one coordinates: twenty-nine carrying a placement, twelve free to be filed. The numbers in this sentence, in that
+Forty-two coordinates: thirty carrying a placement, twelve free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -299,12 +299,27 @@ resolved - that distinction is spelled out in [Handing a package over](../../wha
 
 *Put them into an environment.* Env-first: the environment is the outer token, before the group.
 
-**In the catalogue today: 2 tasks.**
+**In the catalogue today: 3 tasks.**
 
+- `deploy:carrier`
 - `deploy:down`
 - `deploy:up`
 
-**What a product brings itself.** The rollout. What these two add is the half no product had: *which*
+**And one of the three makes the thing the other two deploy onto** (si#5). `deploy:carrier` reads the
+`carriers:` section an environment points at and builds what it names: the machine on Proxmox, then the
+Portainer on it. Two tools, each in a pinned container, each doing the half it is good at - Pulumi
+describes a goal and keeps state, Ansible describes steps and keeps none.
+
+**It is its own command and not a preamble to `deploy up`**, which was decided rather than assumed: two
+verbs, two verdicts. A setup that fails says so, instead of taking a deployment down with it - and a
+`deploy up` that created a container the first time it ran would be a very large command.
+
+**It sits under `deploy` and not under `support`**, and that took back an earlier decision. Setting a
+carrier up needs the environment; `support` is environment-less by taxonomy and `deploy` is already
+environment-first. The alternatives on the table were opening `support` to environments, reaching the
+environment through a variable, and a seventh group. None was needed.
+
+**What a product brings itself.** The rollout. What `up` and `down` add is the half no product had: *which*
 version is going out, whether it exists, and - for a server - handing it to the backend the product
 registered. A `deploy:` section says whether this is a client application installed into a directory here
 or a server brought up on a target, and which `images:` or `artifacts:` entry the versions are looked up

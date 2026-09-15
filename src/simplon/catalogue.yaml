@@ -469,6 +469,18 @@ tasks:
   # A TASK and not a placed command, for `release:artifact`'s reason: both need a `deploy:` section
   # naming what is deployed and whether this is a client or a server, so a command declared here would
   # die on its first line in a product that deploys nothing.
+  # A TASK and not a placed command, for the same reason `deploy:up` is one: it needs a `carriers:`
+  # section and an environment that points at one, so a command declared here would die on its first
+  # line in every product that deploys nowhere.
+  #
+  # UNDER `deploy` AND NOT UNDER `support` (si#5, owner 2026-09-14). Setting a carrier up needs the
+  # environment; `support` is environment-less by taxonomy and `deploy` is already environment-first.
+  # That decision took back an earlier placement and removed the whole conflict rather than managing it.
+  deploy:carrier:
+    impl: simplon.tasks.carrier:up
+    help: "Make the carrier this environment stands on: the machine, then the Portainer on it."
+    params:
+      environment: { help: "the environment whose carrier to make (default: the active one)" }
   deploy:up:
     impl: simplon.tasks.deploy:up
     help: "Deploy a version - a published one, `latest`, or `local` for the current code base."
