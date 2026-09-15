@@ -99,7 +99,7 @@ def test_the_playbook_names_a_pinned_portainer_and_fetches_no_compose_file():
     """The community addon does `curl https://downloads.portainer.io/ce-sts/portainer-compose.yaml` - a
     moving channel - and runs compose. Both are what a pin exists to stop."""
     # act
-    playbook = carrier.PLAYBOOK.format(image=carrier.PORTAINER_IMAGE, port=carrier.PORTAINER_PORT)
+    playbook = _play()
 
     # assert
     steps = _code(playbook)
@@ -137,3 +137,151 @@ def test_a_storage_serves_containers_only_when_all_three_fields_say_so(storage, 
     'this node knows of it'."""
     # assert
     assert storage.serves_containers is (why == "serves containers")
+
+
+# --- the two gaps that left a carrier unusable (si#5, measured 2026-09-15) --------------------------
+
+def _play() -> str:
+    return carrier.PLAYBOOK.format(image=carrier.PORTAINER_IMAGE, port=carrier.PORTAINER_PORT,
+                                   password="not-a-real-password")
+
+
+def test_portainer_is_started_already_initialised():
+    """THE FIVE-MINUTE TRAP. A Portainer with no admin account locks itself - *"the Portainer instance
+    timed out for security purposes"* - and `/api/users/admin/init` then answers 403 because 2.45 wants
+    a setup token it prints into its own log. Measured: with the password file, `/api/users/admin/check`
+    answers 204 from the first second."""
+    # act
+    steps = _code(_play())
+
+    # assert
+    assert "--admin-password-file" in steps
+    assert "/run/secrets/adminpw" in steps
+
+
+def test_a_portainer_that_was_started_without_it_is_replaced():
+    """A play that acted only on a MISSING container would leave every carrier built before this change
+    locked forever. That is the difference between converging and merely doing nothing twice - and it
+    was driven: the trap was recreated by hand, the command took the instance down and rebuilt it."""
+    # act
+    steps = _code(_play())
+
+    # assert
+    assert "docker rm -f portainer" in steps
+    assert steps.count('"admin-password-file" not in container_present.stdout') == 2, (
+        "both the removal and the creation have to test it, or one of the two runs on its own")
+
+
+def test_the_local_docker_environment_is_created():
+    """A fresh Portainer manages NOTHING - `GET /api/endpoints` comes back empty while the carrier
+    declares `endpoint: 1`. Without this, that number is a promise nobody keeps."""
+    # act
+    steps = _code(_play())
+
+    # assert
+    assert "EndpointCreationType" in steps
+    assert "endpoints.json | length == 0" in steps, (
+        "creating it unconditionally would add a second environment on every run")
+
+
+def test_the_playbook_uses_no_go_template():
+    """`{{ ... }}` is a Go template AND Jinja, so a `docker --format` string is read by Ansible before
+    docker ever sees it. Measured: the play failed to parse at all - *"Values starting with a quote must
+    end with the same quote"*. Searching the raw inspect JSON costs nothing and cannot be misread."""
+    # act
+    steps = _code(_play())
+
+    # assert
+    assert "--format" not in steps and "join .Config" not in steps
+
+
+def test_the_host_may_not_share_the_groups_name():
+    """Ansible warns *"Found both group and host with same name: carrier"* and the two then shadow each
+    other in ways that surface as a missing variable three tasks later."""
+    # arrange
+    import inspect as _inspect
+
+    # act
+    source = _inspect.getsource(carrier._ansible)
+
+    # assert
+    assert "{carrier.name} ansible_host=" in source
+
+
+@pytest.mark.parametrize("value, why", [("", "not set at all"), ("kurz", "shorter than Portainer takes")])
+def test_a_missing_or_short_admin_password_is_refused_before_anything_runs(monkeypatch, value, why):
+    """Refusing here beats delivering a carrier whose Portainer nobody can ever log into: Portainer
+    refuses to start on a short password, and one that never starts never initialises."""
+    # arrange
+    monkeypatch.setenv("PORTAINER_PASSWORD", value)
+
+    # act / assert
+    with pytest.raises(SystemExit):
+        carrier.portainer_password(CARRIER)
+
+
+def test_the_password_is_read_off_the_same_prefix_the_url_is(monkeypatch):
+    """One prefix, the credentials beside it - which is what keeps a carrier from needing a second field
+    for every secret it touches."""
+    # arrange
+    monkeypatch.setenv("PORTAINER_PASSWORD", "long-enough-password")
+
+    # act / assert
+    assert carrier.portainer_password(CARRIER) == "long-enough-password"
+
+
+# --- no secret is written to a file or onto a command line ------------------------------------------
+
+def test_the_rendered_playbook_carries_no_password():
+    """THE DEFECT THIS EXISTS FOR, and it was mine. The first version interpolated the admin password
+    into the playbook, which the kernel then wrote into `build/carrier/<name>/carrier.yml` at mode
+    0644 - world-readable on the operator's machine, and the exact thing `credentials.py` exists to
+    prevent, committed by the code that cites it.
+
+    The play reads the value with `lookup('env', ...)` now, so the rendered file carries the NAME and
+    never the value.
+    """
+    # arrange
+    secret = "a-password-nobody-should-find"
+
+    # act
+    rendered = carrier.PLAYBOOK.format(image=carrier.PORTAINER_IMAGE, port=carrier.PORTAINER_PORT)
+
+    # assert
+    assert secret not in rendered
+    assert "lookup('env', 'PORTAINER_PASSWORD')" in rendered, (
+        "the play has to NAME the variable, or it reads nothing and Portainer starts uninitialised")
+    assert "{password}" not in carrier.PLAYBOOK, (
+        "a format field for the value is the defect itself, waiting for a caller to fill it")
+
+
+def test_no_secret_is_put_on_a_docker_command_line():
+    """`credentials.py`'s own rule: argv is world-readable - `/proc/<pid>/cmdline` on Linux, `ps` on
+    macOS - and a command line lands in the shell history. `docker run -e NAME` takes the value out of
+    this process's environment; `-e NAME=value` writes it where anyone on the host can read it for as
+    long as the container runs.
+
+    Read off the SOURCE rather than by running docker, because what is being held is how the argv is
+    built, and a test that needed a daemon would not run in this suite at all.
+    """
+    # arrange
+    import inspect as _inspect
+    import re
+
+    # arrange: the variables that carry a SECRET, and only those. The first draft of this test flagged
+    # every interpolated `-e NAME=value` and therefore flagged the node name, the datastore and the
+    # PUBLIC ssh key - configuration, all of it, and none of it a problem on a command line. A rule that
+    # reports configuration as a leak is a rule somebody loosens on the day it is inconvenient, and then
+    # it no longer catches the real case.
+    secret_bearing = {carrier.CARRIER_TOKEN_ENV, carrier.PULUMI_PASSPHRASE_ENV,
+                      f"PORTAINER{carrier.PASSWORD_SUFFIX}"}
+
+    # act
+    source = _inspect.getsource(carrier._pulumi) + _inspect.getsource(carrier._ansible)
+    with_value = {name for name in re.findall(r'"-e",\s*f?"([A-Z_]+)=', source)}
+
+    # assert
+    leaked = sorted(secret_bearing & with_value)
+    assert leaked == [], (
+        f"these put a secret's VALUE on the command line: {leaked}. Set it in os.environ and pass the "
+        f"bare name, which is what `docker run -e NAME` is for")
