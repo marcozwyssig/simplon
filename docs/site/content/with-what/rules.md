@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 143 | nothing - the declaration had no working meaning |
-| expression rule | 24 | something it could otherwise have said |
-| **all load-time refusals** | **167** | |
+| diagnosis | 147 | nothing - the declaration had no working meaning |
+| expression rule | 25 | something it could otherwise have said |
+| **all load-time refusals** | **172** | |
 
 A **load-time refusal** is one raised on the way from the manifest to a decision, with no tool consulted
 in between. Refusals that happen later - a task whose tool is missing, a build the daemon rejected - are a
@@ -113,7 +113,7 @@ Self-binding is not a third bucket of refusals; it is how far an expression rule
 
 | reach | count | meaning |
 | --- | --- | --- |
-| the kernel is held to it too | 18 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
+| the kernel is held to it too | 19 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
 | a statement about the platform/product seam | 6 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
 | the kernel exempts itself | 0 | there is no longer a rule the kernel declines to apply to itself |
 
