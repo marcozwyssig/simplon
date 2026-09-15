@@ -19,7 +19,7 @@ import pytest
 from simplon import backend, carrierspec, deployment, environments, portainer
 from simplon.tasks import deploy as deploy_task
 
-from tests.test_portainer import Recorder
+from conftest import Recorder
 
 CARRIER = carrierspec.Carrier(
     name="hausportainer",
