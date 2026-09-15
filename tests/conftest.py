@@ -37,3 +37,26 @@ def _this_suite_runs_as_if_on_a_host(monkeypatch):
     for name in AMBIENT:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(hostpath, "in_a_container", lambda: False)
+
+
+class Recorder:
+    """A Portainer that records the calls and answers by path.
+
+    IN CONFTEST RATHER THAN IN A TEST MODULE, and the reason is a gate that went red. The second suite to
+    need it imported it as `from tests.test_portainer import ...`, which resolves when pytest is invoked
+    from the repository root and does NOT when it is invoked from inside `tests/` - and inside `tests/` is
+    how `test suite` runs it, so its conftest applies. Copying the class into the second module would
+    have been the second source this repository removes everywhere else. A shared fixture module is the
+    place that is on the path either way.
+    """
+
+    def __init__(self, answers: dict) -> None:
+        self.answers = answers
+        self.calls: list = []
+
+    def __call__(self, _target, method: str, path: str, body: dict | None = None) -> object:
+        self.calls.append((method, path, body))
+        for prefix, answer in self.answers.items():
+            if path.startswith(prefix):
+                return answer
+        return None

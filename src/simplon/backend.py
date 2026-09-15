@@ -67,18 +67,36 @@ def register(backends: Mapping[str, "Backend"]) -> None:
     _REGISTERED.update(backends)
 
 
+def product_registry() -> "dict[str, Backend]":
+    """What the PRODUCT registered, which may be nothing.
+
+    The difference from `registered` is who is asking and what an empty answer means to them. A product
+    driving `resolve` itself has nothing to run when it registered nothing, and `registered` refuses for
+    it. The kernel's own `deploy up` has something to run either way since si#5 - it ships a backend of
+    its own - so for that caller an empty product registry is not an error but the ordinary case, and
+    refusing would be the "nothing to do reported as failed" defect with the roles swapped.
+    """
+    return dict(_REGISTERED)
+
+
 def registered() -> "dict[str, Backend]":
     """The registered registry, or a refusal naming what the product has to do.
 
     Refuses rather than answering with an empty mapping, because an empty registry and a product that
     forgot to register are the same value with two meanings - and `resolve` would then blame the
     ENVIRONMENT for naming a backend nobody registered, which sends the reader to the wrong file.
+
+    THIS IS THE PRODUCT'S REGISTRY AND ONLY THAT. The kernel's own deploy commands stopped reading it in
+    si#5, because they now merge it over the backends the kernel ships (`tasks.deploy._backends`) - so a
+    product that registers nothing can still deploy. The refusal below is therefore about the caller's own
+    registry, not about whether anything can be deployed at all, and it says so.
     """
     if not _REGISTERED:
         raise ValueError(
-            "no deployment backend is registered, so the kernel's deploy commands have nothing to run. "
-            "A product registers its own at import, beside its context: "
-            "`simplon.backend.register({\"local\": MyBackend()})`")
+            "this product registered no deployment backend, so there is nothing of its own to resolve "
+            "against. A product registers its own at import, beside its context: "
+            "`simplon.backend.register({\"local\": MyBackend()})`. The backends the KERNEL ships are "
+            "reached through its own deploy commands and need no registration.")
     return dict(_REGISTERED)
 
 

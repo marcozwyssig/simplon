@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from conftest import Recorder  # noqa: F401  (re-exported for readers of this module)
 from simplon import portainer
 
 STACK = "someproduct-prod"
@@ -20,21 +21,6 @@ def target() -> portainer.PortainerTarget:
     return portainer.PortainerTarget(
         url="https://portainer.local", token="t", endpoint_id=2, stack_name=STACK
     )
-
-
-class Recorder:
-    """Records the calls and answers by path."""
-
-    def __init__(self, answers: dict[str, object]) -> None:
-        self.answers = answers
-        self.calls: list[tuple[str, str, dict | None]] = []
-
-    def __call__(self, _target, method: str, path: str, body: dict | None = None) -> object:
-        self.calls.append((method, path, body))
-        for prefix, answer in self.answers.items():
-            if path.startswith(prefix):
-                return answer
-        return None
 
 
 def test_missing_configuration_names_the_variable() -> None:

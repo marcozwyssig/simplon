@@ -60,7 +60,7 @@ KINDS = (LXC, VM)
 #: carrier IS, set by the kernel on every container it creates.
 PROXMOX_KEYS = ("endpoint", "token_from", "insecure", "node", "kind",
                 "template", "storage", "cores", "memory", "disk", "ssh_key")
-PORTAINER_KEYS = ("url_from", "endpoint")
+PORTAINER_KEYS = ("url_from", "endpoint", "insecure")
 
 #: The defaults, READ OFF the community helper script rather than invented (`ct/docker.sh`, measured
 #: 2026-09-14): `var_cpu=2`, `var_ram=2048`, `var_disk=4` for its Debian path. A carrier that says
@@ -102,10 +102,20 @@ class Proxmox(NamedTuple):
 class Portainer(NamedTuple):
     """The Portainer half. `url_from` is the credential PREFIX, so `PORTAINER` means `PORTAINER_URL` and
     `PORTAINER_TOKEN` - the convention `credentials.py` fixed and `portainer.PortainerTarget.from_env`
-    already reads."""
+    already reads.
+
+    `insecure` arrived with the backend (si#5, slice 3) and it is a MEASUREMENT rather than a symmetry
+    with `Proxmox.insecure`: the Portainer the kernel installs answers on 9443 with a certificate it
+    generated for itself, and against the real carrier on 2026-09-16 a verifying request failed with
+    `CERTIFICATE_VERIFY_FAILED: self-signed certificate` while the same request with verification off
+    answered 200. Without this key the backend could not reach the Portainer the kernel's own
+    `deploy carrier` had just built. It defaults to FALSE for the same reason Proxmox's does - a product
+    that wants the weaker check says so in the file a reviewer reads.
+    """
 
     url_from: str
     endpoint: int
+    insecure: bool = False
 
 
 class Carrier(NamedTuple):
@@ -174,7 +184,8 @@ def _carrier(name: str, spec: object, where: str) -> Carrier:
             f"Portainer's own id for the Docker environment it manages") from None
 
     return Carrier(name=name, proxmox=_proxmox(proxmox, node, kind, where),
-                   portainer=Portainer(url_from=url_from, endpoint=endpoint))
+                   portainer=Portainer(url_from=url_from, endpoint=endpoint,
+                                       insecure=_insecure(portainer, "portainer", where)))
 
 
 def _positive(block: Mapping, key: str, default: int, where: str) -> int:
@@ -193,6 +204,21 @@ def _positive(block: Mapping, key: str, default: int, where: str) -> int:
     return value
 
 
+def _insecure(block: Mapping, half: str, where: str) -> bool:
+    """`insecure:` on either half, refused when it is not a real boolean.
+
+    ONE function for both halves because the refusal is the interesting part and it must read the same on
+    each: every non-empty string is truthy, so `insecure: "no"` would turn verification OFF while saying
+    the opposite. It is the one value in this section that is refused rather than read leniently.
+    """
+    value = block.get("insecure", False)
+    if not isinstance(value, bool):
+        raise ValueError(
+            f"{where}'s `{half}: insecure:` must be true or false, got {value!r} - it turns TLS "
+            f"verification OFF, so it is the one value here that may not be guessed from a string")
+    return value
+
+
 def _proxmox(block: Mapping, node: str, kind: str, where: str) -> Proxmox:
     """The whole Proxmox block, validated - built HERE rather than splatted from a mapping, because a
     `**dict[str, object]` hands mypy nothing and the type gate said so on the first run.
@@ -201,11 +227,7 @@ def _proxmox(block: Mapping, node: str, kind: str, where: str) -> Proxmox:
     them has a default, because the only field the provider itself requires is the node. A carrier
     states what it wants differently and stays silent about the rest.
     """
-    insecure = block.get("insecure", False)
-    if not isinstance(insecure, bool):
-        raise ValueError(
-            f"{where}'s `proxmox: insecure:` must be true or false, got {insecure!r} - it turns TLS "
-            f"verification OFF, so it is the one value here that may not be guessed from a string")
+    insecure = _insecure(block, "proxmox", where)
     # NO RULE THAT THE PREFIX BE UPPER CASE, and it was written and then struck rather than never
     # considered. CLAUDE.md's first question is whether it forbids something a product might
     # legitimately want: a lower-case environment variable is perfectly legal on every platform this

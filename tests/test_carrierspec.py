@@ -68,9 +68,9 @@ def test_one_carrier_really_serves_two_environments():
     # arrange
     document = _document(
         test={"backend": "portainer", "carrier": "hausportainer", "stack": "bc-test",
-              "repository": "github.com/marcozwyssig/biz-cockpit"},
+              "repository": {"url": "github.com/marcozwyssig/biz-cockpit"}},
         prod={"backend": "portainer", "carrier": "hausportainer", "stack": "bc-prod",
-              "repository": "github.com/marcozwyssig/biz-cockpit"})
+              "repository": {"url": "github.com/marcozwyssig/biz-cockpit"}})
 
     # act
     registry = environments.parse_data(document, ("portainer",))
@@ -133,7 +133,7 @@ def test_an_environment_pointing_at_no_declared_carrier_is_refused_and_told_whic
 
 @pytest.mark.parametrize("spec, fragment", [
     ({"backend": "portainer", "stack": "bc-prod"}, "nowhere for that stack to go"),
-    ({"backend": "portainer", "carrier": "hausportainer", "repository": "github.com/m/bc"},
+    ({"backend": "portainer", "carrier": "hausportainer", "repository": {"url": "github.com/m/bc"}},
      "nothing says what the compose document"),
 ])
 def test_half_a_chain_is_refused(spec, fragment):
@@ -160,7 +160,7 @@ def test_a_product_that_declares_no_carrier_is_untouched():
     # assert
     assert carrierspec.declared(before, "x") == {}
     environment = registry.environments["dev"]
-    assert (environment.carrier, environment.stack, environment.repository) == ("", "", "")
+    assert (environment.carrier, environment.stack, environment.repository) == ("", "", None)
     assert environment.backend == "local"
 
 

@@ -129,6 +129,11 @@ MODULES: dict[str, tuple[str, ...]] = {
     "labegress": ("lab_egress",),
     "labinstance": ("instance",),
     "nexusproxy": ("nexus",),
+    # the backend the kernel ships (si#5): it reaches the document to look up the carrier an environment
+    # names, and hands it to `carrierspec.declared`. `carriers:` is not declared here for the reason the
+    # `environments` entry gives - the key belongs to the reader that can name it when it is mistyped,
+    # and that is the one that cross-checks the environments against it.
+    "portainer": (),
     "tasks.artifact": ("artifacts",),
     "tasks.asset": ("assets",),
     "tasks.buildfiles": ("build",),
