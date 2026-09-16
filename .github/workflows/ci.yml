@@ -32,7 +32,9 @@ jobs:
   # The kernel emits the setting and states what it does; this is simplon's own reason for
   # caring, which no other product has to inherit.
   self-build:
-    runs-on: ubuntu-latest
+    runs-on: ghr-8
+    env:
+      DELIVERY_DOCKER_BOOTSTRAP: '1'
     steps:
       # The full history, and it is a precondition rather than an optimisation.
       # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
@@ -42,9 +44,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
       - run: ./simplon.sh test suite
       # The type gate (si#8), and it runs HERE rather than as a `mypy src` step of its own,
       # because the command has to be the same one a developer runs. si#8 was raised as "mypy is
