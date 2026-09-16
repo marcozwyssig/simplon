@@ -25,6 +25,72 @@ it is the one section held only to existing.
 
 ## 0.16.0
 
+### The pipeline is derived from the command tree (si#267)
+
+The generator **serialised**: a product wrote every job, every step and every `runs-on`, and the kernel
+contributed a checkout and an interpreter. Measured across this family, two of seven repositories used it
+at all; the other five hand-wrote between 47 and 283 lines each, and none of them is different from the
+others for a reason anybody chose.
+
+A step may now say where its steps come from instead of listing them:
+
+```yaml
+    steps:
+      - derive: [build, test]
+```
+
+Every **leaf** of each named group that may run with nobody watching becomes a step, in the order the
+manifest declares it. Leaves rather than aggregates: a GitHub job stops at its first red step, so
+emitting `test all` would collapse four verdicts into one and lose the order its members were written in
+- a reason this repository's own manifest had written down years before the derivation existed.
+
+**The bit that makes it possible is `unattended:`, and it lives in the catalogue.** It asks one thing:
+may a pipeline run this command with nobody at the keyboard? It is a fact about the *body* rather than
+about a product - `test:walk` asks a person to answer each acceptance scenario, and it asks that of
+everybody who imports the coordinate - so it is declared once, for all of them, which is the same
+argument the coordinate space itself runs on.
+
+The population was measured rather than judged: every catalogue body was walked transitively for a
+construct that asks a person, and **one of forty-two** reaches any. That ratio is the case for deriving
+at all; a kernel that had to be told about each command individually would be a template with holes.
+
+**Three states, not two.** Leaving the key out means *nobody has said*, and a derivation may not guess:
+read as false it drops a gate and the pipeline goes green for the wrong reason, read as true it puts a
+command that wants a person on a runner. An undeclared leaf is named and refused. It is also the one
+flag on a spec that is not coerced - every other is `bool(value)`, and `bool(None)` is `False`, which
+would have destroyed the third state at the loader's own door.
+
+#### A correction, and the rule it came from
+
+The note filed on this ticket said a derived pipeline would **hang** on `test walk`. It would not:
+`walk` checks for a terminal and refuses with a message. The repair is the same and the cost is
+different - a red cross rather than a stuck job - and the difference is worth the correction, because a
+red cross that means nothing is how people learn to stop reading them.
+
+#### The refusal that was built and then removed
+
+The first draft put `derive:` on the **job** and refused `steps:` beside it, since which one wins would
+otherwise depend on read order. That refusal did not survive CLAUDE.md's own questions: a product wanting
+the derived pipeline *plus* a Check Run reporter of its own was saying something the kernel could have
+honoured, and what it would have done instead is write the whole file by hand - the work this ticket
+exists to remove. So the rule was deleted rather than justified, by moving the derivation onto a step,
+where a product places it among its own and the order stays the product's.
+
+Four new refusals, all **diagnosis**; the census moves 188 → 192 with **no** new expression rule.
+
+#### What this repository does with it, measured
+
+Derived over simplon's own manifest, `[build, test]` yields ten steps. Its CI runs seven of them; the
+three it adds are `build reference`, `build acceptance` and `build site`. All ten were run by hand on
+this machine before the test was written - all ten exit 0 and leave the tree clean - so the derived
+pipeline here is correct, not merely plausible.
+
+simplon's own CI stays hand-written all the same, and the reason is in its manifest rather than in this
+decision: its step order is argued there, chiefly that the prose gate goes **last** so a release section
+still to be written cannot hide a red suite, and a derivation follows declaration order instead. That
+difference is now held by a test rather than by anybody's memory: if the derivation starts emitting what
+the CI runs, or the CI starts running what is derived, it says so.
+
 ### A runner is named by its KIND, and the kernel carries what follows from it (si#267)
 
 Raised by the owner after moving this repository's CI to a self-hosted runner took a full day, and every

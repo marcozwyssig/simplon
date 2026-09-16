@@ -552,6 +552,43 @@ A **step** is the exception, and deliberately: it has exactly one body, so a key
 modifier nor a body is refused rather than carried. Two bodies - `command:` beside `uses:` or `run:` -
 are refused for the same reason.
 
+**`derive:` on a step writes the pipeline the command tree already implies** (si#267). A step that
+declares it is not one step but a placeholder for however many the named groups carry:
+
+```yaml
+    jobs:
+      self-build:
+        runner: { kind: self-hosted-debian, labels: ghr-8 }
+        steps:
+          - derive: [build, test]
+```
+
+Every **leaf** of each named group that may run with nobody watching becomes a step, in the order the
+manifest declares it. Leaves rather than aggregates, because a GitHub job stops at its first red step -
+emitting `test all` would collapse four verdicts into one and lose the order its members were written
+in. An aggregate is skipped without comment, because nothing is missing from the file; a leaf that is
+skipped **is named in the file**, with the reason, since a reader wondering where `test walk` went is
+standing in the workflow and not in the kernel's source.
+
+Which leaves may run is the `unattended:` flag from [task and command](../task-and-command/), declared
+in the platform catalogue once for every product that imports the coordinate. A leaf that says nothing
+is refused by name rather than guessed at.
+
+**A derived step stands beside your own**, and that is the reason it is a step rather than a key on the
+job. A product that wants the derived pipeline plus a Check Run reporter writes both and decides where
+the seam falls:
+
+```yaml
+        steps:
+          - uses: actions/setup-node@v4
+          - derive: [build, test]
+          - command: release image
+```
+
+A job-level `derive:` would have had to refuse `steps:` beside it — and that refusal would have been an
+expression rule, forbidding something a product legitimately wants and sending it back to writing the
+whole file by hand, which is the work this feature exists to remove.
+
 **`runner:` names a KIND of machine, and the kernel supplies what follows from it** (si#267). This is
 the answer to a day that was spent twice: moving one repository's CI to a self-hosted runner meant
 learning that `actions/setup-python` never installs Python, that a container job cannot be the thing that
