@@ -25,6 +25,34 @@ it is the one section held only to existing.
 
 ## 0.16.0
 
+### Five checks that reported who started the run, not what the code did (si#261)
+
+Three checks in `tests/test_tasks_docs.py` had been red on every developer machine that runs as root and
+green on `ubuntu-latest`, and the difference was carried from session to session as a footnote
+("pre-existing, root-bound"). Moving CI to a self-hosted runner made the footnote a failure.
+
+Two facts were arriving ambiently: `docker.user_args` reads `os.getuid()`, and `_unwritable` asks
+`os.access(..., W_OK)`, which answers **yes** to root whatever the mode says. So `assert "0:0" not in argv`
+was really `assert os.getuid() != 0` — an assertion about the machine wearing the costume of one about the
+code, which no amount of correct behaviour could make pass.
+
+**It was five checks, not three, and the second pair is the worse half.** Two more *passed* as root for
+the wrong reason, and that only showed when this file was finally run as a normal user:
+`test_render_falls_back_to_root_*` expect `--user 0:0`, and as root the fallback never fired — `os.access`
+had called the blocked tree writable — so `0:0` came out because the *caller* was root. The assertion was
+right and the path to it was not. A check that is red tells you something; a check that is green for a
+reason nobody intended tells you nothing and looks fine.
+
+`_as(monkeypatch, uid, gid, unwritable=[...])` now pins both facts per test and delegates to the real
+`os.access` for every path it was not given, so the pin is a statement about those paths rather than a
+second, cruder filesystem underneath. `conftest.py` already does exactly this for two other ambient facts.
+
+The point is not that they pass as root. It is that both cases became assertable on either machine, which
+made two checks possible that could not be written before: a caller who **is** root gets a container that
+runs as root, and the warning names the caller the render decided on rather than whoever started the
+suite. Measured on both identities — 21 passed as root and 21 as `nobody`; broken deliberately, the same
+four failed under each.
+
 ### A docker that is present and cannot be run is a third state (si#263)
 
 Found by moving this repository's own CI to a self-hosted runner. On that machine a file named `docker`
