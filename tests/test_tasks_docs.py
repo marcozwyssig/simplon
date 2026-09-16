@@ -76,15 +76,60 @@ def test_render_runs_the_container_on_the_amd64_platform(monkeypatch, tmp_path):
 # --- which uid the container runs as (si#78) -------------------------------------------------------------
 
 
+#: A uid that is not root and not this machine's, used wherever a test needs A caller rather than THE
+#: caller. Any value does; what matters is that the test states it.
+CALLER = (4242, 4242)
+
+
+def _as(monkeypatch, uid: int, gid: int, unwritable=()) -> None:
+    """Pin WHO this process is and WHAT it may write, for the duration of one test.
+
+    si#261. These two facts used to arrive from the machine, and three checks in this file were therefore
+    decided by it: `docker.user_args` reads `os.getuid()`, and `_unwritable` asks `os.access(..., W_OK)`
+    with the real uid. Run as root the second answers "yes" to everything, so the blocked branch was
+    unreachable and the caller branch always produced `0:0` - and the assertion `"0:0" not in argv` was
+    really `os.getuid() != 0`, an assertion about the machine wearing the costume of one about the code.
+
+    They were green on `ubuntu-latest` and red on every developer machine that runs as root, which was
+    carried for months as a footnote. Moving CI to a self-hosted runner - an LXC where the job is root -
+    made the footnote a failure and took away the one environment in which they could pass.
+
+    THE POINT IS NOT THAT THEY NOW PASS AS ROOT. It is that both cases are assertable on either machine:
+    a non-root caller gets its own uid, a root caller gets root, and the blocked branch is reached
+    because the test says the tree is blocked rather than because the machine happens to agree.
+
+    `conftest.py`'s `_this_suite_runs_as_if_on_a_host` does exactly this for two other ambient facts, and
+    for the same stated reason: a unit test of an argv builder must not depend on the machine it runs on.
+    """
+    monkeypatch.setattr(os, "getuid", lambda: uid)
+    monkeypatch.setattr(os, "getgid", lambda: gid)
+    if unwritable:
+        refused = {str(path) for path in unwritable}
+        real = os.access
+
+        def access(path, mode, **kwargs):
+            # DELEGATES for everything else, so the pin is a statement about these paths and not a
+            # second, cruder filesystem that the rest of the test would then be running against.
+            if mode == os.W_OK and str(path) in refused:
+                return False
+            return real(path, mode, **kwargs)
+
+        monkeypatch.setattr(os, "access", access)
+
+
 def _blocked(path):
-    """A directory the calling user cannot write, without being root: the permission bits are enough,
-    because `os.access` asks with the real uid and an owner is refused by their own mode."""
+    """A directory the render must treat as unwritable. Created for real - `_unwritable` walks, and a
+    path that is not there is skipped before its mode is ever consulted - and named to `_as`, which is
+    what makes the answer the same on a root machine and a non-root one."""
     path.mkdir(parents=True, exist_ok=True)
-    path.chmod(0o500)
+    return path
 
 
 def test_render_runs_the_container_as_the_caller_when_the_tree_is_the_callers(monkeypatch, tmp_path):
-    # arrange: the ordinary case - a product whose own build runs `--user`, so nothing under the tree is
+    # arrange: WHO the caller is, said here rather than inherited (si#261) - the assertion below is about
+    # the container matching the caller, and on a root machine "the caller" and "root" are the same value
+    _as(monkeypatch, *CALLER)
+    # the ordinary case - a product whose own build runs `--user`, so nothing under the tree is
     # root-owned. `--user 0:0` here is what made `build docs` followed by `build jar` rc 1 with
     # `Cannot create directory '/work/.gradle/8.14.3/fileHashes'` (si#78)
     _register(monkeypatch, tmp_path, {"doctoolchain_version": "v3.5.0"})
@@ -98,8 +143,55 @@ def test_render_runs_the_container_as_the_caller_when_the_tree_is_the_callers(mo
     # assert: the caller's own uid, and specifically NOT root - the second half is the assertion, because
     # a fix that merely stopped SAYING 0:0 while still running as root would pass the first
     argv = seen[0]
-    assert argv[argv.index("--user") + 1] == f"{os.getuid()}:{os.getgid()}"
-    assert "0:0" not in argv
+    assert argv[argv.index("--user") + 1] == f"{CALLER[0]}:{CALLER[1]}", (
+        "the container has to run as the caller, and the caller is the one this test named")
+    assert "0:0" not in argv, "a tree the caller owns must not send the render to root"
+
+
+def test_a_caller_who_IS_root_gets_a_container_that_runs_as_root(monkeypatch, tmp_path):
+    """The case that could never be written before, and it is the one this machine has.
+
+    `docker.user_args` runs the container AS THE CALLER. When the caller is root, root is the right
+    answer - the mount is root's, and handing the container some other uid would hit the very
+    AccessDeniedException the module head measured. What was wrong was never this behaviour; it was that
+    three checks asserted `"0:0" not in argv` while reading the uid out of the process, so on a root
+    machine they were asserting that the machine was not the machine.
+
+    Stating the caller separates the two questions. "Does the container match the caller" is about the
+    code and is asserted here. "Is this caller root" is about the machine and is no longer asserted at
+    all.
+    """
+    # arrange
+    _as(monkeypatch, 0, 0)
+    _register(monkeypatch, tmp_path, {"doctoolchain_version": "v3.5.0"})
+    seen = []
+    _stub_run(monkeypatch, rc=0, seen=seen)
+    _html(tmp_path)
+
+    # act
+    docs_cmd.render()
+
+    # assert
+    argv = seen[0]
+    assert argv[argv.index("--user") + 1] == "0:0"
+
+
+def test_the_warning_names_the_caller_that_cannot_write_rather_than_whoever_ran_the_suite(
+        monkeypatch, tmp_path, capsys):
+    """The other half of the same ambient read. The sentence says "cannot be written by uid N", and N
+    came from `os.getuid()` - so the message a person sees depended on who ran the test rather than on
+    who the render decided it was."""
+    # arrange
+    _register(monkeypatch, tmp_path, {"doctoolchain_version": "v3.5.0"})
+    _as(monkeypatch, *CALLER, unwritable=[_blocked(tmp_path / docs_cmd.GRADLE_STATE / "8.1.1")])
+    _stub_run(monkeypatch, rc=0)
+    _html(tmp_path)
+
+    # act
+    docs_cmd.render()
+
+    # assert
+    assert f"uid {CALLER[0]}" in capsys.readouterr().out
 
 
 def test_render_leaves_nothing_the_caller_cannot_delete_when_it_ran_as_the_caller(monkeypatch, tmp_path):
@@ -124,7 +216,10 @@ def test_render_falls_back_to_root_when_the_tree_it_must_write_is_not_writable(m
     # as the caller dies with `Could not update /project/.gradle/8.1.1/fileChanges/last-build.bin`, as root
     # it is rc 0
     _register(monkeypatch, tmp_path, {"doctoolchain_version": "v3.5.0"})
-    _blocked(tmp_path / docs_cmd.GRADLE_STATE)
+    # si#261, and this one PASSED AS ROOT FOR THE WRONG REASON: `os.access` answers yes to root whatever
+    # the mode, so the fallback never fired and `0:0` came out because the CALLER was root. The assertion
+    # was right and the path to it was not. Stated, it is the fallback that produces root - on any machine.
+    _as(monkeypatch, *CALLER, unwritable=[_blocked(tmp_path / docs_cmd.GRADLE_STATE)])
     seen = []
     _stub_run(monkeypatch, rc=0, seen=seen)
     _html(tmp_path)
@@ -143,7 +238,10 @@ def test_render_falls_back_to_root_for_an_unwritable_directory_below_the_tree(mo
     # that stats only the two tops calls this writable and hands the render a uid that dies on its first
     # bookkeeping write
     _register(monkeypatch, tmp_path, {"doctoolchain_version": "v3.5.0"})
-    _blocked(tmp_path / docs_cmd.GRADLE_STATE / "8.1.1" / "fileHashes")
+    # si#261: the same ambient read, one level deeper - and the walk is the point of this test, so the
+    # unwritable entry has to be the deep one and nothing above it.
+    _as(monkeypatch, *CALLER,
+        unwritable=[_blocked(tmp_path / docs_cmd.GRADLE_STATE / "8.1.1" / "fileHashes")])
     seen = []
     _stub_run(monkeypatch, rc=0, seen=seen)
     _html(tmp_path)
@@ -160,7 +258,9 @@ def test_render_says_which_path_forced_it_to_run_as_root(monkeypatch, tmp_path, 
     # arrange: the half si#78 asked for independently of the uid decision - a render that leaves a tree the
     # product's own build cannot write should say so, instead of letting gradle say it two commands later
     _register(monkeypatch, tmp_path, {"doctoolchain_version": "v3.5.0"})
-    _blocked(tmp_path / docs_cmd.GRADLE_STATE / "8.1.1")
+    # si#261: the tree is unwritable because this test says so. Permission bits alone said nothing to a
+    # root caller, so this branch was unreachable on exactly the machines where it matters most.
+    _as(monkeypatch, *CALLER, unwritable=[_blocked(tmp_path / docs_cmd.GRADLE_STATE / "8.1.1")])
     _stub_run(monkeypatch, rc=0)
     _html(tmp_path)
 
@@ -178,6 +278,7 @@ def test_render_says_which_path_forced_it_to_run_as_root(monkeypatch, tmp_path, 
 def test_render_does_not_run_as_root_merely_because_the_written_paths_exist(monkeypatch, tmp_path):
     # arrange: existence is not the question - ownership is. A check keyed on "has this tree been built
     # before" would send every second run back to root and rebuild the defect
+    _as(monkeypatch, *CALLER)
     _register(monkeypatch, tmp_path, {"doctoolchain_version": "v3.5.0"})
     for rel in docs_cmd.WRITTEN_PATHS:
         (tmp_path / rel / "deep" / "deeper").mkdir(parents=True)
