@@ -25,6 +25,32 @@ it is the one section held only to existing.
 
 ## 0.16.0
 
+### `runs-on:` keeps its type, so a list of labels stays a list (si#266)
+
+Filed by `secure-windows-images`, whose Windows template build needs one specific machine with VMware
+Workstation while its unit gates want any Linux runner — so `[self-hosted, windows, vmware]` is the
+natural thing to write, and it was exactly the input that broke.
+
+`_job` coerced the value with `str()`:
+
+```text
+runs-on: [self-hosted, windows, vmware]   ->   runs-on: '[''self-hosted'', ''windows'', ''vmware'']'
+```
+
+Valid YAML, valid GitHub syntax, and it selects a runner whose single label is that literal text. Nothing
+refuses it and nothing warns: the workflow generates, commits, reviews and runs, and the job then waits
+for a runner that cannot exist. `str()` on a value whose **type** carries meaning is the same defect
+`context.section` was given a `blame` for.
+
+The rendering half needed no work at all — `_scalar` delegates to `yaml.safe_dump` in flow style rather
+than guessing, so a tuple was always going to come out as `[self-hosted, windows, vmware]`. All that was
+missing was letting the value through intact.
+
+All three of GitHub's shapes are now carried: a label, a list of labels, and the `group:`/`labels:`
+mapping. The mapping is accepted rather than refused deliberately — refusing a shape the platform
+documents would be an expression rule bought for nothing, since the renderer already handles it. What is
+refused is a value GitHub has no reading for in any shape — a number, a bool, a list with something other
+than a label in it — which is diagnosis, and two entries the census now carries.
 ### The notes guard could only ever fail after the merge, and asked for the wrong spelling (si#270)
 
 Two defects in one gate, found because `main` went red on three consecutive merges and none of them had

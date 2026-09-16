@@ -148,7 +148,7 @@ class Job:
     """
 
     name: str
-    runs_on: str
+    runs_on: "str | tuple[str, ...] | Mapping[str, object]"
     steps: tuple[Step, ...]
     python: str = ""
     checkout: bool = True
@@ -364,14 +364,53 @@ def _reject_duplicate_paths(workflows: Sequence[Workflow]) -> None:
         seen[workflow.path] = workflow.key
 
 
+def _runs_on(value: object, where: str) -> "str | tuple[str, ...] | Mapping[str, object]":
+    """`runs-on:` as the product wrote it, and NOT coerced to a string (si#266).
+
+    `str(value)` was the whole bug. A list is the documented way to select a self-hosted runner, because
+    one label is rarely enough once an account has more than one machine - and `["self-hosted", "windows",
+    "vmware"]` came out as the single label `"['self-hosted', 'windows', 'vmware']"`. Valid YAML, valid
+    GitHub syntax, and it selects a runner that cannot exist, so the job queues for ever with no error
+    anywhere: the workflow generates, commits, reviews and runs, and nothing says a word. Found from
+    `secure-windows-images`, whose Windows template build needs a specific machine.
+
+    `str()` on a value whose TYPE carries meaning is the same defect `context.section` was given a
+    `blame` for. The rendering half needed nothing: `_scalar` delegates to `yaml.safe_dump` in flow style,
+    so a tuple comes out as `[self-hosted, windows, vmware]` and a mapping as GitHub's `group:`/`labels:`
+    form. All that was missing was letting the value through intact.
+
+    THE MAPPING FORM IS ACCEPTED RATHER THAN REFUSED, deliberately. GitHub documents three shapes and
+    refusing one of them would be an expression rule - a product could no longer say something it can
+    legitimately mean - bought for nothing, since the renderer already handles it. What is refused is a
+    value of a kind GitHub has no reading for at all, which is diagnosis: a number, a bool, or a list
+    with something other than a label in it.
+    """
+    if not value:
+        raise ValueError(f"{where}: declares no `runs-on:`. The runner image is the product's choice "
+                         f"and the kernel has no default worth imposing")
+    if isinstance(value, str):
+        return value
+    if isinstance(value, Mapping):
+        return value
+    if isinstance(value, Sequence):
+        wrong = [item for item in value if not isinstance(item, str)]
+        if wrong:
+            raise ValueError(
+                f"{where}: `runs-on:` is a list of runner LABELS, and "
+                + ", ".join(repr(item) for item in wrong)
+                + " is not one. A label is a string; a list of them selects a runner carrying all of "
+                  "them")
+        return tuple(value)
+    raise ValueError(f"{where}: `runs-on:` is a label, a list of labels, or GitHub's `group:`/`labels:` "
+                     f"mapping - not {type(value).__name__} ({value!r}). Coercing it would emit a label "
+                     f"no runner can carry, and the job would queue for ever with nothing to read")
+
+
 def _job(name: str, spec: object, where: str) -> Job:
     where = f"{where}, job '{name}'"
     if not isinstance(spec, Mapping):
         raise ValueError(f"{where}: must be a mapping, not {type(spec).__name__}")
-    runs_on = spec.get("runs-on") or spec.get("runs_on")
-    if not runs_on:
-        raise ValueError(f"{where}: declares no `runs-on:`. The runner image is the product's choice "
-                         f"and the kernel has no default worth imposing")
+    runs_on = _runs_on(spec.get("runs-on") or spec.get("runs_on"), where)
     steps = spec.get("steps")
     if not isinstance(steps, Sequence) or isinstance(steps, str) or not steps:
         raise ValueError(f"{where}: `steps:` must be a non-empty list")
@@ -383,7 +422,7 @@ def _job(name: str, spec: object, where: str) -> Job:
 
     known = {"runs-on", "runs_on", "steps", "python", "checkout", "note"}
     extras = {str(k): v for k, v in spec.items() if str(k) not in known}
-    return Job(name=name, runs_on=str(runs_on), python=str(python) if python is not None else "",
+    return Job(name=name, runs_on=runs_on, python=str(python) if python is not None else "",
                checkout=checkout, note=str(spec.get("note") or ""),
                steps=tuple(_step(item, f"{where}, step {i + 1}") for i, item in enumerate(steps)),
                extras=extras)

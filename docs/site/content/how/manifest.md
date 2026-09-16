@@ -552,6 +552,21 @@ A **step** is the exception, and deliberately: it has exactly one body, so a key
 modifier nor a body is refused rather than carried. Two bodies - `command:` beside `uses:` or `run:` -
 are refused for the same reason.
 
+**`runs-on:` may be a label, a list of labels, or GitHub's `group:`/`labels:` mapping** - all three of
+GitHub's shapes, carried through as written. A list is the documented way to reach a self-hosted runner,
+because one label is rarely enough once an account has more than one machine:
+
+```yaml
+    jobs:
+      template:
+        runs-on: [self-hosted, windows, vmware]
+```
+
+Until 0.16.0 the value was coerced with `str()`, so that list came out as the single label
+`"['self-hosted', 'windows', 'vmware']"` - valid YAML, valid GitHub syntax, and a runner that cannot
+exist, so the job queued for ever with no error anywhere (si#266). A value GitHub has no reading for at
+all - a number, a bool, a list with something other than a label in it - is refused naming the line.
+
 **Whether a tag publishes is your statement**, so a workflow that declares no `on:` is refused rather
 than given a default. A step the kernel has no business modelling - `pypa/gh-action-pypi-publish`, an
 upload, a shell script that reports something - is written out verbatim beside the resolved ones.

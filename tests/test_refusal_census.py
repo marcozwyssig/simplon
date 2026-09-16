@@ -663,7 +663,12 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("workflowgen", "_workflow", "`jobs:` must be a non-empty mapping"): DIAGNOSIS,
     ("workflowgen", "_workflow", "so it cannot also declare"): DIAGNOSIS,
     ("workflowgen", "_job", "must be a mapping, not {type(spec)"): DIAGNOSIS,
-    ("workflowgen", "_job", "declares no `runs-on:`"): DIAGNOSIS,
+    ("workflowgen", "_runs_on", "declares no `runs-on:`"): DIAGNOSIS,
+    # si#266. Both are diagnosis: a list with a number in it, or a bool, is not a runner label in
+    # any reading GitHub has - and the old behaviour was to coerce it with `str()` and emit a
+    # label no runner can carry, so the job queued for ever with nothing said anywhere.
+    ("workflowgen", "_runs_on", "is a list of runner LABELS"): DIAGNOSIS,
+    ("workflowgen", "_runs_on", "is a label, a list of labels, or GitHub's"): DIAGNOSIS,
     ("workflowgen", "_job", "`steps:` must be a non-empty list"): DIAGNOSIS,
     ("workflowgen", "_job", "`checkout:` is true or false"): DIAGNOSIS,
     ("workflowgen", "_step", "must be a mapping, not {type(item)"): DIAGNOSIS,
