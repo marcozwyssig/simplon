@@ -196,17 +196,32 @@ def declared() -> Declared | None:
 
 # --- the repository ----------------------------------------------------------------------------------
 
-def _git(root: Path, *args: str) -> str:
+def _git(root: Path, *args: str, must_answer: bool = False) -> str:
     """`git -C <root> ...`, refusing to turn a broken checkout into an empty answer.
 
     An empty string here would read as "no tags" or "no merges" and make a repository git cannot even
     open come out GREEN, which is this project's recurring defect wearing a release note as a hat. So a
     non-zero rc raises, and the gate turns it into one sentence naming the command that failed.
+
+    `must_answer` IS THE HALF THIS STOPPED ONE STEP SHORT OF (si#274). rc 0 with no output is a third
+    state: git succeeded and said nothing. It cannot be refused for every call - `log --merges` over a
+    range carrying none legitimately prints nothing, and so does `tag` in a checkout with no tags - so
+    the caller says which of its questions has an answer by construction. `<sha>^1..<sha>^2` over a
+    two-parent merge is one: the merge exists, so its second parent brought at least one commit, and no
+    lines back means the question was not answered rather than answered with a shrug.
+
+    Measured 2026-09-16 on a self-hosted runner: that read came back empty and `tickets_of` fell through
+    to its fallback, reporting a merge's ticket as {94} where the author had written si#92 - a green run
+    away from a release note about the wrong number.
     """
     result = run(["git", "-C", str(root), *args])
     if not result.ok:
         raise RuntimeError(f"`git {' '.join(args)}` failed in {root} (rc={result.rc}): "
                            f"{result.err.strip() or 'no output'}")
+    if must_answer and not result.answered:
+        raise RuntimeError(f"`git {' '.join(args)}` succeeded in {root} and printed nothing, which is "
+                           f"neither an answer nor an error. This gate will not read that as an empty "
+                           f"answer - see si#274")
     return result.out
 
 
@@ -267,7 +282,8 @@ def tickets_of(root: Path, sha: str, subject: str) -> set[int]:
     # That is an accepted assumption rather than an oversight: this branch is reached only for a subject
     # GitHub's own merge button composed, and that button produces a two-parent merge and nothing else.
     written = {number
-               for line in _git(root, "log", "--no-merges", "--format=%s", f"{sha}^1..{sha}^2").splitlines()
+               for line in _git(root, "log", "--no-merges", "--format=%s", f"{sha}^1..{sha}^2",
+                                must_answer=True).splitlines()
                for number in tickets_in(line)}
     # The author's statement if there is one, else the only number there is. The fallback keeps the older
     # ranges honest - several merges from before the convention name nothing in their commits either, and
@@ -293,7 +309,7 @@ def fell_back_to_the_pull_request(root: Path, sha: str, subject: str) -> bool:
         return False
     return not {number
                 for line in _git(root, "log", "--no-merges", "--format=%s",
-                                 f"{sha}^1..{sha}^2").splitlines()
+                                 f"{sha}^1..{sha}^2", must_answer=True).splitlines()
                 for number in tickets_in(line)}
 
 
@@ -320,12 +336,12 @@ def branch_tickets(root: Path, end: str) -> set[int]:
     source here and a branch tip does not say what it would be merged into, so the local run stays as
     blind as it was; CI is where this is enforced, and CI is where it now fires.
     """
-    subject = _git(root, "log", "-1", "--format=%s", end).strip()
+    subject = _git(root, "log", "-1", "--format=%s", end, must_answer=True).strip()
     if not is_githubs_own_merge(subject):
         return set()
     return {number
             for line in _git(root, "log", "--no-merges", "--format=%s",
-                             f"{end}^1..{end}^2").splitlines()
+                             f"{end}^1..{end}^2", must_answer=True).splitlines()
             for number in tickets_in(line)}
 
 
@@ -338,8 +354,8 @@ def head_note(root: Path) -> str:
     gained since the branch was cut - a branch that is green on its own tip goes red here, correctly, and
     for a reason nothing used to state.
     """
-    sha = _git(root, "rev-parse", "--short", "HEAD").strip()
-    subject = _git(root, "log", "-1", "--format=%s", "HEAD").strip()
+    sha = _git(root, "rev-parse", "--short", "HEAD", must_answer=True).strip()
+    subject = _git(root, "log", "-1", "--format=%s", "HEAD", must_answer=True).strip()
     if is_githubs_own_merge(subject):
         return (f"HEAD is {sha} {subject!r} - GitHub's own merge, which is what a `pull_request` run "
                 f"checks out. Every range below therefore ends at your branch AS MERGED with the base, "

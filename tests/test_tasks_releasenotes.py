@@ -23,6 +23,7 @@ import pytest
 
 from simplon import context
 from simplon.tasks import releasenotes
+from simplon.run import Result
 
 from conftest import ROOT  # noqa: F401  (keeps the src tree on sys.path)
 
@@ -452,3 +453,75 @@ def test_the_floor_keeps_an_older_section_out_of_the_ranges(tmp_path):
     # assert
     assert sorted(above) == [(0, 5, 0), (0, 6, 0)]
     assert (0, 4, 0) not in above
+
+
+# --- si#274: a read that has an answer by construction may not come back empty ------------------------
+
+def test_a_branch_read_that_answers_nothing_is_refused_rather_than_read_as_no_ticket(tmp_path,
+                                                                                     monkeypatch):
+    """si#274, SEEN RED against the real consequence rather than against a flag.
+
+    `<sha>^1..<sha>^2` over a two-parent merge has an answer BY CONSTRUCTION: the merge exists, so its
+    second parent brought at least one commit. Empty therefore means git did not answer, and `tickets_of`
+    read it as "the commits name no ticket" and fell through to the pull request's number - reporting
+    {94} where the author had written si#92. Measured on a self-hosted runner on 2026-09-16, one run of a
+    commit red and the re-run green.
+
+    A release note about the wrong number is what that would have produced, and it would have been green.
+    """
+    # arrange: a real web merge, and a git whose branch read succeeds and says nothing
+    root = _repo(tmp_path)
+    _commit(root, "chore: the root commit")
+    subject = "Merge pull request #94 from marcozwyssig/docs/92-the-notes"
+    sha = _merge(root, "docs/92-the-notes", ["docs(#92): the notes"], subject)
+    real = releasenotes.run
+
+    def mute(argv, **kwargs):
+        if any("^1.." in str(part) for part in argv):
+            return Result(rc=0, out="", err="")
+        return real(argv, **kwargs)
+
+    monkeypatch.setattr(releasenotes, "run", mute)
+
+    # act
+    with pytest.raises(RuntimeError) as refused:
+        releasenotes.tickets_of(root, sha, subject)
+
+    # assert: it says which command, and that this is not an empty answer
+    said = str(refused.value)
+    assert "printed nothing" in said, said
+    assert "neither an answer nor an error" in said, said
+    assert "si#274" in said, said
+
+
+def test_a_read_that_may_legitimately_be_empty_is_left_alone(tmp_path):
+    """The assurance the refusal must not spend, and it is the reason `must_answer` is per call rather
+    than the rule. A range carrying no merges legitimately prints nothing, and so does `git tag` in a
+    checkout with no tags - refusing those would turn two ordinary states into a broken tool."""
+    # arrange: a repository with a tag and no merges after it
+    root = _repo(tmp_path)
+    _commit(root, "chore: the root commit")
+    _git(root, "tag", "v0.4.0")
+    _commit(root, "chore: work with no merge behind it")
+
+    # act
+    found = releasenotes.merges_in(root, "v0.4.0", "HEAD")
+
+    # assert
+    assert found == []
+
+
+def test_a_merge_that_really_names_no_ticket_still_falls_back_rather_than_raising(tmp_path):
+    """The other half of the same fork: commits that came back and named nothing is an ANSWER, and the
+    fallback it feeds is si#103's and is untouched."""
+    # arrange
+    root = _repo(tmp_path)
+    _commit(root, "chore: the root commit")
+    subject = "Merge pull request #72 from marcozwyssig/feat/release-asset"
+    sha = _merge(root, "feat/release-asset", ["wip", "more wip"], subject)
+
+    # act
+    named = releasenotes.tickets_of(root, sha, subject)
+
+    # assert
+    assert named == {72}

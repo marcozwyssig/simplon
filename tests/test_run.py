@@ -10,7 +10,7 @@ from unittest import mock
 import pytest
 
 from simplon import run as run_module
-from simplon.run import chain, run_stream, stream
+from simplon.run import Result, chain, run_stream, stream
 
 
 def test_run_stream_emits_each_line_and_returns_the_real_rc():
@@ -220,3 +220,31 @@ def test_run_stream_raises_when_the_pipe_could_not_be_read():
         with pytest.raises(OSError) as caught:
             run_stream(["sh", "-c", "echo one; sleep 1"], lambda _line: None)
     assert caught.value.errno == errno.EIO
+
+
+# --- si#274: succeeded and said nothing is not the same as succeeded ----------------------------------
+
+@pytest.mark.parametrize("rc, out, ok, answered", [
+    (0, "v1.2.3\n", True, True),
+    (0, "", True, False),
+    (0, "\n  \n", True, False),
+    (1, "v1.2.3\n", False, False),
+    (1, "", False, False),
+])
+def test_ok_and_answered_are_different_questions(rc, out, ok, answered):
+    """si#274's seam, and the two columns are the whole point: `ok` asks whether the command succeeded,
+    `answered` whether it said anything, and a caller that uses `out` as a VALUE needs the second.
+
+    Two callers did not ask it, and both were found on the same machine within an hour: an empty
+    `git rev-parse --show-toplevel` became `Path("")`, which is `PosixPath('.')` and resolves to the
+    working directory, and an empty `<sha>^1..<sha>^2` became "these commits name no ticket".
+
+    Whitespace counts as nothing on purpose. A command whose whole output is a newline said as little as
+    one that wrote no bytes, and every caller here strips before using the value anyway.
+    """
+    # arrange
+    result = Result(rc=rc, out=out, err="")
+
+    # assert
+    assert result.ok is ok
+    assert result.answered is answered
