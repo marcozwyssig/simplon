@@ -25,6 +25,59 @@ it is the one section held only to existing.
 
 ## 0.16.0
 
+### The notes guard could only ever fail after the merge, and asked for the wrong spelling (si#270)
+
+Two defects in one gate, found because `main` went red on three consecutive merges and none of them had
+broken anything. Measured over the last 40 pushes to `main`: **6 red, and 5 of the 6 were this gate** —
+each for a different number, so nothing accumulated and every repair looked like a one-off.
+
+**It could not fail on the branch.** `merges_in` walks `git log --merges`, and a branch's own commits are
+not merges, so on a `pull_request` run they sat inside the range unread. A pull request's ticket entered
+the range the instant a merge commit for it existed and not one second earlier — which is why si#263 and
+si#264's notes were written from si#261's branch, and si#261's from #262's, and why a docs repair ended
+up inside a chore about a runner.
+
+The information was there the whole time, and the module already knew how to read it: `tickets_of` reads
+`^1..^2` for exactly this. Measured over every merge since v0.12.0 — **36 of 41: the number the gate
+demands is already named in a commit subject on the branch, before any merge commit exists.** Those 36
+now fail where they cost a push. `branch_tickets` reads two parents of GitHub's own merge and of nothing
+else, so a released range and an authored merge are the populations they always were.
+
+**And it asked for a ticket that does not exist.** When a merge's commits name no number, the gate fell
+back to the subject GitHub composed — `Merge pull request #262 from …` — and demanded a section naming
+`si#262`. On GitHub a number is an issue or a pull request and never both, so a heading `(si#262)` sends
+its reader to a merge rather than to the reason for it. Measured over the whole page: **14 of 109 section
+headings name a pull request rather than a ticket**, one of them headed *"The release guard asked for
+notes about pull requests"*. si#103 repaired the half that reads one level down and left the fallback
+standing.
+
+The demand has not weakened — the merge is work the release carries and still has to be described. Only
+the spelling asked for is true now:
+
+```text
+ERR the v0.16.0 section names 7 of the 8 changes merged into v0.15.0..HEAD; missing: #262 (pull request).
+    A `#N` there is a PULL REQUEST and not a ticket - write it in that spelling, because `si#N` would
+    assert an issue of that number and there is none
+```
+
+The fourteen headings already on the page are left as they are. Rewriting them would mean inventing
+tickets that were never filed, and a release note is a record of what happened.
+
+### The CI job runs on a self-hosted runner (#262)
+
+Named `#262` and not `si#262` because there was no ticket: this is the first change judged under the rule
+above, and it is a pull request. `ci.yml`'s job moves to `ghr-8`, addressed by a label of its own rather
+than by `[self-hosted, Linux, X64]`, which would describe any self-hosted Linux machine this account ever
+registers. `release.yml` stays on `ubuntu-latest` — it publishes to PyPI and GHCR and moving it is a trust
+decision, not a chore.
+
+**No `python:`.** `actions/setup-python` never installs Python; it unpacks prebuilt archives, and its
+manifest carries Ubuntu 22.04/24.04/26.04 and RHEL 9/10 and nothing else. This runner is Debian, so no pin
+could have been honoured. Stated rather than buried: nothing now says which Python version CI tests on,
+and a pin that cannot be honoured is worse than none. `DELIVERY_DOCKER_BOOTSTRAP=1` opts into the shape
+`simplon.docker` was written for, because a container job needs docker on the runner in order to start
+and so cannot be the thing that puts it there.
+
 ### Five checks that reported who started the run, not what the code did (si#261)
 
 Three checks in `tests/test_tasks_docs.py` had been red on every developer machine that runs as root and

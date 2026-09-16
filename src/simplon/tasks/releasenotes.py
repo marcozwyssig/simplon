@@ -275,6 +275,60 @@ def tickets_of(root: Path, sha: str, subject: str) -> set[int]:
     return written or tickets_in(subject)
 
 
+def fell_back_to_the_pull_request(root: Path, sha: str, subject: str) -> bool:
+    """True when the only number `tickets_of` could find is the PULL REQUEST's own (si#270).
+
+    The distinction is not pedantry, it is what the notes end up asserting. `si#262` is this house's
+    spelling for *simplon issue 262*, and on GitHub a number is either an issue or a pull request and
+    never both - so a section headed `(si#262)` sends its reader to a merge rather than to the reason for
+    it. Measured when this was raised: **14 of 109 section headings on the releases page name a pull
+    request rather than a ticket**, one of them headed "The release guard asked for notes about pull
+    requests". Every one of them was written by an author doing exactly what the finding told them to.
+
+    So the finding tells them something else now. The demand itself does not change - the merge is still
+    work a release carries, and completeness is still the point - only the spelling it asks for, `#262`
+    rather than `si#262`, which is true and which `tickets_in` has always accepted.
+    """
+    if not _GITHUB_PR_MERGE.fullmatch(subject):
+        return False
+    return not {number
+                for line in _git(root, "log", "--no-merges", "--format=%s",
+                                 f"{sha}^1..{sha}^2").splitlines()
+                for number in tickets_in(line)}
+
+
+def branch_tickets(root: Path, end: str) -> set[int]:
+    """The tickets the branch under test names, when `end` is GitHub's own merge - si#270's cause A.
+
+    THE GATE COULD ONLY EVER FAIL AFTER THE MERGE, and that is what this repairs. `merges_in` walks
+    `--merges`, and the branch's own commits are not merges, so on a `pull_request` run they sit inside
+    the range unread: the ticket appeared the instant a merge commit for it existed and not one second
+    earlier. Measured over the last 40 pushes to this repository's default branch, 6 were red and **5 of
+    the 6 were this gate**, each for a different number, each repaired from the NEXT branch along.
+
+    The information was there the whole time. Measured over every merge since v0.12.0: **36 of 41 - the
+    number the gate demands is already named in a commit SUBJECT on the branch**, before any merge commit
+    exists. This reads those subjects, so those 36 fail on the branch, where a red costs a push.
+
+    THE EPHEMERAL MERGE STAYS OUT OF `merges_in`, and si#97's reason still holds - it is scaffolding, no
+    author can put a ticket in its subject, and asking a section to describe it would be asking about the
+    run rather than about the work. What this adds is the other half: it is scaffolding *over a branch*,
+    and the branch is the work.
+
+    WHAT THIS DOES NOT REACH, stated rather than discovered later: a run on a developer's machine, where
+    `HEAD` is an ordinary commit and there is no merge to read two parents of. The repository is the only
+    source here and a branch tip does not say what it would be merged into, so the local run stays as
+    blind as it was; CI is where this is enforced, and CI is where it now fires.
+    """
+    subject = _git(root, "log", "-1", "--format=%s", end).strip()
+    if not is_githubs_own_merge(subject):
+        return set()
+    return {number
+            for line in _git(root, "log", "--no-merges", "--format=%s",
+                             f"{end}^1..{end}^2").splitlines()
+            for number in tickets_in(line)}
+
+
 def head_note(root: Path) -> str:
     """What `HEAD` is, in one line, and it is the line this gate exists to stop surprising people.
 
@@ -362,6 +416,16 @@ def check() -> int:
         # a YAML typo answered with a Python traceback is that promise broken at the first opportunity.
         log.error(str(exc))
         return 1
+
+
+def _spell(number: int, is_a_pull_request: bool) -> str:
+    """How a missing number is asked for, and the two spellings are not interchangeable (si#270).
+
+    `si#42` says *simplon issue 42*; `#42` says *whatever GitHub has under 42*. When the only place a
+    merge names a number is the subject GitHub composed, that number is the pull request's, and asking
+    for `si#42` is asking the author to write down a ticket that does not exist. They did, fourteen times.
+    """
+    return f"#{number} (pull request)" if is_a_pull_request else f"si#{number}"
 
 
 def _plural(count: int, noun: str) -> str:
@@ -466,6 +530,14 @@ def _assess(root: Path, spec: Declared) -> int:
         merges = merges_in(root, start, end)
         silent = [subject for sha, subject in merges if not tickets_of(root, sha, subject)]
         merged = {number for sha, subject in merges for number in tickets_of(root, sha, subject)}
+        # si#270 cause A: on a `pull_request` run the branch's own commits are in range and are not
+        # merges, so nothing read them and the branch could not fail on its own ticket.
+        merged |= branch_tickets(root, end)
+        # si#270 cause B: which of these numbers are a pull request's rather than a ticket's, so the
+        # finding can ask for the spelling that is true.
+        vorgang = {number
+                   for sha, subject in merges if fell_back_to_the_pull_request(root, sha, subject)
+                   for number in tickets_of(root, sha, subject)}
         named = tickets_in(body_of[version])
         held = version >= spec.complete_from
         missing = sorted(merged - named) if held else []
@@ -483,8 +555,11 @@ def _assess(root: Path, spec: Declared) -> int:
         if missing:
             findings.append(
                 f"the {tag_of(version)} section names {len(merged) - len(missing)} of the {len(merged)} "
-                f"tickets merged into {start}..{end}; missing: "
-                + ", ".join("si#" + str(number) for number in missing))
+                f"changes merged into {start}..{end}; missing: "
+                + ", ".join(_spell(number, number in vorgang) for number in missing)
+                + (". A `#N` there is a PULL REQUEST and not a ticket - write it in that spelling, "
+                   "because `si#N` would assert an issue of that number and there is none"
+                   if vorgang & set(missing) else ""))
 
     if findings:
         for finding in findings:
@@ -492,5 +567,5 @@ def _assess(root: Path, spec: Declared) -> int:
         return 1
 
     log.ok(f"the release notes are complete: {ruled} tags, sections and merges ruled on, and every "
-           f"section from {spell(spec.complete_from)} on names every ticket its range carries")
+           f"section from {spell(spec.complete_from)} on names every change its range carries")
     return 0
