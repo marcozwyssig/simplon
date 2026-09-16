@@ -99,7 +99,6 @@ def test_a_secret_typed_into_the_manifest_is_refused_rather_than_ignored():
 
 @pytest.mark.parametrize("spec, fragment", [
     ({"portainer": {"url_from": "P"}}, "which node the carrier stands on"),
-    ({"proxmox": {"node": "pve1", "kind": "lxc"}}, "where the Portainer on it answers"),
     ({"proxmox": {"node": "", "kind": "lxc"}, "portainer": {"url_from": "P"}}, "no host is named"),
     ({"proxmox": {"node": "pve1", "kind": "container"}, "portainer": {"url_from": "P"}},
      "a container on the node, a"),
@@ -261,3 +260,51 @@ def test_a_lower_case_prefix_is_accepted_because_the_rule_against_it_was_struck(
 
     # assert
     assert carrier.proxmox.token_from == "proxmox"
+
+
+# --- a carrier that is a machine and nothing else (si#258) ------------------------------------------
+
+def test_a_carrier_may_declare_a_machine_and_nothing_to_put_on_it():
+    """THE FINDING si#258 SURFACED, and it was larger than the ticket's own framing. `portainer:` was
+    REQUIRED on every carrier, so "carrier" and "Portainer host" were the same word - and `deploy carrier`
+    proved it by running an apt -> Docker -> Portainer playbook at the end of every run with no branch in
+    it. A product that wanted a machine got a workload it never asked for, and on a machine with no apt, a
+    red run."""
+    # arrange
+    machine = {"proxmox": {"node": "pve-2", "kind": "vm"}}
+
+    # act
+    carrier = carrierspec.declared({"carriers": {"lab": machine}}, "x")["lab"]
+
+    # assert
+    assert carrier.portainer is None, "absent, not an empty Portainer - the two are different statements"
+    assert carrier.proxmox.node == "pve-2"
+
+
+def test_the_portainer_backend_refuses_a_carrier_that_carries_no_portainer():
+    """The half that keeps the looser vocabulary honest: `backend: portainer` pointed at a machine with
+    no Portainer on it has nowhere to put the stack, and is told so by name rather than failing on an
+    attribute."""
+    # arrange
+    from simplon import portainer
+
+    machine = carrierspec.Carrier(name="lab",
+                                  proxmox=carrierspec.Proxmox(node="pve-2", kind="vm"))
+
+    # act / assert
+    with pytest.raises(portainer.PortainerError) as refused:
+        portainer.PortainerTarget.from_carrier(machine, "some-stack", {})
+
+    message = str(refused.value)
+    assert "lab" in message and "declares no `portainer:`" in message
+    assert "a backend the product registers itself" in message, (
+        "the way out has to be named, or the reader is told only that they are wrong")
+
+
+def test_a_carrier_that_declares_a_portainer_is_unchanged():
+    """The compatibility half. Nothing about the declared case moved."""
+    # act
+    carrier = carrierspec.declared({"carriers": {"hausportainer": HAUS}}, "x")["hausportainer"]
+
+    # assert
+    assert carrier.portainer == carrierspec.Portainer(url_from="PORTAINER", endpoint=1)

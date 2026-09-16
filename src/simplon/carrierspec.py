@@ -26,6 +26,12 @@ an unknown key under either block is REFUSED rather than ignored: a `token: ghp_
 section has to fail loudly, and a parser that skipped what it did not recognise would let it sit in a
 committed file instead.
 
+WHAT A CARRIER IS, RESTATED AFTER si#258. It is a MACHINE on a Proxmox node, and optionally the one
+thing this kernel knows how to install on it. The `portainer:` half used to be required, which made
+"carrier" and "Portainer host" the same word - and `deploy carrier` proved it by running an
+apt -> Docker -> Portainer playbook at the end of every run, with no branch in it. A carrier that omits
+the block is created and not configured, and that outcome is reported rather than implied.
+
 WHY THE CHAIN IS TWO NAMED BLOCKS AND NOT A GENERAL LIST OF LAYERS. The expressive form was considered
 and declined with a number: `backend: local` is the only value in all eight environments of all six
 products this kernel can reach. A general layer mechanism for a chain nobody declares yet is the kind of
@@ -119,11 +125,25 @@ class Portainer(NamedTuple):
 
 
 class Carrier(NamedTuple):
-    """One named carrier: a Proxmox node and the Portainer installed on it."""
+    """One named carrier: a Proxmox machine, and what the kernel installs on it.
+
+    `portainer` IS OPTIONAL SINCE si#258, and the reason is a finding rather than a feature request. The
+    section was written as though a carrier and a Portainer host were the same thing: `portainer:` was
+    required on every carrier, and `deploy carrier` ran an apt -> Docker -> Portainer playbook at the end
+    of every run with no branch in it. So the kernel's answer to "make me a machine" was always "and I
+    have decided what runs on it".
+
+    A carrier with no `portainer:` is created and NOT configured. That is a complete outcome and is
+    reported as one - the machine exists, the kernel installed nothing, and the manifest says why. What
+    then runs on it is the product's own business, reached through a backend it registers itself.
+
+    It cost no manifest anything: measured 2026-09-16 over the GitHub API, not one repository in this
+    family declares a `carriers:` section at all, this kernel's own included.
+    """
 
     name: str
     proxmox: Proxmox
-    portainer: Portainer
+    portainer: "Portainer | None" = None
 
 
 def _block(spec: Mapping, key: str, allowed: tuple[str, ...], where: str) -> Mapping:
@@ -167,6 +187,13 @@ def _carrier(name: str, spec: object, where: str) -> Carrier:
             f"{where}'s `proxmox: kind:` must be {' or '.join(KINDS)}, got '{kind}'. An {LXC} is a "
             f"container on the node, a {VM} a full machine - the choice is per environment and the "
             f"kernel cannot infer it")
+
+    if "portainer" not in spec:
+        # A MACHINE AND NOTHING ELSE, which is a complete statement and not half a carrier. The refusal
+        # that used to stand here said a carrier with no `portainer:` "declares no ... so nothing says
+        # where the Portainer on it answers" - true only while a carrier and a Portainer host were the
+        # same thing. What a product puts on the machine is now its own to say.
+        return Carrier(name=name, proxmox=_proxmox(proxmox, node, kind, where), portainer=None)
 
     portainer = _block(spec, "portainer", PORTAINER_KEYS, where)
     url_from = str(portainer.get("url_from", "")).strip()

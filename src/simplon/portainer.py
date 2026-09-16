@@ -116,6 +116,12 @@ class PortainerTarget:
         variables `credentials.py`'s convention stands for. It goes through `from_env` rather than beside
         it, because the refusal that names the missing variable is the half worth not having twice.
         """
+        if carrier.portainer is None:
+            raise PortainerError(
+                f"carrier '{carrier.name}' declares no `portainer:` block, so this backend has nowhere "
+                f"to put the stack. A carrier without one is a machine the kernel creates and does not "
+                f"configure (si#258); give it `portainer: url_from: ...` to have a Portainer installed, "
+                f"or point this environment at a backend the product registers itself")
         source = dict(os.environ if environ is None else environ)
         prefix = carrier.portainer.url_from
         for suffix in ("_URL", "_TOKEN"):
