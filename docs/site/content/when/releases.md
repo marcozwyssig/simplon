@@ -64,7 +64,7 @@ two ordinary states into a broken tool.
 
 **Why git answered nothing is still open.** It has only been seen on one machine, where every push starts two
 workflow runs seconds apart on the same host — but one of the two failures had no concurrent job, so shared
-state cannot be the whole of it. That half needs the runner, and it is on si#274. This half converts a
+state cannot be the whole of it. That half needs the runner, and it is si#277. This half converts a
 wrong answer into a loud one, which is the difference between a defect that costs a re-run and one that
 ships an unlabelled image.
 
