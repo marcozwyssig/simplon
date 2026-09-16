@@ -281,6 +281,20 @@ groups:
         params:
           dry_run: { help: "List what is missing and install nothing.", short: "-n" }      
 
+      # PLACED DELIBERATELY, which is what the catalogue asks of this one (si#92). It is declared there
+      # and placed nowhere, because it grants `NOPASSWD: ALL` and a docker group - "a change nobody wants
+      # appearing in a CLI they did not ask for it in". The reason simplon may now ask for it is that
+      # simplon now PROVISIONS A CI HOST: its own workflows run on a self-hosted runner, and the machine
+      # needs exactly the two privileges this grants before a job on it can reach docker.
+      #
+      # IT DOES NOT FIX A RUNNER THAT EXECUTES AS ROOT, and that is worth writing here because the two
+      # look like one problem. Measured on ghr-8: the job runs with `os.getuid() == 0`, and for root a
+      # docker GROUP is not the obstacle. The order is the other way round - give the runner a normal
+      # user first, then grant that user these privileges, then restart the service, because a group is
+      # inherited at process start and this command deliberately does not know what the service is
+      # called.
+      ci-privileges: { task: "support:ci-privileges" }
+
 # The documentation website's data (#2). Four values here and a fifth taken from the kernel: `source:` is
 # ABSENT on purpose since si#183, so this manifest is the first consumer of the `docs/site` default rather
 # than a product that happens to agree with it. If the default ever stopped working, `build docs` in this
