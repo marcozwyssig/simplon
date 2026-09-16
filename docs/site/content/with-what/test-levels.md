@@ -738,6 +738,15 @@ out**, and a `pull_request` run checks out `refs/pull/N/merge` - your branch as 
 a branch green on its own tip goes red the moment the base moves. Both readings are correct and neither
 used to be said out loud, which is the only reason it read as a flaky gate.
 
+**It fails on the branch, and it asks for the spelling that is true (si#270).** Both halves were wrong
+until 0.16.0, and both were measured on this repository: of the last 40 pushes to `main`, 6 were red and
+5 of the 6 were this gate — always after the merge, never before it. A branch's own commits are not
+merges, so nothing read them; now the two parents of GitHub's ephemeral merge are read, and 36 of 41
+merges since v0.12.0 would have failed on their own branch instead. And when a merge's commits name no
+number at all, the gate no longer demands `si#N` — that number is the pull request's, `si#N` is this
+house's spelling for an *issue*, and a section headed with it sends its reader to a merge rather than to
+the reason for it. It asks for `#N` and says why.
+
 **A run that ruled on nothing is red.** A floor above every release, a page whose headings stopped being
 `## X.Y.Z`, a checkout with no tags - each leaves the gate with nothing to measure, and a green there is
 a report that nobody looked. The tag-less checkout is diagnosed as the *checkout*: `actions/checkout`

@@ -147,7 +147,7 @@ def test_a_ticket_merged_into_a_release_and_missing_from_its_section_is_refused(
     # assert
     said = capsys.readouterr().err
     assert rc == 1
-    assert "the v0.5.0 section names 1 of the 2 tickets merged into v0.4.0..v0.5.0" in said
+    assert "the v0.5.0 section names 1 of the 2 changes merged into v0.4.0..v0.5.0" in said
     assert "missing: si#41" in said
 
 
@@ -534,3 +534,132 @@ def test_a_manifest_without_the_section_stops_the_gate_before_it_touches_git(tmp
     said = capsys.readouterr().err
     assert rc == 1
     assert "`releases:` section" in said
+
+
+# --- si#270: the gate could only ever fail AFTER the merge, and asked for the wrong spelling -----------
+
+def test_a_branch_is_refused_for_its_own_ticket_before_any_merge_commit_carries_it(tmp_path, capsys,
+                                                                                   monkeypatch):
+    """si#270 cause A, SEEN RED - and red on the branch, which is the whole point.
+
+    Before this, `merges_in` walked `--merges` and a branch's own commits are not merges, so on a
+    `pull_request` run they sat inside the range unread: the ticket entered the range the instant a merge
+    commit for it existed and not one second earlier. The cost was measured on this repository - of the
+    last 40 pushes to `main`, 6 were red and 5 of the 6 were this gate, each for a different number and
+    each repaired from the NEXT branch along.
+
+    The arrangement here is the `pull_request` checkout exactly: HEAD is GitHub's own merge of a branch
+    that names si#77 with a base that has never heard of it, and the page does not mention 77.
+    """
+    # arrange: a branch naming a ticket, merged into HEAD the way GitHub's ephemeral merge is
+    root = _complete_release(tmp_path)
+    base = _git(root, "rev-parse", "HEAD").strip()
+    _merge(root, "feat/77", ["feat(si#77): the work the notes forgot"], f"Merge {'b' * 40} into {base}")
+    _product(monkeypatch, root, COMPLETE_PAGE)
+
+    # act
+    rc = releasenotes.check()
+
+    # assert: refused, naming the ticket the BRANCH carries and no merge commit does
+    said = capsys.readouterr().err
+    assert rc == 1
+    assert "missing: si#77" in said, said
+
+
+def test_a_branch_whose_own_ticket_the_notes_do_name_is_green_on_the_branch(tmp_path, capsys,
+                                                                            monkeypatch):
+    """The green half, and it is what makes the red above worth having: writing the note IN the pull
+    request that earns it now passes on the branch, instead of passing for the unrelated reason that
+    nothing could see the ticket yet."""
+    # arrange: the same branch, and a page that names it
+    root = _complete_release(tmp_path)
+    base = _git(root, "rev-parse", "HEAD").strip()
+    _merge(root, "feat/77", ["feat(si#77): the work the notes describe"], f"Merge {'b' * 40} into {base}")
+    _product(monkeypatch, root, COMPLETE_PAGE.replace("it carries si#61.", "it carries si#61 and si#77."))
+
+    # act
+    rc = releasenotes.check()
+
+    # assert
+    assert rc == 0, capsys.readouterr().err
+
+
+def test_a_released_range_is_untouched_by_the_branch_reading(tmp_path, capsys, monkeypatch):
+    """The assurance the repair must not spend. `branch_tickets` reads two parents of GitHub's OWN merge
+    and of nothing else - so a range ending at a tag, and a HEAD that is an ordinary authored merge, are
+    the populations they always were. A repair that quietly widened every range would refuse pages that
+    have been correct for eleven releases."""
+    # arrange: a normal, authored merge at HEAD - not GitHub's machine format
+    root = _complete_release(tmp_path)
+    _merge(root, "feat/78", ["feat(si#78): work nobody has to describe yet"],
+           "merge: the branch, as a person would write it")
+
+    # act
+    carried = releasenotes.branch_tickets(root, "HEAD")
+
+    # assert
+    assert carried == set(), "an authored merge at HEAD was read as a pull request checkout"
+    assert releasenotes.branch_tickets(root, "v0.5.0") == set(), "a tag was read as a pull request"
+
+
+def test_a_merge_that_names_only_its_pull_request_is_asked_for_in_that_spelling(tmp_path, capsys,
+                                                                                monkeypatch):
+    """si#270 cause B, SEEN RED. `si#42` says *simplon issue 42*; a number that exists only in the
+    subject GitHub composed is the PULL REQUEST's, and asking for `si#42` asks the author to write down a
+    ticket that does not exist. Fourteen of the 109 section headings on this repository's own page did
+    exactly that, one of them headed "The release guard asked for notes about pull requests".
+
+    The demand does not weaken - the merge is still work the release carries and still has to be
+    described. Only the spelling asked for is true now.
+    """
+    # arrange: a merge whose commits name nothing, so the only number is the pull request's
+    root = _complete_release(tmp_path)
+    _merge(root, "chore/tidy", ["chore: the CI job moves, and there is no ticket for it"],
+           "Merge pull request #262 from marcozwyssig/chore/tidy")
+    _product(monkeypatch, root, COMPLETE_PAGE)
+
+    # act
+    rc = releasenotes.check()
+
+    # assert
+    said = capsys.readouterr().err
+    assert rc == 1
+    assert "missing: #262 (pull request)" in said, said
+    assert "si#262" not in said, f"the finding still asked for a ticket that does not exist: {said}"
+    assert "would assert an issue of that number and there is none" in said, said
+
+
+def test_naming_the_pull_request_in_that_spelling_satisfies_the_gate(tmp_path, capsys, monkeypatch):
+    """The green half: `#262` in the section is accepted, so the honest spelling is a way through and not
+    merely a nicer complaint."""
+    # arrange
+    root = _complete_release(tmp_path)
+    _merge(root, "chore/tidy", ["chore: the CI job moves, and there is no ticket for it"],
+           "Merge pull request #262 from marcozwyssig/chore/tidy")
+    _product(monkeypatch, root, COMPLETE_PAGE.replace("it carries si#61.", "it carries si#61 and #262."))
+
+    # act
+    rc = releasenotes.check()
+
+    # assert
+    assert rc == 0, capsys.readouterr().err
+
+
+def test_a_merge_whose_commits_name_a_ticket_is_still_asked_for_as_a_ticket(tmp_path, capsys,
+                                                                            monkeypatch):
+    """The other side of the same fork, because a rule that spells everything `#N` would be as wrong as
+    one that spells everything `si#N`. The author's own number is a ticket and is asked for as one."""
+    # arrange
+    root = _complete_release(tmp_path)
+    _merge(root, "feat/79", ["feat(si#79): the work, with its ticket in the subject"],
+           "Merge pull request #263 from marcozwyssig/feat/79")
+    _product(monkeypatch, root, COMPLETE_PAGE)
+
+    # act
+    rc = releasenotes.check()
+
+    # assert
+    said = capsys.readouterr().err
+    assert rc == 1
+    assert "missing: si#79" in said, said
+    assert "#263" not in said, f"the pull request's number reached the finding: {said}"
