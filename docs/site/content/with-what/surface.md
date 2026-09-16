@@ -193,8 +193,15 @@ no product manifest, command or import is affected either way.
 
 Short enough to state, and the half you most need, because everything else at the top level is yours:
 
-`bootstrap` · `catalogue` · `clitaxonomy` · `diskguard` · `oras` · `signatures` · `steplog` ·
-`test_impls` · `tools`
+`bootstrap` · `catalogue` · `clitaxonomy` · `diskguard` · `oras` · `runners` · `signatures` ·
+`steplog` · `test_impls` · `tools`
+
+`runners` needs a word too, because `workflowgen` beside it is a library module and this is not. It is a
+**table** of facts about kinds of CI machine — what a self-hosted Debian runner provides, why
+`actions/setup-python` cannot help there — and a product reaches those facts by naming a kind in its
+manifest, never by importing the table. That is the point of carrying it here: the kernel learns a
+machine once, for everybody, and stays free to add a kind or correct a measured field without that being
+a promise it broke.
 
 `bootstrap` needs a word. It carries the `simplon` console script, so `simplon.bootstrap:main` **is** a
 promised entry point — what is not promised is importing the module for its other functions.
