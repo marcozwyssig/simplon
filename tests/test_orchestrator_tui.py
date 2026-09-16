@@ -1752,3 +1752,111 @@ def test_two_running_steps_keep_their_own_backlogs_so_the_pane_shows_one_stream_
     # unreadable, and dropped they would be invisible
     assert "one line 2" in first and "two line" not in first
     assert "two line 2" in second and "one line" not in second
+
+
+# --- si#265: a repaint with no screen is an ordinary moment; a screen with no bar is a broken app ------
+
+def test_a_repaint_before_the_screen_exists_paints_nothing_and_raises_nothing():
+    """si#265, the half that was the flake. `_repaint_status` has three callers and two of them are
+    clocks - a once-a-second `set_interval` and the worker thread's handovers - so it is reached in
+    moments the app did not choose. Before there is a screen there is no bar, and that is an ordinary
+    moment in a run rather than a failure.
+
+    SEEN RED against the old shape: a single `self.query_one("#status", Static)` here raised
+    `NoMatches: No nodes match '#status' on Screen(id='_default')`, which is how the ticket was found -
+    one run of a commit red, two green, and nothing in that commit touching the TUI.
+    """
+    # arrange: an app that has never been mounted, which is exactly what `_bar is None` means
+    app = _StepApp(_pipeline())
+
+    # act
+    app._repaint_status()
+
+    # assert: nothing raised, and nothing was painted either
+    assert app._bar is None
+
+
+def test_a_repaint_after_the_app_is_torn_down_paints_nothing_either():
+    """The other end of the same life, and the end `run_test()` actually reached. The app is driven to
+    completion, the context manager tears the screen down, and a late tick must find nothing to write to
+    rather than a widget that is no longer in anybody's tree."""
+    # arrange
+    pipeline = _pipeline()
+
+    async def _drive():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert app._bar is not None, "the bar was never found while the app was up"
+        return app
+
+    app = asyncio.run(_drive())
+
+    # act: the tick that used to arrive into an empty tree
+    app._repaint_status()
+
+    # assert
+    assert app._bar is None, "the app kept a widget that is no longer mounted"
+
+
+def test_a_mounted_screen_with_no_bar_is_still_a_broken_app_and_says_so():
+    """The assurance the repair must not spend, and the reason it is not `except NoMatches: pass`.
+
+    Swallowing the lookup would have swallowed this case too - a screen that really is missing its status
+    line - and the bar would then be quietly absent instead of loudly missing. The two states get
+    different code: this one still raises, at the single query in `on_mount`, naming the selector.
+    """
+    from textual.app import ComposeResult
+    from textual.css.query import NoMatches
+    from textual.widgets import Footer, Header
+
+    class _NoBar(_StepApp):
+        """Composes everything except `#status` - a broken app, arranged rather than described."""
+
+        def compose(self) -> ComposeResult:
+            yield Header()
+            yield Footer()
+
+    # arrange
+    app = _NoBar(_pipeline())
+
+    async def _drive():
+        async with app.run_test():
+            pass
+
+    # act + assert: the failure is the lookup, and it names what it could not find
+    with pytest.raises(NoMatches) as refused:
+        asyncio.run(_drive())
+    assert "#status" in str(refused.value), str(refused.value)
+
+
+def test_the_bar_is_found_once_and_the_clocks_never_query_for_it_again():
+    """WHY THE REFERENCE IS HELD rather than looked up each time, stated as a measurement instead of as a
+    preference: after mount, no number of ticks costs another tree query, so there is no second place the
+    lookup can fail from."""
+    # arrange
+    pipeline = _pipeline()
+
+    async def _drive():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            seen: list[str] = []
+            real = app.query_one
+
+            def counted(selector, *args, **kwargs):
+                seen.append(str(selector))
+                return real(selector, *args, **kwargs)
+
+            app.query_one = counted  # type: ignore[method-assign]
+            for _ in range(5):
+                app._repaint_status()
+            return seen
+
+    # act
+    queried = asyncio.run(_drive())
+
+    # assert
+    assert queried == [], f"a repaint went back to the tree: {queried}"

@@ -214,6 +214,10 @@ class _StepApp(App):
         # LEFT. The cursor has already moved by the time a highlight arrives, so the pane has to remember
         # what it was showing itself.
         self._showing: Row | None = None
+        # The bottom bar, held from `on_mount` on - si#265. It is None for exactly two stretches of this
+        # app's life, before the screen is mounted and after it is torn down, and in both of them there
+        # is no bar to repaint. See `_repaint_status`.
+        self._bar: Static | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -229,6 +233,11 @@ class _StepApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        # ONCE, AND HERE, WHERE ITS ABSENCE MEANS SOMETHING (si#265). `compose` yields this bar, so a
+        # screen that is mounted and has no `#status` is a broken app and `query_one` says so with a
+        # `NoMatches` naming the selector. Every later repaint writes to the widget this line found, so
+        # the timer and the worker never query a tree they did not build.
+        self._bar = self.query_one("#status", Static)
         self.query_one("#filter", Input).display = False
         self._mount_tree()
         # The tree keeps the focus, explicitly. Adding the filter box put a second focusable widget on
@@ -307,10 +316,35 @@ class _StepApp(App):
         pure, plain, and asserted without a terminal; this method only places it and colours the whole line
         by the run's derived state, which is the additive half of item 7 for a widget that has no glyph of
         its own."""
-        bar = self.query_one("#status", Static)
+        bar = self._bar
+        if bar is None:
+            # NOTHING TO REPAINT IS NOT A FAILURE, and telling the two apart is the whole of si#265
+            # (`tui.py` had a single `query_one` here and this method has three callers, two of which are
+            # clocks). A once-a-second timer and a worker thread both reach this, and both can arrive
+            # while there is no screen - before `on_mount` has run, and again after the app has been torn
+            # down, which is where `run_test()` found it: `NoMatches: No nodes match '#status'`, one run
+            # of a commit red and two green.
+            #
+            # The repair is NOT `except NoMatches: pass`. That would swallow the other case too - a
+            # mounted screen with no bar in it - and trade a loud flake for a silent one, leaving the
+            # status line quietly missing on a real mount failure. The two states get different code:
+            # that case still raises, at the single query in `on_mount`, and this branch means only
+            # "there is no screen right now".
+            return
         bar.update(status_line(self.rows, steps_module.clock()))
         state = self.rows.state
         bar.set_classes([_BAR_CLASS.get(state, "")] if state in _BAR_CLASS else [])
+
+    def on_unmount(self) -> None:
+        """Let the bar go when the screen does (si#265).
+
+        Without this the app would hold a widget that is no longer in anybody's tree, and a repaint
+        arriving after teardown - which is exactly how the flake was found - would write to it. Writing
+        to a detached widget raises nothing and changes nothing, which is precisely the reason to drop
+        the reference instead: a paint that goes nowhere is the silent half of the pair this ticket is
+        about.
+        """
+        self._bar = None
 
     # ---------------------------------------------------------------- the left pane
 
