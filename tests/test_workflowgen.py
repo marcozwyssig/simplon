@@ -1388,3 +1388,93 @@ def test_the_three_levels_agree_about_a_key_they_do_not_know():
             jobs:
               build: { runs-on: ubuntu-latest, steps: [{ some-future-key: value }] }
         """))
+
+
+# --- si#266: `runs-on` carries a type, and `str()` threw it away --------------------------------------
+
+_LABEL_LIST = """
+    workflows:
+      ci:
+        on: [push]
+        jobs:
+          build:
+            runs-on: [self-hosted, windows, vmware]
+            steps:
+              - command: test all
+    """
+
+
+def test_a_list_of_labels_is_rendered_as_a_list_and_not_as_one_label_with_that_text(manifest):
+    """si#266, SEEN RED. `str(runs_on)` turned `[self-hosted, windows, vmware]` into the single label
+    `"['self-hosted', 'windows', 'vmware']"` - valid YAML, valid GitHub syntax, and it selects a runner
+    whose one label is that literal text. The job then queues for ever with no error anywhere: the
+    workflow generates, commits, reviews and runs, and nothing says a word.
+
+    A list is the DOCUMENTED way to select a self-hosted runner, because one label is rarely enough once
+    an account has more than one machine. This is read back through YAML rather than by string match, so
+    a rendering that merely looks right cannot pass.
+    """
+    # arrange + act
+    rendered = _render(manifest, _LABEL_LIST)
+
+    # assert: the list survived as a list, with the labels intact
+    parsed = yaml.safe_load(rendered)
+    assert parsed["jobs"]["build"]["runs-on"] == ["self-hosted", "windows", "vmware"]
+    assert "['self-hosted'" not in rendered, "the list was coerced to its Python repr"
+
+
+def test_a_single_label_is_still_a_plain_string(manifest):
+    """The assurance the repair must not spend: every manifest in this family writes one label, and one
+    label has to stay a scalar rather than become a list of one."""
+    # arrange + act
+    rendered = _render(manifest, _MINIMAL)
+
+    # assert
+    assert yaml.safe_load(rendered)["jobs"]["build"]["runs-on"] == "ubuntu-latest"
+
+
+def test_githubs_group_and_labels_mapping_survives_too(manifest):
+    """GitHub documents three shapes for `runs-on:` and refusing one of them would be an expression rule
+    bought for nothing - the renderer already handles it, because `_scalar` delegates to `yaml.safe_dump`
+    rather than guessing."""
+    # arrange + act
+    rendered = _render(manifest, _LABEL_LIST.replace(
+        "runs-on: [self-hosted, windows, vmware]",
+        "runs-on: { group: my-runners, labels: [self-hosted, x64] }"))
+
+    # assert
+    assert yaml.safe_load(rendered)["jobs"]["build"]["runs-on"] == {
+        "group": "my-runners", "labels": ["self-hosted", "x64"]}
+
+
+@pytest.mark.parametrize("value, complaint", [
+    ("[self-hosted, 7]", "is a list of runner LABELS"),
+    ("3.12", "is a label, a list of labels, or GitHub's"),
+    ("true", "is a label, a list of labels, or GitHub's"),
+])
+def test_a_value_github_has_no_reading_for_is_refused_instead_of_coerced(value, complaint):
+    """Diagnosis, not an expression rule: none of these is a runner label in any reading GitHub has, and
+    the old behaviour was to coerce it and emit a label no runner can carry."""
+    # arrange
+    section = _section(_LABEL_LIST.replace("[self-hosted, windows, vmware]", value))
+
+    # act
+    with pytest.raises(ValueError) as refused:
+        workflowgen.parse(section)
+
+    # assert
+    assert complaint in str(refused.value), str(refused.value)
+
+
+def test_an_absent_runs_on_is_still_refused_by_its_own_name():
+    """The refusal that was already there, moved into `_runs_on` with the rest and still saying the same
+    thing - the runner image is the product's choice and the kernel has no default worth imposing."""
+    # arrange
+    section = _section(_LABEL_LIST.replace("            runs-on: [self-hosted, windows, vmware]\n", ""))
+
+    # act
+    with pytest.raises(ValueError) as refused:
+        workflowgen.parse(section)
+
+    # assert
+    assert "declares no `runs-on:`" in str(refused.value)
