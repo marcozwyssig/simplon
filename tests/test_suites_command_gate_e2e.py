@@ -37,6 +37,8 @@ from pathlib import Path
 import pytest
 
 from simplon import context
+
+from conftest import docker_is_usable
 from simplon.context import ProductContext
 from simplon.run import run
 from simplon.tasks import profiles, testrun
@@ -46,7 +48,7 @@ from simplon.verdict import Verdict
 #: typed here - so a table entry that stops working takes this suite with it.
 CPP = profiles.profile("cpp", version="19")
 
-_DOCKER = shutil.which("docker") is not None and run(["docker", "version"]).ok
+_DOCKER = docker_is_usable()
 
 needs_docker = pytest.mark.skipif(not _DOCKER, reason="no docker daemon here to compile and test in")
 
@@ -216,31 +218,40 @@ def test_a_tree_that_does_not_compile_stops_at_the_preamble_and_ctest_is_never_a
     assert _binaries(tmp_path) == stale, "the failed compile replaced the binary it was supposed to fail on"
 
 
-def test_the_gate_hands_the_toolchain_body_the_command_path_it_is_running(monkeypatch, tmp_path):
+def test_the_gate_hands_the_toolchain_body_the_command_path_it_is_running(monkeypatch, tmp_path, capsys):
     """WHAT `GateContext` IS FOR, measured through the one thing `run_toolchain` reads off a context.
 
     Its refusals are worded with `ctx.command_path`, so a stand-in carrying the wrong path - or a
-    hardcoded `toolchain:run` - would say the wrong thing about which manifest entry to edit. The image
-    is dropped from the command's `with:` here, which is the refusal that quotes it, and nothing reaches
-    docker at all - which is why this one carries no `needs_docker`, unlike the three above it.
+    hardcoded `toolchain:run` - would say the wrong thing about which manifest entry to edit.
+
+    THE IMAGE IS DROPPED FROM BOTH COMMANDS, and that is a repair rather than a detail. This test used to
+    drop it from the gate's command only and claim in this docstring that "nothing reaches docker at
+    all" - while the gate's PREAMBLE still carried an image and ran first. The claim was true only on a
+    machine where docker works, because there the preamble merely succeeded on its way past. On a CI
+    runner where docker is present and cannot be executed it raised `PermissionError` out of a test that
+    had declared itself docker-free, which is how the claim was found (2026-09-16).
+
+    Now the first thing the gate reaches is the refusal, so the docstring is true on every machine and
+    the test still needs no docker.
     """
-    # arrange: a command whose `with:` names no image
+    # arrange: a product whose commands name no image at all
     _product(monkeypatch, tmp_path, PASSES)
     manifest = (tmp_path / "gatedemo.yaml").read_text(encoding="utf-8")
-    (tmp_path / "gatedemo.yaml").write_text(
-        manifest.replace('          image: "silkeh/clang:19"\n          workdir: "/src"\n'
-                         '          argv: ["ctest", "--test-dir", "build", "--output-on-failure"]',
-                         '          workdir: "/src"\n'
-                         '          argv: ["ctest", "--test-dir", "build", "--output-on-failure"]'),
-        encoding="utf-8")
+    without_images = manifest.replace('          image: "silkeh/clang:19"\n', "")
+    assert "silkeh/clang" not in without_images, "both images have to go, or the preamble runs docker"
+    (tmp_path / "gatedemo.yaml").write_text(without_images, encoding="utf-8")
     gate, cfg = _loaded(tmp_path)
 
     # act
     with pytest.raises(SystemExit) as refused:
         testrun.assess_gate(gate, cfg, [], filtered=False)
 
-    # assert: `log.die` exited, and the gate did not invent a command path
+    # assert: `log.die` exited, and the refusal names the command the gate was running - which is the
+    # whole of what GateContext carries, and what this test never actually checked before
     assert refused.value.code == 1
+    said = capsys.readouterr()
+    assert "build compile" in said.out + said.err, (
+        f"the refusal has to name the manifest entry to edit: {said.out + said.err!r}")
 
 
 def test_the_body_a_gate_backs_may_read_only_the_command_path(monkeypatch, tmp_path):

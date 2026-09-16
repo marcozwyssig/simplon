@@ -82,8 +82,23 @@ def _fetch_static_cli(dest: Path) -> None:
 
 
 def _daemon_reachable() -> bool:
-    """One cheap `docker version` probe; separated for unit-testability."""
-    return run(["docker", "version"]).ok
+    """One cheap `docker version` probe; separated for unit-testability.
+
+    AN OSError IS "NOT REACHABLE" AND NOT A TRACEBACK, which cost a measurement to find. On a CI runner
+    (ghr-8, 2026-09-16) a file named `docker` sat on PATH that `shutil.which` accepted - it checks the
+    permission bits - and that the kernel could not execute: `PermissionError: [Errno 13] Permission
+    denied: 'docker'`, the signature of a binary on a `noexec` mount. Every caller here is asking a
+    yes/no question, and the honest answer to "can I reach the daemon" on such a host is no.
+
+    Letting it propagate was worse than useless: it came out of `ensure_docker`, the one function in
+    this module whose entire purpose is to die naming the fixes, as a bare traceback naming none of
+    them. A third state that crashes the function that exists to classify states is this repository's
+    recurring defect wearing the module's own clothes.
+    """
+    try:
+        return run(["docker", "version"]).ok
+    except OSError:
+        return False
 
 
 def _sudo_prefix() -> list | None:
