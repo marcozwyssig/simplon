@@ -37,6 +37,8 @@ from pathlib import Path
 import pytest
 
 from simplon import context
+
+from conftest import docker_is_usable
 from simplon.context import ProductContext
 from simplon.run import run
 from simplon.tasks import profiles, testrun
@@ -46,7 +48,7 @@ from simplon.verdict import Verdict
 #: typed here - so a table entry that stops working takes this suite with it.
 CPP = profiles.profile("cpp", version="19")
 
-_DOCKER = shutil.which("docker") is not None and run(["docker", "version"]).ok
+_DOCKER = docker_is_usable()
 
 needs_docker = pytest.mark.skipif(not _DOCKER, reason="no docker daemon here to compile and test in")
 

@@ -60,3 +60,31 @@ class Recorder:
             if path.startswith(prefix):
                 return answer
         return None
+
+
+def docker_is_usable() -> bool:
+    """Whether a real docker CLI on this machine can be run at all - the guard the e2e suites skip on.
+
+    IN CONFTEST BECAUSE IT WAS IN THREE FILES, wordforword, and because the third state it now handles
+    was found the expensive way. The line used to read:
+
+        shutil.which("docker") is not None and run(["docker", "version"]).ok
+
+    which knows two states and met a third on a CI runner (2026-09-16): `shutil.which` returned a path -
+    it checks the permission bits and they were set - and the exec then failed with
+    `PermissionError: [Errno 13] Permission denied: 'docker'`, the signature of a binary on a `noexec`
+    mount. A guard whose job is to decide whether to SKIP crashed the whole module instead, and three
+    copies of it crashed identically.
+
+    "Present but unusable" is the same answer as "absent" to the question these suites ask.
+    """
+    import shutil
+
+    from simplon.run import run
+
+    if shutil.which("docker") is None:
+        return False
+    try:
+        return run(["docker", "version"]).ok
+    except OSError:
+        return False

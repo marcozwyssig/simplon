@@ -42,6 +42,8 @@ import yaml
 from typer.testing import CliRunner
 
 from simplon import catalogue as catalogue_mod
+
+from conftest import docker_is_usable
 from simplon import cli, context
 from simplon.context import ProductContext
 from simplon.orchestrator import manifest as manifest_mod
@@ -56,7 +58,7 @@ DOTNET = profiles.profile("dotnet", version="9.0")
 #: Docker, or the reason there will be no verdict. Probed once at import: `which` first so a host
 #: without the CLI never pays for a subprocess, then one `docker version` because an installed CLI
 #: with no daemon behind it fails in a way that looks like a broken generator.
-_DOCKER = shutil.which("docker") is not None and run(["docker", "version"]).ok
+_DOCKER = docker_is_usable()
 
 needs_docker = pytest.mark.skipif(
     not _DOCKER, reason="no docker daemon here to compile the generated tree in")
