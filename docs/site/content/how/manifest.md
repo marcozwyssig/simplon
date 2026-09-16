@@ -822,6 +822,31 @@ in this family.
 and every field above defaults to empty. The section becomes required the moment an environment points at
 one - and then a `carrier:` naming nothing declared is refused, and told which carriers exist.
 
+**`portainer:` is optional, and leaving it out is a statement.** A carrier that declares only `proxmox:`
+is a machine the kernel creates and does **not** configure:
+
+```yaml
+carriers:
+  lab:
+    proxmox:
+      endpoint: https://10.0.0.6:8006/
+      token_from: PROXMOX
+      node: pve-2
+      kind: vm
+      template: local:vztmpl/debian-13-standard_amd64.tar.zst
+      storage: local-zfs
+      ssh_key: "ssh-ed25519 AAAAC3Nz... you@host"
+```
+
+`deploy carrier` then stops after the machine exists and says so - *"exists on pve-2 and nothing was
+installed on it"*. What runs there is your own to deploy, through a backend you register. Until si#258
+the `portainer:` block was required, which made *carrier* and *Portainer host* the same word: an
+apt -> Docker -> Portainer playbook ran at the end of every run with no branch in it, so a product that
+wanted a machine got a workload it never asked for - and on a machine without `apt`, a red run.
+
+**`backend: portainer` pointed at such a carrier is refused by name**, because that backend has nowhere
+to put its stack. The refusal names the carrier and both ways out.
+
 ### `deploy:` - which version a deployment is deploying
 
 A deployment names its version, and it has three kinds of answer:

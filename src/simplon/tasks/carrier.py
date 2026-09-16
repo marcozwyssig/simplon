@@ -144,14 +144,31 @@ def _token(carrier: carrierspec.Carrier) -> str:
     return token
 
 
+def _declared_portainer(carrier: carrierspec.Carrier) -> carrierspec.Portainer:
+    """The carrier's Portainer half, for the paths that only run when it has one.
+
+    A function rather than an `assert` or a `# type: ignore`, because the two callers below are reached
+    only after `up` has checked - and a reader arriving at either of them should be told that, not left
+    to trust it. If it ever raises, the branch in `up` has been lost.
+    """
+    if carrier.portainer is None:
+        raise ValueError(
+            f"carrier '{carrier.name}' declares no `portainer:`, so nothing here applies to it - this "
+            f"path is only reached for a carrier that declares one")
+    return carrier.portainer
+
+
 def portainer_password(carrier: carrierspec.Carrier) -> str:
     """The Portainer admin password, from the environment and never from the file.
 
     IT IS NOT OPTIONAL, and that is the measurement rather than a preference: a Portainer started without
     one locks itself five minutes later and then wants a setup token out of its own log. Refusing here
     beats delivering a carrier whose Portainer nobody can ever log into.
+
+    Only asked of a carrier that DECLARES a Portainer (si#258). A carrier with no `portainer:` block gets
+    no playbook, so there is no admin account to be locked out of and nothing to ask for.
     """
-    variable = f"{carrier.portainer.url_from}{PASSWORD_SUFFIX}"
+    variable = f"{_declared_portainer(carrier).url_from}{PASSWORD_SUFFIX}"
     password = os.environ.get(variable, "")
     if not password:
         log.die(f"{variable} is not set. Portainer needs an admin password AT START - one that gets it "
@@ -457,7 +474,7 @@ def _ansible(carrier: carrierspec.Carrier, address: str, work: Path, key: Path, 
         "docker", "run", "--rm",
         # The password rides the environment for the same reason, and the playbook reads it with
         # `lookup('env', ...)` rather than carrying a rendered copy of it on disk.
-        "-e", f"{carrier.portainer.url_from}{PASSWORD_SUFFIX}",
+        "-e", f"{_declared_portainer(carrier).url_from}{PASSWORD_SUFFIX}",
         "-v", f"{hostpath.translate(work)}:/work",
         "-v", f"{hostpath.translate(key)}:/key:ro", "-w", "/work",
         "-e", "ANSIBLE_HOST_KEY_CHECKING=False",
@@ -468,7 +485,13 @@ def _ansible(carrier: carrierspec.Carrier, address: str, work: Path, key: Path, 
 
 
 def up(environment: str = "") -> int:
-    """Make the carrier this environment stands on: the machine, then the Portainer on it.
+    """Make the carrier this environment stands on: the machine, and what it declares on top of it.
+
+    TWO SHAPES SINCE si#258, and the second one is the finding rather than a feature. A carrier that
+    declares a `portainer:` gets the machine and the Portainer, as before. A carrier that declares none
+    gets the machine and NOTHING ELSE - reported as its own outcome, because before this the
+    apt -> Docker -> Portainer playbook ran at the end of every run with no branch in it, and a product
+    that wanted a machine got a workload it had not asked for.
 
     IT IS ITS OWN COMMAND AND NOT A PREAMBLE TO `deploy up` (owner decision, 2026-09-14). Two verbs,
     two verdicts: when setting a carrier up fails, it says so instead of taking a deployment down with
@@ -483,8 +506,10 @@ def up(environment: str = "") -> int:
     # Called for its REFUSALS, not for its value: the password now reaches Ansible through the
     # environment, and what this returns is thrown away. Reading it here all the same is what stops a
     # carrier being built whose Portainer would then lock itself - the check belongs before the machine
-    # exists, not after.
-    portainer_password(carrier)
+    # exists, not after. Skipped for a carrier that declares no Portainer (si#258): there is no admin
+    # account to be locked out of, so demanding a password for one would refuse a carrier that works.
+    if carrier.portainer is not None:
+        portainer_password(carrier)
     root = context.current().root
     token = _token(carrier)
 
@@ -512,6 +537,16 @@ def up(environment: str = "") -> int:
     if rc != 0:
         log.error(f"the carrier was not created (pulumi exited {rc}), so nothing was configured on it")
         return rc
+
+    if carrier.portainer is None:
+        # THE MACHINE IS THE WHOLE OUTCOME, and saying so is the point of si#258. Before it, an
+        # apt -> Docker -> Portainer playbook ran here with no branch in it, so a carrier that wanted a
+        # machine got a workload it never asked for - and on a machine with no apt, a red run. "Created
+        # and not configured" is a third outcome beside created-and-configured and failed, and it is
+        # reported as one rather than left to be inferred from a log that stops early.
+        log.ok(f"carrier '{carrier.name}' exists on {carrier.proxmox.node} and nothing was installed on "
+               f"it - it declares no `portainer:`, so what runs on it is this product's own to deploy")
+        return 0
 
     key = os.environ.get(SSH_KEY_ENV, "")
     if not key:

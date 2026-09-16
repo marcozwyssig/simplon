@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import pytest
 
-from simplon import carrierspec
+from simplon import carrierspec, environments
 from simplon.tasks import carrier, proxmoxapi
 
 def _code(text: str) -> str:
@@ -285,3 +285,72 @@ def test_no_secret_is_put_on_a_docker_command_line():
     assert leaked == [], (
         f"these put a secret's VALUE on the command line: {leaked}. Set it in os.environ and pass the "
         f"bare name, which is what `docker run -e NAME` is for")
+
+
+# --- a carrier that is a machine and nothing else (si#258) ------------------------------------------
+
+MACHINE = carrierspec.Carrier(
+    name="lab",
+    proxmox=carrierspec.Proxmox(node="pve-2", kind="vm", endpoint="https://10.0.0.6:8006/",
+                                token_from="PROXMOX", insecure=True, template="local:vztmpl/deb.tar.zst",
+                                storage="local-zfs", ssh_key="ssh-ed25519 AAAA notarealkey"),
+)
+
+
+def _stub(monkeypatch, tmp_path, carrier_, seen: list) -> None:
+    """Everything `up` reaches outside itself, replaced. Nothing here runs Pulumi, Ansible or Proxmox."""
+    from simplon import context
+
+    monkeypatch.setattr(carrier, "_carrier_of",
+                        lambda env: (environments.Environment("prod", "portainer", ""), carrier_))
+    monkeypatch.setattr(carrier, "_token", lambda c: "tok")
+    monkeypatch.setattr(carrier, "_pulumi", lambda *a, **k: 0)
+    monkeypatch.setattr(carrier, "_address", lambda *a, **k: "10.0.0.9")
+    monkeypatch.setattr(carrier, "_ansible", lambda *a, **k: seen.append("ansible") or 0)
+    monkeypatch.setattr(carrier.proxmoxapi, "check_storage", lambda *a, **k: None)
+    monkeypatch.setattr(context, "_current",
+                        context.ProductContext("p", tmp_path, tmp_path / "p.yaml"))
+
+
+def test_a_carrier_with_no_portainer_is_created_and_nothing_is_installed(monkeypatch, tmp_path):
+    """THE BRANCH si#258 ASKED FOR. Before it, `_ansible` ran at the end of every `up` regardless of what
+    the carrier declared - an apt -> Docker -> Portainer playbook on a machine that may have no apt."""
+    # arrange
+    seen: list[str] = []
+    _stub(monkeypatch, tmp_path, MACHINE, seen)
+
+    # act
+    rc = carrier.up("prod")
+
+    # assert
+    assert rc == 0
+    assert seen == [], "nothing may be configured on a carrier that declares nothing"
+
+
+def test_a_machine_only_carrier_needs_no_admin_password(monkeypatch, tmp_path):
+    """The refusal that guards a Portainer must not reach a carrier that has none: there is no admin
+    account to be locked out of, and demanding one would refuse a carrier that works."""
+    # arrange
+    seen: list[str] = []
+    _stub(monkeypatch, tmp_path, MACHINE, seen)
+    monkeypatch.delenv("PORTAINER_PASSWORD", raising=False)
+
+    # act / assert - no SystemExit
+    assert carrier.up("prod") == 0
+
+
+def test_a_carrier_that_declares_a_portainer_still_gets_one(monkeypatch, tmp_path):
+    """The compatibility half, and the one that would have caught a branch written the wrong way round."""
+    # arrange
+    seen: list[str] = []
+    _stub(monkeypatch, tmp_path, CARRIER, seen)
+    monkeypatch.setenv("PORTAINER_PASSWORD", "a-long-enough-password")
+    monkeypatch.setenv(carrier.SSH_KEY_ENV, str(tmp_path / "key"))
+    (tmp_path / "key").write_text("notarealkey\n", encoding="utf-8")
+
+    # act
+    rc = carrier.up("prod")
+
+    # assert
+    assert rc == 0
+    assert seen == ["ansible"], "a declared Portainer is still installed"

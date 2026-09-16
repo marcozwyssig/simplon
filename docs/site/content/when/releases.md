@@ -25,6 +25,33 @@ it is the one section held only to existing.
 
 ## 0.16.0
 
+### A carrier says what runs on it, instead of the kernel deciding (si#258)
+
+The ticket asked whether a **hypervisor** is a carrier. The answer is no - an ESXi host that an artefact
+is imported into, asserted against and torn down is a test target, not what an environment is *realised
+on*, which is what `carriers:` means. What the ticket found on the way there is the part worth fixing.
+
+**`portainer:` was required on every carrier**, so *carrier* and *Portainer host* were the same word - and
+`deploy carrier` proved it by running an apt -> Docker -> Portainer playbook at the end of every run with
+no branch in it. A product that wanted a machine got a workload it had never asked for, and on a machine
+without `apt`, a red run rather than a useless one.
+
+A carrier may now declare `proxmox:` alone. `deploy carrier` then stops when the machine exists and
+reports that as its own outcome:
+
+```text
+OK  carrier 'lab' exists on pve-2 and nothing was installed on it - it declares no `portainer:`,
+    so what runs on it is this product's own to deploy
+```
+
+Created-and-not-configured is a third outcome beside created-and-configured and failed, and it is said
+rather than inferred from a log that stops early. `backend: portainer` pointed at such a carrier is
+refused by name, and the admin-password check - which exists so a Portainer cannot lock itself - is no
+longer asked of a carrier that has no Portainer to lock.
+
+**It cost no manifest anything.** Measured over the GitHub API: not one repository in this family
+declares a `carriers:` section, this kernel's own included.
+
 ### The kernel stopped guessing where your tree is (si#250)
 
 The kernel *generates* against two facts about a product's directories, and it had never stated either.
