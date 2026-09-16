@@ -25,6 +25,47 @@ it is the one section held only to existing.
 
 ## 0.16.0
 
+### A docker that is present and cannot be run is a third state (si#263)
+
+Found by moving this repository's own CI to a self-hosted runner. On that machine a file named `docker`
+sits on `PATH` that `shutil.which` accepts — it checks the permission bits, and they are set — and that
+cannot be executed: `PermissionError: [Errno 13] Permission denied: 'docker'`, the signature of a binary
+on a `noexec` mount.
+
+**`ensure_docker` came apart in a traceback.** `_daemon_reachable()` probed with a bare
+`run(["docker", "version"]).ok`, so the error propagated out of the one function in that module whose
+entire stated purpose is to *die naming the fixes* — naming none of them. A third state that crashes the
+function whose job is to classify states is this project's recurring defect wearing the module's own
+clothes. It answers "not reachable" now, and `ensure_docker` says the rest out loud as it always meant to.
+
+It is written against `OSError` rather than `PermissionError`: a wrong-architecture binary and a broken
+interpreter reach the same place, and pinning the one subclass that happened to be measured would be a
+guard fitted to the accident.
+
+**Three e2e suites carried the same guard, word for word**, whose job is to decide whether to *skip* — and
+which failed at import instead, taking every test in the file with it. It lives once in `conftest.py` now.
+
+*Absent* and *present but unusable* are the same answer to "can I run a container". They are not the same
+answer to "is something wrong with this machine", which is why the kernel still says so.
+
+### `support ci-privileges` is placed, because simplon now provisions a CI host (si#264)
+
+The command has existed since si#92 and was declared in the catalogue and placed **nowhere** — it grants
+`NOPASSWD: ALL` and a docker group, which is *"a change nobody wants appearing in a CLI they did not ask
+for it in"*. A product that provisions CI hosts places it deliberately.
+
+Simplon now does, so it places it:
+
+```text
+$ ./simplon.sh support ci-privileges nosuchuser
+ERR  no such user on this host: 'nosuchuser' - nothing was written
+```
+
+**It does not fix a runner that executes as root**, and the placement says so where a reader will find it,
+because the two look like one problem. For root a docker *group* is not the obstacle. The order is: a
+normal user first, then these privileges, then a service restart — a group is inherited at process start,
+and the command deliberately does not know what the service is called.
+
 ### A carrier says what runs on it, instead of the kernel deciding (si#258)
 
 The ticket asked whether a **hypervisor** is a carrier. The answer is no - an ESXi host that an artefact
