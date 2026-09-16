@@ -498,8 +498,31 @@ workflows:
           that is merely wrong rather than failing - and on the release path PyPI accepts the wheel.
           The kernel emits the setting and states what it does; this is simplon's own reason for
           caring, which no other product has to inherit.
-        runs-on: ubuntu-latest
-        python: "3.12"
+        # THE SELF-HOSTED RUNNER, addressed by a label of its OWN and not by its three standard ones
+        # (owner, 2026-09-16). `[self-hosted, Linux, X64]` would describe any self-hosted Linux machine
+        # this account ever registers, so the day a second one joins the jobs would be shared out with
+        # nothing saying so. `ghr-8` names the machine, and the label was added to it for this. It also
+        # sidesteps si#266 rather than waiting for it: a list value for `runs-on` is emitted today as a
+        # quoted string that GitHub rejects, and a plain label is a string.
+        runs-on: ghr-8
+
+        # NO `python:`, WHICH IS NETCTL'S SHAPE AND THE ONE THAT WORKS ON A SELF-HOSTED RUNNER.
+        # `actions/setup-python` never installs Python - it unpacks prebuilt archives, and its manifest
+        # carries Ubuntu 22.04/24.04/26.04 and RHEL 9/10 and nothing else. This runner is Debian, so the
+        # answer was "not found for this operating system" and no pin could have changed it. The runner
+        # provides python3 and the launcher builds its own venv, exactly as netctl's does.
+        #
+        # WHAT THAT COSTS, stated rather than buried: nothing here says which Python version CI tests
+        # on. A pin that cannot be honoured is worse than none - it reads as a guarantee and is a wish.
+        # Putting one back means putting an interpreter where the runner can find it, which is a
+        # statement about a machine and not about this product.
+        #
+        # A CONTAINER JOB WAS TRIED AND IS NOT THE ANSWER: it needs docker on the runner in order to
+        # START, so it cannot be the thing that gets docker onto the runner. netctl starts its
+        # containers FROM INSIDE the job through the docker client instead, which is the shape
+        # `simplon.docker` was written for - and which the flag below opts into.
+        env:
+          DELIVERY_DOCKER_BOOTSTRAP: "1"
         steps:
           # The pytest suite, and it says `test suite` since si#156 - the name this leaf took when
           # `test all` became the aggregate over it and the notes guard. The same run, the same body,
