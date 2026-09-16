@@ -25,6 +25,37 @@ it is the one section held only to existing.
 
 ## 0.16.0
 
+### A repaint with no screen is an ordinary moment, not a missing widget (si#265)
+
+`test_a_resumed_walk_asks_only_the_steps_nobody_answered` failed on one run of a commit and passed on two
+others of the **same** commit, with nothing in that commit touching the TUI:
+
+```text
+textual.css.query.NoMatches: No nodes match '#status' on Screen(id='_default')
+```
+
+A check that gives two verdicts on one commit is not measuring its subject — it is measuring how the
+scheduler happened to interleave. That is si#261's fault one layer along: there the verdict was decided by
+who started the run, here by when a frame finished. And the expensive half is not the red cross; it is
+that every red run of this kind teaches whoever sees it that a red CI might mean nothing.
+
+`_repaint_status` looked the bar up on every call — and it has three callers, two of which are clocks: a
+once-a-second `set_interval` and the worker thread's handovers. Both reach it in moments the app did not
+choose, including the two stretches where there is no screen at all: before `on_mount`, and after the app
+has been torn down, which is where `run_test()` found it.
+
+**The repair is not `except NoMatches: pass`.** That swallows the other case too — a mounted screen that
+really has no status line — and trades a loud flake for a silent one. The two states get different code:
+
+* the bar is found **once**, in `on_mount`, where `compose` has just yielded it, so a screen without one
+  raises there naming the selector;
+* every later repaint writes to the widget that lookup found, and when there is no screen the reference is
+  `None` and there is simply nothing to repaint.
+
+`on_unmount` drops the reference rather than letting a late tick write into a detached widget — that write
+raises nothing and changes nothing, which is exactly the silent half of the pair this ticket is about.
+
+Four checks, three of them seen red against the old shape, and the once-flaky file run five times over.
 ### The notes guard could only ever fail after the merge, and asked for the wrong spelling (si#270)
 
 Two defects in one gate, found because `main` went red on three consecutive merges and none of them had
