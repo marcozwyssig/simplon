@@ -40,8 +40,9 @@ directory when there is no remote yet.
         cli.py                                             the composition root
         paths.py                                           the product-context wiring
         environments.py                                    the environment provider
+    tests/README.md                                        what belongs in tests/, and how to move it
 
-Ten files, and only two of them are yours to edit day to day: `myctl.yaml` and `cli.py`. The
+Eleven files, and only two of them are yours to edit day to day: `myctl.yaml` and `cli.py`. The
 orchestrator block is a parameter rather than a decree - a product that owns its repository root writes
 `simplon init myctl --dir . --orch-dir orchestrator` instead, and [What `init`
 wrote](../what-init-wrote/#the-orchestrator-block-is-a-parameter) says what moves with it.

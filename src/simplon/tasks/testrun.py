@@ -96,7 +96,7 @@ from typing import Callable
 
 import typer
 
-from simplon import context, log, pyvenv, signatures, verdict
+from simplon import context, layout, log, pyvenv, signatures, verdict
 from simplon.tasks import allure
 from simplon.awake import keep_awake
 from simplon.orchestrator.manifest import resolve_ref
@@ -116,6 +116,9 @@ SECTION = "suites"
 #:
 #: An EMPTY `reports:` is still refused rather than read as "use the default": `""` is a statement, and
 #: reading a typo as a request for the default is exactly the silence a default must not buy.
+#: WHAT `reports:` MEANS WHEN NOBODY SAYS, kept as the documented value and no longer as the default
+#: itself: si#250 moved that to `layout.declared(...).reports`, which answers `tests/reports` for a
+#: manifest with no `layout:` section and follows the product's own `tests:` when it has one.
 REPORTS = "tests/reports"
 
 # The shared results dir every canonical gate writes into, under the product's report dir. Fixed rather
@@ -367,7 +370,11 @@ def declared(data: Mapping[str, object], source: str = "manifest") -> Suites:
     section, blame, _ = context.section(data, SECTION)
     if blame:
         raise ValueError(f"{source}: the '{SECTION}' section is missing or is not a mapping")
-    reports = _str(section, "reports", f"{source}: '{SECTION}'") or REPORTS
+    # si#250: the default is the LAYOUT's, not a constant. `tests/reports` was a statement about a
+    # product's directory shape made in passing by a default - and a product whose tests live elsewhere
+    # got a report written into a directory it does not use, silently. `layout.declared` answers with the
+    # same `tests/` for every manifest that says nothing, so nobody's report moved.
+    reports = _str(section, "reports", f"{source}: '{SECTION}'") or layout.declared(data, source).reports
     filtered = _str(section, "filtered_results", f"{source}: '{SECTION}'") or f"{RESULTS}-filtered"
 
     raw_gates = section.get("gates")

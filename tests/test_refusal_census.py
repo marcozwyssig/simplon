@@ -342,6 +342,35 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("environments", "parse_data", "no deployment for those values to be given to"): DIAGNOSIS,
 
 
+    # --- layout.py (si#250) --------------------------------------------------------------------------
+    # Four. Three diagnosis and one expression rule.
+    #
+    # Diagnosis: a `layout:` that is not a mapping declares nothing; a key set to an empty value says
+    # nothing while looking like a statement; and a path that is absolute or climbs out with `..` names
+    # something outside the product root, which is the only tree the toolchain runner mounts - so the
+    # container would fail with a message about the image rather than about the manifest.
+    #
+    # THE UNKNOWN-KEY REFUSAL IS THE EXPRESSION RULE, and here the sorting question is genuinely close.
+    # `build-root: kernel` for `build_root:` would be IGNORED, the command would run at the product root
+    # exactly as it did before the section existed, and the product would work - it would simply build
+    # the wrong tree, quietly. That is a working product from a refused manifest, so it is billed as an
+    # expression rule even though the thing it prevents is the very defect si#250 was filed about.
+    #
+    # The three questions, answered:
+    #   - does it forbid something a product might legitimately want? No manifest in the family declares
+    #     the section at all - it is new - and the only thing refused is a key this kernel does not read.
+    #     Zero over six, and said as a zero.
+    #   - would deleting be cheaper than guarding? No: what is deleted is the only thing that makes a
+    #     typo in this section loud. The section NAME being mistyped is already silent (it is in
+    #     SILENT_ON_ABSENCE with that cost written down), so this is the one refusal left that catches a
+    #     misspelling here at all.
+    #   - what would the fix cost a product that violated it? One key renamed, in the file the refusal
+    #     names, before anything has run.
+    ("layout", "declared", "must be a mapping of"): DIAGNOSIS,
+    ("layout", "declared", "does not take"): EXPRESSION,
+    ("layout", "_relative", "is empty, which says nothing"): DIAGNOSIS,
+    ("layout", "_relative", "has to be a plain relative path"): DIAGNOSIS,
+
     # --- environments.py, the chain (si#5) ---------------------------------------------------------
     # Three, all diagnosis. An environment pointing at a carrier nobody declared has no target; a
     # `stack:` with no carrier has nowhere to be created; a `repository:` with no stack says where a
@@ -656,6 +685,7 @@ REACH: dict[tuple[str, str, str], str] = {
     ("carrierspec", "_block", "does not take"): REACH_MERGED,
     ("environments", "_repository", "does not take"): REACH_MERGED,
     ("environments", "_names", "may not name"): REACH_MERGED,
+    ("layout", "declared", "does not take"): REACH_MERGED,
     ("manifest", "_single_dashed_letter", "must be a single dash plus one letter"): REACH_MERGED,
     ("manifest", "_validate_taxonomy", "impl and depends_on are mutually exclusive"): REACH_MERGED,
     ("manifest", "_validate_taxonomy", "missing help"): REACH_MERGED,

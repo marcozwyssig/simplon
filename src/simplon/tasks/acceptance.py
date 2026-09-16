@@ -100,7 +100,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import NoReturn
 
-from simplon import context, log
+from simplon import context, layout, log
 from simplon.bootstrap import validate_relative_dir
 
 #: Where a product's `.feature` files are when its manifest does not say (si#183's rule, see the head of
@@ -721,14 +721,21 @@ def render(found: Sequence[Feature], *, product: str, title: str, source: str) -
 # --- the task --------------------------------------------------------------------------------------------
 
 
-def document(output: str, source: str = DEFAULT_SOURCE, title: str = "") -> int:
+def document(output: str, source: str = "", title: str = "") -> int:
     """Write the product's acceptance document to `output`, as Markdown for Hugo.
 
     `output` goes through `validate_relative_dir` for the reason `cliref.reference` states: the value
     comes from a manifest and is then WRITTEN to, so an absolute one would land outside the product
-    entirely. `source` is only ever read and therefore takes the default this module declares (si#183).
+    entirely. `source` is only ever read and therefore takes a default (si#183).
+
+    THE DEFAULT IS EMPTY AND NOT `tests/acceptance` SINCE si#250, and the change is what the empty value
+    buys: a parameter default is fixed when the module is imported, so the old one was a statement about
+    every product's directory shape baked into this kernel. Empty means "the one this product declared",
+    resolved against `layout:` below - which answers `tests/acceptance` for a manifest that says nothing,
+    so no product that had not opted in was moved.
     """
     ctx = context.current()
+    source = source or layout.declared(ctx.manifest_data()).acceptance
     relative = validate_relative_dir(
         output, "the acceptance document's output path",
         "give a plain relative path under the product root, e.g. "

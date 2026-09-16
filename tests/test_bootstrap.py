@@ -67,6 +67,10 @@ _EXPECTED_FILES = {
     f"{PKG}/cli.py",
     f"{PKG}/paths.py",
     f"{PKG}/environments.py",
+    # si#250: a directory with a README beats a convention nobody reads. It is the one scaffolded file
+    # that is NOT part of the orchestrator block - it belongs to the product's own tree, which is why
+    # `--orch-dir` does not move it.
+    "tests/README.md",
 }
 
 

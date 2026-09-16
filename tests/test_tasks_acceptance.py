@@ -686,7 +686,10 @@ def test_the_task_writes_the_page_and_says_how_much_it_found(tmp_path, monkeypat
     source.mkdir(parents=True)
     (source / "f.feature").write_text(OUTLINE, encoding="utf-8")
     monkeypatch.setattr(acceptance.context, "current",
-                        lambda: type("Ctx", (), {"root": tmp_path, "name": "p"})())
+                        lambda: type("Ctx", (), {"root": tmp_path, "name": "p",
+                                                 # si#250: the task asks the manifest where the
+                                                 # scenarios live instead of assuming `tests/`.
+                                                 "manifest_data": lambda self: {}})())
 
     # act
     rc = acceptance.document("site/acceptance.md")
@@ -703,7 +706,10 @@ def test_an_absolute_output_path_is_refused_before_anything_is_written(tmp_path,
     product entirely - `cliref.reference`'s rule, and the same guard."""
     # arrange
     monkeypatch.setattr(acceptance.context, "current",
-                        lambda: type("Ctx", (), {"root": tmp_path, "name": "p"})())
+                        lambda: type("Ctx", (), {"root": tmp_path, "name": "p",
+                                                 # si#250: the task asks the manifest where the
+                                                 # scenarios live instead of assuming `tests/`.
+                                                 "manifest_data": lambda self: {}})())
 
     # act / assert
     with pytest.raises(ValueError, match="it must be relative"):

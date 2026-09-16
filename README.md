@@ -78,6 +78,7 @@ It writes ten files:
         cli.py                                             the composition root
         paths.py                                           the product-context wiring
         environments.py                                    the environment provider
+    tests/README.md                                        what belongs in tests/, and how to move it
 
 The Python package stays `orchestrator` wherever the block sits: it is an
 identifier resolved on `PYTHONPATH`, which the launcher points at

@@ -25,6 +25,46 @@ it is the one section held only to existing.
 
 ## 0.16.0
 
+### The kernel stopped guessing where your tree is (si#250)
+
+The kernel *generates* against two facts about a product's directories, and it had never stated either.
+Now the product says them:
+
+```yaml
+layout:
+  build_root: kernel      # default: "" - the product root
+  tests: tests            # default: tests
+```
+
+**The trap it removes cost a real adoption.** The Java profile scaffolds `gradle assemble`, and
+`toolchain:run` writes `-v <product root>:<workdir> -w <workdir>` - so `workdir:` is the path the tree is
+*mounted* at, not a path inside it. A product whose Gradle root was one directory down got a command that
+looked right and built the wrong thing, and naming the subdirectory in `workdir:` does not fix it: that
+relocates the whole tree instead of descending into it. `build_root:` descends, and the mount stays the
+product root, which a build that walks up to find its fixtures needs:
+
+```text
+without layout:            -v /home/dev/firn:/work -w /work        gradle assemble
+build_root: kernel         -v /home/dev/firn:/work -w /work/kernel gradle assemble
+```
+
+**`tests:` replaces two defaults that were layout statements made in passing** - `tests/reports` in the
+suite taxonomy and `tests/acceptance` as a task's parameter default. Both now come from the section, and
+both answer the same thing they always did for a manifest that says nothing.
+
+**One spelling was chosen: `tests`.** Both were in live use - three products and the kernel's own ignore
+block at `tests/`, netctl's root at `test/` - and nothing had ever decided. netctl is not refused; it says
+so in one line instead of working around it per command.
+
+**Nothing here rules on a tree, and that is a measurement rather than a preference.** Across this family,
+six products have six layouts: one is an Eclipse plugin tree, one has no `src/` at all. A kernel that
+stated one layout and held products to it would refuse five of the six, and two could not comply. So the
+section lets a product *say* what the kernel was guessing.
+
+**`simplon init` now writes a `tests/` directory with a README in it**, saying what belongs there and how
+to move it - which is the file the product that filed this ticket had written by hand. A directory with a
+README beats a convention nobody reads. Eleven scaffolded files instead of ten.
+
 ### The values a deployment must be given (si#5)
 
 `required:` names the variables a deployment is handed, and every one of them must have a value. They are

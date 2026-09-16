@@ -78,6 +78,7 @@ from importlib.resources import files
 from pathlib import Path
 
 import simplon
+from simplon import layout
 from simplon.run import run
 
 # A product name is a lowercase slug: it becomes the shim/manifest filename, the manifest `product:` label,
@@ -425,7 +426,27 @@ _MANIFEST = """\
 #                 `commands:` -> command -> { task: <name>, ... }. A command is an INSTANCE of a
 #                 task, so it never writes `impl:` itself.
 #   environments  the deployment env matrix (a backend per env) + the default env.
+#   layout        where YOUR tree sits, for the two things the kernel would otherwise guess.
 product: @@PRODUCT@@
+
+# --- where your tree sits (si#250) ---
+# Both keys below are OPTIONAL and the values shown are the defaults, so a product whose shape is the
+# ordinary one deletes this block and loses nothing. It is scaffolded commented-out because the kernel
+# GENERATES against these two facts, and a product that arranges its tree differently otherwise gets
+# commands that look right and are not.
+#
+#   build_root  where inside your tree a containerised command RUNS. This is the question `workdir:`
+#               looks like it answers and does not: `workdir:` is the path your tree is MOUNTED at, so
+#               naming a subdirectory there relocates the whole tree instead of descending into it. If
+#               your Gradle or CMake build root is not the repository root, say so here.
+#   tests       the directory holding the tests above the acceptance line - where a merged report lands
+#               and where acceptance scenarios are read from.
+#
+# Nothing here is prescribed: measured across this family, six products have six layouts, and a kernel
+# that held them to one would refuse five of them. This section is how you tell it yours.
+# layout:
+#   build_root: ""        # "" is the product root
+#   tests: tests
 
 # --- product build data (read RAW by your paths adapter, IGNORED by the CLI engine) ---
 # The CLI engine reads only tasks/groups and ignores any other top-level section, so your product's
@@ -875,6 +896,37 @@ __pycache__/
 """
 
 
+#: What `simplon init` puts in the `tests/` directory it creates (si#250).
+#:
+#: A DIRECTORY WITH A README BEATS A CONVENTION NOBODY READS, and that is not a slogan - the product that
+#: filed si#250 wrote exactly this file by hand, after reading another product's tree to work out where
+#: its tests were supposed to go. The kernel defaults two paths into here (`tests/reports` for a merged
+#: report, `tests/acceptance` for scenarios), so the directory is where the kernel is already looking.
+_TESTS_README = """\
+# tests/
+
+The tests **above the acceptance line** live here - the ones that exercise @@PRODUCT@@ as a
+whole rather than a unit of it. Two kernel commands already look in this directory:
+
+| path | what puts it there |
+| --- | --- |
+| `tests/acceptance/` | your `.feature` scenarios; `docs acceptance` reads them |
+| `tests/reports/` | the merged test report `test report` writes (git-ignored) |
+
+Tests **below** the line - unit tests beside the code they test - are your own business
+and belong wherever your language puts them. The kernel does not prescribe a shape for
+them: measured across this family, six products have six layouts.
+
+If this directory is not where your tests live, say so in `@@PRODUCT@@.yaml` rather than
+working around it per command:
+
+```yaml
+layout:
+  tests: test
+```
+"""
+
+
 def _templates(name: str, orch_dir: str) -> dict[str, str]:
     """The (relative POSIX path -> template) map for a product, BEFORE placeholder substitution."""
     pkg_dir = pkg_dir_for(orch_dir)
@@ -889,6 +941,7 @@ def _templates(name: str, orch_dir: str) -> dict[str, str]:
         f"{pkg_dir}/cli.py": _CLI,
         f"{pkg_dir}/paths.py": _PATHS,
         f"{pkg_dir}/environments.py": _ENVIRONMENTS,
+        f"{layout.DEFAULT_TESTS}/README.md": _TESTS_README,
     }
 
 
