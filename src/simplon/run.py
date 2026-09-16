@@ -86,6 +86,26 @@ class Result:
     def ok(self) -> bool:
         return self.rc == 0
 
+    @property
+    def answered(self) -> bool:
+        """True when the command succeeded AND said something - si#274's seam.
+
+        `ok` is not the same question, and the difference is this repository's recurring defect wearing a
+        subprocess's clothes: a command that exits 0 and writes nothing has SUCCEEDED and has not
+        ANSWERED. Every caller that goes on to use `out` as a value needs the second question, and two of
+        them did not ask it. `git rev-parse --show-toplevel` answering nothing became `Path("")`, which
+        IS `PosixPath('.')`, which resolves to the working directory - so a product tree was reported as
+        living inside somebody else's checkout and its image was built with no VERSION at all, green.
+
+        Measured twice on 2026-09-16 on a self-hosted runner, in two unrelated tests, an hour apart. Why
+        git answered nothing is a separate question and is still open on si#274; that an empty answer must
+        not be usable as an answer is not.
+
+        WHITESPACE IS NOTHING. A command whose entire output is a newline said as little as one that wrote
+        no bytes, and every caller here strips before using the value anyway.
+        """
+        return self.ok and bool(self.out.strip())
+
 
 def run(argv: list[str], *, check: bool = False, capture: bool = True,
         timeout: float | None = None, input_text: str | None = None,

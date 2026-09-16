@@ -25,6 +25,49 @@ it is the one section held only to existing.
 
 ## 0.16.0
 
+### A command that succeeded and said nothing has not answered (si#274)
+
+Two unrelated tests failed on the self-hosted runner within one hour, both green on a re-run of the same
+commit and both green on every developer machine. They look like two flakes. They are one defect: **in
+each, a `git` command exited 0 and printed nothing, and the nothing was used as an answer.**
+
+```python
+found = Path(toplevel.out.strip())            # image.py, from `rev-parse --show-toplevel`
+if found.resolve() != Path(root).resolve():
+```
+
+`Path("")` **is** `PosixPath('.')`, and `.resolve()` is the working directory — so an empty answer became
+"the current directory", which is never the product root, so `provenance` reported the tree as living
+inside somebody else's checkout and returned nothing. The warning said it out loud without anyone
+noticing: *"the nearest one is `.`"*. The image would then have been built with no `VERSION`/`REVISION`
+**and the run would have stayed green**; it is only visible because a test asks.
+
+The second: `tickets_of` reads the commits a web merge brought in and falls back to the merge subject when
+they name nothing. An empty read is indistinguishable from "they named nothing", so a merge whose author
+had written si#92 was reported as {94} — the pull request's own number. A release note about the wrong
+number, green.
+
+**`Result.answered` is the seam.** `ok` asks whether the command succeeded; `answered` asks whether it
+said anything, and a caller that goes on to use `out` as a value needs the second question. Three places
+ask it now:
+
+* `rev-parse --show-toplevel`, where an empty answer blames the tool instead of the tree;
+* `describe` and `rev-parse HEAD`, which had never been seen to fire — an empty `describe` would stamp
+  `VERSION=""`, a label that is present, empty and wrong, which a reader cannot tell from a build that
+  declined to say;
+* the `<sha>^1..<sha>^2` read, which has an answer **by construction**: the merge exists, so its second
+  parent brought at least one commit.
+
+It is a per-call question and not a rule, deliberately. `log --merges` over a range carrying none
+legitimately prints nothing, and so does `git tag` in a checkout with no tags — refusing those would turn
+two ordinary states into a broken tool.
+
+**Why git answered nothing is still open.** It has only been seen on one machine, where every push starts two
+workflow runs seconds apart on the same host — but one of the two failures had no concurrent job, so shared
+state cannot be the whole of it. That half needs the runner, and it is on si#274. This half converts a
+wrong answer into a loud one, which is the difference between a defect that costs a re-run and one that
+ships an unlabelled image.
+
 ### A repaint with no screen is an ordinary moment, not a missing widget (si#265)
 
 `test_a_resumed_walk_asks_only_the_steps_nobody_answered` failed on one run of a commit and passed on two
@@ -56,6 +99,7 @@ really has no status line — and trades a loud flake for a silent one. The two 
 raises nothing and changes nothing, which is exactly the silent half of the pair this ticket is about.
 
 Four checks, three of them seen red against the old shape, and the once-flaky file run five times over.
+
 ### The notes guard could only ever fail after the merge, and asked for the wrong spelling (si#270)
 
 Two defects in one gate, found because `main` went red on three consecutive merges and none of them had

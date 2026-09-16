@@ -907,3 +907,78 @@ def test_the_reference_is_joined_the_way_release_artifact_joins_its_own():
 
     # act / assert
     assert image.reference(cfg, "1.0") == "ghcr.io/owner/demo-app:1.0"
+
+
+# --- si#274: rc 0 and no output is a third state ------------------------------------------------------
+
+def test_a_toplevel_that_answers_nothing_is_told_apart_from_one_that_answers_elsewhere(tmp_path, capsys,
+                                                                                       monkeypatch):
+    """si#274, SEEN RED, and the red it replaces was invisible.
+
+    `git rev-parse --show-toplevel` exiting 0 and printing nothing became `Path("")` - which **is**
+    `PosixPath('.')` and resolves to the working directory - so the check below compared the cwd with the
+    product root, found them different, and reported this tree as living inside somebody else's checkout.
+    The message said so in as many words: *"the nearest one is ."*. Measured on a self-hosted runner on
+    2026-09-16, where it made a green suite red once and passed on the re-run.
+
+    The two states have to stay apart. "Your tree sits inside another checkout" is a real diagnosis a
+    product can act on; "git said nothing" is a broken tool, and telling somebody to declare
+    `build_args:` because of it would send them to fix the wrong thing.
+    """
+    # arrange: a real checkout, and a git whose --show-toplevel succeeds and says nothing
+    root = _checkout(tmp_path / "product")
+    real = image.run
+
+    def mute(argv, **kwargs):
+        if "--show-toplevel" in argv:
+            return Result(rc=0, out="\n", err="")
+        return real(argv, **kwargs)
+
+    monkeypatch.setattr(image, "run", mute)
+
+    # act
+    derived = image.provenance(root)
+
+    # assert: nothing derived, and the warning blames the tool rather than the tree
+    warning = capsys.readouterr().out
+    assert derived == {}
+    assert "printed nothing" in warning, warning
+    assert "si#274" in warning, warning
+    assert "no git checkout of its own" not in warning, warning
+
+
+def test_a_describe_that_answers_nothing_does_not_stamp_an_empty_version(tmp_path, capsys, monkeypatch):
+    """The same third state one line down, and it had never been seen to fire - which is the reason to
+    write it before it does. An empty `describe` would have stamped `VERSION=""` into the image: a label
+    that is present, empty and wrong, which a reader cannot tell from a build that declined to say."""
+    # arrange
+    root = _checkout(tmp_path / "product")
+    real = image.run
+
+    def mute(argv, **kwargs):
+        if "describe" in argv:
+            return Result(rc=0, out="", err="")
+        return real(argv, **kwargs)
+
+    monkeypatch.setattr(image, "run", mute)
+
+    # act
+    derived = image.provenance(root)
+
+    # assert
+    warning = capsys.readouterr().out
+    assert derived == {}, f"an empty version reached the build arguments: {derived}"
+    assert "`describe`" in warning and "printed nothing" in warning, warning
+
+
+def test_a_checkout_that_answers_normally_is_untouched_by_any_of_it(tmp_path):
+    """The assurance the two refusals must not spend: an ordinary repository still derives both values."""
+    # arrange
+    root = _checkout(tmp_path / "product")
+
+    # act
+    derived = image.provenance(root)
+
+    # assert
+    assert derived["VERSION"] == "v1.2.3"
+    assert len(derived["REVISION"]) == 40

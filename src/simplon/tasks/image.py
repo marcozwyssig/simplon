@@ -316,6 +316,16 @@ def provenance(root: Path) -> dict[str, str]:
         log.warn(f"{root} is not a git checkout, so the image is built without VERSION/REVISION build "
                  f"arguments; the Dockerfile's own ARG defaults apply")
         return {}
+    # AN EMPTY ANSWER IS A THIRD STATE (si#274), and it is the one that used to be invisible. `Path("")`
+    # is `PosixPath('.')` and resolves to the WORKING DIRECTORY, so an empty `--show-toplevel` walked
+    # into the branch below, compared the cwd with the product root, found them different and reported
+    # this tree as living inside somebody else's checkout - naming that checkout as `.`, which is what
+    # the message read on the day: "the nearest one is .". Measured 2026-09-16 on a self-hosted runner.
+    if not toplevel.answered:
+        log.warn(f"`git rev-parse --show-toplevel` succeeded in {root} and printed nothing, which is "
+                 f"neither an answer nor an error, so no VERSION/REVISION could be derived and none is "
+                 f"guessed. The Dockerfile's own ARG defaults apply; if this repeats, it is si#274")
+        return {}
     found = Path(toplevel.out.strip())
     if found.resolve() != Path(root).resolve():
         log.warn(f"{root} has no git checkout of its own - the nearest one is {found}, and stamping ITS "
@@ -328,6 +338,18 @@ def provenance(root: Path) -> dict[str, str]:
     if not (described.ok and revision.ok):
         log.warn(f"{root} is a git checkout with no commit yet, so the image is built without "
                  f"VERSION/REVISION build arguments; the Dockerfile's own ARG defaults apply")
+        return {}
+    # The same third state one line down, and this one has never been seen to fire - which is exactly
+    # why it is here rather than after it has (si#274). An empty `describe` would stamp `VERSION=""`
+    # into the image: a label that is present, empty and wrong, which is worse than the absent one the
+    # branch above produces, because a reader of the image cannot tell it from a build that declined to
+    # say. `ok` asks whether git succeeded; `answered` asks whether it said anything.
+    if not (described.answered and revision.answered):
+        log.warn(f"git succeeded in {root} and printed nothing for "
+                 + " and ".join(name for name, res in (("`describe`", described), ("`rev-parse HEAD`", revision))
+                                if not res.answered)
+                 + ", so the image is built without VERSION/REVISION rather than with an empty one; "
+                   "the Dockerfile's own ARG defaults apply (si#274)")
         return {}
     return {VERSION_ARG: described.out.strip(), REVISION_ARG: revision.out.strip()}
 
