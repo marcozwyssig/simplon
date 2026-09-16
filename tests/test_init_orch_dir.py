@@ -106,6 +106,7 @@ def test_orch_dir_moves_the_whole_block_in_the_file_set():
         f"{SHORT}/src/python/orchestrator/paths.py",
         f"{SHORT}/src/python/orchestrator/environments.py",
         bootstrap.GITIGNORE,
+        "tests/README.md",   # si#250: the product's own tree, so --orch-dir does not move it
     }
 
 

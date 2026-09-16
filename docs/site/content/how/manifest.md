@@ -307,7 +307,7 @@ repository. Adding a key nobody here has heard of is a supported thing to do.
 What was missing is the other half: **which names are already taken**. The product si#159 was reported
 from builds three Windows Server *releases*, and it learned that `releases:` already means
 `{page, from, complete_from}` to `test:release-notes` by reading `src/simplon/tasks/releasenotes.py`. A
-reserved name that can only be found in the source is a trap with a delay on it, so the nineteen are
+reserved name that can only be found in the source is a trap with a delay on it, so the twenty are
 published here and `tests/test_manifest_top_level.py` holds this table to the kernel in both directions.
 
 | key | read by | what it carries |
@@ -326,6 +326,7 @@ published here and `tests/test_manifest_top_level.py` holds this table to the ke
 | `images:` | `build:image`, `release:image` | one entry per container image: registry, repository, Dockerfile, context |
 | `instance:` | the multi-tenant lab | the env var naming the lab instance, and the product's id-length budget |
 | `lab_egress:` | the lab egress helper | the host interface a lab reaches the outside through |
+| `layout:` | `build:toolchain`, `test:*`, `docs:acceptance` | where inside your tree a containerised command runs, and which directory holds the tests above the acceptance line |
 | `nexus:` | the `nexus` commands | the proxy repositories, the compose file and the container this product runs |
 | `releases:` | `test:release-notes` | `page:`, `from:` and `complete_from:`, the three values that gate says what it measures against |
 | `site:` | `docs:site` | the pinned Hugo image, where the sources live, where the site is built to |
@@ -333,10 +334,10 @@ published here and `tests/test_manifest_top_level.py` holds this table to the ke
 | `tracker:` | `test:walk` | where a refused acceptance step becomes a bug ticket, and the product's own wording for it: `title:`, plus `kind:`, `repo:`, `labels:` and `preamble:` |
 | `workflows:` | `release:workflows` | one entry per generated CI file |
 
-A key that is **mistyped** is therefore not the silent no-op it looks like. Seventeen of the nineteen are
+A key that is **mistyped** is therefore not the silent no-op it looks like. Seventeen of the twenty are
 named by the reader that wanted them, the moment that reader runs: `sietv:` instead of `site:` answers
 `the 'site' section is missing or is not a mapping`, and every other reader refuses the same way, naming
-the key it looked for. The two that say nothing say nothing on purpose:
+the key it looked for. The three that say nothing say nothing on purpose:
 
 - **`build:`** - an absent section is the normal case. `build cmake-files` and `build dotnet-solution`
   render the build files from the SOURCES, and `build: targets:` only adds the edges the directories
@@ -344,6 +345,10 @@ the key it looked for. The two that say nothing say nothing on purpose:
   same thing, on purpose - two live manifests have one, and the next section is about them.
 - **`env_var:`** - a product that selects its environment by token and `default:` alone has no such
   variable, and a listing must still work on a manifest that has not adopted the key.
+- **`layout:`** - an absent section is what every product in this family has. It arrived with si#250 and
+  its defaults are exactly what the kernel assumed before it existed, so a manifest that says nothing
+  runs the line it ran yesterday. The cost is stated rather than left to be found: `layotu:` is silent
+  too, and only a key mistyped *inside* a correctly spelled `layout:` is refused.
 
 Both are driven in the test module above, so the silence is measured rather than assumed.
 
@@ -617,6 +622,45 @@ Other sections work the same way: `suites:` is the test-level taxonomy a product
 defines, `environments:` the deployment matrix, `nexus:` and `claude:` the data their respective tasks
 read. A task that needs a section it does not find fails on its first line, which is why such tasks stay
 *tasks* in the catalogue rather than being placed as commands for everybody.
+
+### `layout:` - where your tree sits
+
+The kernel **generates** against two facts about your directories, and before si#250 it guessed both.
+
+```yaml
+layout:
+  build_root: kernel      # default: "" - the product root
+  tests: tests            # default: tests
+```
+
+**`build_root:` is the question `workdir:` looks like it answers and does not.** `workdir:` is the path
+your tree is *mounted* at inside the container - `toolchain:run` writes
+`-v <product root>:<workdir> -w <workdir>` - so naming a subdirectory there relocates the whole tree
+rather than descending into it. `build_root:` descends, and the mount stays the product root, which a
+build that walks up to find its fixtures needs:
+
+```text
+without layout:            -v /home/dev/firn:/work -w /work        gradle assemble
+build_root: kernel         -v /home/dev/firn:/work -w /work/kernel gradle assemble
+```
+
+That trap cost a real adoption: the Java profile scaffolds `gradle assemble`, the product's Gradle root
+was one directory down, and the scaffolded command was silently wrong.
+
+**`tests:` is the directory above the acceptance line** - where `test report` writes its merged report
+and where `docs acceptance` reads scenarios. **The spelling the kernel writes is `tests`**, decided once
+because both were in live use and nothing had chosen. A product whose root directory is `test/` says so
+here in one line, instead of working around it in every command that touches a path.
+
+**Nothing here is prescribed, and that is a measurement rather than a preference.** Across this family,
+six products have six layouts - one is an Eclipse plugin tree, one has no `src/` at all. A kernel that
+stated one layout and held products to it would refuse five of the six. So this section lets a product
+*say* what the kernel was otherwise guessing; it never rules on a tree.
+
+**An absent section is the normal case**, and its defaults are exactly what the kernel assumed before it
+existed - so a manifest that says nothing runs the line it ran yesterday. The cost is stated rather than
+left to be found: a section name mistyped as `layotu:` is silent, and only a key mistyped *inside* a
+correctly spelled `layout:` is refused.
 
 ### `carriers:` - what an environment is realised on
 

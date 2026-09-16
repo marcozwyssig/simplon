@@ -45,7 +45,7 @@ from typing import NoReturn
 import typer
 import yaml
 
-from simplon import context, docker, hostpath, labinstance, log
+from simplon import context, docker, hostpath, labinstance, layout, log
 from simplon.tasks import profiles
 from simplon.run import run
 
@@ -96,7 +96,8 @@ def declared(body: Mapping[str, object], where: str) -> Toolchain:
 
 
 def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
-                extra: list[str], network: str | None = None) -> list[str]:
+                extra: list[str], network: str | None = None,
+                build_root: str = "") -> list[str]:
     """The full docker argv for one toolchain invocation. PURE: it assembles, it runs nothing.
 
     NAMED `docker_argv` SINCE si#105, and the rename is the loader's doing rather than taste: `argv:` is
@@ -123,7 +124,8 @@ def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
     return ["docker", "run", "--rm",
             *(["--network", network] if network else []),
             *docker.user_args(),
-            "-v", f"{hostpath.translate(root)}:{cfg.workdir}", "-w", cfg.workdir,
+            "-v", f"{hostpath.translate(root)}:{cfg.workdir}",
+            "-w", layout.Layout(build_root=build_root).workdir(cfg.workdir),
             *volumes, *env,
             cfg.image, *cfg.argv, *extra]
 
@@ -197,6 +199,7 @@ def run_toolchain(ctx: typer.Context, image: str = "", argv: list[str] | None = 
     # it. A cache volume still carries the id, because that is the one thing that actually needs one.
     instance = labinstance.resolve() if cfg.caches else ""
     line = docker_argv(cfg, root=product.root, product=product.name, instance=instance,
+                       build_root=layout.declared(context.current().manifest_data()).build_root,
                        extra=list(extra or []), network=network)
     return run(line, capture=False).rc
 

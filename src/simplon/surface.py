@@ -140,6 +140,7 @@ NOT_CONSUMERS = {
 #: own head and names no product.
 LIBRARY = frozenset({
     "awake", "backend", "carrierspec", "checksum", "clablifecycle", "clabrender", "cli", "completiongen",
+    "layout",
     "compose", "context", "deployment",
     "credentials", "degraded", "disk", "docker", "environments", "fetch", "filelock",
     "githubpackages", "healthgate", "host", "hostpath",

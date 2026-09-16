@@ -77,7 +77,8 @@ import re
 import pytest
 import yaml
 
-from simplon import (carrierspec, context, deployment, environments, labegress, labinstance, nexusproxy,
+from simplon import (carrierspec, context, deployment, environments, labegress, labinstance, layout,
+                     nexusproxy,
                      tracker,
                      workflowgen)
 from simplon.tasks import (artifact, asset, buildfiles, claudeplugins, docs, env, generated, image,
@@ -134,6 +135,13 @@ MODULES: dict[str, tuple[str, ...]] = {
     # `environments` entry gives - the key belongs to the reader that can name it when it is mistyped,
     # and that is the one that cross-checks the environments against it.
     "portainer": (),
+    # si#250's `layout:`, declared by the THREE modules that fetch the document and hand it to
+    # `layout.declared` - the same shape `artifacts:` has across three readers, and for the same reason
+    # the `environments` entry gives: the key belongs to whoever has the document in its hand, and here
+    # that is three of them. `layout.py` itself is handed the document and is therefore no more a reader
+    # than `carrierspec.py` is.
+    "tasks.acceptance": ("layout",),      # where the acceptance scenarios are read from
+    "tasks.toolchain": ("layout",),       # where inside the tree a containerised command runs
     "tasks.artifact": ("artifacts",),
     "tasks.asset": ("assets",),
     "tasks.buildfiles": ("build",),
@@ -146,15 +154,22 @@ MODULES: dict[str, tuple[str, ...]] = {
     "tasks.nuget": ("artifacts",),   # likewise
     "tasks.releasenotes": ("releases",),
     "tasks.site": ("site",),
-    "tasks.testrun": ("suites",),
+    "tasks.testrun": ("suites", "layout"),   # `layout:` decides where its merged report lands
     "tasks.workflows": ("workflows",),  # hands the document to `workflowgen.parse`
     "tracker": ("tracker",),
 }
 
-#: The two keys whose ABSENCE says nothing, each with the reason it was written that way. Both are driven
+#: The keys whose ABSENCE says nothing, each with the reason it was written that way. All are driven
 #: below, asserting the silence rather than asserting the comment: a declared exception nobody measured is
 #: a claim, and si#48/si#83 are what that costs when the claim is about a set nobody looked at.
 SILENT_ON_ABSENCE = {
+    "layout": "an absent `layout:` section is the NORMAL case and is what every product in this family "
+              "has - the section arrived with si#250 and its defaults are exactly what the kernel "
+              "assumed before it existed, so a manifest that says nothing runs the line it ran "
+              "yesterday. WHAT THAT COSTS, said rather than left to be discovered: a section name "
+              "mistyped as `layotu:` is silent too, and only a key mistyped INSIDE a correctly spelled "
+              "section is refused. Making an unrecognised top-level key loud is a rule about every "
+              "section and not about this one.",
     "build": "an absent `build:` section is the NORMAL case - `build cmake-files` renders the build "
              "files from the SOURCES, and `build: targets:` only adds the dependency edges a directory "
              "cannot show. `_declared_targets` says so at its own docstring and returns an empty "
@@ -217,6 +232,7 @@ DRIVERS: dict[str, tuple[dict, object]] = {
     "env_var": ({"environments": {"dev": {}}, "default": "dev", "env_var": "SAMPLE_ENV"},
                 env.environments),
     "tracker": ({"tracker": {"title": "Refused: {scenario}"}}, tracker.declared),
+    "layout": ({"layout": {"build_root": "kernel"}}, lambda: layout.declared({"layout": {}})),
 }
 
 KEYS = tuple(sorted({key for keys in MODULES.values() for key in keys}))
