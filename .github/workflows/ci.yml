@@ -22,6 +22,10 @@ on:
 
 jobs:
 
+  # A self-hosted Debian machine. `actions/setup-python` unpacks prebuilt archives and carries none
+  # for Debian, so the runner's own python3 is what the launcher builds its venv with; docker is
+  # reached through the bootstrap, because a container job would need docker in order to start.
+  #
   # Stage zero is the working tree. The launcher provisions its own venv and installs this
   # checkout with `-e .`, so the code under test is the code that runs the test - a commit that
   # breaks CLI assembly fails here, in the same round, rather than after a release.

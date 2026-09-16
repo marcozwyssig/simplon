@@ -25,6 +25,61 @@ it is the one section held only to existing.
 
 ## 0.16.0
 
+### A runner is named by its KIND, and the kernel carries what follows from it (si#267)
+
+Raised by the owner after moving this repository's CI to a self-hosted runner took a full day, and every
+hour of it was spent rediscovering something another product in this family already knew:
+
+> *Wenn man Simplon verwendet, dann sollte alles gleich sein. Das ist ja der Vorteil von Simplon.*
+
+A product had to know, on its own, that `actions/setup-python` **never installs Python** — it unpacks
+prebuilt archives, and its manifest carries Ubuntu 22.04/24.04/26.04 and RHEL 9/10 and nothing else; that
+a **container job cannot be the thing that provisions docker**, because it needs docker on the runner in
+order to start at all; and that `DELIVERY_DOCKER_BOOTSTRAP=1` exists. None of it was in the kernel. All of
+it was in a comment in netctl's manifest, learned there once and here a second time.
+
+`simplon.runners` carries it once, for everybody — the same answer the catalogue already gives to the
+same question about commands. A job names a kind:
+
+```yaml
+    jobs:
+      self-build:
+        runner: { kind: self-hosted-debian, labels: ghr-8 }
+```
+
+| kind | `runs-on:` | `setup-python` | environment |
+|---|---|---|---|
+| `github-ubuntu` (the default) | `ubuntu-latest` | yes | — |
+| `self-hosted-debian` | yours to name | **no** | `DELIVERY_DOCKER_BOOTSTRAP: "1"` |
+
+**The label stays the product's.** `ghr-8` names one machine and no kernel can guess it, and
+`[self-hosted, Linux, X64]` is not an answer — it describes every self-hosted Linux machine the account
+will ever register, so the day a second one joins, the jobs are shared out with nothing saying so. A kind
+carrying no label of its own refuses until the job names the machine.
+
+What the kind buys is everything else. A `python:` pin on a kind that cannot honour it is refused **at
+generation**, because a pin that cannot be honoured reads as a guarantee and is a wish. The kind's
+environment is merged into the job's, and a variable the two set differently is refused rather than
+resolved, with the escape named in the refusal. And the kind's one-line reason is written into the
+generated file, so a reader who finds `runs-on: ghr-8` beside `DELIVERY_DOCKER_BOOTSTRAP: '1'` does not
+have to find the kernel to learn why they belong together.
+
+**Measured on this repository's own CI:** `simplon.yaml` now names the kind instead of spelling out the
+three consequences, and the generated `ci.yml` is identical but for the line the kind added explaining
+itself. Twelve manifest lines of hard-won comment became one declaration and a kernel table.
+
+`runs-on:` is not deprecated and is not going to be — it is the whole of what a product needs when its
+machine has nothing to teach anybody. Ten refusals join the census: eight diagnosis, and two expression
+rules for saying a fact twice.
+
+**The other half of si#267 is not in this release.** The ticket also asks whether the kernel should
+*derive* a pipeline from the command tree. Measured against this repository's own manifest, a plain
+derivation over the leaves of `build` and `test` would emit `test walk` — the acceptance walk, which waits
+for a person — so it would produce a pipeline that hangs rather than one that works from the start. What
+is missing is one bit the tree does not carry: whether a command can run with nobody watching. That is a
+decision, not an oversight, and it is recorded on the ticket.
+
+
 ### `runs-on:` keeps its type, so a list of labels stays a list (si#266)
 
 Filed by `secure-windows-images`, whose Windows template build needs one specific machine with VMware

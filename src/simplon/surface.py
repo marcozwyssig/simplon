@@ -165,8 +165,13 @@ PACKAGES = frozenset({"orchestrator", "tasks"})
 #: `bootstrap` is the one that needs a word: it carries the `simplon` console script
 #: (`[project.scripts]` in pyproject.toml), so `simplon.bootstrap:main` IS a promised entry point. What
 #: is not promised is importing the module for its other functions, which is why it sits here.
+#: `runners` is the newest, and it is INTERNAL on purpose although `workflowgen` beside it is LIBRARY
+#: (si#267). It is a TABLE of facts about kinds of CI machine, and a product reaches those facts by
+#: naming a kind in its manifest - never by importing the table. That is the whole point of carrying it
+#: here: the kernel learns a machine once, for everybody, and is free to add a kind or correct a
+#: measured field without that being a promise it broke.
 INTERNAL = frozenset({
-    "bootstrap", "catalogue", "clitaxonomy", "diskguard", "oras", "signatures", "steplog",
+    "bootstrap", "catalogue", "clitaxonomy", "diskguard", "oras", "runners", "signatures", "steplog",
     "test_impls", "tools",
 })
 
