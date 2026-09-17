@@ -352,7 +352,7 @@ tasks:
   # Why generated at all rather than Typer's own `--install-completion`: that hook runs the program on
   # every TAB, measured here at 340-360 ms per start. This writes the tree out once as shell, so the TAB
   # costs a `case` statement in the shell the user is already in. The price is a second source for the
-  # command tree, and `--check` plus `tests/test_own_completion.py` is what pays it.
+  # command tree, and `--check` plus `src/tests/test_own_completion.py` is what pays it.
   support:completion:
     impl: simplon.tasks.completion:generate
     help: "Regenerate the product's shell completion from its manifest (--check reports drift and writes nothing)."

@@ -15,6 +15,7 @@ import pytest
 
 from simplon import catalogue
 from simplon.orchestrator import manifest
+from conftest import ROOT
 
 _CATALOGUE = """
 tasks:
@@ -184,7 +185,7 @@ def test_an_unplaced_coordinate_reaches_the_generated_reference_and_a_placed_one
     - simplon is not a .NET product and will never publish a package to a NuGet feed."""
     from simplon.tasks import cliref
 
-    root = Path(__file__).resolve().parents[1]
+    root = ROOT
     cat = catalogue.load()
     mf = manifest.load((root / "simplon.yaml").read_text(encoding="utf-8"), catalogue=cat)
 

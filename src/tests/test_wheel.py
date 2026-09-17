@@ -26,8 +26,7 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-
+from conftest import ROOT  # noqa: E402 - the one product-root anchor (si#283)
 PROBE = (
     "import simplon.catalogue as c, pathlib;"
     "p = pathlib.Path(c.__file__).parent;"

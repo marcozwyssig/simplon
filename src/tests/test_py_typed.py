@@ -10,9 +10,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-
-
+from conftest import ROOT  # noqa: E402 - the one product-root anchor (si#283)
 def test_py_typed_is_shipped(tmp_path):
     subprocess.run([sys.executable, "-m", "build", "--wheel",
                     "--outdir", str(tmp_path)], cwd=ROOT, check=True,

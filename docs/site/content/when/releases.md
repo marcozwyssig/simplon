@@ -25,6 +25,41 @@ it is the one section held only to existing.
 
 ## 0.17.0
 
+### The unit suite moved to `src/tests`, so the kernel keeps its own placement (si#283)
+
+The taxonomy si#283 shipped says `unit` and `integration` live under `src`, beside the code they judge,
+and `system` and `acceptance` under `tests`. simplon's own unit suite was in `tests/`, and the page had to
+carry a callout saying so.
+
+It does not any more. 164 files moved; `tests/` keeps the acceptance level and the run's artefacts, which
+is what the taxonomy says belongs there. *None exempts the kernel* is a measured claim on the rules page,
+and this is it paid for rather than asserted.
+
+**Nothing for a product to do.** The kernel's defaults did not move - `tests/reports`, `tests/acceptance`
+and the layout's `tests` are what every product still gets, because they are about where OUTPUTS and the
+acceptance level go, not about where a unit suite lives. Where a product puts its unit tests it says in
+its own gate.
+
+#### Three things the move found, and every Python product laid out this way will meet the first two
+
+**The wheel shipped the tests.** Under `src/`, setuptools' `packages.find` treats a directory as a
+package: the first build after the move carried `tests` as a **top-level package**, which on installation
+would land that name on a consumer's import path and shadow their own. `pyproject.toml` excludes it now,
+with the measurement in a comment beside it.
+
+**The type gate swept the suite in** - 382 errors in 64 files. `files = src` had never excluded the tests
+by a decision; it excluded them by their living somewhere else, which is not the same thing and stopped
+being true the day the directory moved. `mypy.ini` says it now, and its "NOT COVERED BY PATH" note - which
+already explained *why* the suite is not typed - was carrying a number that had gone stale too: 1300+
+tests, against 3858.
+
+**Fifteen tests computed the product root themselves**, in ten files, while thirty-eight imported the one
+anchor from `conftest`. All fifteen broke on the move, and three more hard-coded `tests/fixtures` into a
+path spelled out from the root. That is the second source this repository hunts, inside its own suite, and
+the move is what made it visible: a duplicated constant costs nothing until the thing it duplicates moves.
+They read `conftest.ROOT` and a new `conftest.FIXTURES` now, and the one file that had anchored relative
+to itself needed no change at all.
+
 ### The test levels are a taxonomy now, not three examples (si#283)
 
 `with-what/test-levels.md` defined a level precisely - *"one entry under `suites: gates:`"* - and then

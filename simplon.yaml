@@ -137,10 +137,10 @@ groups:
       # argv.
       typecheck-python: { task: "test:typecheck-python" }
       # The release-notes guard (si#89), on the kernel that ships it. It lived in
-      # `tests/test_releases_page.py` until si#89 - which guarded simplon and nothing else, so every
+      # `src/tests/test_releases_page.py` until si#89 - which guarded simplon and nothing else, so every
       # product consuming this catalogue could tag, publish and never write a word. The mechanism is the
       # kernel's now; what stayed here is the DATA, in the `releases:` section below, and simplon's own
-      # house rules about its own page, in `tests/test_releases_page.py`.
+      # house rules about its own page, in `src/tests/test_releases_page.py`.
       #
       # No `with:` - there is nothing to pin. All three values are the product's data and reach the body
       # through the manifest, which is the whole shape of the ticket.
@@ -186,7 +186,7 @@ groups:
       # THE LOCAL GATE (si#156), and an impl-less AGGREGATE for the same reason `build docs` above is
       # one: a command either instantiates a task or plans other commands, never both.
       #
-      # si#89 moved the release-notes guard out of `tests/test_releases_page.py` and into the coordinate
+      # si#89 moved the release-notes guard out of `src/tests/test_releases_page.py` and into the coordinate
       # above, which was right and had a side effect nobody stated: the check left the local gate. `test
       # all` was the pytest suite, `test release-notes` was a command only ci.yml invoked, and a
       # developer running the gate this project tells them to run learned nothing about their missing
@@ -211,7 +211,7 @@ groups:
       # first, never what runs.
       #
       # THE TYPE GATE IS IN IT since si#163, which is the other half of this comment's last paragraph.
-      # si#156 left it out on purpose and said why: folding it in changes what `tests/test_type_gate.py`'s
+      # si#156 left it out on purpose and said why: folding it in changes what `src/tests/test_type_gate.py`'s
       # central rule is ABOUT, and that is a decision rather than a line move. The decision is taken
       # there now and the rule is narrower rather than gone - a job that reaches the suite through THIS
       # aggregate cannot miss the gate, so what is left to protect is the job that names the LEAF, which
@@ -346,13 +346,13 @@ site:
 # what makes the image buildable at any commit rather than only after a PyPI release. The root
 # .dockerignore says what that costs and what it keeps (`.git`, on purpose).
 # THE TEST TAXONOMY, AND IT IS ONE LEVEL DEEP ON PURPOSE (si#248). This kernel has ONE suite - the
-# pytest run under `tests/` - so the section that exists for products with three or four levels declares
+# pytest run under `src/tests/` - so the section that exists for products with three or four levels declares
 # exactly one gate here. That is not the section being misused: what it buys is the half beside the
 # gates, `test:report`, which merges the run's raw results into a single-file Allure archive.
 #
 # WHY THE GATE NAMES A COMMAND RATHER THAN A SUITE. A `suite:` gate would hand the pytest root to the
 # kernel and let it run pytest itself - and this suite cannot be run that way. `orchestrator.cli
-# :test_suite` runs from INSIDE `tests/` so the conftest there applies, and its docstring records what
+# :test_suite` runs from INSIDE `src/tests/` so the conftest there applies, and its docstring records what
 # happens on the container route when thirteen tests bind a `tmp_path` into a `docker run`. A
 # `command:` gate (si#106) keeps that body exactly as it is and takes its rc, which is the whole of what
 # a gate needs from it.
@@ -370,7 +370,7 @@ suites:
       # the same path spelled absolutely, and a directory that is not there is NAMED by the report step
       # rather than quietly contributing nothing.
       results_from: tests/allure-results
-      announce: "unit gate: the pytest suite under tests/, run from inside it so its conftest applies"
+      announce: "unit gate: the pytest suite under src/tests/, run from inside it so its conftest applies"
   # WHAT THE REPORT STEP MERGES, and the gate's `results_from:` above is NOT it - measured on
   # 2026-09-14, because the first draft declared only the gate and shipped a 2.5 MB archive of nothing
   # with an `OK` beside it. `results_from:` is merged when the KERNEL runs that gate (`test:gate`);
@@ -414,9 +414,9 @@ images:
 # reads a web merge one level down, which found one more. A typed count going wrong is the defect this
 # repository has now proved five times, and it happened again inside the comment explaining an exemption
 # against it. The count is stated here as measured on a date rather than as a standing fact, and what
-# holds it is the assertion in tests/test_releases_page.py, not this sentence.
+# holds it is the assertion in src/tests/test_releases_page.py, not this sentence.
 #
-# The exemption is PAID FOR rather than merely declared, and not here: `tests/test_releases_page.py` pins
+# The exemption is PAID FOR rather than merely declared, and not here: `src/tests/test_releases_page.py` pins
 # the excused population at one and requires it to be genuinely incomplete, so the day somebody writes
 # those numbers in, the suite says to move `complete_from` down and delete the exemption. Those are
 # simplon's own house rules about simplon's own page, which is exactly why they did not move into the

@@ -62,7 +62,7 @@ from simplon.tasks.testrun import IMPL_DETAIL
 from simplon.verdict import GateVerdict, Verdict
 
 import sitepages
-from conftest import ROOT
+from conftest import FIXTURES, ROOT
 
 #: The chapter under test.
 CHAPTER = sitepages.chapter("case-java.md")
@@ -73,7 +73,7 @@ INDEX = sitepages.index("what")
 #: The manifest of the product the chapter follows. It is not in this repository - javademo is a Java
 #: product driven for si#26 - so it travels with the chapter, and every command the page types is
 #: resolved against the tree this file assembles.
-FIXTURE = ROOT / "tests" / "fixtures" / "case_java_manifest.yaml"
+FIXTURE = FIXTURES / "case_java_manifest.yaml"
 
 #: The page that owns the price of the detour this chapter's seam removed (si#61). The chapter restates
 #: those numbers to make its point; they are read back off the page that measured them.
