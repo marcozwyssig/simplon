@@ -158,3 +158,61 @@ def test_the_generated_workflow_runs_only_commands_the_manifest_declares():
     for run in runs:
         assert run.startswith(f"./{PRODUCT}.sh "), run
         workflowgen.resolve_command(manifest, run.split(" ", 1)[1], where=f"ci.yml: {run}")
+
+
+# --- si#267: what the derivation would produce here, measured against what this repository runs -------
+
+
+def _ci_steps() -> list[str]:
+    """The commands simplon's own `self-build` job runs, in order, as the manifest declares them."""
+    job = next(job for w in _declared() if w.key == "ci" for job in w.jobs)
+    return [step.command for step in job.steps if step.command]
+
+
+def test_the_derived_pipeline_over_this_manifest_is_a_pipeline_that_would_run():
+    """si#267's own claim, held against the only manifest this repository can measure.
+
+    The ticket asks for a generator that produces a WORKING file rather than a template with holes, and
+    the cheapest way for that claim to be false is for the derivation to emit something that cannot run.
+    Every command below was run by hand on this machine before this test was written - the four this
+    repository's CI does not run included - and all four exit 0 and leave the tree clean.
+    """
+    derived = workflowgen.derive(_loaded(), ["build", "test"], where="measurement")
+
+    assert [step.command for step in derived.steps] == [
+        "build wheel", "build reference", "build acceptance", "build site", "build image",
+        "test suite", "test typecheck-python", "test release-notes", "test report", "test generated"]
+
+
+def test_this_repository_runs_seven_of_those_ten_and_the_difference_is_a_choice_not_a_defect():
+    """THE FINDING si#267 ends on, kept as a measurement instead of a sentence in a document.
+
+    A derived pipeline here would be correct and would cost more: `build site` pulls Hugo and
+    mermaid-cli and takes about three and a half minutes, and every push to this repository starts two
+    runs. The other two it adds are nearly free - `build reference` and `build acceptance` take about a
+    second each - so the bill is one command, not four.
+
+    simplon's own CI stays hand-written all the same, for a reason a derivation cannot carry: its order
+    is argued in the manifest, chiefly that the prose gate goes LAST so a release section still to be
+    written cannot hide a red suite. The derived order follows the manifest's declaration order instead.
+
+    What this test holds is that the difference stays VISIBLE. If the derivation starts emitting what
+    the CI runs, or the CI starts running what is derived, somebody should be told rather than left to
+    assume the two agree.
+    """
+    derived = {step.command for step in workflowgen.derive(_loaded(), ["build", "test"],
+                                                           where="measurement").steps}
+
+    run_here = set(_ci_steps())
+
+    assert run_here < derived
+    assert sorted(derived - run_here) == ["build acceptance", "build reference", "build site"]
+
+
+def test_the_command_this_repository_never_puts_in_ci_is_the_one_the_catalogue_marks_attended():
+    """The two halves of si#267 meeting: the flag the catalogue declares and the choice this repository
+    made years before it existed agree, and they were arrived at independently."""
+    loaded = _loaded()
+
+    assert loaded.commands["test"]["walk"].unattended is False
+    assert "test walk" not in _ci_steps()

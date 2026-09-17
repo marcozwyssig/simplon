@@ -885,3 +885,98 @@ def test_a_coordinate_named_task_with_its_own_impl_is_told_the_body_is_the_produ
     assert "the body is YOURS and not the platform's" in message
     assert "'docs:site' declare an `impl:`" not in message
 
+
+
+# --- si#267: `unattended` is a task's to declare, an instance's to override ---------------------------
+
+
+def _loaded(text: str):
+    return manifest.load(textwrap.dedent(text), catalogue=catalogue_mod.load())
+
+
+def test_a_command_inherits_unattended_from_the_task_it_instantiates():
+    """WHY IT IS INHERITED rather than written per command. `test:walk` asks a person to answer each
+    scenario, and it asks that of every product that imports the coordinate - so it is a fact about the
+    body. A product restating it would be a second source for one truth, which is the drift `impl:` in
+    a manifest already refuses one level down."""
+    loaded = _loaded("""
+        tasks:
+          gate: { impl: "simplon.test_impls:nullary", help: "Gate.", unattended: true }
+        groups:
+          test:
+            commands:
+              gate: { task: gate }
+        env_groups: []
+        """)
+
+    assert loaded.commands["test"]["gate"].unattended is True
+
+
+def test_a_command_may_override_what_its_task_says():
+    """The override exists because a product can WRAP a body in a way that changes the answer - an
+    interactive task driven from a script, or a machine-safe one a product wants kept out of a pipeline.
+    It is the instance's call, the same way `hidden:` is."""
+    loaded = _loaded("""
+        tasks:
+          gate: { impl: "simplon.test_impls:nullary", help: "Gate.", unattended: true }
+        groups:
+          test:
+            commands:
+              gate: { task: gate, unattended: false }
+        env_groups: []
+        """)
+
+    assert loaded.commands["test"]["gate"].unattended is False
+
+
+def test_a_task_that_says_nothing_leaves_the_command_saying_nothing():
+    """THE THIRD STATE, held at the loader rather than only at the derivation. `bool(None)` is False,
+    so any coercion on the way in would turn "nobody has said" into "must not run" before the
+    derivation ever got to name it."""
+    loaded = _loaded("""
+        tasks:
+          gate: { impl: "simplon.test_impls:nullary", help: "Gate." }
+        groups:
+          test:
+            commands:
+              gate: { task: gate }
+        env_groups: []
+        """)
+
+    assert loaded.commands["test"]["gate"].unattended is None
+
+
+@pytest.mark.parametrize("value", ["maybe", "7", '"true"'])
+def test_an_unattended_that_is_not_written_true_or_false_is_refused(value):
+    """`unattended: maybe` has no reading, and neither does the STRING "true" - a quoted word that looks
+    like the flag is exactly how a third state gets a fourth one. Refused rather than coerced."""
+    with pytest.raises(ValueError) as exc:
+        _loaded(f"""
+            tasks:
+              gate: {{ impl: "simplon.test_impls:nullary", help: "Gate.", unattended: {value} }}
+            groups:
+              test:
+                commands:
+                  gate: {{ task: gate }}
+            env_groups: []
+            """)
+
+    assert "unattended" in str(exc.value)
+
+
+def test_a_task_misspelling_the_flag_is_refused_rather_than_silently_ignored():
+    """`check_task`'s existing rule, now guarding this key too: a declaration that renders nowhere is
+    worse than one that fails, and `unattend: true` would otherwise leave the command in the third state
+    while its author believed they had answered."""
+    with pytest.raises(ValueError) as exc:
+        _loaded("""
+            tasks:
+              gate: { impl: "simplon.test_impls:nullary", help: "Gate.", unattend: true }
+            groups:
+              test:
+                commands:
+                  gate: { task: gate }
+            env_groups: []
+            """)
+
+    assert "unattend" in str(exc.value)

@@ -821,3 +821,39 @@ def test_an_old_form_product_still_cannot_invent_a_group_after_the_tree_moved():
     # act / assert
     with pytest.raises(ValueError, match="does not declare"):
         manifest.load(old_form, catalogue=cat)
+
+
+# --- si#267: the catalogue says what a machine may run unwatched --------------------------------------
+
+
+def test_every_catalogue_task_says_whether_a_machine_may_run_it_unwatched():
+    """The census argument, applied to a bit instead of to a count.
+
+    A derivation that reads this flag is only as good as the population that carries it, and a task
+    added without one would not fail here - it would fail in a product's pipeline, months later, as a
+    refusal naming a coordinate whose owner has moved on. The flag is declared in the catalogue rather
+    than by each product precisely so that it is declared ONCE, and this test is what keeps "once" from
+    becoming "once, for the ones somebody remembered".
+    """
+    cat = catalogue.load()
+
+    silent = sorted(name for name, spec in cat.tasks.items() if spec.get("unattended") is None)
+
+    assert not silent, (f"these catalogue tasks do not say whether a pipeline may run them with nobody "
+                        f"watching: {', '.join(silent)}. Declare `unattended:` on each - true if it "
+                        f"runs to a verdict on its own, false if it needs a person")
+
+
+def test_exactly_one_catalogue_task_needs_a_person_and_it_is_the_acceptance_walk():
+    """The measurement behind si#267's flag, pinned rather than described.
+
+    Every catalogue body was walked transitively for a construct that asks a person - input(), getpass,
+    a typer or click prompt - and exactly one reaches any. That ratio is the case for a DERIVATION: a
+    kernel that had to be told about each command individually would be a template with holes, which is
+    the shape the ticket rejected. If this number moves, the derivation's premise has moved with it.
+    """
+    cat = catalogue.load()
+
+    attended = sorted(name for name, spec in cat.tasks.items() if spec.get("unattended") is False)
+
+    assert attended == ["test:walk"]

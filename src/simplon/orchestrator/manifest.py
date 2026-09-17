@@ -112,6 +112,13 @@ class CommandSpec(NamedTuple):
     parallel: bool = False
     keep_awake: bool = False
     hidden: bool = False
+    #: si#267: can this command run with nobody watching? `None` is the third state and means NOBODY HAS
+    #: SAID - which is not the same as "no". A derivation that read an unset flag as false would quietly
+    #: drop a command from a pipeline, and a pipeline missing a gate is green for the wrong reason; one
+    #: that read it as true would put `test walk` on a runner, where it waits for an answer nobody is
+    #: there to give. So the value has three meanings and gets three values, and the derivation refuses
+    #: the middle one by name.
+    unattended: bool | None = None
     with_: dict[str, object] = {}
     params: dict[str, "ParamPresentation"] = {}
 
@@ -403,6 +410,7 @@ class _CommandSpecModel(BaseModel):
     parallel: bool = False
     keep_awake: bool = False
     hidden: bool = False
+    unattended: bool | None = None
 
     @field_validator("impl", "help", mode="before")
     @classmethod
@@ -427,6 +435,23 @@ class _CommandSpecModel(BaseModel):
     @classmethod
     def _as_bool(cls, value: object) -> bool:
         return bool(value)
+
+    @field_validator("unattended", mode="before")
+    @classmethod
+    def _tri_state(cls, value: object) -> bool | None:
+        # Deliberately NOT `_as_bool`. That coercion is what makes a third state collapse into the
+        # second: `bool(None)` is False, and an unset flag would then read as a command that must not
+        # run in a pipeline - a verdict nobody gave. Anything that is not a written true or false is
+        # refused here rather than coerced, because `unattended: maybe` has no reading either.
+        if value is None:
+            return None
+        if not isinstance(value, bool):
+            raise ValueError(
+                f"'unattended' is true or false, got '{value}'. It says whether this command can run "
+                f"with nobody watching, so a pipeline may run it unasked. Leaving the key out is the "
+                f"third answer - nobody has said - and a derived pipeline names the command rather "
+                f"than guessing on its behalf")
+        return value
 
 
 class _ManifestModel(BaseModel):
@@ -907,7 +932,8 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
         group: {name: CommandSpec(impl=spec.impl, help=spec.help, passthrough_args=spec.passthrough_args,
                                   depends_on=spec.depends_on, stop_on_failure=spec.stop_on_failure,
                                   parallel=spec.parallel, keep_awake=spec.keep_awake,
-                                  hidden=spec.hidden, with_=spec.with_,
+                                  hidden=spec.hidden, unattended=spec.unattended,
+                                  with_=spec.with_,
                                   params={pname: ParamPresentation(help=p.help, short=p.short,
                                                                    argument=p.argument,
                                                                    metavar=p.metavar,

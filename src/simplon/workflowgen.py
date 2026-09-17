@@ -136,6 +136,18 @@ class Step(NamedTuple):
     modifiers: Mapping[str, object] = {}
     verbatim: Mapping[str, object] | None = None
     note: str = ""
+    #: si#267: the command GROUPS this step stands in for. A step declaring them is not one step but a
+    #: placeholder for however many the manifest's own tree implies, expanded at render, where the
+    #: manifest is in hand.
+    #:
+    #: WHY A STEP AND NOT A JOB KEY, which is what the first draft built. A job-level `derive:` has to
+    #: refuse `steps:` beside it - which one wins would otherwise depend on read order - and that
+    #: refusal is an EXPRESSION RULE by CLAUDE.md's test: a product that wants the derived pipeline
+    #: plus a Check Run reporter of its own is saying something a kernel could have honoured, and what
+    #: it does instead is write the whole file by hand, which is the work si#267 exists to remove. As a
+    #: step there is nothing to refuse: the product writes where the derived block goes, so the order
+    #: stays the product's and the kernel decides nothing it was not asked to.
+    derive: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -514,7 +526,20 @@ def _step(item: object, where: str) -> Step:
         raise ValueError(f"{where}: must be a mapping, not {type(item).__name__}")
     note = str(item.get("note") or "")
     command = str(item.get("command") or "").strip()
-    rest = {str(k): v for k, v in item.items() if str(k) not in ("command", "note")}
+    rest = {str(k): v for k, v in item.items() if str(k) not in ("command", "note", DERIVE_KEY)}
+
+    derived = _derived_groups(item, where)
+    if derived:
+        # A step that stands in for however many the tree implies cannot also be one step of its own:
+        # the same two-bodies-in-one-step refusal `command:` beside `uses:` already carries, and for the
+        # same reason - which body wins would depend on the order keys are read in.
+        clash = sorted(k for k in ("command", "uses", "run") if (k == "command" and command) or k in rest)
+        if clash:
+            raise ValueError(
+                f"{where}: `{DERIVE_KEY}:` stands in for every step the named groups imply, so this "
+                f"step cannot also declare {', '.join(clash)}. Put the derived block and your own step "
+                f"side by side in `steps:` instead - the order there is yours")
+        return Step(derive=derived, note=note)
 
     if command:
         # `command:` is the step's BODY, not the whole step. A second body beside it - `uses:` or a
@@ -541,6 +566,126 @@ def _step(item: object, where: str) -> Step:
         raise ValueError(f"{where}: a verbatim step needs `uses:` or `run:`; for a product command say "
                          f"`command: <group> <name>` and let it be resolved against the manifest")
     return Step(verbatim=rest, note=note)
+
+
+# --- deriving a job's steps from the command tree -----------------------------------------------------------
+
+
+DERIVE_KEY = "derive"
+
+
+def _derived_groups(spec: Mapping[str, object], where: str) -> tuple[str, ...]:
+    """`derive: [build, test]` on a step - the groups whose leaves that step stands in for, in order.
+
+    A string is accepted for one group, the way `runs-on:` accepts one label, because `derive: test` is
+    what somebody writes first and refusing it would teach nothing.
+    """
+    value = spec.get(DERIVE_KEY)
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, Sequence) or not value:
+        raise ValueError(
+            f"{where}: `{DERIVE_KEY}:` names the command GROUPS whose leaves this step stands in "
+            f"for - `derive: test` or `derive: [build, test]`. Got {type(value).__name__}")
+    out = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"{where}: `{DERIVE_KEY}:` takes group NAMES, and {item!r} is not one")
+        out.append(item.strip())
+    return tuple(out)
+
+
+class Derived(NamedTuple):
+    """A derived job's steps and the prose that says what was left out of them.
+
+    Two values rather than one because they land in different places: the steps are the job's body, and
+    the sentence about what was skipped belongs in the job's COMMENT, above them. A note carried on a
+    step with no body would be a step that renders to nothing, which is the shape this module refuses
+    everywhere else.
+    """
+
+    steps: tuple[Step, ...]
+    note: str
+
+
+def derive(manifest: Manifest, groups: Sequence[str], *, where: str) -> Derived:
+    """Every leaf of each named group that may run with nobody watching, in the manifest's own order.
+
+    THE POINT OF si#267. A product that declares `derive: [build, test]` has said where its pipeline
+    comes from and nothing else; the shape follows its command tree, so a renamed command moves with it
+    and a new one joins without anybody remembering to add a step.
+
+    Three decisions are visible here, and each was measured rather than chosen:
+
+    LEAVES, NOT AGGREGATES. An aggregate plans other commands, and a GitHub job stops at its first red
+    step - so emitting `test all` would collapse four verdicts into one and lose the ORDER its members
+    were written in. This repository's own manifest had already written that reason down before this
+    function existed, in the note above its CI job: the prose gate goes last because a verdict over
+    prose must not hide one over code.
+
+    `unattended` DECIDES, and the third state is refused rather than guessed. An undeclared leaf is a
+    command nobody has ruled on: reading it as false drops a gate from the pipeline and the pipeline is
+    then green for the wrong reason, and reading it as true puts `test walk` on a runner, where it
+    refuses for want of a terminal and teaches whoever sees the red cross that a red CI means nothing.
+
+    A SKIPPED LEAF IS NAMED IN THE FILE, not silently absent. `test walk` is missing from a derived
+    pipeline for a reason, and the reason belongs where a reader of the workflow will be standing when
+    they wonder about it - which is the generated file, not this docstring.
+    """
+    tree = manifest.commands
+    steps: list[Step] = []
+    notes: list[str] = []
+    for group in groups:
+        members = tree.get(group)
+        if members is None:
+            raise ValueError(
+                f"{where}: `{DERIVE_KEY}:` names group '{group}', which this manifest does not declare. "
+                f"It has: {', '.join(sorted(tree)) or '(none)'}")
+        skipped: list[str] = []
+        for name, spec in members.items():
+            if spec.depends_on:
+                # An aggregate, whose members are leaves of this same group and are emitted in their own
+                # right. Nothing is missing from the file, so nothing needs saying about it.
+                continue
+            if spec.unattended is None:
+                raise ValueError(
+                    f"{where}: command '{group} {name}' does not say whether it can run with nobody "
+                    f"watching, so this job cannot know whether to run it. Declare `unattended:` on it, "
+                    f"or on the task it instantiates - a task in the platform catalogue declares it "
+                    f"once for every product that imports the coordinate")
+            if not spec.unattended:
+                skipped.append(name)
+                continue
+            steps.append(Step(command=f"{group} {name}"))
+        notes.append(_derived_note(group, skipped))
+    if not steps:
+        raise ValueError(
+            f"{where}: deriving from {', '.join(groups)} produced no step at all. Either those groups "
+            f"carry no leaf a machine may run, or the wrong groups were named - and a job with no steps "
+            f"is a green tick over nothing, which is worse than the error you are reading")
+    return Derived(steps=tuple(steps), note="\n".join(notes))
+
+
+def _derived_note(group: str, skipped: Sequence[str]) -> str:
+    """What the file says about one derived group - including, and especially, what it left out.
+
+    A reader standing in the generated workflow wondering why `test walk` is not there is not going to
+    find the answer in the kernel's source. It goes in the file.
+    """
+    head = (f"Derived from the `{group}` group of this product's command tree, in the order the manifest "
+            f"declares it. Every leaf that may run with nobody watching is here; an aggregate is not, "
+            f"because its members are.")
+    if not skipped:
+        return head
+    one = len(skipped) == 1
+    return (f"{head} Left out: {', '.join(f'`{group} {n}`' for n in skipped)} - "
+            f"{'it declares' if one else 'they declare'} `unattended: false` and "
+            f"{'needs' if one else 'need'} a person. Run here, "
+            f"{'it' if one else 'they'} would not hang; "
+            f"{'it' if one else 'they'} would go red for a reason that is not about this product's "
+            f"code, and a red cross that means nothing is the expensive kind.")
 
 
 # --- resolving a command step against the manifest ---------------------------------------------------------
@@ -623,6 +768,20 @@ def render(workflow: Workflow, *, manifest: Manifest, product: str, source: str)
 
 def _render_job(job: Job, *, manifest: Manifest, product: str, workflow: str) -> list[str]:
     where = f"workflow '{workflow}', job '{job.name}'"
+    # The derivation happens HERE and not at parse time, because it needs the manifest - the same seam a
+    # `command:` step is already resolved at. A derived step expands into the steps its groups imply and
+    # carries its own note into the first of them, so the file says where that block came from and what
+    # it left out, standing exactly where the product put it.
+    steps: list[Step] = []
+    for index, step in enumerate(job.steps):
+        if not step.derive:
+            steps.append(step)
+            continue
+        result = derive(manifest, step.derive, where=f"{where}, step {index + 1}")
+        head, rest = result.steps[0], result.steps[1:]
+        note = "\n\n".join(part for part in (step.note.strip(), result.note) if part)
+        steps.append(head._replace(note=note))
+        steps.extend(rest)
     lines = [""]
     lines += _comment(job.note, "  ")
     lines.append(f"  {_scalar(job.name)}:")
@@ -644,7 +803,7 @@ def _render_job(job: Job, *, manifest: Manifest, product: str, workflow: str) ->
         lines.append("        with:")
         lines.append(f"          python-version: {_scalar(job.python)}")
 
-    for index, step in enumerate(job.steps):
+    for index, step in enumerate(steps):
         lines += _comment(step.note, "      ")
         if step.command:
             group, name = resolve_command(manifest, step.command,

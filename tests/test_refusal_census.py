@@ -475,6 +475,12 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # working command line. That makes it an expression rule rather than a diagnosis, however sensible.
     ("manifest", "_single_dashed_letter", "must be a single dash plus one letter"): EXPRESSION,
     ("manifest", "_str_tuple", "'depends_on' must be a list of command names"): DIAGNOSIS,
+    # si#267, and its neighbour above is the reason it needs an entry of its own rather than joining
+    # `_as_bool`. Every other flag on a spec is coerced: `bool(value)` turns anything into a verdict.
+    # This one has THREE states - true, false, and nobody has said - so a coercion would destroy the
+    # third on the way in, which is the defect this repository hunts, at the loader's own door.
+    # `unattended: maybe` has no reading and neither does the quoted string "true".
+    ("manifest", "_tri_state", "'unattended' is true or false, got"): DIAGNOSIS,
     ("manifest", "_reject_removed_composites", "which has been removed"): DIAGNOSIS,
     ("manifest", "_coerce_groups", "'groups' must be a mapping of group name"): DIAGNOSIS,
     ("manifest", "_coerce_groups", "must be a mapping of command name -> spec"): DIAGNOSIS,
@@ -718,6 +724,18 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("workflowgen", "_check_path", "must be under '{DIRECTORY}/'"): DIAGNOSIS,
     ("workflowgen", "_check_path", "must end in .yml or .yaml"): DIAGNOSIS,
     ("workflowgen", "_reject_duplicate_paths", "one file has one owner"): DIAGNOSIS,
+    # si#267. All three are values with no reading: `derive: 7` names no group, `derive: [3]` names no
+    # group either, and a step that is both a derived block and a step of its own has two bodies - the
+    # same refusal `command:` beside `uses:` already carries, four lines up.
+    #
+    # WHAT IS DELIBERATELY NOT HERE is the refusal the first draft of si#267 carried: a job-level
+    # `derive:` would have had to refuse `steps:` beside it, and that WOULD have been an expression
+    # rule - a product wanting the derived pipeline plus a Check Run reporter of its own was saying
+    # something a kernel could have honoured. Moving the derivation onto a step removed the rule instead
+    # of justifying it, which is what "would deleting be cheaper than guarding" asks for.
+    ("workflowgen", "_derived_groups", "names the command GROUPS whose leaves"): DIAGNOSIS,
+    ("workflowgen", "_derived_groups", "takes group NAMES, and {item!r}"): DIAGNOSIS,
+    ("workflowgen", "_step", "stands in for every step the named groups imply"): DIAGNOSIS,
 }
 
 #: For each EXPRESSION rule only, the third kind `CLAUDE.md` names: how far the rule reaches.

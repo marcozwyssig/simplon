@@ -13,6 +13,7 @@ tasks:
   wheel:
     impl: "orchestrator.cli:build_wheel"
     help: "Build the wheel."
+    unattended: true
   # NAMED `suite` since si#156, and the rename is the whole mechanism of that ticket. This body is the
   # pytest run and nothing else; `all` is now the AGGREGATE over it and the release-notes guard, and a
   # command either instantiates a task or plans other commands (si#895/si#896), so the leaf had to give
@@ -20,9 +21,11 @@ tasks:
   suite:
     impl: "orchestrator.cli:test_suite"
     help: "Run the pytest suite."
+    unattended: true
   doctor:
     impl: "orchestrator.cli:doctor"
     help: "Check the tools and the environment."
+    unattended: true
 
 # The command tree. `groups:` hangs off the tree the catalogue declares
 # (src/simplon/catalogue.yaml: build/test/release/deploy/monitor/support) rather than inventing groups of

@@ -307,11 +307,17 @@ def _check_command_is_mapping(spec, where: str, name: str) -> None:
 # Keys a task supplies to every command that instantiates it, where the command does not say otherwise.
 # `impl` is not here because it is never the command's to declare; `with` is not here because a template
 # that pinned a value would not be a template.
-INHERITED = ("help", "passthrough_args")
+#
+# `unattended` (si#267) is here rather than on the command because it is a fact about the BODY: `test:walk`
+# asks a person to answer each scenario, and it asks that of every product that imports it. Declared once
+# in the catalogue, it is true for everybody - which is the same argument the coordinate space itself
+# runs on. A command may still override it, because a product can wrap a body in a way that changes the
+# answer, and the override is the instance's to make.
+INHERITED = ("help", "passthrough_args", "unattended")
 
 # What a TASK may declare. Everything else that `_CommandSpecModel` accepts belongs to the instance:
 # a template that pinned a value, hid itself or planned other commands would not be a template.
-TASK_KEYS = ("impl", "help", "passthrough_args", "params")
+TASK_KEYS = ("impl", "help", "passthrough_args", "params", "unattended")
 COMMAND_ONLY_KEYS = ("hidden", "keep_awake", "stop_on_failure", "parallel", "depends_on", "with", "task")
 
 

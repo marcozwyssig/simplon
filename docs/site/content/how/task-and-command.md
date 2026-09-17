@@ -46,10 +46,10 @@ different answer to the second one twice over.
 
 ## Which keys belong to which
 
-A task takes exactly four keys:
+A task takes exactly five keys:
 
 ```text
-impl   help   passthrough_args   params
+impl   help   passthrough_args   params   unattended
 ```
 
 A command takes those it needs to place a task, plus the ones that describe *this* placement:
@@ -58,9 +58,24 @@ A command takes those it needs to place a task, plus the ones that describe *thi
 task   with   help   params   hidden   keep_awake   stop_on_failure   parallel   depends_on   override
 ```
 
-Two of the task's keys are **inherited** by every command that instantiates it unless the command says
-otherwise: `help` and `passthrough_args`. That is the template doing its job - one task documents itself
-once, and every placement gets that wording for free while remaining free to override it.
+Three of the task's keys are **inherited** by every command that instantiates it unless the command says
+otherwise: `help`, `passthrough_args` and `unattended`. That is the template doing its job - one task
+documents itself once, and every placement gets that wording for free while remaining free to override
+it.
+
+`unattended` (si#267) is the newest and the one worth a sentence of its own: it says whether a pipeline
+may run this command with nobody at the keyboard. It belongs to the task rather than to the command
+because it is a fact about the *body* - `test:walk` asks a person to answer each acceptance scenario, and
+it asks that of every product that imports the coordinate. Declared once in the platform catalogue, it is
+true for everybody, which is what lets the kernel [derive a pipeline](../manifest/#workflows---the-ci-files-generated-from-this-same-manifest)
+from a command tree instead of making each product write one.
+
+It has **three** states and not two. `unattended: true` and `unattended: false` are answers; leaving the
+key out is *nobody has said*, and that is neither. A derivation cannot guess it either way - reading it
+as false drops a gate and the pipeline goes green for the wrong reason, reading it as true puts a command
+that wants a person on a runner - so an undeclared command is named and refused instead. It is also the
+one flag on a spec that is not coerced: every other is `bool(value)`, and `bool(None)` is `False`, which
+would destroy the third state at the loader's own door.
 
 `impl` is not in that list, because it is never the command's to declare. `with` is not in it either, and
 the reason is worth stating plainly: **a template that pinned a value would not be a template.** It would
@@ -84,11 +99,11 @@ are worth reading as a group, because together they are the whole of the rule.
 > task 'wheel' declares `with:`, which belongs on a command rather than on the task it instantiates. Move
 > it to the command under `groups:`.
 
-**A task that declares a key nobody reads.** Anything outside the four is rejected rather than dropped,
+**A task that declares a key nobody reads.** Anything outside the five is rejected rather than dropped,
 including keys that read as entirely plausible on a template:
 
-> task 'wheel' declares unknown key `group:`. A task takes impl, help, passthrough_args, params - check
-> the spelling.
+> task 'wheel' declares unknown key `group:`. A task takes impl, help, passthrough_args, params,
+> unattended - check the spelling.
 
 **A task with no body at all.** The message names the alternative, because the mistake it usually
 represents is reaching for the wrong construct:

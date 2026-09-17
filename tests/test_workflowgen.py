@@ -1478,3 +1478,206 @@ def test_an_absent_runs_on_is_still_refused_by_its_own_name():
 
     # assert
     assert "declares no `runs-on:`" in str(refused.value)
+
+
+# --- si#267: a pipeline derived from the command tree -------------------------------------------------
+#
+# The ticket's complaint is that the generator SERIALISES: a product writes every step, so every product
+# writes a different pipeline and five of seven wrote theirs by hand. What is asserted below is the
+# opposite property - that a job which says only where its steps come from gets a working file - plus
+# the three states of the bit that makes it possible, because the middle one is the whole point.
+
+#: A product whose `test` group carries all three cases at once: a leaf a machine may run, a leaf that
+#: needs a person (the catalogue's own `test:walk`, so the flag is read through the real coordinate and
+#: not through a fixture's idea of it), and an aggregate over them.
+_DERIVE_MANIFEST = """
+tasks:
+  suite:   { impl: "simplon.test_impls:nullary", help: "Run every test.", unattended: true }
+  wheel:   { impl: "simplon.test_impls:nullary", help: "Build the wheel.", unattended: true }
+  ask:     { impl: "simplon.test_impls:nullary", help: "Ask somebody." }
+
+groups:
+  build:
+    commands:
+      wheel: { task: wheel }
+  test:
+    commands:
+      suite: { task: suite }
+      walk:  { task: "test:walk" }
+      all:   { depends_on: [suite], help: "Every gate." }
+env_groups: []
+"""
+
+_DERIVED = """
+    workflows:
+      ci:
+        on: [push]
+        jobs:
+          gate:
+            runs-on: ubuntu-latest
+            steps:
+              - derive: [build, test]
+    """
+
+
+@pytest.fixture(scope="module")
+def derive_manifest():
+    return manifest_mod.load(_DERIVE_MANIFEST, catalogue=catalogue_mod.load())
+
+
+def test_a_derived_job_runs_every_leaf_a_machine_may_run_in_the_manifests_own_order(derive_manifest):
+    derived = workflowgen.derive(derive_manifest, ["build", "test"], where="w")
+
+    assert [step.command for step in derived.steps] == ["build wheel", "test suite"]
+
+
+def test_a_derived_job_leaves_out_the_leaf_that_needs_a_person(derive_manifest):
+    derived = workflowgen.derive(derive_manifest, ["test"], where="w")
+
+    assert "test walk" not in [step.command for step in derived.steps]
+
+
+def test_the_generated_file_says_why_the_attended_leaf_is_missing(derive_manifest):
+    # A reader standing in the workflow wondering where `test walk` went will not go looking in the
+    # kernel's source. si#40's own rule, one level on: a generator that drops something silently has
+    # deleted the reason somebody would need.
+    text = _render(derive_manifest, _DERIVED)
+
+    assert "test walk" in text
+    assert "unattended: false" in text
+    assert "needs a person" in text
+
+
+def test_an_aggregate_is_not_derived_into_a_step(derive_manifest):
+    # `test all` plans `test suite`, and a GitHub job stops at its first red step - so emitting the
+    # aggregate would collapse its members' verdicts into one and lose the order they were written in.
+    derived = workflowgen.derive(derive_manifest, ["test"], where="w")
+
+    assert "test all" not in [step.command for step in derived.steps]
+
+
+def test_a_derived_step_is_rendered_through_the_products_launcher(derive_manifest):
+    text = _render(derive_manifest, _DERIVED)
+
+    assert "run: ./sample.sh build wheel" in text
+    assert "run: ./sample.sh test suite" in text
+
+
+def test_a_derived_workflow_is_something_github_would_run(derive_manifest):
+    doc = yaml.safe_load(_render(derive_manifest, _DERIVED))
+
+    assert [step["run"] for step in doc["jobs"]["gate"]["steps"] if "run" in step] == [
+        "./sample.sh build wheel", "./sample.sh test suite"]
+
+
+def test_a_leaf_that_says_nothing_about_running_unwatched_is_refused_by_name():
+    # THE THIRD STATE, and the reason this ticket needed a bit rather than a heuristic. Neither reading
+    # of an unset flag is safe: false drops a gate and the pipeline is green for the wrong reason, true
+    # puts a command that wants a person on a runner.
+    quiet = manifest_mod.load(
+        _DERIVE_MANIFEST.replace('      all:   { depends_on: [suite], help: "Every gate." }',
+                                 '      ask:   { task: ask, help: "Ask." }'),
+        catalogue=catalogue_mod.load())
+
+    with pytest.raises(ValueError) as exc:
+        workflowgen.derive(quiet, ["test"], where="w")
+
+    assert "test ask" in str(exc.value)
+    assert "unattended" in str(exc.value)
+
+
+def test_a_derived_step_cannot_also_be_a_step_of_its_own():
+    """Two bodies in one step, which is the refusal `command:` beside `uses:` already carries. Note what
+    is NOT refused: a derived step and a hand-written one in the same `steps:` list. That composition is
+    the reason the derivation is a step at all - a job-level `derive:` would have had to forbid it, and
+    forbidding it costs a product the whole file."""
+    with pytest.raises(ValueError) as exc:
+        workflowgen.parse(_section("""
+            workflows:
+              ci:
+                on: [push]
+                jobs:
+                  gate:
+                    runs-on: ubuntu-latest
+                    steps:
+                      - derive: [test]
+                        command: test suite
+            """))
+
+    assert "derive" in str(exc.value)
+    assert "command" in str(exc.value)
+
+
+def test_a_derived_block_sits_beside_a_products_own_steps_in_the_order_it_wrote_them(derive_manifest):
+    """THE SHAPE si#267 ends with, and the reason the derivation is a step. Five of seven products in
+    this family hand-write their CI because the generator could not express what is genuinely theirs -
+    a Check Run reporter, a submodule checkout. Here the derived pipeline and that thing stand side by
+    side, and where the seam falls is the product's decision, not the kernel's."""
+    text = _render(derive_manifest, """
+    workflows:
+      ci:
+        on: [push]
+        jobs:
+          gate:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: some/setup@v1
+              - derive: [test]
+              - run: echo done
+    """)
+    doc = yaml.safe_load(text)
+
+    assert [sorted(step)[0] for step in doc["jobs"]["gate"]["steps"]] == [
+        "uses", "uses", "run", "run"]
+    assert doc["jobs"]["gate"]["steps"][-1] == {"run": "echo done"}
+
+
+def test_deriving_from_a_group_the_manifest_does_not_declare_names_the_ones_it_has(derive_manifest):
+    with pytest.raises(ValueError) as exc:
+        workflowgen.derive(derive_manifest, ["deploy"], where="w")
+
+    assert "deploy" in str(exc.value)
+    assert "test" in str(exc.value)
+
+
+def test_one_group_may_be_named_as_a_string(derive_manifest):
+    text = _render(derive_manifest, _DERIVED.replace("derive: [build, test]", "derive: test"))
+
+    assert "run: ./sample.sh test suite" in text
+    assert "build wheel" not in text
+
+
+@pytest.mark.parametrize("value", ["derive: 7", "derive: []", "derive: [3]"])
+def test_a_derive_that_does_not_name_groups_is_refused(value):
+    with pytest.raises(ValueError) as exc:
+        workflowgen.parse(_section(f"""
+            workflows:
+              ci:
+                on: [push]
+                jobs:
+                  gate:
+                    runs-on: ubuntu-latest
+                    steps:
+                      - {value}
+            """))
+
+    assert "derive" in str(exc.value)
+
+
+def test_a_group_whose_every_leaf_needs_a_person_is_refused_rather_than_rendered_empty():
+    # The recurring defect, at this seam: a job with no steps is a green tick over nothing, and green
+    # over nothing is indistinguishable from green over everything in the Actions UI.
+    only_attended = manifest_mod.load("""
+tasks:
+  suite: { impl: "simplon.test_impls:nullary", help: "x", unattended: true }
+groups:
+  test:
+    commands:
+      walk: { task: "test:walk" }
+env_groups: []
+""", catalogue=catalogue_mod.load())
+
+    with pytest.raises(ValueError) as exc:
+        workflowgen.derive(only_attended, ["test"], where="w")
+
+    assert "no step at all" in str(exc.value)
