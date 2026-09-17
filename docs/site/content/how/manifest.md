@@ -754,6 +754,24 @@ An environment says *where* it deploys with `backend:`. It says *onto what* by n
 a carrier is named once and pointed at many times, because one Portainer serves several applications and,
 on the same instance, several environments.
 
+**Both halves of a carrier are optional, and each absence is a statement.** `proxmox:` is the machine the
+kernel makes; `portainer:` is what it installs on it. A carrier with only `proxmox:` is a machine created
+and deliberately not configured (si#258). A carrier with only `portainer:` is a Portainer **somebody else
+built** - it has been running for months, the kernel did not make it and will not, and all this manifest
+needs is where it answers (si#280):
+
+```yaml
+carriers:
+  theirs:
+    portainer:
+      url_from: PORTAINER
+      insecure: true
+```
+
+`deploy carrier` refuses that one by name, because there is no machine for it to make, and it says so in
+terms of the alternative rather than of a fault. A carrier declaring **neither** half is refused at load:
+each absence says something, both at once say nothing that any command can act on.
+
 ```yaml
 carriers:
   hausportainer:

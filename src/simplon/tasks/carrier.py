@@ -96,7 +96,8 @@ PASSWORD_SUFFIX = "_PASSWORD"
 MIN_PASSWORD = 12
 
 
-def _carrier_of(env_name: str = "") -> tuple[environments.Environment, carrierspec.Carrier]:
+def _carrier_of(env_name: str = "") -> ("tuple[environments.Environment, carrierspec.Carrier, "
+                                        "carrierspec.Proxmox]"):
     """The environment being targeted and the carrier it points at, or a refusal that says which is
     missing. Both halves are read from the ONE manifest, so nothing here can disagree with `support
     environments`."""
@@ -115,7 +116,22 @@ def _carrier_of(env_name: str = "") -> tuple[environments.Environment, carriersp
         log.die(f"environment '{name}' declares no `carrier:`, so nothing says what it stands on. A "
                 f"carrier is declared once under `{carrierspec.SECTION}:` and pointed at from here")
         raise SystemExit(1)
-    return environment, declared[environment.carrier]
+    carrier = declared[environment.carrier]
+    if carrier.proxmox is None:
+        # si#280: a carrier may now be a Portainer somebody else built. Every other command reaching a
+        # carrier goes through `carrier.portainer`; this one is the machine-maker, so it is the one
+        # place the absence has to be a refusal - and it names the alternative, because the reader is
+        # here by accident rather than by mistake.
+        log.die(f"carrier '{carrier.name}' declares no `proxmox:`, so there is no machine for this "
+                f"command to make - it names a Portainer that already exists. Deploy to it with "
+                f"`deploy up` and leave the machine to whoever built it; add `proxmox:` only if you "
+                f"want the kernel to create one")
+        raise SystemExit(1)
+    # The machine travels with the carrier rather than being read off it again downstream. That is
+    # what makes the refusal above a NARROWING and not an assertion nobody can ever see fail: every
+    # caller of this function holds a `Proxmox`, because there is no way to hold one without having
+    # come past those four lines.
+    return environment, carrier, carrier.proxmox
 
 
 def _backends(document: dict) -> tuple[str, ...]:
@@ -127,18 +143,18 @@ def _backends(document: dict) -> tuple[str, ...]:
     return tuple(sorted(n for n in names if n)) or ("local",)
 
 
-def _token(carrier: carrierspec.Carrier) -> str:
+def _token(carrier: carrierspec.Carrier, machine: carrierspec.Proxmox) -> str:
     """The Proxmox API token, from the environment and never from the file."""
-    if not carrier.proxmox.token_from:
+    if not machine.token_from:
         log.die(f"carrier '{carrier.name}' declares no `token_from:`, so nothing says which environment "
                 f"variable holds the API token. It is a PREFIX: `token_from: PROXMOX` reads "
                 f"PROXMOX{TOKEN_SUFFIX}")
         raise SystemExit(1)
-    variable = f"{carrier.proxmox.token_from}{TOKEN_SUFFIX}"
+    variable = f"{machine.token_from}{TOKEN_SUFFIX}"
     token = os.environ.get(variable, "")
     if not token:
         log.die(f"{variable} is not set, so carrier '{carrier.name}' cannot reach "
-                f"{carrier.proxmox.endpoint or 'Proxmox'}. Export it; it may not be written into the "
+                f"{machine.endpoint or 'Proxmox'}. Export it; it may not be written into the "
                 f"manifest, which is why the manifest has no field for it")
         raise SystemExit(1)
     return token
@@ -183,7 +199,7 @@ def portainer_password(carrier: carrierspec.Carrier) -> str:
     return password
 
 
-def check_no_password(carrier: carrierspec.Carrier) -> None:
+def check_no_password(machine: carrierspec.Proxmox) -> None:
     """THE CONDITION THE COMMITTED STATE RESTS ON, held rather than remembered.
 
     Measured 2026-09-14 against the provider and confirmed 2026-09-15 against a real run: Pulumi
@@ -195,8 +211,8 @@ def check_no_password(carrier: carrierspec.Carrier) -> None:
     because the field it guards against is one line away in the provider, and a future carrier growing
     one would otherwise quietly undo the decision that the state may be committed.
     """
-    if getattr(carrier.proxmox, "password", ""):
-        log.die(f"carrier '{carrier.name}' sets a password on the container. Pulumi encrypts only "
+    if getattr(machine, "password", ""):
+        log.die(f"this carrier sets a password on the container. Pulumi encrypts only "
                 f"MARKED values and the container resource marks none, so that password would stand in "
                 f"clear text in the committed state. Use `ssh_key:` - a public key is not a secret")
         raise SystemExit(1)
@@ -412,7 +428,8 @@ def render(carrier: carrierspec.Carrier, root: Path) -> Path:
     return where
 
 
-def _pulumi(carrier: carrierspec.Carrier, token: str, program: Path, state: Path, hostname: str) -> int:
+def _pulumi(carrier: carrierspec.Carrier, machine: carrierspec.Proxmox, token: str, program: Path,
+            state: Path, hostname: str) -> int:
     """Run `pulumi up` in the pinned image, over the rendered program, against the committed state.
 
     `PULUMI_BACKEND_URL` RATHER THAN `pulumi login`, measured on 2026-09-14: `pulumi login file://...`
@@ -439,17 +456,17 @@ def _pulumi(carrier: carrierspec.Carrier, token: str, program: Path, state: Path
         # the value out of THIS process's environment without ever writing it on a command line.
         "-e", PULUMI_PASSPHRASE_ENV,
         "-e", "PULUMI_BACKEND_URL=file:///state",
-        "-e", f"CARRIER_ENDPOINT={carrier.proxmox.endpoint}",
+        "-e", f"CARRIER_ENDPOINT={machine.endpoint}",
         "-e", CARRIER_TOKEN_ENV,
-        "-e", f"CARRIER_INSECURE={'1' if carrier.proxmox.insecure else '0'}",
-        "-e", f"CARRIER_NODE={carrier.proxmox.node}",
-        "-e", f"CARRIER_TEMPLATE={carrier.proxmox.template}",
-        "-e", f"CARRIER_STORAGE={carrier.proxmox.storage}",
-        "-e", f"CARRIER_DISK={carrier.proxmox.disk}",
-        "-e", f"CARRIER_MEMORY={carrier.proxmox.memory}",
-        "-e", f"CARRIER_CORES={carrier.proxmox.cores}",
+        "-e", f"CARRIER_INSECURE={'1' if machine.insecure else '0'}",
+        "-e", f"CARRIER_NODE={machine.node}",
+        "-e", f"CARRIER_TEMPLATE={machine.template}",
+        "-e", f"CARRIER_STORAGE={machine.storage}",
+        "-e", f"CARRIER_DISK={machine.disk}",
+        "-e", f"CARRIER_MEMORY={machine.memory}",
+        "-e", f"CARRIER_CORES={machine.cores}",
         "-e", f"CARRIER_HOSTNAME={hostname}",
-        "-e", f"CARRIER_SSH_KEY={carrier.proxmox.ssh_key}",
+        "-e", f"CARRIER_SSH_KEY={machine.ssh_key}",
         docker.pinned_image(PULUMI_IMAGE, "the carrier's Pulumi toolchain"),
         "bash", "-c",
         "pip install -q --root-user-action=ignore -r requirements.txt >/dev/null 2>&1 && "
@@ -501,8 +518,8 @@ def up(environment: str = "") -> int:
     environment's. biz-cockpit's `test` and `prod` share one machine and are separated inside it; an
     implementation that named the machine after the environment would have quietly ruled that out.
     """
-    environment_, carrier = _carrier_of(environment)
-    check_no_password(carrier)
+    environment_, carrier, machine = _carrier_of(environment)
+    check_no_password(machine)
     # Called for its REFUSALS, not for its value: the password now reaches Ansible through the
     # environment, and what this returns is thrown away. Reading it here all the same is what stops a
     # carrier being built whose Portainer would then lock itself - the check belongs before the machine
@@ -511,12 +528,12 @@ def up(environment: str = "") -> int:
     if carrier.portainer is not None:
         portainer_password(carrier)
     root = context.current().root
-    token = _token(carrier)
+    token = _token(carrier, machine)
 
-    missing = [name for name, value in (("endpoint", carrier.proxmox.endpoint),
-                                        ("template", carrier.proxmox.template),
-                                        ("storage", carrier.proxmox.storage),
-                                        ("ssh_key", carrier.proxmox.ssh_key)) if not value]
+    missing = [name for name, value in (("endpoint", machine.endpoint),
+                                        ("template", machine.template),
+                                        ("storage", machine.storage),
+                                        ("ssh_key", machine.ssh_key)) if not value]
     if missing:
         log.die(f"carrier '{carrier.name}' declares no {', '.join(missing)} - every one of them is "
                 f"configuration and belongs in the manifest")
@@ -524,16 +541,16 @@ def up(environment: str = "") -> int:
 
     # THE REFUSAL THAT USED TO ARRIVE THREE MINUTES LATE. Asked here, before a container starts.
     try:
-        proxmoxapi.check_storage(carrier.proxmox.endpoint, token, carrier.proxmox.node,
-                                 carrier.proxmox.storage, insecure=carrier.proxmox.insecure)
+        proxmoxapi.check_storage(machine.endpoint, token, machine.node,
+                                 machine.storage, insecure=machine.insecure)
     except proxmoxapi.ProxmoxError as error:
         log.die(f"carrier '{carrier.name}': {error}")
         return 1
 
     log.info(f"carrier '{carrier.name}' for environment '{environment_.name}' on "
-             f"{carrier.proxmox.node} ({carrier.proxmox.kind})")
+             f"{machine.node} ({machine.kind})")
     program = render(carrier, root)
-    rc = _pulumi(carrier, token, program, root / STATE_DIR, carrier.name)
+    rc = _pulumi(carrier, machine, token, program, root / STATE_DIR, carrier.name)
     if rc != 0:
         log.error(f"the carrier was not created (pulumi exited {rc}), so nothing was configured on it")
         return rc
@@ -544,7 +561,7 @@ def up(environment: str = "") -> int:
         # machine got a workload it never asked for - and on a machine with no apt, a red run. "Created
         # and not configured" is a third outcome beside created-and-configured and failed, and it is
         # reported as one rather than left to be inferred from a log that stops early.
-        log.ok(f"carrier '{carrier.name}' exists on {carrier.proxmox.node} and nothing was installed on "
+        log.ok(f"carrier '{carrier.name}' exists on {machine.node} and nothing was installed on "
                f"it - it declares no `portainer:`, so what runs on it is this product's own to deploy")
         return 0
 
@@ -558,7 +575,7 @@ def up(environment: str = "") -> int:
         log.error(f"{SSH_KEY_ENV} points at {key_path}, which is not a file")
         return 1
 
-    address = _address(carrier, token)
+    address = _address(carrier, machine, token)
     if not address:
         log.error(f"carrier '{carrier.name}' has no address yet - it is created but its interface has "
                   f"not answered. Run this again in a moment; nothing was lost")
@@ -566,22 +583,22 @@ def up(environment: str = "") -> int:
     return _ansible(carrier, address, program, key_path, PORTAINER_PORT)
 
 
-def _address(carrier: carrierspec.Carrier, token: str) -> str:
+def _address(carrier: carrierspec.Carrier, machine: carrierspec.Proxmox, token: str) -> str:
     """The carrier's own IPv4, asked of Proxmox rather than guessed from a lease file.
 
     A container on DHCP has no address the manifest could carry, and the node knows it - which is the
     one piece of runtime truth this command needs and the only reason it asks twice.
     """
     try:
-        vmid = proxmoxapi.container_id(carrier.proxmox.endpoint, token, carrier.proxmox.node,
-                                       carrier.name, insecure=carrier.proxmox.insecure)
+        vmid = proxmoxapi.container_id(machine.endpoint, token, machine.node,
+                                       carrier.name, insecure=machine.insecure)
         if not vmid:
-            log.error(f"no container named '{carrier.name}' on {carrier.proxmox.node}, though the "
+            log.error(f"no container named '{carrier.name}' on {machine.node}, though the "
                       f"carrier run reported success - which is a disagreement worth reading before "
                       f"running anything again")
             return ""
-        return proxmoxapi.address(carrier.proxmox.endpoint, token, carrier.proxmox.node, vmid,
-                                  insecure=carrier.proxmox.insecure)
+        return proxmoxapi.address(machine.endpoint, token, machine.node, vmid,
+                                  insecure=machine.insecure)
     except proxmoxapi.ProxmoxError as error:
         log.error(f"carrier '{carrier.name}': {error}")
         return ""

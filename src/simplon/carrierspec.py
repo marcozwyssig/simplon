@@ -125,7 +125,21 @@ class Portainer(NamedTuple):
 
 
 class Carrier(NamedTuple):
-    """One named carrier: a Proxmox machine, and what the kernel installs on it.
+    """One named carrier: a machine, and what the kernel installs on it - and either half may be absent.
+
+    `proxmox` IS OPTIONAL SINCE si#280, which is si#258's own argument arriving from the other side. A
+    carrier with no `proxmox:` is a Portainer somebody else built: the machine has been running for
+    months, the kernel did not make it and will not, and the only thing this manifest needs from the
+    carrier is where that Portainer answers. `deploy carrier` refuses such a carrier by name, because
+    there is nothing for that command to make.
+
+    THE MEASUREMENT THAT SAYS IT IS NOT A CONVENIENCE. Every reader of `carrier.proxmox` in this kernel
+    lives in `tasks/carrier.py` - the command that CREATES the machine. `portainer.PortainerTarget`
+    reads `carrier.name` and `carrier.portainer` and nothing else. So a product bringing its own machine
+    had to declare a block that no code on its path ever consulted, and the two values with no defaults
+    (`node:`, `kind:`) had no true answer to give. A value that never has an effect is the one that is
+    wrong a year later and tells nobody - this module's neighbour records the same lesson about a count
+    that was wrong within two days.
 
     `portainer` IS OPTIONAL SINCE si#258, and the reason is a finding rather than a feature request. The
     section was written as though a carrier and a Portainer host were the same thing: `portainer:` was
@@ -142,7 +156,7 @@ class Carrier(NamedTuple):
     """
 
     name: str
-    proxmox: Proxmox
+    proxmox: "Proxmox | None" = None
     portainer: "Portainer | None" = None
 
 
@@ -177,23 +191,39 @@ def _carrier(name: str, spec: object, where: str) -> Carrier:
     if not isinstance(spec, Mapping):
         raise ValueError(f"{where} must be a mapping, not {type(spec).__name__}")
 
-    proxmox = _block(spec, "proxmox", PROXMOX_KEYS, where)
-    node = str(proxmox.get("node", "")).strip()
-    if not node:
-        raise ValueError(f"{where}'s `proxmox:` declares no `node:`, so no host is named")
-    kind = str(proxmox.get("kind", "")).strip()
-    if kind not in KINDS:
-        raise ValueError(
-            f"{where}'s `proxmox: kind:` must be {' or '.join(KINDS)}, got '{kind}'. An {LXC} is a "
-            f"container on the node, a {VM} a full machine - the choice is per environment and the "
-            f"kernel cannot infer it")
+    if "proxmox" not in spec:
+        # A PORTAINER SOMEBODY ELSE BUILT, which is a complete statement and not half a carrier
+        # (si#280). The refusal that used to stand here demanded a `node:` and a `kind:` from every
+        # carrier - true only while the kernel was assumed to have made the machine. Nothing on the
+        # deploy path reads this block; `deploy carrier` does, and it says so itself.
+        machine = None
+    else:
+        proxmox = _block(spec, "proxmox", PROXMOX_KEYS, where)
+        node = str(proxmox.get("node", "")).strip()
+        if not node:
+            raise ValueError(f"{where}'s `proxmox:` declares no `node:`, so no host is named")
+        kind = str(proxmox.get("kind", "")).strip()
+        if kind not in KINDS:
+            raise ValueError(
+                f"{where}'s `proxmox: kind:` must be {' or '.join(KINDS)}, got '{kind}'. An {LXC} is a "
+                f"container on the node, a {VM} a full machine - the choice is per environment and the "
+                f"kernel cannot infer it")
+        machine = _proxmox(proxmox, node, kind, where)
 
     if "portainer" not in spec:
+        if machine is None:
+            # NEITHER HALF. Each absence is a statement on its own; both at once state nothing at all,
+            # and the carrier would be a name that no command can act on - `deploy carrier` has no
+            # machine to make and no backend has anywhere to put a stack.
+            raise ValueError(
+                f"{where} declares neither `proxmox:` nor `portainer:`, so it says nothing that can be "
+                f"acted on. A carrier is a machine the kernel makes (`proxmox:`), a Portainer it can "
+                f"reach (`portainer:`), or both")
         # A MACHINE AND NOTHING ELSE, which is a complete statement and not half a carrier. The refusal
         # that used to stand here said a carrier with no `portainer:` "declares no ... so nothing says
         # where the Portainer on it answers" - true only while a carrier and a Portainer host were the
         # same thing. What a product puts on the machine is now its own to say.
-        return Carrier(name=name, proxmox=_proxmox(proxmox, node, kind, where), portainer=None)
+        return Carrier(name=name, proxmox=machine, portainer=None)
 
     portainer = _block(spec, "portainer", PORTAINER_KEYS, where)
     url_from = str(portainer.get("url_from", "")).strip()
@@ -210,7 +240,7 @@ def _carrier(name: str, spec: object, where: str) -> Carrier:
             f"{where}'s `portainer: endpoint:` must be a number, got {raw_endpoint!r} - it is "
             f"Portainer's own id for the Docker environment it manages") from None
 
-    return Carrier(name=name, proxmox=_proxmox(proxmox, node, kind, where),
+    return Carrier(name=name, proxmox=machine,
                    portainer=Portainer(url_from=url_from, endpoint=endpoint,
                                        insecure=_insecure(portainer, "portainer", where)))
 

@@ -23,6 +23,60 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.17.0
+
+### A Portainer on a machine the kernel did not make is a carrier too (si#280)
+
+Raised by biz-cockpit while wiring `backend: portainer` against a Portainer that had been running for
+months. They were blocked on the last piece and the obstacle was ours: `backend: portainer` needs a
+`carrier:`, and every carrier needed a `proxmox:` block with a `node:` and a `kind:`.
+
+**Nothing on the deploy path ever read that block.** Every reader of `carrier.proxmox` in the kernel:
+
+```
+src/simplon/tasks/carrier.py:132,137,141,198,442,444,445,446,447,448
+```
+
+One file, and it is `deploy:carrier` - the command that *makes* the machine. `PortainerTarget.from_carrier`
+reads `carrier.name` and `carrier.portainer` and nothing else. So a product bringing its own machine had
+to declare a block no code on its path consulted, and the two values without defaults had no true answer
+to give. A value that never has an effect is the one that is wrong a year later and tells nobody.
+
+**This is si#258's own argument arriving from the other side.** That ticket struck the refusal on a
+carrier with no `portainer:`, and the reason is in the code: the section *"was written as though a carrier
+and a Portainer host were the same thing"*. A machine with nothing on it is a complete statement. The
+mirror of that sentence is that a Portainer on a machine somebody else built is a complete statement too -
+and until now it could not be said. si#258 named the conflation and removed half of it.
+
+```yaml
+carriers:
+  theirs:
+    portainer:
+      url_from: PORTAINER
+      insecure: true
+```
+
+`deploy carrier` refuses that carrier by name, in terms of the alternative rather than of a fault: the
+reader is there by accident, not by mistake. A carrier declaring **neither** half is refused at load -
+each absence is a statement, both at once state nothing any command can act on.
+
+#### The count goes up while the refusals go down
+
+The census moves **192 → 193**, and that is not a slip. The requirement this ticket removes was never a
+`raise` of its own: a carrier naming only `portainer:` fell into *"so no host is named"*, a refusal
+written for a block that is present and incomplete. Nothing was deleted; a new one was added for the
+carrier that says nothing. **Strictly fewer manifests are refused than before, and the number is one
+higher** - which is the clearest demonstration this repository has yet produced that the count is a
+tripwire against growth nobody noticed, and not a measure of how much a product may say.
+
+No expression rule was added or removed; every carrier refusal is diagnosis.
+
+#### What is not measured
+
+The population is one. `carriers:` shipped in 0.16.0 and no other consumer has reached the section. The
+asymmetry is a property of this code rather than of anybody's manifest, but the size of the want is a
+single product, and that is written on the ticket too.
+
 ## 0.16.0
 
 ### The pipeline is derived from the command tree (si#267)

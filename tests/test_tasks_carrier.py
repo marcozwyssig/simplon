@@ -92,7 +92,7 @@ def test_a_carrier_that_set_a_password_would_be_refused(monkeypatch):
 
     # act / assert
     with pytest.raises(SystemExit):
-        carrier.check_no_password(with_password)
+        carrier.check_no_password(with_password.proxmox)
 
 
 def test_the_playbook_names_a_pinned_portainer_and_fetches_no_compose_file():
@@ -301,9 +301,12 @@ def _stub(monkeypatch, tmp_path, carrier_, seen: list) -> None:
     """Everything `up` reaches outside itself, replaced. Nothing here runs Pulumi, Ansible or Proxmox."""
     from simplon import context
 
+    # si#280: `_carrier_of` hands the MACHINE back beside the carrier, so its refusal of a carrier with
+    # no `proxmox:` is a narrowing the type gate can see rather than an assertion further down.
     monkeypatch.setattr(carrier, "_carrier_of",
-                        lambda env: (environments.Environment("prod", "portainer", ""), carrier_))
-    monkeypatch.setattr(carrier, "_token", lambda c: "tok")
+                        lambda env: (environments.Environment("prod", "portainer", ""), carrier_,
+                                     carrier_.proxmox))
+    monkeypatch.setattr(carrier, "_token", lambda *a, **k: "tok")
     monkeypatch.setattr(carrier, "_pulumi", lambda *a, **k: 0)
     monkeypatch.setattr(carrier, "_address", lambda *a, **k: "10.0.0.9")
     monkeypatch.setattr(carrier, "_ansible", lambda *a, **k: seen.append("ansible") or 0)
@@ -354,3 +357,31 @@ def test_a_carrier_that_declares_a_portainer_still_gets_one(monkeypatch, tmp_pat
     # assert
     assert rc == 0
     assert seen == ["ansible"], "a declared Portainer is still installed"
+
+
+# --- si#280: the machine-maker is the one command that needs a machine ---------------------------------
+
+
+def test_deploy_carrier_refuses_a_portainer_that_was_built_by_somebody_else(monkeypatch, tmp_path):
+    """The other half of making `proxmox:` optional, and the reason it costs nothing elsewhere.
+
+    Every command that reaches a carrier goes through `carrier.portainer`; this one is the machine-maker
+    and is the single place the absence has to be a refusal. It names the alternative rather than the
+    fault, because a reader who lands here is here by accident and not by mistake - they pointed at a
+    Portainer that already exists and typed the command that creates one.
+    """
+    from simplon import context
+
+    monkeypatch.setattr(carrier.carrierspec, "declared", lambda *a, **k: {
+        "theirs": carrier.carrierspec.Carrier(
+            name="theirs", proxmox=None,
+            portainer=carrier.carrierspec.Portainer(url_from="PORTAINER", endpoint=1))})
+    monkeypatch.setattr(carrier.environments, "parse_data", lambda *a, **k: environments.Registry(
+        default="prod",
+        environments={"prod": environments.Environment("prod", "portainer", "", carrier="theirs")}))
+    monkeypatch.setattr(context, "_current",
+                        context.ProductContext("p", tmp_path, tmp_path / "p.yaml"))
+    monkeypatch.setattr(context.ProductContext, "manifest_data", lambda self: {})
+
+    with pytest.raises(SystemExit):
+        carrier._carrier_of("prod")

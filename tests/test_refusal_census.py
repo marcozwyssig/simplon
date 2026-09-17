@@ -288,6 +288,12 @@ CENSUS: dict[tuple[str, str, str], str] = {
 
     ("carrierspec", "declared", "must be a mapping of name -> carrier"): DIAGNOSIS,
     ("carrierspec", "_carrier", "must be a mapping, not"): DIAGNOSIS,
+    # si#280, and it is worth reading beside the count rather than as part of it. This entry ADDS a
+    # refusal while the set of refused manifests SHRINKS: a carrier naming only `portainer:` used to
+    # fall into "so no host is named" two lines down, and is now the legal way to name a Portainer
+    # somebody else built. What is refused instead is the carrier that describes neither half, which
+    # states nothing at all - each absence is a statement on its own, both at once are not.
+    ("carrierspec", "_carrier", "declares neither `proxmox:` nor `portainer:`"): DIAGNOSIS,
     ("carrierspec", "_carrier", "so no host is named"): DIAGNOSIS,
     ("carrierspec", "_carrier", "is a container on the node, a"): DIAGNOSIS,
     ("carrierspec", "_carrier", "so nothing says where the URL and the token are read from"): DIAGNOSIS,
