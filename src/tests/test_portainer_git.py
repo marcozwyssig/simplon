@@ -263,7 +263,7 @@ def test_the_kernel_ships_a_portainer_backend_so_a_product_registers_nothing() -
     the kernel's - `deploy carrier` builds the Portainer, `carriers:` describes it - so a product that
     had to write the class would be writing the far end of a pipe the kernel owns both ends of."""
     # act
-    backends = deploy_task._backends()
+    backends = deploy_task.drivable_backends()
 
     # assert
     assert isinstance(backends[portainer.BACKEND], portainer.PortainerBackend)
@@ -285,7 +285,7 @@ def test_a_products_own_registration_wins_over_the_shipped_one(monkeypatch) -> N
     monkeypatch.setattr(backend, "_REGISTERED", {portainer.BACKEND: Theirs()})
 
     # act
-    backends = deploy_task._backends()
+    backends = deploy_task.drivable_backends()
 
     # assert
     assert isinstance(backends[portainer.BACKEND], Theirs)
@@ -297,7 +297,7 @@ def test_a_product_that_registered_nothing_is_not_refused_any_more() -> None:
     the ordinary case rather than a mistake."""
     # act / assert
     assert backend.product_registry() == {}
-    assert deploy_task._backends(), "the kernel can deploy with no product registration at all"
+    assert deploy_task.drivable_backends(), "the kernel can deploy with no product registration at all"
 
 
 @pytest.mark.parametrize("environment, fragment", [

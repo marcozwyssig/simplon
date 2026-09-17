@@ -225,7 +225,7 @@ def parse_data(data: Mapping[str, object], valid_backends: Iterable[str]) -> Reg
                 f"deployment for those values to be given to")
         envs[str(name)] = Environment(str(name), backend, str(spec.get("description", "")),
                                       carrier=carrier, stack=stack, repository=repository,
-                                      required=required)
+                                      required=required, optional=optional)
     if not envs:
         raise ValueError("environment registry defines no environments")
     default = str(data.get("default", "")).strip()
@@ -310,13 +310,46 @@ class Provider:
 
     def require_backend(self, backend: str = "") -> None:
         """Gate a deployment command on the active environment's backend, so a target whose backend the
-        product has not implemented dies clean instead of mis-running the local path."""
+        product has not implemented dies clean instead of mis-running the local path.
+
+        STILL HERE AND STILL THE PRODUCT'S TO CALL: a body that only works against one backend says so.
+        What changed in si#288 is the CLI's own gate, which used to call this with `LOCAL` for every
+        environment - see `require_drivable`.
+        """
         from simplon import log  # local: keeps this module importable by anything, log imports nothing
 
         wanted = backend or self.LOCAL
         env = self.current()
         if env.backend != wanted:
             log.die(f"environment '{env.name}' needs backend '{wanted}', has '{env.backend}'")
+
+    def require_drivable(self, drivable: "Iterable[str]") -> None:
+        """Gate a CD command on whether the active environment's backend CAN BE DRIVEN (si#288).
+
+        WHAT THIS REPLACES, and why the old question stopped being the right one. The CLI asked
+        `is_local`, and on a no for any non-local environment it demanded `LOCAL` - which was sound when
+        `local` was the only backend anybody had implemented (#11): a CD command aimed at an
+        unimplemented target should fail clean rather than mis-run the local containerlab path.
+
+        The kernel now ships a backend of its own and resolves a product's registrations beside it, so
+        "is this backend local" and "can this backend be driven" are two questions. Asking the first one
+        made `deploy up` unreachable for `backend: portainer` - the feature 0.16.0 released, blocked by
+        the CLI 0.16.0 assembles, and every product adopting it needed a `Provider` subclass to get past
+        its own kernel.
+
+        The replacement refuses exactly what #11 meant to refuse and nothing else: a backend nobody has
+        implemented. It is strictly more permissive for backends that resolve and identical for those
+        that do not.
+        """
+        from simplon import log  # local: keeps this module importable by anything, log imports nothing
+
+        known = tuple(drivable)
+        env = self.current()
+        if env.backend not in known:
+            log.die(f"environment '{env.name}' has backend '{env.backend}', which nothing here can "
+                    f"drive - this run resolves {', '.join(sorted(known)) or 'no backend at all'}. "
+                    f"Register an implementation for it with `simplon.backend.register`, or point this "
+                    f"environment at a backend that is already resolvable")
 
     def command_hint(self, env: str, command: str) -> str:
         """How to reach `command` for environment `env` ON THE CLI, in the form that actually dispatches.
