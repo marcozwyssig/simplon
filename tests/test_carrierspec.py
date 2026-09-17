@@ -98,7 +98,10 @@ def test_a_secret_typed_into_the_manifest_is_refused_rather_than_ignored():
 
 
 @pytest.mark.parametrize("spec, fragment", [
-    ({"portainer": {"url_from": "P"}}, "which node the carrier stands on"),
+    # si#280 struck the row that used to stand first here - a carrier with only `portainer:` was refused
+    # with "which node the carrier stands on", and it is now the legal way to name a Portainer somebody
+    # else built. What replaced it is the case where BOTH halves are absent, which states nothing.
+    ({}, "says nothing that can be acted on"),
     ({"proxmox": {"node": "", "kind": "lxc"}, "portainer": {"url_from": "P"}}, "no host is named"),
     ({"proxmox": {"node": "pve1", "kind": "container"}, "portainer": {"url_from": "P"}},
      "a container on the node, a"),
@@ -308,3 +311,58 @@ def test_a_carrier_that_declares_a_portainer_is_unchanged():
 
     # assert
     assert carrier.portainer == carrierspec.Portainer(url_from="PORTAINER", endpoint=1)
+
+
+# --- si#280: a Portainer on a machine the kernel did not make ----------------------------------------
+
+
+def test_a_carrier_may_name_a_portainer_without_describing_a_machine():
+    """si#258's argument arriving from the other side.
+
+    That ticket struck the refusal on a carrier with no `portainer:`, because a machine with nothing on
+    it is a complete statement. The mirror is this one: a Portainer on a machine somebody else built is
+    a complete statement too, and until si#280 it could not be said - every carrier had to describe a
+    Proxmox first, with a `node:` and a `kind:` that had no true answer.
+
+    Measured before it was changed: every reader of `carrier.proxmox` in this kernel lives in
+    `tasks/carrier.py`, the command that CREATES the machine. Nothing on the deploy path consults it.
+    """
+    declared = carrierspec.declared(
+        {"carriers": {"theirs": {"portainer": {"url_from": "PORTAINER", "insecure": True}}}})
+
+    assert declared["theirs"].proxmox is None
+    assert declared["theirs"].portainer is not None
+    assert declared["theirs"].portainer.url_from == "PORTAINER"
+
+
+def test_a_carrier_that_describes_neither_half_states_nothing_and_is_refused():
+    """Each absence is a statement on its own; both at once are not.
+
+    A carrier with neither block is a name no command can act on - `deploy carrier` has no machine to
+    make, and no backend has anywhere to put a stack. That is the third state this repository always
+    separates out rather than folding into one of the other two.
+    """
+    with pytest.raises(ValueError) as refused:
+        carrierspec.declared({"carriers": {"empty": {}}}, "simplon.yaml")
+
+    message = str(refused.value)
+    assert "neither `proxmox:` nor `portainer:`" in message
+    assert "a Portainer it can reach" in message
+
+
+def test_the_deploy_path_never_reads_the_machine_half():
+    """The measurement si#280 rests on, kept as an assertion rather than as a sentence in the ticket.
+
+    `PortainerTarget.from_carrier` is the whole of what the deploy path asks of a carrier. Hand it one
+    with no machine at all and it still resolves - which is what makes `proxmox:` optional a removal
+    rather than a new shape to support.
+    """
+    from simplon import portainer
+
+    carrier = carrierspec.declared(
+        {"carriers": {"theirs": {"portainer": {"url_from": "PORTAINER"}}}})["theirs"]
+
+    target = portainer.PortainerTarget.from_carrier(
+        carrier, "some-stack", environ={"PORTAINER_URL": "https://p:9443", "PORTAINER_TOKEN": "t"})
+
+    assert target.stack_name == "some-stack"
