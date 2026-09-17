@@ -23,7 +23,7 @@ from simplon import catalogue as catalogue_mod
 
 import sitepages
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+from conftest import ROOT  # noqa: E402 - the one product-root anchor (si#283)
 PAGE = sitepages.chapter("handing-a-package-over.md")
 
 #: The coordinates si#127 and si#128 added. Read from the catalogue below rather than trusted from here;

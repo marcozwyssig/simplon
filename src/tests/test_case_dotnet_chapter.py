@@ -63,7 +63,7 @@ from simplon.tasks import profiles, toolchain
 from simplon.tasks.testrun import Gate
 
 import sitepages
-from conftest import ROOT
+from conftest import FIXTURES, ROOT
 
 #: The chapter under test.
 CHAPTER = sitepages.chapter("case-dotnet.md")
@@ -74,7 +74,7 @@ INDEX = sitepages.index("what")
 #: The manifest of the product the chapter follows. `dotnetdemo` is not in this repository, so it
 #: travels with the chapter and every command the page types is resolved against the tree assembled
 #: from it.
-FIXTURE = ROOT / "tests" / "fixtures" / "case_dotnet_manifest.yaml"
+FIXTURE = FIXTURES / "case_dotnet_manifest.yaml"
 
 #: The closed vocabulary of honesty labels - the same three the other two case chapters carry, so a
 #: reader moving between them is reading one scale and not three.

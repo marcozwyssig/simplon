@@ -27,6 +27,7 @@ from pathlib import Path
 
 from simplon import bootstrap
 from simplon.run import run
+from conftest import ROOT
 
 
 def _scaffold(tmp_path):
@@ -39,7 +40,7 @@ def _scaffold(tmp_path):
 
 def test_batch_line_endings_are_pinned_to_crlf():
     # Arrange
-    attrs = Path(__file__).resolve().parents[1] / ".gitattributes"
+    attrs = ROOT / ".gitattributes"
     # Act / Assert
     assert attrs.is_file(), ".gitattributes is missing"
     assert "*.cmd text eol=crlf" in attrs.read_text()
@@ -111,7 +112,7 @@ def test_the_line_ending_is_chosen_by_extension_rather_than_by_the_scaffolding_h
 def test_the_kernels_own_launcher_on_disk_matches_what_a_scaffold_would_now_write(tmp_path):
     # Arrange: si#57 came out of si#24's cross-check, which found this exact byte difference between the
     # kernel's committed launcher and the one its own scaffolder writes
-    root = Path(__file__).resolve().parents[1]
+    root = ROOT
     bootstrap.write("simplon", tmp_path, orch_dir="deploy/orchestrator")
 
     # Act / Assert: no difference left, and now at the byte level - `.gitattributes` keeps the kernel's
@@ -123,7 +124,7 @@ def test_the_kernels_own_launcher_on_disk_matches_what_a_scaffold_would_now_writ
 def test_git_would_store_the_kernels_own_launcher_unchanged(tmp_path):
     # Arrange / Act: the committed bytes, asked of git rather than of the working tree, because a
     # checkout's `.gitattributes` could be what put the CRLF there rather than the scaffolder
-    root = Path(__file__).resolve().parents[1]
+    root = ROOT
     blob = subprocess.run(["git", "show", "HEAD:simplon.cmd"], cwd=root,
                           capture_output=True, check=True).stdout
 

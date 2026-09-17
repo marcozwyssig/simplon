@@ -30,6 +30,7 @@ from simplon.context import ProductContext
 from simplon.tasks import gitops, release
 
 import sitepages
+from conftest import ROOT
 
 
 # --- the pure decision -------------------------------------------------------------------------------
@@ -443,7 +444,7 @@ def test_nothing_in_the_body_classifies_a_failure_by_reading_gits_english(lab):
     # arrange: `simplon.run` pins no locale, so a translated git would have made every collision read as
     # an ordinary failure with "retry the push" underneath - advice that can only fail again. This is the
     # absence that keeps it out.
-    body = (Path(__file__).resolve().parents[1] / "src" / "simplon" / "tasks" / "release.py").read_text(
+    body = (ROOT / "src" / "simplon" / "tasks" / "release.py").read_text(
         encoding="utf-8")
     code = "\n".join(line for line in body.splitlines() if not line.strip().startswith("#"))
 
@@ -527,8 +528,8 @@ def test_a_repository_with_no_remote_branch_to_judge_against_is_refused_rather_t
 
 # --- what the site says about it (#32 acceptance 4) ---------------------------------------------------
 
-_SITE = Path(__file__).resolve().parents[1] / "docs" / "site" / "content"
-_README = Path(__file__).resolve().parents[1] / "README.md"
+_SITE = ROOT / "docs" / "site" / "content"
+_README = ROOT / "README.md"
 
 
 def _pages() -> dict[str, str]:

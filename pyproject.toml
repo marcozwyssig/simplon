@@ -104,6 +104,15 @@ Documentation = "https://marcozwyssig.github.io/simplon/"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+# si#283 moved the unit suite to `src/tests`, beside the code it judges - and in a src-layout project
+# `src/` is the PACKAGE ROOT, so setuptools found `tests` and shipped it. Measured on the first build
+# after the move: the wheel carried `tests/test_workflowgen.py` and every other file in it, as a
+# TOP-LEVEL package called `tests`. Installing simplon would then put that name on a consumer's import
+# path and shadow their own.
+#
+# This is the price of the placement rule for any Python product laid out this way, so it is written down
+# rather than fixed quietly: tests live under `src/` and ship from nowhere.
+exclude = ["tests*"]
 
 [tool.setuptools.package-data]
 simplon = ["catalogue.yaml", "py.typed", "templates/*.j2"]

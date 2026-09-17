@@ -30,7 +30,7 @@ import yaml
 
 from simplon.tasks import testrun
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+from conftest import ROOT  # noqa: E402 - the one product-root anchor (si#283)
 WORKFLOWS = ROOT / ".github" / "workflows"
 REPORT_COMMAND = "./simplon.sh test report"
 ARTIFACT_ACTION = "actions/upload-artifact"

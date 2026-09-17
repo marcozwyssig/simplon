@@ -23,8 +23,9 @@ import simplon
 from simplon import log, surface
 
 import sitepages
+from conftest import ROOT
 
-SRC = Path(__file__).resolve().parents[1] / "src" / "simplon"
+SRC = ROOT / "src" / "simplon"
 
 #: Not modules of the package's surface in either direction: the dunder file and the build output.
 NOT_CLASSIFIED = {"__init__", "_version"}
@@ -285,7 +286,7 @@ def test_the_release_page_sends_a_minor_release_to_the_record():
 #: Everything a reader of this kernel could mistake for a statement about who uses it: the package, the
 #: front page and the site. Tests are NOT in here - a fixture may need a product name that is nobody.
 def _prose_files() -> list[Path]:
-    root = Path(__file__).resolve().parents[1]
+    root = ROOT
     return [p for p in [*SRC.rglob("*.py"), root / "README.md", *(root / "docs" / "site").rglob("*.md")]
             if p.resolve() != (SRC / "surface.py").resolve()]
 

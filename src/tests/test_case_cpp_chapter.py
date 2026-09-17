@@ -62,7 +62,7 @@ from simplon.tasks import profiles, toolchain
 from simplon.tasks.testrun import Gate
 
 import sitepages
-from conftest import ROOT
+from conftest import FIXTURES, ROOT
 
 #: The chapter under test.
 CHAPTER = sitepages.chapter("case-cpp.md")
@@ -73,7 +73,7 @@ INDEX = sitepages.index("what")
 #: The manifest of the product the chapter follows. cppdemo is not in this repository - it is a C++
 #: product driven for si#108 - so it travels with the chapter, and every command the page types is
 #: resolved against the tree this file assembles.
-FIXTURE = ROOT / "tests" / "fixtures" / "case_cpp_manifest.yaml"
+FIXTURE = FIXTURES / "case_cpp_manifest.yaml"
 
 #: The closed vocabulary of honesty labels - the same three the other two cases carry, deliberately, so a
 #: reader moving between them is reading one scale and not three.

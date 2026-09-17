@@ -68,7 +68,7 @@ def build_wheel() -> int:
 ALLURE_RESULTS = ROOT / "tests" / "allure-results"
 
 def test_suite() -> int:
-    """Run the pytest suite. Runs from tests/, so conftest applies.
+    """Run the pytest suite. Runs from src/tests/, so conftest applies.
 
     The pytest run ALONE, which is what the si#156 rename says out loud: `test all` is the aggregate
     over this and `test release-notes`, and a body that quietly ran a second gate would put the kernel's
@@ -84,7 +84,7 @@ def test_suite() -> int:
     self-ignoring caches, the unreadable-checkout guard), which is a worse trade on both routes at once.
     """
     return subprocess.run([sys.executable, "-m", "pytest", "-q", f"--alluredir={ALLURE_RESULTS}"],
-                          cwd=ROOT / "tests").returncode
+                          cwd=ROOT / "src" / "tests").returncode
 
 
 def doctor() -> int:

@@ -8,7 +8,16 @@ import pytest
 # The source tree now sits in src-layout one level above the tests. The wheel check
 # (test_wheel.py) deliberately runs WITHOUT this path -- it is the only test that uses the
 # package the way a consumer would.
-ROOT = Path(__file__).resolve().parents[1]
+# si#283: the unit suite lives beside the code it judges, under `src/`, so the product root is two
+# levels up rather than one. `tests/` at the root still holds the acceptance level and the run's
+# artefacts, which are not unit tests and do not move with them.
+ROOT = Path(__file__).resolve().parents[2]
+
+#: The suite's own fixture tree, anchored on THIS file rather than spelled out from the root (si#283).
+#: Three chapter tests wrote `ROOT / "tests" / "fixtures"` and all three broke the moment the suite moved
+#: - the same second source as the root anchor itself, one level down. A path relative to the suite
+#: follows the suite.
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 sys.path.insert(0, str(ROOT / "src"))
 
 from simplon import hostpath   # noqa: E402  (needs the sys.path line above)

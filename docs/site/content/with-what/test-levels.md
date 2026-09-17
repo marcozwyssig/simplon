@@ -72,17 +72,24 @@ under `src`, because they are read by whoever changes that code and they move wi
 directory owns them.
 
 {{< callout type="warning" >}}
-**The placement is not checked, and this kernel does not keep it.** simplon's own `unit` gate runs the
-pytest suite under `tests/`, not under `src/`. Measured across this family: agile-cockpit puts its unit
-suite at `src/tests` and its system suite at `tests`, netctl's Java unit tests sit under
-`src/netctl/test/unit/`, and its system and acceptance suites under `test/` - so the shape holds
-everywhere it can be read except here.
+**The placement is stated and not mechanically checked**, and this kernel keeps it: si#283 moved
+simplon's own unit suite out of `tests/` and into `src/tests/`, so the page no longer asks of a product
+what its author declines to do. That is the [rules page](../rules/)'s standing claim applied to a
+placement rather than to a refusal - *none exempts the kernel* - and it was paid for rather than
+asserted. `tests/` at the root still holds the acceptance level and the run's
+artefacts, which is what the taxonomy says belongs there.
 
-It is named rather than quietly enforced because a rule the kernel breaks is one this project may not
-write: *"none exempts the kernel"* is a measured claim on the [rules page](../rules/), and an unexamined
-exemption is the thing si#53 struck a rule for. Moving 3800 tests is not a manifest line, so the
-placement stays guidance until somebody decides that move is worth making. si#283 carries the
-measurement.
+It is not enforced because enforcement would measure the wrong thing. A gate may be a `command:` and
+carry no path at all - simplon's own is one - and netctl spells its directory `test/` rather than
+`tests/` for a shape that is right in every other respect. A check that warned two products and let the
+author's own gate through would be worse than the sentence it replaced.
+
+**What the move cost, written down because every Python product laid out this way will meet it.** Under
+`src/`, setuptools' `packages.find` treats a directory as a package: the first wheel built after the move
+shipped `tests` as a **top-level package**, which would have landed on every consumer's import path and
+shadowed their own. `pyproject.toml` excludes it now. And mypy's `files = src` swept the suite in - 382
+errors in 64 files - because the suite had never been excluded by a decision, only by living somewhere
+else. `mypy.ini` says it now.
 {{< /callout >}}
 
 **A suite of a level is that level, a `-`, and a name of your own.** `acceptance-ui` and
@@ -432,7 +439,7 @@ red, whatever its runner's exit code says:
 The commonest way to meet it is not a broken runner. The kernel's own C++ profile runs
 `ctest --test-dir build --output-on-failure`, which prints `100% tests passed, 0 tests failed out of 3`
 and writes **no results file**: declare `results_from:` without adding `--output-junit` to the command and
-you get exactly the line above. That pair is driven in `tests/test_suites_results_from_e2e.py`, with the
+you get exactly the line above. That pair is driven in `src/tests/test_suites_results_from_e2e.py`, with the
 archive read back out of its own embedded data.
 
 **And a file arriving is not the same as a level having run.** `ctest -L <a label nothing carries>`
