@@ -55,6 +55,7 @@ TWO MEASURED TRAPS, both live in this file.
 from __future__ import annotations
 
 import difflib
+import textwrap
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -62,7 +63,7 @@ from typing import NamedTuple
 
 import yaml
 
-from simplon import context
+from simplon import context, runners
 from simplon.orchestrator.manifest import Manifest
 
 #: The manifest section this module owns. A product that declares no section declares no workflows, and
@@ -148,7 +149,7 @@ class Job:
     """
 
     name: str
-    runs_on: str
+    runs_on: "str | tuple[str, ...] | Mapping[str, object]"
     steps: tuple[Step, ...]
     python: str = ""
     checkout: bool = True
@@ -364,14 +365,124 @@ def _reject_duplicate_paths(workflows: Sequence[Workflow]) -> None:
         seen[workflow.path] = workflow.key
 
 
+def _machine(spec: Mapping[str, object], declared_runs_on: object,
+             where: str) -> "tuple[runners.Runner | None, str | tuple[str, ...] | Mapping[str, object]]":
+    """What the job runs on, from `runner:` when it names a kind and from `runs-on:` when it does not.
+
+    si#267's second decision, and the reason it is a KIND rather than a set of facts in the manifest.
+    "This runner is Debian, so no `setup-python`" is a fact about a MACHINE; today it could only be
+    written in a product's manifest, which is why moving one repository's CI to a self-hosted runner
+    meant rediscovering what another product in this family had already learned - from a comment in its
+    manifest, if you thought to look there. A kind is carried once, for everybody.
+
+    BOTH SPELLINGS STAY, and that is not a transition period. `runs-on:` is the whole of what a product
+    needs when its machine has nothing to teach anybody, and a kernel that forced every product through a
+    table of kinds would be refusing something they can legitimately say. Declaring BOTH is refused,
+    because then two lines answer one question and which of them wins is a coin toss.
+    """
+    declared_runner = spec.get(runners.KEY)
+    if declared_runner is not None and declared_runs_on:
+        raise ValueError(f"{where}: declares both `{runners.KEY}:` and `runs-on:`, which answer the same "
+                         f"question. `{runners.KEY}:` names a KIND of machine and the labels come with "
+                         f"it; `runs-on:` names labels and says nothing about the machine")
+    if declared_runner is None:
+        return None, _runs_on(declared_runs_on, where)
+    runner, labels = runners.resolve(declared_runner, where)
+    return runner, labels[0] if len(labels) == 1 else labels
+
+
+def _with_runner_env(runner: "runners.Runner", extras: dict[str, object],
+                     where: str) -> dict[str, object]:
+    """The job's `env:` with the kind's own settings in it, and a conflict refused rather than resolved.
+
+    A key the kind sets and the product sets differently is REFUSED: letting either win silently would
+    make the generated file disagree with one of the two lines that produced it, and a reader of the
+    workflow would have no way to tell which.
+    """
+    if not runner.env:
+        return extras
+    declared = extras.get("env")
+    if declared is not None and not isinstance(declared, Mapping):
+        raise ValueError(f"{where}: `env:` is a mapping of name -> value, not {type(declared).__name__}")
+    product = dict(declared or {})
+    clash = [name for name, value in runner.env.items()
+             if name in product and str(product[name]) != value]
+    if clash:
+        raise ValueError(
+            f"{where}: '{runner.kind}' already sets "
+            + ", ".join(f"`{name}: {runner.env[name]}`" for name in clash)
+            + ", and this job sets "
+            + ", ".join(f"`{name}: {product[name]}`" for name in clash)
+            + ". One of them would win silently and the file would then disagree with the manifest that "
+              "produced it - say it once. If the kind is wrong for this machine, name the labels with "
+              "`runs-on:` and set the environment yourself, or ask for a kind that describes it: a "
+              "machine the table gets wrong is the table's problem, not a line to override")
+    return {**extras, "env": {**runner.env, **product}}
+
+
+def _note_of(spec: Mapping[str, object], runner: "runners.Runner | None") -> str:
+    """The job's note, with the kind's one line in front of it.
+
+    A generated file has to explain itself to whoever opens it. A reader who finds `runs-on: ghr-8` and
+    `DELIVERY_DOCKER_BOOTSTRAP: '1'` beside each other must not have to find this kernel to learn why they
+    belong together - the same reason `CHECKOUT_NOTE` is emitted rather than assumed.
+    """
+    own = str(spec.get("note") or "")
+    if runner is None:
+        return own
+    # WRAPPED, because the table's line is one sentence of prose and every other note in these files is
+    # hand-wrapped to about this width. A comment that runs to 300 columns is one nobody reads in a diff.
+    why = textwrap.fill(runner.why, width=95)
+    return f"{why}\n\n{own}" if own else why
+
+
+def _runs_on(value: object, where: str) -> "str | tuple[str, ...] | Mapping[str, object]":
+    """`runs-on:` as the product wrote it, and NOT coerced to a string (si#266).
+
+    `str(value)` was the whole bug. A list is the documented way to select a self-hosted runner, because
+    one label is rarely enough once an account has more than one machine - and `["self-hosted", "windows",
+    "vmware"]` came out as the single label `"['self-hosted', 'windows', 'vmware']"`. Valid YAML, valid
+    GitHub syntax, and it selects a runner that cannot exist, so the job queues for ever with no error
+    anywhere: the workflow generates, commits, reviews and runs, and nothing says a word. Found from
+    `secure-windows-images`, whose Windows template build needs a specific machine.
+
+    `str()` on a value whose TYPE carries meaning is the same defect `context.section` was given a
+    `blame` for. The rendering half needed nothing: `_scalar` delegates to `yaml.safe_dump` in flow style,
+    so a tuple comes out as `[self-hosted, windows, vmware]` and a mapping as GitHub's `group:`/`labels:`
+    form. All that was missing was letting the value through intact.
+
+    THE MAPPING FORM IS ACCEPTED RATHER THAN REFUSED, deliberately. GitHub documents three shapes and
+    refusing one of them would be an expression rule - a product could no longer say something it can
+    legitimately mean - bought for nothing, since the renderer already handles it. What is refused is a
+    value of a kind GitHub has no reading for at all, which is diagnosis: a number, a bool, or a list
+    with something other than a label in it.
+    """
+    if not value:
+        raise ValueError(f"{where}: declares no `runs-on:`. The runner image is the product's choice "
+                         f"and the kernel has no default worth imposing")
+    if isinstance(value, str):
+        return value
+    if isinstance(value, Mapping):
+        return value
+    if isinstance(value, Sequence):
+        wrong = [item for item in value if not isinstance(item, str)]
+        if wrong:
+            raise ValueError(
+                f"{where}: `runs-on:` is a list of runner LABELS, and "
+                + ", ".join(repr(item) for item in wrong)
+                + " is not one. A label is a string; a list of them selects a runner carrying all of "
+                  "them")
+        return tuple(value)
+    raise ValueError(f"{where}: `runs-on:` is a label, a list of labels, or GitHub's `group:`/`labels:` "
+                     f"mapping - not {type(value).__name__} ({value!r}). Coercing it would emit a label "
+                     f"no runner can carry, and the job would queue for ever with nothing to read")
+
+
 def _job(name: str, spec: object, where: str) -> Job:
     where = f"{where}, job '{name}'"
     if not isinstance(spec, Mapping):
         raise ValueError(f"{where}: must be a mapping, not {type(spec).__name__}")
-    runs_on = spec.get("runs-on") or spec.get("runs_on")
-    if not runs_on:
-        raise ValueError(f"{where}: declares no `runs-on:`. The runner image is the product's choice "
-                         f"and the kernel has no default worth imposing")
+    runner, runs_on = _machine(spec, spec.get("runs-on") or spec.get("runs_on"), where)
     steps = spec.get("steps")
     if not isinstance(steps, Sequence) or isinstance(steps, str) or not steps:
         raise ValueError(f"{where}: `steps:` must be a non-empty list")
@@ -381,10 +492,19 @@ def _job(name: str, spec: object, where: str) -> Job:
     if not isinstance(checkout, bool):
         raise ValueError(f"{where}: `checkout:` is true or false, got '{checkout}'")
 
-    known = {"runs-on", "runs_on", "steps", "python", "checkout", "note"}
+    known = {"runs-on", "runs_on", "steps", "python", "checkout", "note", runners.KEY}
     extras = {str(k): v for k, v in spec.items() if str(k) not in known}
-    return Job(name=name, runs_on=str(runs_on), python=str(python) if python is not None else "",
-               checkout=checkout, note=str(spec.get("note") or ""),
+    if runner is not None:
+        if python is not None and not runner.setup_python:
+            raise ValueError(
+                f"{where}: '{runner.kind}' cannot be handed an interpreter by "
+                f"`{SETUP_PYTHON_ACTION}`, so `python: {python!r}` is a pin that cannot be honoured - "
+                f"and a pin that cannot be honoured reads as a guarantee and is a wish. {runner.why} "
+                f"Drop it, or put an interpreter where the runner can find it, which is a statement "
+                f"about a machine and not about this product")
+        extras = _with_runner_env(runner, extras, where)
+    return Job(name=name, runs_on=runs_on, python=str(python) if python is not None else "",
+               checkout=checkout, note=_note_of(spec, runner),
                steps=tuple(_step(item, f"{where}, step {i + 1}") for i, item in enumerate(steps)),
                extras=extras)
 

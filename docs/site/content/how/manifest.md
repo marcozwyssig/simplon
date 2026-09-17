@@ -552,6 +552,55 @@ A **step** is the exception, and deliberately: it has exactly one body, so a key
 modifier nor a body is refused rather than carried. Two bodies - `command:` beside `uses:` or `run:` -
 are refused for the same reason.
 
+**`runner:` names a KIND of machine, and the kernel supplies what follows from it** (si#267). This is
+the answer to a day that was spent twice: moving one repository's CI to a self-hosted runner meant
+learning that `actions/setup-python` never installs Python, that a container job cannot be the thing that
+provisions docker, and that `DELIVERY_DOCKER_BOOTSTRAP=1` exists — all of it already written down, in a
+comment in another product's manifest.
+
+```yaml
+    jobs:
+      self-build:
+        runner: { kind: self-hosted-debian, labels: ghr-8 }
+```
+
+| kind | `runs-on:` | `setup-python` | environment |
+|---|---|---|---|
+| `github-ubuntu` (the default) | `ubuntu-latest` | yes | — |
+| `self-hosted-debian` | yours to name | **no** | `DELIVERY_DOCKER_BOOTSTRAP: "1"` |
+
+The **label stays yours**: `ghr-8` names one machine and no kernel can guess it, and
+`[self-hosted, Linux, X64]` is not an answer — it describes every self-hosted Linux machine the account
+will ever register, so the day a second one joins, the jobs are shared out with nothing saying so. A kind
+that carries no label of its own therefore refuses until the job names the machine.
+
+What the kind buys is the rest. A `python:` pin on a kind that cannot honour it is **refused at
+generation**, because a pin that cannot be honoured reads as a guarantee and is a wish; the kind's own
+environment is merged into the job's, and a variable the two set differently is refused rather than
+resolved. The kind's one-line reason is written into the generated file, so a reader who finds
+`runs-on: ghr-8` beside `DELIVERY_DOCKER_BOOTSTRAP: '1'` does not have to find the kernel to learn why
+they belong together.
+
+`runner:` and `runs-on:` answer the same question, so declaring both is refused. **Neither is
+deprecated:** `runs-on:` is the whole of what a product needs when its machine has nothing to teach
+anybody, and a new kind is added to the kernel's table once, for everybody, rather than described again
+in each manifest.
+
+**`runs-on:` may be a label, a list of labels, or GitHub's `group:`/`labels:` mapping** - all three of
+GitHub's shapes, carried through as written. A list is the documented way to reach a self-hosted runner,
+because one label is rarely enough once an account has more than one machine:
+
+```yaml
+    jobs:
+      template:
+        runs-on: [self-hosted, windows, vmware]
+```
+
+Until 0.16.0 the value was coerced with `str()`, so that list came out as the single label
+`"['self-hosted', 'windows', 'vmware']"` - valid YAML, valid GitHub syntax, and a runner that cannot
+exist, so the job queued for ever with no error anywhere (si#266). A value GitHub has no reading for at
+all - a number, a bool, a list with something other than a label in it - is refused naming the line.
+
 **Whether a tag publishes is your statement**, so a workflow that declares no `on:` is refused rather
 than given a default. A step the kernel has no business modelling - `pypa/gh-action-pypi-publish`, an
 upload, a shell script that reports something - is written out verbatim beside the resolved ones.

@@ -248,6 +248,44 @@ CENSUS: dict[tuple[str, str, str], str] = {
     #     answer is not "yes by default". `credentials.py` records the measured cause: a product
     #     repository leaked a token out of a committed YAML file, and the fix was to leave no field one
     #     could be written into. A parser that ignored what it did not recognise puts that field back.
+    # si#267: a KIND of CI machine, carried by the kernel once for everybody. Eight diagnosis and two
+    # expression rules, and the split is worth stating because the eight look like more than they are:
+    # a kind the table does not carry, a label that is not a string, a `runner:` that is a number -
+    # none of those describes a machine any workflow could run on, so the refused manifest had no
+    # working meaning. The `python:` one is diagnosis for the same reason and it is the least obvious:
+    # `actions/setup-python` carries no Debian archive at all, so the pin does not produce a DIFFERENT
+    # working workflow, it produces one whose second step says "not found for this operating system".
+    ("runners", "resolve", "takes `kind:` and `labels:`"): DIAGNOSIS,
+    ("runners", "resolve", "names a kind of machine"): DIAGNOSIS,
+    ("runners", "resolve", "is not a runner kind this kernel knows"): DIAGNOSIS,
+    ("runners", "resolve", "carries no label of its own"): DIAGNOSIS,
+    ("runners", "_labels", "is a list of runner LABELS"): DIAGNOSIS,
+    ("runners", "_labels", "is a label or a list of labels"): DIAGNOSIS,
+    ("workflowgen", "_job", "cannot be handed an interpreter"): DIAGNOSIS,
+    ("workflowgen", "_with_runner_env", "is a mapping of name -> value"): DIAGNOSIS,
+    # THE TWO THAT COST SOMETHING, and both cost the same thing: a manifest that said a fact twice.
+    # Either would have produced a WORKING file - one of the two values wins and the workflow runs -
+    # which is exactly the test CLAUDE.md sets, so they are expression rules and they owe the three
+    # questions.
+    #
+    # `runner:` beside `runs-on:`: no product says this today, because `runner:` is new in 0.16.0.
+    # What a product does instead is say one of them, and which one is not a taste: `runs-on:` when the
+    # machine has nothing to teach anybody, a kind when it does.
+    #
+    # The env clash is the one with a real cost, and it is named rather than waved at: a product whose
+    # self-hosted Debian machine ALREADY has docker would legitimately want `DELIVERY_DOCKER_BOOTSTRAP:
+    # "0"` beside the kind. It cannot. What it does instead is in the refusal - name the labels with
+    # `runs-on:` and set the environment itself, which is exactly what it did before this table existed
+    # and costs it nothing it had - or ask for a kind that describes its machine, which is the answer
+    # the catalogue already gives to the same question about commands: add it once, for everybody.
+    # The one manifest that DID set that variable is this kernel's own, and it now gets it from the
+    # kind instead - the generated `ci.yml` is byte-identical across that change but for the line
+    # the kind added explaining itself. No claim is made about the other five manifests: they are
+    # not reachable from this test, and a count about a set nobody looked at is this repository's
+    # fourth-time mistake.
+    ("workflowgen", "_machine", "declares both"): EXPRESSION,
+    ("workflowgen", "_with_runner_env", "already sets"): EXPRESSION,
+
     ("carrierspec", "declared", "must be a mapping of name -> carrier"): DIAGNOSIS,
     ("carrierspec", "_carrier", "must be a mapping, not"): DIAGNOSIS,
     ("carrierspec", "_carrier", "so no host is named"): DIAGNOSIS,
@@ -663,7 +701,12 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("workflowgen", "_workflow", "`jobs:` must be a non-empty mapping"): DIAGNOSIS,
     ("workflowgen", "_workflow", "so it cannot also declare"): DIAGNOSIS,
     ("workflowgen", "_job", "must be a mapping, not {type(spec)"): DIAGNOSIS,
-    ("workflowgen", "_job", "declares no `runs-on:`"): DIAGNOSIS,
+    ("workflowgen", "_runs_on", "declares no `runs-on:`"): DIAGNOSIS,
+    # si#266. Both are diagnosis: a list with a number in it, or a bool, is not a runner label in
+    # any reading GitHub has - and the old behaviour was to coerce it with `str()` and emit a
+    # label no runner can carry, so the job queued for ever with nothing said anywhere.
+    ("workflowgen", "_runs_on", "is a list of runner LABELS"): DIAGNOSIS,
+    ("workflowgen", "_runs_on", "is a label, a list of labels, or GitHub's"): DIAGNOSIS,
     ("workflowgen", "_job", "`steps:` must be a non-empty list"): DIAGNOSIS,
     ("workflowgen", "_job", "`checkout:` is true or false"): DIAGNOSIS,
     ("workflowgen", "_step", "must be a mapping, not {type(item)"): DIAGNOSIS,
@@ -682,6 +725,11 @@ REACH: dict[tuple[str, str, str], str] = {
     # si#5's one expression rule. MERGED: this kernel's own manifest goes through the same parser, so a
     # stray key under a carrier of simplon's own would be refused exactly the same way. It declares no
     # carrier today, which is why the claim is about the parser rather than about a placement.
+    # si#267. MERGED, and it is a placement rather than a claim about a parser: this kernel's own
+    # `simplon.yaml` names `runner: { kind: self-hosted-debian, labels: ghr-8 }`, so both rules rule on
+    # the kernel's own CI job every time the workflows are generated.
+    ("workflowgen", "_machine", "declares both"): REACH_MERGED,
+    ("workflowgen", "_with_runner_env", "already sets"): REACH_MERGED,
     ("carrierspec", "_block", "does not take"): REACH_MERGED,
     ("environments", "_repository", "does not take"): REACH_MERGED,
     ("environments", "_names", "may not name"): REACH_MERGED,
