@@ -25,6 +25,60 @@ it is the one section held only to existing.
 
 ## 0.17.0
 
+### The test levels are a taxonomy now, not three examples (si#283)
+
+`with-what/test-levels.md` defined a level precisely - *"one entry under `suites: gates:`"* - and then
+taught the mechanism with three example names. The kernel checked a gate's name against the product's own
+manifest and nothing else, so two products could spell one level differently and a third could put a way
+of *reaching* the product where a level goes. That page taught `ui` as a level for months, because there
+was no list to check it against.
+
+There are four, and the page states them as a taxonomy rather than as a report:
+
+| level | what a failure in it means | where it lives |
+|---|---|---|
+| `unit` | one piece is wrong on its own | `src` |
+| `integration` | two pieces disagree where they meet | `src` |
+| `system` | the assembled product misbehaves against real infrastructure | `tests` |
+| `acceptance` | the product does not do what somebody asked it for | `tests` |
+
+**A suite of a level is that level, a `-`, and a name of your own** - `acceptance-ui`,
+`acceptance-dataplane`, `unit-java`. Without that rule the norm would warn on every consumer that runs
+more than one runner at a level, which is most of them.
+
+**A gate off the set gets a warning, never a refusal.** A norm that broke an existing manifest on upgrade
+is not shippable. The message names the set and deliberately does **not** guess at what was meant: a "did
+you mean" over four words is a spelling correction pretending to be a taxonomy.
+
+#### What the measurement changed about the ticket
+
+Measured over all **eight** manifests this family can reach, before the set was written:
+
+| name | products | in the set |
+|---|---|---|
+| `unit` | agile-cockpit, simplon, secure-windows-images | yes |
+| `system` | agile-cockpit, netctl, secure-windows-images | yes |
+| `acceptance-dataplane`, `acceptance-ui` | netctl | yes, as suites |
+| `delivery` | agile-cockpit | **no** |
+| `artefact` | secure-windows-images | **no** |
+| `integration` | nobody | yes, and unused |
+
+Two real declarations fall outside the set. That is the #34/#48 shape again - the smaller population
+would have shown none - and it is why the refusal is a warning.
+
+**And it dissolved the ticket's second question.** si#283 asked where `component` and `boot` sit, because
+this page named them among netctl's levels. They are not levels, because they are not gates: netctl's
+manifest declares `system`, `acceptance-dataplane` and `acceptance-ui`, and the six prefixes the page
+quoted were its **Gradle source sets**. The one taxonomy the documentation had was a report about
+directory names - which is the sharper version of the ticket's own complaint.
+
+#### The placement is stated and not enforced, because this kernel breaks it
+
+`unit` belongs under `src`. simplon's own `unit` gate runs the pytest suite under `tests/`. The page says
+so in a callout rather than the kernel checking it, because *"none exempts the kernel"* is a measured
+claim on the rules page and an unexamined exemption is what si#53 struck a rule for. Moving 3800 tests is
+not a manifest line; the measurement is on si#283 and the decision is somebody's to make out loud.
+
 ### A Portainer on a machine the kernel did not make is a carrier too (si#280)
 
 Raised by biz-cockpit while wiring `backend: portainer` against a Portainer that had been running for

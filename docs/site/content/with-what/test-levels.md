@@ -51,11 +51,79 @@ groups:
 Four commands, two bodies. What each level actually *is* comes from the `suites:` section.
 
 **A level is not a way of reaching the product.** `acceptance` is a level; a browser journey and a
-dataplane probe are two SUITES of it, and netctl - the consumer carrying the most levels of any - spells
-them `acceptance-ui` and `acceptance-dataplane` beside `unit-java`, `component-db`, `integration-java`,
-`boot-java` and `unit-typescript`. A gate called `ui` would put the browser where the level goes and
-teach a taxonomy no product uses. What the third level above is really here to show is the mechanism
-further down: an acceptance journey runs through a product callable rather than through pytest.
+dataplane probe are two SUITES of it. A gate called `ui` would put the browser where the level goes and
+teach a taxonomy no product uses - which this very page did for months, because there was no list to
+check it against (si#196, repaired by hand; si#283, which is why there is a list).
+
+## The four levels
+
+There are four, and this is a **taxonomy** rather than a report of what somebody happens to use:
+
+| level | what a failure in it means | where it lives |
+|---|---|---|
+| `unit` | one piece is wrong on its own, with nothing else running | `src` |
+| `integration` | two pieces disagree where they meet | `src` |
+| `system` | the assembled product misbehaves against real infrastructure | `tests` |
+| `acceptance` | the product does not do what somebody asked it for | `tests` |
+
+**Where a level lives is part of what it is.** `unit` and `integration` sit beside the code they judge,
+under `src`, because they are read by whoever changes that code and they move with it. `system` and
+`acceptance` sit under `tests`, because their subject is the assembled product and no single source
+directory owns them.
+
+{{< callout type="warning" >}}
+**The placement is not checked, and this kernel does not keep it.** simplon's own `unit` gate runs the
+pytest suite under `tests/`, not under `src/`. Measured across this family: agile-cockpit puts its unit
+suite at `src/tests` and its system suite at `tests`, netctl's Java unit tests sit under
+`src/netctl/test/unit/`, and its system and acceptance suites under `test/` - so the shape holds
+everywhere it can be read except here.
+
+It is named rather than quietly enforced because a rule the kernel breaks is one this project may not
+write: *"none exempts the kernel"* is a measured claim on the [rules page](../rules/), and an unexamined
+exemption is the thing si#53 struck a rule for. Moving 3800 tests is not a manifest line, so the
+placement stays guidance until somebody decides that move is worth making. si#283 carries the
+measurement.
+{{< /callout >}}
+
+**A suite of a level is that level, a `-`, and a name of your own.** `acceptance-ui` and
+`acceptance-dataplane` are two suites of one level; `unit-java` and `unit-typescript` are two runners
+under one. The level says what a failure MEANS, the suffix says which runner produced it, and a norm
+without the suffix rule would break every product that has more than one.
+
+**A gate whose name is not one of the four gets a warning, never a refusal.** A norm that broke an
+existing manifest on upgrade would not be shippable, and two manifests in this family declare a name this
+set does not carry. What the kernel says:
+
+> gate 'delivery' is not one of the test levels (unit, integration, system, acceptance). A level says
+> what a failure MEANS; a suite of one is that level, a '-' and a name of your own ('acceptance-ui').
+> Nothing is refused here - rename it, or say on the ticket why this product needs a level the platform
+> does not carry
+
+It names the set and does **not** guess at what was meant. A "did you mean" over four words is a spelling
+correction pretending to be a taxonomy, and the real cases are not misspellings of anything.
+
+### What was measured before the set was written
+
+Over all eight manifests this family can reach, every gate declared today:
+
+| name | products | in the set |
+|---|---|---|
+| `unit` | agile-cockpit, simplon, secure-windows-images | yes |
+| `system` | agile-cockpit, netctl, secure-windows-images | yes |
+| `acceptance-dataplane`, `acceptance-ui` | netctl | yes, as suites of `acceptance` |
+| `delivery` | agile-cockpit | **no** |
+| `artefact` | secure-windows-images | **no** |
+| `integration` | nobody | yes, and unused |
+
+Both of the last two facts are deliberate. A taxonomy that is only the union of what exists is a report,
+and a report cannot tell a product that `ui` is not a level; a set that carries a name nobody uses yet is
+a set rather than a census. `artefact` tests a built OVA and `delivery` tests a pipeline - only those
+products can say which level that is, which is why the warning asks rather than renames.
+
+**The same measurement dissolved a question this page had left open.** It used to name `component` and
+`boot` among netctl's levels. They are not levels, because they are not gates: netctl's manifest declares
+`system`, `acceptance-dataplane` and `acceptance-ui`, and the six prefixes quoted here were its Gradle
+source sets. The one taxonomy this page had was a report about directory names.
 
 ## The `suites:` section
 

@@ -106,6 +106,32 @@ from simplon.verdict import GateVerdict, RunVerdict, Verdict
 # The manifest section this module owns.
 SECTION = "suites"
 
+#: The normed test LEVELS (si#283). A gate's `name:` is one of these, optionally followed by `-<suite>`:
+#: `unit`, `acceptance-ui`, `acceptance-dataplane`. The level says what a failure MEANS; the suffix says
+#: which runner produced it, which is a different question and the reason both exist.
+#:
+#: WHY A SET AT ALL. The kernel checked a gate's name against the product's own manifest and nothing
+#: else, so two products could spell one level differently and a third could put a way of REACHING the
+#: product where a level goes. `with-what/test-levels.md` taught `ui` as a level for months, because
+#: there was no list to check it against - the page's own defect, found by si#196.
+#:
+#: MEASURED BEFORE IT WAS WRITTEN, over all eight manifests this family can reach: `unit` three times,
+#: `system` three times, `acceptance-dataplane` and `acceptance-ui` once each - and `delivery`
+#: (agile-cockpit) and `artefact` (secure-windows-images) once each, which this set does not carry.
+#: `integration` is normed and used by nobody. Both of those facts are deliberate and both are published:
+#: a taxonomy that is only the union of what exists is a report, and a report cannot tell a product that
+#: `ui` is not a level.
+#:
+#: The same measurement dissolved the question the ticket asked about `component` and `boot`. They are
+#: not levels because they are not gates: netctl's manifest declares `system`, `acceptance-dataplane`
+#: and `acceptance-ui`, and the six prefixes the site quoted are its GRADLE SOURCE SETS. The one
+#: taxonomy the documentation had was a report about directory names.
+LEVELS = ("unit", "integration", "system", "acceptance")
+
+#: What separates a level from the suite of it that a product runs. One character, named because the
+#: rule depends on it: `acceptance-ui` is legal and `acceptanceui` is not.
+LEVEL_SUFFIX = "-"
+
 #: Where a run's outputs go when the manifest names no `reports:`. It was REQUIRED until every product
 #: had written the same line, which is the point at which a universal answer has been masquerading as a
 #: per-product decision - and a required key that always gets one answer only teaches people to copy it.
@@ -291,6 +317,40 @@ def _str(body: Mapping, key: str, where: str, *, required: bool = False) -> str:
     return value.strip()
 
 
+def level_of(name: str) -> str:
+    """The normed level a gate name claims, or `""` when it claims none.
+
+    `unit` -> unit. `acceptance-ui` -> acceptance. `delivery` -> "". The split is on the FIRST separator,
+    so a suffix may itself carry one (`acceptance-ui-firefox` is still acceptance).
+    """
+    head = name.split(LEVEL_SUFFIX, 1)[0]
+    return head if head in LEVELS else ""
+
+
+def warn_off_the_norm(name: str, where: str) -> str:
+    """Say so when a gate's name is not a normed level, and hand back what was said.
+
+    A WARNING AND NOT A REFUSAL, decided before it was built. Two manifests this family can reach declare
+    a gate this set does not carry - `delivery` and `artefact` - and a norm that breaks an existing
+    manifest on upgrade is not shippable. The product is told; the run goes on.
+
+    The message names the SET rather than a guess at what was meant. A "did you mean" over four words is
+    a spelling correction pretending to be a taxonomy, and the two real cases are not misspellings of
+    anything: `artefact` tests a built OVA and `delivery` tests a pipeline, and only those products can
+    say which level that is.
+
+    It returns the text so the page quoting it can be pinned against the code that raises it rather than
+    against somebody's memory of it (si#136's rule, and the half si#196 had to repair by hand on that
+    very page).
+    """
+    said = (f"{where}: gate '{name}' is not one of the test levels ({', '.join(LEVELS)}). A level says "
+            f"what a failure MEANS; a suite of one is that level, a '-' and a name of your own "
+            f"('acceptance-ui'). Nothing is refused here - rename it, or say on the ticket why this "
+            f"product needs a level the platform does not carry")
+    log.warn(said)
+    return said
+
+
 def _gate(body: object, where: str) -> Gate:
     """One validated gate entry. Every rule names the offending key, and the exactly-one-kind lock is
     checked here so a half-declared level fails at load time rather than as a confusing empty pytest run.
@@ -304,6 +364,8 @@ def _gate(body: object, where: str) -> Gate:
     if not isinstance(body, Mapping):
         raise ValueError(f"{where}: each gate must be a mapping")
     name = _str(body, "name", where, required=True)
+    if not level_of(name):
+        warn_off_the_norm(name, where)
     where = f"{where} ('{name}')"
     suite, impl = _str(body, "suite", where), _str(body, "impl", where)
     command = _str(body, "command", where)
