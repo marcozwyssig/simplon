@@ -24,7 +24,7 @@ import json
 import os
 import sys
 from importlib.metadata import PackageNotFoundError, distribution as _distribution
-from typing import Callable, Mapping, Protocol, TypedDict, cast
+from typing import Callable, Iterable, Mapping, Protocol, TypedDict, cast
 
 import typer
 
@@ -94,9 +94,16 @@ class EnvironmentProvider(Protocol):
     consumer measured (#51). Structural: any module/object exposing these members satisfies it, so nothing
     named is imported here - the coupling flows product -> kernel, never the reverse.
 
-    ``ENV_VAR`` is the process env var the active environment rides in; ``LOCAL`` is the backend name a CD
-    command gates on. ``names``/``default`` drive env-first token selection; ``is_local``/``require_backend``
-    drive the env-gate for a CD group.
+    ``ENV_VAR`` is the process env var the active environment rides in; ``LOCAL`` is the backend name a
+    product's own body gates on when it only works against one. ``names``/``default`` drive env-first
+    token selection; ``require_drivable`` drives the env-gate for a CD group.
+
+    ``require_drivable`` REPLACED ``is_local`` + ``require_backend`` IN THE GATE (si#288). The gate asked
+    whether the active backend was local and, for any no, demanded `local` - which was right while
+    `local` was the only backend anybody had implemented and wrong the day the kernel shipped one of its
+    own: `deploy up` against `backend: portainer` died on the kernel's own CLI. The other two members
+    stay on this protocol because a product's own body still calls them; what moved is which question the
+    CLI asks.
     """
 
     ENV_VAR: str
@@ -106,6 +113,7 @@ class EnvironmentProvider(Protocol):
     def default(self) -> str: ...
     def is_local(self, name: str | None = ...) -> bool: ...
     def require_backend(self, backend: str = ...) -> None: ...
+    def require_drivable(self, drivable: "Iterable[str]") -> None: ...
 
 
 def _group_default_app(help_text: str, default_fn: Callable[..., object]) -> typer.Typer:
@@ -631,8 +639,15 @@ def main(*, app: typer.Typer, context: ProductContext,
     if verdict == "reject-env" and not asking_help:
         log.die(f"'{cmd}' is environment-agnostic and takes no env prefix; "
                 f"run '{launcher(context.name)} {cmd}'")
-    if verdict == "gate-backend" and not asking_help and not environments.is_local(env):
-        environments.require_backend(environments.LOCAL)
+    if verdict == "gate-backend" and not asking_help:
+        # si#288: the question is whether the backend CAN BE DRIVEN, not whether it is local. This gate
+        # used to demand `LOCAL` for every non-local environment, which was right while `local` was the
+        # only backend anybody had implemented (#11) and wrong the day the kernel shipped one of its own:
+        # `deploy up` against `backend: portainer` died on the kernel's own CLI. The set is read from the
+        # same place `deploy up` resolves against, so the gate and the dispatch cannot disagree.
+        from simplon.tasks.deploy import drivable_backends  # local: cli is on every product's import path
+
+        environments.require_drivable(drivable_backends())
 
     # `prog_name`, and without it Click derives one nobody can type (si#58). `_detect_program_name()`
     # sees `python -m orchestrator`, because that is literally how the launcher execs the module - so

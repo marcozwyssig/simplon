@@ -25,6 +25,61 @@ it is the one section held only to existing.
 
 ## 0.17.0
 
+### Two defects that made `backend: portainer` unusable (si#287, si#288)
+
+Both reported by biz-cockpit while wiring their first production deployment against 0.16.0, and both
+confirmed at the source before anything was written. Together they meant the backend 0.16.0 shipped could
+not be reached, and would not have carried its values if it had been.
+
+#### `optional:` was validated and never handed over (si#287)
+
+```python
+envs[str(name)] = Environment(str(name), backend, ...,
+                              required=required)          # and not optional
+```
+
+`Environment.optional` fell back to its default `()`. `portainer.stack_values` iterates
+`(*required, *optional)`, so **no optional value had ever reached a deployment** since the feature
+shipped.
+
+What it would have cost the consumer, in their words: `prod` coming up without its Smallinvoice, Toggl
+and Graph credentials - cleanly with 409 rather than with fakes, so no data damage, but *an instance that
+can do nothing and does not say why*.
+
+**Why a release went out with it.** Nothing in the suite read `Environment.optional`. The list was
+validated, it took part in the "a name may not be in both lists" refusal, and it appeared in every
+message that counted it - so at every point where somebody looked, it looked processed. Validation was
+never what was missing; arrival was.
+
+The repair is one argument. What is worth more is the assertion beside it: it reads the value at
+`stack_values`, on the **far side** of the seam, because the same test written against `parse_data`'s
+validation passes on the broken code.
+
+#### The CD gate asked whether a backend was local, not whether it could be driven (si#288)
+
+```python
+if verdict == "gate-backend" and not asking_help and not environments.is_local(env):
+    environments.require_backend(environments.LOCAL)
+```
+
+`gate-backend` covers every env-first group, so for any non-local environment **every** command in
+`deploy` and `monitor` died - `deploy up` included. The feature this kernel released was unreachable
+through the CLI this kernel assembles, and every product adopting it needed a `Provider` subclass to get
+past its own kernel.
+
+The gate was older than the backend it blocked. #11 put it there when `local` was the only backend
+anybody had implemented, and its purpose was sound. What changed is that "is this backend local" and "can
+this backend be driven" stopped being one question.
+
+`Provider.require_drivable` asks the second one, against the same set `deploy up` resolves against
+(`tasks.deploy.drivable_backends`, public now for exactly this reason) - so the gate and the dispatch
+cannot disagree. It refuses precisely what #11 meant to refuse, and the refusal names what this run *can*
+drive and how to add one, which is in no document because the set is assembled at run time.
+
+**Nothing for a product to do.** `simplon init` writes a real `Provider`, so a scaffolded product
+inherits the method; `is_local` and `require_backend` stay on the protocol because a product's own body
+still calls them when it only works against one backend.
+
 ### The unit suite moved to `src/tests`, so the kernel keeps its own placement (si#283)
 
 The taxonomy si#283 shipped says `unit` and `integration` live under `src`, beside the code they judge,
@@ -59,6 +114,7 @@ path spelled out from the root. That is the second source this repository hunts,
 the move is what made it visible: a duplicated constant costs nothing until the thing it duplicates moves.
 They read `conftest.ROOT` and a new `conftest.FIXTURES` now, and the one file that had anchored relative
 to itself needed no change at all.
+
 
 ### The test levels are a taxonomy now, not three examples (si#283)
 

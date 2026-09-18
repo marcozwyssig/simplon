@@ -35,7 +35,7 @@ from pathlib import Path
 from simplon import backend, context, deployment, environments, githubpackages, log, portainer
 
 
-def _backends() -> dict[str, backend.Backend]:
+def drivable_backends() -> dict[str, backend.Backend]:
     """Every backend this run may resolve: the ones the kernel ships, with the product's own on top.
 
     THE ORDER IS THE DECISION. A product's registration wins on a name collision, because a product that
@@ -58,7 +58,7 @@ def _environment() -> environments.Environment:
     ships plus what the product registered - so an environment naming one nobody implements is refused by
     `parse_data` with both names in the message rather than failing later.
     """
-    matrix = environments.parse_data(context.current().manifest_data(), tuple(_backends()))
+    matrix = environments.parse_data(context.current().manifest_data(), tuple(drivable_backends()))
     name = os.environ.get(context.ENVIRONMENT_ENV, "").strip() or matrix.default
     env = matrix.environments.get(name)
     if env is None:
@@ -100,7 +100,7 @@ def up(version: str = "") -> int:
         return 0
     env = _environment()
     log.info(f"deploying {resolved.tag} to {env.name} ({env.backend})")
-    return backend.resolve(env, _backends()).deploy(env, resolved)
+    return backend.resolve(env, drivable_backends()).deploy(env, resolved)
 
 
 def down(version: str = "") -> int:
@@ -123,4 +123,4 @@ def down(version: str = "") -> int:
         return 0
     env = _environment()
     log.info(f"destroying {env.name} ({env.backend})")
-    return backend.resolve(env, _backends()).destroy(env)
+    return backend.resolve(env, drivable_backends()).destroy(env)
