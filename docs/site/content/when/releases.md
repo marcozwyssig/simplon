@@ -23,6 +23,36 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.18.0
+
+### The four groups a product reaches for, and where each one goes (si#286)
+
+A product adopting the kernel tends to want the same four groups beyond the six the taxonomy declares -
+`dev`, `contract`, `lint`, `ci` - and the group lock refuses them. It refuses without saying where they
+belong, so each adopting product has worked it out again.
+
+Measured over all eight manifests this family can reach, before deciding anything:
+
+| name | where it actually lives today | as a group |
+|---|---|---|
+| `dev` | `environments:`, in five products | never |
+| `ci` | `workflows:`, in three | never |
+| `lint`, `contract` | one product's own `test` commands (`lint`, `check-contract`) | never |
+
+**No product that has adopted declares a group outside the six.** All four resolve into the three groups
+that already exist, and one product had resolved three of them before the question was asked. Its reason
+is the one the new table is built on: *they verify, so they belong in the group that verifies - a group of
+their own would only repeat the name.*
+
+So the taxonomy is complete and what was missing was the map. It is on [task and
+command](../../how/task-and-command/#the-four-names-a-product-reaches-for-and-where-each-one-goes), with
+the one entry that genuinely depends on the product spelled out: `contract` is `test` when it checks a
+contract and `build` when it generates from a schema, and only that product knows which.
+
+**No kernel code changed**, and deliberately: the four names are a product's vocabulary, not the
+platform's, and pinning them into a refusal would carry somebody else's words in this kernel until they
+changed them.
+
 ## 0.17.0
 
 ### Two defects that made `backend: portainer` unusable (si#287, si#288)

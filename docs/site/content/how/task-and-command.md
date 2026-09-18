@@ -284,6 +284,30 @@ ungoverned. So all six group names carry a placement, and "phase" keeps meaning 
 everywhere else on this site.
 {{< /callout >}}
 
+### The four names a product reaches for, and where each one goes
+
+A product adopting the kernel tends to want the same four groups beyond the six, and si#286 asked whether
+one of them belongs in the taxonomy. Measured over every manifest this family can reach: **none of them
+does, and no product that has adopted declares a group outside the six.**
+
+| what a product wants to write | where it goes | why |
+|---|---|---|
+| `lint:` | a command in **`test`** | it verifies. `test lint`, `test lint-backend` |
+| `contract:` | **`test`** when it checks a contract, **`build`** when it generates from a schema | the group is what the command DOES, and only that product knows which |
+| `ci:` | a command or an [aggregate](#the-third-kind-of-command-an-aggregate) in **`test`** | a pipeline is not a phase; it names the phases it runs |
+| `dev:` | an entry in **`environments:`** | it is a place to deploy to, reached as `dev deploy up` |
+
+The evidence is not four opinions. `dev` is an environment in five of the eight manifests and a group in
+none; `ci` is a workflow key in three and a group in none; and one product had already filed `lint`,
+`check-contract` and `ci` as members of its own `test` group before the question was asked. Its reason is
+the one this table is built on: **they verify, so they belong in the group that verifies - a group of
+their own would only repeat the name.**
+
+`ci` is worth one more sentence, because it is the name that looks most like a group and is least like
+one. A CI pipeline runs the phases; it is not a phase. si#267's [`derive:`](../manifest/) now writes that
+pipeline from the command tree, so a `ci` group would be a third spelling of something that already has
+two homes.
+
 ### Why two axes, and why this is what keeps them two
 
 The namespace says the **family**; the group says the **placement**. They are two questions because
