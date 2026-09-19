@@ -364,14 +364,31 @@ class Provider:
         The replacement refuses exactly what #11 meant to refuse and nothing else: a backend nobody has
         implemented. It is strictly more permissive for backends that resolve and identical for those
         that do not.
+
+        `self._valid` IS PART OF THE SET, and leaving it out was si#293 - a regression this kernel
+        shipped in 0.17.0. `drivable` is what the KERNEL can resolve, and the kernel ships no `local` and
+        never did: that name is what a product's OWN backend answers to. Before si#288 the gate skipped
+        `local` entirely for exactly that reason, so folding it into a set the kernel computes disabled
+        every environment-bound command for a product that had not registered one - which is precisely
+        what `simplon init` scaffolds. A consumer measured four dead commands against `dev`.
+
+        `valid_backends` is the product SAYING WHICH TAGS ITS MATRIX MAY NAME, so a tag in it is claimed,
+        and a claimed tag that nobody implemented is `backend.resolve`'s refusal at dispatch, where it
+        was before and where it names the right file. Reading the two together also closes the second
+        half of that report: the product's hand-written list and the kernel's derived set could diverge -
+        one matrix valid to the parser and undrivable to the gate, out of the same file, with nowhere to
+        read them against each other. Now the gate is that place.
+
+        #11 IS STILL PROTECTED, and by an earlier refusal rather than by this one: a matrix naming a tag
+        the product did NOT declare valid never reaches here, because `parse_data` refuses it first.
         """
         from simplon import log  # local: keeps this module importable by anything, log imports nothing
 
-        known = tuple(drivable)
+        known = tuple(drivable) + self._valid
         env = self.current()
         if env.backend not in known:
             log.die(f"environment '{env.name}' has backend '{env.backend}', which nothing here can "
-                    f"drive - this run resolves {', '.join(sorted(known)) or 'no backend at all'}. "
+                    f"drive - this run resolves {', '.join(sorted(set(known))) or 'no backend at all'}. "
                     f"Register an implementation for it with `simplon.backend.register`, or point this "
                     f"environment at a backend that is already resolvable")
 
