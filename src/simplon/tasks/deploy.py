@@ -54,11 +54,20 @@ def _environment() -> environments.Environment:
     own comment says the product's variable arrives through an injected provider, "so no kernel leaf can
     read the answer back out of it". This is such a leaf.
 
-    The MATRIX comes off the manifest, and the valid backends are the RESOLVABLE ones - what the kernel
-    ships plus what the product registered - so an environment naming one nobody implements is refused by
-    `parse_data` with both names in the message rather than failing later.
+    THE MATRIX IS PARSED AGAINST WHAT IT ITSELF DECLARES, not against the resolvable set, and si#298 is
+    why. Parsing against the resolvable set made `parse_data` the refusal a person met:
+
+        environment 'dev': backend must be 'portainer', got 'local'
+
+    That names a REQUIREMENT where the cause is a MISSING REGISTRATION. It reads as though the matrix is
+    misconfigured and sends the reader to the `environments:` section, while what is missing is a
+    `backend.register` call in the composition root. The consumer who hit it put it exactly right: it
+    sends you to the wrong neighbour.
+
+    `backend.resolve` already has the sentence that fits - "no backend registered for 'local' (known:
+    portainer)" - and it could not be reached, because this line refused first. Now it is reached.
     """
-    matrix = environments.parse_data(context.current().manifest_data(), tuple(drivable_backends()))
+    matrix = environments.parse_data(context.current().manifest_data())
     name = os.environ.get(context.ENVIRONMENT_ENV, "").strip() or matrix.default
     env = matrix.environments.get(name)
     if env is None:

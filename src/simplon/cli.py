@@ -96,14 +96,14 @@ class EnvironmentProvider(Protocol):
 
     ``ENV_VAR`` is the process env var the active environment rides in; ``LOCAL`` is the backend name a
     product's own body gates on when it only works against one. ``names``/``default`` drive env-first
-    token selection; ``require_drivable`` drives the env-gate for a CD group.
+    token selection.
 
-    ``require_drivable`` REPLACED ``is_local`` + ``require_backend`` IN THE GATE (si#288). The gate asked
-    whether the active backend was local and, for any no, demanded `local` - which was right while
-    `local` was the only backend anybody had implemented and wrong the day the kernel shipped one of its
-    own: `deploy up` against `backend: portainer` died on the kernel's own CLI. The other two members
-    stay on this protocol because a product's own body still calls them; what moved is which question the
-    CLI asks.
+    NO BACKEND GATE IS DRIVEN FROM HERE ANY MORE (si#298). `main` used to ask this object whether the
+    active backend could be driven, for every command in an env-first group - and measured over this
+    family, five of eight products have only their OWN commands in those groups, which the kernel does
+    not dispatch and has no registry for. The question belonged to the one place the kernel resolves a
+    backend to an instance, and that is `tasks.deploy`. ``is_local`` and ``require_backend`` stay on this
+    protocol because a product's own body still calls them when it works against one backend only.
     """
 
     ENV_VAR: str
@@ -113,7 +113,6 @@ class EnvironmentProvider(Protocol):
     def default(self) -> str: ...
     def is_local(self, name: str | None = ...) -> bool: ...
     def require_backend(self, backend: str = ...) -> None: ...
-    def require_drivable(self, drivable: "Iterable[str]") -> None: ...
 
 
 def _group_default_app(help_text: str, default_fn: Callable[..., object]) -> typer.Typer:
@@ -639,15 +638,20 @@ def main(*, app: typer.Typer, context: ProductContext,
     if verdict == "reject-env" and not asking_help:
         log.die(f"'{cmd}' is environment-agnostic and takes no env prefix; "
                 f"run '{launcher(context.name)} {cmd}'")
-    if verdict == "gate-backend" and not asking_help:
-        # si#288: the question is whether the backend CAN BE DRIVEN, not whether it is local. This gate
-        # used to demand `LOCAL` for every non-local environment, which was right while `local` was the
-        # only backend anybody had implemented (#11) and wrong the day the kernel shipped one of its own:
-        # `deploy up` against `backend: portainer` died on the kernel's own CLI. The set is read from the
-        # same place `deploy up` resolves against, so the gate and the dispatch cannot disagree.
-        from simplon.tasks.deploy import drivable_backends  # local: cli is on every product's import path
-
-        environments.require_drivable(drivable_backends())
+    # NO BACKEND GATE HERE, and si#298 is the measurement that ended it. `gate-backend` fires for every
+    # command in an env-first group, and for five of the eight products in this family those are their
+    # OWN `up`, `down` and `install` - bodies the kernel does not dispatch and has no registry for.
+    # Exactly one product resolves a command to a `deploy:*` task, and one calls `backend.register`.
+    #
+    # So a gate here asked a question about the KERNEL's dispatch and applied it to commands the kernel
+    # never dispatches. Both of this week's failures are that mismatch from either end: si#288 killed
+    # four of a consumer's own commands, and si#293 had to widen the accepted set until the gate could
+    # not close at all - `registry()` parses the matrix against `valid_backends`, so `env.backend` was in
+    # the accepted set by construction.
+    #
+    # The check did not disappear; it moved to where the kernel actually needs an instance, which is
+    # `tasks.deploy` - see `_environment` and `backend.resolve`. #11's concern is met there and nowhere
+    # else is governed.
 
     # `prog_name`, and without it Click derives one nobody can type (si#58). `_detect_program_name()`
     # sees `python -m orchestrator`, because that is literally how the launcher execs the module - so

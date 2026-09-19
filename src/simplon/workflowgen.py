@@ -723,7 +723,7 @@ def _rollout(workflow: "Workflow", registry: "Mapping[str, object] | None") -> "
     from simplon import context, environments as env_mod
 
     data = registry if registry is not None else context.current().manifest_data()
-    matrix = env_mod.parse_data(data, _declared_backends(data))
+    matrix = env_mod.parse_data(data, env_mod.declared_backends(data))
     jobs: list[Job] = []
     previous = ""
     for stage in workflow.flow:
@@ -769,16 +769,6 @@ def _rollout_note(stage: "Stage", env: object) -> str:
                 f"timers and the secrets this stage may see are account settings rather than manifest "
                 f"lines.")
     return textwrap.fill(head, width=95)
-
-
-def _declared_backends(data: "Mapping[str, object]") -> "tuple[str, ...]":
-    """The backend tags this manifest's own matrix uses, so parsing it here validates nothing it did not
-    already validate at load. The generator is not the place to rule on a backend."""
-    section = data.get("environments") if isinstance(data, Mapping) else None
-    declared: "Mapping[object, object]" = section if isinstance(section, Mapping) else {}
-    names = {str(spec.get("backend", "")).strip()
-             for spec in declared.values() if isinstance(spec, Mapping)}
-    return tuple(sorted(n for n in names if n)) or ("local",)
 
 
 # --- deriving a job's steps from the command tree -----------------------------------------------------------

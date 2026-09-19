@@ -156,124 +156,6 @@ def test_an_optional_name_with_no_value_is_simply_absent():
     assert values == {"API_URL": "https://api.example"}
 
 
-# --- si#288: the CD gate asks whether a backend can be DRIVEN -----------------------------------------
-
-
-def _provider(backend_name: str):
-    """A provider whose one environment carries `backend_name`, built the way `cli.main` builds one."""
-    from simplon import environments as env_mod
-
-    class _One(env_mod.Provider):
-        def current(self, name=None):
-            return env_mod.Environment("prod", backend_name, "")
-
-    # NOT `valid_backends=(backend_name,)`, and si#293 is why: the gate now reads what the product
-    # CLAIMS as well as what the kernel can drive, so a helper that claimed the very tag it was refusing
-    # would test nothing. These provide the scaffolded default and nothing else.
-    return _One("X_ENV", shim="", valid_backends=(env_mod.LOCAL,))
-
-
-def test_a_backend_the_run_can_resolve_passes_the_gate():
-    """THE DEFECT si#288 IS. The gate asked `is_local` and then demanded `LOCAL`, so every command in
-    `deploy` and `monitor` died for a non-local environment - `deploy up` included. The kernel shipped a
-    portainer backend in 0.16.0 that its own CLI would not let anybody reach, and every product adopting
-    it needed a `Provider` subclass to get past the kernel."""
-    _provider("portainer").require_drivable(("portainer", "local"))
-
-
-def test_a_backend_nobody_implemented_still_dies_clean():
-    """WHAT #11 MEANT TO REFUSE, unchanged. A CD command aimed at a target nobody has implemented must
-    fail here rather than mis-run another backend's path."""
-    import pytest as _pytest
-
-    with _pytest.raises(SystemExit):
-        _provider("exoscale").require_drivable(("portainer", "local"))
-
-
-def test_the_refusal_names_what_this_run_can_drive_and_how_to_add_one(capsys):
-    """A refusal that says "wrong backend" sends a reader off to guess which ones are right. This is the
-    only place they can learn it: the set is assembled at run time from what the kernel ships plus what
-    the product registered, so it is in no document."""
-    import pytest as _pytest
-
-    with _pytest.raises(SystemExit):
-        _provider("exoscale").require_drivable(("portainer", "local"))
-
-    captured = capsys.readouterr()
-    said = captured.out + captured.err
-    assert "exoscale" in said
-    assert "portainer" in said and "local" in said
-    assert "simplon.backend.register" in said
-
-
-def test_the_gate_reads_the_same_set_deploy_up_resolves_against():
-    """THE JOIN, and the reason `_backends` became public. A gate computing its own list would be a
-    second source for "what can this run drive", and the two would disagree the day a product registered
-    something - the gate refusing what `deploy up` would happily have driven."""
-    from simplon.tasks import deploy
-
-    assert "portainer" in deploy.drivable_backends()
-
-
-# --- si#293: the gate resolves against what the PRODUCT claims, too ------------------------------------
-
-
-def _provider_with(backend_name: str, valid: tuple[str, ...]):
-    from simplon import environments as env_mod
-
-    class _One(env_mod.Provider):
-        def current(self, name=None):
-            return env_mod.Environment("dev", backend_name, "")
-
-    return _One("X_ENV", shim="", valid_backends=valid)
-
-
-def test_a_backend_the_product_declares_valid_passes_even_with_an_empty_registry():
-    """THE REGRESSION si#293 IS, and it shipped in 0.17.0.
-
-    `drivable` is what the KERNEL can resolve, and the kernel ships no `local` - that name is what a
-    product's OWN backend answers to. Before si#288 the gate skipped `local` entirely for that reason.
-    Folding it into a kernel-computed set disabled every environment-bound command for a product that had
-    not registered one, which is exactly what `simplon init` scaffolds: `dev: { backend: local }` and no
-    registry. A consumer measured four dead commands.
-    """
-    _provider_with("local", (envs_mod.LOCAL,)).require_drivable(("portainer",))
-
-
-def test_the_scaffolded_shape_can_run_its_own_commands():
-    """The shape `bootstrap.py` writes, driven rather than described. If this goes red, `simplon init`
-    produces a product that dies on its first environment-bound command - which is how 0.17.0 went out."""
-    from simplon import bootstrap
-
-    assert "backend: local" in bootstrap._MANIFEST
-
-    _provider_with("local", (envs_mod.LOCAL,)).require_drivable(("portainer",))
-
-
-def test_a_tag_neither_claimed_nor_shipped_still_dies_clean():
-    """What #11 meant to refuse, unchanged. The product has not claimed `exoscale` and nothing ships it,
-    so a CD command aimed at it fails here rather than mis-running another backend's path."""
-    import pytest as _pytest
-
-    with _pytest.raises(SystemExit):
-        _provider_with("exoscale", (envs_mod.LOCAL,)).require_drivable(("portainer",))
-
-
-def test_the_gate_is_where_the_two_lists_are_read_against_each_other():
-    """THE SECOND HALF OF THE REPORT, and the reason this is not a special case for `local`.
-
-    A product's `valid_backends` is hand-written; the kernel's drivable set is derived. They could
-    disagree - one matrix valid to the parser and undrivable to the gate, out of the same file, with
-    nowhere anybody could read the two together. The gate is that place now, so a tag either side claims
-    is accepted and only a tag NEITHER claims is refused.
-    """
-    # Each direction alone, and each would fail if the gate read only the other list. The kernel drives
-    # `portainer` and the product never claimed it; the product claims `local` and the kernel drives
-    # nothing of the sort. Both pass, and a gate reading one list would refuse one of them.
-    _provider_with("portainer", ()).require_drivable(("portainer",))
-    _provider_with("local", (envs_mod.LOCAL,)).require_drivable(())
-
-
 def test_every_backend_a_matrix_names_can_be_checked_against_what_a_run_resolves():
     """THE SHAPE THAT WOULD HAVE CAUGHT si#293, and the reason it is here rather than over this
     repository's own manifest.
@@ -303,3 +185,57 @@ def test_every_backend_a_matrix_names_can_be_checked_against_what_a_run_resolves
 
     assert not undrivable, (f"these environments name a backend nothing can resolve: {undrivable} "
                             f"(resolvable: {sorted(resolvable)})")
+
+
+# --- si#298: the check sits where the kernel needs an instance ----------------------------------------
+#
+# Measured over the eight manifests this family can reach: ONE product resolves a command to a `deploy:*`
+# task, and one calls `backend.register`. The other five have their own `up`, `down` and `install` in an
+# env-first group - bodies the kernel does not dispatch and has no registry for. So a gate in `cli.main`
+# asked a question about the kernel's dispatch and applied it to commands the kernel never dispatches,
+# and both of this week's failures are that mismatch from either end.
+
+
+def test_a_matrix_is_parsed_against_what_it_itself_declares_by_default():
+    """The default that stops one document being valid to one parser and invalid to another.
+
+    si#294, measured by a consumer: the product's provider validated the matrix against its
+    `valid_backends` and the kernel re-validated it against the drivable set, so one file was valid and
+    invalid at the same time with nowhere to read the two against each other."""
+    document = {"default": "dev",
+                "environments": {"dev": {"backend": "local"}, "prod": {"backend": "portainer"}}}
+
+    matrix = parse_data(document)
+
+    assert sorted(matrix.environments) == ["dev", "prod"]
+
+
+def test_a_caller_with_a_narrower_set_still_gets_its_refusal():
+    """The default validates nothing the load did not; a caller that genuinely knows less still says so."""
+    document = {"default": "dev", "environments": {"dev": {"backend": "local"}}}
+
+    with pytest.raises(ValueError) as exc:
+        parse_data(document, ("portainer",))
+
+    assert "local" in str(exc.value)
+
+
+def test_the_missing_instance_names_the_registration_and_not_the_matrix():
+    """THE CONSUMER'S SECOND FINDING. Running a kernel deploy command against an unregistered `local`
+    used to produce `parse_data`'s refusal - *"backend must be 'portainer', got 'local'"* - which names a
+    REQUIREMENT where the cause is a MISSING REGISTRATION, and sends the reader to the `environments:`
+    section while what is missing is a `backend.register` call in the composition root. Their words: it
+    sends you to the wrong neighbour.
+
+    `backend.resolve` always had the sentence that fits. It could not be reached, because the re-parse
+    refused first."""
+    from simplon import backend as backend_mod
+
+    env = envs_mod.Environment("dev", "local", "")
+
+    with pytest.raises(ValueError) as exc:
+        backend_mod.resolve(env, {"portainer": object()})
+
+    said = str(exc.value)
+    assert "no backend registered for 'local'" in said
+    assert "must be" not in said, "the refusal names a requirement again instead of the cause"
