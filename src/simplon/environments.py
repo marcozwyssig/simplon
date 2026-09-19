@@ -192,11 +192,41 @@ def _names(raw: object, key: str, where: str) -> tuple[str, ...]:
     return tuple(names)
 
 
-def parse_data(data: Mapping[str, object], valid_backends: Iterable[str]) -> Registry:
+def declared_backends(data: "Mapping[str, object]") -> tuple[str, ...]:
+    """The backend tags this document's own matrix uses - the set it is already valid against.
+
+    ONE COPY, and it took writing it twice in a day to notice. `workflowgen` needed it to parse a matrix
+    while generating a rollout and `tasks.deploy` needed it to parse one before dispatching, and both
+    grew their own `_declared_backends`. Two readings of "what backends does this document name" is the
+    second source this repository hunts, in a function whose whole job is to avoid ruling twice on one
+    thing.
+
+    It also keeps the reading in the module the refusal census already accounts for: a caller that pulled
+    `data["environments"]` apart itself would become a manifest reader in its own right, and si#61's
+    guard says so out loud - which is exactly how this was found.
+    """
+    section = data.get("environments") if isinstance(data, Mapping) else None
+    declared: "Mapping[object, object]" = section if isinstance(section, Mapping) else {}
+    names = {str(spec.get("backend", "")).strip()
+             for spec in declared.values() if isinstance(spec, Mapping)}
+    return tuple(sorted(n for n in names if n)) or (LOCAL,)
+
+
+def parse_data(data: Mapping[str, object],
+               valid_backends: "Iterable[str] | None" = None) -> Registry:
     """Build the registry from an ALREADY-parsed mapping - a product's standalone environments.yml OR the
     `environments:`/`default:` section of its one manifest (simplon.context.manifest_data()). Validates
     that every backend is one of valid_backends and that `default` names a real environment, so a bad
-    descriptor fails loudly here, not deep in a deployment."""
+    descriptor fails loudly here, not deep in a deployment.
+
+    `valid_backends` DEFAULTS TO WHAT THE DOCUMENT ITSELF DECLARES (si#298), which validates nothing the
+    load did not - and that is the point rather than a weakness. A caller that re-validates a matrix
+    against a DIFFERENT set is how one file came to be valid to the product's own parser and invalid to
+    the kernel at the same time, out of the same document, with nowhere to read the two against each
+    other; a consumer measured that (si#294). A caller with a genuinely narrower set still passes one.
+    """
+    if valid_backends is None:
+        valid_backends = declared_backends(data)
     valid = tuple(valid_backends)
     # The carriers are read FIRST so an environment pointing at one that is not declared is refused by
     # name rather than failing later with an empty lookup. `declared` returns nothing for an absent
@@ -337,8 +367,10 @@ class Provider:
         product has not implemented dies clean instead of mis-running the local path.
 
         STILL HERE AND STILL THE PRODUCT'S TO CALL: a body that only works against one backend says so.
-        What changed in si#288 is the CLI's own gate, which used to call this with `LOCAL` for every
-        environment - see `require_drivable`.
+        The CLI drives no backend gate any more (si#298) - it used to call this with `LOCAL` for every
+        environment, then briefly asked a drivability question instead, and the measurement ended both:
+        five of eight products have only their OWN commands in an env-first group, so a gate there ruled
+        on bodies the kernel does not dispatch. What the kernel dispatches, it checks in `tasks.deploy`.
         """
         from simplon import log  # local: keeps this module importable by anything, log imports nothing
 
@@ -346,51 +378,6 @@ class Provider:
         env = self.current()
         if env.backend != wanted:
             log.die(f"environment '{env.name}' needs backend '{wanted}', has '{env.backend}'")
-
-    def require_drivable(self, drivable: "Iterable[str]") -> None:
-        """Gate a CD command on whether the active environment's backend CAN BE DRIVEN (si#288).
-
-        WHAT THIS REPLACES, and why the old question stopped being the right one. The CLI asked
-        `is_local`, and on a no for any non-local environment it demanded `LOCAL` - which was sound when
-        `local` was the only backend anybody had implemented (#11): a CD command aimed at an
-        unimplemented target should fail clean rather than mis-run the local containerlab path.
-
-        The kernel now ships a backend of its own and resolves a product's registrations beside it, so
-        "is this backend local" and "can this backend be driven" are two questions. Asking the first one
-        made `deploy up` unreachable for `backend: portainer` - the feature 0.16.0 released, blocked by
-        the CLI 0.16.0 assembles, and every product adopting it needed a `Provider` subclass to get past
-        its own kernel.
-
-        The replacement refuses exactly what #11 meant to refuse and nothing else: a backend nobody has
-        implemented. It is strictly more permissive for backends that resolve and identical for those
-        that do not.
-
-        `self._valid` IS PART OF THE SET, and leaving it out was si#293 - a regression this kernel
-        shipped in 0.17.0. `drivable` is what the KERNEL can resolve, and the kernel ships no `local` and
-        never did: that name is what a product's OWN backend answers to. Before si#288 the gate skipped
-        `local` entirely for exactly that reason, so folding it into a set the kernel computes disabled
-        every environment-bound command for a product that had not registered one - which is precisely
-        what `simplon init` scaffolds. A consumer measured four dead commands against `dev`.
-
-        `valid_backends` is the product SAYING WHICH TAGS ITS MATRIX MAY NAME, so a tag in it is claimed,
-        and a claimed tag that nobody implemented is `backend.resolve`'s refusal at dispatch, where it
-        was before and where it names the right file. Reading the two together also closes the second
-        half of that report: the product's hand-written list and the kernel's derived set could diverge -
-        one matrix valid to the parser and undrivable to the gate, out of the same file, with nowhere to
-        read them against each other. Now the gate is that place.
-
-        #11 IS STILL PROTECTED, and by an earlier refusal rather than by this one: a matrix naming a tag
-        the product did NOT declare valid never reaches here, because `parse_data` refuses it first.
-        """
-        from simplon import log  # local: keeps this module importable by anything, log imports nothing
-
-        known = tuple(drivable) + self._valid
-        env = self.current()
-        if env.backend not in known:
-            log.die(f"environment '{env.name}' has backend '{env.backend}', which nothing here can "
-                    f"drive - this run resolves {', '.join(sorted(set(known))) or 'no backend at all'}. "
-                    f"Register an implementation for it with `simplon.backend.register`, or point this "
-                    f"environment at a backend that is already resolvable")
 
     def command_hint(self, env: str, command: str) -> str:
         """How to reach `command` for environment `env` ON THE CLI, in the form that actually dispatches.

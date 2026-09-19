@@ -23,6 +23,71 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.19.0
+
+### The backend gate is gone from the CLI, because it ruled on commands the kernel does not run (si#298)
+
+Two repairs in one week ended in a check that could not fail, and the measurement that found it came from
+a consumer noticing the gate no longer closed for any of their environments. It was not their case.
+
+```
+Provider.registry()          parses the matrix against  self._valid
+Provider.require_drivable()  accepted                   drivable + self._valid
+```
+
+`current()` returns an environment out of `registry()`, and `parse_data` refuses any backend outside
+`self._valid`. So `env.backend` was in `self._valid` **by construction**, and the gate added that same
+set to what it accepted. si#288 asked the wrong question and broke `backend: local`; si#293 answered the
+right one and made the gate unreachable. *A new assertion that has never failed is not yet an assertion*
+- and one left in place reads as protection.
+
+**The tests that guarded it asserted an impossible state.** Their helper overrode `current()` to return
+an environment whose backend need not be in `valid_backends`, which `registry()` cannot produce. They
+were seen red against the mutation; the mutation was real and the input was not.
+
+#### What the measurement said
+
+Over all eight manifests and repositories this family can reach:
+
+| | |
+|---|---|
+| products calling `simplon.backend.register` | **1** - and only since this week, forced by si#288 |
+| products resolving a command to a `deploy:*` task | **1** - the same one |
+| products with their OWN commands in an env-first group | 5 |
+
+netctl does not register: it has its own `REGISTRY` and its own `resolve()`, satisfying the kernel's
+Protocol and handing the kernel nothing. `backend.py`'s docstring said it was *"the only consumer"*,
+which is true of the Protocol and reads as if it were true of `register()`.
+
+So the gate asked a question about the **kernel's dispatch** and applied it to **every command in an
+env-first group** - which for five of eight products are their own `up`, `down` and `install`. Both
+failures are that mismatch from either end.
+
+The check now sits where the kernel actually resolves a backend to an instance: `tasks.deploy`.
+`require_drivable` is gone, and so is the protocol entry - nothing called it.
+
+#### The refusal a person meets now names the cause
+
+Also the consumer's, and it needed the same move. A kernel deploy command against an unregistered `local`
+produced:
+
+> environment 'dev': backend must be 'portainer', got 'local'
+
+That names a **requirement** where the cause is a **missing registration**, and sends the reader to the
+`environments:` section while what is missing is a `backend.register` call in the composition root. Their
+words: *it sends you to the wrong neighbour*. `backend.resolve` always had the sentence that fits and
+could not be reached, because `tasks.deploy` re-parsed the matrix against the drivable set first.
+
+`parse_data`'s `valid_backends` now **defaults to what the document itself declares**, so a caller does
+not re-validate a matrix against a different set than the one it was loaded against - which is si#294,
+the consumer's other finding, closed by the same line.
+
+#### One copy of a function I wrote twice in a day
+
+`declared_backends` lived in `workflowgen` and in `tasks.deploy`, written hours apart for the same
+question. It is in `environments` once now. The refusal census found it: pulling the document apart in
+`tasks.deploy` made that module a manifest reader in its own right, and si#61's guard said so.
+
 ## 0.18.0
 
 ### `backend: local` was refused by the gate that 0.17.0 shipped (si#293)
