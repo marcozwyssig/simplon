@@ -1681,3 +1681,186 @@ env_groups: []
         workflowgen.derive(only_attended, ["test"], where="w")
 
     assert "no step at all" in str(exc.value)
+
+
+# --- a rollout: the environment says WHAT, the flow says in which ORDER --------------------------------
+#
+# The owner's shape (2026-09-19): two questions, two places. `deploys:` in the matrix is what an
+# environment receives; `flow:` on a workflow is the order environments are reached and which stage a
+# person releases. Neither knows the other until the generator puts them together, which is what keeps
+# the version out of the flow and the order out of the matrix.
+
+_ROLLOUT_PRODUCT = """
+tasks:
+  gate: { impl: "simplon.test_impls:nullary", help: "Gate.", unattended: true }
+groups:
+  test:
+    commands:
+      gate: { task: gate }
+  deploy:
+    commands:
+      up: { task: "deploy:up" }
+env_groups: [deploy]
+"""
+
+_ROLLOUT_SECTION = """
+    default: test
+    carriers:
+      hausportainer: { portainer: { url_from: PORTAINER } }
+    environments:
+      test: { backend: portainer, carrier: hausportainer, stack: app-test,
+              repository: { url: github.com/me/app }, deploys: latest }
+      prod: { backend: portainer, carrier: hausportainer, stack: app-prod,
+              repository: { url: github.com/me/app }, deploys: "1.4.0" }
+    workflows:
+      rollout:
+        on: { release: { types: [published] } }
+        runner: { kind: github-ubuntu }
+        flow:
+          - to: test
+          - to: prod
+            approval: true
+    """
+
+
+@pytest.fixture(scope="module")
+def rollout_manifest():
+    return manifest_mod.load(_ROLLOUT_PRODUCT, catalogue=catalogue_mod.load())
+
+
+def _rolled(manifest, body: str = _ROLLOUT_SECTION) -> str:
+    data = _section(body)
+    picked = next(w for w in workflowgen.parse(data) if w.key == "rollout")
+    return workflowgen.render(picked, manifest=manifest, product="app", source="app.yaml",
+                              environments=data)
+
+
+def test_a_stage_becomes_a_job_that_deploys_what_its_environment_declares(rollout_manifest):
+    """THE TWO HALVES MEETING. `flow:` named `test` and `prod`; the matrix said `latest` and `1.4.0`.
+    Neither declaration carries the other's answer."""
+    doc = yaml.safe_load(_rolled(rollout_manifest))
+
+    runs = {name: [s["run"] for s in job["steps"] if "run" in s]
+            for name, job in doc["jobs"].items()}
+
+    assert runs == {"deploy-test": ["./app.sh deploy up --version latest"],
+                    "deploy-prod": ["./app.sh deploy up --version 1.4.0"]}
+
+
+def test_the_stages_are_chained_rather_than_merely_ordered_in_the_file(rollout_manifest):
+    """GitHub runs jobs in PARALLEL unless told otherwise. A rollout whose order lived only in the
+    emitted order would reach production and staging at the same time and look correct in the file."""
+    doc = yaml.safe_load(_rolled(rollout_manifest))
+
+    assert doc["jobs"]["deploy-prod"]["needs"] == "deploy-test"
+    assert "needs" not in doc["jobs"]["deploy-test"]
+
+
+def test_a_stage_that_needs_a_person_carries_githubs_own_environment(rollout_manifest):
+    """`approval: true` gates nothing here - it names GitHub's environment, which is where an account
+    configures required reviewers, wait timers and the secrets that stage may see. Who may approve is an
+    account setting and has no business in a manifest, which is also the only place it can be changed
+    without a commit."""
+    doc = yaml.safe_load(_rolled(rollout_manifest))
+
+    assert doc["jobs"]["deploy-prod"]["environment"] == "prod"
+    assert "environment" not in doc["jobs"]["deploy-test"]
+
+
+def test_each_job_names_the_environment_it_deploys_to(rollout_manifest):
+    doc = yaml.safe_load(_rolled(rollout_manifest))
+
+    envs = {name: [s["env"] for s in job["steps"] if "env" in s][0] for name, job in doc["jobs"].items()}
+
+    assert envs["deploy-test"]["DELIVERY_ENVIRONMENT"] == "test"
+    assert envs["deploy-prod"]["DELIVERY_ENVIRONMENT"] == "prod"
+
+
+def test_the_version_is_a_literal_and_never_an_interpolated_input(rollout_manifest):
+    """THE REASON THE VERSION LIVES IN THE MATRIX. The obvious alternative is a `workflow_dispatch` input
+    interpolated into the command, which is the classic Actions script injection - in a job holding
+    deployment credentials, written by the kernel itself. Nothing the kernel emits may contain a GitHub
+    expression in a `run:` line."""
+    text = _rolled(rollout_manifest)
+
+    for line in text.splitlines():
+        if line.strip().startswith("run:"):
+            assert "${{" not in line, f"the kernel emitted an expression into a run line: {line}"
+
+
+def test_a_rollout_is_something_github_would_run(rollout_manifest):
+    doc = yaml.safe_load(_rolled(rollout_manifest))
+
+    assert sorted(doc["jobs"]) == ["deploy-prod", "deploy-test"]
+    for job in doc["jobs"].values():
+        assert job["runs-on"] == "ubuntu-latest"
+        assert job["steps"]
+
+
+def test_a_stage_naming_no_declared_environment_is_refused(rollout_manifest):
+    with pytest.raises(ValueError) as exc:
+        _rolled(rollout_manifest, _ROLLOUT_SECTION.replace("- to: prod", "- to: staging"))
+
+    assert "staging" in str(exc.value)
+    assert "test" in str(exc.value)
+
+
+def test_an_environment_that_does_not_say_what_it_receives_is_refused(rollout_manifest):
+    """The two halves again, from the missing side: the flow said prod is a stage, the matrix said
+    nothing about what prod gets, and the kernel will not pick a version on a product's behalf."""
+    with pytest.raises(ValueError) as exc:
+        _rolled(rollout_manifest, _ROLLOUT_SECTION.replace('deploys: "1.4.0"', 'description: prod'))
+
+    assert "prod" in str(exc.value)
+    assert "deploys" in str(exc.value)
+
+
+def test_a_products_own_job_stands_beside_the_rollout(rollout_manifest):
+    """NOT REFUSED, and si#267 is why. A product wanting the rollout plus a notification job of its own
+    is saying something the kernel can honour; forbidding it sends them back to writing the whole file.
+    The generated names are stable, so the product's job hangs `needs:` on one."""
+    doc = yaml.safe_load(_rolled(rollout_manifest, _ROLLOUT_SECTION + """
+        jobs:
+          announce:
+            runs-on: ubuntu-latest
+            needs: deploy-prod
+            steps:
+              - run: echo done
+    """))
+
+    assert sorted(doc["jobs"]) == ["announce", "deploy-prod", "deploy-test"]
+    assert doc["jobs"]["announce"]["needs"] == "deploy-prod"
+
+
+@pytest.mark.parametrize("bad, fragment", [
+    ("flow: 7", "ORDERED list"),
+    ("flow: []", "ORDERED list"),
+    ("flow: [{ approval: true }]", "declares no `to:`"),
+    ("flow: [{ to: test }, { to: test }]", "a second time"),
+    ("flow: [{ to: test, approval: yes-please }]", "true or false"),
+    ("flow: [{ to: test, version: latest }]", "which a stage does not take"),
+])
+def test_a_flow_that_does_not_describe_a_rollout_is_refused(bad, fragment):
+    """The last one is the pair that matters: `version:` on a stage reads as entirely plausible and is
+    the one key a stage may not take, because the environment already answers it."""
+    with pytest.raises(ValueError) as exc:
+        workflowgen.parse(_section(_ROLLOUT_SECTION.replace(
+            "flow:\n          - to: test\n          - to: prod\n            approval: true", bad)))
+
+    assert fragment in str(exc.value)
+
+
+def test_a_parameter_the_command_does_not_declare_is_refused(rollout_manifest):
+    """si#40's join, one level in: a workflow may only run a command the manifest declares, and now it
+    may only hand that command a parameter the command declares."""
+    with pytest.raises(ValueError) as exc:
+        workflowgen.render(
+            workflowgen.Workflow(key="w", path=".github/workflows/w.yml", on=["push"],
+                                 jobs=(workflowgen.Job(
+                                     name="j", runs_on="ubuntu-latest",
+                                     steps=(workflowgen.Step(command="deploy up",
+                                                             params={"relase": "1.4.0"}),)),)),
+            manifest=rollout_manifest, product="app", source="app.yaml")
+
+    assert "relase" in str(exc.value)
+    assert "version" in str(exc.value)

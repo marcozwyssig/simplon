@@ -552,6 +552,61 @@ A **step** is the exception, and deliberately: it has exactly one body, so a key
 modifier nor a body is refused rather than carried. Two bodies - `command:` beside `uses:` or `run:` -
 are refused for the same reason.
 
+**`flow:` on a workflow rolls a release out to your environments, in order.** The kernel writes one job
+per stage:
+
+```yaml
+environments:
+  test: { backend: portainer, carrier: haus, stack: app-test, deploys: latest }
+  prod: { backend: portainer, carrier: haus, stack: app-prod, deploys: "1.4.0" }
+
+workflows:
+  rollout:
+    on: { release: { types: [published] } }
+    runner: { kind: github-ubuntu }
+    flow:
+      - to: test
+      - to: prod
+        approval: true
+```
+
+**Two declarations, because they answer two questions.** The environment says **what** it receives, with
+`deploys:` — `latest` for the newest published version, or a pinned tag. The flow says in **which order**
+environments are reached and which stage a person releases. A staging instance wants the newest
+publication and a production one wants a chosen tag, and that is true however the rollout is triggered;
+putting the version in the flow as well would give one truth two homes.
+
+What comes out is `deploy-test` and `deploy-prod`, the second with `needs: deploy-test` — chained rather
+than merely ordered in the file, because **GitHub runs jobs in parallel unless told otherwise** and a
+rollout whose order lived only in the emitted order would reach production and staging at once while
+looking correct.
+
+`approval: true` gates nothing here: it gives the job GitHub's own `environment:`, which is where an
+account configures required reviewers, wait timers and the secrets that stage may see. Who may approve is
+an account setting, and it is the only half that can be changed without a commit.
+
+{{< callout type="warning" >}}
+**The version is a literal, and that is a security property rather than a simplification.** It comes from
+`deploys:` in your manifest, so the kernel writes `deploy up --version 1.4.0` with a value nobody outside
+the repository chose. The obvious alternative — a `workflow_dispatch` input interpolated into the command
+— is the classic Actions script injection, in a job holding deployment credentials, emitted by the
+kernel on your behalf. A product that wants a person to choose the version at dispatch can still do it,
+in a `jobs:` block of its own, where the hazard is visible in its own file.
+{{< /callout >}}
+
+**Your own jobs stand beside it.** A workflow may declare `flow:` and `jobs:` together — the generated
+names are stable, so a notification job hangs `needs: deploy-prod` on one. And a step may now hand a
+command a parameter:
+
+```yaml
+        - command: deploy up
+          params: { version: "1.4.0" }
+```
+
+The parameter **name is checked against what the command declares**, which is si#40's join one level in:
+a renamed parameter breaks generation instead of becoming a `run:` line that fails on a runner three
+minutes into a job.
+
 **`derive:` on a step writes the pipeline the command tree already implies** (si#267). A step that
 declares it is not one step but a placeholder for however many the named groups carry:
 

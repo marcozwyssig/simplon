@@ -156,6 +156,10 @@ MODULES: dict[str, tuple[str, ...]] = {
     "tasks.site": ("site",),
     "tasks.testrun": ("suites", "layout"),   # `layout:` decides where its merged report lands
     "tasks.workflows": ("workflows",),  # hands the document to `workflowgen.parse`
+    # A rollout workflow (`flow:`) is written from the ENVIRONMENT MATRIX: the flow says the order, the
+    # matrix says what each environment receives. So the generator reads the two sections the matrix
+    # lives in, and only when a workflow declares stages - a product with no `flow:` hands it nothing.
+    "workflowgen": ("workflows", "environments", "default", "carriers"),
     "tracker": ("tracker",),
 }
 
