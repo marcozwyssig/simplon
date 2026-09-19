@@ -85,6 +85,22 @@ class Environment(NamedTuple):
     repository: "Repository | None" = None
     required: tuple[str, ...] = ()
     optional: tuple[str, ...] = ()
+    #: WHAT THIS ENVIRONMENT RECEIVES, as a version selector the deploy command already understands:
+    #: `latest` for the newest published version, or a literal tag for one that is pinned. Empty means
+    #: the environment says nothing and whoever runs `deploy up` names the version, which is every
+    #: manifest written before this key existed.
+    #:
+    #: WHY IT IS HERE AND NOT IN THE FLOW. The environment is the thing that has an opinion: a staging
+    #: instance wants whatever was published last and a production one wants the tag somebody chose, and
+    #: that is true however the deployment is triggered. The flow says in which ORDER environments are
+    #: reached and which of them a person has to release; it does not say what they get, because then two
+    #: places would and they would disagree.
+    #:
+    #: AND IT IS WHAT MAKES A GENERATED PIPELINE SAFE TO RENDER. A version that comes from the manifest is
+    #: a literal the kernel writes into the run line. A version that came from a workflow input would be
+    #: `${{ inputs.version }}` interpolated into a shell command in a job holding deployment credentials,
+    #: which is the classic Actions injection - and the kernel would be the one writing it.
+    deploys: str = ""
 
 
 class Registry(NamedTuple):
@@ -223,9 +239,17 @@ def parse_data(data: Mapping[str, object], valid_backends: Iterable[str]) -> Reg
             raise ValueError(
                 f"environment '{name}': declares `required:`/`optional:` and no `stack:`, so there is no "
                 f"deployment for those values to be given to")
+        # NO REFUSAL OF `deploys: local`, and it was written and then struck. It reads as obviously wrong
+        # for a rollout - a pipeline handing a deployment the current code base it did not build - but
+        # CLAUDE.md's first question is whether it forbids something a product might legitimately want,
+        # and a product whose backend builds locally might mean exactly that. The case it IS wrong for
+        # already refuses downstream, in `PortainerBackend.deploy`, with the reason in hand: "Portainer
+        # clones, so there is nothing on this machine for it to deploy". A second refusal here would be
+        # the same verdict with less context.
+        deploys = str(spec.get("deploys", "")).strip()
         envs[str(name)] = Environment(str(name), backend, str(spec.get("description", "")),
                                       carrier=carrier, stack=stack, repository=repository,
-                                      required=required, optional=optional)
+                                      required=required, optional=optional, deploys=deploys)
     if not envs:
         raise ValueError("environment registry defines no environments")
     default = str(data.get("default", "")).strip()

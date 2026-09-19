@@ -25,6 +25,75 @@ it is the one section held only to existing.
 
 ## 0.18.0
 
+### A release rolls out to your environments, from the manifest (si#296)
+
+`workflows:` could describe a CI run and could not describe a deployment. Measured before anything was
+built: `deploy up` **requires** a version selector, a `command:` step could pass **no parameter at all**,
+and an env-first command has no spelling in a step (`command: prod deploy up` resolves to a group
+`prod.deploy` no manifest has). So a rollout was expressible only as a hand-typed `run:` line - the
+unchecked string si#40 exists to abolish, for the command with the largest consequences.
+
+```yaml
+environments:
+  test: { ..., deploys: latest }
+  prod: { ..., deploys: "1.4.0" }
+
+workflows:
+  rollout:
+    on: { release: { types: [published] } }
+    runner: { kind: github-ubuntu }
+    flow:
+      - to: test
+      - to: prod
+        approval: true
+```
+
+**Two declarations, because they answer two questions.** The environment says *what* it receives; the
+flow says in *which order* and which stage a person releases. A staging instance wants the newest
+publication and a production one a chosen tag, whatever triggers the rollout - so the version is not in
+the flow, and the order is not in the matrix.
+
+Out comes `deploy-test` and `deploy-prod`, the second with `needs: deploy-test`. **Chained rather than
+ordered in the file**: GitHub runs jobs in parallel unless told otherwise, so a rollout whose order lived
+only in the emitted order would reach production and staging at once and look correct.
+
+`approval: true` gives the job GitHub's own `environment:`, which is where an account configures required
+reviewers, wait timers and the secrets that stage may see - the only half that can be changed without a
+commit.
+
+#### The version is a literal, and that decided the design
+
+It comes from `deploys:`, so the kernel writes `deploy up --version 1.4.0` with a value nobody outside
+the repository chose. The alternative that was offered and rejected was a `workflow_dispatch` input
+interpolated into the command - the classic Actions script injection, in a job holding deployment
+credentials, **emitted by the kernel on a product's behalf**. A test holds it: nothing the kernel writes
+into a `run:` line may contain a GitHub expression.
+
+#### A step can hand a command a parameter
+
+`params: { version: "1.4.0" }`, with the **name checked against what the command declares** - si#40's
+join one level in. A renamed parameter breaks generation instead of becoming a `run:` line that fails on
+a runner three minutes into a job.
+
+#### Two refusals were written and struck
+
+Both were expression rules by CLAUDE.md's first question, and deleting was cheaper than justifying:
+
+* **`deploys: local`** reads as obviously wrong for a pipeline and is something a product with a
+  locally-building backend might legitimately mean. The case it *is* wrong for already refuses in
+  `PortainerBackend.deploy`, with more context than a second refusal would have had.
+* **`flow:` beside `jobs:`** would have forbidden a rollout plus a product's own notification job -
+  si#267's lesson repeated. The generated names are stable, so a product hangs `needs:` on one.
+
+Six new refusals, all **diagnosis**; the census moves 193 → 199 with no new expression rule.
+
+#### What this kernel cannot do with it
+
+**simplon declares no `environments:` section at all**, so it cannot run this against itself - the thing
+this repository otherwise insists on. The feature is driven against a fixture product instead: ten
+assertions, five of them seen red by breaking the property each protects. That is weaker than dogfooding,
+and it is said here rather than left to be discovered.
+
 ### The four groups a product reaches for, and where each one goes (si#286)
 
 A product adopting the kernel tends to want the same four groups beyond the six the taxonomy declares -

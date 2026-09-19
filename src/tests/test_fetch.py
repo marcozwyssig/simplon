@@ -549,11 +549,24 @@ def test_an_ordinary_failure_to_land_is_not_dressed_up_as_a_hold(base, tmp_path,
         # permission failure as a sync client. Seen red against exactly that mutation.
         raise OSError(errno.EACCES, "Permission denied")
 
-    monkeypatch.setattr(os, "replace", refused)
-
     # act
-    with pytest.raises(fetch.DownloadError) as raised:
-        fetch.download(f"{base}/whole", dest)
+    #
+    # THE PATCH IS SCOPED TO THE CALL, and that is a repair rather than a style. `monkeypatch.setattr`
+    # holds until the test's own teardown, and `os.replace` is not only this product's - allure's
+    # listener writes its result files with it from `pytest_fixture_post_finalizer`, which runs INSIDE
+    # that window. On the self-hosted runner the two met: every assertion passed and the test ended in
+    # `PermissionError` raised by this stub, out of a plugin that has nothing to do with the subject.
+    #
+    # A stub that can reach code the test is not about is not a narrow stub. The context manager undoes
+    # it before the function returns, so teardown sees the real `os.replace`.
+    #
+    # ITS NEIGHBOUR TWO TESTS UP ALREADY DOES THIS RIGHT, by delegating every target that is not its own
+    # (`return real(src, target, ...)`), which is why that one never met allure. So this was the odd one
+    # out rather than a shape the file had chosen - measured, not assumed.
+    with monkeypatch.context() as patched:
+        patched.setattr(os, "replace", refused)
+        with pytest.raises(fetch.DownloadError) as raised:
+            fetch.download(f"{base}/whole", dest)
 
     # assert
     message = str(raised.value)

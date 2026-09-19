@@ -55,6 +55,7 @@ TWO MEASURED TRAPS, both live in this file.
 from __future__ import annotations
 
 import difflib
+import shlex
 import textwrap
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -148,6 +149,11 @@ class Step(NamedTuple):
     #: step there is nothing to refuse: the product writes where the derived block goes, so the order
     #: stays the product's and the kernel decides nothing it was not asked to.
     derive: tuple[str, ...] = ()
+    #: Parameter values this step hands the command, by parameter NAME. Rendered as `--name value` after
+    #: the resolved command line, with the name checked against what the command actually declares - the
+    #: same join `command:` already is, one level in. A workflow can no longer pass a parameter that does
+    #: not exist, which a hand-typed `run:` line could and did.
+    params: Mapping[str, str] = {}
 
 
 @dataclass(frozen=True)
@@ -183,6 +189,14 @@ class Workflow:
     name: str = ""
     note: str = ""
     on: object = None
+    #: si#296: the environments this release is rolled out to, in order. A workflow carrying stages has
+    #: no `jobs:` of its own - the kernel writes one per stage, from the environment matrix, which it
+    #: only has at render.
+    flow: "tuple[Stage, ...]" = ()
+    #: The machine the generated stage jobs run on, and whatever the runner kind contributes. Declared at
+    #: WORKFLOW level because the kernel writes the jobs: there is no job for a product to put it on.
+    rollout_runs_on: "str | tuple[str, ...] | Mapping[str, object]" = ""
+    rollout_env: Mapping[str, object] = field(default_factory=dict)
     jobs: tuple[Job, ...] = ()
     handwritten: str = ""
     extras: Mapping[str, object] = field(default_factory=dict)
@@ -286,20 +300,96 @@ def _workflow(key: str, body: object) -> Workflow:
             f"{where}: declares no `on:` trigger. The kernel does not invent one - whether a tag "
             f"publishes, or a push runs the suite, is this product's statement and not something that "
             f"can be derived from a command tree")
+    # `flow:` AND `jobs:` TOGETHER ARE ALLOWED, and the refusal that stood here was struck for si#267's
+    # reason: a product wanting the rollout plus a notification job of its own was saying something the
+    # kernel could honour, and forbidding it sent them back to writing the whole file. The generated
+    # stage jobs carry stable names (`deploy-<environment>`), so a product's own job hangs `needs:` on
+    # one and the order stays the product's.
+    stages = _stages(body, where)
+    runner, rollout_runs_on = ((None, "") if not stages
+                               else _machine(body, body.get("runs-on") or body.get("runs_on"), where))
+    rollout_env = _with_runner_env(runner, {}, where).get("env", {}) if runner is not None else {}
     jobs = body.get("jobs")
-    if not isinstance(jobs, Mapping) or not jobs:
-        raise ValueError(f"{where}: `jobs:` must be a non-empty mapping of job name -> its declaration")
+    if not stages and (not isinstance(jobs, Mapping) or not jobs):
+        raise ValueError(
+            f"{where}: `jobs:` must be a non-empty mapping of job name -> its declaration, or "
+            f"`{FLOW_KEY}:` must name the environments this release is rolled out to")
 
     return Workflow(key=key, path=path, name=str(body.get("name") or key),
-                    note=str(body.get("note") or ""), on=trigger,
-                    jobs=tuple(_job(str(name), spec, where) for name, spec in jobs.items()),
+                    note=str(body.get("note") or ""), on=trigger, flow=stages,
+                    rollout_runs_on=rollout_runs_on,
+                    rollout_env=rollout_env if isinstance(rollout_env, Mapping) else {},
+                    jobs=tuple(_job(str(name), spec, where)
+                               for name, spec in (jobs or {}).items()) if isinstance(jobs, Mapping)
+                         else (),
                     extras=_workflow_extras(body))
 
 
 #: The workflow-level keys this module reads itself. Everything else GitHub allows at that level -
 #: `permissions:`, `concurrency:`, `defaults:`, `env:`, `run-name:` - is the PRODUCT's and is carried
 #: through, exactly as a job's unknown keys are.
-_OWN_WORKFLOW_KEYS = frozenset({"path", "handwritten", "name", "note", "on", "jobs", True})
+FLOW_KEY = "flow"
+
+
+class Stage(NamedTuple):
+    """One environment a release is rolled out to, and whether a person releases it.
+
+    `approval` does not gate anything here: it says the generated job carries GitHub's own
+    `environment:`, which is where an account configures required reviewers, wait timers and the secrets
+    that stage may see. The kernel names the environment and stops - who may approve is an account
+    setting and has no business in a manifest, which is also the only place it can be changed without a
+    commit.
+    """
+
+    to: str
+    approval: bool = False
+
+
+def _stages(body: Mapping[object, object], where: str) -> "tuple[Stage, ...]":
+    """`flow: [{to: test}, {to: prod, approval: true}]` - the ORDER environments are reached in.
+
+    THE SPLIT THIS RESTS ON (owner decision, 2026-09-19): the environment says WHAT it receives, through
+    `deploys:` in the matrix; the flow says in WHICH ORDER and which stage a person releases. Two
+    questions, two places, for the reason `backend:` and `carrier:` are already two: a staging instance
+    wants the newest publication and a production one wants a chosen tag, and that is true however the
+    rollout is triggered. Putting the version here too would give one truth two homes.
+    """
+    value = body.get(FLOW_KEY)
+    if value is None:
+        return ()
+    if not isinstance(value, Sequence) or isinstance(value, str) or not value:
+        raise ValueError(
+            f"{where}: `{FLOW_KEY}:` is the ORDERED list of environments a release is rolled out to - "
+            f"`[{{to: test}}, {{to: prod, approval: true}}]`. Got {type(value).__name__}")
+    stages: list[Stage] = []
+    seen: set[str] = set()
+    for index, item in enumerate(value):
+        at = f"{where}, {FLOW_KEY} stage {index + 1}"
+        if not isinstance(item, Mapping):
+            raise ValueError(f"{at}: must be a mapping naming `to:`, not {type(item).__name__}")
+        to = str(item.get("to") or "").strip()
+        if not to:
+            raise ValueError(f"{at}: declares no `to:`, so nothing says which environment it reaches")
+        if to in seen:
+            # A rollout that reaches one environment twice deploys it and then deploys it again, and the
+            # second job's verdict is about the first job's deployment. Whatever that is, it is not a
+            # stage.
+            raise ValueError(f"{at}: reaches '{to}' a second time; a stage is one environment, once")
+        seen.add(to)
+        approval = item.get("approval", False)
+        if not isinstance(approval, bool):
+            raise ValueError(f"{at}: `approval:` is true or false, got '{approval}'")
+        unknown = sorted(k for k in item if str(k) not in ("to", "approval"))
+        if unknown:
+            raise ValueError(
+                f"{at}: declares {', '.join(str(k) for k in unknown)}, which a stage does not take. A "
+                f"stage names `to:` and optionally `approval:`; what the environment RECEIVES is its own "
+                f"`deploys:` in the matrix")
+        stages.append(Stage(to=to, approval=approval))
+    return tuple(stages)
+
+
+_OWN_WORKFLOW_KEYS = frozenset({"path", "handwritten", "name", "note", "on", "jobs", FLOW_KEY, "runs-on", "runs_on", runners.KEY, True})
 
 
 def _workflow_extras(body: Mapping[object, object]) -> dict[str, object]:
@@ -568,6 +658,129 @@ def _step(item: object, where: str) -> Step:
     return Step(verbatim=rest, note=note)
 
 
+def _parameters(manifest: Manifest, group: str, name: str,
+                params: "Mapping[str, str]", *, where: str) -> str:
+    """`{"version": "1.4.0"}` -> ` --version 1.4.0`, with the name checked against the command.
+
+    THE JOIN si#40 IS ABOUT, one level in. A workflow may only run a command the manifest declares, and
+    now it may only hand that command a parameter the command declares - so a renamed parameter breaks
+    generation instead of becoming a `run:` line that fails on a runner three minutes into a job.
+
+    A parameter declared as an ARGUMENT is positional and gets no flag, because that is how the CLI reads
+    it; anything else is an option. The value is shell-quoted, and what it is is the manifest's business:
+    a rollout renders `deploys:` here, which is a literal nobody outside the repository chose.
+    """
+    if not params:
+        return ""
+    spec = manifest.commands.get(group, {}).get(name)
+    declared = dict(getattr(spec, "params", {}) or {})
+    out: list[str] = []
+    for key, value in params.items():
+        if key not in declared:
+            raise ValueError(
+                f"{where}: `{group.replace('.', ' ')} {name}` declares no parameter '{key}' - it takes "
+                f"{', '.join(sorted(declared)) or 'none'}. A workflow that passed one anyway would fail "
+                f"on a runner, with the manifest looking correct")
+        rendered = shlex.quote(str(value))
+        out.append(rendered if getattr(declared[key], "argument", False)
+                   else f"--{key.replace('_', '-')} {rendered}")
+    return " " + " ".join(out)
+
+
+# --- a rollout, written from the environment matrix -----------------------------------------------------
+
+
+#: What a stage's job is called. Prefixed so it cannot collide with a product's own job name in the same
+#: file, and suffixed with the environment so a failed run says where it stopped without being opened.
+ROLLOUT_JOB = "deploy-{environment}"
+
+
+def _rollout(workflow: "Workflow", registry: "Mapping[str, object] | None") -> "tuple[Job, ...]":
+    """One job per stage, chained, each deploying the version its environment declares.
+
+    THE TWO HALVES MEET HERE and nowhere else. `flow:` said the order and which stage a person releases;
+    the matrix said, per environment, what that environment receives. Neither knows the other until this
+    function, which is what keeps the version out of the flow and the order out of the matrix.
+
+    WHY THE VERSION IS A LITERAL. It comes from `deploys:` in the manifest, so the run line the kernel
+    writes is `deploy up --version 1.4.0` with a value nobody outside the repository chose. The obvious
+    alternative - a `workflow_dispatch` input interpolated into the command - is the classic Actions
+    script injection, in a job holding deployment credentials, written by the kernel itself. A product
+    that wants a person to choose the version at dispatch can still do it, in a `jobs:` block of its own,
+    where the hazard is visible in its own file rather than emitted on its behalf.
+
+    `needs:` chains the stages rather than the kernel ordering jobs in the file, because GitHub runs jobs
+    in parallel unless told otherwise - a rollout whose order lived only in the emitted order would reach
+    production and staging at the same time and look correct in the file.
+    """
+    if not workflow.flow:
+        # No stages, so nothing to write - and nothing is read either. The early return is the point:
+        # this function reaches for the product context when it is not handed a matrix, and a workflow
+        # with no rollout must not pay for that. Without it every `render` of an ordinary workflow
+        # demanded a registered ProductContext, which is a coupling nobody asked for.
+        return ()
+
+    from simplon import context, environments as env_mod
+
+    data = registry if registry is not None else context.current().manifest_data()
+    matrix = env_mod.parse_data(data, _declared_backends(data))
+    jobs: list[Job] = []
+    previous = ""
+    for stage in workflow.flow:
+        env = matrix.environments.get(stage.to)
+        if env is None:
+            raise ValueError(
+                f"workflow '{workflow.key}': stage '{stage.to}' names no declared environment - the "
+                f"matrix has: {', '.join(sorted(matrix.environments)) or '(none)'}")
+        if not env.deploys:
+            raise ValueError(
+                f"workflow '{workflow.key}': environment '{stage.to}' does not say what it receives, so "
+                f"this rollout cannot name a version for it. Give it `deploys: latest` or a published "
+                f"tag - the flow says the ORDER, the environment says WHAT")
+        name = ROLLOUT_JOB.format(environment=stage.to)
+        extras: dict[str, object] = {}
+        if previous:
+            extras["needs"] = previous
+        if stage.approval:
+            # GitHub's own environment, which is where an account configures required reviewers, wait
+            # timers and the secrets this stage may see. The kernel names it and stops.
+            extras["environment"] = stage.to
+        jobs.append(Job(
+            name=name,
+            runs_on=workflow.rollout_runs_on,
+            note=_rollout_note(stage, env),
+            steps=(Step(command="deploy up", params={"version": env.deploys},
+                        modifiers={"env": {**workflow.rollout_env,
+                                          context.ENVIRONMENT_ENV: stage.to}}),),
+            extras=extras))
+        previous = name
+    return tuple(jobs)
+
+
+def _rollout_note(stage: "Stage", env: object) -> str:
+    """What the generated job says about itself, because a reader of the file has neither half."""
+    receives = getattr(env, "deploys", "")
+    head = (f"GENERATED STAGE. This job deploys `{receives}` to '{stage.to}'. The order comes from the "
+            f"workflow's `flow:`; the version comes from that environment's `deploys:` in the matrix - "
+            f"two declarations, because a staging instance and a production one want different things "
+            f"however the rollout is triggered.")
+    if stage.approval:
+        head = (f"{head} It carries GitHub's `environment: {stage.to}`, so required reviewers, wait "
+                f"timers and the secrets this stage may see are account settings rather than manifest "
+                f"lines.")
+    return textwrap.fill(head, width=95)
+
+
+def _declared_backends(data: "Mapping[str, object]") -> "tuple[str, ...]":
+    """The backend tags this manifest's own matrix uses, so parsing it here validates nothing it did not
+    already validate at load. The generator is not the place to rule on a backend."""
+    section = data.get("environments") if isinstance(data, Mapping) else None
+    declared: "Mapping[object, object]" = section if isinstance(section, Mapping) else {}
+    names = {str(spec.get("backend", "")).strip()
+             for spec in declared.values() if isinstance(spec, Mapping)}
+    return tuple(sorted(n for n in names if n)) or ("local",)
+
+
 # --- deriving a job's steps from the command tree -----------------------------------------------------------
 
 
@@ -732,7 +945,8 @@ def launcher(product: str) -> str:
 # --- rendering -----------------------------------------------------------------------------------------------
 
 
-def render(workflow: Workflow, *, manifest: Manifest, product: str, source: str) -> str:
+def render(workflow: Workflow, *, manifest: Manifest, product: str, source: str,
+           environments: "Mapping[str, object] | None" = None) -> str:
     """One workflow's text. Deterministic: same manifest, same bytes.
 
     Written as TEXT rather than dumped as a document, for the reason the module docstring measures: a
@@ -758,7 +972,7 @@ def render(workflow: Workflow, *, manifest: Manifest, product: str, source: str)
         lines += _key_and_value(key, value, "")
     lines.append("")
     lines.append("jobs:")
-    for job in workflow.jobs:
+    for job in (*_rollout(workflow, environments), *workflow.jobs):
         lines += _render_job(job, manifest=manifest, product=product, workflow=workflow.key)
     text = "\n".join(lines).rstrip("\n") + "\n"
 
@@ -817,8 +1031,10 @@ def _render_job(job: Job, *, manifest: Manifest, product: str, workflow: str) ->
             # the most useful thing that could stand there. A generated name would be the kernel putting
             # words in the product's mouth for no gain; a product that wants different words says
             # `name:` and gets exactly those.
+            line = f"{launcher(product)} {group.replace('.', ' ')} {name}"
             body = {**step.modifiers,
-                    "run": f"{launcher(product)} {group.replace('.', ' ')} {name}"}
+                    "run": line + _parameters(manifest, group, name, step.params,
+                                              where=f"{where}, step {index + 1}")}
             lines += _dumped_step(body, "      ")
         else:
             lines += _dumped_step(step.verbatim or {}, "      ")

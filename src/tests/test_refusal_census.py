@@ -730,6 +730,23 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("workflowgen", "_check_path", "must be under '{DIRECTORY}/'"): DIAGNOSIS,
     ("workflowgen", "_check_path", "must end in .yml or .yaml"): DIAGNOSIS,
     ("workflowgen", "_reject_duplicate_paths", "one file has one owner"): DIAGNOSIS,
+    # The rollout flow. All six are shapes with no reading: a stage that is not a mapping, one that names
+    # no environment, one that names an environment twice (two jobs with one key - the FILE would be
+    # invalid, not merely odd), a non-boolean `approval:`, a key a stage does not take, and a `flow:`
+    # that is not an ordered list.
+    #
+    # TWO REFUSALS WERE WRITTEN HERE AND STRUCK, and both were expression rules by CLAUDE.md's first
+    # question. `deploys: local` reads as obviously wrong for a pipeline and is something a product with
+    # a locally-building backend might legitimately mean - and the case it IS wrong for already refuses
+    # in `PortainerBackend.deploy`, with more context. `flow:` beside `jobs:` would have forbidden a
+    # rollout plus a product's own notification job, which is si#267's lesson repeated: the generated
+    # stages carry stable names, so a product hangs `needs:` on one and keeps its own file.
+    ("workflowgen", "_stages", "is the ORDERED list of environments"): DIAGNOSIS,
+    ("workflowgen", "_stages", "must be a mapping naming `to:`"): DIAGNOSIS,
+    ("workflowgen", "_stages", "declares no `to:`"): DIAGNOSIS,
+    ("workflowgen", "_stages", "a second time; a stage is one environment, once"): DIAGNOSIS,
+    ("workflowgen", "_stages", "`approval:` is true or false"): DIAGNOSIS,
+    ("workflowgen", "_stages", "which a stage does not take"): DIAGNOSIS,
     # si#267. All three are values with no reading: `derive: 7` names no group, `derive: [3]` names no
     # group either, and a step that is both a derived block and a step of its own has two bodies - the
     # same refusal `command:` beside `uses:` already carries, four lines up.
