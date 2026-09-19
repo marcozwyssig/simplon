@@ -2,6 +2,7 @@
 validation with product-supplied valid backends. No I/O; AAA throughout."""
 import pytest
 
+from simplon import environments as envs_mod
 from simplon.environments import parse, parse_data
 
 _BACKENDS = ("local", "cloud")
@@ -166,7 +167,10 @@ def _provider(backend_name: str):
         def current(self, name=None):
             return env_mod.Environment("prod", backend_name, "")
 
-    return _One("X_ENV", shim="", valid_backends=(backend_name,))
+    # NOT `valid_backends=(backend_name,)`, and si#293 is why: the gate now reads what the product
+    # CLAIMS as well as what the kernel can drive, so a helper that claimed the very tag it was refusing
+    # would test nothing. These provide the scaffolded default and nothing else.
+    return _One("X_ENV", shim="", valid_backends=(env_mod.LOCAL,))
 
 
 def test_a_backend_the_run_can_resolve_passes_the_gate():
@@ -209,3 +213,93 @@ def test_the_gate_reads_the_same_set_deploy_up_resolves_against():
     from simplon.tasks import deploy
 
     assert "portainer" in deploy.drivable_backends()
+
+
+# --- si#293: the gate resolves against what the PRODUCT claims, too ------------------------------------
+
+
+def _provider_with(backend_name: str, valid: tuple[str, ...]):
+    from simplon import environments as env_mod
+
+    class _One(env_mod.Provider):
+        def current(self, name=None):
+            return env_mod.Environment("dev", backend_name, "")
+
+    return _One("X_ENV", shim="", valid_backends=valid)
+
+
+def test_a_backend_the_product_declares_valid_passes_even_with_an_empty_registry():
+    """THE REGRESSION si#293 IS, and it shipped in 0.17.0.
+
+    `drivable` is what the KERNEL can resolve, and the kernel ships no `local` - that name is what a
+    product's OWN backend answers to. Before si#288 the gate skipped `local` entirely for that reason.
+    Folding it into a kernel-computed set disabled every environment-bound command for a product that had
+    not registered one, which is exactly what `simplon init` scaffolds: `dev: { backend: local }` and no
+    registry. A consumer measured four dead commands.
+    """
+    _provider_with("local", (envs_mod.LOCAL,)).require_drivable(("portainer",))
+
+
+def test_the_scaffolded_shape_can_run_its_own_commands():
+    """The shape `bootstrap.py` writes, driven rather than described. If this goes red, `simplon init`
+    produces a product that dies on its first environment-bound command - which is how 0.17.0 went out."""
+    from simplon import bootstrap
+
+    assert "backend: local" in bootstrap._MANIFEST
+
+    _provider_with("local", (envs_mod.LOCAL,)).require_drivable(("portainer",))
+
+
+def test_a_tag_neither_claimed_nor_shipped_still_dies_clean():
+    """What #11 meant to refuse, unchanged. The product has not claimed `exoscale` and nothing ships it,
+    so a CD command aimed at it fails here rather than mis-running another backend's path."""
+    import pytest as _pytest
+
+    with _pytest.raises(SystemExit):
+        _provider_with("exoscale", (envs_mod.LOCAL,)).require_drivable(("portainer",))
+
+
+def test_the_gate_is_where_the_two_lists_are_read_against_each_other():
+    """THE SECOND HALF OF THE REPORT, and the reason this is not a special case for `local`.
+
+    A product's `valid_backends` is hand-written; the kernel's drivable set is derived. They could
+    disagree - one matrix valid to the parser and undrivable to the gate, out of the same file, with
+    nowhere anybody could read the two together. The gate is that place now, so a tag either side claims
+    is accepted and only a tag NEITHER claims is refused.
+    """
+    # Each direction alone, and each would fail if the gate read only the other list. The kernel drives
+    # `portainer` and the product never claimed it; the product claims `local` and the kernel drives
+    # nothing of the sort. Both pass, and a gate reading one list would refuse one of them.
+    _provider_with("portainer", ()).require_drivable(("portainer",))
+    _provider_with("local", (envs_mod.LOCAL,)).require_drivable(())
+
+
+def test_every_backend_a_matrix_names_can_be_checked_against_what_a_run_resolves():
+    """THE SHAPE THAT WOULD HAVE CAUGHT si#293, and the reason it is here rather than over this
+    repository's own manifest.
+
+    **simplon declares no `environments:` section at all.** So no assertion over the kernel's own matrix
+    could ever have caught this - there is no matrix. The regression was invisible on both sides: this
+    suite ran no environment-bound command against a `local` environment with an empty registry, and the
+    consumer's suite was 69/69 green because their CI is environment-agnostic. It became visible when a
+    person typed `up`.
+
+    The consumer's own repair is the one copied here, and their argument for it is better than the test:
+    assert the OUTCOME - every `backend:` in the matrix is in the set the gate resolves against - rather
+    than the handle. A test on `backend.register` would have died with any rename and would not have
+    caught their fourth environment.
+
+    A product can paste this. Whether the kernel should run it for every product at assembly time is a
+    separate question, recorded on si#293 rather than answered here.
+    """
+    scaffolded = {"default": "dev",
+                  "environments": {"dev": {"backend": "local", "description": "the scaffolded one"}}}
+    resolvable = {"portainer", envs_mod.LOCAL}
+
+    matrix = parse_data(scaffolded, tuple(resolvable))
+
+    undrivable = {name: env.backend for name, env in matrix.environments.items()
+                  if env.backend not in resolvable}
+
+    assert not undrivable, (f"these environments name a backend nothing can resolve: {undrivable} "
+                            f"(resolvable: {sorted(resolvable)})")

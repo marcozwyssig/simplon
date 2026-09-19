@@ -25,6 +25,47 @@ it is the one section held only to existing.
 
 ## 0.18.0
 
+### `backend: local` was refused by the gate that 0.17.0 shipped (si#293)
+
+**A regression, and the shape of it is worth the space.** si#288 replaced *"is this backend local"* with
+*"can this backend be driven"* and read the answer out of a set the KERNEL computes. The kernel ships
+`portainer` and nothing else - `local` is the name a product's **own** backend answers to, which is why
+the old gate skipped it entirely.
+
+So every environment-bound command against a `local` environment died, for any product that had not
+registered a backend:
+
+```text
+ERR environment 'dev' has backend 'local', which nothing here can drive -
+    this run resolves portainer.
+```
+
+**That is what `simplon init` scaffolds.** `bootstrap.py` writes `dev: { backend: local }` and registers
+nothing. A consumer measured four dead commands - `up`, `down`, `status`, `backup` - on a product whose
+own suite was green.
+
+The gate now resolves against what the kernel ships, what the product registered, **and what the
+product's own provider declares valid**. A tag in `valid_backends` is one the product has claimed; a
+claimed tag nobody implemented is still refused, by `backend.resolve` at dispatch, where it names the
+right file. #11's protection is unchanged and arrives earlier than this gate: a matrix naming a tag the
+product did not declare valid is refused by `parse_data` first.
+
+#### The second half, which is why this is not a special case for `local`
+
+The consumer measured it: `Provider.valid_backends` is hand-written and `drivable_backends()` is derived,
+and the two could disagree - **one matrix valid to the parser and undrivable to the gate, out of the same
+file**, with nowhere anybody could read them against each other. The gate is that place now.
+
+#### Why neither side's tests caught it
+
+This kernel **declares no `environments:` section at all**, so no assertion over its own matrix could have
+existed. The consumer's CI is environment-agnostic and never touches a `dev` command; their suite was
+69/69 green. It became visible when a person typed `up`.
+
+What went in is their repair rather than ours, and their argument for it: assert the **outcome** - every
+`backend:` a matrix names is in the set the gate resolves against - not the handle. A test on
+`backend.register` would have died with any rename and would not have caught their fourth environment.
+
 ### A release rolls out to your environments, from the manifest (si#296)
 
 `workflows:` could describe a CI run and could not describe a deployment. Measured before anything was
@@ -93,6 +134,7 @@ Six new refusals, all **diagnosis**; the census moves 193 → 199 with no new ex
 this repository otherwise insists on. The feature is driven against a fixture product instead: ten
 assertions, five of them seen red by breaking the property each protects. That is weaker than dogfooding,
 and it is said here rather than left to be discovered.
+
 
 ### The four groups a product reaches for, and where each one goes (si#286)
 
