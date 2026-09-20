@@ -25,6 +25,44 @@ it is the one section held only to existing.
 
 ## 0.19.0
 
+### `test:image` — the third verb over an image (si#301)
+
+`build:image` produces and `release:image` publishes. **Nothing ran what was produced**, and the
+catalogue's own comment over `build:image` had been saying what that costs while offering no verb for it:
+*"a product that builds an image only to run a smoke test against it must not be one typo away from
+pushing it"*.
+
+So a product could build an image, push it, and never once execute the **runtime stage of its own
+Dockerfile** — the directives that copy a binary into a base and set an entrypoint, which is the half no
+unit test reaches.
+
+`test:image` builds nothing and pulls nothing. It runs what the daemon already holds, under the reference
+the build would have produced, **resolving the tag the way `build` and `release` resolve it** so the three
+verbs cannot end up naming three references. An image the daemon does not hold is a refusal that names
+`build image` — not a quiet pull of whatever the registry happens to have.
+
+```yaml
+test:
+  commands:
+    image: { task: "test:image", with: { name: app, argv: "--version", expect: "1.4.0" } }
+```
+
+**The mount is what makes it a test about a workspace rather than about `--version`.**
+`<directory under the product>:<absolute path in the container>` binds a fixture, and the run then proves
+the runtime stage against real input. The host half goes through `simplon.hostpath`, because si#201's
+finding applies here exactly as it applies to `toolchain:run`: an untranslated mount source makes the
+daemon create an **empty directory on the host** and mount that, with rc 0 and no message.
+
+Four refusals, each with a test that fails without it: an image the daemon does not hold, a mount that is
+not `<dir>:<absolute>`, a mount that leaves the product or is not a directory, and output that does not
+contain what the caller said it must. **The container's own return code travels** rather than being
+flattened to 1 — a smoke test that reported `1` for every kind of failure would be the third verb
+repeating the defect the first two exist without.
+
+The catalogue grows to 43 coordinates and the `test` namespace to 8, which the phases page, the design
+page and the rules page all carry as numbers **read back out of `catalogue.yaml` by the suite** rather
+than typed.
+
 ### What a gate assures that an aggregate does not (si#290)
 
 si#283 normed the test levels, and si#290 measured how far that norm reaches: **four of eight products in
@@ -59,6 +97,7 @@ No kernel code. `test_test_levels.py` reads the page back against the `Verdict` 
 of the three to have a row that **explains** it - the first draft of that assertion asserted presence
 alone and stayed green when a verdict was struck from the table, because the name still stood in a code
 block above it.
+
 
 ### The backend gate is gone from the CLI, because it ruled on commands the kernel does not run (si#298)
 
