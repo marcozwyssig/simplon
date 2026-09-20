@@ -439,6 +439,24 @@ tasks:
   # `build:image` and `release:image` are TWO tasks along the five verbs, not one with a flag: build
   # produces, release publishes, and a product that builds an image only to run a smoke test against it
   # must not be one typo away from pushing it.
+  # The THIRD verb over one image (si#301), and the one that was missing: build produces, release
+  # publishes, and until this nothing RAN what was produced. A product could build an image, push it,
+  # and never once execute the runtime stage of its own Dockerfile -- the directives that copy a
+  # binary into a base and set an entrypoint -- which is the half no unit test reaches. It builds
+  # nothing and pulls nothing: it runs what the daemon holds under the reference the build would have
+  # produced, so a missing image is a refusal naming `build image` rather than a quiet pull.
+  test:image:
+    impl: simplon.tasks.image:smoke
+    help: "Run the product's container image and check that it answers."
+    unattended: true
+    params:
+      name:   { help: "the image to run (normally pinned per command with `with:`)" }
+      tag:    { help: "the tag to run, when it is not the one the build derives" }
+      argv:   { help: "what to run in the container, as one string" }
+      mount:  { help: "'<directory under the product>:<absolute path in the container>' to bind" }
+      expect: { help: "text the output must contain for the run to count as green" }
+      user:   { help: "run as the invoking uid:gid (default true), so bind-mounted output is owned" }
+
   build:image:
     impl: simplon.tasks.image:build
     help: "Build the product's container image from its declared Dockerfile, with VERSION/REVISION."

@@ -99,14 +99,16 @@ is genuinely a different one.
 """
 from __future__ import annotations
 
+import os
+import shlex
 import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from simplon import context, docker, githubpackages, log
+from simplon import context, docker, githubpackages, hostpath, log
 from simplon.bootstrap import validate_relative_dir
-from simplon.run import run, stream
+from simplon.run import Result, run, stream
 
 #: The manifest section this module owns, in the shape `artifacts:` established: a mapping of NAME -> the
 #: image's own data, because a product may build more than one.
@@ -451,6 +453,90 @@ def build(name: str = "", tag: str = "") -> int:
         return 1
     log.ok(f"built {ref}")
     return 0
+
+
+def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect: str = "",
+          user: bool = True) -> int:
+    """Run the container image `name` declares and check that it answers (si#301).
+
+    The third verb over one image, and the one that was missing: `build:image` produces,
+    `release:image` publishes, and until now nothing RAN what was produced. A product could therefore
+    build an image, push it, and never once execute the runtime stage of its own Dockerfile - the
+    directives that copy the binary into a base and set the entrypoint - which is exactly the half a
+    unit test cannot reach.
+
+    **It builds nothing and pulls nothing.** It runs what the daemon holds under the reference the
+    build would have produced, so a missing image is a refusal that names `build image` rather than a
+    silent pull of something older. The tag is resolved the way `build` and `release` resolve it, so
+    the three verbs cannot end up naming three references.
+
+    `mount` is `<product-relative dir>:<absolute path in the container>`, which is what makes a smoke
+    test about a workspace rather than about `--version`: a product mounts a fixture, runs its own
+    command over it, and the run proves the image can read and write a bind mount as the invoking user.
+    """
+    cfg, root = _declared_for(name)
+    docker.ensure_docker()
+    resolved = resolve_tag(cfg, tag, build_arguments(cfg, root).get(VERSION_ARG, ""))
+    ref = reference(cfg, resolved)
+    if not present_locally(ref):
+        log.error(f"the daemon does not hold {ref}; nothing was run.\n"
+                  f"  this verb runs what a build produced and never pulls: build it first "
+                  f"(`build image`), or name the tag you mean with `tag:`")
+        return 1
+    command = ["docker", "run", "--rm"]
+    if user:
+        command += ["--user", f"{os.getuid()}:{os.getgid()}"]
+    if mount:
+        bound = _mount_argv(mount, root)
+        if bound is None:
+            return 1
+        command += bound
+    command.append(ref)
+    command += shlex.split(argv)
+    result = run(command)
+    if result.rc != 0:
+        log.error(f"{ref} exited {result.rc}\n" + _indented(result))
+        return result.rc
+    if expect and expect not in result.out:
+        log.error(f"{ref} exited 0 and did not say what was expected.\n"
+                  f"  expected to find: {expect}\n" + _indented(result))
+        return 1
+    log.ok(f"ran {ref}")
+    return 0
+
+
+def _mount_argv(mount: str, root: Path) -> list[str] | None:
+    """`-v <host>:<container>` for a declared mount, or `None` after saying why it is not one.
+
+    The host half is product-relative for `_inside_the_product`'s reason: a manifest that could name an
+    absolute path would let one product's command reach into another's tree, and a smoke test is the
+    last place that should be possible.
+    """
+    host, _, target = mount.partition(":")
+    if not target or not target.startswith("/"):
+        log.error(f"mount '{mount}' is not `<directory>:<absolute path in the container>`")
+        return None
+    try:
+        inside = _inside_the_product(host, "mount", "a smoke run")
+    except ValueError as refused:
+        log.error(str(refused))
+        return None
+    path = root / inside
+    if not path.is_dir():
+        log.error(f"mount '{mount}' names {path}, which is not a directory under {root}")
+        return None
+    # si#201's rule, and it is why this returns a translated source rather than `path`: on the
+    # container route the daemon resolves a mount source against the HOST, so an untranslated one
+    # mounts an empty directory it creates there -- rc 0, no message, and a smoke test that proves
+    # nothing over a workspace that is not the workspace.
+    return ["-v", f"{hostpath.translate(path)}:{target}"]
+
+
+def _indented(result: Result) -> str:
+    """What the container said, under the line that reports it - both streams, because an image that
+    fails usually says why on the one nobody printed."""
+    said = "\n".join(part for part in (result.out.strip(), result.err.strip()) if part)
+    return "\n".join(f"  {line}" for line in said.splitlines()) if said else "  (it said nothing)"
 
 
 def release(name: str = "", tag: str = "") -> int:
