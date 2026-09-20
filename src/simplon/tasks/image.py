@@ -472,7 +472,15 @@ def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect
 
     `mount` is `<product-relative dir>:<absolute path in the container>`, which is what makes a smoke
     test about a workspace rather than about `--version`: a product mounts a fixture, runs its own
-    command over it, and the run proves the image can read and write a bind mount as the invoking user.
+    command over it, and the run proves the image can READ a bind mount as the invoking user.
+
+    **Reading, and not writing, and that limit is measured rather than modest** (si#303). This
+    sentence claimed both until the first consumer tried it: `mount` takes a product-relative
+    directory, so the only thing a product can bind is a directory of its own checkout, and a
+    command that wrote into it would leave the tree dirty. firn#110 therefore proves its image's
+    runtime stage with a read-only `check` and says in its own notes that the write path stays
+    unproven. A scratch mount would close it; until there is one, the claim is not this task's to
+    make.
     """
     cfg, root = _declared_for(name)
     docker.ensure_docker()
