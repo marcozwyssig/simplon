@@ -145,7 +145,7 @@ the number that says whether a rib is filled:
 | namespace | kind | tasks in the catalogue today |
 |---|---|---|
 | `build` | phase, agnostic | 6 |
-| `test` | phase, agnostic | 7 |
+| `test` | phase, agnostic | 8 |
 | `release` | phase, agnostic | 6 |
 | `deploy` | phase, env-first | 3 |
 | `monitor` | phase, env-first | 0 |
@@ -155,7 +155,7 @@ the number that says whether a rib is filled:
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Forty-two coordinates: thirty carrying a placement, twelve free to be filed. The numbers in this sentence, in that
+Forty-three coordinates: thirty-one carrying a placement, twelve free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -225,11 +225,12 @@ four commands - `wheel`, `reference`, `site` and the `docs` aggregate - and not 
 
 *Verify them.* Over artefacts that already exist - the phase deliberately does not produce any.
 
-**In the catalogue today: 7 tasks.**
+**In the catalogue today: 8 tasks.**
 
 - `test:generated`
 - `test:gate`
 - `test:accept`
+- `test:image`
 - `test:report`
 - `test:release-notes`
 - `test:typecheck-python`

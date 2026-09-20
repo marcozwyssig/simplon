@@ -982,3 +982,100 @@ def test_a_checkout_that_answers_normally_is_untouched_by_any_of_it(tmp_path):
     # assert
     assert derived["VERSION"] == "v1.2.3"
     assert len(derived["REVISION"]) == 40
+
+
+@pytest.fixture
+def _tagged(monkeypatch):
+    """One resolved tag, so a smoke test is about the run rather than about tag derivation - which
+    `resolve_tag` has its own tests for, and which has no git to derive from in a tmp_path."""
+    monkeypatch.setattr(image, "resolve_tag", lambda cfg, tag, derived="": "1.2.3")
+
+# --- test:image - running what the build produced (si#301, firn#110) ----------------------------------
+
+def test_a_smoke_run_starts_the_reference_the_build_would_have_produced(cli, _no_provenance, _product,
+                                                                        monkeypatch):
+    """The three verbs name ONE reference. A smoke test that resolved its tag differently would be
+    testing an image the build did not produce and the release will not publish - which is the failure
+    `release` already guards against from the other side."""
+    # arrange
+    (_product / "fixture").mkdir()
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+    monkeypatch.setattr(image, "resolve_tag", lambda cfg, tag, derived="": "1.2.3")
+
+    # act
+    rc = image.smoke("app", argv="check", mount="fixture:/workspace")
+
+    # assert
+    assert rc == 0
+    started = cli.argv_starting("docker", "run")
+    assert len(started) == 1
+    assert "ghcr.io/owner/demo-app:1.2.3" in started[0]
+    assert "check" == started[0][-1]
+    assert f"{_product / 'fixture'}:/workspace" in started[0]
+
+
+def test_a_smoke_run_refuses_an_image_the_daemon_does_not_hold(cli, _no_provenance, _product, _tagged,
+                                                               monkeypatch, capsys):
+    """It runs what a build produced and never pulls, so a missing image is a refusal that names the
+    verb which would produce it - not a silent `docker pull` of whatever the registry has."""
+    # arrange
+    (_product / "fixture").mkdir()
+    monkeypatch.setattr(image, "present_locally", lambda ref: False)
+
+    # act
+    rc = image.smoke("app", argv="check", mount="fixture:/workspace")
+
+    # assert
+    assert rc == 1
+    assert cli.argv_starting("docker", "run") == []
+    assert "build image" in capsys.readouterr().err
+
+
+def test_a_smoke_run_hands_back_the_containers_own_return_code(cli, _no_provenance, _product, _tagged,
+                                                               monkeypatch):
+    """The rc is the product's answer about its own image, so it travels rather than being flattened
+    to 1: a gate that reports every failure as the same number is one nobody can triage."""
+    # arrange
+    (_product / "fixture").mkdir()
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+    monkeypatch.setattr(image, "run", _Cli(verdict={("docker", "run"): 3}).run)
+
+    # act
+    rc = image.smoke("app", argv="check", mount="fixture:/workspace")
+
+    # assert
+    assert rc == 3
+
+
+def test_a_smoke_run_refuses_output_that_does_not_say_what_was_expected(_no_provenance, _product,
+                                                                        _tagged, monkeypatch, capsys):
+    """An exit code of zero is the weaker half of the claim. A distroless image whose entrypoint is
+    missing its model files can still exit 0 on `--help`, so a product may name what it must SAY."""
+    # arrange
+    (_product / "fixture").mkdir()
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+    monkeypatch.setattr(image, "run", _Cli(output="something else entirely").run)
+
+    # act
+    rc = image.smoke("app", argv="check", mount="fixture:/workspace", expect="0 errors")
+
+    # assert
+    assert rc == 1
+    assert "0 errors" in capsys.readouterr().err
+
+
+def test_a_smoke_run_refuses_a_mount_that_is_not_a_directory_of_this_product(cli, _no_provenance,
+                                                                            _product, _tagged,
+                                                                            monkeypatch, capsys):
+    """`_inside_the_product`'s rule, reaching the one task that would otherwise let a manifest mount
+    a sibling checkout into a container: a path that leaves the product is refused before docker is
+    asked, and a path that is simply not there is said as itself."""
+    # arrange
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+
+    # act
+    rc = image.smoke("app", argv="check", mount="does-not-exist:/workspace")
+
+    # assert
+    assert rc == 1
+    assert cli.argv_starting("docker", "run") == []
