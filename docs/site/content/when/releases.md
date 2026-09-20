@@ -23,6 +23,37 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.20.0
+
+### The docstring claimed a write nothing exercises (si#303)
+
+`test:image` shipped in 0.19.0 saying its mount
+
+> proves the image can read **and write** a bind mount as the invoking user
+
+**It proves reading.** `mount:` takes a product-relative directory, so the only thing a product can bind
+is a directory of its own checkout, and a command that wrote into it would leave the tree dirty. The
+second product to adopt the task hit that on its first use: it proves its image's runtime stage with a
+read-only check and records in its own notes that the write path stays unproven.
+
+The sentence now claims reading, says why the other half is missing, and names what would close it - a
+scratch mount, copied into a temporary directory before the run. No behaviour changed.
+
+**It was found and repaired by the consumer who wrote it**, within a day of its own release. A claim
+nothing exercises is this repository's own defect class in prose, and prose is where it is hardest to
+see: nothing goes red.
+
+#### What si#303 still carries
+
+Two extensions, neither urgent and neither built:
+
+* **the scratch mount**, which would make the removed half true;
+* **`rc:`**, so a system test can say *"the image rejects a broken model with code 2"* - today every
+  non-zero rc is red, so a refusal cannot be asserted at all. The consumer has had the fixture for months
+  and cannot use it, and supplied the constraint the design would need: **default 0, and an expectation
+  rather than a tolerance** - `rc: 2` means "exactly 2, and 0 would then be red". A tolerance widens what
+  counts as green; an expectation moves it, and only the second is still a gate.
+
 ## 0.19.0
 
 ### `test:image` — the third verb over an image (si#301)
