@@ -114,3 +114,44 @@ def test_the_page_quotes_the_warning_the_kernel_actually_raises():
 
     assert " ".join(quoted.split()) in page, (
         f"the page must quote the warning as the kernel raises it; it now says:\n{quoted}")
+
+
+# --- si#290: what a gate assures, read back against the code ------------------------------------------
+
+
+def test_the_page_names_every_verdict_a_gate_can_carry():
+    """THE ANSWER si#290 ASKED FOR, held against the enum rather than against a memory of it.
+
+    Four of eight products in this family declare no `suites: gates:`, and the one that was asked said
+    nobody had ever named the benefit - *"Arbeit ohne erkennbaren Gewinn"*. The benefit is that a gate has
+    five verdicts where an aggregate step has two, and the three extra ones are exactly the "nothing to
+    do" cases this project separates from "failed".
+
+    A number or a list typed into that page would be wrong on the first day nobody checks it, which is
+    this repository's oldest lesson about documents. So the page is read back against `Verdict`."""
+    from simplon.verdict import Verdict
+
+    text = _text()
+
+    for member in Verdict:
+        assert member.name in text, (
+            f"`{member.name}` is a verdict a gate can carry and the page does not name it - a product "
+            f"reading it to decide whether gates are worth declaring would be told less than the truth")
+
+    # AND EACH OF THE THREE EXTRA ONES IS EXPLAINED, not merely listed. The first draft of this test
+    # asserted presence alone and stayed green when `KILLED` was struck from the table, because the name
+    # still stood in the code block above it. A page that lists a verdict and does not say what it means
+    # answers none of the question this chapter exists for.
+    for name in ("SETUP_FAILED", "NOT_RUN", "KILLED"):
+        assert f"| `{name}` |" in text, (
+            f"`{name}` is listed but has no row saying what it means - listing it is not naming the "
+            f"benefit, which is what si#290 asked for")
+
+
+def test_the_page_says_an_aggregate_carries_only_two_of_them():
+    """The comparison is the point, not the list. Without it the five verdicts read as trivia rather than
+    as the reason to declare a section."""
+    text = _text()
+
+    assert "aggregate" in text
+    assert "PASSED   FAILED" in text or "PASSED` or `FAILED" in text

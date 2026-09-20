@@ -762,6 +762,71 @@ directory is read *flat*, and a results dir holding `aaa-result.json` next to `s
 only one of the three that is true. If your runner writes attachments into a subdirectory, flatten them -
 allure would not have read them there either.
 
+## What a gate assures that an aggregate does not
+
+You do not have to declare `suites:` at all. A product can put each runner behind its own command and tie
+them together with an [aggregate](../../how/task-and-command/#the-third-kind-of-command-an-aggregate):
+
+```yaml
+test:
+  commands:
+    unit-backend:  { task: pytest-backend }
+    unit-frontend: { task: vitest }
+    all:           { depends_on: [unit-backend, unit-frontend] }
+```
+
+That runs. Four of the eight products in this family do exactly that and declare no gates, and when one
+of them was asked why, the answer was not opposition:
+
+> no resistance, just work with no visible benefit — our `ci` runs everything it should run, and a
+> `suites:` section would first have to show what it additionally assures.
+
+Nobody had named the benefit. This chapter names it.
+
+### A gate has five verdicts. An aggregate step has two.
+
+```python
+PASSED   FAILED   SETUP_FAILED   NOT_RUN   KILLED
+```
+
+An aggregate runs commands and reads return codes, so every step is `PASSED` or `FAILED` and nothing
+else. **The three a gate can say and a return code cannot are exactly the "nothing to do" cases** this
+project separates from "failed":
+
+| verdict | what happened | what an aggregate would report |
+|---|---|---|
+| `NOT_RUN` | a declared `precondition:` said no, so the suite never started — and it cleared nothing, so the last real run's results survive | red, about a product it never looked at |
+| `SETUP_FAILED` | the `preamble:` failed, so the suite did not run | red, or worse: green over a suite that ran against a lab that was not there |
+| `KILLED` | a negative wait status is a **signal**; a suite that was shot reported nothing | "the suite ran and found failures" — a statement about the product **that nobody made** |
+
+`SETUP_FAILED` is not hypothetical. That rc used to be computed and dropped, so a lab that failed to
+converge ran the suite anyway and whatever came back was recorded as a verdict about the product.
+
+### And the rest, which is bookkeeping rather than judgement
+
+* **results ownership** — `results: clear` names the one gate that empties the shared archive, and
+  `results_from` says where a runner left its own. A gate that never started clears nothing.
+* **one report across levels** — the [report step](#the-report-step) merges what every gate wrote.
+* **quarantine** — an exploratory run writes to `filtered_results` instead of the real archive.
+* **hooks whose verdicts are honoured** — `precondition:` and `preamble:`, with the rcs above.
+* **JUnit placement, argument forwarding, the announce line**, and a keep-awake window around a long
+  convergence.
+
+### So: is it worth it?
+
+If your levels are a pytest tree and a runner or two, and nothing in your pipeline has a precondition
+that can legitimately say no, an aggregate is genuinely enough and this section is the answer to why you
+skipped it. **If any of your levels can fail to start** — a lab that has to converge, an environment
+that may not be there, a suite a timeout can kill — then an aggregate cannot tell that from a product
+that is broken, and that is the whole of what `suites: gates:` buys.
+
+{{< callout type="info" >}}
+**The four levels above are what `suites: gates:` may carry**, so a product that declares no gates is
+outside this norm by its own arrangement and gets no warning about its level names. That is stated rather
+than assumed: half this family is in that position, and most of them never met the question rather than
+declining it.
+{{< /callout >}}
+
 ## When a level does not exist
 
 A command bound to `test:gate` whose pinned `name` matches no declared gate is a manifest typo, not a

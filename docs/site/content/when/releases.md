@@ -25,6 +25,41 @@ it is the one section held only to existing.
 
 ## 0.19.0
 
+### What a gate assures that an aggregate does not (si#290)
+
+si#283 normed the test levels, and si#290 measured how far that norm reaches: **four of eight products in
+this family declare no `suites: gates:` at all**, so `_gate` never runs for them and nothing rules on
+what they call their levels.
+
+The interesting half came from a consumer, and it is a distinction this repository had folded away: those
+four did not **decline** the section, they **never met the question**. Their words when asked what
+declaring it would cost:
+
+> no resistance, just work with no visible benefit - our `ci` runs everything it should run, and a
+> `suites:` section would first have to show what it additionally assures.
+
+**Nobody had named the benefit.** So the chapter names it, measured out of the code rather than argued:
+
+| | |
+|---|---|
+| a gate | `PASSED` `FAILED` `SETUP_FAILED` `NOT_RUN` `KILLED` |
+| an aggregate step | a return code: `PASSED` or `FAILED` |
+
+The three a gate can say and a return code cannot are exactly the **"nothing to do"** cases this project
+separates from "failed": a precondition that said no and cleared nothing, a preamble that failed so the
+suite never ran, and a suite ended by a **signal** - which reported nothing, making "the suite ran and
+found failures" a statement about the product that nobody made. `SETUP_FAILED` is not hypothetical; that
+rc used to be computed and dropped, so a lab that failed to converge ran the suite anyway.
+
+The chapter ends where the honest answer is: **if none of your levels can fail to start, an aggregate is
+genuinely enough** - and that sentence is now on the page instead of being something each product works
+out alone.
+
+No kernel code. `test_test_levels.py` reads the page back against the `Verdict` enum, and requires each
+of the three to have a row that **explains** it - the first draft of that assertion asserted presence
+alone and stayed green when a verdict was struck from the table, because the name still stood in a code
+block above it.
+
 ### The backend gate is gone from the CLI, because it ruled on commands the kernel does not run (si#298)
 
 Two repairs in one week ended in a check that could not fail, and the measurement that found it came from
