@@ -1860,3 +1860,71 @@ def test_the_bar_is_found_once_and_the_clocks_never_query_for_it_again():
 
     # assert
     assert queried == [], f"a repaint went back to the tree: {queried}"
+
+
+# --- si#306: the same moment, one widget over ---------------------------------------------------------
+
+
+def test_the_run_finishing_after_the_screen_is_gone_focuses_nothing_and_raises_nothing():
+    """si#306, and it is si#265's twin rather than a new kind.
+
+    `_on_done` is handed to `call_from_thread` by a `@work(thread=True)` worker, so it arrives when the
+    RUN ends and not when the app chooses - including after the screen has been torn down. It no-ops its
+    status repaint (si#265 saw to that) and then moves a tree cursor and renders a pane, both of which
+    reach widgets that are no longer there.
+
+    WHAT IT COST, which is why this is a test and not a note: the v0.20.0 publish job failed on
+    `NoMatches: No nodes match '#steps'` with the tag already cut and pushed - `releasing.md` calls that
+    state "cut but not published", and a re-run was needed to finish a release that had already been
+    announced as done.
+    """
+    # arrange: a failed step, so the auto-focus branch is the one that runs
+    pipeline = _pipeline()
+
+    async def _drive():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert app._bar is not None, "the app never had a screen"
+        return app
+
+    app = asyncio.run(_drive())
+
+    # act: the handover that used to arrive into an empty tree
+    app._on_done()
+
+    # assert
+    assert app._bar is None, "the app kept a widget that is no longer mounted"
+
+
+def test_a_run_that_finishes_while_the_screen_is_up_still_focuses_the_first_failure():
+    """The other half, so the guard cannot become an early return that switched the feature off. si#265
+    said it in its own words: the repair is not `except NoMatches: pass`, because that swallows the case
+    where there IS a screen. Same here - with a screen, `_on_done` must still move the cursor."""
+    # A FAILURE THAT IS NOT LAST, and the fixture had to be built for it. `_pipeline()` ends on its
+    # failure, so the cursor is already sitting there when the run finishes and `_on_done`'s move is a
+    # no-op - a test over it stayed green with the whole branch cut out. The move is only observable
+    # when something else ran afterwards.
+    pipeline = Pipeline("smoke", [
+        Step(label="fails", action=lambda: Outcome(rc=1, output="boom")),
+        Step(label="passes", action=lambda: Outcome(rc=0, output="all good")),
+    ])
+
+    async def _drive():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            # READ INSIDE THE SCREEN'S LIFE, and read the CURSOR. A first draft asserted `_expected_row`
+            # and stayed green with the whole branch cut out, because other paths set that attribute
+            # during the run - it measured the app having been used, not the failure having been focused.
+            cursor = app._tree().cursor_node
+            return (cursor.data if cursor is not None else None,
+                    [step.state for step in app.pipeline.steps])
+
+    focused, states = asyncio.run(_drive())
+
+    assert StepState.FAILED in states, "the fixture stopped producing a failure to focus"
+    assert focused is not None and focused.state == StepState.FAILED, (
+        f"the cursor should sit on the first failed step; it is on {focused}")

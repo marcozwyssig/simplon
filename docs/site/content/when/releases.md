@@ -23,6 +23,56 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.21.0
+
+### The run finishing after the screen is gone (si#306)
+
+si#265 repaired `#status` and left `#steps` with the same edge. It surfaced where it is most expensive:
+**the v0.20.0 publish job**, with the tag already cut and pushed.
+
+```text
+FAILED test_walk_tui.py::test_a_refusal_stops_that_scenario_and_the_next_one_is_still_walked
+textual.css.query.NoMatches: No nodes match '#steps' on Screen(id='_default')
+```
+
+`releasing.md` has a name for that state - **cut but not published**, which is neither "nothing happened"
+nor "released" - and a re-run was needed to finish a release that had already been announced as done.
+
+#### The measurement first, because the obvious repair is wrong
+
+`_tree()` has **eleven** call sites. A blanket early return would make a real mount failure quiet in ten
+places to fix one, which is the trade si#265 refused in its own words: *the repair is NOT
+`except NoMatches: pass`*. So each caller was classified before anything was written:
+
+| caller | reached from |
+|---|---|
+| `on_mount`, `_mount_tree`, `_cursor_row`, `_move_cursor_to`, `action_next_failure`, `action_filter`, `on_input_submitted`, `_repaint_everything` | mount, or a key the operator pressed - a screen exists by construction |
+| **`_on_done`** | `call_from_thread` out of a `@work(thread=True)` worker |
+
+**One.** It arrives when the run ends rather than when the app chooses, including after teardown - which
+is exactly the pair si#265 measured for the bar, and the same worker.
+
+#### The bar answers for the tree
+
+`_on_done` returns early when `self._bar is None`. That is deliberate rather than indirect: si#265 made
+`_bar` the one reference this app drops in `on_unmount`, so it is the app's marker for *there is a screen
+right now*. A second marker for the tree would be a second source for one fact, and the two would
+disagree the day only one of them is dropped.
+
+Its `_repaint_status()` already no-ops on its own; what follows does not - it moves a cursor and renders
+a pane. Nothing to focus is not a failure: the run is over and its verdict is already in the subtitle.
+
+#### Two assertions, and the second one had to be rebuilt twice
+
+The first says a handover after teardown raises nothing. The second says the feature still works with a
+screen - without it the guard could become an early return that switched auto-focus off.
+
+That second one was **green with the whole branch cut out**, twice. It first asserted `_expected_row`,
+which other paths set during a run, so it measured the app having been used. Reading the tree cursor
+instead was still green, because the fixture ends on its failure and the cursor is already sitting
+there - `_on_done`'s move is a no-op for that pipeline. It needed a pipeline whose failure is **not
+last**, and only then does removing the branch turn it red.
+
 ## 0.20.0
 
 ### The docstring claimed a write nothing exercises (si#303)
