@@ -948,6 +948,21 @@ class _StepApp(App):
         rc = overall_rc(self.pipeline)
         self.sub_title = "done - all passed" if rc == 0 else "done - failures (press q)"
         self._repaint_status()
+        if self._bar is None:
+            # SAME MOMENT si#265 NAMED, one widget over (si#306). This method is handed to
+            # `call_from_thread` by a `@work(thread=True)` worker, so it arrives when the run ends and
+            # not when the app chooses - including after the screen is gone, which is where `run_test()`
+            # found it: `NoMatches: No nodes match '#steps'`, and it cost a release publish.
+            #
+            # THE BAR ANSWERS FOR THE TREE, and that is deliberate rather than indirect. si#265 made
+            # `_bar` the one reference this app drops in `on_unmount`, so it is the app's marker for
+            # "there is a screen right now" - a second marker for the tree would be a second source for
+            # one fact, and the two would disagree the day only one of them is dropped.
+            #
+            # `_repaint_status` above already no-ops on its own; what follows does not. It moves a
+            # cursor and renders a pane, and both reach widgets. Nothing to focus is not a failure: the
+            # run is over and its verdict is already in `sub_title`.
+            return
         # auto-focus the first failed step's details, if any
         for i, step in enumerate(self.pipeline.steps):
             if step.state == StepState.FAILED and i in self._chain_nodes:
