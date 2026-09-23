@@ -1079,3 +1079,63 @@ def test_a_smoke_run_refuses_a_mount_that_is_not_a_directory_of_this_product(cli
     # assert
     assert rc == 1
     assert cli.argv_starting("docker", "run") == []
+
+
+# --- si#303: `rc:` is an expectation, not a tolerance -------------------------------------------------
+
+
+def test_an_expected_refusal_is_green(_no_provenance, _product, _tagged, monkeypatch):
+    """THE STATEMENT si#303 ASKED FOR, and it could not be made at all: `rc != 0 is red` left a system
+    level unable to say *the image REFUSES a broken input*, which is the other half of what it wants to
+    say about a shipped artefact. The consumer who asked has had the fixture for months and could not
+    use it."""
+    (_product / "fixture").mkdir()
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+    monkeypatch.setattr(image, "run", _Cli(verdict={("docker", "run"): 2}).run)
+
+    assert image.smoke("app", argv="check", mount="fixture:/workspace", rc=2) == 0
+
+
+def test_an_expected_refusal_that_does_not_happen_is_red(_no_provenance, _product, _tagged,
+                                                         monkeypatch, capsys):
+    """AN EXPECTATION AND NOT A TOLERANCE, which is the whole of why it takes a value. A tolerance widens
+    what counts as green; an expectation moves it, so success where a refusal was demanded is a failure
+    - and the image's own 0 must not be handed back as this task's verdict, or the failure would be
+    reported as green."""
+    (_product / "fixture").mkdir()
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+    monkeypatch.setattr(image, "run", _Cli().run)          # the container exits 0
+
+    rc = image.smoke("app", argv="check", mount="fixture:/workspace", rc=2)
+
+    assert rc == 1, "a refusal that did not happen was reported with the container's own success"
+    assert "2 was expected" in capsys.readouterr().err
+
+
+def test_the_default_is_unchanged_and_says_nothing_about_an_expectation(_no_provenance, _product,
+                                                                        _tagged, monkeypatch, capsys):
+    """Every manifest written before si#303 keeps its meaning, and the message for the ordinary case
+    does not grow a clause about an expectation nobody stated."""
+    (_product / "fixture").mkdir()
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+    monkeypatch.setattr(image, "run", _Cli(verdict={("docker", "run"): 3}).run)
+
+    rc = image.smoke("app", argv="check", mount="fixture:/workspace")
+
+    assert rc == 3
+    assert "was expected" not in capsys.readouterr().err
+
+
+def test_what_the_image_says_is_still_checked_when_a_refusal_was_expected(_no_provenance, _product,
+                                                                          _tagged, monkeypatch, capsys):
+    """The two halves compose: a product may demand that the image refuse AND that it say why. Without
+    this the `expect` branch would only ever run for a zero exit, which is where it started."""
+    (_product / "fixture").mkdir()
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+    monkeypatch.setattr(image, "run", _Cli(verdict={("docker", "run"): 2},
+                                           output="something else entirely").run)
+
+    rc = image.smoke("app", argv="check", mount="fixture:/workspace", rc=2, expect="model is broken")
+
+    assert rc == 1
+    assert "model is broken" in capsys.readouterr().err

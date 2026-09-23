@@ -600,6 +600,17 @@ workflows:
       two-thirds prose and two multi-line shell scripts (the on-main report of si#23, the
       wheel-is-the-tag check of si#3); declaring it would move that work rather than remove it
 
+# NO `.claude/settings.json` IN THIS REPOSITORY, and that is a statement rather than an omission
+# (si#292). `claudeplugins.py` describes two halves - the native one Claude Code reads when somebody
+# merely opens the repository, and the scripted one for a fresh machine or an unattended agent - and says
+# keeping them in agreement is the PRODUCT's job. simplon ships only the scripted half, because these
+# plugins are a developer convenience here and not part of any delivery path: nothing this repository
+# builds, tests or publishes goes through them. Growing a settings.json so an invariant would hold would
+# be serving the rule rather than meeting it.
+#
+# `ref:` is a BRANCH OR TAG, not a digest - Claude Code's marketplace sources take `ref` and explicitly
+# not `sha`. It stops the silent redraw on every fetch; it does not stop the owner of that repository
+# from moving the tag.
 claude:
   marketplaces:
     claude-plugins-official:     { source: github, repo: anthropics/claude-plugins-official }

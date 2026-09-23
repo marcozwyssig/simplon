@@ -204,3 +204,47 @@ def test_install_cmd_returns_an_exit_code_rather_than_raising_typer_exit():
     # assert
     assert "typer.Exit" not in source
     assert "\nimport typer" not in source
+
+
+# --- si#292: a marketplace can say WHICH ---------------------------------------------------------------
+
+
+def _one_market(**extra):
+    return {"claude": {"marketplaces": {"m": {"source": "github", "repo": "o/r", **extra}},
+                       "plugins": ["p@m"]}}
+
+
+def test_a_marketplace_may_name_the_ref_it_is_fetched_at():
+    """si#292. Six of the eight manifests this family can reach named the same third-party marketplace
+    and none of them could say a version - an expressiveness gap in a section that reads as a
+    declaration of what a product is developed with."""
+    markets, _ = claudeplugins.declared(_one_market(ref="v1.2.3"))
+
+    assert markets[0].ref == "v1.2.3"
+
+
+def test_a_marketplace_without_a_ref_is_unchanged():
+    """Every manifest written before si#292 keeps its meaning: no ref is the repository's default
+    branch, which is what they have been getting."""
+    markets, _ = claudeplugins.declared(_one_market())
+
+    assert markets[0].ref == ""
+
+
+def test_the_ref_reaches_the_command_in_the_spelling_the_cli_takes():
+    """`owner/repo#ref` is the CLI's spelling and it is assembled in ONE place, so the manifest names the
+    two halves separately and nothing has to know both."""
+    pinned = claudeplugins.Marketplace(name="m", repo="o/r", ref="v1.2.3")
+    plain = claudeplugins.Marketplace(name="m", repo="o/r")
+
+    assert claudeplugins._source_of(pinned) == "o/r#v1.2.3"
+    assert claudeplugins._source_of(plain) == "o/r"
+
+
+def test_a_ref_that_carries_the_cli_separator_is_refused():
+    """Refused rather than stripped: a value silently edited before use is one the manifest no longer
+    describes, and `repo: o/r` with `ref: '#v1'` would otherwise reach the CLI as `o/r##v1`."""
+    with pytest.raises(ValueError) as exc:
+        claudeplugins.declared(_one_market(ref="#v1.2.3"))
+
+    assert "ref" in str(exc.value) and "#" in str(exc.value)

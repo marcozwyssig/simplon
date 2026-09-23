@@ -456,8 +456,15 @@ def build(name: str = "", tag: str = "") -> int:
 
 
 def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect: str = "",
-          user: bool = True) -> int:
+          rc: int = 0, user: bool = True) -> int:
     """Run the container image `name` declares and check that it answers (si#301).
+
+    `rc` IS AN EXPECTATION AND NOT A TOLERANCE (si#303), which is the whole of why it takes a value
+    rather than a list or a flag. `rc: 2` means "exactly 2, and 0 would then be red" - so a system level
+    can say *the image REFUSES a broken input*, which is the other half of what it wants to say about a
+    shipped artefact and which `rc != 0 is red` could not express at all. A tolerance would widen what
+    counts as green; an expectation moves it, and only the second is still a gate. The wording is the
+    consumer's who asked for it (firn), and it is better than the one this ticket opened with.
 
     The third verb over one image, and the one that was missing: `build:image` produces,
     `release:image` publishes, and until now nothing RAN what was produced. A product could therefore
@@ -502,11 +509,15 @@ def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect
     command.append(ref)
     command += shlex.split(argv)
     result = run(command)
-    if result.rc != 0:
-        log.error(f"{ref} exited {result.rc}\n" + _indented(result))
-        return result.rc
+    if result.rc != rc:
+        log.error(f"{ref} exited {result.rc}" + (f", and {rc} was expected" if rc else "") + "\n"
+                  + _indented(result))
+        # `result.rc or 1` and not `result.rc`: when a REFUSAL was expected and the image exited 0, the
+        # container's own code is the success this test is refusing to accept, and handing it back would
+        # report the failure as green.
+        return result.rc or 1
     if expect and expect not in result.out:
-        log.error(f"{ref} exited 0 and did not say what was expected.\n"
+        log.error(f"{ref} exited {result.rc} and did not say what was expected.\n"
                   f"  expected to find: {expect}\n" + _indented(result))
         return 1
     log.ok(f"ran {ref}")

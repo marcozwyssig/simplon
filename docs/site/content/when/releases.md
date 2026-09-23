@@ -25,6 +25,63 @@ it is the one section held only to existing.
 
 ## 0.21.0
 
+### `rc:` — a system level can say that the image REFUSES (si#303)
+
+`test:image` shipped with `rc != 0` always red, so a product could say *the image answers* and not
+*the image rejects a broken input* — the other half of what a system level wants to say about a shipped
+artefact. The consumer who asked has had the fixture for months and could not use it.
+
+```yaml
+    image-refuses: { task: "test:image", with: { name: app, argv: "check", rc: 2 } }
+```
+
+**An expectation, not a tolerance**, and that is the whole of why it takes a value: `rc: 2` means
+"exactly 2, and 0 would then be red". A tolerance widens what counts as green; an expectation moves it,
+and only the second is still a gate. The wording is the consumer's (firn) and is better than the one the
+ticket opened with.
+
+A refusal that does not happen returns **1 and not the container's own 0** — handing that back would
+report the failure as green, which is the defect this task exists against, at its own last seam. Every
+manifest written before this keeps its meaning, and the ordinary message does not grow a clause about an
+expectation nobody stated.
+
+### A marketplace can say WHICH (si#292)
+
+Measured over the eight manifests this family can reach: **six name the same third-party marketplace and
+none could say a version.** The `claude:` section reads as a declaration of what a product is developed
+with and could not express the one thing that makes a dependency declaration mean anything.
+
+```yaml
+claude:
+  marketplaces:
+    theirs: { source: github, repo: owner/repo, ref: v1.2.3 }
+```
+
+**`ref` is a branch or a tag and not a digest**, and saying so is half the point of having it. Claude
+Code's *marketplace* sources take `ref` and explicitly not `sha`; a *plugin* source inside a marketplace
+takes both. So the strongest pin available here is a name somebody upstream can move: it stops the silent
+redraw on every fetch, and does not stop the owner of that repository from moving the tag. Both halves
+belong in the sentence, because "pinned" is otherwise read as the stronger thing.
+
+The `#` of the CLI's `owner/repo#ref` is assembled in one place and **refused in the manifest**: a value
+silently edited before use is one the manifest no longer describes. One new refusal, diagnosis; the
+census moves 199 → 200.
+
+#### What this kernel does not do, said rather than left
+
+simplon declares `claude: marketplaces:` and ships **no `.claude/settings.json`** — the scripted half
+without the native one, in a module whose own invariant is *two files, one truth*. The manifest says so
+now, and says why: these plugins are a developer convenience here and not part of any delivery path.
+Growing a settings.json so an invariant would hold would be serving the rule rather than meeting it.
+
+#### A correction from the way there
+
+The premise this ticket ran on for a day was mine and was wrong. I read `known_marketplaces.json`, found
+no `ref` in it, and concluded the native half *could not carry one* — so a manifest-side pin would be
+half a pin, and half would be worse than a stated absence. It holds none because nobody declared one. I
+measured the artefact instead of reading the contract, which is the same failure as searching a problem's
+vocabulary instead of a solution's, one step earlier.
+
 ### A development environment the repository describes (si#308)
 
 `deploy <env> up` has always resolved an environment to a backend, Docker is something this kernel
@@ -52,6 +109,7 @@ refused naming the path and https://containers.dev, rather than starting somethi
 
 **A teardown finds its containers by the label the CLI writes**, not by a name this kernel invents — so a
 container somebody started from an editor is found by `down` too.
+
 
 ### The run finishing after the screen is gone (si#306)
 
