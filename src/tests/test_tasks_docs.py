@@ -103,6 +103,12 @@ def _as(monkeypatch, uid: int, gid: int, unwritable=()) -> None:
     """
     monkeypatch.setattr(os, "getuid", lambda: uid)
     monkeypatch.setattr(os, "getgid", lambda: gid)
+    # si#319 added a SECOND question beside writability - does the caller own it - and this helper has to
+    # pin that one too, for the reason it pins the first: the tree on disk belongs to whoever runs the
+    # suite, while `uid` above says the caller is somebody else, so the real answer would be "owned by
+    # nobody here" in every test and the blocked branch would be reached because of the machine again.
+    # The declaration is `unwritable`: what this test says the caller cannot use, it cannot use.
+    monkeypatch.setattr(docs_cmd.docker, "not_owned", lambda tops: list(unwritable or []))
     if unwritable:
         refused = {str(path) for path in unwritable}
         real = os.access
@@ -394,3 +400,30 @@ def test_render_dies_when_a_green_run_produced_no_html(monkeypatch, tmp_path):
     # act / assert
     with pytest.raises(SystemExit):
         docs_cmd.render()
+
+
+def test_render_falls_back_to_root_when_the_tree_is_writable_but_not_the_callers(monkeypatch, tmp_path):
+    """si#319: si#78's question was `os.access(W_OK)` - CAN I WRITE HERE - and that is the wrong one for a
+    tool that chmods. gradle sets mode 700 on its own daemon directory every run, and POSIX allows chmod
+    only to the owner, so a directory at 777 belonging to somebody else is writable by everyone and
+    chmod-able by no-one else. Measured as a non-owner: `os.access` True, writing a file fine,
+    `chmod 700` -> `Operation not permitted`, which is where a consumer's build died.
+
+    So this tree - fully writable, wholly somebody else's - used to get the caller's uid and a render that
+    dies one bookkeeping write in. It now takes the same root fallback an unwritable tree does.
+    """
+    # arrange: everything writable, nothing ours
+    _register(monkeypatch, tmp_path, {"doctoolchain_version": "v3.5.0"})
+    (tmp_path / docs_cmd.GRADLE_STATE / "8.1.1").mkdir(parents=True)
+    monkeypatch.setattr(docs_cmd.docker.os, "getuid",
+                        lambda: (tmp_path / docs_cmd.GRADLE_STATE).stat().st_uid + 1)
+    seen = []
+    _stub_run(monkeypatch, rc=0, seen=seen)
+    _html(tmp_path)
+
+    # act
+    docs_cmd.render()
+
+    # assert
+    argv = seen[0]
+    assert argv[argv.index("--user") + 1] == "0:0"

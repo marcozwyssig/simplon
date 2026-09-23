@@ -120,8 +120,17 @@ def _version(data: dict) -> str:
     return version
 
 
-def _unwritable(root: Path) -> list[Path]:
-    """Every existing entry under `WRITTEN_PATHS` that the CALLING user cannot write, first one first.
+def _unusable(root: Path) -> list[Path]:
+    """Every existing entry under `WRITTEN_PATHS` the calling user cannot write OR does not OWN, first
+    one first.
+
+    THE SECOND HALF ARRIVED WITH si#319 and it is not a widening for its own sake. si#78 asked only
+    `os.access(W_OK)`, which is the right question for a tool that reads and writes files and the wrong
+    one for a tool that CHMODS: POSIX allows `chmod` only to a file's owner, so a directory at mode 777
+    belonging to somebody else is writable by everyone and chmod-able by no-one else. gradle sets mode
+    700 on its own daemon directory on every run - measured as a non-owner: `os.access` True, writing a
+    file fine, `chmod 700` -> `Operation not permitted`, which is the sentence a consumer's build died
+    on. Such a tree used to get the caller's uid here and a render that dies one bookkeeping write in.
 
     Empty on a tree the caller owns, which is the ordinary case and the whole reason the render may run as
     the caller. It WALKS rather than stats the two tops, because the state that produced si#78 is exactly
@@ -140,6 +149,12 @@ def _unwritable(root: Path) -> list[Path]:
         for path in (top, *sorted(top.rglob("*"))):
             if not os.access(path, os.W_OK):
                 blocked.append(path)
+    # The ownership half, from `simplon.docker` rather than restated: one question asked in two task
+    # bodies is one that drifts in one of them. Order is preserved and duplicates dropped - a path can
+    # fail both halves and is one finding either way.
+    for path in docker.not_owned(root / rel for rel in WRITTEN_PATHS):
+        if path not in blocked:
+            blocked.append(path)
     return blocked
 
 
@@ -153,12 +168,12 @@ def _user_args(root: Path) -> list[str]:
     too. On a host with no uid concept `docker.user_args` returns nothing at all and the image's own
     `dtcuser` runs - documented there, and the mount carries no ownership to get wrong.
     """
-    blocked = _unwritable(root)
+    blocked = _unusable(root)
     if not blocked:
         return docker.user_args()
     who = f"uid {os.getuid()}" if hasattr(os, "getuid") else "this user"
     log.warn(f"{len(blocked)} entr{'y' if len(blocked) == 1 else 'ies'} under "
-             f"{'/, '.join(str(p) for p in WRITTEN_PATHS)}/ cannot be written by {who} - first: "
+             f"{'/, '.join(str(p) for p in WRITTEN_PATHS)}/ are not the caller's to use ({who}) - first: "
              f"{blocked[0].relative_to(root)}. An earlier container that ran without --user left them, so "
              f"this render runs as root (netctl#1133) and everything it writes will be root-owned too. A "
              f"later step running as {who} dies there with \"Cannot create directory\"; removing those two "

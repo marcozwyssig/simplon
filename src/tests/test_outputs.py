@@ -99,3 +99,40 @@ def test_an_unknown_kind_is_refused_and_the_message_lists_the_kinds(monkeypatch,
     with pytest.raises(ValueError) as excinfo:
         outputs.for_kind("dokcer")
     assert "dokcer" in str(excinfo.value) and "docker" in str(excinfo.value)
+
+
+# --- the home a container gets (si#319) ----------------------------------------------------------------
+
+def test_the_container_home_is_a_directory_under_the_output_root(monkeypatch, tmp_path):
+    """si#319: a container started as the CALLING uid owns the bind mount and nothing else, so it has no
+    writable HOME at all. Every tool that wants one was pointed into the product's tree by hand - gradle
+    by a consumer's image, dotnet by `tasks/nuget.py` since si#102 - and the tree then carries whatever
+    ownership an earlier root run left. The kernel names one place instead."""
+    # arrange
+    _register(monkeypatch, tmp_path, {})
+
+    # act
+    home = outputs.ensure_home()
+
+    # assert: created, under the output root, and owned by whoever ran this
+    assert home == tmp_path / "build" / "home"
+    assert home.is_dir()
+
+
+def test_the_container_home_follows_a_declared_output_root(monkeypatch, tmp_path):
+    # arrange / act
+    _register(monkeypatch, tmp_path, {"output": "build-out"})
+
+    # assert
+    assert outputs.ensure_home() == tmp_path / "build-out" / "home"
+
+
+def test_the_home_is_expressed_in_container_coordinates(monkeypatch, tmp_path):
+    """The path the kernel puts in `HOME=` is the one INSIDE the container, which is the mount point plus
+    the output directory - not the host path, which does not exist there."""
+    # arrange
+    _register(monkeypatch, tmp_path, {"output": "build-out"})
+
+    # act / assert
+    assert outputs.home_in_container("/work") == "/work/build-out/home"
+    assert outputs.home_in_container("/src/") == "/src/build-out/home"

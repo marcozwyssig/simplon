@@ -1,6 +1,8 @@
 """Unit tests for docker - the docker CLI gate + opt-in static bootstrap (netctl#477). Moved here from
 netctl - the gate is platform's now (netctl#649). No network, no real downloads, no real PATH mutation
 beyond the monkeypatched environment; AAA throughout."""
+import os
+
 import pytest
 
 from simplon import context
@@ -393,3 +395,53 @@ def test_a_config_that_cannot_be_read_is_not_read_as_absence(tmp_path, monkeypat
 
     # act / assert
     assert docker.has_stored_login("docker.io") is True
+
+
+# --- what a container may write into, and what it must OWN (si#319) ------------------------------------
+
+def _tree(tmp_path):
+    """A product tree with the two things a containerised run touches: its state and its output."""
+    (tmp_path / "build" / "home").mkdir(parents=True)
+    (tmp_path / ".gradle" / "daemon").mkdir(parents=True)
+    return [tmp_path / "build", tmp_path / ".gradle"]
+
+
+def test_a_tree_the_caller_owns_is_not_flagged(tmp_path):
+    # arrange / act / assert: the ordinary case, and the one that must stay silent
+    assert docker.not_owned(_tree(tmp_path)) == []
+
+
+def test_a_writable_directory_the_caller_does_not_own_is_flagged(tmp_path, monkeypatch):
+    """THE MEASURED CASE si#319 is about. `chmod` may only be called by a file's OWNER, so a directory at
+    mode 777 owned by somebody else is writable by everyone and chmod-able by nobody else - and gradle
+    chmods its daemon registry directory on every run. Measured: as a non-owner, `os.access(W_OK)` is
+    True, writing a file succeeds, and `chmod 700` is `PermissionError [Errno 1] Operation not
+    permitted`, which is the sentence a consumer's build died on.
+
+    So the question si#78's `_unwritable` asks - can I write here - passes a tree the run then dies in.
+    """
+    # arrange: everything is writable, and nothing is ours
+    tops = _tree(tmp_path)
+    monkeypatch.setattr(os, "getuid", lambda: os.stat(tmp_path).st_uid + 1)
+
+    # act
+    flagged = docker.not_owned(tops)
+
+    # assert: the tops and what is under them, first one first
+    assert flagged and flagged[0] == tops[0]
+    assert (tmp_path / "build" / "home") in flagged
+
+
+def test_a_path_that_is_not_there_is_not_a_finding(tmp_path):
+    # arrange / act / assert: a first run has no state yet, and that is not a fault
+    assert docker.not_owned([tmp_path / "build", tmp_path / "nothing-here"]) == []
+
+
+def test_a_host_with_no_uid_concept_has_nothing_to_flag(tmp_path, monkeypatch):
+    # arrange: Windows - the mount carries no ownership to get wrong, which is the same reason
+    # `user_args` hands over nothing there
+    _tree(tmp_path)
+    monkeypatch.delattr(os, "getuid", raising=False)
+
+    # act / assert
+    assert docker.not_owned([tmp_path / "build"]) == []

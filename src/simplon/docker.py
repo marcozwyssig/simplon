@@ -23,6 +23,7 @@ import platform
 import re
 import shutil
 import tarfile
+from collections.abc import Iterable
 from pathlib import Path
 
 from simplon import context
@@ -348,6 +349,66 @@ def has_stored_login(host: str) -> bool:
         if isinstance(stored, dict) and any(_hostname(str(key)) == wanted for key in stored):
             return True
     return False
+
+
+def not_owned(tops: Iterable[Path]) -> list[Path]:
+    """Every existing entry under `tops` that the caller does not OWN, first one first (si#319).
+
+    OWNERSHIP AND NOT WRITABILITY, and the difference is the whole reason this exists. si#78 asked
+    `os.access(W_OK)` - can this process write here - which is the right question for a tool that only
+    reads and writes files. It is the wrong one for a tool that calls `chmod`, which POSIX allows only to
+    a file's owner: a directory at mode 777 belonging to somebody else is writable by everyone and
+    chmod-able by no-one else. Measured as a non-owner against exactly such a directory: `os.access`
+    True, writing a file fine, `chmod 700` -> `PermissionError [Errno 1] Operation not permitted`. That
+    sentence is what a consumer's gradle died on, one `chmod` into its daemon registry, in a tree si#78's
+    check would have called clean.
+
+    WALKS rather than stats the tops, for si#78's own reason: after a root run and a `--user` run the
+    mixture is real - the top belongs to the caller and something under it belongs to root - and a
+    shallow look calls that tree fine.
+
+    Empty on a host with no uid concept: the mount carries no ownership to get wrong there, which is the
+    same reason `user_args` hands over nothing.
+    """
+    if not hasattr(os, "getuid"):
+        return []
+    mine = os.getuid()
+    found: list[Path] = []
+    for top in tops:
+        if not top.exists():
+            continue
+        for path in (top, *sorted(top.rglob("*"))):
+            try:
+                if path.stat().st_uid != mine:
+                    found.append(path)
+            except OSError:
+                # A path that cannot be stat'ed at all is somebody else's problem to report: this
+                # function answers about ownership, and "I could not look" is not an ownership fact.
+                continue
+    return found
+
+
+def ownership_fault(tops: Iterable[Path], root: Path) -> str:
+    """The sentence to print when a containerised run must not start, or '' when the tree is the
+    caller's (si#319).
+
+    ONE MESSAGE IN ONE PLACE, for the reason `user_args` gives about itself: a convention restated in
+    five task bodies is a convention that drifts in one of them. It names the count, the first offender
+    and the way out, because "permission denied" is what the tool would have said and that is the message
+    this one exists to replace.
+    """
+    spoiled = not_owned(tops)
+    if not spoiled:
+        return ""
+    who = f"uid {os.getuid()}" if hasattr(os, "getuid") else "this user"
+    first = spoiled[0]
+    shown = first.relative_to(root) if first.is_relative_to(root) else first
+    return (f"{len(spoiled)} entr{'y' if len(spoiled) == 1 else 'ies'} under "
+            f"{', '.join(sorted({str(top.relative_to(root)) if top.is_relative_to(root) else str(top) for top in tops}))}"
+            f"/ are not owned by {who} - first: {shown}. An earlier container that ran without --user "
+            f"left them, and a tool that chmods its own state (gradle does, on every run) dies there "
+            f"with \"Operation not permitted\" however writable they look. Remove that tree - it is a "
+            f"build output, and it takes a root shell - then run this again.")
 
 
 def user_args() -> list[str]:

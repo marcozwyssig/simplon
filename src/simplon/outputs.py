@@ -105,3 +105,39 @@ def for_kind(kind: str) -> Path:
         raise ValueError(f"simplon: '{kind}' is not a kind of build output; the kinds are "
                          f"{', '.join(KINDS)}")
     return root() / kind
+
+
+#: The HOME a containerised run gets, under the output root (si#319). NOT one of `KINDS`: it is tool
+#: state rather than something a build produced, which is the same footing as `build/tools/bin` and
+#: `build/dotnet-home`, both of which already sit beside the kinds rather than among them.
+HOME = "home"
+
+
+def ensure_home() -> Path:
+    """`<output>/home`, created if it is not there, and returned.
+
+    WHY THE KERNEL OWNS THIS AT ALL (si#319). A container started with `--user <uid>:<gid>` owns the bind
+    mount and nothing else: `/` is not writable for that uid, so a tool that wants a home dies before it
+    reads anything - measured twice in this family, `gradle` with "Could not initialize native services"
+    and `dotnet` with `/.dotnet` denied. Both were answered by pointing the tool's own variable into the
+    product's tree, once in a consumer's image and once in `tasks/nuget.py`. Two hand-made workarounds
+    for one missing thing.
+
+    CREATED HOST-SIDE, AS THE CALLER, and that is the half that matters: the directory then belongs to
+    the uid the container runs as, whatever an earlier root run left around it. A directory the container
+    creates itself inherits nothing and lands under a parent that may already be root's.
+    """
+    path = root() / HOME
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def home_in_container(mount_point: str) -> str:
+    """The same directory in CONTAINER coordinates: the mount point plus the output path. Pure.
+
+    The host path does not exist inside the container, so `HOME=` cannot carry it - this is the one place
+    the two coordinate systems have to be joined, and it is joined once rather than at each call site.
+    """
+    ctx = context.current()
+    relative = root().relative_to(ctx.root).as_posix()
+    return f"{mount_point.rstrip('/')}/{relative}/{HOME}"
