@@ -121,7 +121,7 @@ consumer: its development container carried python3 and py3-pip for no reason bu
 product that wanted neither Python nor a database shipped both. The comment now records that the sentence
 happened.
 
-### The java profile pins Gradle, not only the JDK
+### The java profile pins Gradle, not only the JDK (#316)
 
 `gradle:jdk25` names the JDK and lets **Gradle** float: the day Docker Hub moves that tag, every product
 scaffolded on this profile changes build tool without a line changing here — and every measurement in
