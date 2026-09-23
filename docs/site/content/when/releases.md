@@ -78,6 +78,25 @@ hidden: where a product collapses a reserved instance id away, that instance's p
 sibling's, so a sibling's containers satisfy the check for the collapsed one — the kernel does not hold
 the collapse rule and cannot see it, and a caller that needs the distinction filters before calling.
 
+### The java profile pins Gradle, not only the JDK
+
+`gradle:jdk25` names the JDK and lets **Gradle** float: the day Docker Hub moves that tag, every product
+scaffolded on this profile changes build tool without a line changing here — and every measurement in
+`profiles.py` is suddenly about a Gradle nobody ran. `compile`'s `assemble testClasses` is exactly such a
+measurement; it was read off 9.7.1's task list on 2026-09-10.
+
+The profile image is now `gradle:9.7.1-jdk{version}`. Measured on 2026-09-23, both halves: the floating
+`gradle:jdk21` carries **Gradle 9.7.1** today, and `gradle:9.7.1-jdk25` carries Gradle 9.7.1 on JVM
+25.0.4. **So this changes no behaviour today** — it fixes what today's behaviour is, which is the point of
+a pin.
+
+`docker.pinned_image()` does not catch a floating tag: it refuses `:latest` and an empty tag, and
+`gradle:jdk25` is neither. A test holds it instead.
+
+**It reaches a product only through `init`.** A profile is data for the scaffold and inert afterwards, so
+an existing manifest keeps the image line it was written with — a product that wants the pin edits its own
+`image:`.
+
 ### `strip_prefix` drops the first occurrence, not every one (si#312)
 
 It was `str.replace`, which empties **every** occurrence: a prefix appearing again in a status column or
