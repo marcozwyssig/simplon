@@ -23,6 +23,70 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.22.0
+
+### `simplon.interact` takes the container prefix, and no longer knows a product (si#312)
+
+The module carried `_PREFIX = "clab-netctl-"` — one product's name, and not even that product's general
+case: it is the spelling of that product's **reserved** instance. A multi-tenant orchestrator therefore
+got correct answers for exactly one of its N labs and silent ones for the rest. Measured on netctl at
+0.21.0: an instance with **zero containers** streamed another instance's live log, a listing printed
+`a1-client-be` where it meant `client-be`, and — the finding that decided it — `connect` opened a shell in
+**another instance's controller** while the operator had named their own. Two mis-read; the third
+mis-acted.
+
+**The kernel now derives no container name of its own.** It holds no product name, no reserved instance id
+and no default prefix; a preset value would be the same defect by a detour, answering for whoever happens
+to match it. The caller resolved the instance, so the caller passes the prefix. The test
+`test_the_module_names_no_product_and_no_reserved_instance` holds that: neither spelling may reappear in
+the module, in code or in prose.
+
+**This is a breaking change to a LIBRARY module**, and it breaks loudly — a missing argument is a
+`TypeError` at the call, never a wrong container. For the one measured consumer it is one argument at four
+call sites, and the value is already in the process beside them (netctl passes `paths.CONTAINER_PREFIX`,
+which the `docker ps` filters two lines above already use).
+
+| before | after |
+|---|---|
+| `normalize_container(name)` | `normalize_container(name, prefix)` |
+| `strip_prefix(text)` | `strip_prefix(text, prefix)` |
+| `resolve_connect_target(name, devices, site_names)` | `resolve_connect_target(name, devices, site_controllers, prefix)` |
+
+`parse_logs_args` is unchanged; it never touched a prefix.
+
+`resolve_connect_target` is the one whose change is not just an argument. It used to build a site's
+controller as `<product>-<site>` itself — a **second** product name in the module, which the first
+sentence of this note forbids. It now takes a site → controller-container map, which the caller has and
+the kernel does not.
+
+### A command that presupposes an instance refuses when it is not there (si#312)
+
+`require_instance_present(prefix, container_names)` raises `InstanceNotPresent` unless some name belongs to
+that prefix's instance. It exists because *"the instance is not there"* and *"the instance is there and
+quiet"* were one outcome, which is this project's recurring defect at this seam.
+
+**The line is not read versus write** — it is *does this command create the instance, or presuppose it?*
+A bring-up starts from zero containers, so zero is its ordinary beginning. The wording is netctl's and is
+better than the one this ticket opened with. The same refusal closes a second, long-known defect of theirs
+(netctl#1040): a tear-down from a linked worktree removes its own, usually empty, instance and **reports
+success** while the main lab keeps running — *"it looks like a verification and is none"*.
+
+It **raises** rather than returning a verdict, because a returned verdict can be ignored, and a command
+that carried on regardless is the thing it guards against. Belonging is `startswith` rather than the
+substring match `docker ps --filter name=` performs. One limit is stated in the docstring rather than
+hidden: where a product collapses a reserved instance id away, that instance's prefix is a prefix of every
+sibling's, so a sibling's containers satisfy the check for the collapsed one — the kernel does not hold
+the collapse rule and cannot see it, and a caller that needs the distinction filters before calling.
+
+### `strip_prefix` drops the first occurrence, not every one (si#312)
+
+It was `str.replace`, which empties **every** occurrence: a prefix appearing again in a status column or
+an image name corrupted the rest of the line. Both this ticket and netctl#1914 called the repair "a prefix
+strip"; **it cannot be one**, and that was measured rather than argued — what the callers hand over is a
+`docker ps --format '  {{.Names}}\t{{.Status}}'` LINE, indented and with a second column, so the name does
+not sit at position 0 and `removeprefix` would be a no-op on every real input. The function drops the
+first occurrence and leaves the rest of the line exactly as docker wrote it.
+
 ## 0.21.0
 
 ### `rc:` — a system level can say that the image REFUSES (si#303)
