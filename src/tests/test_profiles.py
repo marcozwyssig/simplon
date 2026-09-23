@@ -17,6 +17,8 @@ accepts it. `test_the_python_bodies_survive_the_toolchain_gate` takes the round 
 bodies only: exactly as far as the new key reaches, and no further, because the rest of the gap is still
 somebody's decision rather than this ticket's.
 """
+import re
+
 import pytest
 
 from simplon import bootstrap
@@ -170,11 +172,33 @@ def test_the_other_three_languages_carry_their_own_toolchain():
     python = profiles.profile("python", version="3.12")
 
     # assert: the compiler AND its version are manifest data, so both reach the image reference
-    assert java.image == "gradle:jdk25" and java.commands["compile"]["argv"][0] == "gradle"
+    assert java.image == "gradle:9.7.1-jdk25" and java.commands["compile"]["argv"][0] == "gradle"
     assert dotnet.image.endswith("sdk:9.0") and dotnet.commands["unit"]["argv"][:2] == ["dotnet", "test"]
     # python reaches its tools through `python -m` rather than by name, see the two tests below
     assert python.image == "python:3.12" and python.commands["analyse"]["argv"][:3] == [
         "python", "-m", "mypy"]
+
+
+def test_the_java_image_pins_the_gradle_version_and_not_only_the_jdk():
+    """`gradle:jdk25` names the JDK and lets GRADLE float, so the day Docker Hub moves that tag every
+    product on this profile silently changes build tool - and every measurement in `profiles.py` is
+    suddenly about a Gradle nobody ran. The `assemble testClasses` pair above is exactly such a
+    measurement: it was read off Gradle 9.7.1's task list.
+
+    A floating tag is not what `docker.pinned_image()` refuses (it refuses `:latest` and an empty tag),
+    which is why this is asserted here rather than caught there.
+    """
+    # arrange / act: the two JDKs the profile is exercised with
+    tags = [profiles.profile("java", version=v).image.split(":", 1)[1] for v in ("21", "25")]
+
+    # assert: the tag opens with a dotted version, ahead of the jdk segment
+    for tag in tags:
+        assert re.match(r"^\d+\.\d+(\.\d+)?-jdk", tag), (
+            f"the java toolchain image is '{tag}': it names the JDK and lets the Gradle version float. "
+            f"Pin the gradle version too, or every measurement in profiles.py re-dates itself quietly.")
+
+    # assert: and it is the version this repository actually measured (profiles.py, 2026-09-10)
+    assert all(tag.startswith("9.7.1-") for tag in tags)
 
 
 def test_the_python_profile_installs_its_own_tools_before_it_runs_them():

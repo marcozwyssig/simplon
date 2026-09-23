@@ -151,7 +151,16 @@ PROFILES: dict[str, Profile] = {
         },
     ),
     "java": Profile(
-        image="gradle:jdk{version}",
+        # THE GRADLE VERSION IS PINNED TOO, not only the JDK. `gradle:jdk25` is a FLOATING tag: it names
+        # the JDK and takes whatever Gradle Docker Hub last pushed behind it, so the day that moves,
+        # every product on this profile changes build tool without a line changing here - and every
+        # measurement in this file re-dates itself in silence. `compile`'s `assemble testClasses` below
+        # is exactly such a measurement; it was read off 9.7.1's task list on 2026-09-10.
+        #
+        # `docker.pinned_image()` does not catch this - it refuses `:latest` and an empty tag, and
+        # `gradle:jdk25` is neither. The tag is held by a test instead
+        # (`test_the_java_image_pins_the_gradle_version_and_not_only_the_jdk`).
+        image="gradle:9.7.1-jdk{version}",
         commands={
             # gRPC AND PROTOBUF (si#238), and it is the one command here that names its OWN image.
             # That is not a special case in the scaffolder - `{"image": prof.image, **body}` has always
