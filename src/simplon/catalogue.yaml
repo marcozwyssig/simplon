@@ -455,6 +455,7 @@ tasks:
       argv:   { help: "what to run in the container, as one string" }
       mount:  { help: "'<directory under the product>:<absolute path in the container>' to bind" }
       expect: { help: "text the output must contain for the run to count as green" }
+      rc:     { help: "the exit code to expect (default 0); `rc: 2` means exactly 2, and 0 is then red" }
       user:   { help: "run as the invoking uid:gid (default true), so bind-mounted output is owned" }
 
   build:image:

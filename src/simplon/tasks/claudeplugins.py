@@ -42,10 +42,26 @@ BUILTIN_MARKETPLACE = "claude-plugins-official"
 
 @dataclass(frozen=True)
 class Marketplace:
-    """One plugin source: the name plugin ids reference it by, and the `owner/repo` it is fetched from."""
+    """One plugin source: the name plugin ids reference it by, the `owner/repo` it is fetched from, and
+    optionally the ref it is fetched AT.
+
+    `ref` IS A BRANCH OR A TAG AND NOT A DIGEST (si#292), and saying so is half the point of having it.
+    Claude Code's marketplace sources take `ref` and explicitly not `sha` - a plugin source inside a
+    marketplace takes both, a marketplace source takes one - so the strongest pin available here is a
+    name somebody upstream can move. `ref: v1.2.3` stops the silent redraw on every fetch and does not
+    stop the owner of that repository from moving the tag. Both halves belong in the sentence, because
+    "pinned" is otherwise read as the stronger thing.
+
+    WHY IT EXISTS AT ALL, and it is not a security feature. This section reads as a declaration of what a
+    product is developed with, and until now it could not say the one thing that makes a dependency
+    declaration mean anything: WHICH. Measured over the eight manifests this family can reach, six named
+    the same third-party marketplace and none of them could say a version. That is an expressiveness gap
+    in this kernel's own vocabulary.
+    """
 
     name: str
     repo: str
+    ref: str = ""
 
 
 @dataclass(frozen=True)
@@ -62,6 +78,15 @@ class Plan:
     def is_complete(self) -> bool:
         """True when this machine already matches the declaration, which is what makes a rerun a no-op."""
         return not self.add_marketplaces and not self.install_plugins
+
+
+def _source_of(market: Marketplace) -> str:
+    """What `claude plugin marketplace add` is handed: `owner/repo`, or `owner/repo#ref` when pinned.
+
+    The `#` is assembled HERE and refused in the manifest, so there is one place that knows the CLI's
+    spelling and the manifest names the two halves separately.
+    """
+    return f"{market.repo}#{market.ref}" if market.ref else market.repo
 
 
 def declared(data: Mapping[str, object],
@@ -94,7 +119,15 @@ def declared(data: Mapping[str, object],
             raise ValueError(f"{source}: '{where}': only source 'github' is supported, got '{kind}'")
         if repo.count("/") != 1 or not all(repo.split("/")):
             raise ValueError(f"{source}: '{where}': repo must be 'owner/name', got '{repo}'")
-        markets.append(Marketplace(name=str(name), repo=repo))
+        ref = str(body.get("ref", "")).strip()
+        if "#" in ref:
+            # The CLI spells a ref as `owner/repo#ref`, so somebody will write the `#` here too. It is
+            # refused rather than stripped: a value that is silently edited before use is one the
+            # manifest no longer describes.
+            raise ValueError(
+                f"{source}: '{where}': `ref:` is the branch or tag alone, not '{ref}' - the `#` belongs "
+                f"to the command line spelling, and this section names the two halves separately")
+        markets.append(Marketplace(name=str(name), repo=repo, ref=ref))
     if not markets:
         raise ValueError(f"{source}: '{SECTION}.marketplaces' declares none")
 
@@ -211,7 +244,7 @@ def install(dry_run: bool = False) -> int:
     unusable: set[str] = set()
     for market in todo.add_marketplaces:
         log.info(f"registering marketplace {market.name} ({market.repo})")
-        if run(["claude", "plugin", "marketplace", "add", market.repo], capture=False).ok:
+        if run(["claude", "plugin", "marketplace", "add", _source_of(market)], capture=False).ok:
             log.ok(f"marketplace {market.name} registered")
         else:
             failures += 1

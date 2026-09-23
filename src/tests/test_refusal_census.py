@@ -730,6 +730,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("workflowgen", "_check_path", "must be under '{DIRECTORY}/'"): DIAGNOSIS,
     ("workflowgen", "_check_path", "must end in .yml or .yaml"): DIAGNOSIS,
     ("workflowgen", "_reject_duplicate_paths", "one file has one owner"): DIAGNOSIS,
+    # si#292. `ref: '#v1'` has no reading: the `#` is the CLI's separator between repo and ref, so a
+    # value carrying it would reach `marketplace add` as `o/r##v1`. Refused rather than stripped,
+    # because a value silently edited before use is one the manifest no longer describes.
+    ("claudeplugins", "declared", "`ref:` is the branch or tag alone"): DIAGNOSIS,
     # The rollout flow. All six are shapes with no reading: a stage that is not a mapping, one that names
     # no environment, one that names an environment twice (two jobs with one key - the FILE would be
     # invalid, not merely odd), a non-boolean `approval:`, a key a stage does not take, and a `flow:`
