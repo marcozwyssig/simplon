@@ -16,20 +16,24 @@
 # WHEN IT MOVES. In the commit that publishes a new image. `release:image` is on demand rather than on
 # every release (simplon.yaml says why), so publishing and pinning are already one person's single act.
 #
-# THERE IS NO LINE YET, and that is a statement rather than an omission: no simplon image has been
-# published at the time of writing. si#200 was proven end to end against a local `registry:2` - built,
-# pushed, read back, purged locally, pulled by version and run - and nothing has gone to a public
-# registry since, so writing a reference here would be a claim nobody has checked. A launcher that finds
-# no line must say exactly that: this checkout has no published kernel image, so the container route is
-# not available and the venv route is.
+# THE FIRST LINE EXISTS SINCE 2026-09-23, and it was written in the order si#313 decided: PUBLISH FIRST,
+# PIN AFTERWARDS. `./simplon.sh release image` ran on the v0.22.0 checkout, `release:image` read the tag
+# back out of the registry before it reported OK, and only then was this line written - so it names
+# something that demonstrably exists rather than something somebody intends to push. Written the other
+# way round, this file would name an image that is not there, and on a machine with no python3 the
+# launcher would take the container route and fail where it would otherwise have said plainly that no
+# image is pinned.
 #
-# WHAT CHANGED IN si#313 IS WHY THERE IS NO LINE. It used to be that there was no route to publish at
-# all: the registry was Docker Hub, which needs a stored credential this repository deliberately does not
-# keep. The registry is `ghcr.io/marcozwyssig` now and needs none, so the only thing between here and a
-# line is somebody running `./simplon.sh release image` on a tagged checkout.
+# WHAT THE PUSH REPORTED, kept here because it is the second source for the line below:
+#   v0.22.0: digest sha256:f9e262fee0569b33855fd3fd32c63d86971e54f830dd2b32e57b887bc4f82c72
 #
-# AND THE ORDER IS PUBLISH FIRST, PIN AFTERWARDS (si#313, decided). `release:image` reads the tag back out
-# of the registry before it reports OK, so a pin written after it names something that demonstrably
-# exists. Written the other way round, this file would name an image that is not there yet - and on a
-# machine with no python3 the launcher would then take the container route and fail, where today it says
-# plainly that no image is pinned.
+# THE FIRST ATTEMPT FAILED ON THE NETWORK and not on the credential - four layers were already up when
+# one timed out awaiting response headers. The second run pushed the rest and read the tag back. Noted
+# because the refusal text `release:image` prints on a failed push is about package scopes, which was
+# the wrong diagnosis that time.
+#
+# WHAT IT USED TO SAY. Until si#313 the registry was Docker Hub, which needs a stored credential this
+# repository deliberately does not keep, so there was no route to publish at all and this file carried
+# a paragraph explaining the absence. ghcr.io needs none: `release:image` logs in with the token Actions
+# issues per run, or `gh auth token` for an operator publishing by hand.
+ghcr.io/marcozwyssig/simplon:v0.22.0
