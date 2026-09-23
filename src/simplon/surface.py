@@ -142,7 +142,7 @@ LIBRARY = frozenset({
     "awake", "backend", "carrierspec", "checksum", "clablifecycle", "clabrender", "cli", "completiongen",
     "layout",
     "compose", "context", "deployment",
-    "credentials", "degraded", "disk", "docker", "environments", "fetch", "filelock",
+    "credentials", "degraded", "devcontainer", "disk", "docker", "environments", "fetch", "filelock",
     "githubpackages", "healthgate", "host", "hostpath",
     "imagenames", "interact", "labegress", "labhost", "labinstance", "labnet", "linux", "log",
     "nexusproxy", "portainer", "ports", "pyvenv", "run", "surface", "taskgen", "topology", "tracker",

@@ -912,9 +912,32 @@ so. `credential_from:` names a PREFIX like every other credential here, and the 
 every deployment** rather than stored in Portainer - so a stack somebody opens in the Portainer UI carries
 no usable read access to your source.
 
-**`backend: portainer` needs no product code.** It is the one backend the kernel ships, because the whole
-chain under it is already the kernel's: `deploy carrier` builds the Portainer, `carriers:` describes it,
-and this section points at it. A product that registers its own implementation under that name still wins.
+**`backend: portainer` needs no product code.** It is one of the two backends the kernel ships, because
+the whole chain under it is already the kernel's: `deploy carrier` builds the Portainer, `carriers:`
+describes it, and this section points at it. A product that registers its own implementation under that
+name still wins.
+
+**`backend: devcontainer` is the other one, and it deploys the working tree into a container your
+repository describes.**
+
+```yaml
+environments:
+  dev: { backend: devcontainer, description: "The development container." }
+```
+
+`deploy dev up local` brings up what `.devcontainer/devcontainer.json` describes; `deploy dev down`
+removes it; `deploy dev status` says whether it is running. It is here for the same reason `portainer`
+is - the chain under it is the kernel's, since Docker is a thing this kernel installs and checks - and it
+needs no product code beyond the file the specification already defines.
+
+**It names no editor, and that is the decision rather than an omission.** `devcontainer.json` is an
+[open specification](https://containers.dev) with a reference CLI of its own, read by more than one
+consumer; this backend drives that CLI and stops there. Which editor a person then attaches is theirs and
+their product's, and a kernel that opened one would be coupling every product to it.
+
+**It refuses a published version.** `local` is the only selector that means anything: a development
+environment is the working tree, mounted. A tag names something in a registry, which is a deployment of a
+different thing under the same verb.
 
 **`portainer: insecure:` is the same value as the Proxmox one and is there for a measured reason.**
 Portainer generates its own certificate on first start, so a carrier the kernel has just built answers
