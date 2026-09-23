@@ -255,6 +255,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # working meaning. The `python:` one is diagnosis for the same reason and it is the least obvious:
     # `actions/setup-python` carries no Debian archive at all, so the pin does not produce a DIFFERENT
     # working workflow, it produces one whose second step says "not found for this operating system".
+    # si#314: `output:` is joined onto the product root and then handed to a clean. A value that is not a
+    # string had no working meaning, so refusing it takes nothing away - and the path rules underneath
+    # (absolute, `..`, backslash) are `bootstrap.validate_relative_dir`'s, counted where they live.
+    ("outputs", "declared", "must be a relative directory"): DIAGNOSIS,
     ("runners", "resolve", "takes `kind:` and `labels:`"): DIAGNOSIS,
     ("runners", "resolve", "names a kind of machine"): DIAGNOSIS,
     ("runners", "resolve", "is not a runner kind this kernel knows"): DIAGNOSIS,

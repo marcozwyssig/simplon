@@ -26,6 +26,8 @@ import tomllib
 import pytest
 import yaml
 
+from simplon.tasks import site as site_task
+
 from simplon import catalogue as catalogue_mod
 from simplon.orchestrator import manifest as manifest_mod
 
@@ -213,8 +215,13 @@ def test_the_deployment_is_the_workflows_and_carries_the_rights(docs_job):
 
 
 def test_the_artifact_is_taken_from_the_directory_the_manifest_builds_into(docs_job):
-    """The upload reads the directory the manifest declares as the site's output. Two spellings of one
-    path is the shape that rots quietly, so this is where they are held together."""
+    """The upload reads the directory the site is really built into. Two spellings of one path is the
+    shape that rots quietly, so this is where they are held together.
+
+    Read through `site.declared` rather than off the `site:` section since si#314: the manifest no longer
+    names an output at all, the site is a KIND under the product's output directory, and what this test
+    must hold is that the workflow uploads what the build WRITES - not that two literals match.
+    """
     # Arrange
     manifest = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
     upload = next(step for step in docs_job["steps"]
@@ -224,7 +231,7 @@ def test_the_artifact_is_taken_from_the_directory_the_manifest_builds_into(docs_
     path = upload["with"]["path"]
 
     # Assert
-    assert path == manifest["site"]["output"]
+    assert path == site_task.declared(manifest, source=str(MANIFEST)).output
 
 
 def test_no_step_gates_on_a_clean_working_tree(workflow):

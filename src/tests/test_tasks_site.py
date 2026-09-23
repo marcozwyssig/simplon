@@ -128,16 +128,52 @@ def test_declared_refuses_a_manifest_without_a_usable_section(document):
         site_task.declared(document)
 
 
-@pytest.mark.parametrize("missing", ["image", "output"])
+@pytest.mark.parametrize("missing", ["image"])
 def test_declared_refuses_a_section_missing_a_required_key(missing):
-    # arrange: the generator is the product's choice, and `output` is handed to a recursive delete - a
-    # kernel default for either would be simplon's own choice imposed on every other product, and for
-    # `output` it would be one imposed on `shutil.rmtree`
+    # arrange: the generator is the product's choice - a kernel default for it would be simplon
+    # choosing which hugo every other product builds with
     section = {key: value for key, value in _SITE.items() if key != missing}
 
     # act / assert
     with pytest.raises(ValueError, match=missing):
         site_task.declared({"site": section})
+
+
+def test_a_section_that_names_no_output_builds_into_the_products_output_directory():
+    """si#314: `output` used to be required BECAUSE it is handed to a recursive delete - a guessed
+    directory would have been one imposed on `shutil.rmtree`. It is not guessed any more: `site` is a
+    KIND under the product's one output directory, which the product declares once (or takes as `build`,
+    the convention every build tool here already uses) and which the kernel has declared disposable in
+    three other places. So the path is derived from something the product said, and the key stays
+    available for a product that wants another.
+    """
+    # arrange: every key but `output`
+    section = {key: value for key, value in _SITE.items() if key != "output"}
+
+    # act
+    cfg = site_task.declared({"site": section})
+
+    # assert
+    assert cfg.output == "build/site"
+
+
+def test_a_declared_output_root_carries_the_site_with_it():
+    # arrange: a product publishing out of another root (cleon's real case)
+    section = {key: value for key, value in _SITE.items() if key != "output"}
+
+    # act
+    cfg = site_task.declared({"site": section, "output": "build-out"})
+
+    # assert
+    assert cfg.output == "build-out/site"
+
+
+def test_a_named_output_still_wins_over_the_kinds_directory():
+    # arrange / act: the whole of what makes this a default and not a rule
+    cfg = site_task.declared({"site": {**_SITE, "output": "public"}, "output": "build-out"})
+
+    # assert
+    assert cfg.output == "public"
 
 
 def test_a_section_that_names_no_source_takes_the_documentation_root():

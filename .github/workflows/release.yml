@@ -257,7 +257,7 @@ jobs:
       # publish the previous run's reference; that is why the aggregate is what runs.
       #
       # Hugo runs in the pinned image via docker, which ubuntu-latest has. The container is given the
-      # RUNNER's own uid (simplon.docker.user_args), so build/website/ comes out owned by `runner` and
+      # RUNNER's own uid (simplon.docker.user_args), so build/site/ comes out owned by `runner` and
       # the upload below can read it - measured, see the task report; the image accepts a uid that does
       # not exist inside it, which is what makes the runner's 1001 no different from a developer's.
       #
@@ -272,6 +272,6 @@ jobs:
       # a runner, which is exactly why neither is a simplon task.
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: build/website
+          path: build/site
       - id: deployment
         uses: actions/deploy-pages@v4

@@ -78,6 +78,56 @@ hidden: where a product collapses a reserved instance id away, that instance's p
 sibling's, so a sibling's containers satisfy the check for the collapsed one — the kernel does not hold
 the collapse rule and cannot see it, and a caller that needs the distinction filters before calling.
 
+### One directory a build writes into, and the kernel says which (si#314)
+
+A product's own artefacts never arrived in `build/` at all. The worked example: jars under
+`src/java/<module>/build/libs/`, a native binary under `firn-cli/build/native/`, a container image
+nowhere on disk, and two documents in the places two manifest lines happened to name. **Nobody could
+clean a build with one directory, and nobody could find what a build produced without first knowing
+which tool produced it.**
+
+```yaml
+output: build        # the default; a product that needs another says so once
+```
+
+Everything the kernel's producing coordinates write now lands under it, by **kind**:
+`cpp/ dotnet/ java/ python/` for what a compile produced, `docker/` for the image pointer, `docs/`,
+`site/` and `logs/`. The four language kinds are the kernel's own toolchain profiles, and
+`test_every_language_profile_has_a_kind` holds that from the other side: a fifth profile without a kind
+turns the suite red rather than leaving that language's output with nowhere named to land.
+
+**A default, not an expression rule** — measured rather than preferred. Over all eight reachable
+manifests, seven producing coordinates name a destination and **two are outside `build/`**: one product
+publishes from `build-out/` (it keeps `build/` for what it FETCHES), and **this repository's own two
+documentation pages are written into the source tree**, because hugo reads its content from
+`docs/site/content/`. A rule over "every producing coordinate" would have refused the kernel's own
+manifest first, and a rule that exempts the kernel is the kind si#53 struck. So a coordinate that names
+its destination still gets exactly what it named. Census: one refusal, diagnosis, 200 -> 201.
+
+**What did NOT change is what `clean` may take.** `build/` was already declared disposable as a whole -
+`tools.py` ("a fetched binary is a BUILD OUTPUT and must die with `clean`"), `steplog.py` ("the same
+`build/` a product's `clean` removes") and the `.gitignore` the scaffolder writes. No new distinction
+between what to keep and what to throw arrives with this; what arrives is that a product's artefacts
+reach that directory at all.
+
+**The one output that is not a file.** A container image lives in a daemon, so `build:image` writes a
+POINTER: `<output>/docker/image.txt` with the reference and the daemon's image id. It is labelled an
+**image id and not a digest**, because a freshly built image has no registry digest - that one exists
+only once something has been pushed. `docker save` was measured and rejected: about a gigabyte per build
+for a toolchain image, written by something nobody reads. A record that cannot be written does not turn
+a real image red - the image exists, and calling a built image a failed build is the opposite lie - but
+it is said out loud.
+
+**The kernel runs its own default.** `simplon.yaml` no longer declares `site: output:`; the site is a
+kind, so it builds into `build/site`, and the release workflow uploads what the build writes rather than
+a second spelling of the same path.
+
+**Found by breaking it.** Reading the manifest to place the step logs meant an unreadable `output:` cost
+a run its whole record - the step logs AND the transcript, the one artefact somebody attaches to a
+ticket when a run went wrong. Losing the account of a failure BECAUSE something else was already wrong is
+exactly backwards, so the logs fall back to the default root and say so once per run. A manifest that is
+not there at all says nothing: there is no declaration to honour.
+
 ### The kernel image publishes to ghcr, so the container route can exist at all (si#313)
 
 si#201's launcher offers every product two routes to the kernel: a Python venv, or a published kernel

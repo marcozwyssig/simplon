@@ -49,12 +49,16 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from simplon import context, docker, hostpath, log
+from simplon import context, docker, hostpath, log, outputs
 from simplon.bootstrap import validate_relative_dir
 from simplon.run import run
 
 #: The manifest section this module owns. A section rather than flat keys: it is five related values, and
 #: a product that declares no website declares no section at all.
+#: The kind of build output a website is (si#314): its own, beside `docs/`, because a built site is
+#: not a document - one is the product of hugo, the others are its input.
+OUTPUT_KIND = "site"
+
 SECTION = "site"
 
 #: Where a product's Hugo sources are, when its manifest does not say (si#183). `docs/` is the
@@ -270,10 +274,17 @@ def _inside_the_product(value: str, key: str, where: str) -> str:
 def declared(data: Mapping[str, object], source: str = "manifest") -> Site:
     """The website the manifest declares, validated LOUDLY.
 
-    `image` and `output` are required to BE declared rather than defaulted, because each one is a
-    statement the kernel cannot make for a product: a kernel that named the image would be choosing a
-    generator on every product's behalf, and one that guessed `output` would hand `shutil.rmtree` a
-    directory nobody typed. A missing section fails here, naming the key, rather than as a container run
+    `image` is required to BE declared rather than defaulted, because it is a statement the kernel
+    cannot make for a product: a kernel that named the image would be choosing a generator on every
+    product's behalf.
+
+    `output` USED TO BE REQUIRED for a second reason - it is handed to a recursive delete, and a guessed
+    directory would have been one imposed on `shutil.rmtree`. si#314 removed the guess rather than the
+    caution: a site is a KIND under the product's one output directory, so the default is
+    `<output>/site` where `output:` is what the product declared (or `build`, the convention every build
+    tool in this family already uses) and where the kernel has already declared everything disposable.
+    The path is therefore derived from something the product said. A product that wants another still
+    names one, and what it names still wins. A missing section fails here, naming the key, rather than as a container run
     against a path that is not there.
 
     `source` is the one that DOES default, to `DEFAULT_SOURCE`, and the block on that constant is where
@@ -292,7 +303,7 @@ def declared(data: Mapping[str, object], source: str = "manifest") -> Site:
     # The REQUIRED keys first, then their shape: a section missing `image` altogether should say so, not
     # complain about the optional theme it also got wrong.
     image = _str(section, "image", where, required=True)
-    out = _str(section, "output", where, required=True)
+    out = _str(section, "output", where) or f"{outputs.declared(data, source)}/{OUTPUT_KIND}"
     # Not `required=True`: a key that carries NO VALUE takes the convention, a key that carries a broken
     # one is ruled on. `_str` draws exactly that line and draws it the same way for every optional key in
     # this section, so `source: ""` and `source: 3` refuse while an omitted key and a bare `source:` (YAML
