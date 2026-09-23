@@ -32,7 +32,8 @@ import os
 import shutil
 from pathlib import Path
 
-from simplon import backend, context, deployment, environments, githubpackages, log, portainer
+from simplon import (backend, context, deployment, devcontainer, environments, githubpackages,
+                     log, portainer)
 
 
 def drivable_backends() -> dict[str, backend.Backend]:
@@ -41,9 +42,15 @@ def drivable_backends() -> dict[str, backend.Backend]:
     THE ORDER IS THE DECISION. A product's registration wins on a name collision, because a product that
     writes its own `portainer` backend has a reason the kernel cannot know - and the alternative, refusing
     the collision, would mean the kernel shipping a backend could break a product that already had one.
-    The kernel ships exactly one today (si#5); everything else is still the product's to register.
+    The kernel ships TWO: `portainer` (si#5) and `devcontainer` (si#308). Both are here for one reason rather
+    than two - the chain underneath each is already the kernel's, so a product writing them would be
+    writing the far end of a pipe the kernel owns both ends of. Everything else is still the product's
+    to register.
     """
-    shipped: dict[str, backend.Backend] = {portainer.BACKEND: portainer.PortainerBackend()}
+    shipped: dict[str, backend.Backend] = {
+        portainer.BACKEND: portainer.PortainerBackend(),
+        devcontainer.BACKEND: devcontainer.DevcontainerBackend(),
+    }
     return {**shipped, **backend.product_registry()}
 
 

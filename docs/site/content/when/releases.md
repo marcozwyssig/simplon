@@ -25,6 +25,34 @@ it is the one section held only to existing.
 
 ## 0.21.0
 
+### A development environment the repository describes (si#308)
+
+`deploy <env> up` has always resolved an environment to a backend, Docker is something this kernel
+installs and checks, and `devcontainer.json` is an open specification with a reference CLI of its own.
+What was missing between them was the thirty lines that read a file a repository already carries.
+
+```yaml
+environments:
+  dev: { backend: devcontainer, description: "The development container." }
+```
+
+`deploy dev up local` brings up what `.devcontainer/devcontainer.json` describes, `deploy dev down`
+removes it, and `deploy dev status` says whether it is running. **No product code**, for the reason
+`portainer` needs none: the chain underneath is the kernel's.
+
+**It names no editor**, and that is the decision rather than an omission. The specification is read by
+more than one consumer — JetBrains Gateway, DevPod and Codespaces among them — so this backend drives the
+CLI and stops there. Which editor a person attaches is theirs and their product's, and a kernel that
+opened one would couple every product to it.
+
+Two refusals are worth knowing before you meet them. A **published version** is refused: a development
+environment is the working tree, so `local` is the only selector that means anything, and a tag names a
+deployment of a different thing under the same verb. A repository with **no specification file** is
+refused naming the path and https://containers.dev, rather than starting something it guessed.
+
+**A teardown finds its containers by the label the CLI writes**, not by a name this kernel invents — so a
+container somebody started from an editor is found by `down` too.
+
 ### The run finishing after the screen is gone (si#306)
 
 si#265 repaired `#status` and left `#steps` with the same edge. It surfaced where it is most expensive:
