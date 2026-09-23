@@ -32,6 +32,7 @@ about 1 GB written on every build, by something nobody reads.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 from simplon import context
@@ -57,7 +58,7 @@ DEFAULT = "build"
 KINDS = ("cpp", "dotnet", "java", "python", "docker", "docs", "logs", "site")
 
 
-def declared(data: dict, source: str = "manifest") -> str:
+def declared(data: Mapping[str, object], source: str = "manifest") -> str:
     """The relative output root the manifest states, or `DEFAULT` when it states none. Pure.
 
     A key that is ABSENT takes the convention. A key that carries a broken value is ruled on - the same
