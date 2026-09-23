@@ -78,7 +78,50 @@ hidden: where a product collapses a reserved instance id away, that instance's p
 sibling's, so a sibling's containers satisfy the check for the collapsed one — the kernel does not hold
 the collapse rule and cannot see it, and a caller that needs the distinction filters before calling.
 
-### The java profile pins Gradle, not only the JDK
+### The kernel image publishes to ghcr, so the container route can exist at all (si#313)
+
+si#201's launcher offers every product two routes to the kernel: a Python venv, or a published kernel
+image named in `deploy/image/image.pin`. **The second has never been available to anyone** — the pin
+holds 1816 bytes of comment and **zero** non-comment lines, which is exactly what `simplon.sh:103`
+filters out, so `KERNEL_IMAGE` is empty and every product falls to the venv.
+
+That was a deferral with a reason, and the reason has **ended rather than been out-weighed**. It was a
+credential: this repository publishes to PyPI through Trusted Publishing and to Pages through OIDC and
+keeps no registry secret at all, and Docker Hub has no such route — an automatic publish would have meant
+a long-lived Hub token standing in the repository's secrets between releases. `ghcr.io` needs none.
+`release:image` asks `githubpackages.is_github_packages` and logs in with the token Actions issues **per
+run**, or with `gh auth token` for an operator publishing by hand.
+
+**It is not the OIDC route** PyPI and Pages use here. Same consequence — nothing is kept between releases
+— by a different mechanism, and whoever decides this later deserves the right name for it.
+
+```yaml
+images:
+  kernel:
+    registry: ghcr.io/marcozwyssig   # was docker.io/marcozwyssig
+```
+
+**No new mechanism was written.** The GitHub-Packages login path has existed since si#200, and
+`test_tasks_image.py`'s own fixtures have always been `ghcr.io/owner` — Docker Hub was the odd one out,
+and it was the one host the kernel's own credential may not be sent to.
+`test_the_kernels_own_registry_is_one_the_run_token_can_reach` holds the new line: move it to a host that
+needs a stored secret and the deferral's reason comes back.
+
+**What has not changed, deliberately.** Publishing stays **on demand**, and the pin stays hand-written —
+the third reason si#200 gave is the only one still standing. The order is decided and written down in
+both files: **publish first, pin afterwards.** `release:image` reads the tag back out of the registry
+before it reports OK, so a pin can only name an image that demonstrably exists. Written the other way
+round, the pin would name an image that is not there — and on a machine with no python3 the launcher
+would take the container route and fail, where today it says plainly that no image is pinned.
+
+**A sentence that came true rather than being deleted.** `simplon.yaml`'s supporting reason read
+*"nothing consumes the image until si#201's launcher does"*. The launcher exists and firn is that
+consumer: its development container carried python3 and py3-pip for no reason but starting the launcher —
+17 packages, 47.4 MiB, `sqlite-libs` among them, because CPython links libsqlite3 for its stdlib. A
+product that wanted neither Python nor a database shipped both. The comment now records that the sentence
+happened.
+
+### The java profile pins Gradle, not only the JDK (#316)
 
 `gradle:jdk25` names the JDK and lets **Gradle** float: the day Docker Hub moves that tag, every product
 scaffolded on this profile changes build tool without a line changing here — and every measurement in

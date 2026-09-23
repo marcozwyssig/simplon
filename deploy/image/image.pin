@@ -17,8 +17,19 @@
 # every release (simplon.yaml says why), so publishing and pinning are already one person's single act.
 #
 # THERE IS NO LINE YET, and that is a statement rather than an omission: no simplon image has been
-# published to Docker Hub at the time of writing. si#200 was proven end to end against a local
-# `registry:2` - built, pushed, read back, purged locally, pulled by version and run - and the Docker Hub
-# account it will live in does not exist on the machine that did that work, so writing a reference here
-# would be a claim nobody has checked. A launcher that finds no line must say exactly that: this checkout
-# has no published kernel image, so the container route is not available and the venv route is.
+# published at the time of writing. si#200 was proven end to end against a local `registry:2` - built,
+# pushed, read back, purged locally, pulled by version and run - and nothing has gone to a public
+# registry since, so writing a reference here would be a claim nobody has checked. A launcher that finds
+# no line must say exactly that: this checkout has no published kernel image, so the container route is
+# not available and the venv route is.
+#
+# WHAT CHANGED IN si#313 IS WHY THERE IS NO LINE. It used to be that there was no route to publish at
+# all: the registry was Docker Hub, which needs a stored credential this repository deliberately does not
+# keep. The registry is `ghcr.io/marcozwyssig` now and needs none, so the only thing between here and a
+# line is somebody running `./simplon.sh release image` on a tagged checkout.
+#
+# AND THE ORDER IS PUBLISH FIRST, PIN AFTERWARDS (si#313, decided). `release:image` reads the tag back out
+# of the registry before it reports OK, so a pin written after it names something that demonstrably
+# exists. Written the other way round, this file would name an image that is not there yet - and on a
+# machine with no python3 the launcher would then take the container route and fail, where today it says
+# plainly that no image is pinned.

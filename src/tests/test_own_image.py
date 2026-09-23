@@ -22,7 +22,7 @@ import subprocess
 import pytest
 import yaml
 
-from simplon import docker
+from simplon import docker, githubpackages
 from simplon.tasks import image
 
 from conftest import ROOT
@@ -99,6 +99,27 @@ def test_the_image_declares_no_tag_so_there_is_one_source_for_the_version():
     assert cfg.tag == ""
 
 
+
+def test_the_kernels_own_registry_is_one_the_run_token_can_reach():
+    """si#313: the deferral that kept this image unpublished was a CREDENTIAL, not a preference -
+    `simplon.yaml` recorded that Docker Hub would mean a long-lived token standing in the repository's
+    secrets between releases. ghcr.io needs none: `release:image` logs in with the token Actions issues
+    per run, or with `gh auth token` locally, and `is_github_packages` is the check that decides whether
+    the credential may go there at all.
+
+    So this asserts the reason is gone rather than out-weighed. Move the registry to a host that needs a
+    stored secret and the reason comes back - and this test says so before the workflow does.
+    """
+    # arrange / act
+    cfg = image.declared(_manifest(), IMAGE, source=str(MANIFEST))
+
+    # assert
+    assert githubpackages.is_github_packages(cfg.registry), (
+        f"the kernel publishes to '{cfg.registry}', which the per-run GitHub token may not be sent to "
+        f"(simplon.githubpackages.is_github_packages). Publishing there needs a stored credential, "
+        f"which is the reason si#200 deferred publishing at all.")
+
+
 # --- the pin si#201 reads ------------------------------------------------------------------------------
 
 
@@ -106,9 +127,9 @@ def test_the_image_declares_no_tag_so_there_is_one_source_for_the_version():
 #: are the same defect at three depths: a tag that moves, no tag at all, and a tag on somebody else's
 #: image - and a launcher that pulled any of them would run a kernel this checkout never chose.
 _BAD_PINS = [
-    ("docker.io/marcozwyssig/simplon:latest", "latest"),
-    ("docker.io/marcozwyssig/simplon", "must pin a version"),
-    ("docker.io/someone-else/simplon:v0.13.0", "not the image"),
+    ("ghcr.io/marcozwyssig/simplon:latest", "latest"),
+    ("ghcr.io/marcozwyssig/simplon", "must pin a version"),
+    ("ghcr.io/someone-else/simplon:v0.13.0", "not the image"),
 ]
 
 
@@ -176,7 +197,7 @@ def test_the_committed_pin_passes_that_same_rule():
 def test_the_pin_is_readable_by_a_shell_without_python():
     # arrange: the whole premise of si#201's second route is that bash knows the image reference before
     # any Python exists. The pipeline below is the one deploy/image/image.pin documents, run for real
-    written = "# a comment\n\n   # an indented comment\ndocker.io/marcozwyssig/simplon:v0.13.0\n"
+    written = "# a comment\n\n   # an indented comment\nghcr.io/marcozwyssig/simplon:v0.13.0\n"
     pipeline = "grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$' | head -n1"
 
     # act
@@ -185,7 +206,7 @@ def test_the_pin_is_readable_by_a_shell_without_python():
 
     # assert: and the two readings of one file agree, which is what keeps si#201 from discovering a
     # second parser at runtime
-    assert shell.stdout.strip() == "docker.io/marcozwyssig/simplon:v0.13.0"
+    assert shell.stdout.strip() == "ghcr.io/marcozwyssig/simplon:v0.13.0"
     assert shell.stdout.strip() == _reference(written)
 
 
