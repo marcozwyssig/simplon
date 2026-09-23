@@ -91,7 +91,7 @@ groups:
           name: kernel
       # The documentation website, as ONE command, and an impl-less AGGREGATE rather than a leaf (#2, task
       # 3). `reference` writes docs/site/content/with-what/commands.md by reading the assembled CLI; `site`
-      # runs Hugo over docs/site/ and publishes into build/website/. The first WRITES a page the second READS, so
+      # runs Hugo over docs/site/ and publishes into build/site/ (si#314: `<output>/site`). The first WRITES a page the second READS, so
       # the order is not a preference - run them the other way round and the published site carries the
       # previous run's reference, or, the very first time, none at all.
       #
@@ -339,7 +339,10 @@ groups:
 # gate asserting "working tree clean" after a site build would go red on the mechanism working correctly.
 site:
   image: "hugomods/hugo:exts-0.148.2"
-  output: "build/website"
+  # NO `output:`, and that absence is the point since si#314: a built site is a KIND of build output, so
+  # it lands in `<output>/site` - here `build/site`, because this manifest declares no `output:` either
+  # and takes the convention. The kernel runs its own default rather than declaring around it; a step
+  # never run in its own house rots unseen, and this is the one that moved.
   base_url: "https://marcozwyssig.github.io/simplon/"
   theme: "github.com/imfing/hextra@v0.12.3"
 

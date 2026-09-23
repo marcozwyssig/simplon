@@ -106,7 +106,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from simplon import context, docker, githubpackages, hostpath, log
+from simplon import context, docker, githubpackages, hostpath, log, outputs
 from simplon.bootstrap import validate_relative_dir
 from simplon.run import Result, run, stream
 
@@ -419,6 +419,52 @@ def present_locally(ref: str) -> bool:
     return run(["docker", "image", "inspect", ref]).ok
 
 
+#: The file `build:image` leaves behind, under `<output>/docker/` (si#314).
+RECORD = "image.txt"
+
+
+def local_id(ref: str) -> str:
+    """The daemon's id for `ref`, or '' when it cannot be read. NOT a registry digest, and the two are
+    not interchangeable: a freshly built image has no `RepoDigests` entry at all - that one comes into
+    being when something is pushed or pulled - so calling this a digest would be a word that is wrong on
+    the one day somebody relies on it."""
+    result = run(["docker", "image", "inspect", "--format", "{{.Id}}", ref])
+    return result.out.strip() if result.ok else ""
+
+
+def record(ref: str, image_id: str, root: Path) -> Path | None:
+    """Write what the build produced into `<output>/docker/image.txt`, returning the path or None.
+
+    A POINTER RATHER THAN CONTENT, which is the whole of si#314's answer for the one output that is not
+    a file: a container image lives in a daemon, not in a directory, and what a deployment redeems is
+    the reference. `docker save` was measured and rejected - about a gigabyte per build for a toolchain
+    image, written by something nobody reads.
+
+    A write that fails does NOT make the build red, and that is deliberate: the image exists, and
+    reporting a built image as a failed build would be the opposite lie to the one this ticket is
+    about. It is reported instead, because a promise quietly not kept is the defect this repository
+    hunts - `tasks/docs.py` records the real case, a `build/` owned by root.
+    """
+    try:
+        directory = outputs.for_kind("docker")
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / RECORD
+        path.write_text(
+            f"# What `build:image` produced, and where to find it (si#314). A POINTER, not the image:\n"
+            f"# a container image lives in a daemon rather than in a directory, and a deployment\n"
+            f"# redeems this reference. Written on every build; this file is a build output like the\n"
+            f"# rest of `{outputs.KEY}:` and dies with a clean.\n"
+            f"reference: {ref}\n"
+            f"image-id: {image_id or 'not readable'}\n"
+            f"# `image-id` is the DAEMON's id, not a registry digest. A registry digest exists only\n"
+            f"# once something has been pushed, which is `release:image` and not this command.\n",
+            encoding="utf-8")
+        return path
+    except (OSError, RuntimeError, ValueError) as broken:
+        log.warn(f"{ref} was built, but {RECORD} could not be written: {broken}")
+        return None
+
+
 def build(name: str = "", tag: str = "") -> int:
     """Build the container image `name` declares, tagged with the reference it will be published under.
 
@@ -451,7 +497,8 @@ def build(name: str = "", tag: str = "") -> int:
         # reference the daemon does not have.
         log.error(f"docker build exited 0 but the daemon does not hold {ref}; nothing was built")
         return 1
-    log.ok(f"built {ref}")
+    written = record(ref, local_id(ref), root)
+    log.ok(f"built {ref}" + (f" ({written.relative_to(root)})" if written else ""))
     return 0
 
 

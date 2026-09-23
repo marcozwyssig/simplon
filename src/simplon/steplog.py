@@ -6,8 +6,10 @@ the whole command (`> file`) sidesteps the TUI entirely and works, but only for 
 knows to do it, and only if they knew BEFORE the run they would want the text. A file written every
 time is the answer for everyone else, and it survives the TUI being closed.
 
-WHERE. `<repo>/build/logs/`, the same `build/` a product's `clean` removes - a step log is a build
-output, not something to keep. The repo root comes from the registered product context, so the
+WHERE. `<output>/logs/` - the product's one output directory (si#314), which defaults to `build/` and
+is the same directory a product's `clean` removes: a step log is a build output, not something to keep.
+`logs` is its OWN kind there rather than sitting among the artefacts, because what it holds is the
+record of what ran. The root comes from the registered product context and its manifest, so the
 convention is the kernel's and identical in every product.
 
 WHAT A STEP LOG IS NOT: the whole run. Since si#148 that second artefact exists beside them, in the
@@ -26,7 +28,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from simplon import context
+from simplon import context, log, outputs
 
 # Everything a filesystem would rather not see in a name. A step's identity is usually a dotted command
 # (`build.compile`), but it FALLS BACK to the shlex-joined argv, which carries slashes and spaces -
@@ -40,13 +42,52 @@ def log_name(command: str) -> str:
     return f"{safe or 'step'}.log"
 
 
+#: Said once per process rather than once per step: a run has as many steps as it likes, and the same
+#: sentence forty times is a way of not being read.
+_SAID: set[str] = set()
+
+
+def _warn_once(message: str) -> None:
+    if message not in _SAID:
+        _SAID.add(message)
+        log.warn(message)
+
+
 def log_directory() -> Path | None:
-    """`<repo>/build/logs`, or None when no product is registered."""
+    """`<output>/logs`, or None when there is nowhere to put one.
+
+    NO PRODUCT REGISTERED IS NONE, and it is silent on purpose: the kernel is imported in places that
+    never register one - a unit test, a scaffolder run - and writing a log there is a courtesy nobody
+    asked for.
+
+    A MANIFEST THAT IS NOT THERE takes the convention without a word - there is no declaration to
+    honour, so there is nothing to report.
+
+    A PRODUCT WHOSE MANIFEST IS BROKEN, or whose `output:` cannot be acted on, STILL GETS ITS LOGS, in the default root, and hears about
+    it once. That direction is deliberate and it was found by breaking it: reading the manifest here is
+    new (si#314), and the first version let an unreadable or impossible `output:` cost the run its whole
+    record - the step logs AND the transcript, which is the one artefact somebody attaches to a ticket
+    when a run goes wrong. Losing the account of a failure BECAUSE something else was already wrong is
+    exactly backwards. The default needs no manifest to be known, so it is what a broken declaration
+    falls back to, and the fallback says so rather than quietly writing somewhere the product did not
+    name.
+    """
     try:
-        root = context.current().root
+        ctx = context.current()
     except RuntimeError:
         return None
-    return root / "build" / "logs"
+    if not ctx.manifest_path.is_file():
+        # NO MANIFEST AT ALL IS NOT A BROKEN DECLARATION, and it is silent for the same reason the
+        # unregistered case is: there is nothing to honour, so the convention applies and nobody needs
+        # telling. The kernel is registered against trees that carry no manifest - a scaffolder run
+        # mid-write, a unit test - and a line of narration there would be noise on every step.
+        return ctx.root / outputs.DEFAULT / "logs"
+    try:
+        return outputs.for_kind("logs")
+    except (RuntimeError, ValueError) as broken:
+        _warn_once(f"step logs and the run transcript go to '{outputs.DEFAULT}/logs' rather than where "
+                   f"'{outputs.KEY}:' points: {broken}")
+        return ctx.root / outputs.DEFAULT / "logs"
 
 
 def existing_log(command: str) -> Path | None:

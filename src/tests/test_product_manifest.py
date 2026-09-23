@@ -23,6 +23,7 @@ import pytest
 
 from simplon import catalogue as catalogue_mod
 from simplon.orchestrator import manifest as manifest_mod
+from simplon import outputs
 from simplon.tasks import site as site_task
 
 from conftest import ROOT
@@ -67,7 +68,14 @@ def test_the_site_section_is_declared_and_valid(product):
         "own default is exercised by the one product this suite can actually build")
     assert declared.source == "docs/site"
     assert declared.source == site_task.DEFAULT_SOURCE
-    assert declared.output == "build/website"
+    # `output` is asserted the same way and for the same reason, since si#314: a built site is a KIND of
+    # build output, so the section must not carry the key at all and the value must still resolve - here
+    # to `build/site`, because this manifest declares no `output:` either and takes the convention. The
+    # kernel is the first consumer of both defaults rather than a product that happens to agree.
+    assert "output" not in data["site"], (
+        "simplon declares `site: output:` again; si#314 leaves it out on purpose, so that the kernel's "
+        "own `<output>/site` is exercised by the one product this suite can actually build")
+    assert declared.output == f"{outputs.DEFAULT}/{site_task.OUTPUT_KIND}" == "build/site"
     assert declared.image and declared.theme
     assert declared.base_url.startswith("https://")
 

@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 172 | nothing - the declaration had no working meaning |
+| diagnosis | 173 | nothing - the declaration had no working meaning |
 | expression rule | 28 | something it could otherwise have said |
-| **all load-time refusals** | **200** | |
+| **all load-time refusals** | **201** | |
 
 A **load-time refusal** is one raised on the way from the manifest to a decision, with no tool consulted
 in between. Refusals that happen later - a task whose tool is missing, a build the daemon rejected - are a

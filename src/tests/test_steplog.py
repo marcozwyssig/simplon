@@ -7,12 +7,16 @@ else.
 """
 import pytest
 
-from simplon import context, steplog
+from simplon import context, outputs, steplog
 from simplon.context import ProductContext
 
 
 @pytest.fixture(autouse=True)
 def _product_context(tmp_path, monkeypatch):
+    # The manifest EXISTS, the way it does in any registered product: since si#314 the log directory is
+    # `<output>/logs/` and `output:` is read from it. A tree without one exercised the "cannot read the
+    # manifest" path by accident, which is a case of its own below.
+    (tmp_path / "cleon.yaml").write_text("name: cleon\n", encoding="utf-8")
     monkeypatch.setattr(context, "_current",
                         ProductContext("cleon", tmp_path, tmp_path / "cleon.yaml"))
 
@@ -83,3 +87,66 @@ def test_a_failed_step_writes_its_output_too(tmp_path, monkeypatch):
     steps.argv_step("compile", ["ant", "compile"], command="build.compile").stream(lambda _: None)
 
     assert "too long" in (tmp_path / "build" / "logs" / "build.compile.log").read_text(encoding="utf-8")
+
+
+def test_a_declared_output_root_moves_the_step_logs(tmp_path):
+    """si#314: the logs are a KIND under the product's one output directory, so a product that publishes
+    out of another root takes its run protocol with it rather than leaving it in a `build/` nothing else
+    uses."""
+    # arrange
+    (tmp_path / "cleon.yaml").write_text("output: build-out\n", encoding="utf-8")
+
+    # act
+    written = steplog.write("build.compile", "BUILD SUCCESSFUL")
+
+    # assert
+    assert written == tmp_path / "build-out" / "logs" / "build.compile.log"
+
+
+def test_an_impossible_output_root_keeps_the_log_in_the_default_place_and_says_so(tmp_path, capsys,
+                                                                                   monkeypatch):
+    """The record of a run must not be what a broken declaration takes away first. A step log and the
+    transcript are what somebody attaches to a ticket when a run went wrong; losing them BECAUSE
+    something else is already wrong is exactly backwards. So the default root - which needs no manifest
+    to be known - catches it, and the fallback is stated rather than silent."""
+    # arrange: a root that would be cleaned somewhere else entirely, and a fresh process's memory of
+    # what it has already said
+    monkeypatch.setattr(steplog, "_SAID", set())
+    (tmp_path / "cleon.yaml").write_text("output: /var/tmp/x\n", encoding="utf-8")
+
+    # act
+    written = steplog.write("build.compile", "BUILD SUCCESSFUL")
+
+    # assert
+    assert written == tmp_path / "build" / "logs" / "build.compile.log"
+    # `log.warn` writes to stdout in this kernel, which is where the rest of a run's narration goes
+    assert "output" in capsys.readouterr().out
+
+
+def test_the_fallback_is_said_once_and_not_once_per_step(tmp_path, capsys, monkeypatch):
+    # arrange
+    monkeypatch.setattr(steplog, "_SAID", set())
+    (tmp_path / "cleon.yaml").write_text("output: /var/tmp/x\n", encoding="utf-8")
+
+    # act: three steps of one run
+    for step in ("build.compile", "build.jar", "test.unit"):
+        steplog.write(step, "out")
+
+    # assert: the same sentence three times is a way of not being read. Counted on the sentence's own
+    # opening rather than on the word `output`, which the nested refusal text carries again.
+    assert capsys.readouterr().out.count("step logs and the run transcript") == 1
+
+
+def test_a_tree_with_no_manifest_takes_the_convention_without_a_word(tmp_path, capsys, monkeypatch):
+    """A missing manifest is not a broken declaration. The kernel is registered against trees that carry
+    none - a scaffolder mid-write, a unit test - and narrating that on every step is noise, not news."""
+    # arrange
+    monkeypatch.setattr(steplog, "_SAID", set())
+    (tmp_path / "cleon.yaml").unlink()
+
+    # act
+    written = steplog.write("build.compile", "BUILD SUCCESSFUL")
+
+    # assert
+    assert written == tmp_path / "build" / "logs" / "build.compile.log"
+    assert capsys.readouterr().out == ""

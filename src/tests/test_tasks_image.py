@@ -16,6 +16,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pathlib
+
 import pytest
 
 from simplon import context, docker, githubpackages
@@ -1139,3 +1141,58 @@ def test_what_the_image_says_is_still_checked_when_a_refusal_was_expected(_no_pr
 
     assert rc == 1
     assert "model is broken" in capsys.readouterr().err
+
+
+# --- the pointer a build leaves behind (si#314) --------------------------------------------------------
+
+def test_a_build_records_what_it_produced_under_the_output_directory(cli, _no_provenance, _product,
+                                                                     tmp_path):
+    """si#314: a container image lives in a daemon, not in a directory, so the promise "everything this
+    build produced is discoverable under one directory" can only be kept with a POINTER. It is the same
+    shape as `deploy/image/image.pin`, and it is what a deployment redeems anyway - the alternative,
+    `docker save`, is about a gigabyte of tarball per build written by something nobody reads."""
+    # arrange: the daemon answers with the id of the image it just built
+    cli.output = "sha256:abc123"
+
+    # act
+    rc = image.build(name="worker")
+
+    # assert
+    assert rc == 0
+    record = tmp_path / "build" / "docker" / "image.txt"
+    assert record.is_file()
+    written = record.read_text(encoding="utf-8")
+    assert "ghcr.io/owner/demo-worker:latest" in written
+    # the local IMAGE ID, and it is labelled as that rather than as a digest: a freshly built image has
+    # no registry digest at all - that one exists only once something has been pushed
+    assert "sha256:abc123" in written
+
+
+def test_the_record_follows_a_declared_output_root(cli, _no_provenance, _product, tmp_path):
+    # arrange: a product that publishes out of another root takes the pointer with it
+    manifest = (tmp_path / "demo.yaml")
+    manifest.write_text("output: build-out\n" + manifest.read_text(encoding="utf-8"), encoding="utf-8")
+
+    # act
+    image.build(name="worker")
+
+    # assert
+    assert (tmp_path / "build-out" / "docker" / "image.txt").is_file()
+
+
+def test_a_record_that_cannot_be_written_does_not_turn_a_real_image_red(cli, _no_provenance, _product,
+                                                                       tmp_path, monkeypatch, capsys):
+    """The image IS built, and reporting a built image as a failed build would be the opposite lie to the
+    one this ticket is about. The write is reported instead - loudly, because a promise quietly not kept
+    is the defect this repository hunts."""
+    # arrange: the output directory cannot be created (the root-owned `build/` tasks/docs.py records)
+    def _refuse(*_args, **_kwargs):
+        raise PermissionError("Permission denied")
+    monkeypatch.setattr(pathlib.Path, "mkdir", _refuse)
+
+    # act
+    rc = image.build(name="worker")
+
+    # assert
+    assert rc == 0
+    assert "image.txt" in capsys.readouterr().out

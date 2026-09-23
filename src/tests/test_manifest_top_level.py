@@ -78,7 +78,7 @@ import pytest
 import yaml
 
 from simplon import (carrierspec, context, deployment, environments, labegress, labinstance, layout,
-                     nexusproxy,
+                     nexusproxy, outputs,
                      tracker,
                      workflowgen)
 from simplon.tasks import (artifact, asset, buildfiles, claudeplugins, docs, env, generated, image,
@@ -122,6 +122,10 @@ MODULES: dict[str, tuple[str, ...]] = {
     # `tasks.deploy` - it declares no key of its own
     "tasks.carrier": (),
     "tasks.generated": ("generated",),
+    # si#314: the one directory a build writes into. A top-level SCALAR rather than a section - it
+    # carries one value, and a section would invite a second key to grow beside it saying the same thing
+    # differently.
+    "outputs": ("output",),
     # `carriers:` is read HERE and not in `carrierspec.py`, which is the same shape as `deployment`'s inner
     # half: that module is handed the document and validates it, this one is what reaches the document
     # and cross-checks an environment's `carrier:` against what it declares. The key belongs to whoever
@@ -180,6 +184,14 @@ SILENT_ON_ABSENCE = {
              "mapping. So does a `build:` section a product declares for its OWN reasons and that "
              "holds no `targets:`, which two live manifests have - si#172, and "
              "`tests/test_manifest_build_section.py` drives it.",
+    "output": "an absent `output:` is the NORMAL case and is what every manifest in this family has "
+              "today: si#314 wrote down a convention rather than inventing one - gradle, maven, cargo "
+              "and the two manifests here that already name a destination all say `build` or a sibling "
+              "of it - so a manifest that says nothing writes where it wrote yesterday. WHAT THAT "
+              "COSTS, stated rather than left to be found: `otuput: build-out` is silent too, and the "
+              "build lands in `build/`. That is the price of a default, and it is the same price "
+              "`layout:` pays; making an unrecognised top-level key loud is a rule about every section "
+              "and not about this one.",
     "env_var": "`env_var:` names the variable a product's env-first CLI publishes the active environment "
                "into. A product that selects an environment by token and `default:` alone has no such "
                "variable, so `_active` answers with the default - 'not an error, since a listing must "
@@ -206,6 +218,9 @@ DRIVERS: dict[str, tuple[dict, object]] = {
               lambda: nexusproxy.declared(context.current().manifest_data(), context.current().root)),
     "workflows": ({"workflows": {"ci": {}}},
                   lambda: workflowgen.parse(context.current().manifest_data())),
+    # si#314: a SCALAR key rather than a section, and the only one here - the driver reads it the way
+    # every producing coordinate does, through the product context.
+    "output": ({"output": "build-out"}, lambda: outputs.root()),
     # Driven through `environments`, and the document has to carry an ENVIRONMENT POINTING AT the
     # carrier: an unreferenced `carriers:` section is legitimately optional, so the mistyped form is only
     # loud when somebody asked for what the typo hid. That is the real failure and this drives it.

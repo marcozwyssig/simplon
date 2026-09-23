@@ -307,7 +307,7 @@ repository. Adding a key nobody here has heard of is a supported thing to do.
 What was missing is the other half: **which names are already taken**. The product si#159 was reported
 from builds three Windows Server *releases*, and it learned that `releases:` already means
 `{page, from, complete_from}` to `test:release-notes` by reading `src/simplon/tasks/releasenotes.py`. A
-reserved name that can only be found in the source is a trap with a delay on it, so the twenty are
+reserved name that can only be found in the source is a trap with a delay on it, so the twenty-one are
 published here and `tests/test_manifest_top_level.py` holds this table to the kernel in both directions.
 
 | key | read by | what it carries |
@@ -327,6 +327,7 @@ published here and `tests/test_manifest_top_level.py` holds this table to the ke
 | `instance:` | the multi-tenant lab | the env var naming the lab instance, and the product's id-length budget |
 | `lab_egress:` | the lab egress helper | the host interface a lab reaches the outside through |
 | `layout:` | `build:toolchain`, `test:*`, `docs:acceptance` | where inside your tree a containerised command runs, and which directory holds the tests above the acceptance line |
+| `output:` | every producing coordinate | the one directory this product's build writes into, as `<output>/<kind>/`. Defaults to `build` |
 | `nexus:` | the `nexus` commands | the proxy repositories, the compose file and the container this product runs |
 | `releases:` | `test:release-notes` | `page:`, `from:` and `complete_from:`, the three values that gate says what it measures against |
 | `site:` | `docs:site` | the pinned Hugo image, where the sources live, where the site is built to |
@@ -334,10 +335,10 @@ published here and `tests/test_manifest_top_level.py` holds this table to the ke
 | `tracker:` | `test:walk` | where a refused acceptance step becomes a bug ticket, and the product's own wording for it: `title:`, plus `kind:`, `repo:`, `labels:` and `preamble:` |
 | `workflows:` | `release:workflows` | one entry per generated CI file |
 
-A key that is **mistyped** is therefore not the silent no-op it looks like. Seventeen of the twenty are
+A key that is **mistyped** is therefore not the silent no-op it looks like. Seventeen of the twenty-one are
 named by the reader that wanted them, the moment that reader runs: `sietv:` instead of `site:` answers
 `the 'site' section is missing or is not a mapping`, and every other reader refuses the same way, naming
-the key it looked for. The three that say nothing say nothing on purpose:
+the key it looked for. The four that say nothing say nothing on purpose:
 
 - **`build:`** - an absent section is the normal case. `build cmake-files` and `build dotnet-solution`
   render the build files from the SOURCES, and `build: targets:` only adds the edges the directories
@@ -349,8 +350,12 @@ the key it looked for. The three that say nothing say nothing on purpose:
   its defaults are exactly what the kernel assumed before it existed, so a manifest that says nothing
   runs the line it ran yesterday. The cost is stated rather than left to be found: `layotu:` is silent
   too, and only a key mistyped *inside* a correctly spelled `layout:` is refused.
+- **`output:`** - an absent key is the normal case and is what every manifest in this family has today.
+  si#314 wrote down a convention rather than inventing one, so a manifest that says nothing writes where
+  it wrote yesterday. Same cost as `layout:`, stated for the same reason: `otuput: build-out` is silent
+  too, and the build lands in `build/`.
 
-Both are driven in the test module above, so the silence is measured rather than assumed.
+All four are driven in the test module above, so the silence is measured rather than assumed.
 
 ### Reading a section, yours or the kernel's
 
@@ -763,6 +768,43 @@ Other sections work the same way: `suites:` is the test-level taxonomy a product
 defines, `environments:` the deployment matrix, `nexus:` and `claude:` the data their respective tasks
 read. A task that needs a section it does not find fails on its first line, which is why such tasks stay
 *tasks* in the catalogue rather than being placed as commands for everybody.
+
+### `output:` - the one directory a build writes into
+
+```yaml
+output: build        # the default; a product that needs another says so once
+```
+
+Everything the kernel's producing coordinates write lands under it, sorted by **kind**:
+
+```
+build/
+  cpp/ dotnet/ java/ python/    what a compile produced
+  docker/                       image.txt - the reference and the id of what `build:image` built
+  docs/                         rendered documentation
+  site/                         the built website
+  logs/                         the step logs and the run transcript
+```
+
+The four language kinds are the kernel's own toolchain profiles, so a language it can build for is a
+language it can say where the result went; a test holds that correspondence, and a fifth profile without
+a kind turns it red.
+
+**It is a default, not a rule.** A coordinate that names its own destination gets exactly what it named -
+`site: output:` still wins over `<output>/site`, and a document written into the source tree because a
+generator reads it from there is a legitimate thing to declare. That is measured rather than conceded:
+over every manifest this kernel can reach, two producing coordinates write outside `build/` today, and
+one of them is in this repository's own manifest.
+
+**`build/` is disposable, and that was already true.** A fetched tool binary, a step log and a rendered
+site are all build outputs that `clean` removes - the kernel says so in `tools.py`, in `steplog.py` and
+in the `.gitignore` it scaffolds. What si#314 changed is that a product's own artefacts now arrive there
+at all, instead of sitting wherever each tool happened to default to.
+
+**The one output that is not a file.** A container image lives in a daemon, not in a directory, so
+`build:image` writes a POINTER: `<output>/docker/image.txt`, carrying the reference and the daemon's
+image id. That is what a deployment redeems anyway. `docker save` was measured and rejected - about a
+gigabyte per build for a toolchain image, written by something nobody reads.
 
 ### `layout:` - where your tree sits
 
