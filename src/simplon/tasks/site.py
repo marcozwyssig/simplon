@@ -594,6 +594,14 @@ def build() -> int:
     """
     ctx = context.current()
     cfg = declared(ctx.manifest_data(), source=str(ctx.manifest_path))
+    # si#319: the output tree must be the CALLER'S, not merely writable. `docker.user_args`'s own head
+    # records what an earlier root-run hugo leaves behind - a `build/website/index.html` owned by `0:0`
+    # that the caller cannot delete, and a root-owned `.hugo_build.lock` that makes the NEXT run fail on
+    # a lock it cannot take. Saying so before the run is cheaper than reading it out of hugo's failure.
+    fault = docker.ownership_fault([outputs.root()], ctx.root)
+    if fault:
+        log.error(fault)
+        return 1
     built = build_site(cfg, ctx.root)
     if built.failed:
         return 1

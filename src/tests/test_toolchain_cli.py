@@ -307,3 +307,42 @@ def test_a_stray_caches_on_the_command_line_is_refused_the_same_way(product, doc
     assert docker_lines == []
     assert isinstance(result.exception, SystemExit)
     assert "must be a list of" in result.output
+
+
+# --- si#319: a home the calling uid owns, and a tree that is still somebody else's ----------------------
+
+def test_a_run_gets_a_home_under_the_output_directory(product, docker_lines, tmp_path):
+    """The kernel hands the container a HOME it can actually write, created host-side as the caller, so a
+    tool that wants one stops needing a hand-made variable pointing wherever happens to be writable."""
+    # arrange
+    _write(product, _COMPILE)
+
+    # act
+    result = CliRunner().invoke(_app(product), ["build", "compile"])
+
+    # assert: the flag is in container coordinates, and the directory exists on the host
+    assert result.exit_code == 0, result.output
+    assert "HOME=/work/build/home" in docker_lines[0]
+    assert (tmp_path / "build" / "home").is_dir()
+
+
+def test_a_tree_the_caller_does_not_own_is_refused_before_the_container_starts(product, docker_lines,
+                                                                              tmp_path, monkeypatch):
+    """The measured failure this ticket opened on: a containerised gradle died on `chmod` against state it
+    could write and did not own - `Operation not permitted`, one line into its own bookkeeping. The run
+    was going to fail either way; refusing first is the difference between a message about the tree and a
+    stack trace about a registry file.
+    """
+    # arrange: an output directory that belongs to somebody else
+    _write(product, _COMPILE)
+    (tmp_path / "build" / "home").mkdir(parents=True)
+    monkeypatch.setattr(toolchain.os, "getuid", lambda: (tmp_path / "build").stat().st_uid + 1)
+
+    # act
+    result = CliRunner().invoke(_app(product), ["build", "compile"])
+
+    # assert: red, nothing started, and the message names the path and the way out
+    assert result.exit_code != 0
+    assert docker_lines == []
+    assert "build/home" in result.output or "build" in result.output
+    assert "own" in result.output

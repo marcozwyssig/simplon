@@ -229,3 +229,47 @@ def test_the_refusal_names_the_command_the_block_was_read_from(monkeypatch, tmp_
     with pytest.raises(RuntimeError) as e:
         toolchain.run_toolchain(_Ctx("netctl build compile"), argv=["cmd"])
     assert "netctl build compile" in str(e.value)
+
+
+# --- a HOME the calling uid owns (si#319) --------------------------------------------------------------
+
+def test_the_argv_hands_the_container_a_home(monkeypatch):
+    """si#319: a container run as the caller owns the bind mount and NOTHING else, so a tool that wants a
+    home dies before it reads anything - measured twice in this family, gradle with "Could not initialize
+    native services" and dotnet with `/.dotnet` denied. Both were answered by a hand-made variable
+    pointing into the product's tree. The kernel hands one over instead."""
+    # arrange
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: ["--user", "1000:1000"])
+
+    # act
+    line = toolchain.docker_argv(_cfg(), root=Path("/repo"), product="netctl", instance="dev", extra=[],
+                                 home="/work/build/home")
+
+    # assert
+    assert "HOME=/work/build/home" in line
+
+
+def test_a_product_that_sets_its_own_home_still_wins(monkeypatch):
+    """A default and not a rule, and here the ordering IS the mechanism: docker takes the LAST `-e` for a
+    name, and the manifest's environment is appended after the kernel's."""
+    # arrange
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: [])
+
+    # act
+    line = toolchain.docker_argv(_cfg(env={"HOME": "/home/build"}), root=Path("/repo"), product="p",
+                                 instance="dev", extra=[], home="/work/build/home")
+
+    # assert: both are there, the product's is later
+    assert line.index("HOME=/home/build") > line.index("HOME=/work/build/home")
+
+
+def test_no_home_given_leaves_the_argv_exactly_as_it_was(monkeypatch):
+    # arrange: the kernel is the only caller that knows a product's output directory, so a body invoked
+    # without one must not invent a path
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: [])
+
+    # act
+    line = toolchain.docker_argv(_cfg(), root=Path("/repo"), product="p", instance="dev", extra=[])
+
+    # assert
+    assert not any(str(item).startswith("HOME=") for item in line)

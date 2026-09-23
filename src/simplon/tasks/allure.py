@@ -614,6 +614,13 @@ def render_report(report_dir: str, results: str | None = None, *, prefix: str = 
     elif shutil.which("docker") is not None:
         tool = "docker"
         log.info("no local allure CLI; rendering the allure HTML report via docker (single-file)")
+        # si#319: NOT GUARDED HERE, and the absence is the decision rather than an omission. The other
+        # four containerised bodies check that the tree they write is the caller's; this one runs
+        # without a registered product context on purpose - it is handed the report directory and knows
+        # nothing else - so the check would have to demand a context this body has never needed, for a
+        # failure it has never had. What allure MEASURED (#6) is the other direction entirely: an image
+        # running as uid 1000 against a host uid that is not 1000, which `_docker_user` answers. The day
+        # a stale tree kills a render here, this is where the check goes.
         ok = run(["docker", "run", "--rm", *_docker_user(),
                   "-v", f"{hostpath.translate(report_dir)}:/work", "-w", "/work",
                   "--entrypoint", "allure", IMAGE,

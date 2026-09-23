@@ -23,6 +23,54 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.23.0
+
+### A home the calling uid owns, and a tree it must own too (si#319)
+
+Reported from a consumer whose containerised gradle died one line into its own bookkeeping:
+
+```
+Could not set file mode 700 on '/work/.gradle/daemon/9.7.1'
+java.nio.file.FileSystemException: Operation not permitted
+```
+
+**That is an ownership failure, not a permission one.** POSIX allows `chmod` only to a file's owner, so a
+directory at mode 777 belonging to somebody else is writable by everyone and chmod-able by no-one else.
+Measured as a non-owner against exactly such a directory: `os.access(W_OK)` **True**, writing a file fine,
+`chmod 700` → `PermissionError [Errno 1] Operation not permitted`.
+
+**si#78 had already repaired this family — and its check asks the other question.** `tasks/docs.py` walked
+`.gradle/` and `build/` before a render and chose the container's uid from `os.access(W_OK)`: the right
+question for a tool that reads and writes files, the wrong one for a tool that chmods. It would have
+called the failing tree clean. It also reached `docs:render` alone; `toolchain:run`, `site`, `nuget` and
+`allure` took `docker.user_args()` with no look at the tree at all.
+
+**Two halves, because the cause and the wreckage are different things.**
+
+`docker.not_owned` asks *do I own this*, walking rather than stat-ing the tops — after a root run and a
+`--user` run the mixture is real. `docker.ownership_fault` turns that into one sentence, in one place, and
+`toolchain:run`, `docs:render`, `site` and `nuget` refuse before starting a container. `docs:render` keeps
+its root fallback and now reaches it for an unowned tree as well as an unwritable one.
+
+And the cause: **a container run as the calling uid owns the bind mount and nothing else, so it has no
+writable HOME.** Every tool that wants one was pointed into the product's tree by hand — a consumer's
+image setting `GRADLE_USER_HOME=/work/.gradle`, and `tasks/nuget.py` setting `DOTNET_CLI_HOME` since
+si#102, both measured, neither aware of the other. `toolchain:run` now hands the container
+`HOME=<output>/home`, created host-side **as the caller**, which is what makes the uid inside the owner of
+what it writes. It sits under si#314's output directory, so it dies with `clean` like the rest.
+
+**A default and not a rule, and the ordering is the mechanism**: docker takes the last `-e` for a name,
+and the manifest's environment is appended after the kernel's, so a product that states its own `HOME`
+gets exactly what it stated.
+
+**Two limits, stated rather than discovered.** What is walked is the output directory: a product's own
+state beside the source — a `.gradle/` that an image's `GRADLE_USER_HOME` points at — is not walked,
+because walking a whole repository before every containerised command costs more than it buys. Bringing
+that state under the home this now provides is what brings it into the check. And `allure` is deliberately
+**not** guarded: it runs without a registered product context on purpose, the check would demand one it
+has never needed, and what allure actually measured (#6) is the opposite direction — an image running as
+uid 1000 against a host uid that is not.
+
 ## 0.22.0
 
 ### `simplon.interact` takes the container prefix, and no longer knows a product (si#312)

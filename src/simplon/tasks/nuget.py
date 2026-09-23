@@ -62,7 +62,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from xml.sax.saxutils import quoteattr
 
-from simplon import context, docker, githubpackages, hostpath, log
+from simplon import context, docker, githubpackages, hostpath, log, outputs
 from simplon.run import stream
 
 #: The manifest section this module reads. `artifacts:` rather than a new top-level key, per design
@@ -366,6 +366,15 @@ def publish(name: str = "", tag: str = "") -> int:
                          f"project is the product's, not this task's")
 
     docker.ensure_docker()
+    # si#319: the tree this container writes must be the CALLER'S, not merely writable. `DOTNET_CLI_HOME`
+    # below is the hand-made half of exactly this problem, inherited from si#102 - a container run as the
+    # caller has no writable home, so the tool was pointed into the mounted tree, which then carries
+    # whatever ownership an earlier root run left.
+    fault = docker.ownership_fault([outputs.root()], root)
+    if fault:
+        log.error(fault)
+        raise ValueError(fault)
+
     (root / PACK_DIR).mkdir(parents=True, exist_ok=True)
     (root / CLI_HOME).mkdir(parents=True, exist_ok=True)
 
@@ -438,6 +447,15 @@ def restore(name: str = "") -> int:
         raise ValueError(f"nothing to restore: {project} does not exist under the product root")
 
     docker.ensure_docker()
+    # si#319: the tree this container writes must be the CALLER'S, not merely writable. `DOTNET_CLI_HOME`
+    # below is the hand-made half of exactly this problem, inherited from si#102 - a container run as the
+    # caller has no writable home, so the tool was pointed into the mounted tree, which then carries
+    # whatever ownership an earlier root run left.
+    fault = docker.ownership_fault([outputs.root()], root)
+    if fault:
+        log.error(fault)
+        raise ValueError(fault)
+
     (root / CLI_HOME).mkdir(parents=True, exist_ok=True)
 
     with _env_file(githubpackages.token()) as env_file:

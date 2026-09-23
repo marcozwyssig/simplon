@@ -36,6 +36,7 @@ reaches the disk.
 """
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -45,7 +46,7 @@ from typing import NoReturn
 import typer
 import yaml
 
-from simplon import context, docker, hostpath, labinstance, layout, log
+from simplon import context, docker, hostpath, labinstance, layout, log, outputs
 from simplon.tasks import profiles
 from simplon.run import run
 
@@ -97,7 +98,7 @@ def declared(body: Mapping[str, object], where: str) -> Toolchain:
 
 def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
                 extra: list[str], network: str | None = None,
-                build_root: str = "") -> list[str]:
+                build_root: str = "", home: str = "") -> list[str]:
     """The full docker argv for one toolchain invocation. PURE: it assembles, it runs nothing.
 
     NAMED `docker_argv` SINCE si#105, and the rename is the loader's doing rather than taste: `argv:` is
@@ -121,12 +122,17 @@ def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
     env: list[str] = []
     for key, value in cfg.env.items():
         env += ["-e", f"{key}={value}"]
+    # si#319: `HOME` FIRST and the manifest's environment after it, because docker takes the LAST `-e`
+    # for a name - so the kernel hands over a home the calling uid owns and a product that states its own
+    # still gets exactly what it stated. An empty `home` adds nothing: only a caller that knows the
+    # product's output directory may name one, and a body invoked without one must not invent a path.
     return ["docker", "run", "--rm",
             *(["--network", network] if network else []),
             *docker.user_args(),
             "-v", f"{hostpath.translate(root)}:{cfg.workdir}",
             "-w", layout.Layout(build_root=build_root).workdir(cfg.workdir),
-            *volumes, *env,
+            *volumes,
+            *(["-e", f"HOME={home}"] if home else []), *env,
             cfg.image, *cfg.argv, *extra]
 
 
@@ -198,7 +204,28 @@ def run_toolchain(ctx: typer.Context, image: str = "", argv: list[str] | None = 
     # meant every toolchain command in every fresh product died on a section that has nothing to do with
     # it. A cache volume still carries the id, because that is the one thing that actually needs one.
     instance = labinstance.resolve() if cfg.caches else ""
+    # si#319, BEFORE the container starts. A container run as the caller owns the bind mount and nothing
+    # else, so the kernel hands it a home under the product's output directory - created here, host-side,
+    # as the caller, which is what makes the uid inside the container the owner of what it writes.
+    #
+    # And the tree is checked for OWNERSHIP rather than writability, because that is the question the
+    # failure asks: `chmod` may only be called by an owner, so a directory somebody else owns at mode 777
+    # is writable by everyone and chmod-able by no-one else - one line into gradle's own bookkeeping,
+    # `Operation not permitted`, in a tree si#78's `os.access` check calls clean. The run was going to
+    # fail either way; refusing here is the difference between a message about the tree and a stack trace
+    # about a registry file.
+    #
+    # WHAT IS WALKED IS THE OUTPUT DIRECTORY, and the limit is stated rather than hidden: a product's own
+    # state outside it - a `.gradle/` beside the source, say - is not walked, because walking a whole
+    # repository before every containerised command costs more than it buys. Bringing that state under
+    # the home this function now provides is what brings it into the check.
+    outputs.ensure_home()
+    fault = docker.ownership_fault([outputs.root()], product.root)
+    if fault:
+        log.error(fault)
+        return 1
     line = docker_argv(cfg, root=product.root, product=product.name, instance=instance,
+                       home=outputs.home_in_container(cfg.workdir),
                        build_root=layout.declared(context.current().manifest_data()).build_root,
                        extra=list(extra or []), network=network)
     return run(line, capture=False).rc
