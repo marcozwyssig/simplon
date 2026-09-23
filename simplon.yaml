@@ -249,14 +249,28 @@ groups:
       # `dynamic = ["version"]`, setuptools-scm derives the number from the tag, and the tag is the
       # argument - so `./simplon.sh release tag v0.1.14` IS the whole act of choosing 0.1.14.
       tag: { task: "release:tag" }
-      # Publishing that image (si#200). ON DEMAND, not from release.yml, and the reason is a credential
-      # rather than a preference: this repository publishes to PyPI through Trusted Publishing and to
-      # Pages through OIDC, so it stores no registry secret at all today, and Docker Hub has no such
-      # route - an automatic publish would mean a long-lived Hub token in the repository's secrets,
-      # standing there between releases. That is the maintainer's decision to take deliberately rather
-      # than a side effect of this ticket. The two supporting reasons: nothing consumes the image until
-      # si#201's launcher does, and the pin in deploy/image/image.pin is committed by hand, so an
-      # automatic publish would push images no checkout points at.
+      # Publishing that image (si#200, moved to ghcr by si#313). ON DEMAND, not from release.yml - and
+      # of the three reasons this comment used to give, TWO HAVE ENDED and the third is why it is still
+      # on demand.
+      #
+      # THE CREDENTIAL REASON IS GONE, not out-weighed. It said Docker Hub has no route like PyPI's
+      # Trusted Publishing or Pages' OIDC, so an automatic publish would mean a long-lived Hub token
+      # standing in this repository's secrets between releases. ghcr.io needs no stored token at all (see
+      # `images:` below for the mechanism, which is the per-run one and not OIDC), so the obstacle is
+      # removed rather than accepted.
+      #
+      # THE SECOND REASON CAME TRUE rather than being refuted, and it is kept here as such: it read
+      # "nothing consumes the image until si#201's launcher does". The launcher exists, and firn is that
+      # consumer - it carried python3 and py3-pip in its development container for no reason but starting
+      # the launcher (17 packages, 47.4 MiB, sqlite-libs among them, because CPython links libsqlite3 for
+      # its stdlib). A sentence that has happened is not an argument any more.
+      #
+      # THE THIRD REASON STANDS, and it is the one holding the trigger: the pin in deploy/image/image.pin
+      # is committed by hand, so a publish nothing points at moves the problem rather than solving it.
+      # The order is therefore PUBLISH FIRST, PIN AFTERWARDS: `release:image` reads the tag back out of
+      # the registry before it says OK, and only then is there something a pin may name. A pin committed
+      # ahead of the push would name an image that does not exist - and on a machine with no python3 the
+      # launcher would then choose the container route and fail where the venv route was never offered.
       #
       # WHAT KEEPS IT FROM ROTTING is the ci.yml step that BUILDS it on every push (see `workflows:`
       # below). Building needs no credential; publishing needs one. So the half that can be exercised on
@@ -331,12 +345,23 @@ site:
 
 # The container image simplon builds of itself (si#200), read by `build:image` / `release:image`.
 #
-# THE REGISTRY IS DOCKER HUB, and it is the first thing this family publishes anywhere but GitHub. That
-# is a constraint rather than a detail: `githubpackages.is_github_packages` exists to stop the GitHub
-# credential reaching any other host - its own docstring records a token that leaked into a repository's
-# history - so the token this kernel mints is not available here, by design. The credential for this
-# registry is the one `docker login docker.io` stored, the kernel reads no secret of its own for it, and
-# since si#200 a push with no stored credential is REFUSED by name instead of attempted and answered by
+# THE REGISTRY IS GHCR, AND IT USED TO BE DOCKER HUB (si#313). The change is a credential rather than a
+# preference, which is also the reason the old line existed: `githubpackages.is_github_packages` stops
+# the GitHub credential reaching any other host - its own docstring records a token that leaked into a
+# repository's history - so under Docker Hub the token this kernel already mints was, by design, not
+# available for its own image. The credential had to be a stored `docker login docker.io`, and in a
+# workflow that means a long-lived Hub token standing in this repository's secrets between releases.
+#
+# ghcr.io needs none. `release:image` asks `is_github_packages` and logs in with the token Actions issues
+# PER RUN, or with `gh auth token` for an operator publishing by hand - the same path `release:artifact`
+# has always used. Nothing is stored, and the check that decides whether the credential may travel at all
+# is the one that was already there. `test_the_kernels_own_registry_is_one_the_run_token_can_reach` holds
+# it: move this line to a host that needs a stored secret and the deferral's reason comes back.
+#
+# It is NOT the OIDC route PyPI and Pages use in release.yml. Same consequence - nothing is kept between
+# releases - by a different mechanism, and whoever reads this later should find the right name for it.
+#
+# A push with no credential is still REFUSED by name rather than attempted and answered by
 # `denied: requested access to the resource is denied`.
 #
 # NO `tag:`. See the `build image` command above: the tag is the derived VERSION, and a constant here
@@ -394,7 +419,7 @@ generated:
 
 images:
   kernel:
-    registry: docker.io/marcozwyssig
+    registry: ghcr.io/marcozwyssig
     repository: simplon
     dockerfile: deploy/image/Dockerfile
     context: .
