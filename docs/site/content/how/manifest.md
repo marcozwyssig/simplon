@@ -804,7 +804,7 @@ reader, and a report that quietly moved looks exactly like a report that does no
 | the run transcript, and a step's own log | `<output>/logs/` — see below: not every run writes one |
 | `build:image`'s pointer | `<output>/docker/image.txt` |
 | `docs:site`, when the `site:` section names no `output:` | `<output>/site/` |
-| the HOME a containerised run gets (si#319) | `<output>/home/` |
+| the HOME a containerised run gets (si#319) | `<output>/home/` — honoured by a uid with no passwd entry; a container running as root takes that entry's home instead (si#325) |
 
 **`<output>/logs/` is written by a run made of STEPS, not by every command.** Measured, because "on every
 run" and "on a step run" are two different promises: the run transcript is written by the step pipeline -
