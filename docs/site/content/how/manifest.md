@@ -796,6 +796,29 @@ generator reads it from there is a legitimate thing to declare. That is measured
 over every manifest this kernel can reach, two producing coordinates write outside `build/` today, and
 one of them is in this repository's own manifest.
 
+**WHAT RESOLVES AGAINST IT, EXHAUSTIVELY** — because "not listed" and "not migrated" look the same to a
+reader, and a report that quietly moved looks exactly like a report that does not exist:
+
+| what | where it goes |
+| --- | --- |
+| the run transcript, and a step's own log | `<output>/logs/` — see below: not every run writes one |
+| `build:image`'s pointer | `<output>/docker/image.txt` |
+| `docs:site`, when the `site:` section names no `output:` | `<output>/site/` |
+| the HOME a containerised run gets (si#319) | `<output>/home/` |
+
+**`<output>/logs/` is written by a run made of STEPS, not by every command.** Measured, because "on every
+run" and "on a step run" are two different promises: the run transcript is written by the step pipeline -
+the TUI and the headless runner - and by `test walk`; a step's own log is written when that step CRASHES,
+or when an operator saves it from the TUI's palette. A gate invoked straight from the CLI (`test unit`)
+runs the task body and no pipeline, so it writes neither, and a product that has only ever run gates
+correctly finds no `logs/` directory at all. Reported by a consumer who upgraded, looked for it, and did
+not find it.
+
+**Nothing else moved, and `reports:` in particular did not.** A test run's outputs still fall back to
+`tests/reports` beside the suite when `suites: reports:` names nothing — the rule 0.7.0 shipped, unchanged
+here. A product that wrote down *"no `reports:`, the kernel's fallback is what we want"* keeps exactly
+what it decided. The day that changes it will be a ticket with this table in it, not a side effect.
+
 **`build/` is disposable, and that was already true.** A fetched tool binary, a step log and a rendered
 site are all build outputs that `clean` removes - the kernel says so in `tools.py`, in `steplog.py` and
 in the `.gitignore` it scaffolds. What si#314 changed is that a product's own artefacts now arrive there

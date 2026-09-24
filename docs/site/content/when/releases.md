@@ -25,6 +25,31 @@ it is the one section held only to existing.
 
 ## 0.23.0
 
+### The pin names a kernel image that exists (si#313)
+
+0.22.0 opened the route; this is the line that uses it. `./simplon.sh release image` ran on the v0.22.0
+checkout and `deploy/image/image.pin` now carries
+
+```
+ghcr.io/marcozwyssig/simplon:v0.22.0
+```
+
+written **after** the push and its read-back, which is the order si#313 decided: `release:image` asks the
+registry whether the tag is there before it reports OK, so the pin names something that demonstrably
+exists rather than something somebody intends to push. The digest is kept beside it in the file as a
+second source for the same line.
+
+**Two measurements kept rather than tidied away.** The first push failed on the **network** — four layers
+were up when one timed out awaiting response headers — and the sentence `release:image` prints on a failed
+push is about package scopes, which was the wrong diagnosis that time. And `build:image` wrote si#314's
+pointer on its first real run.
+
+**What it still does not give a consumer.** The ghcr package is **private**, GitHub's default for a new
+one: measured, an anonymous `docker manifest inspect` is denied. So the container route runs for whoever
+holds a token and not yet for the machine si#313 is about — bash, docker, no python. Visibility is a
+web-UI setting with no REST equivalent, and the end-to-end measurement (purge the local image, log out,
+run the route) is owed after it rather than claimed now.
+
 ### A home the calling uid owns, and a tree it must own too (si#319)
 
 Reported from a consumer whose containerised gradle died one line into its own bookkeeping:
