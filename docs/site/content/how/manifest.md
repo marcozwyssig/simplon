@@ -796,6 +796,21 @@ generator reads it from there is a legitimate thing to declare. That is measured
 over every manifest this kernel can reach, two producing coordinates write outside `build/` today, and
 one of them is in this repository's own manifest.
 
+**WHAT RESOLVES AGAINST IT, EXHAUSTIVELY** — because "not listed" and "not migrated" look the same to a
+reader, and a report that quietly moved looks exactly like a report that does not exist:
+
+| what | where it goes |
+| --- | --- |
+| the step logs and the run transcript | `<output>/logs/` |
+| `build:image`'s pointer | `<output>/docker/image.txt` |
+| `docs:site`, when the `site:` section names no `output:` | `<output>/site/` |
+| the HOME a containerised run gets (si#319) | `<output>/home/` |
+
+**Nothing else moved, and `reports:` in particular did not.** A test run's outputs still fall back to
+`tests/reports` beside the suite when `suites: reports:` names nothing — the rule 0.7.0 shipped, unchanged
+here. A product that wrote down *"no `reports:`, the kernel's fallback is what we want"* keeps exactly
+what it decided. The day that changes it will be a ticket with this table in it, not a side effect.
+
 **`build/` is disposable, and that was already true.** A fetched tool binary, a step log and a rendered
 site are all build outputs that `clean` removes - the kernel says so in `tools.py`, in `steplog.py` and
 in the `.gitignore` it scaffolds. What si#314 changed is that a product's own artefacts now arrive there
