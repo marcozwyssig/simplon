@@ -801,10 +801,18 @@ reader, and a report that quietly moved looks exactly like a report that does no
 
 | what | where it goes |
 | --- | --- |
-| the step logs and the run transcript | `<output>/logs/` |
+| the run transcript, and a step's own log | `<output>/logs/` — see below: not every run writes one |
 | `build:image`'s pointer | `<output>/docker/image.txt` |
 | `docs:site`, when the `site:` section names no `output:` | `<output>/site/` |
 | the HOME a containerised run gets (si#319) | `<output>/home/` |
+
+**`<output>/logs/` is written by a run made of STEPS, not by every command.** Measured, because "on every
+run" and "on a step run" are two different promises: the run transcript is written by the step pipeline -
+the TUI and the headless runner - and by `test walk`; a step's own log is written when that step CRASHES,
+or when an operator saves it from the TUI's palette. A gate invoked straight from the CLI (`test unit`)
+runs the task body and no pipeline, so it writes neither, and a product that has only ever run gates
+correctly finds no `logs/` directory at all. Reported by a consumer who upgraded, looked for it, and did
+not find it.
 
 **Nothing else moved, and `reports:` in particular did not.** A test run's outputs still fall back to
 `tests/reports` beside the suite when `suites: reports:` names nothing — the rule 0.7.0 shipped, unchanged
