@@ -187,6 +187,16 @@ READS_INLINE = {
                    "tasks.artifact - which is deliberate: si#127 extends that section rather than "
                    "inventing one, so it reads it the way its neighbour does",
     "tasks.conan": "`_declared(name)`, same shape as tasks.nuget and tasks.artifact",
+    "tasks.maven": "`_declared(name)`, same shape as tasks.nuget and tasks.conan - si#329 extends the "
+                   "same `artifacts:` section a fourth time rather than inventing one. IT WAS FOUND BY "
+                   "THIS CHECK: the module first IMPORTED `_declared` from tasks.nuget, every test "
+                   "passed, and this assertion stayed green - because the population is derived from "
+                   "which modules call the document accessor, and a module that borrows another's reader "
+                   "calls it nowhere. Three manifest refusals were invisible to the count. Reading the "
+                   "section here is what makes the module visible, and the wider hole - a refusal "
+                   "decided on manifest values obtained through ANOTHER module's reader, which this "
+                   "derivation cannot see at all - is reported as its own ticket rather than left in a "
+                   "comment",
     "tracker": "`declared()` reads the `tracker:` section inline at the front of the one function that "
                "reaches a tracker, the same shape as tasks.releasenotes - and it refuses the same way, "
                "with `log.error` and a None, because it is called after a person has answered a walk "

@@ -44,7 +44,8 @@ PACKAGE_SCOPES: tuple = ("read:packages", "write:packages")
 # one name: OCI artifacts and container images live on ghcr.io, NuGet packages on nuget.pkg.github.com.
 # One credential reaches both, so the check WIDENS by a row rather than a caller opting out of it - and
 # an opt-out is exactly the second token story this module exists to prevent.
-GITHUB_PACKAGE_HOSTS: frozenset = frozenset({"ghcr.io", "nuget.pkg.github.com"})
+GITHUB_PACKAGE_HOSTS: frozenset = frozenset({"ghcr.io", "nuget.pkg.github.com",
+                                             "maven.pkg.github.com"})
 
 
 class PackageError(RuntimeError):

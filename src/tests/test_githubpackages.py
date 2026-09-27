@@ -305,3 +305,20 @@ def test_a_name_that_already_says_zip_is_not_said_twice(tmp_path, calls, monkeyp
                                   archive_name="cleon-updatesite.zip")
 
     assert pushed == ["cleon-updatesite.zip"]
+
+
+def test_the_maven_host_is_one_this_module_may_send_its_token_to():
+    # arrange: si#329 - a jar goes to GitHub's Maven registry, which is a THIRD host beside ghcr.io and
+    # nuget.pkg.github.com. Without it in the set, `is_github_packages` says no and a product publishing
+    # a jar is refused for naming GitHub's own registry.
+    # act / assert
+    assert githubpackages.is_github_packages("maven.pkg.github.com/marcozwyssig/firn") is True
+
+
+def test_a_lookalike_of_the_maven_host_is_still_refused():
+    # arrange: the property the set's own docstring insists on - membership, never a prefix or a suffix.
+    # `maven.pkg.github.com.evil.example` is a host somebody else owns, and a suffix test would hand
+    # them a GitHub PAT.
+    # act / assert
+    assert githubpackages.is_github_packages("maven.pkg.github.com.evil.example/x") is False
+    assert githubpackages.is_github_packages("evil-maven.pkg.github.com/x") is False

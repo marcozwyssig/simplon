@@ -146,7 +146,7 @@ the number that says whether a rib is filled:
 |---|---|---|
 | `build` | phase, agnostic | 6 |
 | `test` | phase, agnostic | 8 |
-| `release` | phase, agnostic | 6 |
+| `release` | phase, agnostic | 7 |
 | `deploy` | phase, env-first | 3 |
 | `monitor` | phase, env-first | 0 |
 | `support` | not a phase | 11 |
@@ -155,7 +155,7 @@ the number that says whether a rib is filled:
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Forty-six coordinates: thirty-four carrying a placement, twelve free to be filed. The numbers in this sentence, in that
+Forty-seven coordinates: thirty-five carrying a placement, twelve free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -264,17 +264,18 @@ A step the person REFUSES becomes a bug ticket, worded by the product through a
 *Publish them.* The point where a mistake stops being local: a tag can be deleted but not un-seen, and a
 pushed image is somebody else's dependency by the time you notice.
 
-**In the catalogue today: 6 tasks.**
+**In the catalogue today: 7 tasks.**
 
 - `release:artifact`
 - `release:asset`
 - `release:conan`
 - `release:image`
+- `release:maven`
 - `release:nuget`
 - `release:tag`
 
 **What a product brings itself.** An `artifacts:`, `assets:` or `images:` section, and - for
-`release:tag` - a workflow that a tag actually triggers. All six are **offered** rather than placed, and `release:tag`
+`release:tag` - a workflow that a tag actually triggers. All seven are **offered** rather than placed, and `release:tag`
 is the case that fixed that bar: it is the one `release:` task that reads no product data at all, so it
 came closest to being handed to everybody, and it is still not - because it **publishes**, and a
 misfire is public and cannot be taken back.
@@ -288,7 +289,22 @@ licence lets it hand out - never one the kernel answers for it.
 whether the tag is there*, because a push nobody verifies is the same defect as a report nobody reads.
 
 `release:nuget` and `release:conan` are two different answers to one question, and the difference is not
-this kernel's taste - it is what GitHub Packages serves. NuGet is a registry it has, so `release:nuget`
+this kernel's taste - it is what GitHub Packages serves. **`release:maven` is the third answer, and it lands on
+NuGet's side** (si#329): GitHub does serve a Maven registry, so there is somewhere to publish *to* and a
+transport would have been the weaker shape. What it adds beyond `release:nuget` is `release:image`'s rule -
+it reads the coordinates back out of the registry - and the reason is specific to this tool: a
+`gradle publish` with no `maven-publish` publication configured has **no work to do and does not fail for
+it**, so a green publish that uploaded nothing is reachable here in a way it is not for `dotnet nuget push`.
+Its verification has three outcomes rather than two, because a `401` means the token may not look and is not
+the same answer as a missing jar.
+
+**Java is now published and Python still is not**, which is deliberate and measured. `tasks/profiles.py`
+builds four languages; this namespace publishes three of them. GitHub Packages has no Python index at all -
+the kinds it serves are npm, RubyGems, Maven, Gradle, NuGet and Docker/Container - so a wheel is Conan's
+situation and not NuGet's. And the route this repository itself uses for PyPI is **trusted publishing**, an
+OIDC exchange between GitHub Actions and PyPI that no command line can perform: a `release:wheel` would have
+to upload with an API token, introducing a long-lived credential where there is currently none in order to
+replace a verbatim workflow step. The verbatim step is the right shape there, and this is the reason. NuGet is a registry it has, so `release:nuget`
 packs a project and pushes it to `nuget.pkg.github.com`, and `build:nuget-config` and
 `build:nuget-restore` are the consuming half. **There is no Conan registry in GitHub Packages at all**,
 so `release:conan` is a *transport*: `conan cache save` writes an archive, this moves that archive into
