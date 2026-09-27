@@ -170,7 +170,12 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
     # no Conan registry in GitHub Packages at all, so `release:conan` is a TRANSPORT over the OCI
     # artifact `release:artifact` already knows how to move - an exact tag pulled and restored, with no
     # remote resolution.
-    assert sorted(cat.namespace("release")) == ["artifact", "asset", "conan", "image", "nuget", "tag"]
+    # si#329 added `maven`, the THIRD answer to that same question, and it lands on nuget's side rather
+    # than conan's: GitHub does serve a Maven registry, so there is somewhere to publish to and a
+    # transport would have been the weaker shape. What it adds beyond nuget is the read-back, because a
+    # `gradle publish` with no publication configured exits 0 having uploaded nothing.
+    assert sorted(cat.namespace("release")) == ["artifact", "asset", "conan", "image", "maven", "nuget",
+                                               "tag"]
 
 
 def test_an_unplaced_coordinate_reaches_the_generated_reference_and_a_placed_one_does_not():

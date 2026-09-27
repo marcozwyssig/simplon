@@ -77,7 +77,7 @@ PROFILES: dict[str, Profile] = {
             # let a body override the profile's - it is simply the first command that needs to, because
             # a language SDK image carries neither `protoc` nor its plugin.
             #
-            # ONE IMAGE SERVES ALL FOUR cppUAGES, measured rather than assumed: on 2026-09-13
+            # ONE IMAGE SERVES ALL FOUR LANGUAGES, measured rather than assumed: on 2026-09-13
             # `namely/protoc-all` generated real stubs for all four from one `.proto` - `greeter_pb2.py`
             # + `greeter_pb2_grpc.py`, `GreeterOuterClass.java` + `GreeterGrpc.java`, `greeter.pb.h/.cc`
             # + `greeter.grpc.pb.h/.cc`, `Greeter.cs` + `GreeterGrpc.cs`. Four profiles name the same
@@ -167,7 +167,7 @@ PROFILES: dict[str, Profile] = {
             # let a body override the profile's - it is simply the first command that needs to, because
             # a language SDK image carries neither `protoc` nor its plugin.
             #
-            # ONE IMAGE SERVES ALL FOUR javaUAGES, measured rather than assumed: on 2026-09-13
+            # ONE IMAGE SERVES ALL FOUR LANGUAGES, measured rather than assumed: on 2026-09-13
             # `namely/protoc-all` generated real stubs for all four from one `.proto` - `greeter_pb2.py`
             # + `greeter_pb2_grpc.py`, `GreeterOuterClass.java` + `GreeterGrpc.java`, `greeter.pb.h/.cc`
             # + `greeter.grpc.pb.h/.cc`, `Greeter.cs` + `GreeterGrpc.cs`. Four profiles name the same
@@ -262,7 +262,7 @@ PROFILES: dict[str, Profile] = {
             # let a body override the profile's - it is simply the first command that needs to, because
             # a language SDK image carries neither `protoc` nor its plugin.
             #
-            # ONE IMAGE SERVES ALL FOUR csharpUAGES, measured rather than assumed: on 2026-09-13
+            # ONE IMAGE SERVES ALL FOUR LANGUAGES, measured rather than assumed: on 2026-09-13
             # `namely/protoc-all` generated real stubs for all four from one `.proto` - `greeter_pb2.py`
             # + `greeter_pb2_grpc.py`, `GreeterOuterClass.java` + `GreeterGrpc.java`, `greeter.pb.h/.cc`
             # + `greeter.grpc.pb.h/.cc`, `Greeter.cs` + `GreeterGrpc.cs`. Four profiles name the same
@@ -400,7 +400,7 @@ PROFILES: dict[str, Profile] = {
             # let a body override the profile's - it is simply the first command that needs to, because
             # a language SDK image carries neither `protoc` nor its plugin.
             #
-            # ONE IMAGE SERVES ALL FOUR pythonUAGES, measured rather than assumed: on 2026-09-13
+            # ONE IMAGE SERVES ALL FOUR LANGUAGES, measured rather than assumed: on 2026-09-13
             # `namely/protoc-all` generated real stubs for all four from one `.proto` - `greeter_pb2.py`
             # + `greeter_pb2_grpc.py`, `GreeterOuterClass.java` + `GreeterGrpc.java`, `greeter.pb.h/.cc`
             # + `greeter.grpc.pb.h/.cc`, `Greeter.cs` + `GreeterGrpc.cs`. Four profiles name the same

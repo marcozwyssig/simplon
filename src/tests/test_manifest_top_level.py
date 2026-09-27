@@ -156,6 +156,7 @@ MODULES: dict[str, tuple[str, ...]] = {
     "tasks.env": ("environments", "default", "env_var"),
     "tasks.image": ("images",),
     "tasks.nuget": ("artifacts",),   # likewise
+    "tasks.maven": ("artifacts",),   # likewise, a fourth time (si#329)
     "tasks.releasenotes": ("releases",),
     "tasks.site": ("site",),
     "tasks.testrun": ("suites", "layout"),   # `layout:` decides where its merged report lands

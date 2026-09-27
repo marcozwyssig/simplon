@@ -23,6 +23,91 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.24.0
+
+### Four languages build, three publish: a jar reaches a registry (si#329)
+
+Requested by a consumer that had nowhere to send its jars, and the gap turned out to be wider than the
+request. `tasks/profiles.py` builds **four** languages and this catalogue published **two**:
+
+| language | build profile | publish coordinate |
+| --- | --- | --- |
+| cpp | `silkeh/clang:{version}` | `release:conan` |
+| dotnet | `mcr.microsoft.com/dotnet/sdk:{version}` | `release:nuget` |
+| java | `gradle:9.7.1-jdk{version}` — pinned since si#316 | **`release:maven`, new** |
+| python | `python:{version}` | still none, deliberately — see below |
+
+**It follows `release:nuget`'s shape and not `release:conan`'s, and that was argued rather than copied.**
+conan's head refuses *"the kernel learning a language toolchain, which the design refuses everywhere else"* —
+but its reason is specific and written beside it: GitHub Packages has **no Conan registry**, so a transport
+over an OCI artifact was the only thing possible. GitHub does serve a Maven registry, so conan's reason does
+not reach here and the weaker shape was not forced.
+
+**What it adds beyond `release:nuget` is the read-back**, and the reason is a property of this tool rather
+than a general principle: a `gradle publish` whose build configures no `maven-publish` publication has **no
+work to do and does not fail for it**. A green publish that uploaded nothing is reachable here in a way it is
+not for `dotnet nuget push`. So the coordinate asks the registry for each module's POM afterwards, which is
+`release:image`'s rule — *a push nobody verifies is the same defect as a report nobody reads* — meeting a tool
+that really can exit 0 having done nothing.
+
+**And the verification has three outcomes, not two.** `404` is "the jar is not there"; `401` is "the token may
+not look"; a dead socket is "the question never arrived". Reporting the last two as the first sends a reader
+to their build file when the answer is a token scope. si#327 paid for that distinction three days earlier, in
+a module whose return code meant four things at once.
+
+**`GRADLE_USER_HOME`, not `HOME`, and that is a consumer's measurement.** si#319 gave a containerised run a
+home the caller owns; si#325 measured what it does not reach — the JVM resolves `user.home` from the passwd
+entry and ignores `$HOME`, so for root, which is what a CI job usually is, setting HOME moves nothing. A tool
+with a variable of its own needs that variable. `maven.pkg.github.com` also joined
+`githubpackages.GITHUB_PACKAGE_HOSTS`, the allowlist that decides where this kernel's token may be sent; the
+lookalike test beside it stayed as it was, because membership and never a suffix is the whole point of that
+set.
+
+### The census could not see a module that borrowed a neighbour's reader (found while building the above)
+
+`tasks/maven.py` first **imported** `_declared` from `tasks/nuget.py` rather than carrying its own. Every
+test passed, mypy was clean — and `test_every_module_that_reads_the_manifest_is_accounted_for` stayed
+**green**, because the population is derived from which modules call the document accessor, and a module that
+borrows another's reader calls it nowhere. Three new manifest refusals were invisible to the count whose only
+purpose is that the sum cannot grow quietly.
+
+Reading the section in the module puts them back, and it is also the house shape: `tasks/artifact`,
+`tasks/asset`, `tasks/nuget` and `tasks/conan` each carry the same function with the same wording on purpose,
+so *a product reading two refusals from two publishing tasks reads the same sentence twice*. The credential
+helper is still imported rather than copied, and the asymmetry is deliberate — two copies of a function that
+writes a 0600 file and removes it in a `finally` is how one of them loses the `finally`.
+
+**Two independent gates caught it once the reader moved in**, which is worth recording: the census's own
+accounting check and `test_manifest_top_level.py`'s `MODULES`. Both had to be told. The wider hole — a refusal
+decided on manifest values obtained through another module's reader is invisible to this derivation — is its
+own ticket rather than a comment.
+
+### Why python still has no coordinate, stated rather than left as an omission
+
+The decision was to add both in one round. Measured, the python half does not survive:
+
+* **GitHub Packages has no Python index at all.** The kinds it serves are npm, RubyGems, Maven, Gradle,
+  NuGet and Docker/Container — this repository's own `release:conan` comment carries that list. So a wheel is
+  Conan's situation, not NuGet's.
+* **This repository publishes to PyPI through trusted publishing.** `release.yml`'s publish job carries
+  `permissions: id-token: write  # Trusted Publishing: no API token in the repo`, and the step is
+  `pypa/gh-action-pypi-publish` with no `with:` at all. The OIDC exchange is between GitHub Actions and PyPI
+  and the action implements it; **no command line can perform it.** A `release:wheel` would therefore upload
+  with an API token — introducing a long-lived credential where there is none today, in order to remove a
+  verbatim workflow step.
+
+The "second source" objection to that verbatim step is real everywhere else and is answered here by a
+measured reason, which is the same standing `release.yml` already has as a hand-written file: the mechanism
+belongs to the CI platform, not to the product's command line. A `release:wheel` would make sense aimed at an
+index that authenticates with a token — a private Nexus, for instance — and no product has asked for one.
+
+### A mangled comment in all four build profiles
+
+`tasks/profiles.py` carried `ONE IMAGE SERVES ALL FOUR cppUAGES` / `javaUAGES` / `csharpUAGES` /
+`pythonUAGES`: one `LANG` → profile-name substitution that took `LANGUAGES` with it, in four places, leaving a
+measured sentence unreadable. Fixed. Small, and worth a line because the sentence it broke is a measurement —
+that one `protoc` image really did generate stubs for all four languages on 2026-09-13.
+
 ## 0.23.0
 
 ### The pin names a kernel image that exists (si#313)

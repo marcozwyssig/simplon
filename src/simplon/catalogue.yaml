@@ -649,6 +649,29 @@ tasks:
   # The image's other half: log in, push, and READ BACK that the registry has the tag. That last step is
   # the reason this is a kernel task at all - a push nobody verifies is the same defect as a report
   # nobody reads, and this project has shipped it twice (see src/simplon/tasks/image.py).
+  # si#329, and the third publish coordinate. DECLARED, NOT PLACED, for `support:ci-privileges`' reason
+  # one namespace along: a product without a jar would get a command that refuses on its first line. The
+  # gap it closes was measured - `tasks/profiles.py` builds FOUR languages (cpp, java, dotnet, python) and
+  # this catalogue published TWO of them, while a Gradle image has been pinned since si#316.
+  #
+  # IT FOLLOWS `release:nuget`'S SHAPE AND NOT `release:conan`'S, and that was argued rather than copied.
+  # conan's head refuses "the kernel learning a language toolchain" - but its reason is written two entries
+  # below and is specific: GitHub Packages has no Conan registry, so a transport was the only thing
+  # possible. For Maven there is a registry (see that same comment's list), so conan's reason does not
+  # reach here.
+  #
+  # IT READS THE REGISTRY BACK, which nuget does not, because a `gradle publish` with no `maven-publish`
+  # publication configured has NO WORK TO DO AND DOES NOT FAIL FOR IT - a green publish that uploaded
+  # nothing. That is `release:image`'s rule ("a push nobody verifies is the same defect as a report nobody
+  # reads") meeting a tool that really can exit 0 having done nothing. The verification has three
+  # outcomes: a 401 means the token may not look, which is not the same as a missing jar.
+  release:maven:
+    impl: simplon.tasks.maven:publish
+    help: "Publish the declared Gradle modules to GitHub's Maven registry and read the coordinates back."
+    unattended: true
+    params:
+      name: { help: "the artifact to publish (normally pinned per command with `with:`)" }
+      tag:  { help: "the version to publish, for one only known after a build" }
   release:image:
     impl: simplon.tasks.image:release
     help: "Push the product's container image and verify the tag is in the registry."
