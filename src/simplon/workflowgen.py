@@ -64,7 +64,7 @@ from typing import NamedTuple
 
 import yaml
 
-from simplon import context, runners
+from simplon import context, disk, runners
 from simplon.orchestrator.manifest import Manifest
 
 #: The manifest section this module owns. A product that declares no section declares no workflows, and
@@ -173,6 +173,11 @@ class Job:
     checkout: bool = True
     note: str = ""
     extras: Mapping[str, object] = field(default_factory=dict)
+    #: si#327: the KIND, kept and not only its consequences. Until now a job carried what the kind had
+    #: already been resolved into - `runs_on`, the note, the env folded into `extras` - and threw the kind
+    #: itself away. That was enough while every consequence was a value; it is not enough for one that is
+    #: a STEP, because a step has to be written at render time, next to the product's own.
+    runner: "runners.Runner | None" = None
 
 
 @dataclass(frozen=True)
@@ -606,7 +611,7 @@ def _job(name: str, spec: object, where: str) -> Job:
                 f"about a machine and not about this product")
         extras = _with_runner_env(runner, extras, where)
     return Job(name=name, runs_on=runs_on, python=str(python) if python is not None else "",
-               checkout=checkout, note=_note_of(spec, runner),
+               checkout=checkout, note=_note_of(spec, runner), runner=runner,
                steps=tuple(_step(item, f"{where}, step {i + 1}") for i, item in enumerate(steps)),
                extras=extras)
 
@@ -970,6 +975,67 @@ def render(workflow: Workflow, *, manifest: Manifest, product: str, source: str,
     return text
 
 
+#: What the generated file says about the two steps nobody wrote in the manifest. Emitted as a comment
+#: above them for `CHECKOUT_NOTE`'s reason: a reader who finds a step the manifest does not mention must
+#: not have to find this kernel to learn why it is there.
+DISK_NOTE = """si#327, and it is a fact about the MACHINE rather than about this product. A {kind} runner is
+the same machine on the next job, so what a build leaves behind - images, stopped containers, build cache -
+accumulates until something fails a long way from the cause. This account's own CI lost a day to it: every
+gate green, then `build image` dying on `E: You don't have enough free space in /var/cache/apt/archives/`,
+and on a second run a step with no log at all and a runner gone offline.
+
+So the disk is measured BEFORE the product's own steps, and given back after them whatever they decided.
+The preflight refuses the job when the docker data filesystem is under {min_free}% free - one second
+instead of eight minutes, and a message that names the disk. The cleanup carries `continue-on-error`
+deliberately: handing space back is not a verdict about this product's code and must not be able to fail a
+run that passed."""
+
+#: What the file says INSTEAD when the product has not placed the commands. Not a refusal, and not a
+#: silent omission either - the two things this repository refuses to choose between.
+DISK_UNPLACED = """si#327: a {kind} runner's disk fills up, and this job would be given a preflight and a
+cleanup step - except that this product has placed neither command. The kernel will not write a step
+calling a command that does not exist: that fails on the runner with the manifest looking correct.
+
+To get them, place both coordinates in the command tree and regenerate:
+
+    {coordinates}
+
+Until then a build on this machine can die of a full disk with nothing in the log about a disk."""
+
+
+def _placed(manifest: Manifest, impl: str) -> str:
+    """The command path a product placed `impl` at (`support ci-disk-preflight`), or "" if nowhere.
+
+    BY IMPL AND NOT BY NAME. A product may place a catalogue coordinate under whatever command name suits
+    its own taxonomy, so the name is the product's and the impl is the identity. Looking the name up would
+    be the kernel assuming a spelling it has no right to.
+    """
+    for group, members in manifest.commands.items():
+        for name, spec in members.items():
+            if spec.impl == impl:
+                return f"{group.replace('.', ' ')} {name}"
+    return ""
+
+
+def _disk_steps(job: Job, manifest: Manifest) -> "tuple[Step | None, Step | None, str]":
+    """`(preflight, cleanup, the note for the file)` for one job - all empty when the kind has no disk."""
+    runner = job.runner
+    if runner is None or not runner.disk_persists:
+        return None, None, ""
+    pre, post = _placed(manifest, runners.PREFLIGHT[1]), _placed(manifest, runners.CLEANUP[1])
+    if not pre or not post:
+        missing = [coord for coord, impl in (runners.PREFLIGHT, runners.CLEANUP)
+                   if not _placed(manifest, impl)]
+        return None, None, DISK_UNPLACED.format(
+            kind=runner.kind, coordinates="\n    ".join(f"<name>: {{ task: \"{c}\" }}" for c in missing))
+    note = DISK_NOTE.format(kind=runner.kind, min_free=disk.DEFAULT_MIN_FREE_PCT)
+    return (Step(command=pre, note=note),
+            # `always()` so a red job still gives its space back - the run that fails is often the run
+            # that filled the machine - and `continue-on-error` so giving it back cannot change a verdict.
+            Step(command=post, modifiers={"if": "always()", "continue-on-error": True}),
+            "")
+
+
 def _render_job(job: Job, *, manifest: Manifest, product: str, workflow: str) -> list[str]:
     where = f"workflow '{workflow}', job '{job.name}'"
     # The derivation happens HERE and not at parse time, because it needs the manifest - the same seam a
@@ -1006,6 +1072,18 @@ def _render_job(job: Job, *, manifest: Manifest, product: str, workflow: str) ->
         lines.append(f"      - uses: {SETUP_PYTHON_ACTION}")
         lines.append("        with:")
         lines.append(f"          python-version: {_scalar(job.python)}")
+
+    # si#327. AFTER the checkout and not before it, and that is a limit rather than a preference: the
+    # preflight is one of the PRODUCT's commands (si#8 - every step in a generated file is a string a
+    # developer can type), and a command needs the checkout it lives in. A checkout is cheap; what the
+    # preflight buys is everything after it, which is where the expensive steps and the real failures are.
+    preflight, cleanup, unplaced = _disk_steps(job, manifest)
+    if unplaced:
+        lines += _comment(unplaced, "      ")
+    if preflight is not None:
+        steps.insert(0, preflight)
+    if cleanup is not None:
+        steps.append(cleanup)
 
     for index, step in enumerate(steps):
         lines += _comment(step.note, "      ")

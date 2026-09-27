@@ -196,6 +196,34 @@ tasks:
     help: "Give a user passwordless sudo and the docker group on THIS host (needs root; idempotent)."
     unattended: true
 
+  # --- support: the docker disk of a CI host (si#327) ---------------------------------------------------
+  # THREE COORDINATES BECAUSE THERE ARE THREE MOMENTS, and collapsing them would lose the distinction that
+  # is the whole repair. `ci-disk-hygiene` is the one a person runs ONCE per machine, as root, and it is
+  # declared-not-placed for `ci-privileges`' reason: it restarts the docker engine, which is not something
+  # anybody wants appearing in a CLI they did not ask for it in. The other two run inside a job, need no
+  # privilege, and are what a generated workflow calls.
+  #
+  # WHAT MADE THIS NECESSARY. The kernel has shipped `simplon/diskguard.py` since it was moved out of
+  # netctl, and until si#327 NOTHING CALLED IT - measured over the whole tree, the only references outside
+  # the module were its own tests. Meanwhile this repository's CI built an image on every push, filled a
+  # runner's 64 GB refquota, and lost a day to `E: You don't have enough free space in
+  # /var/cache/apt/archives/`. A step never run in its own house rots unseen (si#8, si#89, si#200), and
+  # this is that pattern one module along.
+  support:ci-disk-hygiene:
+    impl: simplon.tasks.cidisk:hygiene
+    help: "Cap docker logs, bound the build cache and install a daily prune on THIS host (needs root)."
+    unattended: true
+    params:
+      dry_run: { help: "Show what would change on this host and write nothing.", short: "-n" }
+  support:ci-disk-preflight:
+    impl: simplon.tasks.cidisk:preflight
+    help: "Refuse to start a job on a runner whose docker disk is too full to finish one."
+    unattended: true
+  support:ci-disk-cleanup:
+    impl: simplon.tasks.cidisk:cleanup
+    help: "Prune build cache older than a day - the step a job runs when it is done, whatever it decided."
+    unattended: true
+
   # --- test: the suite runner ------------------------------------------------------------------------
   # `gate` backs EVERY declared suite level: one body, several commands, each pinning its own level with
   # `with: { name: ... }` (netctl#1469 plan 2, replacing the old invocation-name trick of netctl#1406). A

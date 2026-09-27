@@ -275,3 +275,37 @@ def test_a_job_may_still_set_variables_of_its_own_beside_the_kinds():
 
     # assert
     assert job.extras["env"] == {runners.BOOTSTRAP: "1", "OURS": "1"}
+
+
+# --- si#327: the two coordinates, pinned against the catalogue that actually declares them ---------------
+
+
+def test_the_disk_coordinates_resolve_to_the_impls_the_table_names():
+    # arrange: `runners.PREFLIGHT`/`CLEANUP` carry an impl string so `workflowgen` can find the command a
+    # product placed WITHOUT assuming what that product called it. That string is a second source for what
+    # `catalogue.yaml` declares, and a second source nobody compares is this repository's oldest defect -
+    # so it is compared here, against the real catalogue.
+    from simplon import catalogue as catalogue_mod
+    tasks = catalogue_mod.load().tasks
+
+    # act / assert
+    for coordinate, impl in (runners.PREFLIGHT, runners.CLEANUP):
+        assert coordinate in tasks, f"the catalogue no longer declares {coordinate}"
+        declared = tasks[coordinate]["impl"]
+        assert declared == impl, (
+            f"{coordinate} resolves to {declared!r}, but the runner table says {impl!r} - "
+            f"a generated workflow would look for a command that is not there")
+
+
+def test_a_thrown_away_machine_is_not_asked_to_look_after_its_disk():
+    # arrange / act / assert: the distinction the whole feature turns on. A GitHub-hosted runner is
+    # destroyed after the job, so two steps guarding its disk would be two steps for nothing.
+    assert runners.TABLE["github-ubuntu"].disk_persists is False
+    assert runners.TABLE["self-hosted-debian"].disk_persists is True
+
+
+def test_every_kind_says_whether_its_disk_survives_the_job():
+    # arrange / act / assert: a new kind added without an answer here would default to False and silently
+    # lose the guard, so the field is asserted PRESENT on every kind rather than trusted to a default.
+    for kind, runner in runners.TABLE.items():
+        assert isinstance(runner.disk_persists, bool), f"{kind} does not say whether its disk persists"

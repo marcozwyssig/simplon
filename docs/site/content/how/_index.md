@@ -20,5 +20,6 @@ everything that EXPLAINS is here, and [With what](../with-what/) keeps only what
   {{< card link="manifest/" title="The manifest" subtitle="The command tree, the group lock, pinning with `with:`, aggregates and the product data sections." >}}
   {{< card link="tasks/" title="Writing a task" subtitle="A body is a plain function. Where it goes, what it may assume, and how it reaches product data." >}}
   {{< card link="running/" title="Running a command" subtitle="What you see while a command runs, where its output is kept, and how to ask for the plain version." >}}
+  {{< card link="ci-hosts/" title="Preparing a CI host" subtitle="What a self-hosted runner needs before a workflow points at it: the two privileges, the docker disk, and the sweep that warns before a build dies of a full one." >}}
   {{< card link="releasing/" title="Cutting a release" subtitle="One command. Why the tag *is* the version, why it pushes one tag and not all of them, what the guard refuses - and why a push to `main` publishes nothing." >}}
 {{< /cards >}}

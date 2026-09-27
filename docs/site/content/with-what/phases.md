@@ -149,13 +149,13 @@ the number that says whether a rib is filled:
 | `release` | phase, agnostic | 6 |
 | `deploy` | phase, env-first | 3 |
 | `monitor` | phase, env-first | 0 |
-| `support` | not a phase | 8 |
+| `support` | not a phase | 11 |
 | `vcs` | family | 5 |
 | `docs` | family | 4 |
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Forty-three coordinates: thirty-one carrying a placement, twelve free to be filed. The numbers in this sentence, in that
+Forty-six coordinates: thirty-four carrying a placement, twelve free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -343,7 +343,7 @@ environment.
 
 *Host preflight, environment introspection and host tooling.* Not a phase - the group the five stand on.
 
-**In the catalogue today: 8 tasks.**
+**In the catalogue today: 11 tasks.**
 
 - `support:install`
 - `support:nexus`
@@ -352,6 +352,9 @@ environment.
 - `support:workflows`
 - `support:completion`
 - `support:ci-privileges`
+- `support:ci-disk-hygiene`
+- `support:ci-disk-preflight`
+- `support:ci-disk-cleanup`
 - `support:toolchain`
 
 **What a product brings itself.** Nothing, for `support:install` and `support:completion` - they are the
@@ -369,9 +372,22 @@ product declares its parameters and receives the rest.
 `support:ci-privileges` is the one that is offered for a different reason (si#92). It reads no section at
 all, so by the test above it could be placed - and it deliberately is not, because it grants
 `NOPASSWD: ALL` and a docker group. A command that changes who may become root on a machine has to be
-something a product asked for, not something it received with the kernel. It is also the only task here
-that refuses unless it is run as root, and says so: the privilege it hands out is the one the kernel
+something a product asked for, not something it received with the kernel. It refuses unless it is run as root, and says so: the privilege it hands out is the one the kernel
 needs in order to be allowed to do anything, so it cannot take it from inside a job.
+
+**The three `ci-disk-*` coordinates are one mechanism split across three moments (si#327)**, and the split
+is the point rather than an accident of naming. `support:ci-disk-hygiene` is the one a person runs ONCE on
+each runner, as root: it caps container logs, bounds the build cache through the engine's own GC and
+installs a daily prune timer. It is offered for `ci-privileges`' reason at a second place - it restarts the
+docker engine, which kills every container on the machine, and that is not something anybody wants
+appearing in a CLI they did not ask for it in.
+
+The other two run inside a job and need no privilege at all. `support:ci-disk-preflight` refuses to start
+work on a machine that cannot finish it; `support:ci-disk-cleanup` hands back what a run took, whatever
+that run decided. They are offered rather than placed because a product on a GitHub-hosted runner has no
+use for either - the machine is destroyed after every job - and a generated workflow places them for the
+product automatically when its runner kind says the disk survives. That is the one place in this catalogue
+where the KIND OF MACHINE, not the manifest, decides whether a command ends up in a pipeline.
 
 ## The empty rib
 

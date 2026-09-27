@@ -312,6 +312,21 @@ groups:
       # called.
       ci-privileges: { task: "support:ci-privileges" }
 
+      # PLACED FOR THE SAME REASON AND WITH THE SAME CAVEAT (si#327). simplon provisions a CI host, so
+      # simplon is the product that may ask for the command that configures one. `ci-disk-hygiene` needs
+      # root and RESTARTS THE DOCKER ENGINE when the configuration actually moves, which kills every
+      # container on the machine - so it is a command a person types on a host, once, and never a step in
+      # a job.
+      #
+      # The other two are the in-job halves and need no privilege at all. They are placed here because
+      # the generated `ci.yml` below CALLS them by coordinate: the kernel will not write a step for a
+      # command a product has not placed, and says so in the generated file instead - which is the reason
+      # these two lines are load-bearing rather than decorative. Remove them and the workflow loses its
+      # preflight, visibly, in a diff.
+      ci-disk-hygiene: { task: "support:ci-disk-hygiene" }
+      ci-disk-preflight: { task: "support:ci-disk-preflight" }
+      ci-disk-cleanup: { task: "support:ci-disk-cleanup" }
+
 # The documentation website's data (#2). Four values here and a fifth taken from the kernel: `source:` is
 # ABSENT on purpose since si#183, so this manifest is the first consumer of the `docs/site` default rather
 # than a product that happens to agree with it. If the default ever stopped working, `build docs` in this
