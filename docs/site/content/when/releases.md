@@ -88,6 +88,22 @@ what it writes. It sits under si#314's output directory, so it dies with `clean`
 and the manifest's environment is appended after the kernel's, so a product that states its own `HOME`
 gets exactly what it stated.
 
+**WHERE THE HOME DOES NOT REACH**, measured after the fact and said here rather than left to be
+discovered (si#325). A JVM resolves `user.home` from the passwd database and falls back to `$HOME` only
+for a uid that is not in it:
+
+| container user | `user.home` |
+| --- | --- |
+| root, or any uid with a passwd entry | that entry's home — `$HOME` is ignored |
+| a uid with no passwd entry | `$HOME`, and `/` when nothing sets one |
+
+So it reaches the case it was built for — `--user <uid>` for a uid docker cannot map — and is a **no-op
+for a container running as root**, which is what `--user $(id -u)` gives on a host whose developer or CI
+job is root. A JVM tool then writes its state inside the container and `--rm` throws it away; a consumer
+measured 16–20 s per run for that. Tools that read `$HOME` themselves are unaffected; one with a variable
+of its own (`GRADLE_USER_HOME`, `DOTNET_CLI_HOME`) needs that variable, and setting it at the same
+directory is the fix rather than a placeholder.
+
 **Two limits, stated rather than discovered.** What is walked is the output directory: a product's own
 state beside the source — a `.gradle/` that an image's `GRADLE_USER_HOME` points at — is not walked,
 because walking a whole repository before every containerised command costs more than it buys. Bringing

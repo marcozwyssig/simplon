@@ -123,6 +123,19 @@ def ensure_home() -> Path:
     product's tree, once in a consumer's image and once in `tasks/nuget.py`. Two hand-made workarounds
     for one missing thing.
 
+    WHERE IT DOES NOT REACH, measured rather than assumed (si#325). A JVM resolves `user.home` from the
+    PASSWD DATABASE and falls back to `$HOME` only for a uid that is not in it:
+
+        docker run --rm -e HOME=/tmp/xyz gradle:9.7.1-jdk25   ->  user.home = /root
+        docker run --rm --user 4242:4242 -e HOME=/tmp/xyz ... ->  user.home = /tmp/xyz
+
+    So this reaches a container run as an unmapped uid - which is what `--user <uid>` gives for an
+    ordinary developer - and is a NO-OP for one running as root, where the passwd entry wins. On a host
+    whose developer or CI job is root, `docker.user_args()` passes `--user 0:0` and a JVM tool writes its
+    state to `/root/.gradle` inside the container, which `--rm` then throws away. A tool that reads
+    `$HOME` itself (pip, npm, uv) is unaffected; one with a variable of its own needs that variable, and
+    a consumer measured 16-20 s per run for the difference.
+
     CREATED HOST-SIDE, AS THE CALLER, and that is the half that matters: the directory then belongs to
     the uid the container runs as, whatever an earlier root run left around it. A directory the container
     creates itself inherits nothing and lands under a parent that may already be root's.
