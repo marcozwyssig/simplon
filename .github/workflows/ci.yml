@@ -48,6 +48,18 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # si#327, and it is a fact about the MACHINE rather than about this product. A self-hosted-debian runner is
+      # the same machine on the next job, so what a build leaves behind - images, stopped containers, build cache -
+      # accumulates until something fails a long way from the cause. This account's own CI lost a day to it: every
+      # gate green, then `build image` dying on `E: You don't have enough free space in /var/cache/apt/archives/`,
+      # and on a second run a step with no log at all and a runner gone offline.
+      #
+      # So the disk is measured BEFORE the product's own steps, and given back after them whatever they decided.
+      # The preflight refuses the job when the docker data filesystem is under 15% free - one second
+      # instead of eight minutes, and a message that names the disk. The cleanup carries `continue-on-error`
+      # deliberately: handing space back is not a verdict about this product's code and must not be able to fail a
+      # run that passed.
+      - run: ./simplon.sh support ci-disk-preflight
       - run: ./simplon.sh test suite
       # The type gate (si#8), and it runs HERE rather than as a `mypy src` step of its own,
       # because the command has to be the same one a developer runs. si#8 was raised as "mypy is
@@ -112,3 +124,6 @@ jobs:
           path: tests/reports/*.html
           if-no-files-found: error
           retention-days: 90
+      - if: always()
+        continue-on-error: true
+        run: ./simplon.sh support ci-disk-cleanup

@@ -112,6 +112,79 @@ that state under the home this now provides is what brings it into the check. An
 has never needed, and what allure actually measured (#6) is the opposite direction — an image running as
 uid 1000 against a host uid that is not.
 
+### The disk that fills, guarded by the guard that was already in the box (si#327)
+
+`simplon/diskguard.py` has shipped since the mechanism moved out of netctl. Its own first line says what
+it is for — *"so a full disk never silently breaks an initdb-style bootstrap or a container deploy"* — and
+until this release **nothing called it**: measured over the whole tree, the only references outside the
+module were its own tests. Meanwhile this repository's CI built a docker image on every push.
+
+It ended the way that ends. A runner answered `Disk quota exceeded` with **64 GB in /var/lib/docker** — an
+LXC container on ZFS with a refquota, so the ceiling is the filesystem's and free space on the pool buys
+nothing. What the pipeline saw was
+
+```
+E: You don't have enough free space in /var/cache/apt/archives/
+```
+
+eight minutes into a docker build, with every gate before it green; and on a second run of the same commit,
+a step with `conclusion: null`, **no log at all**, and the runner going offline. Neither text mentions a
+disk. This is si#8, si#89 and si#200's pattern one module along — *a step never run in its own house rots
+unseen* — and this time the unplaced step was the one that would have kept CI alive.
+
+**Three coordinates, because there are three moments**, and collapsing them is what had made the guard
+unusable for the job it was needed for:
+
+| | when | what it does | privilege |
+| --- | --- | --- | --- |
+| `support ci-disk-hygiene` | once per machine | caps container logs, bounds the build cache through the engine's own GC, installs a daily prune timer | root |
+| `support ci-disk-preflight` | before a job's own steps | refuses a machine that cannot finish the work | none |
+| `support ci-disk-cleanup` | after them, whatever they decided | hands back the build cache older than a day | none |
+
+**An rc of 0 that meant four different things had to be widened first.** `disk_guard` returned 0 for "no
+docker", "could not read df", "enough free" and "pruned" alike — this repository's hunted defect verbatim,
+in the module that was supposed to prevent an instance of it. A fail-fast cannot be built on that, so
+`simplon.disk.verdict` now gives each meaning its own value (`UNKNOWN`, `ENOUGH`, `LOW`), and an
+**unmeasurable** disk is reported rather than passed over as a healthy one. It does not fail the job: a
+preflight that blocked every build because `df` changed its output would cost more than the defect it
+guards.
+
+**A second defect in the same module is recorded and deliberately not repaired.** `disk_guard` probes with
+`df -P <dir> 2>/dev/null | tail -1`, and a pipeline's exit status is `tail`'s — so a failed `df` comes back
+`ok` with empty output, parses as unparseable, and the guard skips silently. Defensible for a best-effort
+pruner, wrong for a preflight, and `disk_guard` has a consumer, so the preflight probes without a pipe and
+the guard is left alone until somebody argues about it.
+
+**The two in-job steps are written into a generated workflow by the KIND of machine, not by the manifest.**
+`simplon.runners` already carries what a kind provides — that a Debian runner refuses `actions/setup-python`,
+that docker arrives through the bootstrap — and whether the disk survives the job belongs in exactly that
+table. `github-ubuntu` is destroyed after every job and gets nothing; `self-hosted-debian` gets both steps,
+the preflight first and the cleanup last under `if: always()` with `continue-on-error: true`, because
+handing space back is not a verdict about a product's code. The kernel will not write a step for a command
+a product has not placed — that fails on the runner with the manifest looking correct — so when the
+coordinates are absent the generated file **says so**, in a comment, naming what to place.
+
+**The preflight stands after the checkout and not before it**, and that is a limit rather than a
+preference: it is one of the product's own commands (si#8 — every step in a generated file is a string a
+developer can type), and a command needs the checkout it lives in. A checkout is cheap; what the preflight
+buys is everything after it.
+
+**Measured over all eight reachable manifests, and the result is smaller than it looks.** Only
+`simplon.yaml` declares a runner KIND, so only simplon's generated workflow gains the steps today. `firn`
+is on a self-hosted machine too and reaches it with `runs-on: firn`, which says *the machine is
+mine* and leaves the kernel no table entry to reason from — one manifest line (`runner: { kind:
+self-hosted-debian, labels: firn }`) would bring it in. `biz-cockpit` and `swi` are on `ubuntu-latest` and
+need none of it. And `netctl`, whose six runners are the largest part of this fleet, declares no
+`workflows:` section at all: its workflow files are hand-written, `runs-on: self-hosted`, and outside this
+generator entirely.
+
+**What this release does not do.** It does not configure a single host by itself. `support ci-disk-hygiene`
+is a command a person runs as root on each runner — it merges into `/etc/docker/daemon.json` rather than
+replacing it, refuses a file it cannot parse, and restarts the engine **only** when the document actually
+moved, because a restart kills every container on the machine including the job that called it. There are
+eight runners in this account across three repositories, and `-n` shows what would change before anything
+does.
+
 ## 0.22.0
 
 ### `simplon.interact` takes the container prefix, and no longer knows a product (si#312)

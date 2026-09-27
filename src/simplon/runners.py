@@ -56,6 +56,13 @@ class Runner(NamedTuple):
     env: Mapping[str, str]
     #: One line, said out loud in the generated file, so a reader of the workflow is not sent here.
     why: str
+    #: Does this machine still exist tomorrow? si#327, and it is the difference between a disk that can
+    #: fill and one that cannot. A GitHub-hosted runner is destroyed after every job, so nothing it leaves
+    #: behind can reach the next one. A self-hosted runner IS the next job's machine, and this account's
+    #: own CI died of exactly that: 64 GB of images and build cache against a 64 GB refquota, reported to
+    #: the pipeline as `E: You don't have enough free space in /var/cache/apt/archives/` inside a docker
+    #: build, and on a second run as a step with no log at all and a runner that had gone offline.
+    disk_persists: bool = False
 
 
 #: Every kind the kernel knows, and no more than were measured.
@@ -85,6 +92,9 @@ TABLE: Mapping[str, Runner] = {
         env={},
         why="GitHub-hosted Ubuntu: `actions/setup-python` unpacks an interpreter here, and docker is "
             "already on the machine.",
+        # Destroyed after every job, so there is no disk to look after. Emitting a guard here would cost
+        # every product two steps for a machine that cannot have the problem.
+        disk_persists=False,
     ),
     "self-hosted-debian": Runner(
         kind="self-hosted-debian",
@@ -95,8 +105,25 @@ TABLE: Mapping[str, Runner] = {
             "none for Debian, so the runner's own python3 is what the launcher builds its venv with; "
             "docker is reached through the bootstrap, because a container job would need docker in "
             "order to start.",
+        disk_persists=True,
     ),
 }
+
+#: The two commands a job on a persistent-disk machine is given, and the task each one is (si#327).
+#:
+#: A COORDINATE AND AN IMPL, because the two answer different questions. The coordinate is what a product
+#: WRITES to place the command; the impl is what the placement RESOLVES to, and it is the only thing that
+#: identifies the task afterwards - a product may place `support:ci-disk-preflight` under any command name
+#: it likes, and the generated step has to call the name that product chose. So the kernel looks the impl
+#: up in the product's command tree rather than assuming a spelling.
+#:
+#: These strings are a SECOND SOURCE for what `catalogue.yaml` declares, which is the defect `CLAUDE.md`
+#: names, so they are pinned against it: `test_runners.py` loads the real catalogue and asserts each
+#: coordinate resolves to the impl written here. Drift turns that red rather than turning a workflow into
+#: a file that calls nothing.
+PREFLIGHT = ("support:ci-disk-preflight", "simplon.tasks.cidisk:preflight")
+CLEANUP = ("support:ci-disk-cleanup", "simplon.tasks.cidisk:cleanup")
+
 
 #: The kind a job gets when it names none, which is what every product's workflows meant before this
 #: table existed. Changing it would rewrite files nobody asked to have rewritten.

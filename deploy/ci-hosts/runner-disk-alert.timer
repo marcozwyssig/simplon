@@ -1,0 +1,9 @@
+[Unit]
+Description=Hourly CI-runner disk sweep (runner-disk-alert.service)
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target

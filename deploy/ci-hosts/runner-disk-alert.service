@@ -1,0 +1,9 @@
+[Unit]
+Description=Warn about CI-runner containers whose disk is filling up (si#327)
+Documentation=https://marcozwyssig.github.io/simplon/how/ci-hosts/
+
+[Service]
+Type=oneshot
+# Adjust the path to wherever this repository's copy sits on the Proxmox host.
+ExecStart=/usr/local/sbin/runner-disk-alert.sh
+Environment=THRESHOLD=80

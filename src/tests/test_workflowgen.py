@@ -1864,3 +1864,141 @@ def test_a_parameter_the_command_does_not_declare_is_refused(rollout_manifest):
 
     assert "relase" in str(exc.value)
     assert "version" in str(exc.value)
+
+
+# --- si#327: the disk steps a machine with a PERSISTENT disk needs, and no other ------------------------
+# A GitHub-hosted runner is destroyed after every job, so nothing it leaves behind can hurt the next one.
+# A self-hosted runner is the same machine tomorrow, and this account's own CI died of exactly that: 64 GB
+# of images and build cache in a 64 GB refquota, reported to the pipeline as
+# `E: You don't have enough free space in /var/cache/apt/archives/` inside a docker build.
+#
+# So the steps are a consequence of the KIND of machine, which is what `simplon.runners` carries once for
+# everybody - the same seam `setup_python` and the docker bootstrap already sit on. A product declaring a
+# self-hosted kind gets them without asking; a product that writes `runs-on:` itself gets nothing, because
+# that spelling says "the machine is mine" and the kernel has no table entry to reason from.
+
+#: A product that has PLACED the two in-job coordinates, which is what the kernel needs in order to call
+#: them by name. Placement is the product's; the kernel only asks whether it happened.
+_WITH_DISK_COMMANDS = """
+tasks:
+  suite: { impl: "simplon.test_impls:nullary", help: "Run every test." }
+
+groups:
+  test:
+    commands:
+      all: { task: suite }
+  support:
+    commands:
+      ci-disk-preflight: { task: "support:ci-disk-preflight" }
+      ci-disk-cleanup: { task: "support:ci-disk-cleanup" }
+env_groups: []
+"""
+
+_SELF_HOSTED = """
+    workflows:
+      ci:
+        on: [push]
+        jobs:
+          build:
+            runner: { kind: self-hosted-debian, labels: ghr-8 }
+            steps:
+              - command: test all
+"""
+
+
+@pytest.fixture(scope="module")
+def disk_manifest():
+    """A product that placed the two disk coordinates."""
+    return manifest_mod.load(_WITH_DISK_COMMANDS, catalogue=catalogue_mod.load())
+
+
+def test_a_self_hosted_job_is_given_a_disk_preflight_before_its_own_first_step(disk_manifest):
+    # arrange / act
+    doc = yaml.safe_load(_render(disk_manifest, _SELF_HOSTED))
+    runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s]
+
+    # assert: FIRST of the runs, so a machine that cannot finish the job says so in one second rather
+    # than eight minutes into a docker build
+    assert runs[0] == "./sample.sh support ci-disk-preflight"
+    assert runs[1] == "./sample.sh test all"
+
+
+def test_the_cleanup_step_runs_whatever_the_job_decided_and_cannot_turn_it_red(disk_manifest):
+    # arrange / act
+    steps = yaml.safe_load(_render(disk_manifest, _SELF_HOSTED))["jobs"]["build"]["steps"]
+
+    # assert: last, `always()`, and explicitly not fatal - giving the disk back is not a verdict about
+    # the product's code, so it must not be able to fail a run that passed
+    last = steps[-1]
+    assert last["run"] == "./sample.sh support ci-disk-cleanup"
+    assert last["if"] == "always()"
+    assert last["continue-on-error"] is True
+
+
+def test_a_github_hosted_job_gets_no_disk_steps(disk_manifest):
+    # arrange: the machine is destroyed after the job, so nothing it leaves can hurt anybody
+    doc = yaml.safe_load(_render(disk_manifest, """
+    workflows:
+      ci:
+        on: [push]
+        jobs:
+          build:
+            runner: github-ubuntu
+            steps:
+              - command: test all
+    """))
+
+    # act
+    runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s]
+
+    # assert: exactly the product's own step and nothing added
+    assert runs == ["./sample.sh test all"]
+
+
+def test_a_job_that_names_its_own_machine_gets_no_disk_steps(disk_manifest):
+    # arrange: `runs-on:` is the spelling that says "the machine is mine". There is no kind, so there is
+    # no table entry, so the kernel has nothing to reason from - and this is the documented way out for a
+    # self-hosted product that does not want the kernel's opinion.
+    doc = yaml.safe_load(_render(disk_manifest, """
+    workflows:
+      ci:
+        on: [push]
+        jobs:
+          build:
+            runs-on: [self-hosted, Linux]
+            steps:
+              - command: test all
+    """))
+
+    # act
+    runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s]
+
+    # assert
+    assert runs == ["./sample.sh test all"]
+
+
+def test_a_product_that_placed_neither_coordinate_is_told_so_in_the_generated_file(manifest):
+    # arrange: the module's ORIGINAL fixture product, which places no disk command at all. The kernel
+    # will not write a step calling a command that does not exist - that fails on the runner with the
+    # manifest looking correct - and it will not silently drop the protection either, which is this
+    # repository's hunted defect. It says so, in the file, where the reader is standing.
+    text = _render(manifest, _SELF_HOSTED)
+    doc = yaml.safe_load(text)
+
+    # act
+    runs = [s.get("run") for s in doc["jobs"]["build"]["steps"] if "run" in s]
+
+    # assert
+    assert runs == ["./sample.sh test all"]
+    assert "support:ci-disk-preflight" in text
+    assert "support:ci-disk-cleanup" in text
+
+
+def test_the_note_about_the_disk_steps_says_which_machine_it_is_about(disk_manifest):
+    # arrange / act: a reader who finds two steps nobody wrote in the manifest must not have to find the
+    # kernel to learn why they are there
+    text = _render(disk_manifest, _SELF_HOSTED)
+
+    # assert
+    assert "self-hosted" in text
+    assert "disk" in text.lower()
