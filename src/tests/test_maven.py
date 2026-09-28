@@ -146,3 +146,113 @@ def test_a_registry_carrying_a_scheme_is_refused_rather_than_silently_doubled():
     # arrange / act / assert: `https://https://...` is a URL error reported as a missing package
     with pytest.raises(ValueError):
         maven.repository_url("https://maven.pkg.github.com/o/r", checked=True)
+
+
+# --- si#330: the coordinate answers the snapshot question itself ----------------------------------------
+# The original ticket asks for this explicitly - "whether a publish hangs off a tag is a question this
+# coordinate should answer EXPLICITLY rather than leave to each manifest". A snapshot republishes under one
+# coordinate, which is right while a shape is moving and wrong the moment something builds against it. Both
+# consumers that wanted this feature had the question open, so there was no product decision to inherit.
+
+
+def test_a_snapshot_version_is_recognised_by_mavens_own_rule():
+    # arrange / act / assert: Maven's rule is the literal suffix, and it is case-SENSITIVE - `-Snapshot`
+    # is an ordinary release version to every tool in that ecosystem, which is a trap worth pinning
+    assert maven.is_snapshot("0.1.0-SNAPSHOT") is True
+    assert maven.is_snapshot("0.1.0") is False
+    assert maven.is_snapshot("0.1.0-Snapshot") is False
+    assert maven.is_snapshot("0.1.0-SNAPSHOT-1") is False
+
+
+def test_a_release_version_already_in_the_registry_is_refused_before_anything_is_published(monkeypatch):
+    # arrange: the whole point of checking FIRST. A release coordinate is immutable, so a second publish
+    # either fails part-way - leaving some modules uploaded and some not - or silently changes nothing.
+    monkeypatch.setattr(maven, "_status", lambda url, token: 200)
+
+    # act
+    state, why = maven.may_publish("maven.pkg.github.com/o/r", "g.h", ["core"], "1.0", "t")
+
+    # assert
+    assert state is False
+    assert "1.0" in why
+
+
+def test_a_release_version_that_is_not_there_yet_may_be_published(monkeypatch):
+    # arrange
+    monkeypatch.setattr(maven, "_status", lambda url, token: 404)
+
+    # act / assert
+    assert maven.may_publish("maven.pkg.github.com/o/r", "g.h", ["core"], "1.0", "t")[0] is True
+
+
+def test_a_snapshot_may_always_be_published_and_is_never_probed(monkeypatch):
+    # arrange: republishing IS what a snapshot is for, so the existence check would refuse the normal case
+    def boom(url, token):
+        raise AssertionError("a snapshot must not be probed for existence - republishing is its purpose")
+    monkeypatch.setattr(maven, "_status", boom)
+
+    # act / assert
+    assert maven.may_publish("maven.pkg.github.com/o/r", "g.h", ["core"], "9.9-SNAPSHOT", "t")[0] is True
+
+
+def test_an_unaskable_registry_does_not_block_a_release_publish(monkeypatch):
+    # arrange: 401 means "we may not look", which is not "the version is free" and not "it is taken"
+    # either. Blocking here would make a token scope look like a version collision.
+    monkeypatch.setattr(maven, "_status", lambda url, token: 401)
+
+    # act
+    state, why = maven.may_publish("maven.pkg.github.com/o/r", "g.h", ["core"], "1.0", "t")
+
+    # assert: it proceeds, and it SAYS it could not check - the half that would otherwise be missing
+    assert state is True
+    assert why
+
+
+# --- si#330: the gradle task is the product's to name ---------------------------------------------------
+
+
+def test_the_gradle_task_defaults_to_publish():
+    # arrange / act / assert
+    assert maven.publish_argv("1.0") == ["gradle", "publish", "-Pversion=1.0", "--no-daemon"]
+
+
+def test_a_product_may_name_another_gradle_task():
+    # arrange: eleven modules, and a product that publishes some of them names its own task - or reaches
+    # one subproject's, which the root `publish` does not do
+    # act
+    argv = maven.publish_argv("1.0", task=":core:publish")
+
+    # assert
+    assert argv == ["gradle", ":core:publish", "-Pversion=1.0", "--no-daemon"]
+
+
+def test_a_task_name_that_is_not_one_is_refused_by_name():
+    # arrange: it goes into argv, so there is no shell to abuse - but a name with a space becomes ONE
+    # argument gradle cannot resolve, and a leading dash becomes a flag. Both fail far from the manifest.
+    # act / assert
+    for wrong in ["publish --info", "-Dfoo=bar", "", "publish;rm -rf /"]:
+        with pytest.raises(ValueError):
+            maven.gradle_task({"task": wrong}, "firn")
+
+
+def test_a_declared_but_empty_task_is_told_apart_from_an_absent_one():
+    # arrange: both are refused by the pattern anyway, so what this pins is the MESSAGE - and that is the
+    # point rather than a detail. Leaving the key out means "the default is fine"; declaring it with nothing
+    # means somebody meant to name a task and did not, and those two readers need different sentences.
+    # Without the distinction the second one is told their empty string "is not a gradle task name", which
+    # is true and useless.
+    # act
+    with pytest.raises(ValueError) as caught:
+        maven.gradle_task({"task": ""}, "firn")
+
+    # assert
+    assert "no value" in str(caught.value)
+    assert maven.DEFAULT_TASK in str(caught.value), "the message has to name what leaving it out would give"
+
+
+def test_a_legal_task_name_survives_the_check():
+    # arrange / act / assert: the shapes a real build actually uses
+    for good in ["publish", ":core:publish", "publishAllPublicationsToGithubRepository",
+                 "publishMavenJavaPublicationToMavenRepository"]:
+        assert maven.gradle_task({"task": good}, "firn") == good
+    assert maven.gradle_task({}, "firn") == maven.DEFAULT_TASK

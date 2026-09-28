@@ -298,6 +298,20 @@ it**, so a green publish that uploaded nothing is reachable here in a way it is 
 Its verification has three outcomes rather than two, because a `401` means the token may not look and is not
 the same answer as a missing jar.
 
+**It also answers the snapshot question itself** (si#330), rather than leaving it to each manifest. A
+`-SNAPSHOT` version republishes under one coordinate; a release version is immutable. So a release version
+that is *already* in the registry is refused **before a container starts**, because publishing again would
+either fail part-way - some modules replaced, some not - or change nothing while reporting success. A
+snapshot is never probed, since republishing is its purpose. And the two get different closing sentences: for
+a release the read-back proves this run put the artefact there, for a snapshot it proves only that it is
+there, because an earlier run may have left it. One sentence covering both claims would be the weaker of the
+two.
+
+The gradle task is the product's to name (`task:`, default `publish`) - `publish` is the obvious one and not
+always the right one, since the root task does not reach one subproject's. Declaring the key **with no
+value** is refused rather than read as the default: leaving it out means "the default is fine", and an empty
+one means somebody meant to name a task and did not.
+
 **Java is now published and Python still is not**, which is deliberate and measured. `tasks/profiles.py`
 builds four languages; this namespace publishes three of them. GitHub Packages has no Python index at all -
 the kinds it serves are npm, RubyGems, Maven, Gradle, NuGet and Docker/Container - so a wheel is Conan's

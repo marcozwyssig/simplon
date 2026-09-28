@@ -63,6 +63,45 @@ with a variable of its own needs that variable. `maven.pkg.github.com` also join
 lookalike test beside it stayed as it was, because membership and never a suffix is the whole point of that
 set.
 
+### The coordinate answers the snapshot question instead of passing it on (si#330)
+
+si#330 is the ORIGINAL ticket for the paragraph above; si#329 was a duplicate of it, opened later the same
+day on a consumer's request and measured independently to the same conclusion. The original asked for three
+pieces of configuration, and the first cut delivered one of them. These are the other two.
+
+**Snapshot versus release, decided here and not per manifest.** The ticket's wording is exact: *"whether a
+publish hangs off a tag is a question this coordinate should answer explicitly rather than leave to each
+manifest"*. Both consumers that wanted this feature had it open, so there was no product decision to inherit.
+
+What follows from the bit is not symmetric, which is why it could not be left as a manifest flag:
+
+* A **release** version is immutable in the registry. So one that is already published is refused **before a
+  container starts**, because the alternative is what a second attempt actually does - fail part-way with
+  some modules replaced and some not, which is worse than either clean outcome, or change nothing while
+  reporting success.
+* A **snapshot** is never probed at all. Republishing under one coordinate is its purpose, so an existence
+  check there would refuse the normal case.
+* An **unaskable** registry does not block either. `401` is "we may not look", which is neither "the version
+  is free" nor "it is taken"; blocking on it would make a token scope look like a version collision. It
+  proceeds and says it could not check.
+
+**And the closing line differs by kind**, which is the same distinction one step further on. For a release the
+read-back proves *this run* put the artefact there, because the pre-check established it was absent. For a
+snapshot it proves only that the artefact is *there* - an earlier run may have left it. One sentence covering
+both claims would silently be the weaker of the two.
+
+**The gradle task is the product's to name.** `task:` in the `artifacts:` entry, defaulting to `publish` -
+because `publish` is the obvious task and not always the right one: the root task does not reach one
+subproject's, and a build may call its own something else. A subset of modules is still the product's
+`maven-publish` block, which the ticket says too. `modules:` remains what the read-back checks, and that
+asymmetry is now written down rather than left to be discovered.
+
+**Declaring `task:` with no value is refused rather than read as the default**, which is this repository's
+recurring defect at the smallest scale it appears in: leaving the key out means "the default is fine", and an
+empty one means somebody meant to name a task and did not. The pattern check would have rejected the empty
+string anyway - what the extra branch buys is the *sentence*, and a test pins the sentence, because a branch
+no test can tell apart from its neighbour is a branch this repository does not keep.
+
 ### The census could not see a module that borrowed a neighbour's reader (found while building the above)
 
 `tasks/maven.py` first **imported** `_declared` from `tasks/nuget.py` rather than carrying its own. Every
