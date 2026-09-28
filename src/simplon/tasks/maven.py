@@ -36,6 +36,7 @@ machine and stays in `docker inspect` for as long as the container exists.
 """
 from __future__ import annotations
 
+import re
 import urllib.error
 import urllib.request
 from collections.abc import Sequence
@@ -71,6 +72,21 @@ UNKNOWN = "unknown"
 
 #: How long the read-back waits on one HTTP request. A verification that hangs is a release that hangs.
 TIMEOUT = 30.0
+
+#: Maven's own suffix for a mutable version, and the check against it is CASE-SENSITIVE because Maven's is:
+#: `0.1.0-Snapshot` is an ordinary release version to every tool in that ecosystem, which is a trap rather
+#: than a nicety.
+SNAPSHOT_SUFFIX = "-SNAPSHOT"
+
+#: The gradle task when a product names none. `publish` is the obvious one and is deliberately not the only
+#: one - si#330: "a product with eleven modules may publish some and not others", and the root `publish`
+#: does not reach one subproject's.
+DEFAULT_TASK = "publish"
+
+#: What a gradle task name may be. It goes into argv and never through a shell, so this is not about
+#: injection: a name with a SPACE becomes one argument gradle cannot resolve, and one starting with a dash
+#: becomes a flag. Both fail on the runner, far from the manifest line that caused it.
+TASK_NAME = re.compile(r"[A-Za-z:][A-Za-z0-9_.:-]*\Z")
 
 
 def _declared(name: str) -> dict:
@@ -150,8 +166,80 @@ def pom_url(registry: str, group: str, module: str, version: str) -> str:
     return f"{repository_url(registry)}/{path}/{module}/{version}/{module}-{version}.pom"
 
 
-def publish_argv(version: str) -> list[str]:
-    """`gradle publish`, with the version the tag names. Pure.
+def is_snapshot(version: str) -> bool:
+    """Whether `version` is a MUTABLE Maven coordinate. Pure.
+
+    The whole of si#330's question rests on this one bit. A snapshot republishes under one coordinate,
+    which is right while a shape is moving and wrong the moment something builds against it - so the two
+    kinds cannot be published by the same rules, and the coordinate decides which it is rather than
+    leaving every manifest to.
+    """
+    return version.endswith(SNAPSHOT_SUFFIX)
+
+
+def gradle_task(spec: "dict", name: str) -> str:
+    """The gradle task `name` declares, or `publish`. Refuses something that is not a task name.
+
+    si#330 asked for this: `publish` is the obvious task and is not always the right one. A product that
+    publishes a subset expresses that in its own `maven-publish` block - that half really is the product's
+    - but a product whose task has another name, or which wants `:core:publish` rather than the root one,
+    had no line to write.
+    """
+    if "task" not in spec:
+        return DEFAULT_TASK
+    declared = str(spec.get("task") or "")
+    # ABSENT AND EMPTY ARE DIFFERENT, which is this repository's recurring defect at the smallest possible
+    # scale: not declaring the key means "the default is fine", and declaring it with nothing means somebody
+    # meant to say something and did not. Reading the second as the first would run `publish` on a product
+    # that had tried to name another task and left the value out.
+    if not declared.strip():
+        raise ValueError(
+            f"artifact '{name}': `task:` is declared with no value. Leave the key out to get "
+            f"`{DEFAULT_TASK}`, or name the task - an empty one is a sentence somebody started")
+    if not TASK_NAME.match(declared):
+        raise ValueError(
+            f"artifact '{name}': `task: {declared!r}` is not a gradle task name. One name, no flags and no "
+            f"spaces - `publish`, `:core:publish`, `publishAllPublicationsToGithubRepository`. Arguments "
+            f"belong to the task itself, because this reaches gradle as one argv element and a name with a "
+            f"space is a task gradle cannot resolve")
+    return declared
+
+
+def may_publish(registry: str, group: str, modules: "Sequence[str]", version: str,
+                token: str) -> "tuple[bool, str]":
+    """`(may we, what to say about it)` BEFORE anything is uploaded.
+
+    THIS IS THE HALF THAT HAS TO RUN FIRST, and the reason is what a second publish of a RELEASE
+    coordinate actually does: the version is immutable, so the attempt either fails part-way - leaving some
+    modules uploaded and some not, which is worse than either outcome - or changes nothing while reporting
+    success. Asking first turns both into one sentence naming the version.
+
+    A SNAPSHOT IS NEVER PROBED. Republishing is its purpose, so an existence check there would refuse the
+    normal case.
+
+    AN UNASKABLE REGISTRY DOES NOT BLOCK. `401` means "we may not look", which is neither "the version is
+    free" nor "it is taken" - blocking on it would make a token scope look like a version collision. It
+    proceeds and says it could not check, which is the half that would otherwise be missing.
+    """
+    if is_snapshot(version):
+        return True, (f"{version} is a snapshot: it republishes under one coordinate, so anything already "
+                      f"built against it changes underneath")
+    state, _ = verify(registry, group, modules, version, token)
+    if state == PRESENT:
+        return False, (
+            f"{group}:*:{version} is already in {repository_url(registry)}, and a release version is "
+            f"immutable there. Publishing again would either fail part-way - some modules replaced, some "
+            f"not - or change nothing while reporting success. Cut a new version, or publish "
+            f"{version}{SNAPSHOT_SUFFIX} while the shape is still moving")
+    if state == UNKNOWN:
+        return True, ("could not check whether this version is already published - the registry answered "
+                      "neither 200 nor 404. Proceeding, because that is a token that may not read rather "
+                      "than a version that is taken")
+    return True, ""
+
+
+def publish_argv(version: str, task: str = DEFAULT_TASK) -> list[str]:
+    """`gradle <task>`, with the version the tag names. Pure.
 
     `-Pversion=` rather than an edit to `build.gradle`: the version is a property of the RELEASE, and a
     number checked into a build file is a number two people can pick at once - the argument `release:tag`
@@ -160,7 +248,7 @@ def publish_argv(version: str) -> list[str]:
     `--no-daemon` because a Gradle daemon inside a `--rm` container is a process nobody reaps, and the
     container's exit then waits on it.
     """
-    return ["gradle", "publish", f"-Pversion={version}", "--no-daemon"]
+    return ["gradle", task, f"-Pversion={version}", "--no-daemon"]
 
 
 def docker_argv(image: str, root: Path, env_file: Path, argv: list[str]) -> list[str]:
@@ -256,6 +344,7 @@ def publish(name: str = "", tag: str = "") -> int:
     (registry, image, group) = _required(spec, name, "registry", "image", "group")
     repository_url(registry, checked=True)
     modules = _modules(spec, name)
+    task = gradle_task(spec, name)
     pinned = docker.pinned_image(image, f"artifact '{name}'",
                                  hint="a published jar names the JDK and Gradle it was built with")
 
@@ -276,14 +365,25 @@ def publish(name: str = "", tag: str = "") -> int:
     (root / GRADLE_HOME).mkdir(parents=True, exist_ok=True)
 
     token = githubpackages.token()
+    # si#330: the snapshot question, answered here and not left to each manifest. A release version that is
+    # already published is refused BEFORE a container starts, because the alternative is a half-replaced
+    # coordinate.
+    allowed, said = may_publish(registry, group, modules, resolved, token)
+    if not allowed:
+        log.error(said)
+        return 1
+    if said:
+        log.warn(said)
+
     with _env_file(token) as env_file:
-        log.info(f"publishing {group}:{{{','.join(modules)}}}:{resolved} to {repository_url(registry)}")
-        rc = stream(docker_argv(pinned, root, env_file, publish_argv(resolved)))
+        log.info(f"publishing {group}:{{{','.join(modules)}}}:{resolved} to {repository_url(registry)} "
+                 f"with `gradle {task}`")
+        rc = stream(docker_argv(pinned, root, env_file, publish_argv(resolved, task)))
 
     if rc != 0:
         # The scope advice is a HINT tied to a condition, never appended to every failure - image.py's
         # rule, because a publish fails on a full disk and a dead network too.
-        log.error(f"gradle publish failed (rc={rc}; see output above)\n"
+        log.error(f"`gradle {task}` failed (rc={rc}; see output above)\n"
                   f"if the registry refused it rather than the build, the usual cause is a token without "
                   f"the package scopes:\n" + githubpackages.scope_advice())
         return rc
@@ -291,7 +391,7 @@ def publish(name: str = "", tag: str = "") -> int:
     state, missing = verify(registry, group, modules, resolved, token)
     if state == ABSENT:
         log.error(
-            f"gradle publish reported success and {repository_url(registry)} does not carry "
+            f"`gradle {task}` reported success and {repository_url(registry)} does not carry "
             f"{', '.join(f'{group}:{m}:{resolved}' for m in missing)}. A build with no `maven-publish` "
             f"publication configured has no work to do and does not fail for it - which is what this "
             f"read-back exists to catch")
@@ -303,6 +403,15 @@ def publish(name: str = "", tag: str = "") -> int:
             f"request that never arrived - not evidence that the jars are missing.\n"
             + githubpackages.scope_advice())
         return 0
-    log.ok(f"published and read back {len(modules)} module(s) as {group}:*:{resolved} at "
-           f"{repository_url(registry)}")
+    # WHAT THE OK LINE MAY CLAIM DIFFERS BY KIND, and that is si#330's question showing up one last time.
+    # For a release the read-back proves this run put the artefact there, because `may_publish` established
+    # it was absent beforehand. For a snapshot it proves PRESENCE and nothing more - the coordinate may have
+    # been occupied by an earlier run, and saying "published" for both would be one sentence covering two
+    # different claims.
+    if is_snapshot(resolved):
+        log.ok(f"{len(modules)} module(s) present as {group}:*:{resolved} at {repository_url(registry)} - a "
+               f"snapshot, so this confirms they are THERE and not that this run put them there")
+    else:
+        log.ok(f"published and read back {len(modules)} module(s) as {group}:*:{resolved} at "
+               f"{repository_url(registry)}")
     return 0

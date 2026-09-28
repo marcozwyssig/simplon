@@ -312,7 +312,7 @@ published here and `tests/test_manifest_top_level.py` holds this table to the ke
 
 | key | read by | what it carries |
 | --- | --- | --- |
-| `artifacts:` | `release:artifact`, `release:nuget-*`, `release:conan-*` | one entry per published artefact: registry, repository, source directory, media type |
+| `artifacts:` | `release:artifact`, `release:nuget-*`, `release:conan-*`, `release:maven` | one entry per published artefact: registry, repository, source directory, media type - and for a jar `group:`, `modules:` and an optional `task:` |
 | `assets:` | `release:asset` | one entry per file attached to a GitHub release |
 | `carriers:` | the environment selector | one entry per thing an environment is realised ON: its `proxmox:` node and kind, and the `portainer:` on it |
 | `build:` | `build:cmake-files`, `build:dotnet-solution` | `targets:`, the dependency edges between build targets that a directory layout cannot show |
