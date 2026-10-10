@@ -515,7 +515,7 @@ workflows:
       what this file would lose is the ordering. Every verdict below still has one implementation,
       and `test all` reaches three of them by name rather than by repeating them.
     # VERBATIM product data: whether a push runs the suite is nothing the kernel can derive.
-    on: [push, pull_request]
+    on: [push, pull_request, workflow_dispatch]
     jobs:
       self-build:
         note: |

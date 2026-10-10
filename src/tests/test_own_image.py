@@ -428,3 +428,22 @@ def test_repin_refuses_a_reference_or_digest_of_the_wrong_shape(tmp_path, ref, d
     # assert
     assert result.returncode == 2
     assert text == PIN.read_text(encoding="utf-8")
+
+
+def test_the_pin_branch_gets_a_ci_run_because_nothing_a_github_token_pushes_starts_one():
+    """si#365: #364, the first pin pull request, carried no `self-build` - a GITHUB_TOKEN push starts no
+    workflow. `workflow_dispatch` is the exception, so ci.yml has to accept it and the job has to use it."""
+    # arrange
+    job = _release_jobs()["image"]
+    script = next(step["run"] for step in job["steps"] if "deploy/image/repin.sh" in step.get("run", ""))
+
+    # act
+    pushed = script.index('git push --quiet --force origin "$branch"')
+    dispatched = script.find('gh workflow run ci.yml --ref "$branch"')
+
+    # assert: dispatched on the pushed branch, by a job allowed to, into a workflow that accepts it
+    assert dispatched > pushed
+    assert job["permissions"]["actions"] == "write"
+    ci = _manifest()["workflows"]["ci"]
+    assert "workflow_dispatch" in ci.get("on", ci.get(True, []))       # YAML 1.1 reads a bare `on` as True
+    assert "  - workflow_dispatch" in (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")

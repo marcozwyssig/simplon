@@ -294,6 +294,9 @@ jobs:
   # request needs "Allow GitHub Actions to create and approve pull requests" in the repository's Actions
   # settings. Without the second the image is published, the branch is pushed, and the job is RED with the
   # branch named - a pin that did not move is not a green outcome, it is work a person still has to do.
+  #
+  # CI ON THE PIN IS DISPATCHED, not triggered (si#365): v0.26.2's pin pull request #364 carried no
+  # `self-build` at all, because nothing a GITHUB_TOKEN pushes starts a workflow.
   image:
     needs: publish
     runs-on: ubuntu-latest
@@ -301,6 +304,7 @@ jobs:
       contents: write        # push the branch that moves the pin
       packages: write        # push ghcr.io/marcozwyssig/simplon with this run's own token
       pull-requests: write   # open the pull request for that branch
+      actions: write         # dispatch ci.yml on that branch (si#365)
     steps:
       - uses: actions/checkout@v4
         with:
@@ -333,10 +337,18 @@ jobs:
               commit --quiet -am "chore: pin the kernel image to ${GITHUB_REF_NAME}" \
               -m "Published and read back by release run ${GITHUB_RUN_ID}: ${digest}."
           git push --quiet --force origin "$branch"
+          # A push or pull request made with this run's GITHUB_TOKEN starts no workflow (GitHub's rule
+          # against one run triggering another without end), so the pin would reach its pull request
+          # with no test result at all - green-looking and unexamined (si#365). `workflow_dispatch` is
+          # the documented exception, and a check belongs to the COMMIT, so the run shows on the PR.
+          gh workflow run ci.yml --ref "$branch" || {
+            echo "::error::branch $branch is pushed, but ci.yml could not be dispatched on it, so its pull request would carry no test result"
+            exit 1
+          }
           if ! gh pr create --base main --head "$branch" --title "Pin the kernel image to ${GITHUB_REF_NAME}" \
                  --body "Published and read back by release run ${GITHUB_RUN_ID}: \`${ref}@${digest}\`. This moves \`deploy/image/image.pin\` to it (publish first, pin afterwards)."; then
             echo "::error::$ref is published and branch $branch is pushed, but the pull request could not be opened. Allow it under Settings > Actions > General > 'Allow GitHub Actions to create and approve pull requests', or open it by hand: https://github.com/${GITHUB_REPOSITORY}/compare/main...${branch}"
             echo "- **image**: \`$ref\` published; pin branch \`$branch\` pushed; **pull request NOT opened**." >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          echo "- **image**: \`$ref@${digest}\` published; pin pull request opened from \`$branch\`." >> "$GITHUB_STEP_SUMMARY"
+          echo "- **image**: \`$ref@${digest}\` published; pin pull request opened from \`$branch\`, ci.yml dispatched on it." >> "$GITHUB_STEP_SUMMARY"

@@ -23,6 +23,19 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.26.3
+
+**What a product has to do:** nothing.
+
+### The pin pull request the release opens now carries a CI result (si#365)
+
+v0.26.2 ran release.yml's `image` job for real for the first time. It published the image and opened #364,
+which moved the pin, but **no `self-build` ran on #364**, because a push or pull request made with a run's
+`GITHUB_TOKEN` starts no workflow. The pin `test_own_image.py` exists to check reached its pull request
+untested and looking green. `ci.yml` now also accepts `workflow_dispatch`, and the `image` job dispatches
+it on the pin branch right after pushing it, with `actions: write`. A check belongs to the commit, so the
+dispatched run shows on the pull request. If the dispatch fails, the job is red.
+
 ## 0.26.2
 
 **What a product has to do:** nothing.
