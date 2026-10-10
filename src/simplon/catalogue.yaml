@@ -215,6 +215,17 @@ tasks:
     unattended: true
     params:
       dry_run: { help: "Show what would change on this host and write nothing.", short: "-n" }
+  # --- support: linux/arm64 emulation on a CI host (si#358) --------------------------------------------
+  # DECLARED, NOT PLACED, for `ci-privileges`' reason: it needs root and changes the host kernel for every
+  # process on it, so it is a command a person types on a runner, once. It checks first - against the same
+  # `simplon` builder a multi-platform build uses - and installs only when that builder cannot run arm64:
+  # `qemu-user-binfmt` on a VM, a boot-time binfmt_misc registration in an LXC container.
+  support:ci-arm64:
+    impl: simplon.tasks.ciarm64:arm64
+    help: "Check that THIS host can build linux/arm64, and register the emulator if not (VM or LXC; needs root)."
+    unattended: true
+    params:
+      dry_run: { help: "Show which recipe this host takes and what would run, and change nothing.", short: "-n" }
   support:ci-disk-preflight:
     impl: simplon.tasks.cidisk:preflight
     help: "Refuse to start a job on a runner whose docker disk is too full to finish one."

@@ -149,13 +149,13 @@ the number that says whether a rib is filled:
 | `release` | phase, agnostic | 7 |
 | `deploy` | phase, env-first | 3 |
 | `monitor` | phase, env-first | 0 |
-| `support` | not a phase | 11 |
+| `support` | not a phase | 12 |
 | `vcs` | family | 5 |
 | `docs` | family | 4 |
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Forty-seven coordinates: thirty-five carrying a placement, twelve free to be filed. The numbers in this sentence, in that
+Forty-eight coordinates: thirty-six carrying a placement, twelve free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -376,7 +376,7 @@ environment.
 
 *Host preflight, environment introspection and host tooling.* Not a phase - the group the five stand on.
 
-**In the catalogue today: 11 tasks.**
+**In the catalogue today: 12 tasks.**
 
 - `support:install`
 - `support:nexus`
@@ -386,6 +386,7 @@ environment.
 - `support:completion`
 - `support:ci-privileges`
 - `support:ci-disk-hygiene`
+- `support:ci-arm64`
 - `support:ci-disk-preflight`
 - `support:ci-disk-cleanup`
 - `support:toolchain`
@@ -407,6 +408,12 @@ all, so by the test above it could be placed - and it deliberately is not, becau
 `NOPASSWD: ALL` and a docker group. A command that changes who may become root on a machine has to be
 something a product asked for, not something it received with the kernel. It refuses unless it is run as root, and says so: the privilege it hands out is the one the kernel
 needs in order to be allowed to do anything, so it cannot take it from inside a job.
+
+`support:ci-arm64` is offered for that reason at a third place (si#358). It registers a linux/arm64
+emulator, which changes the host kernel for every process on it, so it is a command a person types on a
+runner, as root, once. It checks first, against the same `simplon` builder a multi-platform build uses, and
+installs only when that builder cannot run arm64: `qemu-user-binfmt` on a VM or bare metal, a boot-time
+`binfmt_misc` registration in an LXC container. Any other `systemd-detect-virt` answer is refused by name.
 
 **The three `ci-disk-*` coordinates are one mechanism split across three moments (si#327)**, and the split
 is the point rather than an accident of naming. `support:ci-disk-hygiene` is the one a person runs ONCE on

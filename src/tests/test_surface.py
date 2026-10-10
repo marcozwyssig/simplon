@@ -170,7 +170,7 @@ def test_the_innards_under_tasks_are_exactly_the_modules_no_coordinate_names():
     """
     # arrange
     catalogue = (SRC / "catalogue.yaml").read_text(encoding="utf-8")
-    named = set(re.findall(r"impl:\s*\"?simplon\.tasks\.([a-z_]+):", catalogue))
+    named = set(re.findall(r"impl:\s*\"?simplon\.tasks\.([a-z0-9_]+):", catalogue))
     present = {p.stem for p in (SRC / "tasks").glob("*.py")} - {"__init__"}
 
     # act
