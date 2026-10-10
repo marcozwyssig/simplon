@@ -215,8 +215,8 @@ command asks the remote - `ls-remote`, which keeps no local cache - before it re
 
 This is the one that costs people an afternoon, so it gets its own heading.
 
-In this repository - and in any product set up the same way - **both** the PyPI release **and** the
-documentation website hang off the `v*` tag:
+In this repository - and in any product set up the same way - the PyPI release, the documentation
+website **and** the kernel's container image all hang off the `v*` tag:
 
 ```yaml
 on:
@@ -232,6 +232,12 @@ it ages rather than describing something nobody can install yet.
 
 So: documentation changes go out with the next release, and if a documentation fix is urgent, the way
 to ship it is to cut a release.
+
+**The container image follows the tag too, and its pin follows in a pull request.** After the wheel is
+on PyPI, the release workflow builds `ghcr.io/marcozwyssig/simplon:vX.Y.Z`, pushes it with the run's own
+token and reads it back. Then it opens a pull request that moves `deploy/image/image.pin` to that image.
+Merge it: until you do, a machine with no python3 still runs the previous image. The tagged commit cannot
+pin its own image, because the image does not exist yet when the tag is cut.
 
 ## A **minor** has a second question
 

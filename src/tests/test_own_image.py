@@ -348,18 +348,83 @@ def test_the_image_is_built_on_every_push_so_the_dockerfile_cannot_rot():
     assert "build image" in commands
 
 
-def test_nothing_publishes_the_image_automatically():
-    # arrange: the decision si#200 took, asserted because an absence is what a reviewer cannot see.
-    # Publishing needs a long-lived Docker Hub token in the repository's secrets; this repository stores
-    # no registry secret at all today (PyPI is Trusted Publishing, Pages is OIDC). The day that changes
-    # it is a decision somebody takes, with this test in the diff
-    declared = _manifest()["workflows"]
-    generated = "".join((ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
-                        for name in ("ci.yml", "release.yml"))
+def _release_jobs() -> dict:
+    return yaml.safe_load((ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8"))["jobs"]
+
+
+def test_every_release_publishes_the_image_after_the_wheel_and_ci_never_does():
+    """Marco, 2026-10-10: a release publishes the pip package AND the image. Until then the image went out
+    on demand, and firn#198 found it four releases stale. CI still only BUILDS it: a push is not a release."""
+    # arrange
+    job = _release_jobs()["image"]
+    ci_steps = [step.get("command") for j in _manifest()["workflows"]["ci"]["jobs"].values() for step in j["steps"]]
+    ci_text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
     # act
-    steps = [step.get("command") for job in declared["ci"]["jobs"].values() for step in job["steps"]]
+    runs = [step.get("run", "") for step in job["steps"]]
 
     # assert
-    assert "release image" not in steps
-    assert "release image" not in generated
+    assert job["needs"] == "publish"
+    assert job["permissions"]["packages"] == "write"
+    built = next(i for i, r in enumerate(runs) if r.startswith("./simplon.sh build image"))
+    published = next(i for i, r in enumerate(runs) if r.startswith("./simplon.sh release image"))
+    assert built < published
+    assert "release image" not in ci_steps and "release image" not in ci_text
+
+
+def test_the_pin_moves_only_after_the_publish_and_only_through_a_pull_request():
+    # arrange
+    runs = [step.get("run", "") for step in _release_jobs()["image"]["steps"]]
+
+    # act
+    published = next(i for i, r in enumerate(runs) if r.startswith("./simplon.sh release image"))
+    pinned = next(i for i, r in enumerate(runs) if "deploy/image/repin.sh" in r)
+    pushes = [line.strip() for line in runs[pinned].splitlines() if line.strip().startswith("git push")]
+
+    # assert: after the read-back, on its own branch, and handed to a person as a pull request
+    assert published < pinned
+    assert pushes == ['git push --quiet --force origin "$branch"']
+    assert "gh pr create --base main" in runs[pinned]
+
+
+def _repin(tmp_path, *args):
+    pin = tmp_path / "image.pin"
+    pin.write_text(PIN.read_text(encoding="utf-8"), encoding="utf-8")
+    result = subprocess.run(["bash", str(ROOT / "deploy" / "image" / "repin.sh"), *args, str(pin)],
+                            capture_output=True, text=True)
+    return result, pin.read_text(encoding="utf-8")
+
+
+def test_repin_moves_the_reference_and_appends_the_digest_record(tmp_path):
+    # act
+    result, text = _repin(tmp_path, "ghcr.io/marcozwyssig/simplon:v9.9.9", "sha256:" + "a" * 64)
+
+    # assert: the pin is the new reference, and its record follows the last one and its continuation lines
+    assert result.returncode == 0, result.stderr
+    assert _reference(text) == "ghcr.io/marcozwyssig/simplon:v9.9.9"
+    lines = text.splitlines()
+    record = lines.index("#   v9.9.9: digest sha256:" + "a" * 64)
+    assert not lines[record + 1].startswith("#     ")
+
+
+def test_repin_onto_what_is_already_pinned_writes_nothing_and_says_so_with_its_own_code(tmp_path):
+    # arrange
+    current = _reference(PIN.read_text(encoding="utf-8"))
+
+    # act
+    result, text = _repin(tmp_path, current, "sha256:" + "b" * 64)
+
+    # assert: "nothing to do" is not "done" - 3, not 0, and the file is untouched
+    assert result.returncode == 3
+    assert text == PIN.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("ref, digest", [("ghcr.io/marcozwyssig/simplon:latest", "sha256:" + "c" * 64),
+                                         ("ghcr.io/marcozwyssig/simplon:v1.0.0", "md5:abc")])
+def test_repin_refuses_a_reference_or_digest_of_the_wrong_shape(tmp_path, ref, digest):
+    # act
+    result, text = _repin(tmp_path, ref, digest)
+
+    # assert
+    assert result.returncode == 2
+    assert text == PIN.read_text(encoding="utf-8")

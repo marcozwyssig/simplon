@@ -23,6 +23,28 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.26.2
+
+**What a product has to do:** nothing.
+
+### Every release publishes the kernel image, and opens the pull request that pins it (#363)
+
+Requested by Marco on 2026-10-10: a release publishes the pip package **and** the docker image. Until
+then `ghcr.io/marcozwyssig/simplon` was published on demand, and firn#198 found it four releases stale.
+Its `firn.yaml` needs `platforms:`, `contexts:` and `support:ci-arm64`, and a 0.22.0 kernel cannot
+assemble any of them. The image was published by hand at v0.26.1 and pinned.
+
+From now on, `release.yml` has an `image` job after `publish`. It builds the image for the tag, pushes
+it with the run's own `GITHUB_TOKEN` and reads it back. Then `deploy/image/repin.sh` moves
+`deploy/image/image.pin` on a branch, and the job opens a pull request. The tagged commit cannot pin its
+own image, so the pin trails the tag by one merge, and it never names an image that does not exist.
+`repin.sh` answers 3 instead of 0 when the pin already names the image, so a rerun opens no second pull
+request.
+
+Opening the pull request needs "Allow GitHub Actions to create and approve pull requests" in the
+repository's Actions settings. Without it, the image is still published and the branch is still pushed,
+and the job is red and names both the setting and the branch.
+
 ## 0.26.1
 
 **What a product has to do:** nothing. Two messages now name the cure that applies where they are read.
