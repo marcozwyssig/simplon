@@ -23,6 +23,20 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.25.1
+
+**What a product has to do:** nothing. The repair only changes runs that pass `platform:`.
+
+### `platform:` narrows the `contexts:` dependencies too (si#355, #356)
+
+Measured by firn right after 0.25.0. Its everyday `./firn.sh build image --platform linux/amd64` still baked the
+toolchain image that `contexts:` names for **every** declared platform. On a runner without binfmt that meant
+building the arm64 toolchain under QEMU and failing, which is the cost `platform:` exists to avoid. Now
+`platform:` narrows every target in the bake, the dependencies included. A run without it still bakes every
+declared platform for every target, as a release needs. A host log line that used to say "not among the
+declared platforms" for a platform that is declared but not the one built now says "not among the platforms
+built here".
+
 ## 0.25.0
 
 **What a product has to do:** nothing for multi-platform images - it is opt-in. Delete `task:` from any `artifacts:` entry that `release:maven` reads. The key is
