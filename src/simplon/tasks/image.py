@@ -934,7 +934,8 @@ def _target_contexts(cfg: Image, version: str) -> dict[str, str]:
     return {context_name(dep, version): f"target:{dep_name}" for dep_name, dep in cfg.contexts}
 
 
-def bake_definition(cfg: Image, name: str, ref: str, derived: Mapping[str, str], root: Path) -> dict:
+def bake_definition(cfg: Image, name: str, ref: str, derived: Mapping[str, str], root: Path,
+                    platform: str = "") -> dict:
     """The bake file for `cfg`: its dependencies, the pushing target `name`, and one loading target per
     platform. Pure.
 
@@ -942,20 +943,26 @@ def bake_definition(cfg: Image, name: str, ref: str, derived: Mapping[str, str],
     `<output>/docker/` reads as what ran without its reader knowing bake's merge rules. A dependency is
     built for THE DEPENDENT's platforms, not for any it declares itself, and carries no tag and no output:
     it exists only as an input, so nothing can publish it.
+
+    `platform` narrows EVERY target - the dependencies too - to that one platform (si#355): a narrowed
+    build that still baked its contexts for each declared platform paid for, and needed an emulator for,
+    exactly what `platform:` exists to avoid. Without it every declared platform is baked, as a release needs.
     """
+    chosen = [platform] if platform else list(cfg.platforms)
+
     def target(image_: Image) -> dict:
         body: dict = {"context": str(root / image_.context), "dockerfile": str(root / image_.dockerfile),
-                      "platforms": list(cfg.platforms), "args": {**derived, **image_.build_args}}
+                      "platforms": list(chosen), "args": {**derived, **image_.build_args}}
         if image_.contexts:
             body["contexts"] = _target_contexts(image_, derived.get(VERSION_ARG, ""))
         return body
 
     targets = {dep_name: target(dep) for dep_name, dep in dependencies(cfg)}
     targets[name] = {**target(cfg), "tags": [ref], "output": ["type=registry"]}
-    for platform in cfg.platforms:
-        targets[platform_target(name, platform)] = {
-            **target(cfg), "platforms": [platform],
-            "output": [f"type=docker,name={platform_reference(ref, platform)}"]}
+    for each in chosen:
+        targets[platform_target(name, each)] = {
+            **target(cfg), "platforms": [each],
+            "output": [f"type=docker,name={platform_reference(ref, each)}"]}
     return {"target": targets}
 
 
@@ -1173,7 +1180,7 @@ def _build_platforms(cfg: Image, name: str, tag: str, root: Path, platform: str 
     ready, unrunnable = prepare_builder(chosen)
     if not ready:
         return 1
-    path = write_bake(bake_definition(cfg, name, ref, derived, root), name)
+    path = write_bake(bake_definition(cfg, name, ref, derived, root, platform), name)
     if path is None:
         return 1
     metadata = path.parent / f"bake-{name}.metadata.json"
@@ -1199,7 +1206,9 @@ def _build_platforms(cfg: Image, name: str, tag: str, root: Path, platform: str 
         if not run(["docker", "tag", loaded[native], ref]).ok:
             log.warn(f"{loaded[native]} was built but could not be tagged {ref}")
     else:
-        log.info(f"this host ({native or 'platform not readable'}) is not among the declared platforms, "
+        why = ("is not among the platforms built here" if native in cfg.platforms
+               else "is not among the declared platforms")
+        log.info(f"this host ({native or 'platform not readable'}) {why} ({', '.join(chosen)}), "
                  f"so nothing is tagged {ref} here; each platform is under its own reference")
     try:
         reported = metadata.read_text(encoding="utf-8")
