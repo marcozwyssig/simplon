@@ -1982,6 +1982,56 @@ def test_a_build_pinned_to_one_platform_bakes_only_that_platform(monkeypatch, _n
     assert "ghcr.io/owner/demo-multi:1.0-linux-arm64" not in inspected
 
 
+def _baked(root):
+    return json.loads((root / "build" / "docker" / "bake-multi.json").read_text(encoding="utf-8"))["target"]
+
+
+def test_a_build_pinned_to_one_platform_bakes_every_target_including_contexts_for_that_platform_only(
+        monkeypatch, _no_provenance, _multi):
+    """si#355: the dependency used to be baked for each declared platform, so a cold amd64-only build
+    needed an arm64 emulator for a stage nobody asked for."""
+    # arrange
+    _fake(monkeypatch)
+
+    # act
+    image.build(name="multi", tag="1.0", platform="linux/amd64")
+
+    # assert
+    targets = _baked(_multi)
+    assert {key: body["platforms"] for key, body in targets.items()} == {
+        "base": ["linux/amd64"], "multi": ["linux/amd64"], "multi__linux_amd64": ["linux/amd64"]}
+
+
+def test_a_build_without_platform_still_bakes_every_declared_platform_for_every_target(
+        monkeypatch, _no_provenance, _multi):
+    # arrange
+    _fake(monkeypatch)
+
+    # act
+    image.build(name="multi", tag="1.0")
+
+    # assert
+    both = ["linux/amd64", "linux/arm64"]
+    targets = _baked(_multi)
+    assert {key: body["platforms"] for key, body in targets.items()} == {
+        "base": both, "multi": both, "multi__linux_amd64": ["linux/amd64"], "multi__linux_arm64": ["linux/arm64"]}
+
+
+def test_the_host_log_line_says_the_platform_is_declared_when_it_is_only_not_the_one_built(
+        monkeypatch, _no_provenance, _multi, capsys):
+    # arrange
+    _fake(monkeypatch)
+
+    # act
+    image.build(name="multi", tag="1.0", platform="linux/arm64")
+
+    # assert
+    out = capsys.readouterr()
+    text = out.out + out.err
+    assert "is not among the platforms built here (linux/arm64)" in text
+    assert "not among the declared platforms" not in text
+
+
 def test_a_build_pinned_to_a_platform_that_is_not_the_hosts_tags_nothing_plain(monkeypatch, _no_provenance,
                                                                              _multi):
     # arrange
