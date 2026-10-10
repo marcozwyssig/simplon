@@ -99,14 +99,17 @@ is genuinely a different one.
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import shlex
 import shutil
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from simplon import context, docker, githubpackages, hostpath, log, outputs
+from simplon.labhost import BINFMT_IMAGE
 from simplon.bootstrap import validate_relative_dir
 from simplon.run import Result, run, stream
 
@@ -133,6 +136,11 @@ class Image:
     context: str
     build_args: dict[str, str] = field(default_factory=dict)
     tag: str = ""
+    #: si#347. Empty is the single-platform image this module always built, with the argv it always had.
+    platforms: tuple[str, ...] = ()
+    #: si#347. The declared images this one is built FROM, as (name, image) pairs in declaration order,
+    #: each already validated - including its own contexts, so a cycle never reaches a build.
+    contexts: tuple[tuple[str, "Image"], ...] = ()
 
 
 def _str(body: Mapping, key: str, where: str, *, required: bool = False) -> str:
@@ -182,6 +190,85 @@ def _build_args(body: Mapping, where: str) -> dict[str, str]:
     return out
 
 
+#: `<os>/<arch>[/<variant>]`, lower case - the spelling buildx accepts and an OCI index records. Checked at
+#: the declaration because buildx's own answer to `linux-arm64` arrives after the context has been sent.
+_PLATFORM = re.compile(r"[a-z0-9]+/[a-z0-9_]+(?:/[a-z0-9]+)?\Z")
+
+#: What a buildx bake target may be called. An image name becomes one the moment it is built with
+#: `platforms:` or named as a context, and bake refuses anything else - after the build has started.
+_BAKE_TARGET = re.compile(r"[A-Za-z0-9_-]+\Z")
+
+
+def _platforms(body: Mapping, where: str) -> tuple[str, ...]:
+    """The declared `platforms:`, in order, or () when the key is absent.
+
+    A LIST AND NEVER A STRING. `platforms: linux/amd64,linux/arm64` is buildx's own CLI spelling, and
+    accepting it here would make a YAML list and a comma-joined string two ways to say one thing.
+
+    WHAT IS NOT REFUSED, on purpose. An empty list is the same statement as no key - one platform, the
+    host's - and a platform listed twice is a restatement; both build a working image, so refusing them
+    would be expression rules with nothing measured behind them. The duplicate is dropped, the empty
+    list read as absent.
+    """
+    declared = body.get("platforms")
+    if declared is None:
+        return ()
+    if not isinstance(declared, list):
+        raise ValueError(f"{where}: 'platforms' must be a list of platforms such as "
+                         f"[linux/amd64, linux/arm64]; leave the key out for an image built for the "
+                         f"host's own platform only")
+    for entry in declared:
+        if not isinstance(entry, str) or not _PLATFORM.match(entry.strip()):
+            raise ValueError(f"{where}: platform {entry!r} is not '<os>/<arch>[/<variant>]', "
+                             f"e.g. linux/arm64 or linux/arm/v7")
+    return tuple(dict.fromkeys(entry.strip() for entry in declared))
+
+
+def _bake_name(name: str, where: str) -> str:
+    """`name`, when it can be a buildx bake target - which an image becomes once it has `platforms:` or is
+    another image's context."""
+    if not _BAKE_TARGET.match(name):
+        raise ValueError(f"{where}: the image name '{name}' cannot name a buildx bake target, which it "
+                         f"becomes with `platforms:` or as a context - rename the entry using letters, "
+                         f"digits, '-' and '_' only")
+    return name
+
+
+def _contexts(section: Mapping, body: Mapping, chain: tuple[str, ...], where: str,
+              source: str) -> tuple[tuple[str, Image], ...]:
+    """The declared images `body` is built FROM, each validated as an image in its own right.
+
+    A LIST OF NAMES, NOT A MAP OF REFERENCES (si#347), and that is the design decision of this key. A
+    Dockerfile's `FROM ghcr.io/owner/toolchain:25` has to meet the image that supplies it under that exact
+    string, and the string already exists in this section: it is the dependency's own registry,
+    repository and tag. A map from a typed reference to an image name would be a second place to keep
+    those three values, and the first time the toolchain's tag moves the two would disagree in a way that
+    no build reports - buildx would simply pull whatever the registry holds under the stale name. So the
+    name is derived (`context_name`), under the tag the dependency would be built under anyway: its
+    constant `tag:`, which is firn's case, or else the derived VERSION, which a Dockerfile can name with
+    a global `ARG VERSION` before its FROM.
+
+    A name listed twice is a restatement and is dropped rather than refused, for `_platforms`' reason.
+    """
+    declared = body.get("contexts")
+    if declared is None:
+        return ()
+    if not isinstance(declared, list):
+        raise ValueError(f"{where}: 'contexts' must be a list of image names from the '{SECTION}:' "
+                         f"section, e.g. [toolchain]")
+    out: list[tuple[str, Image]] = []
+    for dep in dict.fromkeys(str(entry) for entry in declared):
+        if dep in chain:
+            raise ValueError(f"{where}: contexts form a cycle: {' -> '.join((*chain, dep))} - an image "
+                             f"cannot be built from itself")
+        if dep not in section:
+            raise ValueError(f"{where}: context '{dep}' is not an image in the '{SECTION}:' section; "
+                             f"declared are: {', '.join(sorted(str(key) for key in section))}")
+        _bake_name(dep, where)
+        out.append((dep, declared_image(section, dep, source, chain)))
+    return tuple(out)
+
+
 def declared(data: Mapping[str, object], name: str, source: str = "manifest") -> Image:
     """The image `name` declares, validated LOUDLY.
 
@@ -201,10 +288,19 @@ def declared(data: Mapping[str, object], name: str, source: str = "manifest") ->
     if name not in section:
         raise ValueError(f"{source}: no image '{name}' in the '{SECTION}:' section; declared are: "
                          f"{', '.join(sorted(str(key) for key in section)) or '(none)'}")
+    return declared_image(section, name, source, ())
+
+
+def declared_image(section: Mapping, name: str, source: str, chain: tuple[str, ...]) -> Image:
+    """One entry of the section, validated - `declared`'s body, split out so a context is validated by the
+    very same reading as the image that names it (si#347). `chain` is the path of names that led here."""
     body = section[name]
     if not isinstance(body, Mapping):
         raise ValueError(f"{source}: image '{name}' is not a mapping")
     where = f"{source}: '{SECTION}.{name}'"
+    platforms = _platforms(body, where)
+    if platforms:
+        _bake_name(name, where)
     return Image(
         registry=_str(body, "registry", where, required=True),
         repository=_str(body, "repository", where, required=True),
@@ -213,6 +309,8 @@ def declared(data: Mapping[str, object], name: str, source: str = "manifest") ->
         context=_inside_the_product(_str(body, "context", where, required=True), "context", where),
         build_args=_build_args(body, where),
         tag=_str(body, "tag", where),
+        platforms=platforms,
+        contexts=_contexts(section, body, (*chain, name), where, source),
     )
 
 
@@ -432,7 +530,8 @@ def local_id(ref: str) -> str:
     return result.out.strip() if result.ok else ""
 
 
-def record(ref: str, image_id: str, root: Path) -> Path | None:
+def record(ref: str, image_id: str, root: Path,
+           platforms: Mapping[str, tuple[str, str]] | None = None) -> Path | None:
     """Write what the build produced into `<output>/docker/image.txt`, returning the path or None.
 
     A POINTER RATHER THAN CONTENT, which is the whole of si#314's answer for the one output that is not
@@ -457,12 +556,25 @@ def record(ref: str, image_id: str, root: Path) -> Path | None:
             f"reference: {ref}\n"
             f"image-id: {image_id or 'not readable'}\n"
             f"# `image-id` is the DAEMON's id, not a registry digest. A registry digest exists only\n"
-            f"# once something has been pushed, which is `release:image` and not this command.\n",
+            f"# once something has been pushed, which is `release:image` and not this command.\n"
+            + _platform_lines(platforms or {}),
             encoding="utf-8")
         return path
     except (OSError, RuntimeError, ValueError) as broken:
         log.warn(f"{ref} was built, but {RECORD} could not be written: {broken}")
         return None
+
+
+def _platform_lines(platforms: Mapping[str, tuple[str, str]]) -> str:
+    """The record's lines for a multi-platform build (si#347): one per platform, naming the per-platform
+    reference the daemon holds it under and that image's id."""
+    if not platforms:
+        return ""
+    lines = ["# One image per declared platform, each loaded into the daemon under its own reference: the\n"
+             "# daemon cannot hold a manifest list, the registry can, and `release:image` assembles it.\n"]
+    lines += [f"{platform}: {ref} image-id: {image_id or 'not readable'}\n"
+              for platform, (ref, image_id) in platforms.items()]
+    return "".join(lines)
 
 
 def build(name: str = "", tag: str = "") -> int:
@@ -475,7 +587,11 @@ def build(name: str = "", tag: str = "") -> int:
     cfg, root = _declared_for(name)
     # si#74, and the order is the point: the manifest's own paths are checked BEFORE the tool is demanded,
     # so a declaration that points at nothing is answered as itself on a host that has no docker either.
-    missing = missing_declared_paths(cfg, root)
+    # si#347 widened it to the images a multi-platform build bakes alongside this one, because their
+    # Dockerfiles are read in the same run; a single-platform build does not build its contexts, so their
+    # paths are not this run's business.
+    checked = [cfg, *(dep for _, dep in dependencies(cfg))] if cfg.platforms else [cfg]
+    missing = [line for one in checked for line in missing_declared_paths(one, root)]
     if missing:
         both = "two paths that do not exist" if len(missing) > 1 else "a path that does not exist"
         log.error(f"image '{name}' declares {both} under {root}:\n  " + "\n  ".join(missing)
@@ -483,7 +599,11 @@ def build(name: str = "", tag: str = "") -> int:
                     f"failed later, about something else")
         return 1
     docker.ensure_docker()
+    if cfg.platforms:
+        return _build_platforms(cfg, name, tag, root)
     args = build_arguments(cfg, root)
+    if not _contexts_in_the_daemon(cfg, name, args.get(VERSION_ARG, "")):
+        return 1
     resolved = resolve_tag(cfg, tag, args.get(VERSION_ARG, ""))
     rc = build_image(cfg, resolved, root, args)
     if rc != 0:
@@ -503,7 +623,7 @@ def build(name: str = "", tag: str = "") -> int:
 
 
 def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect: str = "",
-          rc: int = 0, user: bool = True) -> int:
+          rc: int = 0, user: bool = True, platform: str = "") -> int:
     """Run the container image `name` declares and check that it answers (si#301).
 
     `rc` IS AN EXPECTATION AND NOT A TOLERANCE (si#303), which is the whole of why it takes a value
@@ -535,26 +655,50 @@ def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect
     runtime stage with a read-only `check` and says in its own notes that the write path stays
     unproven. A scratch mount would close it; until there is one, the claim is not this task's to
     make.
+
+    **Every declared platform starts once** (si#347). For an image with `platforms:` the run is repeated
+    per platform, each under `--platform` against the reference `build:image` loaded that platform under,
+    so an arm64 image that cannot start is found before it is published rather than by an arm64 user.
+    Every platform runs even after one has failed, because which of them failed is the whole content of
+    the answer; `platform:` narrows the run to one.
     """
     cfg, root = _declared_for(name)
     docker.ensure_docker()
     resolved = resolve_tag(cfg, tag, build_arguments(cfg, root).get(VERSION_ARG, ""))
     ref = reference(cfg, resolved)
-    if not present_locally(ref):
-        log.error(f"the daemon does not hold {ref}; nothing was run.\n"
+    if platform and not cfg.platforms:
+        log.error(f"`platform: {platform}` was given, but image '{name}' declares no `platforms:` - it is "
+                  f"built for this host's platform only. Declare `platforms:` on `{SECTION}.{name}`, or "
+                  f"drop `platform:`")
+        return 1
+    if platform and platform not in cfg.platforms:
+        log.error(f"image '{name}' is not built for {platform}; its declared platforms are "
+                  f"{', '.join(cfg.platforms)}")
+        return 1
+    runs = ([(each, platform_reference(ref, each)) for each in ([platform] if platform else cfg.platforms)]
+            if cfg.platforms else [("", ref)])
+    absent = [each for _, each in runs if not present_locally(each)]
+    if absent:
+        log.error(f"the daemon does not hold {', '.join(absent)}; nothing was run.\n"
                   f"  this verb runs what a build produced and never pulls: build it first "
                   f"(`build image`), or name the tag you mean with `tag:`")
         return 1
-    command = ["docker", "run", "--rm"]
+    options: list[str] = []
     if user:
-        command += ["--user", f"{os.getuid()}:{os.getgid()}"]
+        options += ["--user", f"{os.getuid()}:{os.getgid()}"]
     if mount:
         bound = _mount_argv(mount, root)
         if bound is None:
             return 1
-        command += bound
-    command.append(ref)
-    command += shlex.split(argv)
+        options += bound
+    verdicts = [_run_once(each, [*(["--platform", one] if one else []), *options], argv, expect, rc)
+                for one, each in runs]
+    return next((verdict for verdict in verdicts if verdict != 0), 0)
+
+
+def _run_once(ref: str, options: list[str], argv: str, expect: str, rc: int) -> int:
+    """One `docker run` of `ref` and its verdict: 0, or the code `smoke` hands back."""
+    command = ["docker", "run", "--rm", *options, ref, *shlex.split(argv)]
     result = run(command)
     if result.rc != rc:
         log.error(f"{ref} exited {result.rc}" + (f", and {rc} was expected" if rc else "") + "\n"
@@ -617,10 +761,21 @@ def release(name: str = "", tag: str = "") -> int:
     # The same derivation the build used, so the two commands name one reference without the number being
     # typed twice - and a checkout that has moved since the build says so, by naming a tag that is not on
     # this machine, rather than by publishing the wrong one.
-    resolved = resolve_tag(cfg, tag, build_arguments(cfg, root).get(VERSION_ARG, ""))
+    derived = provenance(root)
+    resolved = resolve_tag(cfg, tag, {**derived, **cfg.build_args}.get(VERSION_ARG, ""))
     ref = reference(cfg, resolved)
 
-    if not present_locally(ref):
+    if cfg.platforms:
+        # si#347: the manifest list is pushed out of the builder, not out of the daemon, but the daemon
+        # holding every platform is what proves the build ran for this tag - and what keeps the push an
+        # export from a warm cache rather than a build nobody asked this command to do.
+        absent = [platform for platform in cfg.platforms
+                  if not present_locally(platform_reference(ref, platform))]
+        if absent:
+            log.error(f"{ref} has not been built on this machine for {', '.join(absent)}, so there is "
+                      f"nothing to push - run the build first (`build:image`, with the same --tag)")
+            return 1
+    elif not present_locally(ref):
         log.error(f"{ref} is not on this machine, so there is nothing to push - run the build first "
                   f"(`build:image`, with the same --tag)")
         return 1
@@ -671,6 +826,9 @@ def release(name: str = "", tag: str = "") -> int:
         log.info(f"{host} is not GitHub Packages, so no GitHub token is minted for it - the push uses "
                  f"the credential `docker login {host}` has already stored")
 
+    if cfg.platforms:
+        return _push_platforms(cfg, name, root, ref, derived)
+
     log.info(f"pushing {ref}")
     rc = stream(["docker", "push", ref], cwd=str(root))
     if rc != 0:
@@ -694,4 +852,333 @@ def release(name: str = "", tag: str = "") -> int:
                   f"an unproven publish is what this check exists to stop being reported as done")
         return 1
     log.ok(f"published {ref}")
+    return 0
+
+
+# --- si#347: one image, several platforms, one manifest list -------------------------------------------
+#
+# WHY BUILDX BAKE, AND NOT `docker buildx build`. firn's Dockerfile starts `FROM` an image the same manifest
+# declares and nobody publishes. The classic builder resolves that in the daemon; a buildx builder with the
+# docker-container driver - the only kind that can produce a manifest list on a daemon without the
+# containerd image store - cannot see the daemon at all, so the dependency has to be SUPPLIED, per
+# platform. `docker buildx build --build-context name=...` takes a registry image, a directory or an OCI
+# layout, and each of those means building and exporting the dependency once per platform by hand. A bake
+# target can instead name another target (`target:toolchain`), and bake then builds the dependency for
+# exactly the platforms the dependent asks for, inside the same builder, with no tag and no output - so
+# it is never pushed anywhere. Measured 2026-10-10 against a local registry:2 with buildx v0.38.0: a
+# `FROM ghcr.io/example/demo-toolchain:25` resolved through `contexts:` without a single request to ghcr,
+# and the arm64 stage ran on the arm64 toolchain.
+#
+# WHY THE BUILD LOADS ONE IMAGE PER PLATFORM. A daemon with the classic image store cannot hold a manifest
+# list, and whether a host has the containerd store is the host's business - an answer that depends on
+# which host asked is the shape this module refuses everywhere else. So `build:image` loads each platform
+# into the daemon under its own reference (`<ref>-linux-arm64`), which every daemon can hold; `test:image`
+# runs each of those under `--platform`; and the host's own platform is also tagged under the plain
+# reference, so everything that runs the image by name keeps running it. `release:image` then pushes the
+# manifest list out of the builder, where the cache from the build makes it an export rather than a
+# second build. Measured 2026-10-10 through these very functions, on an x86_64 host with a fresh
+# `simplon` builder: `build:image` for linux/amd64 + linux/arm64 with the dependency baked alongside took
+# 7.6s cold; `test:image` ran both platforms in 0.5s (`uname -m` said x86_64 and aarch64); `release:image`
+# pushed the list in 1.0s, every step CACHED, and the dependency's repository was never created in the
+# registry. An index re-tagged with only amd64 was read back as missing linux/arm64 - the tag-only probe
+# answers rc 0 for that same reference.
+#
+# EMULATION IS WARNED ABOUT, NEVER REGISTERED, NEVER REFUSED. Registering binfmt handlers is a privileged
+# `docker run` that changes the host KERNEL for every process on it until reboot - on a shared self-hosted
+# runner that is a decision for whoever owns the machine, of the same kind as `support:ci-disk-hygiene`,
+# which this catalogue also leaves to a person. Refusing up front would be an expression rule with no
+# measured cause: a Dockerfile that cross-compiles with `FROM --platform=$BUILDPLATFORM` needs no emulator
+# at all and would be refused for nothing. So the builder's own platform list is read, a platform it cannot
+# run is named with the one command that registers it, and a failed build repeats that command.
+
+#: The buildx builder the kernel creates and uses BY NAME, so it never changes which builder is a
+#: developer's current one (`docker buildx use` is never run).
+BUILDER = "simplon"
+
+
+def context_name(cfg: Image, version: str = "") -> str:
+    """The name a Dockerfile's FROM uses for a declared image: its own reference, under the tag it would
+    be built under - its constant `tag:`, else the derived VERSION (`resolve_tag`'s order)."""
+    return reference(cfg, resolve_tag(cfg, "", version))
+
+
+def platform_reference(ref: str, platform: str) -> str:
+    """`ghcr.io/o/app:1.0-linux-arm64` - where the daemon holds ONE platform of a multi-platform image."""
+    return f"{ref}-{platform.replace('/', '-')}"
+
+
+def platform_target(name: str, platform: str) -> str:
+    """The bake target that builds `platform` alone and loads it into the daemon."""
+    return f"{name}__{platform.replace('/', '_')}"
+
+
+def dependencies(cfg: Image) -> list[tuple[str, Image]]:
+    """Every image `cfg` is built from, transitively, each once, dependencies before their dependents."""
+    out: list[tuple[str, Image]] = []
+
+    def visit(image_: Image) -> None:
+        for dep_name, dep in image_.contexts:
+            visit(dep)
+            if dep_name not in (name for name, _ in out):
+                out.append((dep_name, dep))
+
+    visit(cfg)
+    return out
+
+
+def _target_contexts(cfg: Image, version: str) -> dict[str, str]:
+    return {context_name(dep, version): f"target:{dep_name}" for dep_name, dep in cfg.contexts}
+
+
+def bake_definition(cfg: Image, name: str, ref: str, derived: Mapping[str, str], root: Path) -> dict:
+    """The bake file for `cfg`: its dependencies, the pushing target `name`, and one loading target per
+    platform. Pure.
+
+    Every target is written out in full rather than through bake's `inherits`, so the file in
+    `<output>/docker/` reads as what ran without its reader knowing bake's merge rules. A dependency is
+    built for THE DEPENDENT's platforms, not for any it declares itself, and carries no tag and no output:
+    it exists only as an input, so nothing can publish it.
+    """
+    def target(image_: Image) -> dict:
+        body: dict = {"context": str(root / image_.context), "dockerfile": str(root / image_.dockerfile),
+                      "platforms": list(cfg.platforms), "args": {**derived, **image_.build_args}}
+        if image_.contexts:
+            body["contexts"] = _target_contexts(image_, derived.get(VERSION_ARG, ""))
+        return body
+
+    targets = {dep_name: target(dep) for dep_name, dep in dependencies(cfg)}
+    targets[name] = {**target(cfg), "tags": [ref], "output": ["type=registry"]}
+    for platform in cfg.platforms:
+        targets[platform_target(name, platform)] = {
+            **target(cfg), "platforms": [platform],
+            "output": [f"type=docker,name={platform_reference(ref, platform)}"]}
+    return {"target": targets}
+
+
+def write_bake(definition: dict, name: str) -> Path | None:
+    """Write the bake file under `<output>/docker/`, or say why it could not be and return None. Unlike
+    `record`, a failure here IS red: the build reads this file."""
+    try:
+        directory = outputs.for_kind("docker")
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"bake-{name}.json"
+        path.write_text(json.dumps(definition, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return path
+    except (OSError, RuntimeError, ValueError) as broken:
+        log.error(f"the bake file for image '{name}' could not be written, so nothing was built: {broken}")
+        return None
+
+
+def builder_platforms(text: str) -> set[str] | None:
+    """The platforms builder `BUILDER` can run, out of `docker buildx ls --format json` (one JSON object
+    per line), or None when the answer does not say."""
+    for line in text.splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(entry, dict) and entry.get("Name") == BUILDER:
+            found = {str(platform) for node in entry.get("Nodes") or [] if isinstance(node, dict)
+                     for platform in node.get("Platforms") or []}
+            return found or None
+    return None
+
+
+def missing_platforms(declared: Iterable[str], found: Iterable[str]) -> list[str]:
+    """The declared platforms `found` does not carry, in declared order. Pure.
+
+    A declared `linux/arm64` is carried by a `linux/arm64/v8`: a registry or a builder may add the variant
+    the declaration left implicit. The reverse does not hold - `linux/arm/v7` is not `linux/arm/v6`.
+    """
+    have = set(found)
+    return [platform for platform in declared
+            if not any(f == platform or f.startswith(platform + "/") for f in have)]
+
+
+def _emulation_command(platforms: Iterable[str]) -> str:
+    arches = ",".join(dict.fromkeys(platform.split("/")[1] for platform in platforms))
+    return f"docker run --privileged --rm {BINFMT_IMAGE} --install {arches}"
+
+
+def _emulation_advice(unrunnable: list[str]) -> str:
+    if not unrunnable:
+        return ""
+    return (f"\n  the builder could not run {', '.join(unrunnable)} before the build started, so if the "
+            f"output above says `exec format error` this host has no emulator for it. Register one - a "
+            f"privileged act on the whole host, which is why simplon does not do it for you:\n"
+            f"    {_emulation_command(unrunnable)}\n"
+            f"  then `docker buildx rm {BUILDER}`, so the builder is created again and sees it")
+
+
+def prepare_builder(platforms: tuple[str, ...]) -> tuple[bool, list[str]]:
+    """The builder, ready: (whether it is, the declared platforms it cannot run).
+
+    buildx is DEMANDED, not provided. Unlike oras it is a docker CLI plugin and has to sit where that
+    CLI looks; the static CLI `simplon.docker` bootstraps carries none, so the refusal names the two
+    places one comes from.
+    """
+    if not run(["docker", "buildx", "version"]).ok:
+        log.error("a multi-platform image is built with `docker buildx`, and this docker has no buildx "
+                  "plugin. Install it: the `docker-buildx-plugin` package from Docker's repository, or "
+                  "docker/setup-buildx-action in a workflow. The static docker CLI simplon can bootstrap "
+                  "carries no plugins.")
+        return False, []
+    if not run(["docker", "buildx", "inspect", "--bootstrap", BUILDER]).ok:
+        log.info(f"no buildx builder '{BUILDER}' yet; creating it with the docker-container driver, the "
+                 f"one that can produce a manifest list on any daemon")
+        create = ["docker", "buildx", "create", "--name", BUILDER, "--driver", "docker-container",
+                  "--driver-opt", "network=host", "--bootstrap"]
+        created = run(create)
+        if not created.ok:
+            log.error(f"`{' '.join(create)}` failed, so nothing was built: "
+                      f"{(created.err or created.out).strip() or '(it said nothing)'}")
+            return False, []
+    runnable = builder_platforms(run(["docker", "buildx", "ls", "--format", "json"]).out)
+    if runnable is None:
+        log.warn(f"could not read which platforms builder '{BUILDER}' can run; building anyway")
+        return True, []
+    unrunnable = missing_platforms(platforms, runnable)
+    if unrunnable:
+        log.warn(f"builder '{BUILDER}' cannot run {', '.join(unrunnable)} (it can run "
+                 f"{', '.join(sorted(runnable))}). A Dockerfile that RUNs anything in those stages needs "
+                 f"an emulator; one that cross-compiles does not. To register one:\n"
+                 f"    {_emulation_command(unrunnable)}")
+    return True, unrunnable
+
+
+def _native_platform() -> str:
+    """The daemon's own platform, `linux/amd64`, or '' when it does not say."""
+    result = run(["docker", "version", "--format", "{{.Server.Os}}/{{.Server.Arch}}"])
+    return result.out.strip() if result.answered else ""
+
+
+def _contexts_in_the_daemon(cfg: Image, name: str, version: str) -> bool:
+    """For a SINGLE-platform image built from another: the dependency is in the daemon, or a refusal.
+
+    The plain `docker build` resolves FROM in the daemon and, failing that, PULLS - from a registry that
+    for firn's toolchain never had the image. The argv is untouched; this only answers the missing
+    dependency as itself, before docker answers it as somebody else's registry.
+    """
+    for dep_name, dep in cfg.contexts:
+        if not present_locally(context_name(dep, version)):
+            log.error(f"image '{name}' is built FROM {context_name(dep, version)}, which the daemon does "
+                      f"not hold.\n"
+                      f"  build it first: `build:image` with `with: {{ name: {dep_name} }}`. Without "
+                      f"`platforms:` the build resolves FROM in the daemon, and docker would otherwise "
+                      f"try to pull an image that was never published")
+            return False
+    return True
+
+
+def _build_platforms(cfg: Image, name: str, tag: str, root: Path) -> int:
+    """`build` for an image with `platforms:` - see the block above for the shape and why."""
+    derived = provenance(root)
+    resolved = resolve_tag(cfg, tag, {**derived, **cfg.build_args}.get(VERSION_ARG, ""))
+    ref = reference(cfg, resolved)
+    ready, unrunnable = prepare_builder(cfg.platforms)
+    if not ready:
+        return 1
+    path = write_bake(bake_definition(cfg, name, ref, derived, root), name)
+    if path is None:
+        return 1
+    log.info(f"building {ref} for {', '.join(cfg.platforms)}"
+             + (", from " + ", ".join(context_name(dep, derived.get(VERSION_ARG, ""))
+                                      for _, dep in cfg.contexts) + " built alongside"
+                if cfg.contexts else ""))
+    rc = stream(["docker", "buildx", "bake", "--builder", BUILDER, "--file", str(path),
+                 *(platform_target(name, platform) for platform in cfg.platforms)], cwd=str(root))
+    if rc != 0:
+        log.error(f"docker buildx bake failed (rc={rc}); {ref} was not built for "
+                  f"{', '.join(cfg.platforms)} (see output above)" + _emulation_advice(unrunnable))
+        return rc
+    loaded = {platform: platform_reference(ref, platform) for platform in cfg.platforms}
+    absent = [each for each in loaded.values() if not present_locally(each)]
+    if absent:
+        log.error(f"docker buildx bake exited 0 but the daemon does not hold {', '.join(absent)}; "
+                  f"nothing was built for that platform")
+        return 1
+    native = _native_platform()
+    if native in loaded:
+        if not run(["docker", "tag", loaded[native], ref]).ok:
+            log.warn(f"{loaded[native]} was built but could not be tagged {ref}")
+    else:
+        log.info(f"this host ({native or 'platform not readable'}) is not among the declared platforms, "
+                 f"so nothing is tagged {ref} here; each platform is under its own reference")
+    written = record(ref, local_id(ref) if native in loaded else "", root,
+                     platforms={platform: (each, local_id(each)) for platform, each in loaded.items()})
+    log.ok(f"built {ref} for {', '.join(cfg.platforms)}"
+           + (f" ({written.relative_to(root)})" if written else ""))
+    return 0
+
+
+def index_platforms(text: str) -> set[str] | None:
+    """The platforms a manifest LIST carries, `os/arch[/variant]`, or None when `text` is not one. Pure.
+
+    `unknown/unknown` is not a platform: it is how buildx marks the attestation manifests it adds beside
+    the images, measured in the index it pushed to a local registry:2.
+    """
+    try:
+        document = json.loads(text)
+    except ValueError:
+        return None
+    manifests = document.get("manifests") if isinstance(document, dict) else None
+    if not isinstance(manifests, list):
+        return None
+    found: set[str] = set()
+    for entry in manifests:
+        platform = entry.get("platform") if isinstance(entry, dict) else None
+        if not isinstance(platform, dict):
+            continue
+        parts = [str(platform.get(key) or "") for key in ("os", "architecture", "variant")]
+        if "unknown" in parts[:2] or not all(parts[:2]):
+            continue
+        found.add("/".join(part for part in parts if part))
+    return found
+
+
+def _push_platforms(cfg: Image, name: str, root: Path, ref: str, derived: Mapping[str, str]) -> int:
+    """`release` for an image with `platforms:`: push the manifest list out of the builder, then ask the
+    registry for the INDEX and find every declared platform in it.
+
+    The single-platform probe asks only whether a tag resolves, and for a manifest list that is the wrong
+    question: an index that lost a platform still resolves. So this fetches the index itself - with oras,
+    for the reasons the module head gives - and reads which platforms it carries.
+    """
+    ready, unrunnable = prepare_builder(cfg.platforms)
+    if not ready:
+        return 1
+    path = write_bake(bake_definition(cfg, name, ref, derived, root), name)
+    if path is None:
+        return 1
+    log.info(f"pushing {ref} for {', '.join(cfg.platforms)}")
+    rc = stream(["docker", "buildx", "bake", "--builder", BUILDER, "--file", str(path), name], cwd=str(root))
+    if rc != 0:
+        advice = ("\nif the registry refused it rather than the network, the usual cause on GHCR is a "
+                  "token without the package scopes:\n" + githubpackages.scope_advice()
+                  if githubpackages.is_github_packages(cfg.registry) else "")
+        log.error(f"docker buildx bake {name} failed (rc={rc}; see output above)" + advice
+                  + _emulation_advice(unrunnable))
+        return rc
+    try:
+        githubpackages.require_oras()
+        fetched = run(["oras", "manifest", "fetch", ref])
+    except githubpackages.PackageError as failure:
+        log.error(f"{ref} was pushed, but the publish could not be verified: {failure}")
+        return 1
+    if not fetched.ok:
+        log.error(f"docker buildx bake exited 0 but {ref} could not be read back: either the tag was not "
+                  f"stored or the registry could not be asked - both mean the publish is unproven")
+        return 1
+    found = index_platforms(fetched.out)
+    if found is None:
+        log.error(f"{ref} is in the registry but is not a manifest list, so it carries one platform at "
+                  f"most and {', '.join(cfg.platforms)} were declared")
+        return 1
+    missing = missing_platforms(cfg.platforms, found)
+    if missing:
+        log.error(f"{ref} is in the registry without {', '.join(missing)}: its index carries "
+                  f"{', '.join(sorted(found)) or 'no platform at all'}, and "
+                  f"{', '.join(cfg.platforms)} were declared")
+        return 1
+    log.ok(f"published {ref} for {', '.join(cfg.platforms)}, each found in the registry's index")
     return 0
