@@ -23,6 +23,33 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.26.0
+
+**What a product has to do:** nothing. The new command is offered, not placed. A product that builds
+linux/arm64 on its own runner places `ci-arm64: { task: "support:ci-arm64" }` under `support:` and
+runs it once on that runner.
+
+### `support ci-arm64`: check a runner for linux/arm64, and register the emulator if it is missing (si#358)
+
+firn's release builds its image for linux/amd64 and linux/arm64 (si#347). On a runner without an arm64
+emulator that build fails with `exec format error`, and the cure differs by what the runner is. Until now
+the recipe for each case lived only in firn's `docs/07-docker.md` §7. The new coordinate
+`support:ci-arm64` carries it:
+
+- **VM or bare metal:** `apt-get install -y qemu-user-binfmt`.
+- **LXC container:** the static `qemu-aarch64` copied out of the pinned `tonistiigi/binfmt` image, a
+  boot script that registers it with the F flag in the container's own `binfmt_misc`, and a unit
+  ordered before docker.
+- **Any other `systemd-detect-virt` answer:** refused by name, and nothing is changed.
+
+It checks first, against the same `simplon` builder a build uses, and drops a builder created before the
+emulator so it is created again. "Already set up", "set up" and "still no linux/arm64" are three distinct
+outcomes. `-n` shows the recipe and the commands and needs no root. When a build finds no arm64, its
+warning now names this command first, and the one-boot `docker run … --install arm64` second.
+
+Not measured on a real runner yet: the root run on this kernel's development host was not allowed, so
+every branch is covered by tests that fake the host at `run`. The first real run is ghr-7.
+
 ## 0.25.1
 
 **What a product has to do:** nothing. The repair only changes runs that pass `platform:`.

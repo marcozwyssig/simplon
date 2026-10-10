@@ -324,6 +324,7 @@ groups:
       # these two lines are load-bearing rather than decorative. Remove them and the workflow loses its
       # preflight, visibly, in a diff.
       ci-disk-hygiene: { task: "support:ci-disk-hygiene" }
+      ci-arm64: { task: "support:ci-arm64" }
       ci-disk-preflight: { task: "support:ci-disk-preflight" }
       ci-disk-cleanup: { task: "support:ci-disk-cleanup" }
 

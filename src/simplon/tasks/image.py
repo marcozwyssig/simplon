@@ -894,6 +894,8 @@ def release(name: str = "", tag: str = "") -> int:
 # measured cause: a Dockerfile that cross-compiles with `FROM --platform=$BUILDPLATFORM` needs no emulator
 # at all and would be refused for nothing. So the builder's own platform list is read, a platform it cannot
 # run is named with the one command that registers it, and a failed build repeats that command.
+# For arm64 that command is `support:ci-arm64` (si#358): the same person, the same root, but a recipe that
+# survives a reboot on a VM and an LXC alike instead of a paragraph each runner owner re-derives.
 
 #: The buildx builder the kernel creates and uses BY NAME, so it never changes which builder is a
 #: developer's current one (`docker buildx use` is never run).
@@ -1007,7 +1009,12 @@ def missing_platforms(declared: Iterable[str], found: Iterable[str]) -> list[str
 
 
 def _emulation_command(platforms: Iterable[str]) -> str:
+    """The command that registers an emulator for `platforms`. For arm64 alone it is the support command
+    (si#358), which survives a reboot on a VM and an LXC alike; otherwise the one-boot `docker run`."""
     arches = ",".join(dict.fromkeys(platform.split("/")[1] for platform in platforms))
+    if arches == "arm64":
+        return (f"sudo <product>.sh support ci-arm64   (for this boot only: "
+                f"docker run --privileged --rm {BINFMT_IMAGE} --install arm64)")
     return f"docker run --privileged --rm {BINFMT_IMAGE} --install {arches}"
 
 
@@ -1021,19 +1028,22 @@ def _emulation_advice(unrunnable: list[str]) -> str:
             f"  then `docker buildx rm {BUILDER}`, so the builder is created again and sees it")
 
 
-def prepare_builder(platforms: tuple[str, ...]) -> tuple[bool, list[str]]:
-    """The builder, ready: (whether it is, the declared platforms it cannot run).
+def ensure_builder() -> bool:
+    """Builder `BUILDER` exists and is bootstrapped, creating it when it does not; False, said, when not.
 
     buildx is DEMANDED, not provided. Unlike oras it is a docker CLI plugin and has to sit where that
     CLI looks; the static CLI `simplon.docker` bootstraps carries none, so the refusal names the two
     places one comes from.
+
+    Shared with `support:ci-arm64` (si#358), which has to ask the SAME builder a build uses - a check
+    against any other builder would answer a question nobody's build asks.
     """
     if not run(["docker", "buildx", "version"]).ok:
         log.error("a multi-platform image is built with `docker buildx`, and this docker has no buildx "
                   "plugin. Install it: the `docker-buildx-plugin` package from Docker's repository, or "
                   "docker/setup-buildx-action in a workflow. The static docker CLI simplon can bootstrap "
                   "carries no plugins.")
-        return False, []
+        return False
     if not run(["docker", "buildx", "inspect", "--bootstrap", BUILDER]).ok:
         log.info(f"no buildx builder '{BUILDER}' yet; creating it with the docker-container driver, the "
                  f"one that can produce a manifest list on any daemon")
@@ -1046,9 +1056,16 @@ def prepare_builder(platforms: tuple[str, ...]) -> tuple[bool, list[str]]:
         if not created.ok and not run(["docker", "buildx", "inspect", "--bootstrap", BUILDER]).ok:
             log.error(f"`{' '.join(create)}` failed, so nothing was built: "
                       f"{(created.err or created.out).strip() or '(it said nothing)'}")
-            return False, []
+            return False
         if not created.ok:
             log.info(f"builder '{BUILDER}' was created meanwhile by another run; using it")
+    return True
+
+
+def prepare_builder(platforms: tuple[str, ...]) -> tuple[bool, list[str]]:
+    """The builder, ready: (whether it is, the declared platforms it cannot run)."""
+    if not ensure_builder():
+        return False, []
     runnable = builder_platforms(run(["docker", "buildx", "ls", "--format", "json"]).out)
     if runnable is None:
         log.warn(f"could not read which platforms builder '{BUILDER}' can run; building anyway")

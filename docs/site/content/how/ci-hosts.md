@@ -3,18 +3,19 @@ title: "Preparing a CI host"
 weight: 8
 ---
 
-## Two commands, once per machine
+## Commands to run once per machine
 
 A self-hosted runner is the same machine on the next job. Everything a build leaves behind is still there
-tomorrow, and the two commands below are what a host needs before anybody points a workflow at it:
+tomorrow, and the commands below are what a host needs before anybody points a workflow at it:
 
 ```bash
 sudo ./<product>.sh support ci-privileges <user>     # si#92
 sudo ./<product>.sh support ci-disk-hygiene          # si#327
+sudo ./<product>.sh support ci-arm64                 # si#358, only where a product builds linux/arm64
 ```
 
-Both need root, both are idempotent, and both refuse with a message that names the cure rather than
-failing quietly. Neither is **placed** by the catalogue: a product that never provisions a CI host should
+All of them need root, all are idempotent, and all refuse with a message that names the cure rather than
+failing quietly. None is **placed** by the catalogue: a product that never provisions a CI host should
 not find commands in its CLI that change who may become root or restart a docker engine.
 
 ## Why the disk one exists
@@ -52,6 +53,31 @@ Look before you apply, which is what `-n` is for on a fleet:
 
 ```bash
 sudo ./<product>.sh support ci-disk-hygiene -n
+```
+
+## linux/arm64 on an amd64 runner
+
+A multi-platform image (si#347) that RUNs anything in its arm64 stages needs an emulator on the runner.
+Without one the build fails a minute in with `exec format error`. `support ci-arm64` checks first and
+installs only when needed:
+
+1. `systemd-detect-virt` decides the recipe. A VM or bare metal gets `qemu-user-binfmt`, which registers
+   the emulator through `systemd-binfmt` at every boot. An `lxc` container gets a boot-time script and a
+   unit ordered before docker. In an LXC container `tonistiigi/binfmt --install` is refused with
+   `permission denied`, so the script registers `qemu-aarch64` in the container's own `binfmt_misc`.
+   The interpreter is copied out of the same pinned `tonistiigi/binfmt` image. The recipe is firn's,
+   measured in firn#945. Any other answer is refused by name, and nothing is changed.
+2. The answer is asked of the `simplon` builder, the one a multi-platform build uses. A builder created
+   before the emulator was registered does not see it, so the command drops it with
+   `docker buildx rm simplon` and lets it be created again.
+3. Three outcomes, each with its own text: *already set up* (nothing installed), *set up* (this run
+   changed the host or only renewed the builder), or red, when the builder still does not list
+   `linux/arm64`.
+
+```bash
+./<product>.sh support ci-arm64 -n     # which recipe this host takes, and what would run; needs no root
+sudo ./<product>.sh support ci-arm64
+docker buildx ls                       # the simplon builder lists linux/arm64
 ```
 
 ## The two halves that run inside a job
