@@ -483,10 +483,16 @@ images:
 with the docker-container driver the first time, and never made your current builder). `build:image`
 loads each platform into the daemon under its own reference - `ghcr.io/example/app:1.0-linux-arm64` - and
 tags the host's own platform under the plain reference too, so anything that runs the image by name still
-does. `test:image` runs every declared platform under `--platform`, or the one `platform:` names.
-`release:image` pushes **one manifest list** and then fetches the index from the registry and looks for
-every declared platform in it; a tag that resolves but lost a platform is red. An entry without
-`platforms:` builds and pushes with exactly the argv it always had.
+does. `build:image` and `test:image` both take `platform:` to work on one declared platform only - pin
+`platform: linux/amd64` with `with:` on the commands a developer and CI run every day, so they stay one
+native build on a host with no emulator. `release:image` refuses until every declared platform has been
+built: run `build image` without `platform:` before it. It then pushes **one manifest list**, fetches the
+index from the registry and looks for every declared platform in it - a tag that resolves but lost a
+platform is red - and holds each platform's manifest digest against the one the build recorded. The push
+re-runs the bake; with the builder's cache warm that is an export of exactly the images the smoke ran,
+and if the cache was pruned in between it is a second build, which this check turns red instead of
+publishing images nothing ran. An entry without `platforms:` builds and pushes with exactly the argv it
+always had.
 
 **`contexts:`** names other entries of this section that the Dockerfile starts `FROM`. The name the
 `FROM` line uses is not typed again: it is the named image's own `registry/repository:tag` (its `tag:`,
@@ -505,9 +511,18 @@ command that registers them:
 docker run --privileged --rm tonistiigi/binfmt:qemu-v10.2.3 --install arm64
 ```
 
+That registration **lasts until the host reboots**. On a runner that should keep building arm64 after a
+restart, register the handlers persistently instead - the distribution's `qemu-user-static` (with
+`binfmt-support` or systemd-binfmt), which re-registers them at boot. After either, `docker buildx rm
+simplon` lets the builder be created again so it sees them.
+
 It does not refuse, because a Dockerfile that cross-compiles (`FROM --platform=$BUILDPLATFORM`) needs no
 emulator at all. buildx itself is required: the static docker CLI simplon can bootstrap carries no
 plugins, so install `docker-buildx-plugin`, or use `docker/setup-buildx-action` in a workflow.
+
+A **GitHub-hosted runner** is set up fresh for every job, so the generated workflow's job needs its own
+`docker/setup-qemu-action` (and `docker/setup-buildx-action`) step before `build image`; simplon generates
+neither.
 
 ### `releases:` - where the notes live, and from when they are complete
 

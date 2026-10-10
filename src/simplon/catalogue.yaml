@@ -494,6 +494,7 @@ tasks:
     params:
       name: { help: "the image to build (normally pinned per command with `with:`)" }
       tag:  { help: "the tag to build under, for a version only known after a build" }
+      platform: { help: "one of the image's declared `platforms:` to build; default every declared one" }
 
   # The product's OWN build files, written from its source tree (si#102). The second half of si#95:
   # `toolchain:run` runs a pinned compiler over a product tree, and these two produce the files that

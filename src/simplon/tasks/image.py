@@ -577,14 +577,21 @@ def _platform_lines(platforms: Mapping[str, tuple[str, str]]) -> str:
     return "".join(lines)
 
 
-def build(name: str = "", tag: str = "") -> int:
+def build(name: str = "", tag: str = "", platform: str = "") -> int:
     """Build the container image `name` declares, tagged with the reference it will be published under.
 
     `name` is normally pinned per command with `with: { name: ... }`, the shape `test:gate` and
     `release:artifact` both use - a product with two images declares two commands rather than making the
     caller remember a string.
+
+    `platform` builds ONE of the declared `platforms:` (si#347, fix round 1). Without it a multi-platform
+    image is built for every declared platform, which is what a release needs; with it, the everyday
+    "build the image I can run here" stays one native build on a host with no emulator, and a product
+    pins it per command - firn's CI and devcontainer with `platform: linux/amd64`.
     """
     cfg, root = _declared_for(name)
+    if not _platform_declared(cfg, name, platform):
+        return 1
     # si#74, and the order is the point: the manifest's own paths are checked BEFORE the tool is demanded,
     # so a declaration that points at nothing is answered as itself on a host that has no docker either.
     # si#347 widened it to the images a multi-platform build bakes alongside this one, because their
@@ -600,7 +607,7 @@ def build(name: str = "", tag: str = "") -> int:
         return 1
     docker.ensure_docker()
     if cfg.platforms:
-        return _build_platforms(cfg, name, tag, root)
+        return _build_platforms(cfg, name, tag, root, platform)
     args = build_arguments(cfg, root)
     if not _contexts_in_the_daemon(cfg, name, args.get(VERSION_ARG, "")):
         return 1
@@ -666,14 +673,7 @@ def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect
     docker.ensure_docker()
     resolved = resolve_tag(cfg, tag, build_arguments(cfg, root).get(VERSION_ARG, ""))
     ref = reference(cfg, resolved)
-    if platform and not cfg.platforms:
-        log.error(f"`platform: {platform}` was given, but image '{name}' declares no `platforms:` - it is "
-                  f"built for this host's platform only. Declare `platforms:` on `{SECTION}.{name}`, or "
-                  f"drop `platform:`")
-        return 1
-    if platform and platform not in cfg.platforms:
-        log.error(f"image '{name}' is not built for {platform}; its declared platforms are "
-                  f"{', '.join(cfg.platforms)}")
+    if not _platform_declared(cfg, name, platform):
         return 1
     runs = ([(each, platform_reference(ref, each)) for each in ([platform] if platform else cfg.platforms)]
             if cfg.platforms else [("", ref)])
@@ -773,7 +773,11 @@ def release(name: str = "", tag: str = "") -> int:
                   if not present_locally(platform_reference(ref, platform))]
         if absent:
             log.error(f"{ref} has not been built on this machine for {', '.join(absent)}, so there is "
-                      f"nothing to push - run the build first (`build:image`, with the same --tag)")
+                      f"nothing to push - run `build image` WITHOUT `platform:`, so every declared "
+                      f"platform is built, with the same --tag. A release publishes all of "
+                      f"{', '.join(cfg.platforms)} or none of them")
+            return 1
+        if not _recorded_for_every_platform(cfg, name, ref):
             return 1
     elif not present_locally(ref):
         log.error(f"{ref} is not on this machine, so there is nothing to push - run the build first "
@@ -1029,10 +1033,15 @@ def prepare_builder(platforms: tuple[str, ...]) -> tuple[bool, list[str]]:
         create = ["docker", "buildx", "create", "--name", BUILDER, "--driver", "docker-container",
                   "--driver-opt", "network=host", "--bootstrap"]
         created = run(create)
-        if not created.ok:
+        # TWO RUNS CAN GET HERE AT ONCE - two jobs on one daemon that both found no builder - and the one
+        # that loses the race is told `existing instance`. That is not a failure of anything this run
+        # needs, so the builder is asked about once more before the answer is red.
+        if not created.ok and not run(["docker", "buildx", "inspect", "--bootstrap", BUILDER]).ok:
             log.error(f"`{' '.join(create)}` failed, so nothing was built: "
                       f"{(created.err or created.out).strip() or '(it said nothing)'}")
             return False, []
+        if not created.ok:
+            log.info(f"builder '{BUILDER}' was created meanwhile by another run; using it")
     runnable = builder_platforms(run(["docker", "buildx", "ls", "--format", "json"]).out)
     if runnable is None:
         log.warn(f"could not read which platforms builder '{BUILDER}' can run; building anyway")
@@ -1070,28 +1079,116 @@ def _contexts_in_the_daemon(cfg: Image, name: str, version: str) -> bool:
     return True
 
 
-def _build_platforms(cfg: Image, name: str, tag: str, root: Path) -> int:
-    """`build` for an image with `platforms:` - see the block above for the shape and why."""
+def _platform_declared(cfg: Image, name: str, platform: str) -> bool:
+    """Whether `platform` - '' for "all of them" - is one this image can be asked for, or a refusal that
+    names the declared list. Shared by `build` and `smoke`, so the two answer one question in one way."""
+    if platform and not cfg.platforms:
+        log.error(f"`platform: {platform}` was given, but image '{name}' declares no `platforms:` - it is "
+                  f"built for this host's platform only. Declare `platforms:` on `{SECTION}.{name}`, or "
+                  f"drop `platform:`")
+        return False
+    if platform and platform not in cfg.platforms:
+        log.error(f"image '{name}' is not built for {platform}; its declared platforms are "
+                  f"{', '.join(cfg.platforms)}")
+        return False
+    return True
+
+
+#: What `build:image` produced per platform, beside `image.txt` (si#347, fix round 1). A file the release
+#: READS, unlike `image.txt`: it carries the manifest digest buildx reported for each platform it loaded,
+#: and `release:image` holds the pushed index against it.
+BUILT = "built-{name}.json"
+
+
+def built_digests(text: str, name: str, platforms: Iterable[str]) -> dict[str, str]:
+    """The manifest digest bake reported per platform, out of its `--metadata-file`. Pure.
+
+    `containerimage.digest` of a `type=docker` target is the digest of that platform's image manifest.
+    Measured 2026-10-10: after a warm build, the child manifests of the index `release:image` pushed
+    carried exactly these digests, platform for platform.
+    """
+    try:
+        document = json.loads(text)
+    except ValueError:
+        return {}
+    out: dict[str, str] = {}
+    for platform in platforms:
+        entry = document.get(platform_target(name, platform)) if isinstance(document, dict) else None
+        digest = entry.get("containerimage.digest") if isinstance(entry, dict) else None
+        if isinstance(digest, str) and digest:
+            out[platform] = digest
+    return out
+
+
+def _built_path(name: str) -> Path:
+    return outputs.for_kind("docker") / BUILT.format(name=name)
+
+
+def read_built(name: str, ref: str) -> dict[str, str]:
+    """The recorded digests for `ref`, or {} - a record about another reference says nothing about this one."""
+    try:
+        document = json.loads(_built_path(name).read_text(encoding="utf-8"))
+    except (OSError, RuntimeError, ValueError):
+        return {}
+    if not isinstance(document, dict) or document.get("reference") != ref:
+        return {}
+    platforms = document.get("platforms")
+    return {str(k): str(v) for k, v in platforms.items()} if isinstance(platforms, dict) else {}
+
+
+def _write_built(name: str, ref: str, digests: Mapping[str, str]) -> None:
+    """Merge `digests` into the record for `ref`: a one-platform build replaces its own platform's entry
+    and keeps the others, so `build image platform: linux/amd64` after a full build does not make the
+    release forget arm64."""
+    try:
+        path = _built_path(name)
+        merged = {**read_built(name, ref), **digests}
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"reference": ref, "platforms": merged}, indent=2, sort_keys=True) + "\n",
+                        encoding="utf-8")
+    except (OSError, RuntimeError, ValueError) as broken:
+        log.warn(f"{ref} was built, but {BUILT.format(name=name)} could not be written ({broken}); "
+                 f"`release:image` will refuse until a build can record what it produced")
+
+
+def _recorded_for_every_platform(cfg: Image, name: str, ref: str) -> bool:
+    """Before a push: the build recorded a digest for every platform, or a refusal naming the fix."""
+    unrecorded = [platform for platform in cfg.platforms if platform not in read_built(name, ref)]
+    if unrecorded:
+        log.error(f"no record of what `build image` produced for {', '.join(unrecorded)} under {ref} "
+                  f"({BUILT.format(name=name)} in the `docker` output), so the push could not be held "
+                  f"against what was built and smoked. Run `build image` WITHOUT `platform:`, with the "
+                  f"same --tag, then release")
+        return False
+    return True
+
+
+def _build_platforms(cfg: Image, name: str, tag: str, root: Path, platform: str = "") -> int:
+    """`build` for an image with `platforms:` - see the block above for the shape and why. `platform`
+    narrows it to one declared platform."""
+    chosen = (platform,) if platform else cfg.platforms
     derived = provenance(root)
     resolved = resolve_tag(cfg, tag, {**derived, **cfg.build_args}.get(VERSION_ARG, ""))
     ref = reference(cfg, resolved)
-    ready, unrunnable = prepare_builder(cfg.platforms)
+    ready, unrunnable = prepare_builder(chosen)
     if not ready:
         return 1
     path = write_bake(bake_definition(cfg, name, ref, derived, root), name)
     if path is None:
         return 1
-    log.info(f"building {ref} for {', '.join(cfg.platforms)}"
+    metadata = path.parent / f"bake-{name}.metadata.json"
+    log.info(f"building {ref} for {', '.join(chosen)}"
              + (", from " + ", ".join(context_name(dep, derived.get(VERSION_ARG, ""))
                                       for _, dep in cfg.contexts) + " built alongside"
                 if cfg.contexts else ""))
     rc = stream(["docker", "buildx", "bake", "--builder", BUILDER, "--file", str(path),
-                 *(platform_target(name, platform) for platform in cfg.platforms)], cwd=str(root))
+                 "--metadata-file", str(metadata),
+                 *(platform_target(name, each) for each in chosen)], cwd=str(root))
     if rc != 0:
         log.error(f"docker buildx bake failed (rc={rc}); {ref} was not built for "
-                  f"{', '.join(cfg.platforms)} (see output above)" + _emulation_advice(unrunnable))
+                  f"{', '.join(chosen)} (see output above)" + _emulation_advice(unrunnable))
         return rc
-    loaded = {platform: platform_reference(ref, platform) for platform in cfg.platforms}
+    loaded = {each: platform_reference(ref, each) for each in chosen}
     absent = [each for each in loaded.values() if not present_locally(each)]
     if absent:
         log.error(f"docker buildx bake exited 0 but the daemon does not hold {', '.join(absent)}; "
@@ -1104,15 +1201,31 @@ def _build_platforms(cfg: Image, name: str, tag: str, root: Path) -> int:
     else:
         log.info(f"this host ({native or 'platform not readable'}) is not among the declared platforms, "
                  f"so nothing is tagged {ref} here; each platform is under its own reference")
+    try:
+        reported = metadata.read_text(encoding="utf-8")
+    except OSError:
+        reported = ""
+    digests = built_digests(reported, name, chosen)
+    if len(digests) < len(chosen):
+        log.warn(f"bake reported no image digest for "
+                 f"{', '.join(each for each in chosen if each not in digests)}; `release:image` will "
+                 f"refuse to publish until a build records one")
+    _write_built(name, ref, digests)
     written = record(ref, local_id(ref) if native in loaded else "", root,
-                     platforms={platform: (each, local_id(each)) for platform, each in loaded.items()})
-    log.ok(f"built {ref} for {', '.join(cfg.platforms)}"
+                     platforms={each: (loaded_ref, local_id(loaded_ref)) for each, loaded_ref in loaded.items()})
+    log.ok(f"built {ref} for {', '.join(chosen)}"
            + (f" ({written.relative_to(root)})" if written else ""))
     return 0
 
 
 def index_platforms(text: str) -> set[str] | None:
-    """The platforms a manifest LIST carries, `os/arch[/variant]`, or None when `text` is not one. Pure.
+    """The platforms a manifest LIST carries, `os/arch[/variant]`, or None when `text` is not one. Pure."""
+    manifests = index_manifests(text)
+    return None if manifests is None else set(manifests)
+
+
+def index_manifests(text: str) -> dict[str, str] | None:
+    """Platform -> child manifest digest of a manifest LIST, or None when `text` is not one. Pure.
 
     `unknown/unknown` is not a platform: it is how buildx marks the attestation manifests it adds beside
     the images, measured in the index it pushed to a local registry:2.
@@ -1124,7 +1237,7 @@ def index_platforms(text: str) -> set[str] | None:
     manifests = document.get("manifests") if isinstance(document, dict) else None
     if not isinstance(manifests, list):
         return None
-    found: set[str] = set()
+    found: dict[str, str] = {}
     for entry in manifests:
         platform = entry.get("platform") if isinstance(entry, dict) else None
         if not isinstance(platform, dict):
@@ -1132,8 +1245,24 @@ def index_platforms(text: str) -> set[str] | None:
         parts = [str(platform.get(key) or "") for key in ("os", "architecture", "variant")]
         if "unknown" in parts[:2] or not all(parts[:2]):
             continue
-        found.add("/".join(part for part in parts if part))
+        found["/".join(part for part in parts if part)] = str(entry.get("digest") or "")
     return found
+
+
+def digest_mismatches(declared: Iterable[str], published: Mapping[str, str],
+                      built: Mapping[str, str]) -> list[str]:
+    """One line per declared platform whose published manifest is not the one the build loaded. Pure.
+
+    A published `linux/arm64/v8` answers for a declared `linux/arm64`, as in `missing_platforms`.
+    """
+    lines = []
+    for platform in declared:
+        there = next((digest for found, digest in published.items()
+                      if found == platform or found.startswith(platform + "/")), "")
+        if there != built.get(platform, ""):
+            lines.append(f"{platform}: the registry holds {there or 'nothing'}, the build loaded "
+                         f"{built.get(platform) or 'nothing recorded'}")
+    return lines
 
 
 def _push_platforms(cfg: Image, name: str, root: Path, ref: str, derived: Mapping[str, str]) -> int:
@@ -1169,16 +1298,31 @@ def _push_platforms(cfg: Image, name: str, root: Path, ref: str, derived: Mappin
         log.error(f"docker buildx bake exited 0 but {ref} could not be read back: either the tag was not "
                   f"stored or the registry could not be asked - both mean the publish is unproven")
         return 1
-    found = index_platforms(fetched.out)
-    if found is None:
+    manifests = index_manifests(fetched.out)
+    if manifests is None:
         log.error(f"{ref} is in the registry but is not a manifest list, so it carries one platform at "
                   f"most and {', '.join(cfg.platforms)} were declared")
         return 1
+    found = set(manifests)
     missing = missing_platforms(cfg.platforms, found)
     if missing:
         log.error(f"{ref} is in the registry without {', '.join(missing)}: its index carries "
                   f"{', '.join(sorted(found)) or 'no platform at all'}, and "
                   f"{', '.join(cfg.platforms)} were declared")
         return 1
-    log.ok(f"published {ref} for {', '.join(cfg.platforms)}, each found in the registry's index")
+    # WHAT WAS PUSHED IS WHAT WAS SMOKED, checked rather than assumed (fix round 1). The push re-runs bake,
+    # and while the builder's cache holds the build that is an export of the very images `build:image`
+    # loaded and `test:image` ran. If the cache was pruned in between, the push BUILT AGAIN - for firn a
+    # second native-image compile - and published bytes nothing ever ran. The manifest digest names the
+    # config and every layer, so it is the stricter equality of the two a registry can be asked about.
+    mismatched = digest_mismatches(cfg.platforms, manifests, read_built(name, ref))
+    if mismatched:
+        log.error(f"{ref} is published, but not as built: the push rebuilt what the builder's cache no "
+                  f"longer held, so the registry now serves images `test:image` never ran.\n  "
+                  + "\n  ".join(mismatched)
+                  + "\n  run `build image` (without `platform:`) and the smoke checks again, then release "
+                    "again - the same tag is overwritten with the images that were checked")
+        return 1
+    log.ok(f"published {ref} for {', '.join(cfg.platforms)}, each found in the registry's index as the "
+           f"image the build loaded")
     return 0
