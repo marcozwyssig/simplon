@@ -447,3 +447,25 @@ def test_the_pin_branch_gets_a_ci_run_because_nothing_a_github_token_pushes_star
     ci = _manifest()["workflows"]["ci"]
     assert "workflow_dispatch" in ci.get("on", ci.get(True, []))       # YAML 1.1 reads a bare `on` as True
     assert "  - workflow_dispatch" in (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+
+def test_the_kernel_image_is_published_for_arm64_too_and_ci_builds_amd64_only():
+    """si#368: an amd64-only index left a Mac with Apple silicon unable to start the container route."""
+    # arrange
+    kernel = _manifest()["images"]["kernel"]
+    ci_steps = [s for j in _manifest()["workflows"]["ci"]["jobs"].values() for s in j["steps"]]
+    steps = _release_jobs()["image"]["steps"]
+    runs = [step.get("run", "") for step in steps]
+
+    # act
+    ci_build = next(s for s in ci_steps if s.get("command") == "build image")
+    emulator = next(i for i, s in enumerate(steps) if s.get("uses", "").startswith("docker/setup-qemu-action"))
+    built = next(i for i, r in enumerate(runs) if r.startswith("./simplon.sh build image"))
+
+    # assert: both declared; CI stays native; the release registers the emulator before it builds, and
+    # pins the INDEX digest read from the registry, not a local image's (which holds one platform)
+    assert kernel["platforms"] == ["linux/amd64", "linux/arm64"]
+    assert ci_build["params"] == {"platform": "linux/amd64"}
+    assert emulator < built
+    assert steps[emulator]["with"] == {"image": image.BINFMT_IMAGE, "platforms": "arm64"}
+    assert "docker buildx imagetools inspect" in next(r for r in runs if "deploy/image/repin.sh" in r)

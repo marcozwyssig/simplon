@@ -84,7 +84,9 @@ jobs:
       #
       # It goes after the wheel and before the prose gate for the reason the next note gives:
       # a verdict over code is read before a verdict over prose.
-      - run: ./simplon.sh build image
+      # amd64 ONLY (si#368): the image declares arm64 too, and building that here would put an
+      # emulated stage on this runner on every push. A release builds both.
+      - run: ./simplon.sh build image --platform linux/amd64
       # The release-notes guard (si#89), and it is LAST on purpose. A gate that fails early
       # hides everything behind it, and this one rules on prose rather than on code: a
       # release section still to be written must not stop a reader from seeing whether the

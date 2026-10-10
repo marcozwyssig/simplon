@@ -752,6 +752,7 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("workflowgen", "_step", "declares neither `command:` nor a verbatim"): DIAGNOSIS,
     ("workflowgen", "_step", "a verbatim step needs `uses:` or `run:`"): DIAGNOSIS,
     ("workflowgen", "_step", "already gives this step its body"): DIAGNOSIS,
+    ("workflowgen", "_step", "`params:` must map parameter names to values"): DIAGNOSIS,
     ("workflowgen", "_declared_trigger", "declares the trigger twice"): DIAGNOSIS,
     ("workflowgen", "_check_path", "must be relative to the product root"): DIAGNOSIS,
     ("workflowgen", "_check_path", "must be under '{DIRECTORY}/'"): DIAGNOSIS,

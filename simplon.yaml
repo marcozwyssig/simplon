@@ -425,6 +425,10 @@ images:
     repository: simplon
     dockerfile: deploy/image/Dockerfile
     context: .
+    # Both, so a Mac with Apple silicon runs the container route natively (si#368): with amd64 alone
+    # the route did not start there at all ("no matching manifest for linux/arm64"). A release builds
+    # both; CI builds amd64 only (`platform:` on its step), so the runner needs no emulator per push.
+    platforms: [linux/amd64, linux/arm64]
 
 # The release notes' three values (si#89), and there is nothing else the kernel may know about them.
 #
@@ -570,7 +574,10 @@ workflows:
 
               It goes after the wheel and before the prose gate for the reason the next note gives:
               a verdict over code is read before a verdict over prose.
+              amd64 ONLY (si#368): the image declares arm64 too, and building that here would put an
+              emulated stage on this runner on every push. A release builds both.
             command: build image
+            params: { platform: linux/amd64 }
           - note: |
               The release-notes guard (si#89), and it is LAST on purpose. A gate that fails early
               hides everything behind it, and this one rules on prose rather than on code: a

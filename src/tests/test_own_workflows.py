@@ -157,7 +157,8 @@ def test_the_generated_workflow_runs_only_commands_the_manifest_declares():
     assert runs, "the generated workflow runs no product command at all"
     for run in runs:
         assert run.startswith(f"./{PRODUCT}.sh "), run
-        workflowgen.resolve_command(manifest, run.split(" ", 1)[1], where=f"ci.yml: {run}")
+        # The command is what precedes its flags (`build image --platform linux/amd64`, si#368).
+        workflowgen.resolve_command(manifest, run.split(" ", 1)[1].split(" --", 1)[0], where=f"ci.yml: {run}")
 
 
 # --- si#267: what the derivation would produce here, measured against what this repository runs -------
