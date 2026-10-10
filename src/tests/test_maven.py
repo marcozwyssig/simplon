@@ -251,3 +251,22 @@ def test_publish_refuses_a_declared_task_before_docker_is_touched(monkeypatch):
     # act / assert
     with pytest.raises(ValueError, match="`task:` was withdrawn"):
         maven.publish("firn")
+
+
+def test_verify_refuses_to_report_on_nothing(monkeypatch):
+    # arrange: si#341's measurement - a registry that holds nothing, and no modules to ask about. The loop
+    # would find nothing to disagree with and say PRESENT: a read-back that checked nothing, reported green.
+    monkeypatch.setattr(maven, "_status", lambda url, token: 404)
+
+    # act / assert: the function that makes the claim refuses, rather than relying on `_modules` upstream
+    with pytest.raises(ValueError, match="checked nothing"):
+        maven.verify("maven.pkg.github.com/o/r", "g.h", [], "1.0", "t")
+
+
+def test_may_publish_inherits_the_refusal_rather_than_calling_nothing_published(monkeypatch):
+    # arrange: the second caller, where the vacuous PRESENT would have read as "already in the registry"
+    monkeypatch.setattr(maven, "_status", lambda url, token: 404)
+
+    # act / assert
+    with pytest.raises(ValueError, match="checked nothing"):
+        maven.may_publish("maven.pkg.github.com/o/r", "g.h", [], "1.0", "t")

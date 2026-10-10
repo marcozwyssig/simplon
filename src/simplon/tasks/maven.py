@@ -288,7 +288,18 @@ def verify(registry: str, group: str, modules: Sequence[str], version: str,
     when any answer is neither - 401 and 403 mean the token may not look, 0 means the request never
     happened, and reporting either as "your jar is missing" points at the build file when the answer is a
     token scope.
+
+    AN EMPTY LIST IS REFUSED, not answered (si#341). With nothing to ask about, the loop finds nothing to
+    disagree with and the answer would be `PRESENT` - a true answer to a question nobody asked, which
+    `publish` would print as "read back 0 module(s)" and `may_publish` as "already published". `_modules`
+    keeps a manifest from getting here today, but that guarantee lived in a different function from the
+    one making the claim, so it moves here: relax `_modules`, or add a caller, and this still says no.
     """
+    if not modules:
+        raise ValueError(
+            f"verify was handed no modules for {group}:{version}, so it would report a read-back that "
+            f"checked nothing. This is a caller's fault, not the registry's: `_modules` refuses an empty "
+            f"`modules:` before any caller should get here")
     missing: list[str] = []
     for module in modules:
         status = _status(pom_url(registry, group, module, version), token)
