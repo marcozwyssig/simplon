@@ -53,7 +53,19 @@ class PackageError(RuntimeError):
 
 
 def scope_advice(scopes: Sequence[str] = PACKAGE_SCOPES) -> str:
-    """The one command that grants a `gh` token the package permissions."""
+    """The one command that grants a `gh` token the package permissions - or, inside GitHub Actions, what
+    applies there instead.
+
+    IN A WORKFLOW THE COMMAND IS THE WRONG CURE (si#361). The token there is the job's GITHUB_TOKEN, whose
+    scopes `gh auth refresh` cannot touch; measured on firn's first publish, refused with
+    `denied: permission_denied: read_package` because the package already existed without Actions access
+    for the repository. One string still serves every publish path, so the branch lives here.
+    """
+    if os.getenv("GITHUB_ACTIONS", "").strip().lower() == "true":
+        return ("in a workflow the token is the job's GITHUB_TOKEN, and `gh auth refresh` cannot change it. "
+                "The job needs `permissions: packages: write`, and a package that already exists has to "
+                "grant THIS repository access: the package's Package settings -> Manage Actions access -> "
+                "add the repository with role Write")
     return ("`gh auth login` does not request package permissions. Run:\n"
             f"    gh auth refresh -h github.com -s {','.join(scopes)}")
 

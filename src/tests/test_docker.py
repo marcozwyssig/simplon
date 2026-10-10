@@ -180,6 +180,22 @@ def test_socket_state_names_a_mounted_but_unwritable_socket(monkeypatch, tmp_pat
     assert "NOT WRITABLE" in docker._socket_state()
 
 
+def test_an_unwritable_socket_names_the_host_runner_cure_and_the_container_one(monkeypatch, tmp_path):
+    """si#360: a runner on the host lost the docker group on a reboot and was told about --group-add."""
+    # arrange
+    sock = tmp_path / "docker.sock"
+    sock.touch()
+    monkeypatch.setenv("DOCKER_HOST", f"unix://{sock}")
+    monkeypatch.setattr(docker.os, "access", lambda p, m: False)
+
+    # act
+    said = docker._socket_state()
+
+    # assert
+    assert "support ci-privileges <user>" in said and "RESTART the runner service" in said
+    assert "--group-add" in said
+
+
 def test_socket_state_names_a_writable_socket_with_a_dead_daemon(monkeypatch, tmp_path):
     # arrange: socket present and writable, so only the daemon side remains
     sock = tmp_path / "docker.sock"

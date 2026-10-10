@@ -23,6 +23,28 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.26.1
+
+**What a product has to do:** nothing. Two messages now name the cure that applies where they are read.
+Both were measured by firn on its first real release of `ghcr.io/marcozwyssig/firn`.
+
+### An unwritable docker socket names the host runner's cure too (si#360)
+
+ghr-7 was rebooted, and its runner user had lost the docker group. With `DELIVERY_DOCKER_BOOTSTRAP=1` the
+job stopped with `NOT WRITABLE by uid 1000 (missing --group-add)`, which is a container runner's cure. The
+message now names both shapes. On a host runner: `sudo <product>.sh support ci-privileges <user>`, then
+restart the runner service, because a group is inherited at process start. On a container runner:
+`--group-add` with the socket's gid.
+
+### In a workflow, a refused GHCR push no longer says `gh auth refresh` (si#361)
+
+firn's first push was refused with `denied: permission_denied: read_package`, because the package
+already existed without Actions access for the repository. The advice said to run `gh auth refresh`,
+which cannot change a workflow's `GITHUB_TOKEN`. When `GITHUB_ACTIONS=true` the advice now says what
+applies there: the job needs `permissions: packages: write`, and an existing package has to grant the
+repository access under Package settings -> Manage Actions access, with role Write. Off a workflow the
+advice is unchanged.
+
 ## 0.26.0
 
 **What a product has to do:** nothing. The new command is offered, not placed. A product that builds
