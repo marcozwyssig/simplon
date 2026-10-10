@@ -23,6 +23,35 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.25.0
+
+**What a product has to do:** delete `task:` from any `artifacts:` entry that `release:maven` reads. The key is
+now refused by name. Measured on si#337 over all eight reachable manifests: none declares it, so for every
+known product the answer is "nothing".
+
+### `release:maven` always publishes, and always reads back; `task:` is withdrawn (si#337, repairs si#334)
+
+0.24.0 let an `artifacts:` entry name its gradle task. si#334 measured what that bought: `task:
+publishToMavenLocal` reaches no registry, so the read-back found nothing and reported a green local publish as
+a **failed release**, with a diagnosis about `maven-publish` that was not the cause. Three repairs were written
+up (si#335, si#336, si#337) and decided by a choice list. The one taken says the key was too *wide* rather than
+too weakly checked: this coordinate claims "the jars are in the registry, and I looked", and a task that does
+not go there cannot be held to that claim at all.
+
+So the task is fixed to `publish` and the read-back always runs. A declared `task:` is **refused, not
+ignored**, because ignoring `task: ":core:publish"` would run a different publication without a word. The
+refusal names the replacement: a publish that is not a release is the product's own command through
+`toolchain:run`, which is where `release:conan`'s division of labour already put it.
+
+### A read-back that checked nothing no longer reports success (si#341)
+
+Handed an empty module list, `verify` found nothing to disagree with and answered `present` - which `publish`
+would have printed as "read back 0 module(s)" and the pre-publish check as "already in the registry". No
+manifest could reach it, because `_modules` refuses an empty `modules:` first. But that guarantee lived in a
+different function from the one making the claim, so it has moved: `verify` itself now refuses to report on
+nothing, and each of its two callers has a test that says so. Found by applying a consumer's own measured
+defect - firn's guard that passed "because it had nothing to check" - to this code, not by the suite.
+
 ## 0.24.0
 
 ### Four languages build, three publish: a jar reaches a registry (si#329)
