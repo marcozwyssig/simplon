@@ -275,3 +275,68 @@ jobs:
           path: build/site
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  # THE KERNEL IMAGE GOES OUT WITH EVERY RELEASE (Marco, 2026-10-10), beside the wheel and the site. Until
+  # then it was published on demand, and the reasons for that ended one by one: ghcr.io takes the run's own
+  # GITHUB_TOKEN, so no registry secret is stored (si#313); and a consumer exists, firn#198, which a stale
+  # image blocked the same day - its manifest needs a kernel newer than the one on demand had left behind.
+  #
+  # PUBLISH FIRST, PIN AFTERWARDS, and that is why the pin is a PULL REQUEST and not part of the tag. The
+  # tagged commit cannot name an image that only exists once this job has pushed it and read it back, so
+  # `deploy/image/repin.sh` moves `deploy/image/image.pin` on a branch and the job opens a pull request a
+  # person merges. A pin that names an image which does not exist would send a machine with no python3
+  # down the container route to a failure the venv route never offered.
+  #
+  # `needs: publish`: the image carries the version PyPI now serves, never one it refused.
+  #
+  # TWO THINGS A PERSON SETS ONCE, and the job names each when it is the cause. The package has to grant
+  # this repository Actions access with role Write (si#361's advice says where), and opening the pull
+  # request needs "Allow GitHub Actions to create and approve pull requests" in the repository's Actions
+  # settings. Without the second the image is published, the branch is pushed, and the job is RED with the
+  # branch named - a pin that did not move is not a green outcome, it is work a person still has to do.
+  image:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # push the branch that moves the pin
+      packages: write        # push ghcr.io/marcozwyssig/simplon with this run's own token
+      pull-requests: write   # open the pull request for that branch
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: ./simplon.sh build image --tag "$GITHUB_REF_NAME"
+      - run: ./simplon.sh release image --tag "$GITHUB_REF_NAME"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Open the pull request that pins the published image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ref="ghcr.io/marcozwyssig/simplon:${GITHUB_REF_NAME}"
+          digest="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$ref" \
+                    | sed -n 's|^ghcr.io/marcozwyssig/simplon@||p' | head -n1)"
+          test -n "$digest" || { echo "::error::$ref was published but its digest could not be read"; exit 1; }
+          branch="pin/kernel-image-${GITHUB_REF_NAME}"
+          git fetch --quiet origin main
+          git switch --quiet -c "$branch" origin/main
+          rc=0; deploy/image/repin.sh "$ref" "$digest" || rc=$?
+          if [ "$rc" = 3 ]; then
+            echo "- **image**: \`$ref\` published; \`main\` already pins it, so no pull request." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          test "$rc" = 0
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit --quiet -am "chore: pin the kernel image to ${GITHUB_REF_NAME}" \
+              -m "Published and read back by release run ${GITHUB_RUN_ID}: ${digest}."
+          git push --quiet --force origin "$branch"
+          if ! gh pr create --base main --head "$branch" --title "Pin the kernel image to ${GITHUB_REF_NAME}" \
+                 --body "Published and read back by release run ${GITHUB_RUN_ID}: \`${ref}@${digest}\`. This moves \`deploy/image/image.pin\` to it (publish first, pin afterwards)."; then
+            echo "::error::$ref is published and branch $branch is pushed, but the pull request could not be opened. Allow it under Settings > Actions > General > 'Allow GitHub Actions to create and approve pull requests', or open it by hand: https://github.com/${GITHUB_REPOSITORY}/compare/main...${branch}"
+            echo "- **image**: \`$ref\` published; pin branch \`$branch\` pushed; **pull request NOT opened**." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "- **image**: \`$ref@${digest}\` published; pin pull request opened from \`$branch\`." >> "$GITHUB_STEP_SUMMARY"

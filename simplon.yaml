@@ -249,32 +249,15 @@ groups:
       # `dynamic = ["version"]`, setuptools-scm derives the number from the tag, and the tag is the
       # argument - so `./simplon.sh release tag v0.1.14` IS the whole act of choosing 0.1.14.
       tag: { task: "release:tag" }
-      # Publishing that image (si#200, moved to ghcr by si#313). ON DEMAND, not from release.yml - and
-      # of the three reasons this comment used to give, TWO HAVE ENDED and the third is why it is still
-      # on demand.
+      # Publishing that image (si#200, moved to ghcr by si#313). Since 2026-10-10 EVERY RELEASE does it:
+      # release.yml's `image` job runs this command after the wheel is on PyPI, with the run's own
+      # GITHUB_TOKEN, and then opens the pull request that moves deploy/image/image.pin. It used to be on
+      # demand, for three reasons that all ended: Docker Hub needed a stored token (ghcr.io does not); no
+      # consumer existed (firn is one); and the pin was hand-committed, so a publish nothing pointed at
+      # moved the problem. The pin now follows in a pull request, still PUBLISH FIRST, PIN AFTERWARDS,
+      # because a pin naming an image that is not there would send a machine with no python3 to a failure.
       #
-      # THE CREDENTIAL REASON IS GONE, not out-weighed. It said Docker Hub has no route like PyPI's
-      # Trusted Publishing or Pages' OIDC, so an automatic publish would mean a long-lived Hub token
-      # standing in this repository's secrets between releases. ghcr.io needs no stored token at all (see
-      # `images:` below for the mechanism, which is the per-run one and not OIDC), so the obstacle is
-      # removed rather than accepted.
-      #
-      # THE SECOND REASON CAME TRUE rather than being refuted, and it is kept here as such: it read
-      # "nothing consumes the image until si#201's launcher does". The launcher exists, and firn is that
-      # consumer - it carried python3 and py3-pip in its development container for no reason but starting
-      # the launcher (17 packages, 47.4 MiB, sqlite-libs among them, because CPython links libsqlite3 for
-      # its stdlib). A sentence that has happened is not an argument any more.
-      #
-      # THE THIRD REASON STANDS, and it is the one holding the trigger: the pin in deploy/image/image.pin
-      # is committed by hand, so a publish nothing points at moves the problem rather than solving it.
-      # The order is therefore PUBLISH FIRST, PIN AFTERWARDS: `release:image` reads the tag back out of
-      # the registry before it says OK, and only then is there something a pin may name. A pin committed
-      # ahead of the push would name an image that does not exist - and on a machine with no python3 the
-      # launcher would then choose the container route and fail where the venv route was never offered.
-      #
-      # WHAT KEEPS IT FROM ROTTING is the ci.yml step that BUILDS it on every push (see `workflows:`
-      # below). Building needs no credential; publishing needs one. So the half that can be exercised on
-      # every commit is, and the half that cannot is the one an operator runs.
+      # It stays a command a person can type, for a re-publish or a hotfix outside the tag.
       image:
         task: "release:image"
         with:
@@ -581,8 +564,8 @@ workflows:
           - note: |
               The kernel's own container image (si#200), BUILT here and published nowhere. Building
               needs no credential, so the half of the loop that can run on every push does - which is
-              what keeps the Dockerfile from rotting between the on-demand publishes that are the
-              other half. It is the same argument as every other step in this file: a command a
+              what keeps the Dockerfile from rotting between the releases that publish it, which are
+              the other half. It is the same argument as every other step in this file: a command a
               developer can type, run by the pipeline rather than restated in it.
 
               It goes after the wheel and before the prose gate for the reason the next note gives:
