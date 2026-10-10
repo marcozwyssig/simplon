@@ -208,51 +208,46 @@ def test_an_unaskable_registry_does_not_block_a_release_publish(monkeypatch):
     assert why
 
 
-# --- si#330: the gradle task is the product's to name ---------------------------------------------------
+# --- si#337: the gradle task is the coordinate's, and `task:` is withdrawn ---------------------------------
 
 
-def test_the_gradle_task_defaults_to_publish():
+def test_the_gradle_task_is_always_publish():
     # arrange / act / assert
     assert maven.publish_argv("1.0") == ["gradle", "publish", "-Pversion=1.0", "--no-daemon"]
 
 
-def test_a_product_may_name_another_gradle_task():
-    # arrange: eleven modules, and a product that publishes some of them names its own task - or reaches
-    # one subproject's, which the root `publish` does not do
-    # act
-    argv = maven.publish_argv("1.0", task=":core:publish")
+def test_a_declared_task_is_refused_rather_than_ignored():
+    # arrange: si#334's case - a task that never reaches the registry. Ignoring the key would run the
+    # root `publish` instead of what the product named, a different publication with no word said.
+    for declared in ["publishToMavenLocal", ":core:publish", ""]:
+        # act
+        with pytest.raises(ValueError) as caught:
+            maven.refuse_withdrawn({"task": declared}, "firn")
 
-    # assert
-    assert argv == ["gradle", ":core:publish", "-Pversion=1.0", "--no-daemon"]
+        # assert: it names the key, the ticket, and the route that replaces it
+        said = str(caught.value)
+        assert "`task:` was withdrawn" in said and "si#337" in said
+        assert "toolchain:run" in said
 
 
-def test_a_task_name_that_is_not_one_is_refused_by_name():
-    # arrange: it goes into argv, so there is no shell to abuse - but a name with a space becomes ONE
-    # argument gradle cannot resolve, and a leading dash becomes a flag. Both fail far from the manifest.
+def test_an_entry_without_the_withdrawn_key_passes():
+    # arrange / act / assert
+    maven.refuse_withdrawn({"registry": "maven.pkg.github.com/o/r", "group": "g"}, "firn")
+
+
+
+
+def test_publish_refuses_a_declared_task_before_docker_is_touched(monkeypatch):
+    # arrange: a complete entry that still carries the 0.24.0 key. The refusal has to come from `publish`
+    # itself and before a container could start - a helper nobody calls refuses nothing.
+    spec = {"registry": "maven.pkg.github.com/o/r", "image": "gradle:9.7.1-jdk21", "group": "g.h",
+            "modules": ["core"], "tag": "1.0", "task": "publishToMavenLocal"}
+    monkeypatch.setattr(maven, "_declared", lambda name: dict(spec))
+
+    def no_docker():
+        raise AssertionError("docker was reached before the withdrawn key was refused")
+    monkeypatch.setattr(maven.docker, "ensure_docker", no_docker)
+
     # act / assert
-    for wrong in ["publish --info", "-Dfoo=bar", "", "publish;rm -rf /"]:
-        with pytest.raises(ValueError):
-            maven.gradle_task({"task": wrong}, "firn")
-
-
-def test_a_declared_but_empty_task_is_told_apart_from_an_absent_one():
-    # arrange: both are refused by the pattern anyway, so what this pins is the MESSAGE - and that is the
-    # point rather than a detail. Leaving the key out means "the default is fine"; declaring it with nothing
-    # means somebody meant to name a task and did not, and those two readers need different sentences.
-    # Without the distinction the second one is told their empty string "is not a gradle task name", which
-    # is true and useless.
-    # act
-    with pytest.raises(ValueError) as caught:
-        maven.gradle_task({"task": ""}, "firn")
-
-    # assert
-    assert "no value" in str(caught.value)
-    assert maven.DEFAULT_TASK in str(caught.value), "the message has to name what leaving it out would give"
-
-
-def test_a_legal_task_name_survives_the_check():
-    # arrange / act / assert: the shapes a real build actually uses
-    for good in ["publish", ":core:publish", "publishAllPublicationsToGithubRepository",
-                 "publishMavenJavaPublicationToMavenRepository"]:
-        assert maven.gradle_task({"task": good}, "firn") == good
-    assert maven.gradle_task({}, "firn") == maven.DEFAULT_TASK
+    with pytest.raises(ValueError, match="`task:` was withdrawn"):
+        maven.publish("firn")
