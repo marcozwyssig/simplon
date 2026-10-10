@@ -456,5 +456,10 @@ def _socket_state() -> str:
     if not path.exists():
         return f"{path} NOT MOUNTED"
     if not os.access(path, os.W_OK):
-        return f"{path} mounted but NOT WRITABLE by uid {os.getuid()} (missing --group-add)"
+        # BOTH SHAPES, because the cure differs and si#360 measured the wrong one being named: a runner
+        # straight on the host lost the docker group on a reboot, and was told about `--group-add`.
+        return (f"{path} mounted but NOT WRITABLE by uid {os.getuid()}: on a host runner, put its user in "
+                f"the docker group - sudo <product>.sh support ci-privileges <user> - and RESTART the runner "
+                f"service, because a group is inherited at process start; on a container runner, missing "
+                f"--group-add with the socket's gid")
     return f"{path} mounted and writable, but the daemon did not answer"

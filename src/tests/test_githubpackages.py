@@ -84,9 +84,11 @@ def test_neither_source_is_an_error_that_names_both(monkeypatch):
 
 # --- the advice everyone needs once -----------------------------------------------------------------
 
-def test_the_advice_names_the_command_that_grants_the_scopes():
+def test_the_advice_names_the_command_that_grants_the_scopes(monkeypatch):
     """`gh auth login` requests gist, read:org, repo and workflow - not the package scopes - so the
-    first local publish fails pointing at the package rather than at the token."""
+    first local publish fails pointing at the package rather than at the token. Off a workflow: inside
+    one the advice is a different one (si#361), and CI runs this suite inside one."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     scopes = githubpackages.PACKAGE_SCOPES
 
     advice = githubpackages.scope_advice(scopes)
@@ -322,3 +324,28 @@ def test_a_lookalike_of_the_maven_host_is_still_refused():
     # act / assert
     assert githubpackages.is_github_packages("maven.pkg.github.com.evil.example/x") is False
     assert githubpackages.is_github_packages("evil-maven.pkg.github.com/x") is False
+
+
+def test_outside_a_workflow_the_scope_advice_names_gh_auth_refresh(monkeypatch):
+    # arrange
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+    # act
+    said = githubpackages.scope_advice()
+
+    # assert
+    assert "gh auth refresh -h github.com -s read:packages,write:packages" in said
+
+
+def test_in_a_workflow_the_scope_advice_names_the_packages_actions_access_not_gh_auth_refresh(monkeypatch):
+    """si#361: firn's first publish was refused with read_package and told to refresh a token that a
+    workflow cannot refresh."""
+    # arrange
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+
+    # act
+    said = githubpackages.scope_advice()
+
+    # assert
+    assert "Manage Actions access" in said and "packages: write" in said
+    assert "gh auth refresh -h" not in said

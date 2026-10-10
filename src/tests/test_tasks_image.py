@@ -681,7 +681,8 @@ def test_a_failed_login_stops_the_release_and_names_the_command_that_grants_the_
                                                                                        capsys):
     """#31 acceptance 5's first half, and acceptance 4's second. A registry that rejects the credential
     must not end in a traceback the reader has to dig the fix out of."""
-    # arrange
+    # arrange: off a workflow, where this advice applies (si#361) - CI runs this suite inside one
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     def rejected(registry, **kwargs):
         raise githubpackages.PackageError("docker login to ghcr.io failed: 401 Unauthorized\n"
                                           + githubpackages.scope_advice())
