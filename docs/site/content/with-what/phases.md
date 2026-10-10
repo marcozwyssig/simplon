@@ -307,10 +307,13 @@ a release the read-back proves this run put the artefact there, for a snapshot i
 there, because an earlier run may have left it. One sentence covering both claims would be the weaker of the
 two.
 
-The gradle task is the product's to name (`task:`, default `publish`) - `publish` is the obvious one and not
-always the right one, since the root task does not reach one subproject's. Declaring the key **with no
-value** is refused rather than read as the default: leaving it out means "the default is fine", and an empty
-one means somebody meant to name a task and did not.
+The gradle task is always `publish`, and the read-back always runs (si#337). 0.24.0 let the entry name
+another one with `task:`, and si#334 measured the cost: `task: publishToMavenLocal` reaches no registry, so
+the read-back found nothing and reported a green local publish as a failed release, with a wrong diagnosis.
+The key was too wide rather than too weakly checked - this coordinate claims "the jars are in the registry,
+and I looked", and a task that does not go there cannot be held to it. So the key is **withdrawn and
+refused**, not ignored, because ignoring `task: ":core:publish"` would run a different publication without a
+word. A publish that is not a release is the product's own command through `toolchain:run`.
 
 **Java is now published and Python still is not**, which is deliberate and measured. `tasks/profiles.py`
 builds four languages; this namespace publishes three of them. GitHub Packages has no Python index at all -

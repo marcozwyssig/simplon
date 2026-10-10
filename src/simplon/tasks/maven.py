@@ -36,7 +36,6 @@ machine and stays in `docker inspect` for as long as the container exists.
 """
 from __future__ import annotations
 
-import re
 import urllib.error
 import urllib.request
 from collections.abc import Sequence
@@ -78,15 +77,22 @@ TIMEOUT = 30.0
 #: than a nicety.
 SNAPSHOT_SUFFIX = "-SNAPSHOT"
 
-#: The gradle task when a product names none. `publish` is the obvious one and is deliberately not the only
-#: one - si#330: "a product with eleven modules may publish some and not others", and the root `publish`
-#: does not reach one subproject's.
-DEFAULT_TASK = "publish"
+#: The gradle task, and it is ONE task rather than the product's to name (si#337). 0.24.0 let an `artifacts:`
+#: entry say `task:`, and si#334 measured what that bought: `task: publishToMavenLocal` reached no registry,
+#: the read-back then found nothing and reported a green local publish as a failed release - with a
+#: diagnosis about `maven-publish` that was not the cause. The key was too WIDE, not too weakly checked:
+#: this coordinate's whole claim is "the jars are in the registry, and I looked", and a task that does not
+#: go to the registry cannot be held to that claim at all. So the task is fixed and the read-back always
+#: runs. A publish that is NOT a release - `publishToMavenLocal`, a task with another name - is the
+#: product's own command through `toolchain:run`, which is where `release:conan`'s head already puts the
+#: division of labour.
+TASK = "publish"
 
-#: What a gradle task name may be. It goes into argv and never through a shell, so this is not about
-#: injection: a name with a SPACE becomes one argument gradle cannot resolve, and one starting with a dash
-#: becomes a flag. Both fail on the runner, far from the manifest line that caused it.
-TASK_NAME = re.compile(r"[A-Za-z:][A-Za-z0-9_.:-]*\Z")
+#: Keys an `artifacts:` entry for this coordinate used to accept and no longer does. REFUSED rather than
+#: ignored, because ignoring `task: ":core:publish"` would run the root `publish` instead - a different
+#: publication with no word said, which is the defect this repository hunts. Withdrawn in 0.25.0; measured
+#: before withdrawing: no reachable manifest declared it (si#337).
+WITHDRAWN = ("task",)
 
 
 def _declared(name: str) -> dict:
@@ -177,32 +183,16 @@ def is_snapshot(version: str) -> bool:
     return version.endswith(SNAPSHOT_SUFFIX)
 
 
-def gradle_task(spec: "dict", name: str) -> str:
-    """The gradle task `name` declares, or `publish`. Refuses something that is not a task name.
-
-    si#330 asked for this: `publish` is the obvious task and is not always the right one. A product that
-    publishes a subset expresses that in its own `maven-publish` block - that half really is the product's
-    - but a product whose task has another name, or which wants `:core:publish` rather than the root one,
-    had no line to write.
-    """
-    if "task" not in spec:
-        return DEFAULT_TASK
-    declared = str(spec.get("task") or "")
-    # ABSENT AND EMPTY ARE DIFFERENT, which is this repository's recurring defect at the smallest possible
-    # scale: not declaring the key means "the default is fine", and declaring it with nothing means somebody
-    # meant to say something and did not. Reading the second as the first would run `publish` on a product
-    # that had tried to name another task and left the value out.
-    if not declared.strip():
-        raise ValueError(
-            f"artifact '{name}': `task:` is declared with no value. Leave the key out to get "
-            f"`{DEFAULT_TASK}`, or name the task - an empty one is a sentence somebody started")
-    if not TASK_NAME.match(declared):
-        raise ValueError(
-            f"artifact '{name}': `task: {declared!r}` is not a gradle task name. One name, no flags and no "
-            f"spaces - `publish`, `:core:publish`, `publishAllPublicationsToGithubRepository`. Arguments "
-            f"belong to the task itself, because this reaches gradle as one argv element and a name with a "
-            f"space is a task gradle cannot resolve")
-    return declared
+def refuse_withdrawn(spec: "dict", name: str) -> None:
+    """Refuse a key 0.24.0 accepted and si#337 withdrew, naming what to do instead."""
+    for key in WITHDRAWN:
+        if key in spec:
+            raise ValueError(
+                f"artifact '{name}': `{key}:` was withdrawn in 0.25.0 (si#337). `release:maven` always runs "
+                f"`gradle {TASK}` and reads every module back from the registry - a task that does not "
+                f"publish there cannot be held to that. Delete the key; a publish that is not a release "
+                f"(`publishToMavenLocal`, a task with another name) is your own command through "
+                f"`toolchain:run`")
 
 
 def may_publish(registry: str, group: str, modules: "Sequence[str]", version: str,
@@ -238,8 +228,8 @@ def may_publish(registry: str, group: str, modules: "Sequence[str]", version: st
     return True, ""
 
 
-def publish_argv(version: str, task: str = DEFAULT_TASK) -> list[str]:
-    """`gradle <task>`, with the version the tag names. Pure.
+def publish_argv(version: str) -> list[str]:
+    """`gradle publish`, with the version the tag names. Pure.
 
     `-Pversion=` rather than an edit to `build.gradle`: the version is a property of the RELEASE, and a
     number checked into a build file is a number two people can pick at once - the argument `release:tag`
@@ -248,7 +238,7 @@ def publish_argv(version: str, task: str = DEFAULT_TASK) -> list[str]:
     `--no-daemon` because a Gradle daemon inside a `--rm` container is a process nobody reaps, and the
     container's exit then waits on it.
     """
-    return ["gradle", task, f"-Pversion={version}", "--no-daemon"]
+    return ["gradle", TASK, f"-Pversion={version}", "--no-daemon"]
 
 
 def docker_argv(image: str, root: Path, env_file: Path, argv: list[str]) -> list[str]:
@@ -344,7 +334,7 @@ def publish(name: str = "", tag: str = "") -> int:
     (registry, image, group) = _required(spec, name, "registry", "image", "group")
     repository_url(registry, checked=True)
     modules = _modules(spec, name)
-    task = gradle_task(spec, name)
+    refuse_withdrawn(spec, name)
     pinned = docker.pinned_image(image, f"artifact '{name}'",
                                  hint="a published jar names the JDK and Gradle it was built with")
 
@@ -377,13 +367,13 @@ def publish(name: str = "", tag: str = "") -> int:
 
     with _env_file(token) as env_file:
         log.info(f"publishing {group}:{{{','.join(modules)}}}:{resolved} to {repository_url(registry)} "
-                 f"with `gradle {task}`")
-        rc = stream(docker_argv(pinned, root, env_file, publish_argv(resolved, task)))
+                 f"with `gradle {TASK}`")
+        rc = stream(docker_argv(pinned, root, env_file, publish_argv(resolved)))
 
     if rc != 0:
         # The scope advice is a HINT tied to a condition, never appended to every failure - image.py's
         # rule, because a publish fails on a full disk and a dead network too.
-        log.error(f"`gradle {task}` failed (rc={rc}; see output above)\n"
+        log.error(f"`gradle {TASK}` failed (rc={rc}; see output above)\n"
                   f"if the registry refused it rather than the build, the usual cause is a token without "
                   f"the package scopes:\n" + githubpackages.scope_advice())
         return rc
@@ -391,7 +381,7 @@ def publish(name: str = "", tag: str = "") -> int:
     state, missing = verify(registry, group, modules, resolved, token)
     if state == ABSENT:
         log.error(
-            f"`gradle {task}` reported success and {repository_url(registry)} does not carry "
+            f"`gradle {TASK}` reported success and {repository_url(registry)} does not carry "
             f"{', '.join(f'{group}:{m}:{resolved}' for m in missing)}. A build with no `maven-publish` "
             f"publication configured has no work to do and does not fail for it - which is what this "
             f"read-back exists to catch")
