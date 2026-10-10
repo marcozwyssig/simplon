@@ -12,6 +12,8 @@ asserted RED, not merely described.
 AAA throughout; nothing here builds, pushes or logs in for real - except `provenance`, which is measured
 against a real temporary git checkout, because a derivation nobody ran against git is a guess.
 """
+import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -75,10 +77,16 @@ class _Cli:
     call it wants to fail - which is how each red case below stays about one thing.
     """
 
-    def __init__(self, verdict=None, output=""):
+    def __init__(self, verdict=None, output="", outputs=None, effects=None):
         self.calls: list = []
+        # What a streamed command LEAVES BEHIND, by argv prefix - bake's `--metadata-file` (fix round 1).
+        self.effects = effects or {}
         self.verdict = verdict or {}
         self.output = output
+        # si#347: what a command PRINTS, by argv prefix, for the calls whose answer is read as a value -
+        # the registry's index, the builder's platform list, the daemon's own platform. `output` stays the
+        # answer of every other call, so the tests written before this keep the fake they were written for.
+        self.outputs = outputs or {}
 
     def _rc(self, argv) -> int:
         for prefix, rc in self.verdict.items():
@@ -86,13 +94,23 @@ class _Cli:
                 return rc
         return 0
 
+    def _out(self, argv) -> str:
+        for prefix, out in self.outputs.items():
+            if tuple(argv[:len(prefix)]) == tuple(prefix):
+                return out
+        return self.output
+
     def run(self, argv, **kwargs) -> Result:
         self.calls.append(list(argv))
-        return Result(rc=self._rc(argv), out=self.output, err="")
+        return Result(rc=self._rc(argv), out=self._out(argv), err="")
 
     def stream(self, argv, **kwargs) -> int:
         self.calls.append(list(argv))
-        return self._rc(argv)
+        rc = self._rc(argv)
+        for prefix, effect in self.effects.items():
+            if rc == 0 and tuple(argv[:len(prefix)]) == tuple(prefix):
+                effect(list(argv))
+        return rc
 
     def argv_starting(self, *prefix) -> list:
         return [call for call in self.calls if tuple(call[:len(prefix)]) == prefix]
@@ -1196,3 +1214,924 @@ def test_a_record_that_cannot_be_written_does_not_turn_a_real_image_red(cli, _no
     # assert
     assert rc == 0
     assert "image.txt" in capsys.readouterr().out
+
+
+# --- si#347: one image, several platforms, one manifest list -------------------------------------------
+#
+# firn publishes its image for linux/amd64 AND linux/arm64 from an x86_64 runner, and its Dockerfile starts
+# `FROM` another image the same manifest declares and nobody publishes. Everything below is the argv the
+# kernel hands buildx and the reading of what the registry answers; the end-to-end half was measured
+# against a local `registry:2` and is recorded in the si#347 block of `simplon.tasks.image`.
+
+_MULTI = """
+  base:
+    registry: ghcr.io/owner
+    repository: demo-base
+    dockerfile: docker/base.Dockerfile
+    context: .
+    tag: "25"
+  multi:
+    registry: ghcr.io/owner
+    repository: demo-multi
+    dockerfile: Dockerfile
+    context: .
+    platforms: [linux/amd64, linux/arm64]
+    contexts: [base]
+  single-on-base:
+    registry: ghcr.io/owner
+    repository: demo-single
+    dockerfile: Dockerfile
+    context: .
+    contexts: [base]
+"""
+
+#: What `docker buildx ls --format json` prints for a bootstrapped builder that can run both - one JSON
+#: object per line, the shape measured with buildx v0.38.0.
+_BUILDER_BOTH = ('{"Name":"simplon","Driver":"docker-container","Nodes":[{"Name":"simplon0",'
+                 '"Platforms":["linux/amd64","linux/amd64/v2","linux/arm64","linux/386"]}]}\n'
+                 '{"Name":"default","Driver":"docker","Nodes":[{"Platforms":["linux/amd64"]}]}\n')
+_BUILDER_AMD64_ONLY = ('{"Name":"simplon","Driver":"docker-container","Nodes":[{"Name":"simplon0",'
+                       '"Platforms":["linux/amd64","linux/amd64/v2","linux/386"]}]}\n')
+
+#: The index buildx pushed to a local registry:2 on 2026-10-10, trimmed to the fields that are read:
+#: two platform manifests and the two attestation manifests buildx adds with `unknown/unknown`.
+_INDEX_BOTH = """{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json", "manifests": [
+ {"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": "sha256:4e89", "platform": {"architecture": "amd64", "os": "linux"}},
+ {"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": "sha256:f674", "platform": {"architecture": "arm64", "os": "linux"}},
+ {"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": "sha256:7d37", "platform": {"architecture": "unknown", "os": "unknown"},
+  "annotations": {"vnd.docker.reference.type": "attestation-manifest"}},
+ {"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": "sha256:35fc", "platform": {"architecture": "unknown", "os": "unknown"},
+  "annotations": {"vnd.docker.reference.type": "attestation-manifest"}}]}"""
+_INDEX_AMD64_ONLY = """{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json", "manifests": [
+ {"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": "sha256:4e89", "platform": {"architecture": "amd64", "os": "linux"}}]}"""
+_SINGLE_MANIFEST = """{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
+ "config": {"mediaType": "application/vnd.oci.image.config.v1+json", "digest": "sha256:aa"}, "layers": []}"""
+
+
+@pytest.fixture
+def _multi(_product):
+    """The fixture manifest with three more images: a dependency with a constant tag, a two-platform image
+    built FROM it, and a single-platform image built FROM it."""
+    (_product / "demo.yaml").write_text(_MANIFEST.replace("groups: {}", _MULTI.lstrip("\n") + "groups: {}"),
+                                        encoding="utf-8")
+    (_product / "docker" / "base.Dockerfile").write_text("FROM busybox:1.36\n", encoding="utf-8")
+    return _product
+
+
+#: The manifest digests bake reports per loaded platform - the same two the index fixtures carry, which is
+#: what a warm push measured: the published children ARE the loaded images.
+_LOADED = {"linux/amd64": "sha256:4e89", "linux/arm64": "sha256:f674"}
+
+
+def _bake_reports(digests):
+    """A bake that writes its `--metadata-file` the way buildx v0.38.0 does for `type=docker` targets."""
+    def effect(argv):
+        if "--metadata-file" not in argv:
+            return
+        targets = argv[argv.index("--metadata-file") + 2:]
+        document = {target: {"containerimage.digest": digests[platform]}
+                    for target in targets for platform in digests
+                    if target == image.platform_target("multi", platform)}
+        Path(argv[argv.index("--metadata-file") + 1]).write_text(json.dumps(document), encoding="utf-8")
+    return effect
+
+
+def _fake(monkeypatch, *, verdict=None, outputs=None, loaded=None) -> _Cli:
+    fake = _Cli(verdict=verdict, outputs={("docker", "buildx", "ls"): _BUILDER_BOTH,
+                                          ("docker", "version"): "linux/amd64",
+                                          **(outputs or {})},
+                effects={("docker", "buildx", "bake"): _bake_reports(loaded or _LOADED)})
+    monkeypatch.setattr(image, "run", fake.run)
+    monkeypatch.setattr(image, "stream", fake.stream)
+    return fake
+
+
+@pytest.fixture
+def _recorded(_multi):
+    """What a full `build image` of `multi:1.0` records, so a release test is about the release."""
+    record = _multi / "build" / "docker" / "built-multi.json"
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text(json.dumps({"reference": "ghcr.io/owner/demo-multi:1.0", "platforms": _LOADED}),
+                      encoding="utf-8")
+    return record
+
+
+def _body(**extra) -> dict:
+    return {"registry": "ghcr.io/owner", "repository": "demo-app", "dockerfile": "Dockerfile",
+            "context": ".", **extra}
+
+
+# --- the declaration --------------------------------------------------------------------------------
+
+def test_a_declared_platform_list_is_carried_in_order():
+    # arrange
+    data = {"images": {"app": _body(platforms=["linux/amd64", "linux/arm64"])}}
+
+    # act
+    cfg = image.declared(data, "app")
+
+    # assert
+    assert cfg.platforms == ("linux/amd64", "linux/arm64")
+
+
+def test_an_image_without_platforms_declares_none():
+    # arrange
+    data = {"images": {"app": _body()}}
+
+    # act
+    cfg = image.declared(data, "app")
+
+    # assert
+    assert (cfg.platforms, cfg.contexts) == ((), ())
+
+
+@pytest.mark.parametrize("platforms,fragment", [
+    ("linux/amd64", "'platforms' must be a list of platforms"),
+    (["amd64"], "is not '<os>/<arch>[/<variant>]'"),
+    (["linux/arm/v7/extra"], "is not '<os>/<arch>[/<variant>]'"),
+    ([7], "is not '<os>/<arch>[/<variant>]'"),
+])
+def test_a_platform_list_that_buildx_would_refuse_is_refused_at_the_declaration(platforms, fragment):
+    # arrange
+    data = {"images": {"app": _body(platforms=platforms)}}
+
+    # act
+    raised = pytest.raises(ValueError, match=re.escape(fragment))
+
+    # assert
+    with raised:
+        image.declared(data, "app")
+
+
+@pytest.mark.parametrize("platforms,expected", [
+    ([], ()),
+    (["linux/amd64", "linux/arm64", "linux/amd64"], ("linux/amd64", "linux/arm64")),
+])
+def test_a_restated_or_empty_platform_list_builds_rather_than_being_refused(platforms, expected):
+    """Neither is broken: an empty list says what no key says, a repeated platform says it twice. Refusing
+    either would forbid a manifest that builds, which is an expression rule nothing measured asks for."""
+    # arrange
+    data = {"images": {"app": _body(platforms=platforms)}}
+
+    # act
+    cfg = image.declared(data, "app")
+
+    # assert
+    assert cfg.platforms == expected
+
+
+def test_a_context_listed_twice_is_one_context():
+    # arrange
+    data = {"images": {"app": _body(contexts=["base", "base"]), "base": _body(tag="1")}}
+
+    # act
+    cfg = image.declared(data, "app")
+
+    # assert
+    assert [name for name, _ in cfg.contexts] == ["base"]
+
+
+def test_a_context_without_a_constant_tag_is_named_by_the_version_it_would_be_built_under():
+    """A Dockerfile can name such a dependency with a global `ARG VERSION` before its FROM, and the kernel
+    passes VERSION to both - so the context is named the way the dependency's own build would tag it."""
+    # arrange
+    data = {"images": {"app": _body(contexts=["base"]), "base": _body(repository="demo-base")}}
+    cfg = image.declared(data, "app")
+
+    # act
+    name = image.context_name(cfg.contexts[0][1], "v1.2.3")
+
+    # assert
+    assert name == "ghcr.io/owner/demo-base:v1.2.3"
+
+
+def test_a_context_names_a_declared_image_and_carries_it_whole():
+    # arrange
+    data = {"images": {"app": _body(platforms=["linux/amd64"], contexts=["base"]),
+                       "base": _body(repository="demo-base", dockerfile="base.Dockerfile", tag="25")}}
+
+    # act
+    cfg = image.declared(data, "app")
+
+    # assert: the name a Dockerfile's FROM uses is the dependency's OWN reference, derived, not retyped
+    assert [name for name, _ in cfg.contexts] == ["base"]
+    assert image.context_name(cfg.contexts[0][1]) == "ghcr.io/owner/demo-base:25"
+
+
+@pytest.mark.parametrize("images,fragment", [
+    ({"app": _body(contexts="base"), "base": _body(tag="1")}, "'contexts' must be a list of image names"),
+    ({"app": _body(contexts=["nope"]), "base": _body(tag="1")}, "context 'nope' is not an image in the"),
+    ({"app": _body(contexts=["app"], tag="1")}, "contexts form a cycle: app -> app"),
+    ({"app": _body(contexts=["base"]), "base": _body(contexts=["app"], tag="1")},
+     "contexts form a cycle: app -> base -> app"),
+    ({"my.app": _body(platforms=["linux/amd64"])}, "cannot name a buildx bake target"),
+    ({"app": _body(contexts=["my.base"]), "my.base": _body(tag="1")}, "cannot name a buildx bake target"),
+])
+def test_a_context_that_cannot_be_supplied_is_refused_by_name(images, fragment):
+    # arrange
+    data = {"images": images}
+    name = next(iter(images))
+
+    # act
+    raised = pytest.raises(ValueError, match=fragment)
+
+    # assert
+    with raised:
+        image.declared(data, name)
+
+
+def test_a_broken_dependency_is_refused_as_itself_and_not_as_its_dependent():
+    # arrange: the dependency is missing a required key
+    data = {"images": {"app": _body(contexts=["base"]),
+                       "base": {"registry": "ghcr.io/owner", "dockerfile": "D", "context": ".", "tag": "1"}}}
+
+    # act
+    raised = pytest.raises(ValueError, match=r"'images\.base': 'repository' is required")
+
+    # assert
+    with raised:
+        image.declared(data, "app")
+
+
+# --- build: unchanged without `platforms:` ----------------------------------------------------------
+
+def test_an_image_without_platforms_builds_with_exactly_the_argv_it_had_before(cli, _no_provenance,
+                                                                                _product):
+    """si#347's third acceptance line, held as a literal: the whole argv, not a few members of it."""
+    # arrange / act
+    rc = image.build(name="worker")
+
+    # assert
+    assert rc == 0
+    assert cli.argv_starting("docker", "build") == [[
+        "docker", "build", "--file", str(_product / "docker/worker.Dockerfile"),
+        "--tag", "ghcr.io/owner/demo-worker:latest",
+        "--build-arg", "PYTHON_VERSION=3.12", "--build-arg", "SLIM=true",
+        str(_product / "services/worker")]]
+    assert cli.argv_starting("docker", "buildx") == []
+
+
+def test_a_release_without_platforms_pushes_and_probes_exactly_as_before(cli, logins):
+    # arrange / act
+    rc = image.release(name="worker")
+
+    # assert
+    assert rc == 0
+    assert cli.argv_starting("docker", "push") == [["docker", "push", "ghcr.io/owner/demo-worker:latest"]]
+    assert cli.argv_starting("oras") == [["oras", "manifest", "fetch", "--descriptor",
+                                          "ghcr.io/owner/demo-worker:latest"]]
+    assert cli.argv_starting("docker", "buildx") == []
+
+
+def test_a_single_platform_image_built_from_another_needs_that_one_built_first(monkeypatch, _no_provenance,
+                                                                               _multi, capsys):
+    """Without `platforms:` the build is the plain `docker build` it always was, and that resolves FROM in
+    the daemon - so the dependency has to be there, and saying so beats docker's pull from a registry that
+    never had it."""
+    # arrange
+    fake = _fake(monkeypatch, verdict={("docker", "image", "inspect", "ghcr.io/owner/demo-base:25"): 1})
+
+    # act
+    rc = image.build(name="single-on-base", tag="1.0")
+
+    # assert
+    assert rc == 1
+    assert fake.argv_starting("docker", "build") == []
+    err = capsys.readouterr().err
+    assert "ghcr.io/owner/demo-base:25" in err and "build:image" in err and "name: base" in err
+
+
+def test_a_single_platform_image_whose_dependency_is_built_keeps_the_plain_argv(monkeypatch,
+                                                                                _no_provenance, _multi):
+    # arrange
+    fake = _fake(monkeypatch)
+
+    # act
+    rc = image.build(name="single-on-base", tag="1.0")
+
+    # assert
+    assert rc == 0
+    assert fake.argv_starting("docker", "build") == [[
+        "docker", "build", "--file", str(_multi / "Dockerfile"), "--tag", "ghcr.io/owner/demo-single:1.0",
+        str(_multi)]]
+
+
+# --- build: with `platforms:` -----------------------------------------------------------------------
+
+def test_a_multi_platform_build_bakes_one_target_per_platform_and_never_runs_docker_build(
+        monkeypatch, _no_provenance, _multi):
+    # arrange
+    fake = _fake(monkeypatch)
+
+    # act
+    rc = image.build(name="multi", tag="1.0")
+
+    # assert
+    assert rc == 0
+    assert fake.argv_starting("docker", "build") == []
+    bake = fake.argv_starting("docker", "buildx", "bake")
+    assert bake == [["docker", "buildx", "bake", "--builder", "simplon", "--file",
+                     str(_multi / "build" / "docker" / "bake-multi.json"),
+                     "--metadata-file", str(_multi / "build" / "docker" / "bake-multi.metadata.json"),
+                     "multi__linux_amd64", "multi__linux_arm64"]]
+
+
+def test_the_bake_file_supplies_the_dependency_per_platform_and_pushes_only_the_image(monkeypatch,
+                                                                                      _multi):
+    """The dependency is a TARGET of the same bake, built for the dependent's platforms; it carries no tag
+    and no output, so nothing ever publishes it - firn's toolchain is never pushed."""
+    # arrange
+    monkeypatch.setattr(image, "provenance", lambda root: {"VERSION": "v1", "REVISION": "abc"})
+    _fake(monkeypatch)
+
+    # act
+    image.build(name="multi", tag="1.0")
+
+    # assert
+    bake = json.loads((_multi / "build" / "docker" / "bake-multi.json").read_text(encoding="utf-8"))
+    targets = bake["target"]
+    assert targets["base"] == {"context": str(_multi), "dockerfile": str(_multi / "docker/base.Dockerfile"),
+                               "platforms": ["linux/amd64", "linux/arm64"],
+                               "args": {"VERSION": "v1", "REVISION": "abc"}}
+    assert targets["multi"]["platforms"] == ["linux/amd64", "linux/arm64"]
+    assert targets["multi"]["tags"] == ["ghcr.io/owner/demo-multi:1.0"]
+    assert targets["multi"]["output"] == ["type=registry"]
+    assert targets["multi"]["contexts"] == {"ghcr.io/owner/demo-base:25": "target:base"}
+    assert targets["multi__linux_arm64"]["platforms"] == ["linux/arm64"]
+    assert targets["multi__linux_arm64"]["output"] == [
+        "type=docker,name=ghcr.io/owner/demo-multi:1.0-linux-arm64"]
+    assert "tags" not in targets["multi__linux_arm64"]
+    assert targets["multi__linux_arm64"]["contexts"] == {"ghcr.io/owner/demo-base:25": "target:base"}
+
+
+def test_the_hosts_own_platform_is_also_tagged_under_the_plain_reference(monkeypatch, _no_provenance,
+                                                                         _multi):
+    """So every command that runs the image by its reference - firn's system level does - keeps working
+    on the host that built it."""
+    # arrange
+    fake = _fake(monkeypatch)
+
+    # act
+    image.build(name="multi", tag="1.0")
+
+    # assert
+    assert fake.argv_starting("docker", "tag") == [["docker", "tag", "ghcr.io/owner/demo-multi:1.0-linux-amd64",
+                                                    "ghcr.io/owner/demo-multi:1.0"]]
+
+
+def test_a_host_whose_platform_is_not_declared_tags_nothing_under_the_plain_reference(monkeypatch,
+                                                                                    _no_provenance, _multi):
+    # arrange
+    fake = _fake(monkeypatch, outputs={("docker", "version"): "linux/riscv64"})
+
+    # act
+    rc = image.build(name="multi", tag="1.0")
+
+    # assert
+    assert rc == 0
+    assert fake.argv_starting("docker", "tag") == []
+
+
+def test_a_missing_buildx_is_refused_naming_where_it_comes_from(monkeypatch, _no_provenance, _multi, capsys):
+    """The static CLI `simplon.docker` bootstraps carries no plugins, so this is reachable on exactly the
+    hosts that bootstrap exists for."""
+    # arrange
+    fake = _fake(monkeypatch, verdict={("docker", "buildx", "version"): 1})
+
+    # act
+    rc = image.build(name="multi", tag="1.0")
+
+    # assert
+    assert rc == 1
+    assert fake.argv_starting("docker", "buildx", "bake") == []
+    err = capsys.readouterr().err
+    assert "docker-buildx-plugin" in err and "docker/setup-buildx-action" in err
+
+
+def test_a_builder_that_is_not_there_is_created_with_the_container_driver(monkeypatch, _no_provenance,
+                                                                          _multi):
+    # arrange
+    fake = _fake(monkeypatch, verdict={("docker", "buildx", "inspect"): 1})
+
+    # act
+    image.build(name="multi", tag="1.0")
+
+    # assert
+    assert fake.argv_starting("docker", "buildx", "create") == [[
+        "docker", "buildx", "create", "--name", "simplon", "--driver", "docker-container",
+        "--driver-opt", "network=host", "--bootstrap"]]
+
+
+def test_a_builder_that_is_there_is_used_as_it_is(monkeypatch, _no_provenance, _multi):
+    # arrange
+    fake = _fake(monkeypatch)
+
+    # act
+    image.build(name="multi", tag="1.0")
+
+    # assert
+    assert fake.argv_starting("docker", "buildx", "create") == []
+    assert fake.argv_starting("docker", "buildx", "use") == []
+
+
+def test_a_builder_that_cannot_be_created_is_red_before_anything_is_built(monkeypatch, _no_provenance,
+                                                                          _multi, capsys):
+    # arrange
+    fake = _fake(monkeypatch, verdict={("docker", "buildx", "inspect"): 1, ("docker", "buildx", "create"): 1})
+
+    # act
+    rc = image.build(name="multi", tag="1.0")
+
+    # assert
+    assert rc == 1
+    assert fake.argv_starting("docker", "buildx", "bake") == []
+    assert "docker buildx create" in capsys.readouterr().err
+
+
+def test_a_platform_the_builder_cannot_run_is_warned_about_with_the_command_that_registers_it(
+        monkeypatch, _no_provenance, _multi, capsys):
+    """The decision on emulation: WARN and build, never register and never refuse. A Dockerfile that
+    cross-compiles with `--platform=$BUILDPLATFORM` needs no emulator, so a refusal would forbid a working
+    product; registering one is a privileged, host-wide act on a shared runner."""
+    # arrange
+    fake = _fake(monkeypatch, outputs={("docker", "buildx", "ls"): _BUILDER_AMD64_ONLY})
+
+    # act
+    rc = image.build(name="multi", tag="1.0")
+
+    # assert
+    assert rc == 0
+    assert fake.argv_starting("docker", "buildx", "bake")
+    assert fake.argv_starting("docker", "run") == []          # nothing registered on the host's behalf
+    out = capsys.readouterr()
+    said = out.out + out.err
+    assert "linux/arm64" in said
+    assert "docker run --privileged --rm tonistiigi/binfmt:qemu-v10.2.3 --install arm64" in said
+
+
+def test_a_failed_bake_names_the_emulation_command_when_a_platform_was_not_runnable(monkeypatch,
+                                                                                 _no_provenance, _multi,
+                                                                                 capsys):
+    # arrange
+    _fake(monkeypatch, verdict={("docker", "buildx", "bake"): 1},
+          outputs={("docker", "buildx", "ls"): _BUILDER_AMD64_ONLY})
+
+    # act
+    rc = image.build(name="multi", tag="1.0")
+
+    # assert
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "exec format error" in err and "--install arm64" in err
+
+
+def test_a_failed_bake_says_nothing_about_emulation_when_every_platform_was_runnable(monkeypatch,
+                                                                                  _no_provenance, _multi,
+                                                                                  capsys):
+    # arrange
+    _fake(monkeypatch, verdict={("docker", "buildx", "bake"): 1})
+
+    # act
+    rc = image.build(name="multi", tag="1.0")
+
+    # assert
+    assert rc == 1
+    assert "binfmt" not in capsys.readouterr().err
+
+
+def test_a_bake_that_exits_zero_without_loading_a_platform_is_red(monkeypatch, _no_provenance, _multi,
+                                                                  capsys):
+    # arrange: the arm64 image never reached the daemon
+    _fake(monkeypatch, verdict={("docker", "image", "inspect", "ghcr.io/owner/demo-multi:1.0-linux-arm64"): 1})
+
+    # act
+    rc = image.build(name="multi", tag="1.0")
+
+    # assert
+    assert rc == 1
+    assert "ghcr.io/owner/demo-multi:1.0-linux-arm64" in capsys.readouterr().err
+
+
+def test_a_multi_platform_build_checks_the_dependencys_paths_too(monkeypatch, _no_provenance, _multi,
+                                                                capsys):
+    # arrange
+    (_multi / "docker" / "base.Dockerfile").unlink()
+    fake = _fake(monkeypatch)
+
+    # act
+    rc = image.build(name="multi", tag="1.0")
+
+    # assert
+    assert rc == 1
+    assert fake.argv_starting("docker", "buildx", "bake") == []
+    assert "dockerfile: docker/base.Dockerfile" in capsys.readouterr().err
+
+
+def test_a_multi_platform_build_records_every_platform_it_loaded(monkeypatch, _no_provenance, _multi):
+    # arrange
+    _fake(monkeypatch)
+
+    # act
+    image.build(name="multi", tag="1.0")
+
+    # assert
+    record = (_multi / "build" / "docker" / "image.txt").read_text(encoding="utf-8")
+    assert "reference: ghcr.io/owner/demo-multi:1.0" in record
+    assert "linux/amd64: ghcr.io/owner/demo-multi:1.0-linux-amd64" in record
+    assert "linux/arm64: ghcr.io/owner/demo-multi:1.0-linux-arm64" in record
+
+
+# --- release: one manifest list, read back per platform -----------------------------------------------
+
+@pytest.mark.parametrize("text,expected", [
+    (_INDEX_BOTH, {"linux/amd64", "linux/arm64"}),
+    (_INDEX_AMD64_ONLY, {"linux/amd64"}),
+    ('{"mediaType": "application/vnd.docker.distribution.manifest.list.v2+json", "manifests": ['
+     '{"platform": {"os": "linux", "architecture": "arm", "variant": "v7"}}]}', {"linux/arm/v7"}),
+    (_SINGLE_MANIFEST, None),
+    ("not json", None),
+    ("", None),
+    ('{"manifests": "nope"}', None),
+])
+def test_the_platforms_an_index_carries_are_read_and_attestations_are_not_platforms(text, expected):
+    # arrange / act
+    found = image.index_platforms(text)
+
+    # assert
+    assert found == expected
+
+
+@pytest.mark.parametrize("declared,found,missing", [
+    (("linux/amd64", "linux/arm64"), {"linux/amd64", "linux/arm64"}, []),
+    (("linux/amd64", "linux/arm64"), {"linux/amd64"}, ["linux/arm64"]),
+    (("linux/arm64",), {"linux/arm64/v8"}, []),
+    (("linux/arm/v7",), {"linux/arm/v6"}, ["linux/arm/v7"]),
+])
+def test_a_declared_platform_is_matched_with_or_without_the_variant_the_registry_adds(declared, found,
+                                                                                      missing):
+    # arrange / act
+    result = image.missing_platforms(declared, found)
+
+    # assert
+    assert result == missing
+
+
+def test_a_multi_platform_release_bakes_the_push_and_reads_back_the_index(monkeypatch, logins,
+                                                                          _no_provenance, _recorded, _multi):
+    # arrange
+    fake = _fake(monkeypatch, outputs={("oras", "manifest", "fetch"): _INDEX_BOTH})
+
+    # act
+    rc = image.release(name="multi", tag="1.0")
+
+    # assert
+    assert rc == 0
+    assert logins == ["ghcr.io/owner"]
+    assert fake.argv_starting("docker", "push") == []
+    assert fake.argv_starting("docker", "buildx", "bake") == [[
+        "docker", "buildx", "bake", "--builder", "simplon", "--file",
+        str(_multi / "build" / "docker" / "bake-multi.json"), "multi"]]
+    assert fake.argv_starting("oras") == [["oras", "manifest", "fetch", "ghcr.io/owner/demo-multi:1.0"]]
+
+
+def test_a_pushed_index_missing_a_declared_platform_is_red_and_names_it(monkeypatch, logins,
+                                                                        _no_provenance, _recorded, capsys):
+    # arrange
+    _fake(monkeypatch, outputs={("oras", "manifest", "fetch"): _INDEX_AMD64_ONLY})
+
+    # act
+    rc = image.release(name="multi", tag="1.0")
+
+    # assert
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "linux/arm64" in err and "linux/amd64" in err
+
+
+def test_a_pushed_tag_that_is_a_single_manifest_is_not_a_multi_platform_publish(monkeypatch, logins,
+                                                                                _no_provenance, _recorded,
+                                                                                capsys):
+    # arrange
+    _fake(monkeypatch, outputs={("oras", "manifest", "fetch"): _SINGLE_MANIFEST})
+
+    # act
+    rc = image.release(name="multi", tag="1.0")
+
+    # assert
+    assert rc == 1
+    assert "not a manifest list" in capsys.readouterr().err
+
+
+def test_a_multi_platform_read_back_that_cannot_be_asked_is_red(monkeypatch, logins, _no_provenance, _recorded,
+                                                                capsys):
+    # arrange
+    _fake(monkeypatch, verdict={("oras", "manifest", "fetch"): 1})
+
+    # act
+    rc = image.release(name="multi", tag="1.0")
+
+    # assert
+    assert rc == 1
+    assert "could not be asked" in capsys.readouterr().err
+
+
+def test_a_multi_platform_release_needs_every_platform_built_first(monkeypatch, logins, _no_provenance,
+                                                                   _multi, capsys):
+    # arrange
+    fake = _fake(monkeypatch, verdict={("docker", "image", "inspect", "ghcr.io/owner/demo-multi:1.0-linux-arm64"): 1})
+
+    # act
+    rc = image.release(name="multi", tag="1.0")
+
+    # assert
+    assert rc == 1
+    assert logins == [] and fake.argv_starting("docker", "buildx", "bake") == []
+    err = capsys.readouterr().err
+    assert "linux/arm64" in err and "`build image` WITHOUT `platform:`" in err
+
+
+def test_a_failed_multi_platform_push_hands_back_its_rc_and_reads_nothing_back(monkeypatch, logins,
+                                                                              _no_provenance, _recorded):
+    # arrange
+    fake = _fake(monkeypatch, verdict={("docker", "buildx", "bake"): 3})
+
+    # act
+    rc = image.release(name="multi", tag="1.0")
+
+    # assert
+    assert rc == 3
+    assert fake.argv_starting("oras") == []
+
+
+def test_a_multi_platform_release_puts_no_credential_on_any_argv(monkeypatch, logins, _no_provenance,
+                                                                 _recorded):
+    # arrange
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_secret_value")
+    fake = _fake(monkeypatch, outputs={("oras", "manifest", "fetch"): _INDEX_BOTH})
+
+    # act
+    image.release(name="multi", tag="1.0")
+
+    # assert
+    assert not any("ghp_secret_value" in " ".join(call) for call in fake.calls)
+
+
+# --- smoke: every platform has started once -----------------------------------------------------------
+
+def test_a_multi_platform_smoke_runs_every_declared_platform_under_its_own_platform(monkeypatch,
+                                                                                   _no_provenance, _multi):
+    # arrange
+    fake = _fake(monkeypatch)
+
+    # act
+    rc = image.smoke("multi", tag="1.0", argv="--version", user=False)
+
+    # assert
+    assert rc == 0
+    assert fake.argv_starting("docker", "run") == [
+        ["docker", "run", "--rm", "--platform", "linux/amd64", "ghcr.io/owner/demo-multi:1.0-linux-amd64",
+         "--version"],
+        ["docker", "run", "--rm", "--platform", "linux/arm64", "ghcr.io/owner/demo-multi:1.0-linux-arm64",
+         "--version"]]
+
+
+def test_a_smoke_pinned_to_one_platform_runs_only_that_one(monkeypatch, _no_provenance, _multi):
+    # arrange
+    fake = _fake(monkeypatch)
+
+    # act
+    rc = image.smoke("multi", tag="1.0", argv="--version", user=False, platform="linux/arm64")
+
+    # assert
+    assert rc == 0
+    assert [call[4] for call in fake.argv_starting("docker", "run")] == ["linux/arm64"]
+
+
+def test_a_smoke_pinned_to_an_undeclared_platform_is_refused(monkeypatch, _no_provenance, _multi, capsys):
+    # arrange
+    fake = _fake(monkeypatch)
+
+    # act
+    rc = image.smoke("multi", tag="1.0", platform="linux/s390x")
+
+    # assert
+    assert rc == 1
+    assert fake.argv_starting("docker", "run") == []
+    assert "linux/amd64, linux/arm64" in capsys.readouterr().err
+
+
+def test_a_smoke_pinned_to_a_platform_on_a_single_platform_image_is_refused(cli, _no_provenance, _product,
+                                                                           _tagged, monkeypatch, capsys):
+    # arrange
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+
+    # act
+    rc = image.smoke("app", platform="linux/arm64")
+
+    # assert
+    assert rc == 1
+    assert cli.argv_starting("docker", "run") == []
+    assert "platforms:" in capsys.readouterr().err
+
+
+def test_a_multi_platform_smoke_reports_the_platform_that_failed(monkeypatch, _no_provenance, _multi,
+                                                                 capsys):
+    # arrange: arm64 exits 126, the shape of a missing emulator
+    fake = _fake(monkeypatch, verdict={("docker", "run", "--rm", "--platform", "linux/arm64"): 126})
+
+    # act
+    rc = image.smoke("multi", tag="1.0", user=False)
+
+    # assert: both ran - one platform's failure does not hide whether the other started
+    assert rc == 126
+    assert len(fake.argv_starting("docker", "run")) == 2
+    assert "ghcr.io/owner/demo-multi:1.0-linux-arm64 exited 126" in capsys.readouterr().err
+
+
+def test_a_multi_platform_smoke_refuses_a_platform_the_daemon_does_not_hold(monkeypatch, _no_provenance,
+                                                                            _multi, capsys):
+    # arrange
+    fake = _fake(monkeypatch, verdict={("docker", "image", "inspect", "ghcr.io/owner/demo-multi:1.0-linux-arm64"): 1})
+
+    # act
+    rc = image.smoke("multi", tag="1.0", user=False)
+
+    # assert
+    assert rc == 1
+    assert fake.argv_starting("docker", "run") == []
+    assert "build image" in capsys.readouterr().err
+
+
+# --- fix round 1: one platform on demand, the push held against the build, the builder race -------------
+
+def test_a_build_pinned_to_one_platform_bakes_only_that_platform(monkeypatch, _no_provenance, _multi):
+    """The everyday build: firn's CI and devcontainer pin `platform: linux/amd64`, so adopting `platforms:`
+    does not turn every `build image` into an emulated arm64 native-image compile."""
+    # arrange
+    fake = _fake(monkeypatch)
+
+    # act
+    rc = image.build(name="multi", tag="1.0", platform="linux/amd64")
+
+    # assert
+    assert rc == 0
+    assert fake.argv_starting("docker", "buildx", "bake")[0][-1:] == ["multi__linux_amd64"]
+    assert fake.argv_starting("docker", "tag") == [["docker", "tag", "ghcr.io/owner/demo-multi:1.0-linux-amd64",
+                                                    "ghcr.io/owner/demo-multi:1.0"]]
+    inspected = [call[-1] for call in fake.argv_starting("docker", "image", "inspect") if len(call) == 4]
+    assert "ghcr.io/owner/demo-multi:1.0-linux-arm64" not in inspected
+
+
+def test_a_build_pinned_to_a_platform_that_is_not_the_hosts_tags_nothing_plain(monkeypatch, _no_provenance,
+                                                                             _multi):
+    # arrange
+    fake = _fake(monkeypatch)
+
+    # act
+    rc = image.build(name="multi", tag="1.0", platform="linux/arm64")
+
+    # assert
+    assert rc == 0
+    assert fake.argv_starting("docker", "buildx", "bake")[0][-1:] == ["multi__linux_arm64"]
+    assert fake.argv_starting("docker", "tag") == []
+
+
+def test_a_build_pinned_to_an_undeclared_platform_is_refused_naming_the_declared_ones(monkeypatch,
+                                                                                   _no_provenance, _multi,
+                                                                                   capsys):
+    # arrange
+    fake = _fake(monkeypatch)
+
+    # act
+    rc = image.build(name="multi", tag="1.0", platform="linux/s390x")
+
+    # assert
+    assert rc == 1
+    assert fake.argv_starting("docker", "buildx") == []
+    assert "linux/amd64, linux/arm64" in capsys.readouterr().err
+
+
+def test_a_build_pinned_to_a_platform_on_a_single_platform_image_is_refused(cli, _no_provenance, _product,
+                                                                           capsys):
+    # arrange / act
+    rc = image.build(name="app", tag="1.0", platform="linux/arm64")
+
+    # assert
+    assert rc == 1
+    assert cli.argv_starting("docker", "build") == []
+    assert "declares no `platforms:`" in capsys.readouterr().err
+
+
+def test_a_build_records_the_digest_bake_reported_for_each_platform(monkeypatch, _no_provenance, _multi):
+    # arrange
+    _fake(monkeypatch)
+
+    # act
+    image.build(name="multi", tag="1.0")
+
+    # assert
+    assert image.read_built("multi", "ghcr.io/owner/demo-multi:1.0") == _LOADED
+
+
+def test_a_one_platform_build_replaces_its_own_entry_and_keeps_the_others(monkeypatch, _no_provenance,
+                                                                         _recorded):
+    # arrange
+    _fake(monkeypatch, loaded={"linux/amd64": "sha256:new0", "linux/arm64": "sha256:f674"})
+
+    # act
+    image.build(name="multi", tag="1.0", platform="linux/amd64")
+
+    # assert
+    assert image.read_built("multi", "ghcr.io/owner/demo-multi:1.0") == {"linux/amd64": "sha256:new0",
+                                                                         "linux/arm64": "sha256:f674"}
+
+
+def test_a_record_about_another_reference_is_no_record(_recorded):
+    # arrange / act
+    found = image.read_built("multi", "ghcr.io/owner/demo-multi:2.0")
+
+    # assert
+    assert found == {}
+
+
+def test_bakes_metadata_is_read_per_platform_target():
+    # arrange
+    text = json.dumps({"multi__linux_amd64": {"containerimage.digest": "sha256:aa"},
+                       "multi__linux_arm64": {"buildx.build.ref": "x"}})
+
+    # act
+    digests = image.built_digests(text, "multi", ["linux/amd64", "linux/arm64"])
+
+    # assert
+    assert digests == {"linux/amd64": "sha256:aa"}
+
+
+def test_a_release_with_no_record_of_the_build_is_refused_before_anything_is_pushed(monkeypatch, logins,
+                                                                                   _no_provenance, _multi,
+                                                                                   capsys):
+    # arrange: the images are in the daemon, but nothing says what the build produced
+    fake = _fake(monkeypatch, outputs={("oras", "manifest", "fetch"): _INDEX_BOTH})
+
+    # act
+    rc = image.release(name="multi", tag="1.0")
+
+    # assert
+    assert rc == 1
+    assert fake.argv_starting("docker", "buildx", "bake") == []
+    assert "`build image` WITHOUT `platform:`" in capsys.readouterr().err
+
+
+def test_a_push_that_published_other_images_than_the_build_loaded_is_red_and_names_them(monkeypatch, logins,
+                                                                                     _no_provenance,
+                                                                                     _recorded, capsys):
+    """The cold-cache case: the push rebuilt arm64, so the registry serves an image `test:image` never ran."""
+    # arrange
+    rebuilt = _INDEX_BOTH.replace("sha256:f674", "sha256:cold")
+    _fake(monkeypatch, outputs={("oras", "manifest", "fetch"): rebuilt})
+
+    # act
+    rc = image.release(name="multi", tag="1.0")
+
+    # assert
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "linux/arm64: the registry holds sha256:cold, the build loaded sha256:f674" in err
+    assert "linux/amd64:" not in err
+
+
+@pytest.mark.parametrize("published,built,expected", [
+    ({"linux/amd64": "sha256:a", "linux/arm64": "sha256:b"}, {"linux/amd64": "sha256:a", "linux/arm64": "sha256:b"}, 0),
+    ({"linux/amd64": "sha256:a", "linux/arm64/v8": "sha256:b"}, {"linux/amd64": "sha256:a", "linux/arm64": "sha256:b"}, 0),
+    ({"linux/amd64": "sha256:a", "linux/arm64": "sha256:x"}, {"linux/amd64": "sha256:a", "linux/arm64": "sha256:b"}, 1),
+    ({"linux/amd64": "sha256:a"}, {"linux/amd64": "sha256:a", "linux/arm64": "sha256:b"}, 1),
+])
+def test_published_digests_are_held_against_the_built_ones_per_platform(published, built, expected):
+    # arrange / act
+    lines = image.digest_mismatches(("linux/amd64", "linux/arm64"), published, built)
+
+    # assert
+    assert len(lines) == expected
+
+
+def test_a_builder_created_meanwhile_by_another_run_is_used_rather_than_failing(monkeypatch, _no_provenance,
+                                                                              _multi):
+    """Two jobs on one daemon both find no builder; the one whose `create` loses sees it exist afterwards."""
+    # arrange: the first inspect finds nothing, the create loses the race, the second inspect finds it
+    fake = _fake(monkeypatch, verdict={("docker", "buildx", "create"): 1})
+    answers = iter([1, 0])
+    plain = fake.run
+
+    def run(argv, **kwargs):
+        if tuple(argv[:3]) == ("docker", "buildx", "inspect"):
+            fake.calls.append(list(argv))
+            return Result(rc=next(answers), out="", err="")
+        return plain(argv, **kwargs)
+    monkeypatch.setattr(image, "run", run)
+
+    # act
+    rc = image.build(name="multi", tag="1.0")
+
+    # assert
+    assert rc == 0
+    assert len(fake.argv_starting("docker", "buildx", "inspect")) == 2
+    assert fake.argv_starting("docker", "buildx", "bake")

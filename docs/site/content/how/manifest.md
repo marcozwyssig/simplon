@@ -323,7 +323,7 @@ published here and `tests/test_manifest_top_level.py` holds this table to the ke
 | `env_var:` | `support:environments` | the variable a product's env-first CLI publishes the active environment into |
 | `generated:` | `test:generated` | one entry per committed generated file: its `path:` and the `by:` command that produces it |
 | `environments:` | the environment selector | the environment matrix: name, backend, description |
-| `images:` | `build:image`, `release:image` | one entry per container image: registry, repository, Dockerfile, context |
+| `images:` | `build:image`, `release:image`, `test:image` | one entry per container image: registry, repository, Dockerfile, context, and optionally its platforms and the images it is built from |
 | `instance:` | the multi-tenant lab | the env var naming the lab instance, and the product's id-length budget |
 | `lab_egress:` | the lab egress helper | the host interface a lab reaches the outside through |
 | `layout:` | `build:toolchain`, `test:*`, `docs:acceptance` | where inside your tree a containerised command runs, and which directory holds the tests above the acceptance line |
@@ -457,6 +457,72 @@ that only ever existed on your machine.
 If `registry:` does not name `ghcr.io`, no GitHub token is minted for it. The push then uses whatever
 credential your own `docker login <host>` stored, and a rejection says so instead of pointing at
 `gh auth refresh`, which would mean nothing on someone else's registry.
+
+#### Several platforms, and an image built from another one
+
+Two optional keys turn one entry into a multi-platform image (si#347):
+
+```yaml
+images:
+  toolchain:                      # never published; only ever an input
+    registry: ghcr.io
+    repository: example/toolchain
+    dockerfile: deploy/builder/Dockerfile
+    context: .
+    tag: "25"
+  app:
+    registry: ghcr.io
+    repository: example/app
+    dockerfile: Dockerfile        # starts `FROM ghcr.io/example/toolchain:25 AS build`
+    context: .
+    platforms: [linux/amd64, linux/arm64]
+    contexts: [toolchain]
+```
+
+**`platforms:`** sends the build through `docker buildx bake` with a builder called `simplon` (created
+with the docker-container driver the first time, and never made your current builder). `build:image`
+loads each platform into the daemon under its own reference - `ghcr.io/example/app:1.0-linux-arm64` - and
+tags the host's own platform under the plain reference too, so anything that runs the image by name still
+does. `build:image` and `test:image` both take `platform:` to work on one declared platform only - pin
+`platform: linux/amd64` with `with:` on the commands a developer and CI run every day, so they stay one
+native build on a host with no emulator. `release:image` refuses until every declared platform has been
+built: run `build image` without `platform:` before it. It then pushes **one manifest list**, fetches the
+index from the registry and looks for every declared platform in it - a tag that resolves but lost a
+platform is red - and holds each platform's manifest digest against the one the build recorded. The push
+re-runs the bake; with the builder's cache warm that is an export of exactly the images the smoke ran,
+and if the cache was pruned in between it is a second build, which this check turns red instead of
+publishing images nothing ran. An entry without `platforms:` builds and pushes with exactly the argv it
+always had.
+
+**`contexts:`** names other entries of this section that the Dockerfile starts `FROM`. The name the
+`FROM` line uses is not typed again: it is the named image's own `registry/repository:tag` (its `tag:`,
+or the derived `VERSION` when it declares none), so the two cannot drift apart. With `platforms:`, the
+named image is built in the same bake, for the same platforms, with no tag and no output, so it is
+supplied per platform and never pushed anywhere. Without `platforms:`, the plain `docker build` resolves
+`FROM` in the daemon, so the named image has to be built first, and a build that would otherwise try to
+pull it is refused with the command that builds it.
+
+**Emulation is your host's business, and simplon says so rather than doing it.** Building arm64 on an
+x86_64 runner needs QEMU registered in the kernel - a privileged, host-wide change that lasts until
+reboot. simplon reads which platforms its builder can run, warns about any it cannot, and names the one
+command that registers them:
+
+```sh
+docker run --privileged --rm tonistiigi/binfmt:qemu-v10.2.3 --install arm64
+```
+
+That registration **lasts until the host reboots**. On a runner that should keep building arm64 after a
+restart, register the handlers persistently instead - the distribution's `qemu-user-static` (with
+`binfmt-support` or systemd-binfmt), which re-registers them at boot. After either, `docker buildx rm
+simplon` lets the builder be created again so it sees them.
+
+It does not refuse, because a Dockerfile that cross-compiles (`FROM --platform=$BUILDPLATFORM`) needs no
+emulator at all. buildx itself is required: the static docker CLI simplon can bootstrap carries no
+plugins, so install `docker-buildx-plugin`, or use `docker/setup-buildx-action` in a workflow.
+
+A **GitHub-hosted runner** is set up fresh for every job, so the generated workflow's job needs its own
+`docker/setup-qemu-action` (and `docker/setup-buildx-action`) step before `build image`; simplon generates
+neither.
 
 ### `releases:` - where the notes live, and from when they are complete
 

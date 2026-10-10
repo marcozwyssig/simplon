@@ -693,11 +693,24 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # --- tasks/image.py: the `images:` section (agile-cockpit declares one) ----------------------------
     ("image", "declared", "section is missing or is not a mapping - declare the registry"): DIAGNOSIS,
     ("image", "declared", "no image '{name}' in the"): DIAGNOSIS,
-    ("image", "declared", "image '{name}' is not a mapping"): DIAGNOSIS,
+    ("image", "declared_image", "image '{name}' is not a mapping"): DIAGNOSIS,
     ("image", "_str", "is required"): DIAGNOSIS,
     ("image", "_str", "must be a non-empty string"): DIAGNOSIS,
     ("image", "_build_args", "'build_args' must be a mapping of name to value"): DIAGNOSIS,
     ("image", "_build_args", "must be a scalar, not"): DIAGNOSIS,
+    # si#347, firn's two-platform image. Every one of these is a declaration buildx could not carry out:
+    # a platform string it refuses, a name it cannot use for a bake target, a context nothing declares or
+    # that leads back to itself. Three more were written and DELETED instead of entered here, by the
+    # "would deleting be cheaper than guarding" question: an empty `platforms:` list and a platform or
+    # context listed twice build a working image, so they are read (as absent, and once) rather than
+    # refused; and "a context needs a constant `tag:`" became a derivation - the context is named under
+    # the tag its own build would use, so a Dockerfile with `ARG VERSION` before FROM is not forbidden.
+    ("image", "_platforms", "'platforms' must be a list of platforms"): DIAGNOSIS,
+    ("image", "_platforms", "is not '<os>/<arch>[/<variant>]'"): DIAGNOSIS,
+    ("image", "_bake_name", "cannot name a buildx bake target"): DIAGNOSIS,
+    ("image", "_contexts", "'contexts' must be a list of image names"): DIAGNOSIS,
+    ("image", "_contexts", "contexts form a cycle"): DIAGNOSIS,
+    ("image", "_contexts", "is not an image in the '{SECTION}:' section"): DIAGNOSIS,
 
     # --- tasks/site.py: the `site:` section (three products declare one) ------------------------------
     ("site", "declared", "section is missing or is not a mapping - declare the pinned hugo image"):

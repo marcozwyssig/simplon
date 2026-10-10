@@ -485,14 +485,16 @@ tasks:
       expect: { help: "text the output must contain for the run to count as green" }
       rc:     { help: "the exit code to expect (default 0); `rc: 2` means exactly 2, and 0 is then red" }
       user:   { help: "run as the invoking uid:gid (default true), so bind-mounted output is owned" }
+      platform: { help: "one of the image's declared `platforms:` to run; default every declared one" }
 
   build:image:
     impl: simplon.tasks.image:build
-    help: "Build the product's container image from its declared Dockerfile, with VERSION/REVISION."
+    help: "Build the product's container image from its declared Dockerfile, with VERSION/REVISION, for every declared platform."
     unattended: true
     params:
       name: { help: "the image to build (normally pinned per command with `with:`)" }
       tag:  { help: "the tag to build under, for a version only known after a build" }
+      platform: { help: "one of the image's declared `platforms:` to build; default every declared one" }
 
   # The product's OWN build files, written from its source tree (si#102). The second half of si#95:
   # `toolchain:run` runs a pinned compiler over a product tree, and these two produce the files that
@@ -674,7 +676,7 @@ tasks:
       tag:  { help: "the version to publish, for one only known after a build" }
   release:image:
     impl: simplon.tasks.image:release
-    help: "Push the product's container image and verify the tag is in the registry."
+    help: "Push the product's container image and verify the tag, and every declared platform, is in the registry."
     unattended: true
     params:
       name: { help: "the image to publish (normally pinned per command with `with:`)" }
