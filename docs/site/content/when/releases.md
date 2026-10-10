@@ -25,9 +25,31 @@ it is the one section held only to existing.
 
 ## 0.25.0
 
-**What a product has to do:** delete `task:` from any `artifacts:` entry that `release:maven` reads. The key is
+**What a product has to do:** nothing for multi-platform images - it is opt-in. Delete `task:` from any `artifacts:` entry that `release:maven` reads. The key is
 now refused by name. Measured on si#337 over all eight reachable manifests: none declares it, so for every
 known product the answer is "nothing".
+
+### One image, several platforms, one manifest list read back per platform (si#347)
+
+Requested by firn, which needs `ghcr.io/marcozwyssig/firn` for linux/amd64 **and** linux/arm64 from its
+generated release workflow (firn#945); firn's own session built it. An `images:` entry may now declare
+`platforms: [linux/amd64, linux/arm64]`. The image is then built through `docker buildx bake` on a builder named
+`simplon`, which is created on first use and never made the current one, and `release:image` pushes **one
+manifest list**. The read-back checks every declared platform in the pushed index, not only that the tag
+exists. It also compares each platform's published digest with the one the build recorded, so a rebuild
+between the smoke check and the push turns red instead of publishing an image nothing ran.
+
+**`contexts:`** lets an image start `FROM` another declared image - firn's image is built on its never-published
+toolchain image. The name the `FROM` line uses is derived from that entry's own registry, repository and tag,
+so the two cannot drift, and with `platforms:` the dependency is built for the same platforms in the same bake.
+**`platform:`** on `build:image` and `test:image` narrows a run to one declared platform, so everyday builds
+stay native.
+
+**An entry without `platforms:` builds and pushes with exactly the argv it did before**, and two literal tests
+hold that, so no existing product changes. Emulation is warned about and never registered: a missing QEMU is
+named with the one pinned `tonistiigi/binfmt` command, repeated if a build fails. Whether to refuse before the
+build instead is open as si#353, together with the reason not to: a Dockerfile that cross-compiles with
+`FROM --platform=$BUILDPLATFORM` needs no emulator at all.
 
 ### `release:maven` always publishes, and always reads back; `task:` is withdrawn (si#337, repairs si#334)
 
