@@ -30,7 +30,9 @@ written with `groups:`, so a product that upgrades without doing them does not s
 
 1. **Rewrite the manifest** with `simplon manifest migrate <product>.yaml`. It ships with this kernel and
    loads no manifest, so it works on one the kernel refuses:
-   - venv route: `deploy/orchestrator/.venv/bin/simplon manifest migrate <product>.yaml`
+   - venv route: `<orch-dir>/.venv/bin/simplon manifest migrate <product>.yaml`, where `<orch-dir>` is
+     the directory your `orchestrator:` block names - `deploy/orchestrator` by default, and for example
+     `deploy/provision/orchestrator` in firn. The refusal a not-yet-migrated manifest gets fills it in.
    - container route: `docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/src" -w /src
      ghcr.io/marcozwyssig/simplon:v0.28.0 simplon manifest migrate <product>.yaml`
 
