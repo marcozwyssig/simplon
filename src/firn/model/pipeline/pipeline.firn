@@ -1,0 +1,88 @@
+// simplon.pipeline (si#371): the first, checked slice of the metamodel firn sketched on si#346.
+//
+// What it says: a Task is a filter type with input and output Ports, each accepting an ArtifactKind; a
+// TaskCommand is a filter instance that runs one Task, OWNS what it produces and REFERENCES what it
+// consumes, so every artifact has exactly one producer by construction. A Group holds commands.
+//
+// What the sketch got wrong, measured by `firn check` on firn v0.1.0: every Association needs an
+// `objectCardinality`, which the sketch left out. Not yet modelled: AggregateCommand, Registry,
+// Environment, Site and the areas ci / cd / support. Those arrive with the M2 model (si#344 part D).
+package simplon.pipeline
+
+ArtifactKind typeOf firn.core.Class extends firn.core.NamedResource {
+  allowRoot = true
+  property refines typeOf firn.core.Association {
+    range = simplon.pipeline.ArtifactKind
+    subjectCardinality = 0..N
+    objectCardinality = 0..N
+  }
+}
+
+Port typeOf firn.core.Class extends firn.core.NamedResource {
+  property accepts typeOf firn.core.Association {
+    range = simplon.pipeline.ArtifactKind
+    subjectCardinality = 1..1
+    objectCardinality = 0..N
+  }
+}
+
+Task typeOf firn.core.Class extends firn.core.NamedResource {
+  allowRoot = true
+  property body typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property input typeOf firn.core.Composition {
+    range = simplon.pipeline.Port
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+  property output typeOf firn.core.Composition {
+    range = simplon.pipeline.Port
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+}
+
+Artifact typeOf firn.core.Class extends firn.core.NamedResource {
+  property path typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property kind typeOf firn.core.Association {
+    range = simplon.pipeline.ArtifactKind
+    subjectCardinality = 1..1
+    objectCardinality = 0..N
+  }
+}
+
+Command typeOf firn.core.Class extends firn.core.NamedResource {
+  modifier = firn.core.InheritanceModifier.Abstract
+}
+
+TaskCommand typeOf firn.core.Class extends simplon.pipeline.Command {
+  property task typeOf firn.core.Association {
+    range = simplon.pipeline.Task
+    subjectCardinality = 1..1
+    objectCardinality = 0..N
+  }
+  property consumes typeOf firn.core.Association {
+    range = simplon.pipeline.Artifact
+    subjectCardinality = 0..N
+    objectCardinality = 0..N
+  }
+  property produces typeOf firn.core.Composition {
+    range = simplon.pipeline.Artifact
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+}
+
+Group typeOf firn.core.Class extends firn.core.NamedResource {
+  allowRoot = true
+  property command typeOf firn.core.Composition {
+    range = simplon.pipeline.Command
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+}

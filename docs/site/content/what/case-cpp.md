@@ -127,8 +127,9 @@ here.
 
 `simplon.tasks.profiles` is a table, and that is a design decision rather than an implementation detail:
 the kernel learns no CMake and no MSBuild, it learns to run a pinned image over a product tree as the
-calling user. What it carries per language is argv and paths, nothing callable. There are four profiles -
-`cpp`, `java`, `dotnet` and `python` - and the C++ one carried four commands when this
+calling user. What it carries per language is argv and paths, nothing callable. There are five profiles -
+`cpp`, `java`, `dotnet` and `python`, and since si#371 `firn`, which checks and generates models
+rather than compiling a language - and the C++ one carried four commands when this
 chapter was measured:
 
 {{< callout type="info" >}}

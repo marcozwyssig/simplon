@@ -273,3 +273,52 @@ def test_no_home_given_leaves_the_argv_exactly_as_it_was(monkeypatch):
 
     # assert
     assert not any(str(item).startswith("HOME=") for item in line)
+
+
+def test_cwd_moves_the_working_directory_and_not_the_mount(monkeypatch):
+    # arrange: si#371 - firn reads `firn.toml` from its working directory and takes no project option, so
+    # a firn project under `src/firn/` needs the container to START there while the whole tree is mounted
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: [])
+    cfg = _cfg(workdir="/workspace", cwd="src/firn")
+
+    # act
+    line = toolchain.docker_argv(cfg, root=Path("/repo"), product="simplon", instance="", extra=[])
+
+    # assert
+    assert "/repo:/workspace" in line
+    assert line[line.index("-w") + 1] == "/workspace/src/firn"
+
+
+def test_cwd_sits_below_the_build_root_when_there_is_one(monkeypatch):
+    # arrange
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: [])
+    cfg = _cfg(workdir="/workspace", cwd="firn")
+
+    # act
+    line = toolchain.docker_argv(cfg, root=Path("/repo"), product="p", instance="", extra=[],
+                                 build_root="src")
+
+    # assert: both are paths under the mount, the build root first because it is the product's
+    assert line[line.index("-w") + 1] == "/workspace/src/firn"
+
+
+def test_no_cwd_runs_in_the_mount_exactly_as_before(monkeypatch):
+    # arrange
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: [])
+
+    # act
+    line = toolchain.docker_argv(_cfg(), root=Path("/repo"), product="p", instance="", extra=[])
+
+    # assert
+    assert line[line.index("-w") + 1] == "/work"
+
+
+@pytest.mark.parametrize("cwd", ["/src/firn", "../elsewhere", "src/../../x", ""])
+def test_a_cwd_that_is_not_a_plain_path_under_the_tree_is_refused_by_name(monkeypatch, cwd):
+    # arrange: the same gate `layout:` uses, so the two cannot disagree about what is inside the tree
+    monkeypatch.setattr(toolchain.log, "die", _boom)
+
+    # act / assert
+    with pytest.raises(RuntimeError) as e:
+        _cfg(cwd=cwd)
+    assert "cwd" in str(e.value) and "build.compile" in str(e.value)

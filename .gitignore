@@ -41,3 +41,8 @@ docs/site/.hugo_build.lock
 # where the next reader cannot tell which run it belongs to.
 tests/allure-results/
 tests/reports/
+
+# firn's own working files in simplon's firn project (si#371): its build cache, and the directory
+# `firn gen` writes into, which firn will not let leave src/firn/.
+src/firn/.firn-cache/
+src/firn/gen/

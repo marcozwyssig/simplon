@@ -792,3 +792,6 @@ tasks:
     params:
       extra:   { help: "appended to the manifest's argv, verbatim", argument: true }
       network: { help: "the docker network the container joins ('none' for no networking); pin it with `with:` on a command whose verdict depends on what it can or cannot reach" }
+      # si#371: firn reads `firn.toml` from the directory it starts in and has no project option, so a firn
+      # project below the root needs the container to start there while the whole tree stays mounted.
+      cwd:     { help: "the directory under the mount the command starts in (a plain relative path); absent means the mount itself" }

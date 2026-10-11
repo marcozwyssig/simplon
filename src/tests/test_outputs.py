@@ -83,8 +83,11 @@ def test_every_language_profile_has_a_kind():
     lists from drifting: a fifth profile without a kind would leave that language's artefacts with
     nowhere named to land, which is the defect si#314 exists against, reintroduced one language at a
     time."""
-    # arrange / act: the languages the kernel ships a toolchain for
-    languages = set(profiles.PROFILES)
+    # arrange / act: the languages the kernel ships a toolchain for. `firn` (si#371) is a profile and not
+    # a language: `firn gen` writes where the product's own `firn.toml` names a target, and firn refuses
+    # a target outside its project directory (E104), so there is no `<output>/firn/` the kernel could
+    # name - a kind for it would be a directory nothing ever writes to.
+    languages = set(profiles.PROFILES) - {"firn"}
 
     # assert
     assert languages <= set(outputs.KINDS), (

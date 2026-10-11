@@ -116,6 +116,17 @@ ci:
       docs:
         help: "Write the command reference, then build the website from it."
         depends_on: [reference, acceptance, site]
+      # `firn gen` over simplon's own model (si#371). No template yet, so it writes nothing; it is placed so the
+      # pair exists before the first template does. Started in src/firn/, where firn.toml is.
+      model:
+        task: toolchain:run
+        with:
+          image: ghcr.io/marcozwyssig/firn:v0.1.0
+          workdir: /workspace
+          network: none
+          cwd: src/firn
+          argv:
+          - gen
   test:
     commands:
       # The pytest suite (si#156). It answered to `all` until that ticket; what took the name is the
@@ -236,6 +247,17 @@ ci:
       all:
         help: "Run every test: the pytest suite, the type gate, the staleness gate, then the release-notes guard."
         depends_on: [suite, typecheck-python, generated, release-notes]
+      # `firn check` over simplon's own pipeline model (si#371): rc passes through unchanged - 0 clean,
+      # 1 model wrong, 2 usage, 3 no project, 70 firn's own fault. Started in src/firn/, where firn.toml is.
+      model:
+        task: toolchain:run
+        with:
+          image: ghcr.io/marcozwyssig/firn:v0.1.0
+          workdir: /workspace
+          network: none
+          cwd: src/firn
+          argv:
+          - check
   release:
     commands:
       # The release itself (#32). Simplon cuts its own releases with the command it ships, for the same
@@ -567,6 +589,11 @@ workflows:
               wheel, because a stale completion is a fact about the tree rather than about the build, and
               a reader looking at a red run should see it beside the other verdicts about the tree.
             command: test generated
+          - note: |
+              simplon's own pipeline model, checked by firn in its pinned image (si#371). A fact about the
+              tree like the two before it, so it sits beside them. The image is public and the runner
+              already reaches docker for the image build below, so it needs nothing new.
+            command: test model
           - command: build wheel
           - note: |
               The kernel's own container image (si#200), BUILT here and published nowhere. Building
