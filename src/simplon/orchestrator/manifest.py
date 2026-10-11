@@ -165,6 +165,14 @@ class Manifest(NamedTuple):
     # Migration state, and deliberately in the model: the diff of this list per wave is the ratchet, and
     # a group left out of it must be held back by a body that cannot be rendered (taskgen.unrenderable).
     generate: frozenset[str] = frozenset()
+    # The area each phase group stands in (si#344): group -> "ci" / "cd". `support` and a product's own
+    # groups are absent. Read off the merged tree, so it is the catalogue's statement and not a table.
+    areas: dict[str, str] = {}
+
+    def area_of(self, group: str) -> str | None:
+        """`ci` or `cd` for a phase group and everything nested under it; None for `support` and its
+        subtree (si#344). Read off the merged tree, so it is the catalogue's statement and not a table."""
+        return self.areas.get(group.split(".", 1)[0])
 
     def taxonomy(self) -> CommandTaxonomy:
         """The shared env-gate engine built from this manifest's tree (one env-gate, not a copy)."""
@@ -857,11 +865,21 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     # it, and reading it here is what keeps a catalogue that has not moved yet owning the shape AND the
     # existence of its groups.
     catalogue_groups = (getattr(catalogue, "groups", {}) or {}) or (getattr(catalogue, "taxonomy", {}) or {})
-    tree = data.get("groups") or {}
-    if not isinstance(tree, dict):
+    old_groups = data.get("groups")
+    if old_groups is not None and not isinstance(old_groups, dict):
         raise ValueError(
-            f"`groups:` is not a mapping: found {type(tree).__name__} instead. It maps each group name "
-            f"to its node (help, env_first, groups, commands) - check the indentation under this key")
+            f"`groups:` is not a mapping: found {type(old_groups).__name__} instead. It maps each group "
+            f"name to its node (help, env_first, groups, commands) - check the indentation under this key")
+    # The areas (si#344): a product writes its commands under `ci:` / `cd:` / `support:`, and the
+    # catalogue's `ci` and `cd` are transparent nodes those sections merge onto. A load with no
+    # catalogue merges onto `AREA_SKELETON` instead, so it reads `ci:` exactly as a product does.
+    kernel_tree = catalogue_groups or treeform.AREA_SKELETON
+    _, phase_areas = treeform.elide_transparent(kernel_tree)
+    if old_groups is not None:
+        # TRANSITIONAL (deleted in plan A Task 9): the old form, wrapped into the area tree.
+        tree = treeform.tree_from_groups(old_groups or {}, phase_areas)
+    else:
+        tree = treeform.tree_from_areas(data)
     tasks_block = data.get("tasks")
     if tasks_block is not None and not isinstance(tasks_block, dict):
         raise ValueError(
@@ -883,10 +901,14 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     # says nothing about groups at all - and an unconditional lock against an empty kernel tree would
     # reject every group any manifest could possibly declare, which is a rule about nothing enforced over
     # everything. The kernel's own catalogue declares all six, so every real product is locked.
-    merged = treeform.merge(catalogue_groups, tree,
+    merged = treeform.merge(kernel_tree, tree,
                             product_tasks=product_tasks,
                             catalogue_tasks=getattr(catalogue, "tasks", {}) or {},
                             locked=bool(catalogue_groups))
+    # The transparent level folded away (si#344): from here on `merged` holds `build`, `deploy`, ...
+    # where the tree holds `ci.build`, `cd.deploy`, and every path below is the one the CLI has always
+    # had. `areas` is what the fold remembers of the level it removed.
+    merged, areas = treeform.elide_transparent(merged)
     lowered_taxonomy, flat = treeform.lower(merged)
     # `merged` deliberately keeps every group the CATALOGUE offers, touched or not (see `merge`'s own
     # docstring), because `lowered_taxonomy` is what the "which groups exist" check below reads. `flat`
@@ -898,7 +920,15 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     # survives for its child to hang from. The "declares no commands" load error in `merge` already
     # catches the other case (a path the manifest DOES name, left empty), so nothing empty and
     # self-declared ever reaches this filter.
-    keep = treeform.declared_paths(tree) | treeform.paths_with_commands(flat)
+    #
+    # The product's own tree is in area form too, and its `ci`/`cd` nodes do not say `transparent:` -
+    # the platform's do, and a product may not restate a platform group's shape. So they are folded by
+    # the KERNEL's word on them, or `declared_paths` would name `ci.build` where `flat` has `build`.
+    own_tree = {name: ({**(node or {}), "transparent": True}
+                       if (kernel_tree.get(name) or {}).get("transparent") else node)
+                for name, node in tree.items()}
+    keep = (treeform.declared_paths(treeform.elide_transparent(own_tree)[0])
+            | treeform.paths_with_commands(flat))
     flat = {path: members for path, members in flat.items() if path in keep}
     # A declared task whose NAME a command has taken for a different body (si#81). This is what is left
     # of `check_every_task_is_used` after si#53 struck it: that rule refused every `tasks:` entry no
@@ -919,7 +949,7 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     # tree, so the catalogue's own placed commands are held to the rule beside the product's. Runs
     # BEFORE `resolve`, because `resolve` consumes the `task:` this rule is about and hands back an
     # `impl:` the coordinate is no longer visible in.
-    treeform.check_coordinate_placement(flat, frozenset(catalogue_groups))
+    treeform.check_coordinate_placement(flat, treeform.platform_groups(catalogue_groups))
     resolved = treeform.resolve(flat, product_tasks, getattr(catalogue, "tasks", {}) or {})
     data = {**data, "groups": resolved, "tasks": {}}
     try:
@@ -970,7 +1000,7 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     # the same statement inside the group node. What survives the check is an entry naming a group no
     # platform owns - the manifest's own group, which is the case the key was written for - so this
     # replacement now only ever fires there.
-    treeform.check_env_groups(merged, model.env_groups, frozenset(catalogue_groups))
+    treeform.check_env_groups(merged, model.env_groups, treeform.platform_groups(catalogue_groups))
     tree = {name: (dataclasses.replace(node, env_first=True)
                    if name in env_groups and not node.env_first else node)
             for name, node in tree.items()}
@@ -987,7 +1017,7 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     if validate_with:
         _validate_param_bindings(commands)
     return Manifest(groups=groups, env_groups=env_groups, commands=commands, tree=tree,
-                    generate=generate)
+                    generate=generate, areas=areas)
 
 
 def _catalogue_tree(declared: dict[str, dict],

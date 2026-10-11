@@ -575,6 +575,13 @@ CENSUS: dict[tuple[str, str, str], str] = {
      "is declared under `tasks:` and instantiated by no command"): DIAGNOSIS,
     ("treeform", "check_coordinate_placement", "places the coordinate"): EXPRESSION,
     ("treeform", "check_env_groups", "shape_is_the_platforms"): EXPRESSION,
+    # si#344, the transparent level. All three are DIAGNOSIS: none forbids a shape that would have
+    # produced a working product. Two names reaching one command-line path would be two groups the CLI
+    # cannot tell apart; a command on a transparent node would have no path at all and, unrefused, would
+    # load green and run nowhere; an area section that is not a mapping is an indentation slip.
+    ("treeform", "_refuse_a_second_path", "is reached through two transparent nodes"): DIAGNOSIS,
+    ("treeform", "elide_transparent", "is transparent and declares `commands:`"): DIAGNOSIS,
+    ("treeform", "tree_from_areas", "is not a mapping"): DIAGNOSIS,
 
     # --- tasks/testrun.py: the `suites:` section (si#61) --------------------------------------------
     #

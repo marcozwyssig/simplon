@@ -15,6 +15,7 @@ import pytest
 
 from simplon import catalogue
 from simplon.orchestrator import manifest
+from simplon.orchestrator.model import treeform
 from conftest import ROOT
 
 _CATALOGUE = """
@@ -719,8 +720,9 @@ def test_the_shipped_catalogue_places_the_general_commands_and_nothing_that_need
     # commands into it - the rule that a coordinate opening with a phase name belongs to that phase is
     # unchanged - but the kernel places none of its own there (#39): a command that publishes has to be
     # asked for, not handed out.
-    assert "commands" not in cat.groups["release"]
-    assert cat.groups["release"]["help"]
+    release = cat.groups["ci"]["groups"]["release"]
+    assert "commands" not in release
+    assert release["help"]
 
 
 def test_the_shipped_gate_task_documents_name_while_every_real_instantiation_pins_it():
@@ -753,11 +755,15 @@ def test_the_shipped_catalogue_declares_the_whole_ci_cd_loop():
     # arrange
     cat = catalogue.load()
 
-    # act / assert: the shape every *ctl product inherits, and the two env-first groups
-    assert set(cat.groups) == {"build", "test", "release", "deploy", "monitor", "support"}
-    assert set(cat.groups["support"]["groups"]) == {"git", "tasks"}
-    assert cat.groups["deploy"]["env_first"] is True
-    assert cat.groups["monitor"]["env_first"] is True
+    # act: the groups as the command line sees them, the transparent `ci`/`cd` folded away (si#344)
+    visible = treeform.elide_transparent(cat.groups)[0]
+
+    # assert: the shape every *ctl product inherits, and the two env-first groups - env-first because
+    # they stand under `cd`, which says it once for both
+    assert set(visible) == {"build", "test", "release", "deploy", "monitor", "support"}
+    assert set(visible["support"]["groups"]) == {"git", "tasks"}
+    assert visible["deploy"]["env_first"] is True
+    assert visible["monitor"]["env_first"] is True
 
 
 # --- the kernel's command tree (netctl#1469) -----------------------------------------------------------

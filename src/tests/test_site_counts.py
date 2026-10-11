@@ -216,7 +216,8 @@ def test_the_card_for_the_phases_chapter_counts_the_empty_ribs_off_the_catalogue
     """
     # arrange
     cat = catalogue_mod.load()
-    empty = {group for group in cat.groups
+    groups = treeform.platform_groups(cat.groups)  # the ribs, not the transparent areas (si#344)
+    empty = {group for group in groups
              if not any(coordinate.startswith(f"{group}:") for coordinate in cat.tasks)}
 
     # act
@@ -231,7 +232,7 @@ def test_the_card_for_the_phases_chapter_counts_the_empty_ribs_off_the_catalogue
         f"{sorted(empty)} empty")
 
     # assert: and the catalogue really has both kinds, so the count is a distinction and not a constant
-    assert empty and len(empty) < len(cat.groups)
+    assert empty and len(empty) < len(groups)
 
 
 # --- the six rules, counted six times --------------------------------------------------------------------

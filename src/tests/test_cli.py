@@ -19,6 +19,7 @@ from typer.testing import CliRunner
 
 from simplon import cli
 from simplon.orchestrator import manifest
+from simplon.orchestrator.model import treeform
 
 
 def _impls_module():
@@ -985,7 +986,8 @@ def test_every_group_the_shipped_catalogue_describes_renders_that_description():
         cli.assemble(app, mf, product="demo")
 
         # act / assert
-        declared = _catalogue_help(cat.groups)
+        # the groups the command line shows: the transparent `ci`/`cd` have no CLI path (si#344)
+        declared = _catalogue_help(treeform.elide_transparent(cat.groups)[0])
         assert declared, "der Katalog beschreibt keine einzige Gruppe - dann prueft dieser Test nichts"
         for path, help_text in declared.items():
             assert help_text, f"Gruppe '{path}' im Katalog traegt kein `help:`"

@@ -60,6 +60,7 @@ import re
 import pytest
 
 from simplon import catalogue as catalogue_mod
+from simplon.orchestrator.model import treeform
 
 import sitepages
 from conftest import ROOT
@@ -92,6 +93,13 @@ ENV_FIRST_MARKER = "env-first"
 # --- what the catalogue actually says ------------------------------------------------------------------
 
 
+def _visible_groups(cat) -> dict[str, dict]:
+    """The catalogue's groups as the page and the command line know them: `ci` and `cd` are transparent
+    (si#344), so this is the tree with them folded away - `build` ... `monitor` and `support`, each
+    carrying the `env_first:` its area hands it."""
+    return treeform.elide_transparent(cat.groups)[0]
+
+
 def _catalogue_coordinates() -> dict[str, set[str]]:
     """Every catalogue coordinate, grouped by namespace - plus an EMPTY entry for a declared group that
     has no coordinate at all.
@@ -101,7 +109,7 @@ def _catalogue_coordinates() -> dict[str, set[str]]:
     them, so the page could omit them and stay green.
     """
     cat = catalogue_mod.load()
-    by_namespace: dict[str, set[str]] = {group: set() for group in cat.groups}
+    by_namespace: dict[str, set[str]] = {group: set() for group in _visible_groups(cat)}
     for coordinate in cat.tasks:
         by_namespace.setdefault(coordinate.split(":", 1)[0], set()).add(coordinate)
     return by_namespace
@@ -110,11 +118,11 @@ def _catalogue_coordinates() -> dict[str, set[str]]:
 def _expected_kind(namespace: str) -> str:
     """The wording the overview table must carry for one namespace, derived from the catalogue."""
     cat = catalogue_mod.load()
-    if namespace not in cat.groups:
+    if namespace not in _visible_groups(cat):
         return FAMILY
     if namespace not in PHASES:
         return NOT_A_PHASE
-    return ENV_FIRST_PHASE if cat.groups[namespace].get("env_first") else AGNOSTIC_PHASE
+    return ENV_FIRST_PHASE if _visible_groups(cat)[namespace].get("env_first") else AGNOSTIC_PHASE
 
 
 # --- reading the page back -----------------------------------------------------------------------------
@@ -292,12 +300,12 @@ def test_the_opening_table_quotes_the_catalogues_own_wording():
     printed = _groups_table()
 
     # assert: the six groups, each carrying the catalogue's own sentence
-    assert set(printed) == set(cat.groups)
-    for name, node in cat.groups.items():
+    assert set(printed) == set(_visible_groups(cat))
+    for name, node in _visible_groups(cat).items():
         assert printed[name][0] == node["help"], f"'{name}' is described as {printed[name][0]!r}"
 
     # assert: and the environment column is the `env_first:` flag, not a remembered one
-    for name, node in cat.groups.items():
+    for name, node in _visible_groups(cat).items():
         assert printed[name][-1] == ("yes" if node.get("env_first") else "no"), name
 
 
@@ -500,7 +508,7 @@ def test_every_empty_rib_is_an_env_first_phase():
 
     # act
     empty = {name for name in PHASES if not expected[name]}
-    env_first = {name for name in PHASES if cat.groups[name].get("env_first")}
+    env_first = {name for name in PHASES if _visible_groups(cat)[name].get("env_first")}
 
     # assert
     assert empty, "no rib is empty at all - the claim below has nothing left to describe"
@@ -518,7 +526,7 @@ def test_the_diagram_draws_the_six_groups_and_nothing_else():
     """The picture is over the platform's groups, so a seventh box - or a missing one - is a picture of
     a different model."""
     # arrange
-    expected = set(catalogue_mod.load().groups)
+    expected = set(_visible_groups(catalogue_mod.load()))
 
     # act
     nodes = dict(_NODE.findall(_diagram()))
@@ -571,7 +579,7 @@ def test_the_diagram_marks_the_env_first_phases():
 
     # assert
     marked = {name for name, label in nodes.items() if ENV_FIRST_MARKER in label}
-    assert marked == {name for name, node in cat.groups.items() if node.get("env_first")}
+    assert marked == {name for name, node in _visible_groups(cat).items() if node.get("env_first")}
 
 
 def test_the_diagram_puts_support_beside_the_loop_and_not_in_it():
@@ -614,8 +622,8 @@ def test_the_summary_sentence_counts_the_catalogue_and_not_a_memory():
     """
     # arrange
     cat = catalogue_mod.load()
-    placed = [c for c in cat.tasks if c.split(":", 1)[0] in cat.groups]
-    free = [c for c in cat.tasks if c.split(":", 1)[0] not in cat.groups]
+    placed = [c for c in cat.tasks if c.split(":", 1)[0] in _visible_groups(cat)]
+    free = [c for c in cat.tasks if c.split(":", 1)[0] not in _visible_groups(cat)]
 
     # act
     sentence = (f"{_word(len(cat.tasks)).capitalize()} coordinates: {_word(len(placed))} carrying a "

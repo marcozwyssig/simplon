@@ -47,13 +47,41 @@ PHASES = frozenset({"build", "test", "release", "deploy", "monitor"})
 
 
 def test_the_catalogue_still_declares_exactly_the_six_groups_the_rule_is_written_against():
-    """The rule's set is the catalogue's top-level groups, so a seventh group added without a thought
-    for this rule must show up here rather than silently widen it."""
-    # arrange / act
-    groups = frozenset(catalogue_mod.load().groups)
+    """The rule's set is the catalogue's first VISIBLE level of groups, so a seventh group added without a
+    thought for this rule must show up here rather than silently widen it."""
+    # arrange / act: the rule's set is the first VISIBLE level, not the top-level keys (si#344)
+    groups = treeform.platform_groups(catalogue_mod.load().groups)
 
     # assert
     assert groups == PLATFORM_GROUPS
+
+
+def test_build_image_under_ci_test_is_still_refused_through_the_transparent_level():
+    # arrange
+    text = textwrap.dedent("""\
+        product: demo
+        ci:
+          test:
+            commands:
+              image: { task: "build:image", with: { name: kernel } }
+    """)
+
+    # act / assert
+    with pytest.raises(ValueError, match="'build:image' belongs under"):
+        manifest_mod.load(text, catalogue=catalogue_mod.load())
+
+
+def test_the_old_first_segment_comparison_would_have_let_it_through():
+    """The failure si#344 measured, shown rather than asserted away: compared against the catalogue's
+    TOP-LEVEL keys, `build:image` is a family and the misplacement loads green."""
+    # arrange
+    flat = {"test": {"image": {"task": "build:image"}}}
+
+    # act
+    ruled = treeform.check_coordinate_placement(flat, frozenset(catalogue_mod.load().groups))
+
+    # assert: nothing refused, nothing ruled on - the rule silently stopped applying
+    assert ruled == 0
 
 
 def test_support_is_a_group_the_rule_covers_and_not_a_sixth_phase():
@@ -278,10 +306,15 @@ def _placements(text: str) -> dict:
     onto the catalogue's, so the platform's OWN placed commands are counted too."""
     catalogue = catalogue_mod.load()
     data = yaml.safe_load(text) or {}
-    merged = treeform.merge(catalogue.groups, data.get("groups") or {},
+    # Either form, wrapped into the area tree the catalogue's `ci`/`cd` merge onto (si#344), and the
+    # transparent level folded away after the merge - exactly as `load` does it.
+    _, phase_areas = treeform.elide_transparent(catalogue.groups)
+    tree = (treeform.tree_from_groups(data["groups"] or {}, phase_areas) if data.get("groups") is not None
+            else treeform.tree_from_areas(data))
+    merged = treeform.merge(catalogue.groups, tree,
                             product_tasks=dict(data.get("tasks") or {}),
                             catalogue_tasks=catalogue.tasks, locked=True)
-    return treeform.lower(merged)[1]
+    return treeform.lower(treeform.elide_transparent(merged)[0])[1]
 
 
 def test_the_rule_holds_over_this_repositorys_own_manifest():

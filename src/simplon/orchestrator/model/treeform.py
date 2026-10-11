@@ -93,6 +93,10 @@ def elide_transparent(tree: dict) -> tuple[dict, dict[str, str]]:
 
     A name hoisted twice - from two transparent siblings, or beside a visible sibling of the same name -
     would be two groups with one command-line path. That is refused here, naming both internal paths.
+
+    A transparent node's OWN `commands:` are refused too, rather than dropped with the node: a command
+    on it would have no path, and folding it away would load green a command that runs nowhere - the
+    "nothing to do" that is really a failure.
     """
     elided: dict = {}
     origin: dict[str, str] = {}
@@ -101,6 +105,11 @@ def elide_transparent(tree: dict) -> tuple[dict, dict[str, str]]:
         name = str(name)
         node = node or {}
         if node.get("transparent"):
+            if node.get("commands"):
+                raise ValueError(
+                    f"group '{name}' is transparent and declares `commands:`. A transparent node is "
+                    f"skipped when the CLI path is built, so a command on it would have no path - place "
+                    f"it on one of its groups")
             for child, child_node in (node.get("groups") or {}).items():
                 child = str(child)
                 _refuse_a_second_path(child, f"{name}.{child}", origin)
@@ -115,6 +124,67 @@ def elide_transparent(tree: dict) -> tuple[dict, dict[str, str]]:
             elided[name] = node
             origin[name] = name
     return elided, areas
+
+
+#: The three top-level sections a product declares its commands in (si#344). `ci` and `cd` are
+#: transparent nodes of the platform's tree; `support` is a group node in its own right.
+AREAS = ("ci", "cd", "support")
+
+#: Keys under `cd:` that are product DATA rather than groups: the environment matrix (`default`,
+#: `environments`, read by `simplon.environments`) and the location axis (`site`, reserved, si#344).
+CD_DATA_KEYS = ("default", "environments", "site")
+
+#: The kernel tree a load WITHOUT a catalogue merges onto (`locked=False`). It exists only so that such a
+#: load reads `ci:` the way every product does, with `build` on the command line rather than `ci build`.
+#: It is a second statement of which areas are transparent, and
+#: `test_the_skeleton_agrees_with_the_catalogue_on_the_areas` holds it to the catalogue's.
+AREA_SKELETON = {"ci": {"transparent": True}, "cd": {"transparent": True, "env_first": True}}
+
+
+def tree_from_areas(data: dict) -> dict:
+    """The product's `ci:` / `cd:` / `support:` sections as ONE tree for `merge`.
+
+    Under `ci:` and `cd:` the phase groups stand directly (`ci: build:`), where the tree nests children
+    under `groups:`; this wraps them. The data keys under `cd:` are not groups and are left out here -
+    `simplon.environments` reads them from the document. `support:` already IS a group node.
+    """
+    tree: dict = {}
+    for area in ("ci", "cd"):
+        section = data.get(area)
+        if section is None:
+            continue
+        if not isinstance(section, dict):
+            raise ValueError(
+                f"`{area}:` is not a mapping: found {type(section).__name__} instead. It maps each phase "
+                f"group ({_phases_of(area)}) to its node - check the indentation under this key")
+        groups = {name: node for name, node in section.items()
+                  if not (area == "cd" and name in CD_DATA_KEYS)}
+        # A section holding only data (`cd:` with nothing but its environments) names no group. Left out
+        # rather than handed to `merge` as an empty node, which a catalogue-less load would refuse as a
+        # group that "declares no commands" - a promise the product never made.
+        if groups:
+            tree[area] = {"groups": groups}
+    if data.get("support") is not None:
+        tree["support"] = data["support"]
+    return tree
+
+
+def _phases_of(area: str) -> str:
+    return "build, test, release" if area == "ci" else "deploy, monitor"
+
+
+def tree_from_groups(groups: dict, areas: dict[str, str]) -> dict:
+    """TRANSITIONAL (si#344 plan A, deleted in its Task 9): the old `groups:` form wrapped into the area
+    tree, so both forms load while the fixtures are migrated. `areas` maps a phase to its area; a group
+    no area claims stays at the top level, which is where a catalogue-less test's own groups live."""
+    tree: dict = {}
+    for name, node in (groups or {}).items():
+        area = areas.get(str(name))
+        if area:
+            tree.setdefault(area, {"groups": {}})["groups"][str(name)] = node
+        else:
+            tree[str(name)] = node
+    return tree
 
 
 def _refuse_a_second_path(name: str, path: str, origin: dict[str, str]) -> None:
