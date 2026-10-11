@@ -188,6 +188,22 @@ def test_a_group_written_twice_keeps_both_copies_and_drops_no_line():
                            "support:\n  commands:\n    b: { task: doctor }\n")
 
 
+def test_a_column_0_comment_above_a_group_travels_with_that_group():
+    # arrange: firn's shape - a comment at column 0, inside groups:, directly above `  deploy:`
+    text = ("product: demo\n"
+            "groups:\n  support:\n    commands:\n      doctor: { task: doctor }\n"
+            "\n# --- deploy ---\n  deploy:\n    commands:\n      up: { task: up }\n")
+
+    # act
+    result = migrate_text(text)
+
+    # assert: it lands under cd:, directly above deploy:, and keeps its column
+    assert result.status == "migrated", result.reason
+    assert result.text == ("product: demo\n"
+                           "cd:\n# --- deploy ---\n  deploy:\n    commands:\n      up: { task: up }\n"
+                           "support:\n  commands:\n    doctor: { task: doctor }\n")
+
+
 @pytest.mark.parametrize("product", PRODUCTS)
 def test_every_real_manifest_migrates_and_parses_back_to_the_same_content(product):
     # arrange

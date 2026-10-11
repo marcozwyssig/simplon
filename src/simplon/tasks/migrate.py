@@ -43,7 +43,12 @@ class Migration(NamedTuple):
 
 def _blocks(lines: list[str], key_re: re.Pattern, indent: int) -> list[tuple[str | None, list[str]]]:
     """Split `lines` into (key, lines) blocks at `indent`. Comment and blank lines directly above a key
-    line belong to that key's block; anything before the first key is a (None, lines) preamble."""
+    line belong to that key's block; anything before the first key is a (None, lines) preamble.
+
+    "Directly above" is read by POSITION, not by exact indent: a comment at the key's indent OR LESS
+    counts. firn writes a column-0 banner inside `groups:` above `  deploy:`, and it announces deploy -
+    read by exact indent, it became the tail of `support:`, which cannot then be dedented. A comment
+    indented DEEPER than the key is still the previous block's content (a commented-out command)."""
     blocks: list[tuple[str | None, list[str]]] = [(None, [])]
     pending: list[str] = []
     for line in lines:
@@ -52,7 +57,7 @@ def _blocks(lines: list[str], key_re: re.Pattern, indent: int) -> list[tuple[str
         if match:
             blocks.append((match.group("key"), pending + [line]))
             pending = []
-        elif not stripped or (stripped.startswith("#") and len(line) - len(line.lstrip()) == indent):
+        elif not stripped or (stripped.startswith("#") and len(line) - len(line.lstrip()) <= indent):
             pending.append(line)
         else:
             if pending:
