@@ -278,3 +278,20 @@ def test_a_cd_without_a_matrix_yields_neither_key_rather_than_failing():
     # act / assert
     assert envs_mod.matrix_section({"cd": {"site": {}}}) == {"default": None, "environments": None}
     assert envs_mod.matrix_section({}) == {"default": None, "environments": None}
+
+
+@pytest.mark.parametrize("cd, said", [
+    ({"default": "dev", "environments": ["dev"]},
+     "'cd: environments' must be a mapping of environment name -> descriptor"),
+    ({"default": "dev", "environments": {}}, "'cd: environments' defines no environments"),
+    ({"default": "qa", "environments": {"dev": {"backend": "local"}}},
+     "'cd: default' is 'qa', which is not a defined environment"),
+])
+def test_a_matrix_refusal_names_the_key_where_it_is_written(cd, said):
+    # arrange: the matrix stands under `cd:` since si#344, and `tasks/env.py` already says so - a refusal
+    # that names a bare `environments` or "the registry" names a key no loadable manifest carries
+
+    # act / assert
+    with pytest.raises(ValueError) as caught:
+        parse_data({"cd": cd})
+    assert str(caught.value) == said

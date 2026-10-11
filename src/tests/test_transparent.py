@@ -221,6 +221,26 @@ def test_env_first_under_ci_is_refused():
         "env-first as a whole. Remove the key, or move the commands that need an environment under `cd:`")
 
 
+def test_env_first_on_a_group_nested_under_ci_names_where_it_is_written():
+    # arrange: below the phase group every level is a `groups:` key, and the location says each one
+    text = NEW_FORM.replace("  build:\n", "  build:\n    groups:\n      x:\n        env_first: true\n")
+
+    # act / assert
+    with pytest.raises(ValueError) as caught:
+        _load(text)
+    assert str(caught.value).startswith("`ci: build: groups: x:` declares `env_first:`. ")
+
+
+def test_transparent_two_levels_under_cd_names_where_it_is_written():
+    # arrange
+    text = NEW_FORM + "  deploy:\n    groups:\n      x:\n        groups:\n          y:\n            transparent: true\n"
+
+    # act / assert
+    with pytest.raises(ValueError) as caught:
+        _load(text)
+    assert str(caught.value).startswith("`cd: deploy: groups: x: groups: y:` declares `transparent:`. ")
+
+
 def test_an_unknown_key_under_cd_names_both_lists():
     # arrange
     text = NEW_FORM.replace("  default: dev\n", "  default: dev\n  rollout: {}\n")

@@ -294,13 +294,12 @@ def declared(data: Mapping[str, object], source: str = "manifest") -> Site:
     `_str` rules on a value that is there; a bare `source:` carries no value at all and defaults, which
     is what `theme:` and `base_url:` have always done with one.
     """
-    name = SECTION
-    section, blame, _ = context.section(data, name)
+    section, blame, _ = context.section(data, SECTION)
     if blame:
-        raise ValueError(f"{source}: the '{name}' section is missing or is not a mapping "
+        raise ValueError(f"{source}: the '{SECTION}' section is missing or is not a mapping "
                          f"- declare the pinned hugo image and where the site is built to (the sources "
                          f"default to '{DEFAULT_SOURCE}')")
-    where = f"{source}: '{name}'"
+    where = f"{source}: '{SECTION}'"
     # The REQUIRED keys first, then their shape: a section missing `image` altogether should say so, not
     # complain about the optional theme it also got wrong.
     image = _str(section, "image", where, required=True)

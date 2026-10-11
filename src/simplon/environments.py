@@ -255,7 +255,7 @@ def parse_data(data: Mapping[str, object],
     matrix = matrix_section(data)
     declared = matrix["environments"] or {}
     if not isinstance(declared, Mapping):
-        raise ValueError("'environments' must be a mapping of environment name -> descriptor")
+        raise ValueError("'cd: environments' must be a mapping of environment name -> descriptor")
     for name, spec in declared.items():
         spec = spec if isinstance(spec, Mapping) else {}
         backend = str(spec.get("backend", "")).strip()
@@ -301,10 +301,10 @@ def parse_data(data: Mapping[str, object],
                                       carrier=carrier, stack=stack, repository=repository,
                                       required=required, optional=optional, deploys=deploys)
     if not envs:
-        raise ValueError("environment registry defines no environments")
+        raise ValueError("'cd: environments' defines no environments")
     default = str(matrix["default"] or "").strip()
     if default not in envs:
-        raise ValueError(f"environment registry default '{default}' is not a defined environment")
+        raise ValueError(f"'cd: default' is '{default}', which is not a defined environment")
     return Registry(envs, default)
 
 

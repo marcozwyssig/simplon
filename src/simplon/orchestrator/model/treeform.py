@@ -237,15 +237,18 @@ def tree_from_areas(data: dict, phases: dict[str, tuple[str, ...]]) -> dict:
     return tree
 
 
-def refuse_area_shape(node: object, area: str, name: str) -> None:
+def refuse_area_shape(node: object, area: str, name: str, below: tuple[str, ...] = ()) -> None:
     """Refuse what a group under `ci:` / `cd:` / `support:` may not say about its own shape (si#344).
 
     `node` comes first because the census measures a rule by the first argument it was handed, and the
     loader also runs this over the CATALOGUE's `ci` groups - the kernel is held to `env_first:` too.
+    `below` is the path from `name` down to `node` as the recursion walks it; the location is the tree
+    path handed to `written_at`, so a nested group reads `ci: build: groups: x:` and not a hand-joined
+    spelling that drops the colons.
     """
     if not isinstance(node, dict):
         return
-    where = " ".join(part for part in (f"{area}:", f"{name}:" if name else "") if part)
+    where = written_at((area, name, *below) if name else (area, *below))
     if "transparent" in node:
         raise ValueError(
             f"`{where}` declares `transparent:`. Which nodes are transparent is the platform's "
@@ -258,7 +261,7 @@ def refuse_area_shape(node: object, area: str, name: str) -> None:
             f"which is env-first as a whole. Remove the key, or move the commands that need an "
             f"environment under `cd:`")
     for child, child_node in (node.get("groups") or {}).items():
-        refuse_area_shape(child_node, area, " ".join(part for part in (name, f"groups: {child}") if part))
+        refuse_area_shape(child_node, area, name, (*below, str(child)))
 
 
 def _phases_of(area: str) -> str:
