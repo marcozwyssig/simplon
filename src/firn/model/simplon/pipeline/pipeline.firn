@@ -1,0 +1,210 @@
+// simplon.pipeline (si#371, si#346): the metamodel of simplon's delivery pipeline, written for firn.
+//
+// What it says: a Task is a filter type with input and output Ports, each accepting an ArtifactKind; a
+// TaskCommand is a filter instance that runs one Task, OWNS what it produces and REFERENCES what it
+// consumes, so every artifact has exactly one producer by construction. A Group holds commands and
+// belongs to one Area (ci, cd, support). Aggregates, releases, environments, sites and registries are
+// modelled below; what a release publishes and what a test result is about are DERIVED (SelectorRelation).
+//
+// What the sketch got wrong, measured by `firn check` on firn v0.1.0: every Association needs an
+// `objectCardinality`, which the sketch left out. `firn check` does not compile a selector: see
+// src/tests/test_firn_pipeline_e2e.py, which asks every SelectorRelation for its value.
+package simplon.pipeline
+
+// ci | cd | support (spec D.1). Transparency is a property of the area, so it is not a key a group
+// can carry.
+enum Area { ci cd support }
+
+ArtifactKind typeOf firn.core.Class extends firn.core.NamedResource {
+  allowRoot = true
+  property refines typeOf firn.core.Association {
+    range = simplon.pipeline.ArtifactKind
+    subjectCardinality = 0..N
+    objectCardinality = 0..N
+  }
+}
+
+Registry typeOf firn.core.Class extends firn.core.NamedResource {
+  allowRoot = true
+  property host typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+}
+
+Port typeOf firn.core.Class extends firn.core.NamedResource {
+  property accepts typeOf firn.core.Association {
+    range = simplon.pipeline.ArtifactKind
+    subjectCardinality = 1..1
+    objectCardinality = 0..N
+  }
+  property param typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+}
+
+Task typeOf firn.core.Class extends firn.core.NamedResource {
+  allowRoot = true
+  property key typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+  property body typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+  property input typeOf firn.core.Composition {
+    range = simplon.pipeline.Port
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+  property output typeOf firn.core.Composition {
+    range = simplon.pipeline.Port
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+}
+
+Artifact typeOf firn.core.Class extends firn.core.NamedResource {
+  property key typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+  property path typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+  property kind typeOf firn.core.Association {
+    range = simplon.pipeline.ArtifactKind
+    subjectCardinality = 1..1
+    objectCardinality = 0..N
+  }
+  property registry typeOf firn.core.Association {
+    range = simplon.pipeline.Registry
+    subjectCardinality = 0..1
+    objectCardinality = 0..N
+  }
+}
+
+Command typeOf firn.core.Class extends firn.core.NamedResource {
+  modifier = firn.core.InheritanceModifier.Abstract
+  property key typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+}
+
+TaskCommand typeOf firn.core.Class extends simplon.pipeline.Command {
+  property task typeOf firn.core.Association {
+    range = simplon.pipeline.Task
+    subjectCardinality = 1..1
+    objectCardinality = 0..N
+  }
+  property consumes typeOf firn.core.Association {
+    range = simplon.pipeline.Artifact
+    subjectCardinality = 0..N
+    objectCardinality = 0..N
+  }
+  property produces typeOf firn.core.Composition {
+    range = simplon.pipeline.Artifact
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+}
+
+// What a test result is ABOUT is derived from what its producer consumes, never declared (spec C.3).
+TestResult typeOf firn.core.Class extends simplon.pipeline.Artifact {
+  property about typeOf firn.core.SelectorRelation {
+    range = simplon.pipeline.Artifact
+    subjectCardinality = 0..N
+    objectCardinality = 0..N
+    selector = "self.owner().consumes"
+  }
+}
+
+AggregateCommand typeOf firn.core.Class extends simplon.pipeline.Command {
+  property member typeOf firn.core.Association {
+    range = simplon.pipeline.Command
+    subjectCardinality = 1..N
+    objectCardinality = 0..N
+  }
+  property produced typeOf firn.core.SelectorRelation {
+    range = simplon.pipeline.Artifact
+    subjectCardinality = 0..N
+    objectCardinality = 0..N
+    selector = "self.member.produces"
+  }
+}
+
+// The bundle a release aggregate names (spec C.4). Its content is derived from the members.
+Release typeOf firn.core.Class extends simplon.pipeline.Artifact {
+  property published typeOf firn.core.SelectorRelation {
+    range = simplon.pipeline.Artifact
+    subjectCardinality = 0..N
+    objectCardinality = 0..N
+    selector = "self.owner().member.consumes"
+  }
+}
+
+ReleaseCommand typeOf firn.core.Class extends simplon.pipeline.AggregateCommand {
+  property release typeOf firn.core.Composition {
+    range = simplon.pipeline.Release
+    subjectCardinality = 1..1
+    objectCardinality = 0..1
+  }
+}
+
+Environment typeOf firn.core.Class extends firn.core.NamedResource {
+  allowRoot = true
+  property key typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+  property next typeOf firn.core.Association {
+    range = simplon.pipeline.Environment
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+}
+
+Site typeOf firn.core.Class extends firn.core.NamedResource {
+  allowRoot = true
+}
+
+// `site` stays 0..1 until a kernel body reads it (spec, "What this is NOT").
+Deploy typeOf firn.core.Class extends simplon.pipeline.TaskCommand {
+  property environment typeOf firn.core.Association {
+    range = simplon.pipeline.Environment
+    subjectCardinality = 1..1
+    objectCardinality = 0..N
+  }
+  property site typeOf firn.core.Association {
+    range = simplon.pipeline.Site
+    subjectCardinality = 0..1
+    objectCardinality = 0..N
+  }
+}
+
+Group typeOf firn.core.Class extends firn.core.NamedResource {
+  allowRoot = true
+  property key typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
+  property area typeOf firn.core.Association {
+    range = simplon.pipeline.Area
+    subjectCardinality = 1..1
+    objectCardinality = 0..N
+  }
+  property command typeOf firn.core.Composition {
+    range = simplon.pipeline.Command
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+  property group typeOf firn.core.Composition {
+    range = simplon.pipeline.Group
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+}

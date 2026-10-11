@@ -604,9 +604,11 @@ Decision 10 puts the **whole manifest** into firn, not only the pipeline.
 
 ### D.3 Checking it
 
-- **The M2 packages live in this repository** under `model/`, with its own `firn.toml` at the top (firn
-  expects the project at the mount root, si#371), and simplon places `test model: { task: "toolchain:run", with: { profile: firn,
-  command: check } }` (si#371's done-when).
+- **The M2 packages live in this repository** under `src/firn/` (si#371, Marco: firn under src), started
+  there through `toolchain:run`'s `cwd:`. The check is `test model`, written by `support toolchain firn
+  0.1.0` in its expanded form (profiles are scaffolded, si#95).
+- **`firn check` does not compile a SelectorRelation's selector** (measured on v0.1.0, reported to firn):
+  every SelectorRelation has a test asserting its non-empty answer over a fixture.
 - **A drift gate in CI** regenerates `simplon.firn` from `simplon.yaml` and runs `firn check` over it.
   rc 0 is the only green. firn's exit codes are 0/1/2/3/70, and the gate compares against 0, never
   against 1.

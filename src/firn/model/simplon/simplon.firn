@@ -14,6 +14,7 @@ BuildWheel typeOf simplon.pipeline.Task {
 }
 
 build typeOf simplon.pipeline.Group {
+  area = simplon.pipeline.Area.ci
   command wheel typeOf simplon.pipeline.TaskCommand {
     task = simplon.kernel.BuildWheel
     produces dist typeOf simplon.pipeline.Artifact {

@@ -1,0 +1,69 @@
+package demo
+
+kimage typeOf simplon.pipeline.ArtifactKind {
+}
+kresult typeOf simplon.pipeline.ArtifactKind {
+}
+kbundle typeOf simplon.pipeline.ArtifactKind {
+}
+
+BuildImage typeOf simplon.pipeline.Task {
+  body = "simplon.tasks.image:build"
+}
+TestImage typeOf simplon.pipeline.Task {
+  body = "simplon.tasks.image:test"
+}
+PublishImage typeOf simplon.pipeline.Task {
+  body = "simplon.tasks.image:publish"
+}
+SaveImage typeOf simplon.pipeline.Task {
+  body = "simplon.tasks.image:save"
+}
+
+build typeOf simplon.pipeline.Group {
+  area = simplon.pipeline.Area.ci
+  command image typeOf simplon.pipeline.TaskCommand {
+    task = demo.BuildImage
+    produces kernel typeOf simplon.pipeline.Artifact {
+      kind = demo.kimage
+    }
+  }
+  command save typeOf simplon.pipeline.TaskCommand {
+    task = demo.SaveImage
+    consumes = demo.build.image.kernel
+    produces kernel_archive typeOf simplon.pipeline.Artifact {
+      kind = demo.kimage
+      path = "build/image/kernel.tar"
+    }
+  }
+  command all typeOf simplon.pipeline.AggregateCommand {
+    member = demo.build.save
+  }
+}
+
+test typeOf simplon.pipeline.Group {
+  area = simplon.pipeline.Area.ci
+  command image typeOf simplon.pipeline.TaskCommand {
+    task = demo.TestImage
+    consumes = demo.build.image.kernel
+    produces checked typeOf simplon.pipeline.TestResult {
+      kind = demo.kresult
+      path = "build/test/image.json"
+    }
+  }
+}
+
+release typeOf simplon.pipeline.Group {
+  area = simplon.pipeline.Area.ci
+  command image typeOf simplon.pipeline.TaskCommand {
+    task = demo.PublishImage
+    consumes = demo.build.image.kernel
+    consumes = demo.test.image.checked
+  }
+  command all typeOf simplon.pipeline.ReleaseCommand {
+    member = demo.release.image
+    release bundle typeOf simplon.pipeline.Release {
+      kind = demo.kbundle
+    }
+  }
+}
