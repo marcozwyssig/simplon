@@ -1701,14 +1701,15 @@ cd:
 """
 
 _ROLLOUT_SECTION = """
-    default: test
     carriers:
       hausportainer: { portainer: { url_from: PORTAINER } }
-    environments:
-      test: { backend: portainer, carrier: hausportainer, stack: app-test,
-              repository: { url: github.com/me/app }, deploys: latest }
-      prod: { backend: portainer, carrier: hausportainer, stack: app-prod,
-              repository: { url: github.com/me/app }, deploys: "1.4.0" }
+    cd:
+      default: test
+      environments:
+        test: { backend: portainer, carrier: hausportainer, stack: app-test,
+                repository: { url: github.com/me/app }, deploys: latest }
+        prod: { backend: portainer, carrier: hausportainer, stack: app-prod,
+                repository: { url: github.com/me/app }, deploys: "1.4.0" }
     workflows:
       rollout:
         on: { release: { types: [published] } }

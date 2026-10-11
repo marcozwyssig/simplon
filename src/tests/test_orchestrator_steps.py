@@ -363,6 +363,7 @@ ci:
         help: "The middle aggregate."
         depends_on: ["inner", "b1"]
         stop_on_failure: MID_FLAG
+# a non-phase group under cd: loads only because this manifest is loaded without a catalogue
 cd:
   run:
     commands:
@@ -781,6 +782,7 @@ ci:
         help: "Declares aot too."
         depends_on: ["aot", "image"]
         stop_on_failure: true
+# a non-phase group under cd: loads only because this manifest is loaded without a catalogue
 cd:
   run:
     commands:
@@ -847,6 +849,7 @@ ci:
       first: { help: "Planned first.", depends_on: ["shared"] }
       mid: { help: "Declares shared too.", depends_on: ["shared", "other"] }
       guarded: { help: "Wants to stop.", depends_on: ["mid"], stop_on_failure: true }
+# a non-phase group under cd: loads only because this manifest is loaded without a catalogue
 cd:
   run:
     commands:

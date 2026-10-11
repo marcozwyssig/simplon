@@ -249,7 +249,7 @@ becomes "is docker there?", and that second question has an answer a script can 
 brings whatever a moving tag points at today has relocated the problem rather than solved it - the
 machine no longer decides what the build uses, but the calendar does:
 
-> simplon.yaml: 'site': 'image' must pin a version ('<image>:<tag>'), got 'hugomods/hugo' - an untagged
+> simplon.yaml: 'website': 'image' must pin a version ('<image>:<tag>'), got 'hugomods/hugo' - an untagged
 > image means ':latest', which moves under the build; pin it as '<image>:<tag>' (e.g.
 > 'hugomods/hugo:exts-0.148.2'), or by digest
 

@@ -1,7 +1,7 @@
 """The environments listing command (netctl#1280, epic #1274 slice S6): a real Typer callback a
 product's manifest points its `impl:` straight at.
 
-Fully manifest-driven: the `environments:` mapping, the `default:` key and the new `env_var:` key (the
+Fully manifest-driven: the `cd: environments:` mapping, the `cd: default:` key and the `env_var:` key (the
 name of the environment variable a product's own env-first CLI prefix publishes the active environment
 into, e.g. netctl's `NETCTL_ENV`) are all read RAW through `simplon.context.current().manifest_data()`.
 `env_var:` is what makes this fully manifest-driven rather than needing a second, product-owned registry
@@ -42,10 +42,11 @@ def environments() -> int:
     matrix = environments_mod.matrix_section(data)
     envs = matrix["environments"] or {}
     if not envs:
-        raise ValueError(f"{ctx.manifest_path}: 'environments' section is missing or empty")
+        raise ValueError(f"{ctx.manifest_path}: 'cd: environments' section is missing or empty")
     default = str(matrix["default"] or "").strip()
     if default not in envs:
-        raise ValueError(f"{ctx.manifest_path}: 'default' must name a declared environment, got '{default}'")
+        raise ValueError(f"{ctx.manifest_path}: 'cd: default' must name a declared environment, "
+                         f"got '{default}'")
     env_var = str(data.get("env_var", "")).strip()
 
     active = _active(envs, default, env_var)

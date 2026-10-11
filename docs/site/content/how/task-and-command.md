@@ -97,7 +97,7 @@ are worth reading as a group, because together they are the whole of the rule.
 **A task that declares a command's key.**
 
 > task 'wheel' declares `with:`, which belongs on a command rather than on the task it instantiates. Move
-> it to the command under `groups:`.
+> it to the command under `ci:`, `cd:` or `support:`.
 
 **A task that declares a key nobody reads.** Anything outside the five is rejected rather than dropped,
 including keys that read as entirely plausible on a template:
@@ -352,7 +352,7 @@ one in the tree and the one in the catalogue - the group that is allowed, and th
 
 > command 'test image' places the coordinate 'build:image', and 'build' is one of the platform's own group
 > names. A coordinate that starts with one says where the task belongs, so 'build:image' belongs under
-> `groups: build:` and nowhere else - this places it under 'test'. Move the command to `groups: build:
+> `ci: build:` and nowhere else - this places it under 'test'. Move the command to `ci: build:
 > commands: image:`, or - if this body really is a family each product places where it likes - give it a
 > namespace in the platform catalogue that names no group, the way `docs:site` can sit under `build` in
 > one product and under `release` in another. The names that carry a placement are the platform's groups:

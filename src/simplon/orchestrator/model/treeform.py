@@ -141,6 +141,45 @@ CD_DATA_KEYS = ("default", "environments", "site")
 AREA_SKELETON = {"ci": {"transparent": True}, "cd": {"transparent": True, "env_first": True}}
 
 
+def written_at(path: Iterable[str]) -> str:
+    """Where a tree path is WRITTEN in a manifest (si#344): `ci: build:`, `support: groups: git:`.
+
+    A refusal names the place its reader edits, and that place is neither the tree path (`ci.build`,
+    which appears in no file) nor the command line (`build`, which drops the area). Under `ci:` and `cd:`
+    the phase groups stand directly; every level below, and every level under `support:`, is a
+    `groups:` key. The prefix is joined only when it is there, so an area on its own reads `support:`
+    and never `support: :`.
+    """
+    parts = [str(part) for part in path]
+    if not parts:
+        return ""
+    head, rest = parts[0], parts[1:]
+    words = [f"{head}:"]
+    if head in ("ci", "cd") and rest:
+        words.append(f"{rest[0]}:")
+        rest = rest[1:]
+    words.extend(f"groups: {child}:" for child in rest)
+    return " ".join(words)
+
+
+def tree_path(path: str, areas: dict[str, str]) -> tuple[str, ...]:
+    """A dotted path AFTER the transparent level was folded away (`build.wheel`), with its area put
+    back (`('ci', 'build', 'wheel')`) - the inverse `written_at` needs. `areas` is what
+    `elide_transparent` remembered; a path it does not name (`support`, or a catalogue-less load's own
+    group) is its own tree path."""
+    parts = tuple(str(path).split("."))
+    area = (areas or {}).get(parts[0])
+    return (area, *parts) if area else parts
+
+
+def _cli_path(path: Iterable[str]) -> str:
+    """A tree path as the command line spells it: the area is skipped, the rest is spaced."""
+    parts = [str(part) for part in path]
+    if len(parts) > 1 and parts[0] in ("ci", "cd"):
+        parts = parts[1:]
+    return " ".join(parts)
+
+
 def tree_from_areas(data: dict, phases: dict[str, tuple[str, ...]]) -> dict:
     """The product's `ci:` / `cd:` / `support:` sections as ONE tree for `merge`.
 
@@ -201,7 +240,7 @@ def refuse_area_shape(node: object, area: str, name: str) -> None:
     """
     if not isinstance(node, dict):
         return
-    where = f"{area}: {name}:" if name else f"{area}:"
+    where = " ".join(part for part in (f"{area}:", f"{name}:" if name else "") if part)
     if "transparent" in node:
         raise ValueError(
             f"`{where}` declares `transparent:`. Which nodes are transparent is the platform's "
@@ -214,25 +253,11 @@ def refuse_area_shape(node: object, area: str, name: str) -> None:
             f"which is env-first as a whole. Remove the key, or move the commands that need an "
             f"environment under `cd:`")
     for child, child_node in (node.get("groups") or {}).items():
-        refuse_area_shape(child_node, area, f"{name}: groups: {child}")
+        refuse_area_shape(child_node, area, " ".join(part for part in (name, f"groups: {child}") if part))
 
 
 def _phases_of(area: str) -> str:
     return "build, test, release" if area == "ci" else "deploy, monitor"
-
-
-def tree_from_groups(groups: dict, areas: dict[str, str]) -> dict:
-    """TRANSITIONAL (si#344 plan A, deleted in its Task 9): the old `groups:` form wrapped into the area
-    tree, so both forms load while the fixtures are migrated. `areas` maps a phase to its area; a group
-    no area claims stays at the top level, which is where a catalogue-less test's own groups live."""
-    tree: dict = {}
-    for name, node in (groups or {}).items():
-        area = areas.get(str(name))
-        if area:
-            tree.setdefault(area, {"groups": {}})["groups"][str(name)] = node
-        else:
-            tree[str(name)] = node
-    return tree
 
 
 def _refuse_a_second_path(name: str, path: str, origin: dict[str, str]) -> None:
@@ -297,17 +322,15 @@ def paths_with_commands(flat: dict) -> frozenset[str]:
                             if other == path or other.startswith(f"{path}.")))
 
 
-def shape_is_the_platforms(path: str, key: str) -> str:
+def shape_is_the_platforms(path: Iterable[str], key: str) -> str:
     """The refusal a product gets for restating the SHAPE of a group the platform declares.
 
-    One string with two callers, and that is the point (si#43). `merge` raises it for `env_first:` (or
-    `help:`) written onto a platform group; `check_env_groups` raises it for `env_groups:`, which says
-    `env_first: true` about a group from the top level of the same file. Two spellings of one statement
-    have to be refused for one reason and point at one way out, or the second spelling reads as a
-    separate rule with its own exceptions - which is exactly how it became a back door.
+    It had two callers until si#344: `check_env_groups` raised it for `env_groups:`, the top-level
+    spelling of `env_first: true` (si#43). That key went with the old form, and the rule with it, so
+    `merge` is the one caller left. `path` is the TREE path, named where it is written (`written_at`).
     """
-    return (f"group '{path}' declares `{key}:`, which the platform's node already sets. A product may "
-            f"add commands and sub-groups to a platform group, never change its shape - change it in "
+    return (f"`{written_at(path)}` declares `{key}:`, which the platform's node already sets. A product "
+            f"may add commands and sub-groups to a platform group, never change its shape - change it in "
             f"the platform's `groups:` instead, once, for everybody")
 
 
@@ -365,10 +388,14 @@ def merge(kernel: dict, product: dict, _path: tuple[str, ...] = (),
             # about REDECLARING a shape the platform already set, and here there is no platform.
             out[name] = {}
         if name not in out:
+            # Named where it is written, and its siblings named as what stands beside it THERE: under
+            # `ci:` that is build, release, test - never `ci, cd, support`, which are not groups to the
+            # person writing `ci:` (si#344).
+            beside = f"under `{written_at(_path)}`" if _path else "at the top level"
             raise ValueError(
-                f"groups entry '{'.'.join(path)}' names a group the platform's tree does not declare. "
+                f"`{written_at(path)}` names a group the platform's tree does not declare. "
                 f"The platform owns which groups exist, so that the same groups and the same general "
-                f"tasks are there in every product. Available here: "
+                f"tasks are there in every product. Available {beside}: "
                 f"{', '.join(sorted(out)) or '(none)'}. Either put these commands in one of those, or "
                 f"declare the new group in the platform's `groups:` - once, for everybody")
         _check_node_keys(node, path)
@@ -380,17 +407,16 @@ def merge(kernel: dict, product: dict, _path: tuple[str, ...] = (),
                                          product_tasks=product_tasks, catalogue_tasks=catalogue_tasks,
                                          locked=locked)
             elif key == "commands":
-                merged["commands"] = _merge_commands(base.get("commands") or {}, value,
-                                                     ".".join(path),
+                merged["commands"] = _merge_commands(base.get("commands") or {}, value, path,
                                                      product_tasks=product_tasks or {},
                                                      catalogue_tasks=catalogue_tasks or {})
             elif own:
                 merged[key] = value
             else:
-                raise ValueError(shape_is_the_platforms(".".join(path), key))
+                raise ValueError(shape_is_the_platforms(path, key))
         if _is_empty(merged):
             raise ValueError(
-                f"group '{'.'.join(path)}' declares no commands. A group this manifest names is a "
+                f"`{written_at(path)}` declares no commands. A group this manifest names is a "
                 f"promise it has at least one, directly or in a subgroup - add one, or remove the "
                 f"declaration and leave the group to the platform's default (nothing rendered)")
         out[name] = merged
@@ -414,7 +440,7 @@ def _impl_of(ref: str, product_tasks: dict, catalogue_tasks: dict) -> str:
     return str(spec.get("impl") or ref)
 
 
-def _merge_commands(base: dict, extra: dict, where: str,
+def _merge_commands(base: dict, extra: dict, path: tuple[str, ...],
                     *, product_tasks: dict, catalogue_tasks: dict) -> dict:
     """A group's members, with the product's refinements folded in per KEY rather than per node.
 
@@ -432,7 +458,11 @@ def _merge_commands(base: dict, extra: dict, where: str,
     explicit "yes, I mean to replace it" the platform cannot infer from silence. `override: true` makes
     the product's node the WHOLE command (no merge with the base's `help:`/`params:`): those describe the
     body being replaced, not the one that now runs.
+
+    `path` is the group's TREE path: a command is named the way the command line spells it, and the
+    place to edit the way the manifest writes it (si#344).
     """
+    where = _cli_path(path)
     out: dict[str, dict] = {}
     for name, spec in (base or {}).items():
         name = str(name)
@@ -465,7 +495,7 @@ def _merge_commands(base: dict, extra: dict, where: str,
                     f"refuses to make - `{name}` and `{name}` look the same, `{old_impl}` and "
                     f"`{new_impl}` do not. If the product's body ({new_impl}) must deliberately replace "
                     f"the platform's ({old_impl}) here, add `override: true` next to `task: \"{new_ref}\"` "
-                    f"under this command in `groups: {where}: commands: {name}:`. If it should not, drop "
+                    f"under this command in `{written_at(path)} commands: {name}:`. If it should not, drop "
                     f"the `task:` line here and keep refining the platform's command instead (help:, "
                     f"params:, with: only)")
             # A deliberate replacement stands alone: merging the base's `help:`/`params:` in would
@@ -523,7 +553,7 @@ def check_task(name: str, spec: dict) -> None:
         if key in COMMAND_ONLY_KEYS:
             raise ValueError(
                 f"task '{name}' declares `{key}:`, which belongs on a command rather than on the task "
-                f"it instantiates. Move it to the command under `groups:`")
+                f"it instantiates. Move it to the command under `ci:`, `cd:` or `support:`")
         if key not in TASK_KEYS:
             raise ValueError(
                 f"task '{name}' declares unknown key `{key}:`. A task takes "
@@ -634,10 +664,25 @@ def _is_old_form_node(node: object) -> bool:
 
 
 def old_form_groups(groups: dict) -> dict:
-    """The flat-form entries of a `groups:` block, keyed as they are written."""
+    """The flat-form entries of a block of group nodes, keyed as they are written."""
     if not isinstance(groups, dict):
         return {}
     return {str(name): node for name, node in groups.items() if _is_old_form_node(node)}
+
+
+def _area_groups(data: dict) -> dict:
+    """The group nodes a manifest writes under `ci:`, `cd:` and `support:` - where the flat form lands
+    after `simplon manifest migrate` (si#344), which moves `groups:` into the areas without reading what
+    each node holds. `support:` is a group node itself; under `cd:` the data keys are not groups."""
+    found: dict = {}
+    for area in ("ci", "cd"):
+        section = data.get(area)
+        if isinstance(section, dict):
+            found.update({name: node for name, node in section.items()
+                          if not (area == "cd" and name in CD_DATA_KEYS)})
+    if "support" in data:
+        found["support"] = data["support"]
+    return found
 
 
 def old_form_tasks(tasks: dict) -> dict:
@@ -678,7 +723,10 @@ def check_no_old_form(data: dict) -> None:
     three facts a reader cannot recover from that failure are exactly the three this message carries -
     WHAT shape was found, WHEN it stopped loading, and WHERE the shape that replaced it is written down.
     """
-    groups = old_form_groups(data.get("groups") or {})
+    # Read from the areas rather than from `groups:`: a `groups:` manifest is refused before this runs
+    # (`check_no_pre_si344_form`), and its migration carries a flat node across unchanged - so the areas
+    # are where a flat-form manifest is still found, one refusal after the cut's.
+    groups = old_form_groups(_area_groups(data))
     tasks = old_form_tasks(data.get("tasks") or {})
     stale_import = bool(data.get("import"))
     if not groups and not tasks and not stale_import:
@@ -715,11 +763,13 @@ def check_no_old_form(data: dict) -> None:
     notes = []
     if groups:
         notes.append("a command is an INSTANCE of a task: declare the body once under `tasks:` and let "
-                     "the command point at it with `task:`, under `groups: <group>: commands:`")
+                     "the command point at it with `task:`, under `ci: build: commands:` (or the "
+                     "phase it belongs to), `cd: deploy: commands:` or `support: commands:`")
     if placing:
         notes.append("a task no longer places its own command: keep the body under `tasks:`, DELETE its "
                      "`group:` key, and add the command that instantiates it under "
-                     "`groups: <group>: commands:` with `task:`")
+                     "`ci: build: commands:` (or the phase it belongs to), `cd: deploy: commands:` or "
+                     "`support: commands:` with `task:`")
     own_bodied = [name for name in coordinate_keyed
                   if isinstance(tasks.get(name), dict) and tasks[name].get("impl")]
     if [name for name in coordinate_keyed if name not in own_bodied]:
@@ -744,6 +794,75 @@ def check_no_old_form(data: dict) -> None:
           "also the only way your comments survive the move.")
 
 
+# --- the cut: the form si#344 replaced, refused by name ------------------------------------------------
+#
+# `groups:`, `env_groups:`, a top-level `default:` / `environments:` and a top-level `site:` were the
+# manifest's shape until si#344 put the commands under `ci:` / `cd:` / `support:`, the matrix under
+# `cd:` and the documentation site under `website:`. The way out is `simplon manifest migrate`, which
+# reads the document as YAML and loads no manifest - so it still works on one this kernel refuses.
+#
+# `env_groups:` took its rule with it (si#43, `check_env_groups`): the key let a product say
+# `env_first: true` about a platform group from the top level of the file, and that rule refused the
+# contradiction. With env-first decided by the area - everything under `cd:`, nothing under `ci:` - there
+# is no second spelling left to contradict the first, and `Manifest.env_groups` is read off the tree.
+
+#: The way out, named for both routes a product runs the kernel by. `<orch-dir>` and `<kernel image>` are
+#: placeholders on purpose: this loader is handed TEXT, not a launcher, so it cannot know either.
+#: `ProductContext.manifest` - the one place a product loads its manifest, and the one that knows the
+#: product root - fills them from what the launcher exported (`LAUNCH_ORCH_DIR`, `LAUNCH_IMAGE_PIN`).
+ORCH_DIR_PLACEHOLDER = "<orch-dir>"
+IMAGE_PLACEHOLDER = "<kernel image>"
+MIGRATE_COMMAND = "simplon manifest migrate"
+_MIGRATE = (
+    "Rewrite it with the migration, which loads no manifest and so works on this one:\n"
+    f"  venv:      {ORCH_DIR_PLACEHOLDER}/.venv/bin/{MIGRATE_COMMAND} {{name}}\n"
+    "  container: docker run --rm --user \"$(id -u):$(id -g)\" -v \"$PWD:/src\" -w /src "
+    f"{IMAGE_PLACEHOLDER} {MIGRATE_COMMAND} {{name}}")
+
+#: The keys that make a top-level `site:` the DOCUMENTATION site (now `website:`) rather than the
+#: deployment location, which si#344 reserved under `cd:`.
+_DOCS_SITE_KEYS = ("image", "base_url", "theme", "source", "output")
+
+
+def check_no_pre_si344_form(data: dict, manifest_path: str | None) -> None:
+    """Refuse every key of the form si#344 replaced, by name, with the way out.
+
+    DIAGNOSIS, all of it: `_ManifestModel` ignores unknown top-level keys, so without this a `groups:`
+    manifest would load as a product with no commands and a top-level `environments:` would leave every
+    deploy without a matrix - green at load, wrong at the first command. Runs FIRST, before any check
+    could report a symptom instead - `check_no_old_form` included: a manifest still on the flat form is
+    on `groups:` too, and its first way out is this migration, after which the flat groups stand in the
+    areas and that check names them there.
+    """
+    name = manifest_path or "the manifest"
+    how = _MIGRATE.format(name=manifest_path or "<manifest>.yaml")
+    if "groups" in data:
+        raise ValueError(
+            f"{name} declares `groups:`, which si#344 replaced: commands stand under `ci:` (build, test, "
+            f"release), `cd:` (deploy, monitor) and `support:`, and the command line does not change:\n"
+            f"  ci:\n    build:\n      commands: {{ ... }}\n{how}")
+    if "env_groups" in data:
+        raise ValueError(
+            f"{name} declares `env_groups:`, which si#344 deleted: everything under `cd:` takes an "
+            f"environment and nothing under `ci:` does, so the structure says it. Delete the key.\n{how}")
+    for key in ("default", "environments"):
+        if key in data:
+            raise ValueError(
+                f"{name} declares `{key}:` at the top level; since si#344 it stands under `cd:`, beside "
+                f"the commands that take an environment.\n{how}")
+    if "site" in data:
+        # `in`, not `is not None`: a bare `site:` is a key of the old form too, and ignoring it is the
+        # silence this function exists to break.
+        site = data["site"]
+        if isinstance(site, dict) and any(k in site for k in _DOCS_SITE_KEYS):
+            raise ValueError(
+                f"{name} declares a top-level `site:` with the documentation site's keys; since si#344 "
+                f"that section is `website:`, and `site:` is the deployment location under `cd:`.\n{how}")
+        raise ValueError(
+            f"{name} declares a top-level `site:`. The deployment location stands under `cd: site:` "
+            f"(si#344), and the documentation site is `website:` - move it to whichever it is")
+
+
 # --- a declared task nobody places is a task on OFFER (si#53) -----------------------------------------
 #
 # `check_every_task_is_used` stood here and refused it. It was the one expression rule the kernel did not
@@ -763,7 +882,8 @@ def check_no_old_form(data: dict) -> None:
 
 
 def check_no_shadowed_task_declaration(flat: dict, product_tasks: dict,
-                                       catalogue_tasks: dict | None = None) -> None:
+                                       catalogue_tasks: dict | None = None,
+                                       areas: dict[str, str] | None = None) -> None:
     """Reject a declared task whose NAME a command has taken for a different body (si#81).
 
     THE CASE, and it is the one si#53 measured as the price of striking `check_every_task_is_used`: a
@@ -810,15 +930,17 @@ def check_no_shadowed_task_declaration(flat: dict, product_tasks: dict,
                 f"command '{path} {name}' - the one that bears its name - {runs} instead. That is a "
                 f"half-finished move or a typo, not an offer: the body this manifest still carries "
                 f"({dead}) is reachable from nowhere, and until now nothing said so. Either point "
-                f"`groups: {path}: commands: {name}:` at `task: {name}`, or delete the `tasks: {name}:` "
-                f"declaration whose body no longer runs. A task NO command names is untouched by this - "
-                f"declaring more than you place is what a catalogue is for (si#53)")
+                f"`{written_at(tree_path(path, areas or {}))} commands: {name}:` at `task: {name}`, or "
+                f"delete the `tasks: {name}:` declaration whose body no longer runs. A task NO command "
+                f"names is untouched by this - declaring more than you place is what a catalogue is "
+                f"for (si#53)")
 
 
 # --- placement or family: what a coordinate's namespace says about where it may go (si#34) ------------
 
 
-def check_coordinate_placement(flat: dict, platform_groups: frozenset[str]) -> int:
+def check_coordinate_placement(flat: dict, platform_groups: frozenset[str],
+                               areas: dict[str, str] | None = None) -> int:
     """Reject a coordinate that names a platform group and is placed in a different one.
 
     THE RULE. A catalogue coordinate is `<namespace>:<name>`, and the namespace answers one of two
@@ -887,72 +1009,17 @@ def check_coordinate_placement(flat: dict, platform_groups: frozenset[str]) -> i
             if namespace == group:
                 ruled += 1
                 continue
+            # Named where the manifest WRITES the group (si#344): `ci: build:`, `support:` - `areas` is
+            # what the fold remembered of the level the flat path no longer carries.
+            home = written_at(tree_path(namespace, areas or {}))
             raise ValueError(
                 f"command '{placed_in} {name}' places the coordinate '{ref}', and '{namespace}' is one "
                 f"of the platform's own group names. A coordinate that starts with one says where the "
-                f"task belongs, so '{ref}' belongs under `groups: {namespace}:` and nowhere else - this "
-                f"places it under '{placed_in}'. Move the command to `groups: {namespace}: commands: "
+                f"task belongs, so '{ref}' belongs under `{home}` and nowhere else - this "
+                f"places it under '{placed_in}'. Move the command to `{home} commands: "
                 f"{name}:`, or - if this body really is a family each product places where it likes - "
                 f"give it a namespace in the platform catalogue that names no group, the way `docs:site` "
                 f"can sit under `build` in one product and under `release` in another. The names that "
                 f"carry a placement are the platform's groups: {', '.join(sorted(platform_groups))} - "
                 f"the phases of the delivery loop, plus the group that supports them")
-    return ruled
-
-
-# --- env_groups: the flat spelling of a group's env-first shape, and who owns it (si#43) --------------
-
-
-def check_env_groups(merged: dict, env_groups: Iterable[str], platform_groups: frozenset[str]) -> int:
-    """Reject an `env_groups:` entry that contradicts the merged node's `env_first:`.
-
-    THE RULE is `merge`'s, and this function only reaches the one spelling `merge` never sees.
-    `env_first: true` written onto a group the catalogue declares is refused there - not because it
-    switches the gate the wrong way, but because a product may not STATE a platform group's shape at all.
-    `env_groups: [<that group>]` says the same thing from the top level of the same file, so it lands on
-    the same refusal, from `shape_is_the_platforms`.
-
-    NOT "it only switches on, never off". That reading was the one this check replaces, and it does not
-    survive contact with `merge`: `merge` allows no switching in either direction. `env_first: true` on a
-    group the catalogue already calls env-first is refused just as flatly as `false` on one. There is no
-    asymmetry to mirror.
-
-    So the entry is measured against the MERGED node rather than allowed to overrule it:
-
-      - the merged node is already env-first: the entry AGREES with the platform. Harmless, probably
-        redundant, accepted - and counted, because agreement is the case a reader has to be able to tell
-        apart from the entry having done something;
-      - the merged node is not env-first and the platform owns the group: the entry CONTRADICTS the
-        platform, and that is the refusal;
-      - the merged node is not env-first and no platform owns the group: nothing has been contradicted.
-        The group is the manifest's own - a loader running without a catalogue - and `env_groups:` is
-        its own statement about it, which is the case the key was written for. `load` gates it on.
-
-    `platform_groups` is the catalogue's own top-level group names, a parameter for the same reason
-    `check_coordinate_placement`'s is: "which groups have a shape somebody else owns" is the CATALOGUE's
-    statement, and a caller with no catalogue hands in an empty set and owns every group it declares.
-
-    Only TOP-LEVEL entries reach here; the model's rule 2 rejects a dotted one before this runs, so a
-    nested node's `env_first:` is never spoken about from this key.
-
-    RETURNS how many entries it ruled on - entries measured against a group the platform owns - because a
-    manifest with no `env_groups:` at all returns 0 exactly as a manifest whose every entry was checked
-    against a platform node that agreed, and only the second is evidence that the rule ran. The count
-    has to come from here rather than be recomputed by a caller, for the reason si#34's does: a test that
-    counted the entries itself would count them while a check that ruled on none stayed green.
-    """
-    ruled = 0
-    for group in env_groups or ():
-        node = (merged or {}).get(str(group)) or {}
-        if bool(node.get("env_first", False)):
-            ruled += 1
-            continue
-        if str(group) not in platform_groups:
-            continue
-        ruled += 1
-        raise ValueError(
-            shape_is_the_platforms(str(group), "env_groups")
-            + f". `env_groups: [{group}]` says `env_first: true` about '{group}', and the platform's "
-              f"node says `env_first: false` - drop the entry, or turn the group env-first in the "
-              f"platform's `groups:`, once, for every product that has it")
     return ruled

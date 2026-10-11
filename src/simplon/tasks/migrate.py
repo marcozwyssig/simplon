@@ -169,7 +169,17 @@ def migrate_text(text: str, *, unknown_groups_into: str | None = None) -> Migrat
     """Splice `text` from the `groups:` form into the ci/cd form; see the module head for the rules."""
     if unknown_groups_into not in (None, "ci", "cd"):
         raise ValueError(f"unknown_groups_into must be 'ci' or 'cd', not {unknown_groups_into!r}")
-    old = yaml.safe_load(text)
+    try:
+        old = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        # A refusal and not a traceback: this command is the way out of a manifest the kernel no longer
+        # loads, so it is run on files somebody is in the middle of editing. The parser's own mark is
+        # reprinted because it was handed a STRING and its `str()` would name "<unicode string>".
+        mark = getattr(exc, "problem_mark", None)
+        where = f"line {mark.line + 1}, column {mark.column + 1}: " if mark is not None else ""
+        problem = getattr(exc, "problem", None) or str(exc)
+        return Migration("refused", text, (), f"it is not valid YAML, so nothing can be moved: "
+                                              f"{where}{problem}")
     if not isinstance(old, dict):
         return Migration("current", text)
     docs_site = _is_docs_site(old.get("site"))
@@ -251,6 +261,16 @@ def migrate_text(text: str, *, unknown_groups_into: str | None = None) -> Migrat
             return refused(f"env_groups: {_render(value)} names a group outside cd:. Under the ci/cd form "
                            "only what stands under cd: takes an environment, so this manifest has to "
                            "decide by hand where those commands belong")
+        # An entry naming a group the manifest does not declare was REFUSED by the loader the key
+        # belonged to. Deleting it here would turn a manifest that did not load into one that does,
+        # silently - the migration would have fixed a mistake nobody was told about.
+        declared = old.get("groups") if isinstance(old.get("groups"), dict) else {}
+        missing = [group for group in value if group not in declared]
+        if missing:
+            return refused(f"env_groups: {_render(value)} names '{missing[0]}', which groups: does not "
+                           "declare - the manifest did not load before the migration either, so deleting "
+                           "the entry would hide a mistake rather than move it. Declare the group or drop "
+                           "the entry, and run again")
         owned = [line for line in blocks[keys.index("env_groups")][1] if line.strip()]
         removed += owned
         comments = sum(1 for line in owned if line.strip().startswith("#"))

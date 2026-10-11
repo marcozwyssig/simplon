@@ -126,8 +126,9 @@ def test_the_committed_completion_is_shell_bash_will_accept():
 
 
 def test_simplon_completes_no_environment_because_it_has_no_env_first_group():
-    """A DECISION with a measurable consequence (si#58 question 2). simplon declares `env_groups: []`,
-    so `simplon.cli.main` would refuse an explicit env to every one of its groups - and completing `dev`
+    """A DECISION with a measurable consequence (si#58 question 2). simplon places nothing under `cd:`
+    (it declared `env_groups: []` before si#344 derived the field from the tree), so `simplon.cli.main`
+    would refuse an explicit env to every one of its groups - and completing `dev`
     at the first position would have offered a token that leads only to that refusal. The environments
     are still read from the manifest; there is simply nothing there to read."""
     # arrange

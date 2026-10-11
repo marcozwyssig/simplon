@@ -7,11 +7,12 @@ from simplon.environments import parse, parse_data
 
 _BACKENDS = ("local", "cloud")
 _OK = """
-default: dev
-environments:
-  dev:  { backend: local, description: "Local lab." }
-  test: { backend: cloud, description: "QA." }
-  prod: { backend: cloud }
+cd:
+  default: dev
+  environments:
+    dev:  { backend: local, description: "Local lab." }
+    test: { backend: cloud, description: "QA." }
+    prod: { backend: cloud }
 """
 
 
@@ -37,7 +38,7 @@ def test_parse_defaults_missing_description_to_empty():
 
 def test_parse_rejects_a_backend_not_in_valid_backends():
     # arrange: a backend outside the product's valid set
-    text = "default: dev\nenvironments:\n  dev: { backend: kubernetes }\n"
+    text = "cd:\n  default: dev\n  environments:\n    dev: { backend: kubernetes }\n"
 
     # act / assert
     with pytest.raises(ValueError, match="backend"):
@@ -46,7 +47,7 @@ def test_parse_rejects_a_backend_not_in_valid_backends():
 
 def test_parse_rejects_a_default_that_is_not_a_defined_environment():
     # arrange: default points at a non-existent environment
-    text = "default: staging\nenvironments:\n  dev: { backend: local }\n"
+    text = "cd:\n  default: staging\n  environments:\n    dev: { backend: local }\n"
 
     # act / assert
     with pytest.raises(ValueError, match="default"):
@@ -56,14 +57,14 @@ def test_parse_rejects_a_default_that_is_not_a_defined_environment():
 def test_parse_rejects_an_empty_environment_set():
     # arrange / act / assert
     with pytest.raises(ValueError, match="no environments"):
-        parse("default: dev\nenvironments: {}\n", _BACKENDS)
+        parse("cd:\n  default: dev\n  environments: {}\n", _BACKENDS)
 
 
 def test_parse_data_builds_the_registry_from_an_already_parsed_mapping():
     # arrange: the one-manifest path hands parse_data an already-loaded dict, not text (no yaml round-trip)
-    data = {"default": "dev",
-            "environments": {"dev": {"backend": "local", "description": "Local lab."},
-                             "prod": {"backend": "cloud"}}}
+    data = {"cd": {"default": "dev",
+                   "environments": {"dev": {"backend": "local", "description": "Local lab."},
+                                    "prod": {"backend": "cloud"}}}}
 
     # act
     reg = parse_data(data, _BACKENDS)
@@ -76,7 +77,7 @@ def test_parse_data_builds_the_registry_from_an_already_parsed_mapping():
 
 def test_parse_data_rejects_an_unknown_backend_from_a_mapping():
     # arrange: the same validation applies on the mapping path
-    data = {"default": "dev", "environments": {"dev": {"backend": "kubernetes"}}}
+    data = {"cd": {"default": "dev", "environments": {"dev": {"backend": "kubernetes"}}}}
 
     # act / assert
     with pytest.raises(ValueError, match="backend"):
@@ -87,12 +88,14 @@ def test_parse_data_rejects_an_unknown_backend_from_a_mapping():
 
 
 _WITH_BOTH_LISTS = {
-    "default": "prod",
     "carriers": {"c": {"portainer": {"url_from": "P"}}},
-    "environments": {
-        "prod": {"backend": "portainer", "carrier": "c", "stack": "s",
-                 "repository": {"url": "u"},
-                 "required": ["API_URL"], "optional": ["LOG_LEVEL", "APP_TITLE"]},
+    "cd": {
+        "default": "prod",
+        "environments": {
+            "prod": {"backend": "portainer", "carrier": "c", "stack": "s",
+                     "repository": {"url": "u"},
+                     "required": ["API_URL"], "optional": ["LOG_LEVEL", "APP_TITLE"]},
+        },
     },
 }
 
@@ -174,8 +177,8 @@ def test_every_backend_a_matrix_names_can_be_checked_against_what_a_run_resolves
     A product can paste this. Whether the kernel should run it for every product at assembly time is a
     separate question, recorded on si#293 rather than answered here.
     """
-    scaffolded = {"default": "dev",
-                  "environments": {"dev": {"backend": "local", "description": "the scaffolded one"}}}
+    scaffolded = {"cd": {"default": "dev",
+                         "environments": {"dev": {"backend": "local", "description": "the scaffolded one"}}}}
     resolvable = {"portainer", envs_mod.LOCAL}
 
     matrix = parse_data(scaffolded, tuple(resolvable))
@@ -202,8 +205,8 @@ def test_a_matrix_is_parsed_against_what_it_itself_declares_by_default():
     si#294, measured by a consumer: the product's provider validated the matrix against its
     `valid_backends` and the kernel re-validated it against the drivable set, so one file was valid and
     invalid at the same time with nowhere to read the two against each other."""
-    document = {"default": "dev",
-                "environments": {"dev": {"backend": "local"}, "prod": {"backend": "portainer"}}}
+    document = {"cd": {"default": "dev",
+                       "environments": {"dev": {"backend": "local"}, "prod": {"backend": "portainer"}}}}
 
     matrix = parse_data(document)
 
@@ -212,7 +215,7 @@ def test_a_matrix_is_parsed_against_what_it_itself_declares_by_default():
 
 def test_a_caller_with_a_narrower_set_still_gets_its_refusal():
     """The default validates nothing the load did not; a caller that genuinely knows less still says so."""
-    document = {"default": "dev", "environments": {"dev": {"backend": "local"}}}
+    document = {"cd": {"default": "dev", "environments": {"dev": {"backend": "local"}}}}
 
     with pytest.raises(ValueError) as exc:
         parse_data(document, ("portainer",))
@@ -261,23 +264,13 @@ def test_parse_data_reads_a_cd_matrix():
     assert set(matrix.environments) == {"dev"}
 
 
-def test_a_cd_matrix_beats_a_top_level_one():
-    # arrange: TRANSITIONAL fallback must only apply when `cd:` carries neither key
-    doc = {**_CD_DOC, "default": "old", "environments": {"old": {"backend": "local"}}}
-
-    # act
-    section = envs_mod.matrix_section(doc)
-
-    # assert
-    assert section["default"] == "dev"
-
-
-def test_the_top_level_matrix_is_still_read_while_the_fixtures_move():
-    # arrange: TRANSITIONAL (si#344 plan A, removed in the cut)
+def test_a_top_level_matrix_is_not_read():
+    # arrange: the form before si#344, which the loader now refuses by name - a reader that fell back to it
+    # would be reading a key no loadable manifest carries
     doc = {"default": "dev", "environments": {"dev": {"backend": "local"}}}
 
     # act / assert
-    assert envs_mod.matrix_section(doc) == {"default": "dev", "environments": {"dev": {"backend": "local"}}}
+    assert envs_mod.matrix_section(doc) == {"default": None, "environments": None}
 
 
 def test_a_cd_without_a_matrix_yields_neither_key_rather_than_failing():

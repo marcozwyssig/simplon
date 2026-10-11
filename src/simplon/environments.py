@@ -109,8 +109,8 @@ class Registry(NamedTuple):
 
 
 def parse(text: str, valid_backends: Iterable[str]) -> Registry:
-    """Parse an environments.yml TEXT document into the registry (pure; unit-tested). Thin wrapper over
-    parse_data for the standalone-file form; the validation lives in parse_data."""
+    """Parse a manifest TEXT into the registry (pure; unit-tested), reading the matrix under `cd:` as
+    `matrix_section` does. Thin wrapper over parse_data; the validation lives in parse_data."""
     return parse_data(yaml.safe_load(text) or {}, valid_backends)
 
 
@@ -197,17 +197,17 @@ def matrix_section(document: Mapping) -> dict:
 
     `cd` is where whatever takes an environment stands, so the matrix it takes them from stands there too.
     ONE accessor for every reader - `parse_data`, completion, `tasks/env`, `tasks/carrier`, `labinstance` -
-    because five readers each walking `document["cd"]` by hand would be five places to forget the
-    transitional fallback below when it is removed.
+    because five readers each walking `document["cd"]` by hand would be five places to get one detail
+    wrong.
 
-    TRANSITIONAL (si#344 plan A, removed in the cut): a top-level `default:`/`environments:` is still read
-    when `cd:` carries neither, so the not-yet-migrated fixtures keep loading.
+    A top-level `default:`/`environments:` is NOT read: since the si#344 cut the loader refuses it by
+    name (`treeform.check_no_pre_si344_form`), so a reader that fell back to it would be reading a key no
+    loadable manifest carries.
     """
     cd = document.get("cd") if isinstance(document, Mapping) else None
-    source = cd if isinstance(cd, Mapping) and ("default" in cd or "environments" in cd) else document
-    if not isinstance(source, Mapping):
+    if not isinstance(cd, Mapping):
         return {"default": None, "environments": None}
-    return {"default": source.get("default"), "environments": source.get("environments")}
+    return {"default": cd.get("default"), "environments": cd.get("environments")}
 
 
 def declared_backends(data: "Mapping[str, object]") -> tuple[str, ...]:
@@ -232,8 +232,8 @@ def declared_backends(data: "Mapping[str, object]") -> tuple[str, ...]:
 
 def parse_data(data: Mapping[str, object],
                valid_backends: "Iterable[str] | None" = None) -> Registry:
-    """Build the registry from an ALREADY-parsed mapping - a product's standalone environments.yml OR the
-    `environments:`/`default:` section of its one manifest (simplon.context.manifest_data()). Validates
+    """Build the registry from an ALREADY-parsed mapping - the `cd: environments:` / `cd: default:` of a
+    product's one manifest (simplon.context.manifest_data()), read through `matrix_section`. Validates
     that every backend is one of valid_backends and that `default` names a real environment, so a bad
     descriptor fails loudly here, not deep in a deployment.
 

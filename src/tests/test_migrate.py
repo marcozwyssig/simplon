@@ -130,6 +130,37 @@ def test_an_env_groups_value_the_new_shape_cannot_say_is_refused():
                              "decide by hand where those commands belong")
 
 
+def test_an_env_groups_entry_naming_a_group_the_manifest_does_not_have_is_refused():
+    # arrange: the old loader refused this manifest ("is not a declared group"); deleting the entry would
+    # turn it into one that loads, and nobody would have said so
+    text = "product: demo\ngroups:\n  build:\n    commands:\n      w: { task: wheel }\nenv_groups: [deploy]\n"
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "refused"
+    assert result.text == text
+    assert result.reason == ("env_groups: [deploy] names 'deploy', which groups: does not declare - the "
+                             "manifest did not load before the migration either, so deleting the entry "
+                             "would hide a mistake rather than move it. Declare the group or drop the entry, "
+                             "and run again")
+
+
+def test_a_document_that_does_not_parse_is_refused_naming_the_parse_error():
+    # arrange: the starter template's own placeholder, which is not YAML until it is substituted
+    text = "product: @@PRODUCT@@\ngroups:\n  build: {}\n"
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "refused"
+    assert result.text == text
+    assert result.reason.startswith("it is not valid YAML, so nothing can be moved: line 1, column 10: ")
+    assert "'@'" in result.reason
+
+
 def test_a_group_outside_the_six_is_refused_unless_told_where_it_goes():
     # arrange
     text = "product: demo\ngroups:\n  lab:\n    commands:\n      up: { task: x }\n"
@@ -332,6 +363,21 @@ def test_migrate_refused_is_rc_1_and_writes_nothing(tmp_path, capsys):
     assert rc == 1
     assert path.read_text() == text
     assert "flow style on line 2" in capsys.readouterr().err
+
+
+def test_migrate_on_a_document_that_does_not_parse_is_rc_1_and_writes_nothing(tmp_path, capsys):
+    # arrange
+    path = tmp_path / "demo.yaml"
+    text = "product: @@PRODUCT@@\n"
+    path.write_text(text)
+
+    # act
+    rc = migrate_mod.migrate(str(path))
+
+    # assert: a refusal with its reason, not a traceback
+    assert rc == 1
+    assert path.read_text() == text
+    assert "not valid YAML" in capsys.readouterr().err
 
 
 def test_support_manifest_migrate_is_placed_for_every_product():

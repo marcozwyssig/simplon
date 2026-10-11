@@ -94,6 +94,50 @@ def test_manifest_names_the_file_when_the_document_does_not_parse(tmp_path):
     assert "line 3, column 8" in str(caught.value)
 
 
+_GROUPS_MANIFEST = "product: sample\ngroups:\n  test:\n    commands:\n      lint: { task: lint }\n"
+
+
+def test_the_cut_message_names_the_launchers_real_paths(monkeypatch, tmp_path):
+    """si#344: the loader is handed text and writes `<orch-dir>` and `<kernel image>`; the product's load
+    is where the launcher's exports are, so the commands a person copies are the ones that run here."""
+    # arrange
+    (tmp_path / "image.pin").write_text("# pin\nghcr.io/marcozwyssig/simplon:v0.28.0\n", encoding="utf-8")
+    monkeypatch.setenv("LAUNCH_ORCH_DIR", str(tmp_path / "deploy" / "orchestrator"))
+    monkeypatch.setenv("LAUNCH_IMAGE_PIN", str(tmp_path / "image.pin"))
+    path = tmp_path / "sample.yaml"
+    path.write_text(_GROUPS_MANIFEST, encoding="utf-8")
+
+    # act
+    with pytest.raises(ValueError) as caught:
+        ProductContext("sample", tmp_path, path).manifest()
+
+    # assert: every path relative to the product root the two commands are run from
+    message = str(caught.value)
+    assert "  venv:      deploy/orchestrator/.venv/bin/simplon manifest migrate sample.yaml\n" in message
+    assert "-w /src ghcr.io/marcozwyssig/simplon:v0.28.0 simplon manifest migrate sample.yaml" in message
+    # and the subject still names the file the reader has open
+    assert message.startswith(f"{path} declares `groups:`")
+    # and the cause is not printed twice: the loader's own wording is replaced, not chained
+    assert caught.value.__cause__ is None and caught.value.__suppress_context__
+
+
+def test_a_placeholder_with_nothing_to_fill_it_is_left_rather_than_emptied(monkeypatch, tmp_path):
+    # arrange: no launcher exports (a kernel driven directly), and a pin that names a missing file
+    monkeypatch.delenv("LAUNCH_ORCH_DIR", raising=False)
+    monkeypatch.setenv("LAUNCH_IMAGE_PIN", str(tmp_path / "absent.pin"))
+    path = tmp_path / "sample.yaml"
+    path.write_text(_GROUPS_MANIFEST, encoding="utf-8")
+
+    # act
+    with pytest.raises(ValueError) as caught:
+        ProductContext("sample", tmp_path, path).manifest()
+
+    # assert
+    message = str(caught.value)
+    assert "<orch-dir>/.venv/bin/simplon manifest migrate sample.yaml" in message
+    assert "-w /src <kernel image> simplon manifest migrate" in message
+
+
 def test_manifest_data_fails_loudly_on_a_missing_file(tmp_path):
     # arrange: a manifest path that does not exist
     ctx = ProductContext("sample", tmp_path, tmp_path / "absent.yaml")

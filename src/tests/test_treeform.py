@@ -12,6 +12,7 @@ from conftest import ROOT
 from simplon import catalogue as catalogue_mod
 from simplon.orchestrator import manifest
 from simplon.orchestrator.model import treeform
+from simplon.tasks import migrate
 
 
 def test_a_flat_group_lowers_to_a_taxonomy_entry_and_a_member_map():
@@ -225,7 +226,7 @@ def test_a_product_declared_nested_group_left_with_no_commands_is_rejected():
     product = {"support": {"groups": {"empty-sub": {}}}}
 
     # act / assert
-    with pytest.raises(ValueError, match="support.empty-sub.*declares no commands"):
+    with pytest.raises(ValueError, match="`support: groups: empty-sub:` declares no commands"):
         treeform.merge(kernel, product)
 
 
@@ -699,12 +700,29 @@ def test_an_import_section_is_rejected():
 
 
 def test_a_tree_form_manifest_passes_the_flat_form_check():
-    # si#344 Task 9: becomes a cut diagnosis
     # arrange / act / assert: no exception
-    treeform.check_no_old_form({"product": "demo", "groups": {}})
+    treeform.check_no_old_form({"product": "demo", "ci": {}})
     treeform.check_no_old_form({"product": "demo",
                                 "tasks": {"img": {"impl": "a:b", "help": "h."}},
-                                "groups": {"build": {"commands": {"img": {"task": "img"}}}}})
+                                "ci": {"build": {"commands": {"img": {"task": "img"}}}},
+                                "cd": {"default": "dev", "environments": {"dev": {}}},
+                                "support": {"commands": {"img": {"task": "img"}}}})
+
+
+def test_the_flat_form_is_found_in_the_areas_where_the_migration_leaves_it():
+    # arrange: a flat node under each area - what `manifest migrate` makes of a flat `groups:` block
+    data = {"ci": {"build": {"wheel": {"impl": "a:b"}}},
+            "cd": {"default": "dev", "deploy": {"up": {"impl": "a:up"}}},
+            "support": {"doctor": {"impl": "a:doctor"}}}
+
+    # act
+    with pytest.raises(ValueError) as exc:
+        treeform.check_no_old_form(data)
+
+    # assert: every flat group named, and the cd data key is not mistaken for one
+    message = str(exc.value)
+    assert "group(s) 'build', 'deploy', 'support' name commands directly" in message
+    assert "'default'" not in message
 
 
 def test_a_declared_task_no_command_places_is_accepted():
@@ -751,8 +769,12 @@ ci:
 # The manifest below is not an illustration. It is simplon's OWN `simplon.yaml` as it stood at 0.3.0 -
 # flat groups, `import:`, and coordinate-keyed `tasks:` entries all three - which is what makes these
 # tests a measurement rather than a restatement of the renderer.
-
-# si#344 Task 9: becomes a cut diagnosis
+#
+# Since si#344 such a manifest meets the cut first: it declares `groups:`, and the loader refuses that by
+# name and hands over `simplon manifest migrate`. The migration moves `groups:` into the areas without
+# reading the nodes, so the flat form is still there afterwards, under `ci:` and `support:` - and THAT
+# is the manifest the si#33 refusal now has to answer. `_MIGRATED_OLD_MANIFEST` is the real migration's
+# output, not a hand-written guess at it.
 _REAL_OLD_MANIFEST = """
 product: simplon
 default: dev
@@ -798,13 +820,29 @@ site:
 """
 
 
+_MIGRATED_OLD_MANIFEST = migrate.migrate_text(_REAL_OLD_MANIFEST).text
+
+
+def test_a_real_old_manifest_meets_the_cut_before_the_flat_form_refusal():
+    # act
+    with pytest.raises(ValueError) as exc:
+        manifest.load(_REAL_OLD_MANIFEST, catalogue=catalogue_mod.load())
+
+    # assert: the si#344 refusal, which is the one whose way out runs on this file
+    assert "declares `groups:`, which si#344 replaced" in str(exc.value)
+    # and the migration really did leave the flat form for the next refusal to find, or the three tests
+    # below would be measuring a manifest nobody can arrive at
+    assert migrate.migrate_text(_REAL_OLD_MANIFEST).status == "migrated"
+    assert "impl:" in _MIGRATED_OLD_MANIFEST
+
+
 def test_a_real_old_manifest_is_refused_and_the_message_names_every_flat_section():
     # arrange: all three flat shapes at once, which is the realistic case - a product that wrote `impl:`
     # on a command also placed its catalogue tasks the old way. Reporting one per load would be three
     # guessing games instead of none.
     # act
     with pytest.raises(ValueError) as exc:
-        manifest.load(_REAL_OLD_MANIFEST, catalogue=catalogue_mod.load())
+        manifest.load(_MIGRATED_OLD_MANIFEST, catalogue=catalogue_mod.load())
 
     # assert
     message = str(exc.value)
@@ -826,7 +864,7 @@ def test_the_refusal_names_the_release_that_abolished_the_form_and_the_page_that
     """
     # arrange / act
     with pytest.raises(ValueError) as exc:
-        manifest.load(_REAL_OLD_MANIFEST, catalogue=catalogue_mod.load())
+        manifest.load(_MIGRATED_OLD_MANIFEST, catalogue=catalogue_mod.load())
     message = str(exc.value)
 
     # assert: the release, and the page - the deep link by its ANCHOR rather than by a heading a reader
@@ -846,7 +884,7 @@ def test_the_refusal_no_longer_promises_a_rewrite():
     "Rewrite those sections as:" and then prints nothing is worse than one that never offered it."""
     # arrange / act
     with pytest.raises(ValueError) as exc:
-        manifest.load(_REAL_OLD_MANIFEST, catalogue=catalogue_mod.load())
+        manifest.load(_MIGRATED_OLD_MANIFEST, catalogue=catalogue_mod.load())
     message = str(exc.value)
 
     # assert

@@ -35,10 +35,10 @@ Six groups exist - `build`, `test`, `release`, `deploy`, `monitor`, and `support
 - and that is all there are. A seventh is not refused by a rule bolted on top; it has nowhere to land,
 because a product's tree is merged onto the platform's:
 
-> groups entry 'publish' names a group the platform's tree does not declare. The platform owns which
-> groups exist, so that the same groups and the same general tasks are there in every product. Available
-> here: build, deploy, monitor, release, support, test. Either put these commands in one of those, or
-> declare the new group in the platform's `groups:` - once, for everybody.
+> `ci: publish:` names a group the platform's tree does not declare. The platform owns which groups
+> exist, so that the same groups and the same general tasks are there in every product. Available under
+> `ci:`: build, release, test. Either put these commands in one of those, or declare the new group in the
+> platform's `groups:` - once, for everybody
 
 So `test` means *verify* in every product, and `deploy prod up` reads the same to somebody who has never
 seen that product before.

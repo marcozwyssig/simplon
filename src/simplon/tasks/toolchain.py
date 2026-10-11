@@ -323,15 +323,9 @@ def scaffold(language: str, version: str) -> int:
 #: than walked into.
 _KEY = re.compile(r"^(?P<indent> *)(?P<key>[A-Za-z0-9_][A-Za-z0-9_.-]*):(?P<rest>.*)$")
 
-#: The top-level section the build group stands in. `ci:` since si#344, where `build` is a phase of the
-#: integration area; `groups:` is the form before it, read here only while the loader still reads it.
-#: TRANSITIONAL (si#344 plan A): `groups` goes with the old form's cut in Task 9.
-_AREAS = ("ci", "groups")
-
-
-def _area(data: object) -> str:
-    """The section a manifest's build group stands in - the old one only when the file is in that form."""
-    return "groups" if isinstance(data, Mapping) and "groups" in data and "ci" not in data else "ci"
+#: The top-level section the build group stands in: `ci:` since si#344, where `build` is a phase of the
+#: integration area. The `groups:` form before it no longer loads, so it is not read here either.
+_AREA = "ci"
 
 
 def _declared_build_commands(text: str) -> Mapping[str, object]:
@@ -342,7 +336,7 @@ def _declared_build_commands(text: str) -> Mapping[str, object]:
     """
     data = yaml.safe_load(text) or {}
     node: object = data
-    for key in (_area(data), "build", "commands"):
+    for key in (_AREA, "build", "commands"):
         if not isinstance(node, Mapping):
             return {}
         node = node.get(key)
@@ -382,7 +376,7 @@ def _spliced(text: str, additions: Mapping[str, object], where: str) -> str:
 def _place(lines: list[str]) -> tuple[int, bool, int, int] | None:
     """Where the new commands go: (the `commands:` line, whether it holds an empty `{}`, the line to
     insert before, the indent to write them at). None when the shape is not the one this can splice."""
-    groups = next((found for area in _AREAS if (found := _find(lines, area, 0, len(lines), 0))), None)
+    groups = _find(lines, _AREA, 0, len(lines), 0)
     if groups is None or groups[1]:
         return None
     _, groups_end = _extent(lines, groups[0] + 1, 0, len(lines))
@@ -514,12 +508,11 @@ def _same_data(spliced: str, text: str, additions: Mapping[str, object]) -> bool
     except yaml.YAMLError:
         return False
     want = yaml.safe_load(text) or {}
-    area = _area(want)
-    groups = want.get(area) or {}
+    groups = want.get(_AREA) or {}
     build = groups.get("build") or {}
     build["commands"] = {**(build.get("commands") or {}), **additions}
     groups["build"] = build
-    want[area] = groups
+    want[_AREA] = groups
     return bool(got == want)
 
 
@@ -530,6 +523,6 @@ def _refuse(where: str, additions: Mapping[str, object], indent: int) -> NoRetur
     cannot read - not a licence to guess. What a reader can act on is the text itself, so it is printed.
     """
     log.info(f"{where}: no `ci:` -> `build:` -> `commands:` block mapping to splice into. "
-             f"Paste this under your build group's `commands:`:")
+             f"Paste this under `ci: build: commands:`:")
     print("\n".join(_entries(additions, indent)))
     log.die(f"{where} was left unchanged - a scaffolder that guessed at the shape would corrupt it.")

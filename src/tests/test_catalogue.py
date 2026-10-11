@@ -818,7 +818,8 @@ def test_a_product_still_cannot_invent_a_group_after_the_tree_moved():
     """)
 
     # act / assert
-    with pytest.raises(ValueError, match="'ci.wildwest' names a group the platform's tree does not declare"):
+    with pytest.raises(ValueError,
+                       match="`ci: wildwest:` names a group the platform's tree does not declare"):
         manifest.load(text, catalogue=cat)
 
 

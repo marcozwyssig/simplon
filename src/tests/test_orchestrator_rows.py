@@ -86,6 +86,7 @@ tasks:
   install: { impl: "demo.impls:install", help: "Install host prereqs." }
   compile: { impl: "demo.impls:compile", help: "Compile the artefacts." }
 
+# a non-phase group under cd: loads only because this manifest is loaded without a catalogue
 cd:
   build:
     commands:

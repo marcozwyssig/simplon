@@ -312,21 +312,22 @@ What was missing is the other half: **which names are already taken**. The produ
 from builds three Windows Server *releases*, and it learned that `releases:` already means
 `{page, from, complete_from}` to `test:release-notes` by reading `src/simplon/tasks/releasenotes.py`. A
 reserved name that can only be found in the source is a trap with a delay on it, so the twenty-one are
-published here and `tests/test_manifest_top_level.py` holds this table to the kernel in both directions.
+published here, beside the three sections the commands stand in (`ci:`, `cd:`, `support:`), and
+`tests/test_manifest_top_level.py` holds this table to the kernel in both directions.
 
 | key | read by | what it carries |
 | --- | --- | --- |
 | `artifacts:` | `release:artifact`, `release:nuget-*`, `release:conan-*`, `release:maven` | one entry per published artefact: registry, repository, source directory, media type - and for a jar `group:`, `modules:` and an optional `task:` |
 | `assets:` | `release:asset` | one entry per file attached to a GitHub release |
 | `carriers:` | the environment selector | one entry per thing an environment is realised ON: its `proxmox:` node and kind, and the `portainer:` on it |
+| `cd:` | the loader, the environment selector | the `deploy:` and `monitor:` commands, and the environment matrix beside them: `environments:` (name, backend, description) and `default:` (the environment a command targets when no env token is given) |
+| `ci:` | the loader | the `build:`, `test:` and `release:` commands |
 | `build:` | `build:cmake-files`, `build:dotnet-solution` | `targets:`, the dependency edges between build targets that a directory layout cannot show |
 | `claude:` | `support:claude-plugins` | the marketplaces and plugin ids an agent host installs |
-| `default:` | the environment selector | the environment a command targets when no env token is given |
 | `deploy:` | the deploy commands | `source:`, naming the `images:` or `artifacts:` entry a deployment's versions are looked up in |
 | `doctoolchain_version:` | `docs:render` | the pinned docToolchain image tag |
 | `env_var:` | `support:environments` | the variable a product's env-first CLI publishes the active environment into |
 | `generated:` | `test:generated` | one entry per committed generated file: its `path:` and the `by:` command that produces it |
-| `environments:` | the environment selector | the environment matrix: name, backend, description |
 | `images:` | `build:image`, `release:image`, `test:image` | one entry per container image: registry, repository, Dockerfile, context, and optionally its platforms and the images it is built from |
 | `instance:` | the multi-tenant lab | the env var naming the lab instance, and the product's id-length budget |
 | `lab_egress:` | the lab egress helper | the host interface a lab reaches the outside through |
@@ -334,15 +335,16 @@ published here and `tests/test_manifest_top_level.py` holds this table to the ke
 | `output:` | every producing coordinate | the one directory this product's build writes into, as `<output>/<kind>/`. Defaults to `build` |
 | `nexus:` | the `nexus` commands | the proxy repositories, the compose file and the container this product runs |
 | `releases:` | `test:release-notes` | `page:`, `from:` and `complete_from:`, the three values that gate says what it measures against |
-| `site:` | `docs:site` | the pinned Hugo image, where the sources live, where the site is built to |
 | `suites:` | `test:*` | the test-level taxonomy: the gates, their order, and which one clears the shared results |
+| `support:` | the loader | the commands that support the five phases rather than being one, and their sub-groups |
 | `tracker:` | `test:walk` | where a refused acceptance step becomes a bug ticket, and the product's own wording for it: `title:`, plus `kind:`, `repo:`, `labels:` and `preamble:` |
+| `website:` | `docs:site` | the pinned Hugo image, where the sources live, where the site is built to |
 | `workflows:` | `release:workflows` | one entry per generated CI file |
 
 A key that is **mistyped** is therefore not the silent no-op it looks like. Seventeen of the twenty-one are
-named by the reader that wanted them, the moment that reader runs: `sietv:` instead of `site:` answers
-`the 'site' section is missing or is not a mapping`, and every other reader refuses the same way, naming
-the key it looked for. The four that say nothing say nothing on purpose:
+named by the reader that wanted them, the moment that reader runs: `websiet:` instead of `website:`
+answers `the 'website' section is missing or is not a mapping`, and every other reader refuses the
+same way, naming the key it looked for. The four that say nothing say nothing on purpose:
 
 - **`build:`** - an absent section is the normal case. `build cmake-files` and `build dotnet-solution`
   render the build files from the SOURCES, and `build: targets:` only adds the edges the directories
@@ -836,7 +838,7 @@ and says so. A name with nothing behind it fails exactly the way a file nobody n
 accounted for.
 
 Other sections work the same way: `suites:` is the test-level taxonomy a product's own test tree
-defines, `environments:` the deployment matrix, `nexus:` and `claude:` the data their respective tasks
+defines, `cd: environments:` the deployment matrix, `nexus:` and `claude:` the data their respective tasks
 read. A task that needs a section it does not find fails on its first line, which is why such tasks stay
 *tasks* in the catalogue rather than being placed as commands for everybody.
 
@@ -874,7 +876,7 @@ reader, and a report that quietly moved looks exactly like a report that does no
 | --- | --- |
 | the run transcript, and a step's own log | `<output>/logs/` — see below: not every run writes one |
 | `build:image`'s pointer | `<output>/docker/image.txt` |
-| `docs:site`, when the `site:` section names no `output:` | `<output>/site/` |
+| `docs:site`, when the `website:` section names no `output:` | `<output>/site/` |
 | the HOME a containerised run gets (si#319) | `<output>/home/` — honoured by a uid with no passwd entry; a container running as root takes that entry's home instead (si#325) |
 
 **`<output>/logs/` is written by a run made of STEPS, not by every command.** Measured, because "on every
@@ -1311,7 +1313,10 @@ tasks:
 ```
 
 **That form was abolished in 0.4.0.** A manifest written that way no longer loads, and the loader says
-so by name rather than letting it die further down as a missing key on some node:
+so by name rather than letting it die further down as a missing key on some node. Since si#344 it says so
+second: the `groups:` key is refused first, with `simplon manifest migrate` as the way out, and the
+migration moves each group under `ci:`, `cd:` or `support:` without reading what it holds - so the flat
+groups are still flat afterwards, and this is the refusal that names them there:
 
 ```
 this manifest is written in the flat command form, which no longer loads: the form was abolished in
@@ -1323,7 +1328,8 @@ available.
 
 What it becomes:
   - a command is an INSTANCE of a task: declare the body once under `tasks:` and let the command point
-    at it with `task:`, under `groups: <group>: commands:`
+    at it with `task:`, under `ci: build: commands:` (or the phase it belongs to), `cd: deploy:
+    commands:` or `support: commands:`
   - a catalogue task keeps its body in the kernel - the command names the coordinate
     (`task: "<namespace>:<name>"`) and copies nothing
   - the catalogue's own commands arrive by merging its tree, so `import:` has nothing left to do -

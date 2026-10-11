@@ -271,6 +271,7 @@ tasks:
   package: { impl: "cliref_impls:wheel", help: "Package the artefacts." }
   wheel: { impl: "cliref_impls:up", help: "Build the wheel." }
 
+# a non-phase group under cd: loads only because this manifest is loaded without a catalogue
 cd:
   package:
     commands:

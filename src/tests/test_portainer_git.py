@@ -565,7 +565,8 @@ def test_the_manifest_may_not_claim_the_variable_the_kernel_sets() -> None:
 
 def test_required_values_with_no_stack_have_nowhere_to_go() -> None:
     # arrange
-    document = {"environments": {"prod": {"backend": "portainer", "required": ["A"]}}, "default": "prod"}
+    document = {"cd": {"environments": {"prod": {"backend": "portainer", "required": ["A"]}},
+                       "default": "prod"}}
 
     # act / assert
     with pytest.raises(ValueError) as refused:
@@ -623,10 +624,10 @@ def test_a_name_in_both_lists_is_refused_rather_than_ranked() -> None:
     # arrange
     document = {"carriers": {"haus": {"proxmox": {"node": "pve", "kind": "lxc"},
                                       "portainer": {"url_from": "P"}}},
-                "environments": {"prod": {"backend": "portainer", "carrier": "haus", "stack": "s",
-                                          "required": ["TOGGL_API_TOKEN"],
-                                          "optional": ["TOGGL_API_TOKEN"]}},
-                "default": "prod"}
+                "cd": {"environments": {"prod": {"backend": "portainer", "carrier": "haus", "stack": "s",
+                                                 "required": ["TOGGL_API_TOKEN"],
+                                                 "optional": ["TOGGL_API_TOKEN"]}},
+                       "default": "prod"}}
 
     # act / assert
     with pytest.raises(ValueError) as refused:
@@ -638,8 +639,8 @@ def test_a_name_in_both_lists_is_refused_rather_than_ranked() -> None:
 
 def test_optional_alone_still_needs_somewhere_to_go() -> None:
     # arrange
-    document = {"environments": {"prod": {"backend": "portainer", "optional": ["APP_TITLE"]}},
-                "default": "prod"}
+    document = {"cd": {"environments": {"prod": {"backend": "portainer", "optional": ["APP_TITLE"]}},
+                       "default": "prod"}}
 
     # act / assert
     with pytest.raises(ValueError) as refused:

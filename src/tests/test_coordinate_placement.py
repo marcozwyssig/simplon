@@ -45,6 +45,10 @@ PLATFORM_GROUPS = frozenset({"build", "test", "release", "deploy", "monitor", "s
 #: the refusal and the website all have to keep straight.
 PHASES = frozenset({"build", "test", "release", "deploy", "monitor"})
 
+#: The area each phase stands in (si#344), spelled out for the same reason as `PLATFORM_GROUPS`. The
+#: refusal names the place the manifest WRITES a group - `ci: build:` - and that place needs the area.
+AREAS = {"build": "ci", "test": "ci", "release": "ci", "deploy": "cd", "monitor": "cd"}
+
 
 def test_the_catalogue_still_declares_exactly_the_six_groups_the_rule_is_written_against():
     """The rule's set is the catalogue's first VISIBLE level of groups, so a seventh group added without a
@@ -119,16 +123,16 @@ def test_the_rejection_names_both_coordinates_the_allowed_group_and_the_way_out(
 
     # act
     with pytest.raises(ValueError) as caught:
-        treeform.check_coordinate_placement(flat, PLATFORM_GROUPS)
+        treeform.check_coordinate_placement(flat, PLATFORM_GROUPS, areas=AREAS)
     message = str(caught.value)
 
     # assert: both coordinates - the placement in the tree, and the one in the catalogue
     assert "'test image'" in message
     assert "'build:image'" in message
-    # the allowed group, named as the manifest spells it
-    assert "`groups: build:`" in message
+    # the allowed group, named where the manifest writes it (si#344)
+    assert "`ci: build:`" in message
     # and both ways out: move the command, or make the namespace a family
-    assert "`groups: build: commands: image:`" in message
+    assert "`ci: build: commands: image:`" in message
     assert "names no group" in message
     assert "docs:site" in message
     # the group set itself, so "does my namespace name one?" is answerable from the message alone -
@@ -445,7 +449,7 @@ def test_the_website_quotes_the_refusal_word_for_word():
 
     # act
     with pytest.raises(ValueError) as caught:
-        treeform.check_coordinate_placement(flat, PLATFORM_GROUPS)
+        treeform.check_coordinate_placement(flat, PLATFORM_GROUPS, areas=AREAS)
     real = " ".join(str(caught.value).replace("`", "").split())
 
     # assert: not "close enough" - the page shows a reader what they will see, so a full stop the

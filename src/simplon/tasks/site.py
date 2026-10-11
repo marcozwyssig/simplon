@@ -61,12 +61,6 @@ OUTPUT_KIND = "site"
 
 SECTION = "website"
 
-#: TRANSITIONAL (si#344 plan A, removed in the cut): the section's old name, still read when `website:` is
-#: absent and `site:` carries one of the docs keys - a `site:` without them is something else a product
-#: named site, exactly as `migrate` leaves it alone.
-_OLD_SECTION = "site"
-_OLD_SECTION_KEYS = ("image", "base_url", "theme", "source", "output")
-
 #: Where a product's Hugo sources are, when its manifest does not say (si#183). `docs/` is the
 #: documentation root - architecture, specs, plans and the site all belong in it, so one repository stops
 #: answering "where is the documentation" in two places - and this is the leaf simplon itself uses.
@@ -301,11 +295,6 @@ def declared(data: Mapping[str, object], source: str = "manifest") -> Site:
     is what `theme:` and `base_url:` have always done with one.
     """
     name = SECTION
-    # TRANSITIONAL (si#344 plan A, removed in the cut): the not-yet-migrated `site:` still builds.
-    old = data.get(_OLD_SECTION) if isinstance(data, Mapping) else None
-    if (isinstance(data, Mapping) and SECTION not in data and isinstance(old, Mapping)
-            and any(key in old for key in _OLD_SECTION_KEYS)):
-        name = _OLD_SECTION
     section, blame, _ = context.section(data, name)
     if blame:
         raise ValueError(f"{source}: the '{name}' section is missing or is not a mapping "

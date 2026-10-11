@@ -6,10 +6,11 @@ cd:
   default: dev
 
 # Simplon's own three bodies. A task is the TEMPLATE for a body, declared once here; a command under
-# `groups:` is an instance of one. These three are one-off callables rather than reusable templates - no
-# other product will ever place `orchestrator.cli:build_wheel` - and they are declared here anyway,
-# because there is no second way to declare a body any more: the flat form that let a command carry its
-# own `impl:` was deleted in si#33, and this manifest was one of the two things still written in it.
+# `ci:` or `support:` is an instance of one. These three are one-off callables rather than reusable
+# templates - no other product will ever place `orchestrator.cli:build_wheel` - and they are declared
+# here anyway, because there is no second way to declare a body any more: the flat form that let a
+# command carry its own `impl:` was deleted in si#33, and this manifest was one of the two things still
+# written in it.
 tasks:
   wheel:
     impl: "orchestrator.cli:build_wheel"
@@ -28,10 +29,11 @@ tasks:
     help: "Check the tools and the environment."
     unattended: true
 
-# The command tree. `groups:` hangs off the tree the catalogue declares
-# (src/simplon/catalogue.yaml: build/test/release/deploy/monitor/support) rather than inventing groups of
-# its own - which is also what makes the catalogue reachable without an `import:` section: a command names
-# a coordinate with `task: "<namespace>:<name>"` and the merge happens at load time.
+# The command tree. `ci:`, `cd:` and `support:` hang off the tree the catalogue declares
+# (src/simplon/catalogue.yaml: build/test/release under ci, deploy/monitor under cd, and support) rather
+# than inventing groups of its own - which is also what makes the catalogue reachable without an
+# `import:` section: a command names a coordinate with `task: "<namespace>:<name>"` and the merge
+# happens at load time.
 #
 # A group with no command anywhere under it does not render, so `deploy` and `monitor` are absent from
 # this CLI: simplon deploys nothing and watches nothing. They are the catalogue's, not missing.

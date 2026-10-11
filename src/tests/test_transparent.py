@@ -141,16 +141,13 @@ def test_a_command_under_ci_build_is_build_on_the_command_line():
     assert mf.area_of("support.git") is None
 
 
-def test_the_old_groups_form_assembles_the_same_cli_while_both_are_read():
-    # si#344 Task 9: becomes a cut diagnosis
-    # arrange
+def test_the_old_groups_form_is_refused_rather_than_read():
+    # arrange: the same manifest, still written in the form si#344 replaced
     old = NEW_FORM.replace("ci:\n  build:", "groups:\n  build:")
 
-    # act
-    new_mf, old_mf = _load(NEW_FORM), _load(old)
-
-    # assert
-    assert new_mf.groups == old_mf.groups and new_mf.commands == old_mf.commands
+    # act / assert: no second reading of it any more - the cut, by name (`test_cut.py` pins the text)
+    with pytest.raises(ValueError, match="declares `groups:`, which si#344 replaced"):
+        _load(old)
 
 
 def test_everything_under_cd_is_env_first_and_nothing_under_ci_is():
@@ -198,6 +195,17 @@ def test_a_product_writing_transparent_is_refused():
         "`ci: build:` declares `transparent:`. Which nodes are transparent is the platform's statement "
         "(the catalogue's `groups:`), so that `ci` and `cd` are skipped on the command line in every "
         "product and nothing else is - remove the key")
+
+
+def test_transparent_on_a_group_nested_under_support_names_where_it_is_written():
+    # arrange: `support:` is a group node with no name of its own above it, so the location is built
+    # from the area alone - without a stray `: ` where a name would have stood
+    text = NEW_FORM + "support:\n  groups:\n    git:\n      transparent: true\n"
+
+    # act / assert
+    with pytest.raises(ValueError) as caught:
+        _load(text)
+    assert str(caught.value).startswith("`support: groups: git:` declares `transparent:`. ")
 
 
 def test_env_first_under_ci_is_refused():

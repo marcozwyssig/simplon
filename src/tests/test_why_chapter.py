@@ -198,7 +198,7 @@ def _catalogue_helps() -> dict[str, str]:
 def _unpinned_image_refusal() -> str:
     """The real load error for an image reference that names no version, normalised to one line."""
     try:
-        site_mod.declared({"site": {"image": "hugomods/hugo", "source": "s", "output": "o"}},
+        site_mod.declared({"website": {"image": "hugomods/hugo", "source": "s", "output": "o"}},
                           source="simplon.yaml")
     except ValueError as caught:
         return " ".join(str(caught).split())

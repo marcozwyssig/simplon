@@ -48,6 +48,8 @@ def test_load_reads_the_groups_tree_as_membership_and_specs():
     assert mf.groups == {"code": ("fmt", "lint"), "build": ("build",), "deploy": ("up", "down")}
     # ... which of them are env-first, read off the tree: `deploy` stands under `cd:` ...
     assert mf.taxonomy().env_groups == frozenset({"deploy"})
+    # ... and the field the deleted `env_groups:` key used to fill says the same, derived from that tree
+    assert mf.env_groups == frozenset({"deploy"})
     # ... and `commands` is the nested spec tree, resolved via spec_for(group, name)
     assert set(mf.commands) == {"code", "build", "deploy"}
     assert set(mf.commands["code"]) == {"fmt", "lint"}
@@ -80,9 +82,10 @@ def test_taxonomy_reuses_the_shared_env_gate_built_from_the_manifest():
     assert tax.env_verdict("fmt", env_explicit=False) == "ok"
 
 
-def test_load_rejects_a_manifest_with_no_groups():
-    # arrange / act / assert: a manifest with no `groups` tree (unknown top-level keys are ignored)
-    with pytest.raises(ValueError, match="no groups"):
+def test_load_rejects_a_manifest_with_no_commands():
+    # arrange / act / assert: a manifest placing no command under `ci:`, `cd:` or `support:` (unknown
+    # top-level keys are ignored)
+    with pytest.raises(ValueError, match="declares no commands under ci:, cd: or support:"):
         manifest.load("product: demo\n")
 
 
@@ -132,26 +135,6 @@ def test_load_refuses_a_document_with_a_control_character_without_printing_a_pla
     assert "/repo/swi.yaml" in message
     assert "special characters are not allowed" in message
     assert "position 14" in message
-
-
-def test_load_rejects_an_env_group_that_is_not_a_declared_group():
-    # arrange: env_groups names a group that does not exist. `env_groups:` is a key of the `groups:` form
-    # only, so this manifest stays in it.
-    # si#344 Task 9: becomes a cut diagnosis
-    text = ("""
-tasks:
-  fmt: { impl: "m:f", help: "x" }
-
-groups:
-  code:
-    commands:
-      fmt: { task: "fmt" }
-env_groups: [deploy]
-""")
-
-    # act / assert
-    with pytest.raises(ValueError, match="env_groups entry 'deploy'"):
-        manifest.load(text)
 
 
 # A name owned by two groups, each nesting its OWN spec - the #519 shape (netctl: `test all` runs every test
@@ -1262,29 +1245,6 @@ ci:
     assert m.tree["build"].groups == {}
 
 
-def test_an_env_groups_entry_naming_a_nested_group_is_rejected():
-    # arrange: `env_groups:` is the FLAT key; a nested node declares env_first: in the taxonomy block.
-    # Accepting the dotted spelling here loaded cleanly and made the env-gate a silent no-op for that
-    # group - a CD command that must be backend-gated instead reached the "ok" verdict.
-    # si#344 Task 9: becomes a cut diagnosis
-    text = """
-tasks:
-  commit: { impl: "m:f", help: "Commit." }
-
-groups:
-  support:
-    groups:
-      git:
-        commands:
-          commit: { task: "commit" }
-env_groups: [support.git]
-"""
-
-    # act / assert: the message must point at the key that DOES work
-    with pytest.raises(ValueError, match="env_first"):
-        manifest.load(text)
-
-
 def test_a_nested_group_is_declared_by_the_very_tree_that_places_its_commands():
     """The tree form closed the hole the loader's dotted-path check was written for.
 
@@ -1636,8 +1596,12 @@ def test_a_new_form_manifest_cannot_invent_a_group():
     text = 'product: demo\ntasks: {}\nci:\n  wildwest:\n    commands: {}\n'
 
     # act / assert
-    with pytest.raises(ValueError, match="'ci.wildwest' names a group the platform's tree does not declare"):
+    with pytest.raises(ValueError) as caught:
         manifest.load(text, catalogue=catalogue)
+    # assert: named where it is written, its siblings named as what stands beside it there (si#344)
+    message = str(caught.value)
+    assert message.startswith("`ci: wildwest:` names a group the platform's tree does not declare.")
+    assert "Available under `ci:`: build." in message
 
 
 def test_a_coordinate_keyed_entry_under_a_new_form_tasks_block_is_rejected():

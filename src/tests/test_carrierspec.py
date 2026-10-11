@@ -35,8 +35,8 @@ HAUS = {
 def _document(**environs: dict) -> dict:
     """The manifest shape both halves read: carriers beside environments, in one document."""
     return {"carriers": {"hausportainer": HAUS},
-            "environments": environs,
-            "default": next(iter(environs))}
+            "cd": {"environments": environs,
+                   "default": next(iter(environs))}}
 
 
 def test_a_carrier_is_read_as_the_two_halves_it_declares():
@@ -153,8 +153,8 @@ def test_a_product_that_declares_no_carrier_is_untouched():
     their environments. Every field si#5 adds defaults to empty, and an absent `carriers:` section is not
     a refusal, so none of them has a line to change."""
     # arrange
-    before = {"environments": {"dev": {"backend": "local", "description": "Local development."}},
-              "default": "dev"}
+    before = {"cd": {"environments": {"dev": {"backend": "local", "description": "Local development."}},
+                     "default": "dev"}}
 
     # act
     registry = environments.parse_data(before, ("local",))
