@@ -23,11 +23,10 @@ _MANIFEST = """
 tasks:
   suite: { impl: "simplon.test_impls:nullary", help: "Run every test." }
 
-groups:
+ci:
   test:
     commands:
       all: { task: suite }
-env_groups: []
 """
 
 
@@ -152,11 +151,10 @@ def test_the_environments_reach_the_completion_from_the_manifest(product, capsys
     `context.current().manifest_data()` and `parse_data` takes the names out of its `environments:`
     section - so a static generator can read them, and this is that read, end to end through the verb."""
     # arrange: the same product with an env-first group and a two-environment matrix
-    product.manifest_path.write_text(textwrap.dedent(_MANIFEST).replace(
-        "env_groups: []",
-        "  deploy:\n    commands:\n      up: { task: suite }\n"
-        "env_groups: [deploy]\ndefault: dev\nenvironments:\n"
-        "  dev: { backend: local }\n  prod: { backend: local }\n"), encoding="utf-8")
+    product.manifest_path.write_text(textwrap.dedent(_MANIFEST) + (
+        "cd:\n  default: dev\n  environments:\n"
+        "    dev: { backend: local }\n    prod: { backend: local }\n"
+        "  deploy:\n    commands:\n      up: { task: suite }\n"), encoding="utf-8")
 
     # act
     completion_task.generate()

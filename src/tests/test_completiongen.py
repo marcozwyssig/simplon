@@ -40,7 +40,7 @@ tasks:
   six:   { impl: "simplon.test_impls:nullary", help: "Six." }
   seven: { impl: "simplon.test_impls:nullary", help: "Seven." }
 
-groups:
+ci:
   # a collapsed single-member flat group: its member is a VISIBLE top-level command, no group token
   package:
     commands:
@@ -55,21 +55,21 @@ groups:
     commands:
       unit:  { task: four }
       inner: { task: five, hidden: true }
-  # a NESTED group
-  support:
-    groups:
-      git:
-        commands:
-          commit: { task: six }
+cd:
+  default: dev
+  environments:
+    dev:  { backend: local }
+    prod: { backend: local }
   # an env-first group
   deploy:
     commands:
       up: { task: seven }
-env_groups: [deploy]
-default: dev
-environments:
-  dev:  { backend: local }
-  prod: { backend: local }
+# a NESTED group
+support:
+  groups:
+    git:
+      commands:
+        commit: { task: six }
 """
 
 
@@ -162,8 +162,9 @@ def test_an_environment_is_offered_only_where_an_env_first_group_exists():
     """`simplon.cli.main` refuses an explicit env to an agnostic group, so a product with no env-first
     group must not have environments completed at all - every such completion would be a line the
     dispatcher then rejects."""
-    # arrange: the same manifest with its one env-first group made agnostic
-    agnostic = _MANIFEST.replace("env_groups: [deploy]", "env_groups: []")
+    # arrange: the same manifest without its one env-first group - `cd:` keeps only its environments
+    agnostic = _MANIFEST.replace("  # an env-first group\n  deploy:\n    commands:\n      up: { task: seven }\n", "")
+    assert agnostic != _MANIFEST
 
     # act
     spec = _tree(agnostic)

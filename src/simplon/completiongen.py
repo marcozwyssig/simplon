@@ -198,8 +198,15 @@ def _env_names(mf: Manifest, tax: clitaxonomy.CommandTaxonomy,
     since a catalogue group holding no command is still a name the dispatch will not treat as an
     environment). That is how netctl's `test` environment and `test` group coexist; completing it would
     suggest an environment selection the very next token turns into a group dispatch.
+
+    WHICH GROUPS ARE ENV-FIRST IS READ OFF THE TREE, not off `mf.env_groups`. That field is the
+    `env_groups:` key as written, and the ci / cd form (si#344) has no such key: what stands under `cd:`
+    is env-first because the catalogue's `cd` node says so. Reading the key would make every migrated
+    product complete no environment at all - a green "nothing to offer" that is really a lost feature.
+    `mf.groups` and not the taxonomy's own list, because the merged tree keeps a platform group nobody
+    placed a command in (`deploy` in a product that deploys nothing), and that group dispatches nothing.
     """
-    if not mf.env_groups:
+    if not any(tax.group_requires_env(group) for group in mf.groups):
         return ()
     return tuple(_token(str(name), "environment") for name in environments
                  if str(name) not in tax.groups)
