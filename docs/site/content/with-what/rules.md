@@ -76,8 +76,9 @@ an argument.
 | **all load-time refusals** | **216** | |
 
 si#344 deleted the `env_groups:` key and took its rule (si#43) with it - everything under `cd:` takes an
-environment and nothing under `ci:` does, so there is no second spelling left to contradict - and that is
-the first change in this series that lowered the expression-rule count.
+environment and nothing under `ci:` does, so there is no second spelling left to contradict. It added two:
+a product may not declare `transparent:` on a group, and nothing under `ci:` may declare `env_first:`.
+One deleted, two added: the expression-rule count went up by one, from 28 to 29, not down.
 
 A **load-time refusal** is one raised on the way from the manifest to a decision, with no tool consulted
 in between. Refusals that happen later - a task whose tool is missing, a build the daemon rejected - are a

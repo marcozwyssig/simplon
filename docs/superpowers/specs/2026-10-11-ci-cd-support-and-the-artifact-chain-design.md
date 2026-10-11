@@ -35,6 +35,7 @@ All of them were taken by Marco through choice lists, and none of them is reopen
 | 14 | A command can have several inputs and several outputs. A release is an aggregate of leaves: it generates the release notes, puts the artifact into the registry and cuts a tag | 2026-10-11 |
 | 15 | The release is one artifact, a `kind: release` bundle, and that is what a deploy consumes | 2026-10-11 |
 | 16 | The release notes are generated from the merges and tickets since the previous tag | 2026-10-11 |
+| 17 | Plan A is released on its own, as the first cut. Then si#371 (firn as toolchain), then the firn M2 model, which carries B's and C's content (artifacts, kinds, ports, test results). B and C are then **generated** from that model: the manifest schema and models, the catalogue vocabulary, the four Jinja templates and the docs reference. The `images:` fold becomes a second, small cut that reruns the same migrate command, so every product runs migrate twice. Replaces the shipping order of 13 | 2026-10-11 |
 
 firn's metamodel advice (si#346, last comment, grounded in firn main a9e59dd5) supplies the vocabulary:
 a **task** is a filter type with ports, a **command** is a filter instance (TaskCommand or
@@ -179,8 +180,9 @@ key is blamed by name (si#172). The refusal census walks these readers. The plan
 `tests/test_refusal_census.py` and classify every message that changes.
 
 **`check_env_groups` and rule 2 are deleted, not adapted.** They guarded a key that no longer exists.
-Their census entries go with them, which lowers the expression-rule count. That is the first time a part
-of this spec deletes rules instead of adding them, and the census page should say so.
+Their census entries go with them: one expression rule leaves. Two come in with the transparent level
+(C.7): `transparent:` written by a product, and `env_first:` under `ci:`. One out, two in, so the
+expression-rule count rises by one, 28 to 29. It does not fall, and the census page should say so.
 
 ### A.5 The migration command
 
@@ -535,7 +537,7 @@ plan that adds it is merged:
 | unknown key under `cd:` | diagnosis | — |
 | transparent CLI-path collision | diagnosis | merged (binds the catalogue) |
 | `transparent:` written by a product | expression rule | platform/product seam |
-| `env_first:` under `ci:` | expression rule | merged |
+| `env_first:` under `ci:` | expression rule | platform/product seam (measured, see below) |
 | unknown kind | diagnosis | — |
 | artifact kind ≠ the task reading it (B.4) | diagnosis | — |
 | C.5 rules 1, 2, 3, 4 | diagnosis | merged |
@@ -549,6 +551,11 @@ plan that adds it is merged:
 | image without `path:` across jobs | diagnosis | — |
 
 `check_env_groups` and rule 2 leave the census (A.4).
+
+**The `env_first:` row was planned as "merged" and measured as the seam.** The loader does run the rule
+over the catalogue's own `ci` groups, so it binds the kernel in fact. But the census decides reach by
+what the rule was handed, and the kernel's `ci` groups carry no coordinate the census can see, so it
+records `REACH_SEAM`. The census is the measurement; this table follows it.
 
 ---
 
@@ -609,17 +616,23 @@ Decision 10 puts the **whole manifest** into firn, not only the pipeline.
 
 ---
 
-## Order of work (decision 13)
+## Order of work (decisions 13 and 17)
 
-| Plan | Content | Ships | Depends on |
+| Step | Content | Ships | Depends on |
 |---|---|---|---|
-| A | shape, transparent level, si#34, readers, migration (A.5), diagnoses (A.6), env_groups deleted | together with B in **one** kernel release, which is the cut | — |
-| B | `artifacts:` + `kinds:`, `images:` folded, kind checks, migration extended | same release as A | A; the four products' named costs (B.4) |
-| C | ports, produces/consumes, test results, the release aggregate and `release:notes`, load rules, workflowgen hand-off | the next release; additive except for the release rule | B; agile-cockpit's cost for its test |
-| D | `simplon.pipeline` + `simplon.manifest`, `support manifest model`, drift gate | after C | si#371, firn back from pause |
+| A | shape, transparent level, si#34, readers, migration (A.5), diagnoses (A.6), env_groups deleted | alone, as **cut 1**; the release waits for nothing | — |
+| si#371 | firn as toolchain | — | firn back from pause |
+| the model | the firn M2 model (part D's packages), carrying B's and C's content: artifacts, kinds, ports, test results | — | si#371 |
+| B | `artifacts:` + `kinds:`, `images:` folded, kind checks, migration extended; generated from the model | **cut 2**, small: the `images:` fold, by rerunning the same migrate command | the model; the four products' named costs (B.4) |
+| C | ports, produces/consumes, test results, the release aggregate and `release:notes`, load rules, workflowgen hand-off; generated from the model | the release after B; additive except for the release rule | B; agile-cockpit's cost for its test |
 
-A and B ship in one release because they share the cut. Two cuts would mean migrating every manifest
-twice and refusing twice. C adds keys, so a migrated manifest without them still loads, with one
+What is generated from the model, and so no longer written by hand in B and C: the manifest schema and
+models, the catalogue vocabulary, the four Jinja templates, and the docs reference.
+
+A ships alone (decision 17), and that has a price, named here: there are two cuts, not one. Every
+product runs `simplon manifest migrate` twice - once for the shape in cut 1, once for the `images:` fold
+in cut 2 - and meets a refusal twice if it does not. The command is the same both times, and the second
+run moves one section. C adds keys, so a migrated manifest without them still loads, with one
 exception: the release rule refuses an untested release. That refusal is part of C's release
 notes, and agile-cockpit is asked before C ships, not after.
 

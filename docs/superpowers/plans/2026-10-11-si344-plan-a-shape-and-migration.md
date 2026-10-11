@@ -2169,8 +2169,11 @@ EOF
 
 - Open the PR with "Closes" **nothing**: si#344 closes with plan C (memory: the closing keyword is
   `Closes #<n>`, and plain `si#<n>` closes nothing; here neither is wanted). The body names plan A and
-  says the release waits for plan B.
+  says it is released on its own, as the first cut: the release waits for nothing (spec decision 17).
 - Ask each product's peer session (agile-cockpit, asbundle, biz-cockpit, cleon, firn, netctl, swi) to
   run `simplon manifest migrate` on a branch against the PR's kernel and report its diff. This is the
   "ask before shipping" step, and it can start as soon as Task 6 is merged.
-- Plan B starts from `support manifest migrate` and extends `migrate_text` with the `images:` fold.
+- Next is si#371 (firn as toolchain), then the firn M2 model carrying B's and C's content; B and C are
+  generated from it (spec decision 17, "Order of work").
+- The `images:` fold is a second, small cut. It extends `migrate_text`, and every product reruns the same
+  `simplon manifest migrate` - the price of releasing A alone.
