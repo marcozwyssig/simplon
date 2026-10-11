@@ -258,3 +258,49 @@ def test_commands_directly_under_an_area_are_refused(area, first, with_catalogue
     assert str(caught.value) == (
         f"`{area}: commands:` stands directly under the area. Commands belong to a phase group - "
         f"`{area}: {first}: commands:` - because the area itself is skipped on the command line")
+
+
+# --- a refusal names the place the manifest WRITES a group (si#344, review round 1) ---------------------
+
+def test_a_phase_group_that_is_not_a_mapping_is_named_where_it_is_written():
+    # arrange
+    text = NEW_FORM.replace("  build:\n    commands:\n      wheel: { task: wheel }\n", "  build: 3\n")
+
+    # act / assert
+    with pytest.raises(ValueError) as caught:
+        _load(text)
+    assert str(caught.value) == (
+        "`ci: build:` is not a mapping: found int instead. A group node's value must be a mapping with "
+        "its own keys (help, env_first, groups, commands) - check the indentation under this entry")
+
+
+def test_an_unknown_key_on_a_nested_support_group_is_named_where_it_is_written():
+    # arrange
+    text = NEW_FORM + "support:\n  groups:\n    git:\n      bogus: 1\n"
+
+    # act / assert
+    with pytest.raises(ValueError) as caught:
+        _load(text)
+    assert str(caught.value).startswith("`support: groups: git:` declares unknown key 'bogus'. ")
+
+
+def test_a_shadowed_task_declaration_names_the_command_and_its_place_as_written():
+    # arrange: a `tasks: wheel` no command instantiates, beside a command `wheel` that runs another body
+    text = textwrap.dedent("""\
+        product: demo
+        tasks:
+          wheel: { impl: "pkg.mod:wheel", help: "Build the wheel." }
+          other: { impl: "pkg.mod:other", help: "Something else." }
+        support:
+          groups:
+            git:
+              commands:
+                wheel: { task: other }
+    """)
+
+    # act / assert: the command as the command line spells it, the place as the manifest writes it
+    with pytest.raises(ValueError) as caught:
+        _load(text)
+    message = str(caught.value)
+    assert "the command 'support git wheel' - the one that bears its name" in message
+    assert "Either point `support: groups: git: commands: wheel:` at `task: wheel`" in message

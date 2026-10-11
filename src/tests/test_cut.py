@@ -89,3 +89,15 @@ def test_a_manifest_with_no_commands_anywhere_says_where_they_go():
     with pytest.raises(ValueError) as caught:
         manifest_mod.load("product: demo\n")
     assert str(caught.value) == "manifest declares no commands under ci:, cd: or support:"
+
+
+@pytest.mark.parametrize("document, found", [("just a string", "str"), ("- a\n- list\n", "list")],
+                         ids=["scalar", "list"])
+def test_a_document_that_is_not_a_mapping_is_refused_by_name(document, found):
+    # act / assert: not `"groups" in data` matching a SUBSTRING of a string, and not an AttributeError
+    # from the first `.get` after it - the shape is named
+    with pytest.raises(ValueError) as caught:
+        manifest_mod.load(document, manifest_path="demo.yaml")
+    assert str(caught.value) == (
+        f"demo.yaml is not a mapping: found {found} instead. A manifest maps its top-level keys "
+        f"(product, tasks, ci, cd, support, ...) to their values")

@@ -1,5 +1,6 @@
-"""Unit tests for simplon.environments.parse - the pure environments.yml -> Registry parsing and
-validation with product-supplied valid backends. No I/O; AAA throughout."""
+"""Unit tests for simplon.environments.parse - the pure manifest-matrix (`cd: environments:` /
+`cd: default:`) -> Registry parsing and validation with product-supplied valid backends. No I/O; AAA
+throughout."""
 import pytest
 
 from simplon import environments as envs_mod

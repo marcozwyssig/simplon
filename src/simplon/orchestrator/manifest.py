@@ -984,6 +984,9 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     taxonomy = CommandTaxonomy.from_tree(tree)
     for name in groups:
         if "." in name and taxonomy.resolve_path(name) is None:
+            # Unreachable from a product since the tree form: `groups` is `lower`'s output over the same
+            # merged tree, so every dotted key names a node in it. Kept as the guard; worded in the
+            # loader's own terms because no manifest can make a reader see it.
             raise ValueError(
                 f"groups entry '{name}' names a nested group the `taxonomy:` block does not declare - "
                 f"declare it there, or move its commands to a top-level group")
@@ -1092,11 +1095,15 @@ def _enforce_the_catalogue_owns_the_groups(members: dict[str, tuple[str, ...]],
         raise ValueError(
             "a product manifest may not declare `taxonomy:` when the catalogue declares one: the platform "
             "owns the CI/CD loop's shape so every product runs the same one (declared here: "
-            f"{', '.join(sorted(product_taxonomy))}). Contribute MEMBERS through `groups:` instead, or add "
-            "the group to the catalogue's `taxonomy:`, where every product gets it")
+            f"{', '.join(sorted(product_taxonomy))}). Contribute MEMBERS through `ci:`, `cd:` or "
+            "`support:` instead, or add the group to the catalogue's `taxonomy:`, where every product "
+            "gets it")
 
     unknown = sorted(name for name in members if "." not in name and name not in catalogue_taxonomy)
     if unknown:
+        # Unreachable from a product since the tree form: `load` hands in the taxonomy LOWERED from the
+        # merged tree whose `flat` gave `members`, and `merge`'s lock (`ci: x:` named where it is
+        # written) refuses a group the catalogue lacks before this runs. Kept as the guard.
         raise ValueError(
             f"groups entry '{unknown[0]}' names a group the catalogue's `groups:` does not declare"
             + (f" (also: {', '.join(unknown[1:])})" if len(unknown) > 1 else "")

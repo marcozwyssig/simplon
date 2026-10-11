@@ -565,6 +565,7 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # these would otherwise load as a product with no commands, a deploy with no matrix or a site that is
     # not built - green at load and wrong at the first command. The form they name does not load at all
     # any more, so nothing expressible is forbidden: the refusal is what replaces the silence.
+    ("treeform", "check_no_pre_si344_form", "A manifest maps its top-level keys"): DIAGNOSIS,
     ("treeform", "check_no_pre_si344_form", "declares `groups:`, which si#344 replaced"): DIAGNOSIS,
     ("treeform", "check_no_pre_si344_form", "which si#344 deleted"): DIAGNOSIS,
     ("treeform", "check_no_pre_si344_form", "at the top level; since si#344"): DIAGNOSIS,

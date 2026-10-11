@@ -254,7 +254,7 @@ machine no longer decides what the build uses, but the calendar does:
 > 'hugomods/hugo:exts-0.148.2'), or by digest
 
 The theme module is refused on the same grounds - `@latest`, `@master` and a bare branch name are
-all queries that resolve differently tomorrow. Both declarations, and the rest of the `site:`
+all queries that resolve differently tomorrow. Both declarations, and the rest of the `website:`
 section, are in [The manifest](../../how/manifest/#product-data-sections).
 
 ### What it costs

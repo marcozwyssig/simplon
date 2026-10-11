@@ -121,6 +121,28 @@ def test_the_cut_message_names_the_launchers_real_paths(monkeypatch, tmp_path):
     assert caught.value.__cause__ is None and caught.value.__suppress_context__
 
 
+def test_a_path_with_no_relative_spelling_leaves_the_placeholder_and_the_cut_message(monkeypatch, tmp_path):
+    # arrange: `os.path.relpath` raises across Windows drives; that must not replace the cut's refusal
+    monkeypatch.setenv("LAUNCH_ORCH_DIR", str(tmp_path / "deploy" / "orchestrator"))
+    monkeypatch.delenv("LAUNCH_IMAGE_PIN", raising=False)
+
+    def no_relative_path(path, start=None):
+        raise ValueError("path is on mount 'D:', start on mount 'C:'")
+
+    monkeypatch.setattr(context.os.path, "relpath", no_relative_path)
+    path = tmp_path / "sample.yaml"
+    path.write_text(_GROUPS_MANIFEST, encoding="utf-8")
+
+    # act
+    with pytest.raises(ValueError) as caught:
+        ProductContext("sample", tmp_path, path).manifest()
+
+    # assert: still the cut, the placeholder left, and the manifest named as the loader named it
+    message = str(caught.value)
+    assert "declares `groups:`, which si#344 replaced" in message
+    assert f"<orch-dir>/.venv/bin/simplon manifest migrate {path}\n" in message
+
+
 def test_a_placeholder_with_nothing_to_fill_it_is_left_rather_than_emptied(monkeypatch, tmp_path):
     # arrange: no launcher exports (a kernel driven directly), and a pin that names a missing file
     monkeypatch.delenv("LAUNCH_ORCH_DIR", raising=False)

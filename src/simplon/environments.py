@@ -1,4 +1,5 @@
-"""Named, isolated deployment environments: a product's environments.yml parsed into a validated Registry.
+"""Named, isolated deployment environments: the matrix under a product manifest's `cd:` (`environments:`
+and `default:`, si#344) parsed into a validated Registry.
 
 parse is pure (no I/O). The product supplies the set of valid backend names (each product knows its own
 backends, e.g. a local lab vs a cloud provider) and owns the stateful registry lookup + the

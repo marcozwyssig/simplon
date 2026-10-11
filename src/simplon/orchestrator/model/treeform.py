@@ -24,16 +24,18 @@ from collections.abc import Iterable
 NODE_KEYS = ("help", "env_first", "transparent", "groups", "commands")
 
 
-def _check_node_keys(node: dict, path: tuple[str, ...]) -> None:
+def _check_node_keys(node: dict, where: str) -> None:
     """Reject a group node key outside NODE_KEYS, wherever a node is read.
 
     Shared by `lower` and `merge` so the kernel's own tree - which only `lower` ever walks directly - is
     checked exactly as strictly as a product's, rather than having a typo copied through verbatim.
+    `where` is the node as its reader finds it: `merge` names the place a manifest writes it
+    (`written_at`), `lower` the catalogue's dotted path.
     """
     for key in node:
         if key not in NODE_KEYS:
             raise ValueError(
-                f"group '{'.'.join(path)}' declares unknown key '{key}'. A group node's keys are "
+                f"{where} declares unknown key '{key}'. A group node's keys are "
                 f"help, env_first, transparent, groups and commands - rename it, or if this is meant to be a "
                 f"command, move it under `commands:`")
 
@@ -53,13 +55,16 @@ def lower(tree: dict, _path: tuple[str, ...] = ()) -> tuple[dict, dict]:
     flat: dict[str, dict] = {}
     for name, node in (tree or {}).items():
         path = _path + (str(name),)
+        # Dotted on purpose: by the time `load` lowers the merged tree, `merge` has already ruled on
+        # every node a product wrote (in the product's own spelling), so what is left to refuse here is
+        # the CATALOGUE's tree - read by kernel maintainers, under the catalogue's `groups:`.
         if node is not None and not isinstance(node, dict):
             raise ValueError(
                 f"group '{'.'.join(path)}' is not a mapping: found {type(node).__name__} instead. A "
                 f"group node's value must be a mapping with its own keys (help, env_first, transparent, "
                 f"groups, commands) - check the indentation under this entry")
         node = node or {}
-        _check_node_keys(node, path)
+        _check_node_keys(node, f"group '{'.'.join(path)}'")
         shape = {key: node[key] for key in NODE_KEYS if key in node and key not in ("groups", "commands")}
         child_taxonomy, child_flat = lower(node.get("groups") or {}, path)
         if child_taxonomy:
@@ -377,7 +382,7 @@ def merge(kernel: dict, product: dict, _path: tuple[str, ...] = (),
         path = _path + (name,)
         if node is not None and not isinstance(node, dict):
             raise ValueError(
-                f"group '{'.'.join(path)}' is not a mapping: found {type(node).__name__} instead. A "
+                f"`{written_at(path)}` is not a mapping: found {type(node).__name__} instead. A "
                 f"group node's value must be a mapping with its own keys (help, env_first, groups, "
                 f"commands) - check the indentation under this entry")
         node = dict(node or {})
@@ -398,7 +403,7 @@ def merge(kernel: dict, product: dict, _path: tuple[str, ...] = (),
                 f"tasks are there in every product. Available {beside}: "
                 f"{', '.join(sorted(out)) or '(none)'}. Either put these commands in one of those, or "
                 f"declare the new group in the platform's `groups:` - once, for everybody")
-        _check_node_keys(node, path)
+        _check_node_keys(node, f"`{written_at(path)}`")
         base = out[name]
         merged = dict(base)
         for key, value in node.items():
@@ -835,6 +840,12 @@ def check_no_pre_si344_form(data: dict, manifest_path: str | None) -> None:
     areas and that check names them there.
     """
     name = manifest_path or "the manifest"
+    if not isinstance(data, dict):
+        # Before any `in`: on a STRING that is a substring test, and the first `.get` after it an
+        # AttributeError naming nothing. A document that parsed to a scalar or a list is said as one.
+        raise ValueError(
+            f"{name} is not a mapping: found {type(data).__name__} instead. A manifest maps its top-level "
+            f"keys (product, tasks, ci, cd, support, ...) to their values")
     how = _MIGRATE.format(name=manifest_path or "<manifest>.yaml")
     if "groups" in data:
         raise ValueError(
@@ -927,8 +938,9 @@ def check_no_shadowed_task_declaration(flat: dict, product_tasks: dict,
                     "is an aggregate that plans other commands and runs no body of its own")
             raise ValueError(
                 f"task '{name}' is declared under `tasks:` and instantiated by no command, while the "
-                f"command '{path} {name}' - the one that bears its name - {runs} instead. That is a "
-                f"half-finished move or a typo, not an offer: the body this manifest still carries "
+                f"command '{_cli_path(tree_path(path, areas or {}))} {name}' - the one that bears its "
+                f"name - {runs} instead. That is a half-finished move or a typo, not an offer: the "
+                f"body this manifest still carries "
                 f"({dead}) is reachable from nowhere, and until now nothing said so. Either point "
                 f"`{written_at(tree_path(path, areas or {}))} commands: {name}:` at `task: {name}`, or "
                 f"delete the `tasks: {name}:` declaration whose body no longer runs. A task NO command "

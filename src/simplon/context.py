@@ -191,19 +191,27 @@ class ProductContext:
         (si#344). A placeholder whose source is unset or unreadable is LEFT, so the message never prints
         an empty path where one belongs.
         """
-        def relative(path: str) -> str:
-            rel = os.path.relpath(path, self.root)
+        def relative(path: str) -> str | None:
+            # None when the path has no spelling relative to the root at all - `relpath` raises across
+            # Windows drives - so the caller leaves what it had rather than replace the cut's refusal.
+            try:
+                rel = os.path.relpath(path, self.root)
+            except ValueError:
+                return None
             return path if rel.startswith("..") else rel
 
-        orch = os.environ.get("LAUNCH_ORCH_DIR", "").strip()
+        exported = os.environ.get("LAUNCH_ORCH_DIR", "").strip()
+        orch = relative(exported) if exported else None
         if orch:
-            message = message.replace(_treeform.ORCH_DIR_PLACEHOLDER, relative(orch))
+            message = message.replace(_treeform.ORCH_DIR_PLACEHOLDER, orch)
         image = _first_reference(os.environ.get("LAUNCH_IMAGE_PIN", "").strip())
         if image:
             message = message.replace(_treeform.IMAGE_PLACEHOLDER, image)
         command = _treeform.MIGRATE_COMMAND
-        return message.replace(f"{command} {self.manifest_path}",
-                               f"{command} {relative(str(self.manifest_path))}")
+        manifest = relative(str(self.manifest_path))
+        if manifest is None:
+            return message
+        return message.replace(f"{command} {self.manifest_path}", f"{command} {manifest}")
 
     @classmethod
     def resolve(cls, name: str, root: Path, manifest_path: Path) -> "ProductContext":
