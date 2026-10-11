@@ -1,0 +1,24 @@
+// The smallest true statement about simplon's own pipeline in that metamodel: `./simplon.sh build wheel`
+// runs the product task `wheel` (simplon.yaml, impl orchestrator.cli:build_wheel) and produces the
+// wheel under dist/. Everything else in simplon.yaml is still only in simplon.yaml.
+package simplon.kernel
+
+Wheel typeOf simplon.pipeline.ArtifactKind {
+}
+
+BuildWheel typeOf simplon.pipeline.Task {
+  body = "orchestrator.cli:build_wheel"
+  output wheel typeOf simplon.pipeline.Port {
+    accepts = simplon.kernel.Wheel
+  }
+}
+
+build typeOf simplon.pipeline.Group {
+  command wheel typeOf simplon.pipeline.TaskCommand {
+    task = simplon.kernel.BuildWheel
+    produces dist typeOf simplon.pipeline.Artifact {
+      path = "dist"
+      kind = simplon.kernel.Wheel
+    }
+  }
+}

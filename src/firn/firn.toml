@@ -1,0 +1,11 @@
+# simplon's own firn project (si#371): the delivery pipeline as a model firn can check and, later,
+# generate from (si#344 part D, si#346). `./simplon.sh test model` runs `firn check` here and
+# `./simplon.sh build model` runs `firn gen`, both in the pinned firn image, started in this directory.
+name = "simplon"
+model = ["model"]
+templates = []
+
+# Where `firn gen` writes. firn refuses a target outside this directory (E104), so it stays below it
+# and is gitignored. There is no template yet, so nothing is written.
+[target.gen]
+path = "gen"

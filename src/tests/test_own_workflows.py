@@ -177,21 +177,29 @@ def test_the_derived_pipeline_over_this_manifest_is_a_pipeline_that_would_run():
     the cheapest way for that claim to be false is for the derivation to emit something that cannot run.
     Every command below was run by hand on this machine before this test was written - the four this
     repository's CI does not run included - and all four exit 0 and leave the tree clean.
+
+    si#371 added `build model` and `test model`, firn's `gen` and `check` over `src/firn/`. Both were run
+    the same way on 2026-10-11: both exit 0, and `gen` writes nothing, because there is no template yet.
     """
     derived = workflowgen.derive(_loaded(), ["build", "test"], where="measurement")
 
     assert [step.command for step in derived.steps] == [
-        "build wheel", "build reference", "build acceptance", "build site", "build image",
-        "test suite", "test typecheck-python", "test release-notes", "test report", "test generated"]
+        "build wheel", "build reference", "build acceptance", "build site", "build image", "build model",
+        "test suite", "test typecheck-python", "test release-notes", "test report", "test generated",
+        "test model"]
 
 
-def test_this_repository_runs_seven_of_those_ten_and_the_difference_is_a_choice_not_a_defect():
+def test_this_repository_runs_eight_of_those_twelve_and_the_difference_is_a_choice_not_a_defect():
     """THE FINDING si#267 ends on, kept as a measurement instead of a sentence in a document.
 
     A derived pipeline here would be correct and would cost more: `build site` pulls Hugo and
     mermaid-cli and takes about three and a half minutes, and every push to this repository starts two
     runs. The other two it adds are nearly free - `build reference` and `build acceptance` take about a
     second each - so the bill is one command, not four.
+
+    si#371 added `test model`, which the CI runs, and `build model`, which it does not: `firn gen` has no
+    template to render yet, so a step for it would report on nothing. It is the fourth difference, and as
+    cheap as the two above.
 
     simplon's own CI stays hand-written all the same, for a reason a derivation cannot carry: its order
     is argued in the manifest, chiefly that the prose gate goes LAST so a release section still to be
@@ -207,7 +215,8 @@ def test_this_repository_runs_seven_of_those_ten_and_the_difference_is_a_choice_
     run_here = set(_ci_steps())
 
     assert run_here < derived
-    assert sorted(derived - run_here) == ["build acceptance", "build reference", "build site"]
+    assert sorted(derived - run_here) == ["build acceptance", "build model", "build reference",
+                                          "build site"]
 
 
 def test_the_command_this_repository_never_puts_in_ci_is_the_one_the_catalogue_marks_attended():

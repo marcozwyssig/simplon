@@ -75,6 +75,10 @@ jobs:
       # wheel, because a stale completion is a fact about the tree rather than about the build, and
       # a reader looking at a red run should see it beside the other verdicts about the tree.
       - run: ./simplon.sh test generated
+      # simplon's own pipeline model, checked by firn in its pinned image (si#371). A fact about the
+      # tree like the two before it, so it sits beside them. The image is public and the runner
+      # already reaches docker for the image build below, so it needs nothing new.
+      - run: ./simplon.sh test model
       - run: ./simplon.sh build wheel
       # The kernel's own container image (si#200), BUILT here and published nowhere. Building
       # needs no credential, so the half of the loop that can run on every push does - which is
