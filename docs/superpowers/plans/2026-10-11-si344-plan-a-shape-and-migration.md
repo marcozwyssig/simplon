@@ -1904,9 +1904,7 @@ text, not a launcher. The spec's A.6 promise, "filled from what the product's la
 kept by the product CLI's `main` (`cli.py:587`): it catches this specific refusal (by message prefix
 `declares \`groups:\`` and its siblings) and replaces the two placeholders with
 `os.environ.get("LAUNCH_ORCH_DIR")` and the pin read from `LAUNCH_IMAGE_PIN` when the launcher exported
-them. Check with `grep -n "export" src/simplon/templates/launch.sh.j2` whether it exports them. If it
-does not, **leave the placeholders and tell Marco**: exporting two variables is a launcher change for
-every product, and that is his call, not this plan's.
+them. **Marco decided (2026-10-11) that the launcher exports both**, which is Step 3a below.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -1970,6 +1968,48 @@ as stated under Interfaces. Delete the transitional fallbacks in `environments.m
 `check_no_old_form` may itself read `data.get("groups")` for its own flat-form detection. Read it, and
 if it does, make sure the new check runs first, so that a `groups:` manifest gets the si#344 message and
 not the si#33 one.
+
+- [ ] **Step 3a: The launcher exports `LAUNCH_ORCH_DIR` and `LAUNCH_IMAGE_PIN`, and the product CLI fills the placeholders**
+
+In `src/simplon/templates/launch.sh.j2`, after the two assignments (lines 30 and 36), add
+`export LAUNCH_ORCH_DIR LAUNCH_IMAGE_PIN`. In `launch.cmd.j2`, the `set` lines already put the values in
+the child's environment; confirm that with `grep -n "LAUNCH_ORCH_DIR\|LAUNCH_IMAGE_PIN" src/simplon/templates/launch.cmd.j2`.
+On the container route the variables must also reach the container: add them to the `docker run` env
+arguments the template already builds. Look for `-e` in the template and follow its pattern. Translate
+`LAUNCH_ORCH_DIR` to its path relative to the product root, because the host path means nothing inside
+`/src`.
+
+In `src/simplon/cli.py:main` (line 587), where the manifest is loaded, catch `ValueError`. If its text
+contains `simplon manifest migrate`, replace `<orch-dir>` with the orchestrator directory relative to
+the product root (from `LAUNCH_ORCH_DIR`) and `<kernel image>` with the first non-comment line of the
+file `LAUNCH_IMAGE_PIN` names. Leave a placeholder in place when its variable is unset or the file is
+missing, so the message never shows an empty path. Then re-raise or print exactly as `main` handles a
+load error today.
+
+Test in `test_cli.py` (or the test file that covers `cli.main`'s load-error path):
+
+```python
+def test_the_cut_message_names_the_launchers_real_paths(tmp_path, monkeypatch, capsys):
+    # arrange
+    (tmp_path / "image.pin").write_text("# pin\nghcr.io/marcozwyssig/simplon:v0.28.0\n")
+    monkeypatch.setenv("LAUNCH_ORCH_DIR", str(tmp_path / "deploy" / "orchestrator"))
+    monkeypatch.setenv("LAUNCH_IMAGE_PIN", str(tmp_path / "image.pin"))
+    # ... a product context rooted at tmp_path whose manifest declares `groups:`
+    #     (follow the pattern of the existing load-error test in that file)
+
+    # act: run main the way that test does
+
+    # assert
+    err = capsys.readouterr().err
+    assert "deploy/orchestrator/.venv/bin/simplon manifest migrate" in err
+    assert "ghcr.io/marcozwyssig/simplon:v0.28.0 simplon manifest migrate" in err
+```
+
+Fill in the arrange/act by copying the existing load-error test's setup in the same file, which is the
+one that pins "is not valid YAML" (si#222): find it with `grep -rn "is not valid YAML" src/tests`.
+Add a launcher test in `test_launch_container_env.py` asserting both variables reach the container, in
+the style of the tests already there. Regenerating each product's launcher is the product's step
+(`simplon init --force` or its documented re-scaffold), and the PR body names it.
 
 - [ ] **Step 4: Run the cut tests, then the suite**
 
