@@ -1079,11 +1079,25 @@ def _inline_readers() -> tuple[str, ...]:
 # constructor, a function from a module outside the kernel. Each would shrink the answer silently, so the
 # walk collects them and `test_every_hand_off_of_the_document_is_followed` holds that list at empty.
 #
+# A READ BY A KEY THE WALK CANNOT RESOLVE IS THE SAME BLIND SPOT FROM THE OTHER END: `document.get(kind)`
+# with `kind` a parameter reads a section, and `_strings` turns it into no key at all. The walk collects
+# those sites too, and `test_every_unresolved_key_read_is_named` pins them to `KEY_READS_COVERED`, each
+# with the route by which its section is counted anyway - so a new one goes red instead of shrinking the
+# answer (si#346's final review measured `deployment._entry` dropping both of its reads this way).
+#
 # What this cannot see, said rather than discovered: a manifest TEXT parsed somewhere other than the two
 # seams (`environments.parse`, `tasks/toolchain.py`'s splice) - measured on the day this was written to
 # read `cd` and `ci` only, both found here through the seams anyway - and a pydantic validator's own reads,
 # because a model reads its FIELDS and a before-validator that tests for a key the model does not carry
-# (`_reject_removed_composites`) is refusing it by construction.
+# (`_reject_removed_composites`) is refusing it by construction. Three more, named by si#346's final
+# review and not followed:
+#   - the document flowing OUT through a return value. The walk follows it into callees, never back to
+#     a caller, so a helper that returns the parsed document hands it to reads nobody walks.
+#     `tasks/manifestmodel._load` is the one there is, and it is in `READS_INLINE` for that reason;
+#   - a starred or double-starred hand-off (`f(*args)`, `f(**data)`): `positions` and `keywords` see
+#     only plain arguments, so the parameter that receives the document is never marked;
+#   - `_model_fields` reads a model's own annotated fields only - not a `ClassVar` (which it wrongly
+#     counts), not `validation_alias`/`AliasChoices`, and not a field inherited from a base model.
 
 
 def _string_constants(module: _Module) -> dict[str, tuple[str, ...]]:
@@ -1147,8 +1161,9 @@ def _document_reads() -> tuple[_Read, ...]:
 
 
 @functools.lru_cache(maxsize=None)
-def _document_flow() -> tuple[tuple[_Read, ...], tuple[str, ...]]:
-    """The reads, and every call that is handed the document and resolves to no kernel function."""
+def _document_flow() -> tuple[tuple[_Read, ...], tuple[str, ...], tuple[str, ...]]:
+    """The reads; every call handed the document that resolves to no kernel function; every read of the
+    document by a key the walk cannot resolve to a string (`document.get(kind)`)."""
     queue: list[tuple[str, str, frozenset[str] | None]] = []
     for dotted in _kernel_modules():
         for name, functions in _module(dotted).funcs.items():
@@ -1159,6 +1174,7 @@ def _document_flow() -> tuple[tuple[_Read, ...], tuple[str, ...]]:
 
     reads: list[_Read] = []
     unresolved: list[str] = []
+    blind: list[str] = []
     seen: set = set()
     while queue:
         item = queue.pop()
@@ -1168,12 +1184,12 @@ def _document_flow() -> tuple[tuple[_Read, ...], tuple[str, ...]]:
         dotted, name, handed = item
         module = _module(dotted)
         for function in module.funcs.get(name, []):
-            reads.extend(_reads_in(module, function, handed, queue, unresolved))
-    return tuple(sorted(set(reads))), tuple(sorted(set(unresolved)))
+            reads.extend(_reads_in(module, function, handed, queue, unresolved, blind))
+    return tuple(sorted(set(reads))), tuple(sorted(set(unresolved))), tuple(sorted(set(blind)))
 
 
 def _reads_in(module: _Module, function, handed: frozenset[str] | None, queue: list,
-              unresolved: list[str]) -> list[_Read]:
+              unresolved: list[str], blind: list[str]) -> list[_Read]:
     names = dict(_string_constants(module))
     if handed is None:
         text = _positional(function)[0]
@@ -1226,17 +1242,18 @@ def _reads_in(module: _Module, function, handed: frozenset[str] | None, queue: l
     out: list[_Read] = []
     for node in ast.walk(function):
         keys: tuple[str, ...] = ()
+        key_node: ast.AST | None = None  # the expression a by-key read of the document reads with
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get"
                 and node.args and is_document(node.func.value)):
-            keys = _strings(node.args[0], names)
+            key_node = node.args[0]
         elif isinstance(node, ast.Subscript) and is_document(node.value):
-            keys = _strings(node.slice, names)
+            key_node = node.slice
         elif (isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.In)
               and is_document(node.comparators[0])):
-            keys = _strings(node.left, names)
+            key_node = node.left
         elif isinstance(node, ast.Call) and _is_the_section_walk(node.func, module):
             if len(node.args) > 1 and is_document(node.args[0]):
-                keys = _strings(node.args[1], names)  # the first path step is the top-level key
+                key_node = node.args[1]  # the first path step is the top-level key
         elif isinstance(node, ast.Call):
             positions = [i for i, arg in enumerate(node.args) if is_document(arg)]
             keywords = {kw.arg for kw in node.keywords if kw.arg and is_document(kw.value)}
@@ -1261,6 +1278,12 @@ def _reads_in(module: _Module, function, handed: frozenset[str] | None, queue: l
                     every = {*positional, *(p.arg for p in callee.args.kwonlyargs)}
                     params = {positional[i] for i in positions if i < len(positional)} | (keywords & every)
                     queue.append((target[0], target[1], frozenset(params)))
+        if key_node is not None:
+            keys = _strings(key_node, names)
+            if not keys:
+                # The document IS read here, by a key no rule above resolves (a parameter, a
+                # comprehension variable). Dropping it would shrink sections_read() silently (si#346).
+                blind.append(f"{dotted}.{name}: {ast.unparse(node)}")
         out.extend(_Read(key, dotted, name, node.lineno, check) for key in keys)
     return out
 
@@ -1574,12 +1597,37 @@ def test_every_hand_off_of_the_document_is_followed():
     function from outside the kernel - is, and the walk cannot follow it. Empty on the day this was
     written, so the first one is news.
     """
-    reads, unresolved = _document_flow()
+    reads, unresolved, _ = _document_flow()
 
     assert reads, "the walk found no read at all - it is broken, and an empty list below would mean nothing"
     assert unresolved == (), (
         "the manifest document is handed to a call the section walk cannot follow, so whatever that call "
         f"reads is missing from sections_read(): {list(unresolved)}")
+
+
+KEY_READS_COVERED = {
+    # `_entry(document, kind, ...)` reads the section a `cd: source:` names, so `kind` is a parameter.
+    # Both sections it can be are counted anyway: `SOURCE_SECTIONS = ("images", "artifacts")` is a
+    # SECTION constant, and test_the_sections_the_kernel_reads_include_every_declared_section_constant
+    # holds every such constant inside sections_read().
+    "deployment._entry: document.get(kind)": "SOURCE_SECTIONS, via the SECTION-constant cross-check",
+    "deployment._entry: document.get(k)": "SOURCE_SECTIONS, via the SECTION-constant cross-check",
+}
+
+
+def test_every_unresolved_key_read_is_named():
+    """A read of the document by a key the walk cannot resolve is a section it may not have counted.
+
+    Each one is named in KEY_READS_COVERED with the route by which its section is counted anyway; a new
+    one is neither, and this goes red. EXACTLY, so an entry outliving its read goes red too.
+    """
+    reads, _, blind = _document_flow()
+
+    assert reads, "the walk found no read at all - it is broken, and the comparison below would mean nothing"
+    assert set(blind) == set(KEY_READS_COVERED), (
+        "the manifest document is read by a key the section walk cannot resolve, so that section may be "
+        f"missing from sections_read() - new: {sorted(set(blind) - set(KEY_READS_COVERED))}, "
+        f"gone: {sorted(set(KEY_READS_COVERED) - set(blind))}")
 
 
 def test_the_only_excluded_raise_is_the_funnel_that_re_raises_the_model():
