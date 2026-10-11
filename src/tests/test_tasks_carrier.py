@@ -385,3 +385,11 @@ def test_deploy_carrier_refuses_a_portainer_that_was_built_by_somebody_else(monk
 
     with pytest.raises(SystemExit):
         carrier._carrier_of("prod")
+
+
+def test_the_backends_are_read_from_a_cd_matrix():
+    # arrange
+    document = {"cd": {"default": "dev", "environments": {"dev": {"backend": "proxmox"}}}}
+
+    # act / assert
+    assert carrier._backends(document) == ("proxmox",)

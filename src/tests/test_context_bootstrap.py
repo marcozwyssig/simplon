@@ -9,11 +9,10 @@ _MARKER = """product: sample
 tasks:
   lint: { impl: "sample.cli:lint", help: "Lint it." }
 
-groups:
+ci:
   code:
     commands:
       lint: { task: "lint" }
-env_groups: []
 """
 
 

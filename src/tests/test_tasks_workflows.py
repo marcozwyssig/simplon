@@ -22,11 +22,10 @@ _MANIFEST = """
 tasks:
   suite: { impl: "simplon.test_impls:nullary", help: "Run every test." }
 
-groups:
+ci:
   test:
     commands:
       all: { task: suite }
-env_groups: []
 
 workflows:
   ci:
@@ -314,11 +313,10 @@ def test_a_product_with_no_workflows_section_is_refused_loudly(tmp_path, monkeyp
     manifest_path.write_text(textwrap.dedent("""
         tasks:
           suite: { impl: "simplon.test_impls:nullary", help: "Run every test." }
-        groups:
+        ci:
           test:
             commands:
               all: { task: suite }
-        env_groups: []
     """), encoding="utf-8")
     monkeypatch.setattr(context, "_current",
                         context.ProductContext(name="bare", root=tmp_path,

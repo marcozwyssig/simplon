@@ -37,18 +37,18 @@ tasks:
   up: { impl: "demo.impls:up", help: "Deploy up." }
   seed: { impl: "demo.impls:seed", help: "Seed." }
 
-groups:
+ci:
   build:
     commands:
       install: { task: "install" }
       build: { task: "build" }
       prep: { help: "Install + build.", depends_on: ["install", "build"] }
+cd:
   deploy:
     commands:
       up: { task: "up" }
       seed: { task: "seed" }
       bringup: { help: "Full bring-up.", depends_on: ["prep", "up", "seed"] }
-env_groups: [deploy]
 """
 
 
@@ -175,16 +175,16 @@ tasks:
   unit: { impl: "demo.impls:unit", help: "Unit gate." }
   up: { impl: "demo.impls:up", help: "Deploy up." }
 
-groups:
+ci:
   test:
     commands:
       unit: { task: "unit" }
       all: { help: "Every test stage.", depends_on: ["unit"] }
+cd:
   deploy:
     commands:
       up: { task: "up" }
       all: { help: "Full bring-up.", depends_on: ["up"] }
-env_groups: [deploy]
 """
     mf = manifest_load(text)
 
@@ -284,16 +284,16 @@ tasks:
   unit: { impl: "demo.impls:unit", help: "Unit gate." }
   up: { impl: "demo.impls:up", help: "Deploy up." }
 
-groups:
+ci:
   test:
     commands:
       unit: { task: "unit" }
       all: { help: "Every test stage.", depends_on: ["unit"] }
+cd:
   deploy:
     commands:
       up: { task: "up" }
       all: { help: "Full bring-up.", depends_on: ["up"] }
-env_groups: [deploy]
 """
 
 

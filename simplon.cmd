@@ -150,6 +150,9 @@ set "DOCKER_ENV=-e "DELIVERY_HOST_ROOT=%LAUNCH_ROOT%" -e DELIVERY_MOUNT_ROOT=/sr
 set "DOCKER_ENV=%DOCKER_ENV% -e DELIVERY_ROUTE=inside"
 set "DOCKER_ENV=%DOCKER_ENV% -e "LAUNCH_PRODUCT=%LAUNCH_PRODUCT%" -e LAUNCH_ROOT=/src"
 set "DOCKER_ENV=%DOCKER_ENV% -e "LAUNCH_ORCH_DIR=%ORCH_IN_SRC%" -e "LAUNCH_MODULE=%LAUNCH_MODULE%""
+rem The pin file in the container's coordinates, so a refusal can name the image (si#344). Spelled from the
+rem same default LAUNCH_IMAGE_PIN carries above: a hand-moved pin has to be moved here too.
+set "DOCKER_ENV=%DOCKER_ENV% -e LAUNCH_IMAGE_PIN=/src/deploy/image/image.pin"
 set "DOCKER_ENV=%DOCKER_ENV% -e PYTHONPATH=%ORCH_IN_SRC%/src/python"
 set "DOCKER_ENV=%DOCKER_ENV% -e PYTHONUSERBASE=/src/build/container/python -e HOME=/tmp"
 

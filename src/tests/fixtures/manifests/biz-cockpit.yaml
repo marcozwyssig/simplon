@@ -1,0 +1,576 @@
+# biz-cockpit delivery manifest - the single declarative source the delivery kernel
+# (simplon, simplon.orchestrator.manifest) assembles biz-cockpit's CLI from. It replaced the
+# root Makefile as the build/delivery description (issue #88, ADR 0015).
+#
+# Sections:
+#   product       the product label (shim/manifest name + diagnostics).
+#   groups        the ONE command tree: group -> command -> { impl: "module:function", help }, or an
+#                 impl-less AGGREGATE carrying only `depends_on`.
+#   env_groups    the subset of groups that are env-first (`biz-cockpit <env> <group> <cmd>`).
+#   environments  the deployment env matrix + the default env.
+#   images        product build data - IGNORED by the CLI engine, read raw by orchestrator.cli.
+#
+# THE GROUP NAMES ARE NOT COCKPIT'S TO CHOOSE (platform#68, adopted here 2026-08-28). The kernel's
+# catalogue (simplon's delivery.yaml) declares which top-level groups exist - build, test, release,
+# deploy, monitor, support, tasks - so that a person moving between two *ctl products finds the same
+# loop with the same general tasks in it. Cockpit's own `dev`, `contract`, `lint` and `ci` groups are
+# gone; every one of their commands lives on as a MEMBER of a platform group, which is the seam that
+# stayed wide open. What a command is CALLED is still cockpit's: the flat aliases below mean
+# `./biz-cockpit.sh lint|ci|generate-api|check-contract|status|logs` all still dispatch verbatim.
+product: biz-cockpit
+
+# --- product build data (read RAW via ProductContext.manifest_data(), IGNORED by the CLI engine) ---
+# Image NAMES derive from the block path (rule 6). The registry and the tag are addresses, so they are
+# overridable from the environment (rule 8): nothing here is baked into an image, it only names one.
+# Defaults keep a local build unqualified (`biz-cockpit-backend:0.1.0`), exactly as the compose file
+# has always tagged it; CI sets IMAGE_REGISTRY=ghcr.io/marcozwyssig and IMAGE_TAG=<sha|version>.
+images:
+  backend:
+    name: biz-cockpit-backend
+    context: src/backend
+    dockerfile: pkg/Dockerfile
+    # Die zwei Koordinaten, an denen eine AUSLIEFERUNG nachschlägt, ob es die genannte Version
+    # überhaupt gibt (`deploy:` weiter unten zeigt hierher; simplon.deployment liest sie). Sie
+    # bauen und schieben nichts: `build` und `publish` bilden die Referenz weiterhin aus `name:`
+    # (Regel 6) und `IMAGE_REGISTRY` (Regel 8), damit ein lokaler Bau unqualifiziert bleibt.
+    # Zusammen ergeben sie genau das, was publish.yml als IMAGE_REGISTRY setzt —
+    # `ghcr.io/marcozwyssig/biz-cockpit-backend` —, und eine Probe des Orchestrators nagelt das
+    # fest, damit die beiden Schreibweisen derselben Adresse nicht auseinanderlaufen.
+    registry: ghcr.io
+    repository: marcozwyssig/biz-cockpit-backend
+  frontend:
+    name: biz-cockpit-frontend
+    context: src/frontend
+    dockerfile: pkg/Dockerfile
+    # rule 7: a block may reference another block's api/ - the published contract is passed in as an
+    # extra build context so the image build needs no running backend.
+    build_contexts:
+      backend-api: src/backend/api
+    # Dieselben zwei Koordinaten wie beim backend, seit #267. Die AUSLIEFERUNG schlaegt hier nicht
+    # nach - `deploy: source:` zeigt auf das backend und fragt einmal -, aber das Dokument, das
+    # Portainer klont, schreibt seither BEIDE Adressen aus, und eine Adresse, die im Dokument steht
+    # und im Manifest nicht, waere genau die zweite Schreibweise, die die Probe unten verhindert.
+    registry: ghcr.io
+    repository: marcozwyssig/biz-cockpit-frontend
+image_tag: "0.1.0"
+
+# The ONE command tree. Every top-level key is a group the platform declares; cockpit contributes
+# members to them and declares none of its own.
+groups:
+
+  # --- build: produce the artefacts -------------------------------------------------------------
+  # Both images, and the published contract (rule 3) - the contract IS an artefact this block emits,
+  # so exporting it and generating the client from it belong here. Verifying it does not: that is the
+  # `test` group's `check-contract`.
+  build:
+    commands:
+      build:
+        help: "Type-check both blocks, then build both container images from source."
+        # Der Typprüfer VOR den Images (Eigentümer-Entscheid 2026-09-04). Das bricht
+        # die Lehre dieser Datei — „build stellt her, test verifiziert" — und zwar
+        # mit Absicht: ein Image, das aus Code entsteht, den mypy und tsc nie
+        # gesehen haben, ist ein Artefakt von etwas Kaputtem. `ci` prüfte das schon,
+        # aber `build` liess sich daran vorbei aufrufen, und genau das ist der Weg,
+        # den ein Deployment nimmt. Der Preis ist bekannt und angenommen: `build`
+        # dauert länger und doppelt, was `ci` ohnehin fährt.
+        depends_on: [build-ci-image, typecheck, build-backend, build-frontend]
+        stop_on_failure: true
+      # Das Bild, in dem die TORE laufen (#277) - kein ausgeliefertes Erzeugnis, deshalb kein Blockname.
+      build-ci-image:  { task: "build-ci-image",  help: "Build the image the gates run in." }
+      build-backend:   { task: "build-backend",   help: "Build the biz-cockpit-backend image." }
+      build-frontend:  { task: "build-frontend",  help: "Build the biz-cockpit-frontend image." }
+      export-spec:     { task: "export-spec",     help: "Export the OpenAPI spec from the app factory (no server, temp DB)." }
+      generate-client: { task: "generate-client", help: "Generate the frontend's typed schema from the committed contract." }
+      # Die Produktwebseite (#202). Ihre fuenf Werte stehen im `site:`-Abschnitt
+      # weiter unten, nicht hier: sie sind die Daten des Produkts, und
+      # `docs:site` liest sie durch das Manifest. Hier steht nur, DASS wir sie
+      # bauen — und dass sie zu `build` gehoert, weil sie ein Erzeugnis ist.
+      website: { task: "docs:site", help: "Die Produktwebseite mit Hugo bauen (in Docker, HTML)." }
+      generate-api:
+        help: "Export the contract, then regenerate the frontend client from it."
+        depends_on: [export-spec, generate-client]
+        stop_on_failure: true
+
+  # --- test: verify them ------------------------------------------------------------------------
+  # The suites, the linters and the contract staleness gate - everything that answers "is this
+  # correct?" - plus `ci`, which is the whole gate in one token.
+  #
+  # NOTE: `test` is deliberately the namesake of its group. delivery.cli.main only consumes a leading
+  # env token when that token names no group, so the group keeps the bare `test` token for the suite
+  # even though `test` is also an environment. Reaching the test ENV goes through $BIZ_COCKPIT_ENV
+  # (see orchestrator.environments).
+  test:
+    # NEUE Gruppenform (netctl#1469): die Mitglieder liegen unter `commands:`. Nötig, weil der
+    # Kernel `task:` NUR in dieser Form auflöst. `typecheck-backend` holte seine Mechanik von dort und
+    # tut es seit #277 nicht mehr: der Kern-Task kann kein Bild bekommen (Begründung in cli.py).
+    # Der Kernel wandert Gruppe für Gruppe; die übrigen stehen noch in der alten Form.
+    commands:
+      test:
+        help: "Run every gate the CI test job runs: backend pytest, frontend vitest, tsc --noEmit."
+        depends_on: [generate-client, test-backend, test-frontend, typecheck, test-orchestrator]
+      test-backend: { task: test-backend, help: "Run the backend test suite (pytest)." }
+      test-frontend: { task: test-frontend, help: "Run the frontend test suite (vitest)." }
+      # Beide Blöcke, dieselbe Form wie `lint` (Typprüfer, 2026-09-03): mypy bewacht
+      # zuerst die Domäne, `infrastructure` folgt in Stufe 2 — siehe [tool.mypy] in
+      # src/backend/pyproject.toml.
+      typecheck:
+        help: "Type-check both blocks: mypy, then tsc --noEmit."
+        depends_on: [typecheck-backend, typecheck-frontend]
+      # From the KERNEL (delivery.tasks.typecheck), not from cockpit: running a type checker needs no
+      # product knowledge. What is cockpit's is the DATA, and it is in `[tool.mypy]` in the backend's
+      # pyproject. The three pins say where the backend keeps its own installed set - mypy must read THAT
+      # one, not the host venv the CLI runs in, or it would type a program nobody ships.
+      # Der Mechanismus ist wieder der des Kerns (#279), nur ein anderer Task als vor #277:
+      # `test:typecheck-python` faehrt mypy durch einen Interpreter, den ein Pin auf der MASCHINE
+      # benennt, und kann kein Bild bekommen; `toolchain:run` ist dafuer da. Gemessen, bevor es hier
+      # stand: `Success: no issues found in 246 source files`.
+      #
+      # `--directory` und NICHT `--project`: `[tool.mypy] files = ["src/app"]` ist relativ zum
+      # ARBEITSVERZEICHNIS, und das ist im Bild die Wurzel des eingehaengten Baums. Mit `--project`
+      # meldet mypy `Cannot read file 'src/app'` (#277, gemessen).
+      #
+      # HOME und Zwischenspeicher zeigen in den BAUM und nicht in ein benanntes Volumen: docker legt
+      # ein frisches als root an, ganz gleich als wer der Container faehrt (#278, zweimal gemessen).
+      #
+      # Dieses Tor ist als einziges so deklariert, und das ist Absicht: CLAUDE.md verlangt fuer GENAU
+      # dieses den Mechanismus des Kerns. Die sechs Nachbarn bleiben bei `_uv_gate`/`_npm_gate`, weil
+      # sie sonst dieselben fuenf Zeilen wiederholten und der Kern dafuer keine Abkuerzung hat.
+      typecheck-backend:
+        task: "toolchain:run"
+        with:
+          image: "biz-cockpit-ci:0.1.0"
+          argv: ["uv", "run", "--directory", "src/backend", "mypy", "--config-file", "pyproject.toml"]
+          env: { HOME: "/work/build/home", UV_CACHE_DIR: "/work/build/cache/uv", UV_LINK_MODE: "copy" }
+        help: "Type-check the backend (mypy)."
+      typecheck-frontend: { task: typecheck-frontend, help: "Type-check the frontend (tsc --noEmit)." }
+      # The deployment mechanics have their own logic now (which credentials leak, which data tree is
+      # missing, which container path a snapshot maps to), so they have their own suite - pytest inside
+      # the orchestrator's host venv, no Docker needed (issue #74).
+      test-orchestrator: { task: test-orchestrator, help: "Run the orchestrator's own test suite (pytest)." }
+      lint:
+        help: "Lint both blocks: ruff check + ruff format --check, then ESLint."
+        depends_on: [lint-backend, lint-frontend]
+      lint-backend: { task: lint-backend, help: "Lint the backend (ruff check + ruff format --check)." }
+      lint-frontend: { task: lint-frontend, help: "Lint the frontend (ESLint)." }
+      verify-spec: { task: verify-spec, hidden: true, help: "Fail if the committed contract differs from the exported one." }
+      check-contract:
+        help: "CI staleness gate (rule 3): the committed contract must match the code."
+        depends_on: [export-spec, verify-spec]
+        stop_on_failure: true
+      ci:
+        help: "The full CI gate: lint, the contract staleness check, then the test suites."
+        depends_on: [build-ci-image, lint, check-contract, check-completion, check-workflows, test]
+
+  # --- release: publish them --------------------------------------------------------------------
+  # --- support: the group that carries the platform's own helpers ------------------------------
+  # Die Vervollstaendigungsdatei wird aus DIESEM Manifest erzeugt und liegt seit simplon 0.7.0
+  # unter `deploy/completions/` (vorher an der Wurzel - was zugleich Regel 1 verletzte). Sie treibt
+  # ab, sobald jemand einen Befehl hinzufuegt und das Erzeugen vergisst, also bekommt sie dasselbe
+  # Tor wie der Vertrag: erzeugt, festgeschrieben, in `ci` gegengeprueft. Die MECHANIK ist die des
+  # Kerns (`support:completion`); cockpit steuert nur bei, dass sie im Tor mitlaeuft.
+  #
+  # Der Befehl MUSS hier stehen und nicht unter `test`: eine Koordinate, die mit einem Gruppennamen
+  # der Plattform beginnt, sagt selbst, wohin sie gehoert - der Kern weist die falsche Stelle ab.
+  support:
+    commands:
+      check-completion:
+        task: "support:completion"
+        with: { check: true }
+        help: "Fail if the committed shell completion differs from the manifest."
+      # Dieselbe Bauart wie die Vervollstaendigung daneben, und aus demselben Grund (#277): erzeugt,
+      # festgeschrieben, im Tor gegengeprueft. Ein Schritt sagt `command: ci` und der Kern loest ihn
+      # gegen den Kommandobaum auf - ein umbenanntes Kommando bricht die ERZEUGUNG laut, statt einen
+      # Workflow zu hinterlassen, der ins Leere ruft. Genau das war an der handgeschriebenen Fassung
+      # nicht zu haben: sie nannte Befehle, und dass die stimmten, hielt nur zusammen, wer sie tippte.
+      workflows:
+        task: "support:workflows"
+        help: "Regenerate the GitHub workflows from this manifest."
+      check-workflows:
+        task: "support:workflows"
+        with: { check: true }
+        help: "Fail if the committed workflows differ from the manifest."
+      # Die Erweiterungen, mit denen cockpit entwickelt wird (#270). Die MECHANIK ist die des Kerns
+      # (netctl#1286); cockpit steuert die Liste im `claude:`-Abschnitt weiter unten bei. Der Befehl
+      # ist fuer eine frische Maschine, einen unbeaufsichtigten Agenten oder ein CI-Abbild - wer das
+      # Archiv nur OEFFNET, bekommt dieselben Erweiterungen ohne Befehl aus `.claude/settings.json`.
+      claude-plugins:
+        task: "support:claude-plugins"
+        help: "Die im Manifest erklaerten Claude-Code-Erweiterungen einrichten; wiederholbar."
+  release:
+    commands:
+      publish: { task: "publish", help: "Push the built images to the container registry (GHCR)." }
+      release:
+        help: "Build both images and push them to the registry."
+        depends_on: [build, publish]
+        stop_on_failure: true
+
+  # --- deploy: put them into an environment (env-first) -----------------------------------------
+  # `update` is THE command on the deployment host (owner decision 2026-08-20): pull the published
+  # images, bring the stack back up, verify it answers - deliberately, never automatically, because a
+  # faulty merge must not reach an instance that triggers real Smallinvoice payments on its own.
+  #
+  # `local` is the dev-server pair (owner decision 2026-08-28): running the product from source on
+  # this machine is a deployment too, into the local environment, so it belongs beside `up` rather
+  # than in a `dev` group of cockpit's own. It is the one member here that does NOT read the target
+  # environment's compose stack - it runs uvicorn and Next against ~/.biz-cockpit - which is why the
+  # impl refuses any environment but dev instead of quietly serving dev data under a `prod` prefix.
+  #
+  # backup/restore honour the target environment: dev snapshots the local database, a host instance
+  # snapshots its own, through a throwaway container off its own volumes.
+  deploy:
+    commands:
+      local:          { task: "local",          help: "Run backend + frontend dev servers together (Ctrl-C stops both)." }
+      local-backend:  { task: "local-backend",  help: "Run the backend dev server (uvicorn --reload on :8000)." }
+      local-frontend: { task: "local-frontend", help: "Run the frontend dev server (Next.js on :3000)." }
+      # `up`/`down` sind der LOKALE Weg: `docker compose` gegen `deploy/env/<x>/` auf DIESER
+      # Maschine. Seit #266 weisen sie jede Umgebung ab, deren `backend:` nicht `local` ist — für
+      # `test` und `prod` besitzt Portainer den Stapel, und ein zweites `docker compose` auf
+      # demselben Projektnamen wäre eine zweite Hand am selben Gegenstand (der Projektname stimmt
+      # sogar überein, `down` hätte also wirklich abgeräumt, was Portainer für laufend hält).
+      up:      { task: "up",      help: "Bring the stack up for the target environment (pull, then up -d)." }
+      down:    { task: "down",    help: "Tear the target environment's stack down." }
+      # Der Weg über Portainer (#154 -> platform#155 -> si#5, jetzt der Hintergrund des Kerns).
+      # Der Eigentümer betreibt ein Portainer auf seinem Proxmox (2026-08-29): cockpit installiert
+      # keines, es liefert hinein und Portainer zieht die Abbilder aus GHCR.
+      #
+      # Der frühere handgeschriebene Befehl `portainer` ist hier verschwunden, und mit ihm die
+      # ZEICHENKETTEN-Route: er löste die compose-Datei selbst auf und schickte das Ergebnis mit
+      # substituierten Werten hinüber. Jetzt klont Portainer das Repository selbst und bekommt die
+      # Werte je Auslieferung frisch als `env_vars` (`required:`/`optional:` der Umgebung). Was
+      # lief, ist damit ein Commit und nicht eine Zeichenkette, die ein Orchestrator zusammengebaut
+      # hat — und Portainer kann den Stapel allein neu ausrollen.
+      #
+      # `rollout` heisst nicht `up`, weil `up` besetzt bleibt (oben) und weil der Befehl eine
+      # VERSION nennt: `--version 0.1.0` oder `latest`. `--version local` ist auf diesem Weg
+      # verboten und wird vom Kern abgewiesen — Portainer klont das Repository, auf dieser Maschine
+      # liegt nichts, was er ausliefern könnte.
+      rollout:  { task: "deploy:up",   help: "Eine veröffentlichte Version über Portainer in die Zielumgebung ausliefern." }
+      teardown: { task: "deploy:down", help: "Den Stapel der Zielumgebung in Portainer ENTFERNEN (nicht nur anhalten)." }
+      backup:  { task: "backup",  help: "Write a consistent SQLite snapshot (VACUUM INTO) into the environment's BACKUP_DIR." }
+      restore: { task: "restore", help: "Restore a snapshot (app stopped; the previous DB is kept)." }
+      # `update` ist der LOKALE Weg geblieben und damit seit #266 fuer `test` und `prod` nicht mehr
+      # der Befehl, der dort etwas tut: sein erster Schritt ist `up`, und der weist eine
+      # Portainer-Umgebung ab — mit der Meldung, die `rollout` nennt. Der Befehl bleibt stehen
+      # statt zu verschwinden, weil eine Abweisung, die den richtigen Weg nennt, mehr sagt als ein
+      # fehlender Befehl. Auf dem Portainer-Weg prueft `rollout` selbst nach: der Kern fragt
+      # Portainer so lange, bis der Stapel wirklich laeuft (Status 1), und meldet Status 4 und den
+      # Zeitablauf als eigene Ausgaenge — genau die Nachpruefung, fuer die hier `status` haengt.
+      update:
+        help: "Der lokale Weg in einem Schritt: Abbilder ziehen, Stack neu starten, Gesundheit pruefen."
+        depends_on: [up, status]
+        stop_on_failure: true
+
+  # --- monitor: watch what is running there (env-first) -----------------------------------------
+  # Reading an instance is not changing it. `update` still plans `status` as its verification step -
+  # a `depends_on` entry names a command, not a group, so the plan crosses the group boundary.
+  monitor:
+    commands:
+      status: { task: "status", help: "Show the target environment's containers and probe its health endpoint." }
+      logs:   { task: "logs",   help: "Show the target environment's container logs." }
+
+# WO die Env-Vorsilbe gilt, sagt seit simplon 0.4.0 der KATALOG, nicht dieses
+# Manifest: `deploy` und `monitor` sind die env-ersten Gruppen der Plattform
+# (`biz-cockpit <env> deploy up`), jede andere weist eine Vorsilbe ab.
+#
+# Das frühere `env_groups: [deploy, monitor]` stand hier bis #204 und ist
+# entfernt — gemessen, nicht vermutet: mit und ohne die Zeile ist die
+# zusammengebaute CLI Zeile für Zeile dieselbe, über alle acht Hilfeseiten.
+# Sie wiederholte nur, was der Katalog ohnehin sagt. Ein Eintrag, der dem
+# Katalog WIDERSPRÄCHE, wird seit 0.4.0 abgewiesen (si#43) — auch das ein
+# Grund, ihn nicht als Zierde stehen zu lassen.
+
+# --- der Träger: die Maschine, auf der die bereitgestellten Umgebungen stehen (si#5, #266) ---------
+#
+# Ein Portainer auf dem Proxmox des Eigentümers, seit 2026-08-29 in Betrieb. cockpit installiert ihn
+# NICHT — dafür gäbe es `deploy carrier`, und dieser Befehl wird hier nie gefahren; die Maschine
+# steht. Beide bereitgestellten Umgebungen teilen sich diesen einen Träger und werden durch ihren
+# Stapelnamen und ihren Datenbaum getrennt, weshalb er EINMAL hier steht und nicht je Umgebung.
+#
+# NICHTS HIER IST EIN WERT. `url_from:` ist eine VORSILBE: PORTAINER_URL und PORTAINER_TOKEN werden
+# in der Umgebung gelesen, in der der Befehl läuft. Ein `token:` gäbe es gar nicht — der Kern weist
+# jeden Schlüssel ab, den er nicht kennt, und genau das ist die Zusicherung, dass hier nie ein
+# Geheimnis liegen bleibt. `insecure: true`, weil Portainer sein Zertifikat beim ersten Start selbst
+# ausstellt; ohne diese Zeile scheitert jeder Aufruf an CERTIFICATE_VERIFY_FAILED.
+#
+# KEIN `proxmox:` MEHR, seit simplon 0.17.0 (si#280, #269). Bis dahin verlangte der Kern den Block
+# auf jedem Träger, obwohl ihn auf dem Auslieferungsweg nie jemand liest — sein einziger Leser ist
+# `deploy:carrier`, der Befehl, der die Maschine MACHT und der hier nie läuft. Zwei Zeilen standen
+# deshalb da, die nichts taten; sie sind ersatzlos weg. Was hier bleibt, beschreibt das Portainer,
+# und das ist alles, was cockpit von diesem Träger je braucht.
+carriers:
+  hausportainer:
+    portainer:
+      url_from: PORTAINER
+      insecure: true
+
+# WELCHE VERSION AUSGELIEFERT WIRD (Kern si#235). `deploy:up` liest diesen Abschnitt als erstes: er
+# sagt, dass cockpit eine SERVER-Anwendung ist (sie wird auf einem Ziel hochgefahren, nicht in ein
+# Verzeichnis dieser Maschine installiert) und wo nachgeschlagen wird, ob es die genannte Version
+# überhaupt gibt. Er wiederholt keine Adresse, sondern zeigt auf einen Eintrag, den `images:` schon
+# hat.
+deploy:
+  kind: server
+  source: { images: backend }
+
+# The deployment environment matrix. `dev` is `local` - `docker compose` on this machine, building
+# from source; `test` and `prod` are `portainer` since #266: the stack is delivered into the carrier
+# above, and PORTAINER clones the compose document itself (the git route). The per-environment deltas
+# for the LOCAL path (project name, data dirs, ports) live in deploy/env/<x>/, the invariants in
+# deploy/env/_common/ (rule 9) — on the Portainer path the same values arrive as `required:`/
+# `optional:` out of the environment the deploy command runs in, because Portainer's checkout has no
+# deploy/env/ layering in front of it.
+#
+# `required:`/`optional:` SIND ABGELEITET UND NICHT ABGETIPPT: das Dokument
+# `deploy/provision/docker-compose.deploy.yml` sagt den Unterschied selbst. `${X:?…}` heisst
+# pflichtig (ein fehlender Wert bricht ab, statt in eine Vorgabe zu fallen, die auf den Träger
+# zeigt), `${X:-}` heisst freiwillig (leer heisst „nicht angeschlossen", #201/ADR 0020). Es sind 11
+# pflichtige — 13 bis #267, wo BACKEND_IMAGE und FRONTEND_IMAGE verschwunden sind, weil das Dokument
+# die Abbildadresse jetzt selbst schreibt und nur die VERSION vom Kern nimmt — und 13 freiwillige bei
+# prod, 7 bei test; `test_stack_variables.py` prüft beide Richtungen als je einen eigenen Befund.
+#
+# SIMPLON_VERSION steht in keiner der Listen, und das ist keine Auslassung: die Variable gehört dem
+# Kern, er setzt sie aus der ausgelieferten Version, und ein Manifest, das sie beansprucht, wird
+# abgewiesen.
+default: dev
+environments:
+  dev:  { backend: local, description: "Local development stack; images built from source." }
+  test:
+    backend: portainer
+    carrier: hausportainer
+    stack: biz-cockpit-test
+    description: "Trial instance on the carrier; delivered by Portainer, FAKE adapters enforced via TOGGL_FAKE/GRAPH_MAIL_FAKE/GRAPH_CALENDAR_FAKE (no real bookkeeping), published on the loopback only."
+    repository: &biz_cockpit_repository
+      url: github.com/marcozwyssig/biz-cockpit
+      ref: main
+      compose: deploy/provision/docker-compose.deploy.yml
+      credential_from: GIT
+    # DIE ZWEI ABBILDREFERENZEN STANDEN HIER BIS #267 und ihr Fehlen ist keine Auslassung: das
+    # Dokument setzt die Referenz jetzt aus der Adresse des Manifests und `SIMPLON_VERSION` zusammen.
+    # Sie hier stehen zu lassen hiesse, einem Betreiber einen Wert abzuverlangen, der nichts mehr
+    # aendert — und der zweite Befund von `test_stack_variables.py` sagt genau das.
+    required: &deployed_required
+      - RESTART_POLICY
+      - HTTP_BIND
+      - HTTP_PORT
+      - COCKPIT_DATA_DIR
+      - BACKUP_DIR
+      - BELEGE_DIR
+      - KREDITOREN_DIR
+      - ORDERS_DIR
+      - INVOICES_DIR
+      - OFFERS_DIR
+      - TIMESHEET_DIR
+    # SECHS NAMEN WENIGER ALS BEI prod, und die sechs sind Absicht. Die Probeinstanz muss auf den
+    # Attrappen laufen (Eigentümer-Entscheid 2026-08-20): cockpit legt in Smallinvoice Zahlungen an
+    # und löscht sie wieder und legt in Toggl Projekte an, eine Probe mit echten Zugangsdaten
+    # veränderte also bei jedem Lauf echte Buchhaltung. Auf dem lokalen Weg bewacht das
+    # `_guard_fake_adapters` an der aufgelösten compose-Konfiguration — auf dem Portainer-Weg gibt
+    # es diese Auflösung nicht mehr, und die Liste hier IST der Wächter: was nicht genannt ist,
+    # kann nicht hinüberreisen, auch nicht aus einer Schale, in der die Werte für prod noch stehen.
+    optional:
+      - APP_TITLE
+      - BACKEND_URL
+      - O365_SENDER
+      - SMALLINVOICE_FAKE
+      - TOGGL_FAKE
+      - GRAPH_MAIL_FAKE
+      - GRAPH_CALENDAR_FAKE
+  prod:
+    backend: portainer
+    carrier: hausportainer
+    stack: biz-cockpit-prod
+    description: "Production instance on the carrier; delivered by Portainer, real credentials from the environment the deploy command runs in, reachable over the VPN only (#74)."
+    repository: *biz_cockpit_repository
+    required: *deployed_required
+    optional:
+      - APP_TITLE
+      - BACKEND_URL
+      - SMALLINVOICE_CLIENT_ID
+      - SMALLINVOICE_CLIENT_SECRET
+      - TOGGL_API_TOKEN
+      - O365_TENANT_ID
+      - O365_CLIENT_ID
+      - O365_CLIENT_SECRET
+      - O365_SENDER
+      - SMALLINVOICE_FAKE
+      - TOGGL_FAKE
+      - GRAPH_MAIL_FAKE
+      - GRAPH_CALENDAR_FAKE
+
+# --- the bodies, declared once (netctl#1469): a command is an INSTANCE of a task, so the new-form
+# `test` group above points at these by bare name instead of restating an `impl:` per command.
+# Die Produktwebseite (#202). Fuenf Werte, und alle fuenf sind Aussagen ueber
+# UNSEREN Baum und UNSERE Werkzeugwahl — der Kern setzt keinen davon vor, weil
+# ein Vorgabewert simplons Verzeichnisordnung jedem anderen Produkt aufzwaenge.
+#
+# `source` liegt unter docs/ und nicht in einem eigenen `site/` am Wurzelrand:
+# Regel 1 sagt, dass src/ und deploy/ der ganze Baum sind, und docs/ traegt
+# bereits die ADRs und arc42. Eine Webseite ist Dokumentation, kein Produktteil.
+#
+# `output` liegt unter build/ und ist damit gitignoriert: was Hugo erzeugt,
+# gehoert nicht ins Repository. Veroeffentlicht wird es nach
+# marcozwyssig/biz-cockpit-site, weil DIESES Repository privat bleibt.
+site:
+  image: "hugomods/hugo:exts-0.148.2"
+  source: "docs/website"
+  output: "build/website"
+  base_url: "https://marcozwyssig.github.io/biz-cockpit-site/"
+  theme: "github.com/imfing/hextra@v0.12.3"
+
+# --- die Erweiterungen, mit denen cockpit entwickelt wird (#270) ------------------------------------
+#
+# ZWEI DATEIEN, EINE WAHRHEIT. Diese Liste ist die GESKRIPTETE Haelfte, die
+# `support claude-plugins` einrichtet; `.claude/settings.json` ist die NATIVE - Claude Code liest
+# `enabledPlugins` aus jeder settings.json, die es findet, und bietet einem Menschen, der das Archiv
+# bloss oeffnet, dieselben Erweiterungen an, ganz ohne Befehl. Der Kern sagt ausdruecklich, dass die
+# beiden in Uebereinstimmung zu halten Sache des PRODUKTS ist: `test_claude_plugins.py` ist die
+# Wache dazwischen, und ohne sie waeren es zwei Wahrheiten, die still auseinanderlaufen.
+#
+# Nichts hier ist ein Wert im Sinne von Regel 8 - eine Marktstelle ist eine ADRESSE eines Archivs,
+# kein Zugangsdatum, und der Kern weist jeden Schluessel ab, den er nicht kennt.
+#
+# EIN BEKANNTER VORBEHALT, abgewogen und nicht uebersehen (Eigentuemer-Entscheid 2026-09-18, si#292).
+# `alexgreensh/token-optimizer` ist eine DRITTE PARTEI, und eine Marktstelle laesst sich heute nicht
+# auf eine Fassung festnageln: der Kern kennt nur `(name, repo)` - kein `ref:`, kein `commit:`, kein
+# `tag:`. Dasselbe Manifest pinnt den Lieferkern Ziffer fuer Ziffer (`simplon==0.17.0`); hier steht
+# fremder Code ohne Version, und `.claude/settings.json` schaltet ihn fuer JEDEN zu, der das Archiv
+# oeffnet - das ist der Zweck der nativen Haelfte und zugleich ihr Preis.
+#
+# Warum es trotzdem bleibt: das Archiv ist privat und einbenutzerig, und die Erweiterung lief hier
+# laengst, bevor sie hier stand - die Erklaerung hat nichts hinzugefuegt, sie hat etwas ausgesprochen.
+# Gemessen hat die Simplon-Seite ausserdem, dass es kein Einzelfall ist: SECHS von acht Produkten der
+# Familie nennen dieselbe fremde Adresse ungepinnt, simplon selbst eingeschlossen (si#292).
+#
+# Und ein Pin allein hier waere keine Loesung, sondern eine, die wie eine aussieht: `settings.json`
+# kennt nur NAMEN, also bliebe der Weg, den ein Mensch tatsaechlich nimmt, ungepinnt - waehrend das
+# Manifest eine Zusicherung behauptete. Eine Garantie, die auf dem ueblichen Weg nicht gilt, ist
+# schlechter als eine ausgesprochene Luecke. Deshalb steht sie hier ausgesprochen.
+#
+# ZU `pyright-lsp`: cockpits Typtor ist mypy (Regel 11), und es ist ABSICHTLICH gestuft - die
+# Domaene, die api-Schicht und die Kompositionswurzel sind geprueft, `infrastructure/sqlite/*` ist
+# ausgenommen, weil die imperative ORM-Zuordnung (ADR 0016) die Spaltentypen vor jedem Pruefer
+# verbirgt. Ein zweiter Typpruefer im Editor wird also genau dort rot, wo das Tor bewusst schweigt.
+# Er steht trotzdem hier, weil er installiert ist und benutzt wird, und eine Deklaration, die das
+# verschwiege, waere die Abweichung, die dieser Abschnitt beseitigen soll. Die Rangfolge ist:
+# **mypy entscheidet, pyright beraet.**
+# DIE WORKFLOWS SIND ERZEUGT (#277, si#40). Sie standen handgeschrieben in .github/workflows/ und
+# nannten die Werkzeugkette Schritt fuer Schritt: setup-uv, setup-node, `npm ci`, dann das Tor. Seit
+# die Tore IM BILD laufen, ist davon nichts mehr wahr - der Runner braucht Docker und einen
+# Interpreter fuer den Starter, mehr nicht. Was hier steht, ist deshalb kurz, und das ist der Beleg,
+# dass der Umbau etwas gebracht hat: die Schritte, die verschwunden sind, waren die Wiederholung
+# dessen, was das Manifest ohnehin sagt.
+#
+# Trigger, Runner und Berechtigungen gehoeren dem PRODUKT und werden woertlich durchgereicht; die
+# Schrittfolge nicht - die steht im Kommandobaum. `actions/checkout` schreibt der Kern selbst mit
+# `fetch-depth: 0`, weil eine flache Kopie eine Version ableitet, die bloss falsch ist (si#3).
+workflows:
+  ci:
+    name: ci
+    on:
+      push:
+        branches: [main]
+      pull_request:
+      workflow_dispatch:
+    jobs:
+      gate:
+        runs-on: ubuntu-latest
+        # Der Starter baut sich sein eigenes Wirt-venv (ADR 0019) und braucht dafuer einen
+        # Interpreter. uv und node stehen hier NICHT mehr: die holt sich jedes Tor aus seinem Bild.
+        python: "3.12"
+        steps:
+          - command: test ci
+
+  # NICHT erzeugt, und der Grund ist ein anderer als bei `ci`: publish.yml traegt einen
+  # `workflow_dispatch`-Eingabewert und eine Tag-Bedingung, also Dinge, die kein Kommandobaum sagt.
+  # Es steht hier, damit die Drift-Pruefung es kennt und nicht fuer eine verirrte Datei haelt.
+  publish:
+    handwritten: "traegt einen workflow_dispatch-Eingabewert und eine Tag-Bedingung (#277)"
+
+claude:
+  marketplaces:
+    claude-plugins-official:     { source: github, repo: anthropics/claude-plugins-official }
+    alexgreensh-token-optimizer: { source: github, repo: alexgreensh/token-optimizer }
+  plugins:
+    - superpowers@claude-plugins-official
+    - feature-dev@claude-plugins-official
+    - code-review@claude-plugins-official
+    - code-simplifier@claude-plugins-official
+    - security-guidance@claude-plugins-official
+    - frontend-design@claude-plugins-official
+    - github@claude-plugins-official
+    - pyright-lsp@claude-plugins-official
+    - token-optimizer@alexgreensh-token-optimizer
+
+tasks:
+  # #204, simplon 0.4.0: die flache Kommandoform ist im Kern geloescht (si#33).
+  # Die RUEMPFE stehen seither hier, die Gruppen zeigen nur noch mit `task:`
+  # darauf. Fuer cockpit heisst das: dieselben Befehle, dieselbe CLI — nur die
+  # Stelle, an der ein `impl:` steht, ist eine andere.
+  build-ci-image:
+    impl: "orchestrator.cli:build_ci_image"
+    help: "Build the image the gates run in."
+  build-backend:
+    impl: "orchestrator.cli:build_backend"
+    help: "Build the biz-cockpit-backend image."
+  build-frontend:
+    impl: "orchestrator.cli:build_frontend"
+    help: "Build the biz-cockpit-frontend image."
+  export-spec:
+    impl: "orchestrator.cli:export_spec"
+    help: "Export the OpenAPI spec from the app factory (no server, temp DB)."
+  generate-client:
+    impl: "orchestrator.cli:generate_client"
+    help: "Generate the frontend's typed schema from the committed contract."
+  publish:
+    impl: "orchestrator.cli:publish"
+    help: "Push the built images to the container registry (GHCR)."
+  local:
+    impl: "orchestrator.cli:dev"
+    help: "Run backend + frontend dev servers together (Ctrl-C stops both)."
+  local-backend:
+    impl: "orchestrator.cli:dev_backend"
+    help: "Run the backend dev server (uvicorn --reload on :8000)."
+  local-frontend:
+    impl: "orchestrator.cli:dev_frontend"
+    help: "Run the frontend dev server (Next.js on :3000)."
+  up:
+    impl: "orchestrator.cli:up"
+    help: "Bring the stack up for the target environment (pull, then up -d)."
+  down:
+    impl: "orchestrator.cli:down"
+    help: "Tear the target environment's stack down."
+  backup:
+    impl: "orchestrator.cli:backup"
+    help: "Write a consistent SQLite snapshot (VACUUM INTO) into the environment's BACKUP_DIR."
+  restore:
+    impl: "orchestrator.cli:restore"
+    help: "Restore a snapshot (app stopped; the previous DB is kept)."
+  status:
+    impl: "orchestrator.cli:status"
+    help: "Show the target environment's containers and probe its health endpoint."
+  logs:
+    impl: "orchestrator.cli:logs"
+    help: "Show the target environment's container logs."
+  test-backend:
+    impl: "orchestrator.cli:test_backend"
+    help: "Run the backend test suite (pytest)."
+    passthrough_args: true
+  test-frontend:
+    impl: "orchestrator.cli:test_frontend"
+    help: "Run the frontend test suite (vitest)."
+  typecheck-frontend:
+    impl: "orchestrator.cli:typecheck_frontend"
+    help: "Type-check the frontend (tsc --noEmit)."
+  test-orchestrator:
+    impl: "orchestrator.cli:test_orchestrator"
+    help: "Run the orchestrator's own test suite (pytest)."
+    passthrough_args: true
+  lint-backend:
+    impl: "orchestrator.cli:lint_backend"
+    help: "Lint the backend (ruff check + ruff format --check)."
+  lint-frontend:
+    impl: "orchestrator.cli:lint_frontend"
+    help: "Lint the frontend (ESLint)."
+  verify-spec:
+    impl: "orchestrator.cli:verify_spec"
+    help: "Fail if the committed contract differs from the exported one."

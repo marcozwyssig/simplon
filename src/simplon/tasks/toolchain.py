@@ -23,7 +23,7 @@ is not a file anybody reads.
 A round-trip-preserving loader (`ruamel.yaml`) would fix it and was rejected: every dependency in this
 kernel is a constraint on every consumer forever (see pyproject's argued bounds), and a second YAML
 implementation for ONE command is a large one. The splice reads the file as TEXT, finds
-`groups:` -> `build:` -> `commands:`, and inserts the new commands after the last line already in that
+`ci:` -> `build:` -> `commands:`, and inserts the new commands after the last line already in that
 block. Nothing it did not write is re-serialised, so comments, flow style, key order and blank lines
 survive by construction rather than by a writer's care.
 
@@ -319,20 +319,24 @@ def scaffold(language: str, version: str) -> int:
 # --- the splice (si#110): text in, text out, and nothing re-serialised that was not written here ---
 
 #: One `key:` line of a block mapping. The key charset is what a command/group name may be; anything
-#: else on the line lands in `rest`, which is how a flow value (`groups: { ... }`) is recognised rather
+#: else on the line lands in `rest`, which is how a flow value (`ci: { ... }`) is recognised rather
 #: than walked into.
 _KEY = re.compile(r"^(?P<indent> *)(?P<key>[A-Za-z0-9_][A-Za-z0-9_.-]*):(?P<rest>.*)$")
 
+#: The top-level section the build group stands in: `ci:` since si#344, where `build` is a phase of the
+#: integration area. The `groups:` form before it no longer loads, so it is not read here either.
+_AREA = "ci"
+
 
 def _declared_build_commands(text: str) -> Mapping[str, object]:
-    """The command names already under `groups: build: commands:`, read through the ordinary loader.
+    """The command names already under `ci: build: commands:`, read through the ordinary loader.
 
     READING is what a plain loader is good at, and the never-clobber rule needs nothing more than the
     names. Only the WRITE goes through the splice.
     """
     data = yaml.safe_load(text) or {}
     node: object = data
-    for key in ("groups", "build", "commands"):
+    for key in (_AREA, "build", "commands"):
         if not isinstance(node, Mapping):
             return {}
         node = node.get(key)
@@ -372,7 +376,7 @@ def _spliced(text: str, additions: Mapping[str, object], where: str) -> str:
 def _place(lines: list[str]) -> tuple[int, bool, int, int] | None:
     """Where the new commands go: (the `commands:` line, whether it holds an empty `{}`, the line to
     insert before, the indent to write them at). None when the shape is not the one this can splice."""
-    groups = _find(lines, "groups", 0, len(lines), 0)
+    groups = _find(lines, _AREA, 0, len(lines), 0)
     if groups is None or groups[1]:
         return None
     _, groups_end = _extent(lines, groups[0] + 1, 0, len(lines))
@@ -504,11 +508,11 @@ def _same_data(spliced: str, text: str, additions: Mapping[str, object]) -> bool
     except yaml.YAMLError:
         return False
     want = yaml.safe_load(text) or {}
-    groups = want.get("groups") or {}
+    groups = want.get(_AREA) or {}
     build = groups.get("build") or {}
     build["commands"] = {**(build.get("commands") or {}), **additions}
     groups["build"] = build
-    want["groups"] = groups
+    want[_AREA] = groups
     return bool(got == want)
 
 
@@ -518,7 +522,7 @@ def _refuse(where: str, additions: Mapping[str, object], indent: int) -> NoRetur
     A shape the splice does not recognise is a manifest somebody wrote by hand in a way this scanner
     cannot read - not a licence to guess. What a reader can act on is the text itself, so it is printed.
     """
-    log.info(f"{where}: no `groups:` -> `build:` -> `commands:` block mapping to splice into. "
-             f"Paste this under your build group's `commands:`:")
+    log.info(f"{where}: no `ci:` -> `build:` -> `commands:` block mapping to splice into. "
+             f"Paste this under `ci: build: commands:`:")
     print("\n".join(_entries(additions, indent)))
     log.die(f"{where} was left unchanged - a scaffolder that guessed at the shape would corrupt it.")

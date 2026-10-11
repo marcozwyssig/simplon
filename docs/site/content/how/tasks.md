@@ -172,7 +172,7 @@ tell a missing tool from a broken one. It is the same idiom `run.Result` uses, f
 tasks:
   wheel: { impl: "orchestrator.cli:build_wheel", help: "Build the wheel." }
 
-groups:
+ci:
   build:
     commands:
       wheel: { task: "wheel" }

@@ -137,7 +137,7 @@ def _carrier_of(env_name: str = "") -> ("tuple[environments.Environment, carrier
 def _backends(document: dict) -> tuple[str, ...]:
     """Every backend name the document itself uses. The kernel does not own this list - a product
     registers its own implementations - so the set is read off the matrix rather than fixed here."""
-    declared = document.get("environments") or {}
+    declared = environments.matrix_section(document)["environments"] or {}
     names = {str((spec or {}).get("backend", "")).strip()
              for spec in declared.values() if isinstance(spec, dict)}
     return tuple(sorted(n for n in names if n)) or ("local",)

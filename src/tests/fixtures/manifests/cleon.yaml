@@ -1,0 +1,271 @@
+# cleon delivery manifest - the single declarative source the delivery kernel
+# (delivery.orchestrator.manifest) assembles cleon's CLI from. Scaffolded by
+# `python -m delivery.bootstrap` (netctl#651 strand 4). Fill it in: add your real groups + commands and
+# wire each `impl` to a "module:function" your orchestrator package exports.
+#
+# Sections:
+#   product       the product label (shim/manifest name + diagnostics).
+#   groups        the ONE command tree: group -> command -> { impl: "module:function", help: "one-line
+#                 summary" }. The key order within a group is its membership order; the env-gate is derived.
+#   env_groups    the subset of groups that are env-first (`cleon <env> <group> <cmd>`, default below).
+#   environments  the deployment env matrix (a backend per env) + the default env.
+product: cleon
+
+# --- product build data (read RAW via CONTEXT.manifest_data(), IGNORED by the CLI engine) ---
+# The CLI engine reads only groups/env_groups, so cleon's own build parameters live here rather than in
+# Python. Everything below is a knob someone may need to turn on a machine I cannot see - a differently
+# unpacked bundle, a bigger heap, an Actifsource release that renames a build configuration - and none
+# of it should require editing code to turn.
+build:
+  # WHERE THE BUNDLE COMES FROM. `build fetch-bundle` pulls it from the registry asbundle publishes to
+  # and unpacks it here. A developer with a bundle already unpacked can skip that step and point
+  # `directory` at their own. Relative paths resolve from the repo root.
+  bundle:
+    directory: build/bundle
+    registry: ghcr.io/marcozwyssig
+    repository: asbundle-bundle
+    # Empty means "the newest published for this host". Pin it to reproduce an old build - the tag
+    # carries the Eclipse and JDK versions, so pinning it pins those too.
+    tag: ""
+    # Ordered candidates for the Eclipse `plugins` directory inside it, tried in this order. Ordered
+    # rather than searched, because the archive root DIFFERS BY HOST: asbundle zips the Eclipse install
+    # itself on Linux and Windows, and the folder containing Eclipse.app on macOS. A candidate only
+    # counts if it actually holds org.eclipse.equinox.launcher_*.jar.
+    plugin_candidates:
+      - plugins
+      - Eclipse.app/Contents/Eclipse/plugins
+      - "*/plugins"
+      - "*/Eclipse.app/Contents/Eclipse/plugins"
+
+  # THE ANT RUNS. Both files live in deploy/provision/ per the platform block layout.
+  ant:
+    generate_file: deploy/provision/asbuild.generate.xml
+    package_file: deploy/provision/asbuild.package.xml
+    generate_targets: [generate]
+    # Compiling uses the SAME build file as packaging - it is the same javac over the same projects,
+    # just run earlier and stopping before the jars.
+    compile_targets: [compile]
+    package_targets: [package]
+    # JVM flags for the Ant process, passed via ANT_OPTS. Generation walks 22,000+ generated files;
+    # the default heap is where that runs out, halfway through a CI run.
+    opts: ["-Xmx4g"]
+    # Extra -D properties handed to BOTH build files. The build files declare defaults for these, so an
+    # empty map here is a working build - this is the override seam, not a requirement.
+    properties:
+      cleon.java.target: "21"
+      # Turn on to have the generator say what it loaded and why something was not found. Long, but the
+      # alternative when a generation fails is guessing - which has cost several CI runs already.
+      cleon.generate.verbose: "true"
+      # `error` makes any model error fail the build; `warning` reports and continues. Currently
+      # `warning`, because the model has one known incompleteness (a Feature under Project Methods ->
+      # hermes with no `fullName`) and blocking every release on it is a decision for the model's owner.
+      cleon.validate.exceptiontype: "warning"
+
+  # WHAT IS BUILT. The site project is the root of the derivation: it names the features, they name the
+  # plugins, and nothing else is compiled (orchestrator/deliverables.py).
+  site:
+    project: cleon.site
+    # The profile the asbundle bundle was assembled with. p2 installs INTO a profile, and naming one
+    # that does not exist fails with a message about the profile rather than about cleon.
+    profile: SDKProfile
+    # Directories under src/ to exclude entirely. The samples are not shipped AND are the only nested
+    # projects; they are currently excluded by not being referenced rather than by name, so this is
+    # empty on purpose - fill it if a sample ever ends up on the site by accident.
+    skip_directories: []
+
+# The ONE command tree, along the CI/CD loop: group -> command -> { impl: "module:function", help }. The
+# key order within a group is its membership order. `build` is a single-member group whose member shares its
+# name, so it collapses to ONE flat top-level command (`cleon build`); `deploy` is a multi-member
+# env-first group (see env_groups). The starter impls point at the generated `orchestrator.cli` callbacks;
+# replace them with your own as you add commands.
+#
+# `build` and `all` are impl-less AGGREGATES (#895/#896): they declare no impl, only `depends_on`, and
+# the kernel binds them at assembly time (assemble(step_context=...) in orchestrator/cli.py) to run their
+# dependency plan as live-streamed `./cleon.sh <cmd>` steps.
+#
+# `build` sets `stop_on_failure: true` and `all` leaves it false, and the difference is not cosmetic:
+# packaging a failed generation compiles a stale tree and publishes an update site that looks fine, so
+# that chain must stop at the first red. Deploy's `all` reports every step instead, which is what you
+# want from a status sweep.
+# --- what cleon publishes ---------------------------------------------------------------------------
+# The combined artefact: an asbundle bundle with cleon already installed, so a user starts with Eclipse,
+# Actifsource AND cleon in place and picks up later cleon releases through the normal update mechanism.
+release:
+  registry: ghcr.io/marcozwyssig
+  repository: cleon-bundle
+
+# --- what is published as an OCI artifact -------------------------------------------------------------
+# Read by the kernel's `release:artifact` task (simplon.tasks.artifact): registry, package, directory and
+# media type are cleon's DATA; zipping, logging in and pushing are the kernel's mechanics, shared with
+# every other product that publishes a folder.
+#
+# No `tag:` here, and that absence is the point: cleon's version is generated INTO a feature jar by the
+# model and is only readable after a build, so no key in this file could hold it. `orchestrator.cli`
+# resolves it and passes it to the same task.
+artifacts:
+  updatesite:
+    registry: ghcr.io/marcozwyssig
+    repository: cleon-updatesite
+    source: build-out/site
+    # What the published file is CALLED. Without it the kernel names the archive after the directory,
+    # so `build-out/site` publishes as `site.zip` - a name that says where it was built and nothing
+    # about what it holds, to whoever pulls it by hand.
+    archive: cleon-updatesite
+    # Its own media type: pulling one of these gets a p2 repository to point Eclipse at, not an IDE to
+    # unpack, and nothing reading the manifest rather than the filename should have to guess which.
+    media_type: application/vnd.actifsource.cleon.updatesite.v1+zip
+
+# --- what is attached to a GitHub release ---------------------------------------------------------------
+# Read by the kernel's `release:asset` task (simplon.tasks.asset). The OTHER side of `release:` above:
+# that one puts the bundle in a registry, where a build pulls it with its own token; this attaches it to
+# a release page, where a person downloads it.
+#
+# CLEON MAY OFFER BOTH ONLY BECAUSE THIS REPOSITORY IS PRIVATE, and that is a licence and not a
+# preference: the bundle carries Actifsource Enterprise, and a release asset on a PUBLIC repository is an
+# anonymous download. While cleon was public this section could not exist. See
+# site/content/docs/getting-started.md for the boundary it sits on.
+#
+# No `tag:` here, for the same reason `artifacts:` has none: cleon's version is generated into a feature
+# jar by the model and is readable only after a build. `orchestrator.cli:publish_asset` resolves it and
+# passes it in - WITHOUT the host, so the five matrix cells land on ONE release and each archive carries
+# its host in its own filename.
+assets:
+  bundle:
+    # A glob, because the build names the file after the version it just produced. One match per cell.
+    source: "build-out/cleon_*_on_*.zip"
+
+# WHAT CLEON'S COMMANDS ARE (the command-tree form, netctl#1469). A body is declared ONCE here, under
+# `tasks:`, and a command instantiates it with `task:`. That indirection is what buys the group tree
+# below: writing the groups this way merges cleon's commands onto the KERNEL's own command tree, so
+# cleon inherits the general commands Simplon places for every product - `support install` (the host
+# tooling the kernel needs, today oras) and `support git` (the version-control chores, including
+# `auth-scopes` for the GHCR package permissions). In the previous, flat form (`impl:` written straight
+# on the command) none of that existed here: the kernel tree is merged only for a manifest that
+# declares at least one group this way.
+tasks:
+  fetch-bundle: { impl: "orchestrator.cli:fetch_bundle",
+                  help: "Pull the asbundle bundle for this host from the registry and unpack it." }
+  compile:  { impl: "orchestrator.cli:compile",
+              help: "Compile the model plugins, so the generator can load their Java functions." }
+  # NOT `generate` and NOT `install`, though that is what the bodies do: both are names the KERNEL's own
+  # command tree already owns (`support tasks generate` regenerates a product's CLI module, `support
+  # install` provisions host tooling), and an aggregate's `depends_on` takes a BARE command name - so a
+  # duplicate name is not a shadowed command, it is a plan that cannot be resolved at all.
+  generate-sources: { impl: "orchestrator.cli:generate",
+              help: "Run Actifsource headless: generate the plugin sources, features and update site, then validate." }
+  package:  { impl: "orchestrator.cli:package",
+              help: "Compile, jar the plugins and features, and publish the P2 update site." }
+  install-features: { impl: "orchestrator.cli:install",
+              help: "Install the freshly built cleon features into the bundle's Eclipse." }
+  bundle:   { impl: "orchestrator.cli:bundle",
+              help: "Zip the bundle, now carrying cleon, into a publishable archive." }
+  publish:  { impl: "orchestrator.cli:publish",
+              help: "Push the combined cleon+Actifsource bundle to the registry." }
+  publish-updatesite: { impl: "orchestrator.cli:publish_updatesite",
+              help: "Push the P2 update site to the registry (mechanics: the kernel's release:artifact)." }
+  publish-asset: { impl: "orchestrator.cli:publish_asset",
+              help: "Attach the built bundle to the GitHub release for this version (mechanics: the kernel's release:asset)." }
+  up:       { impl: "orchestrator.cli:up",   help: "Deploy the product to the target environment (placeholder)." }
+  # The counterpart of `build bundle`: that produces the artefact, this puts it where someone can start
+  # it. Same shape as asbundle's `deploy install`, because it is the same act one layer up.
+  install:  { impl: "orchestrator.cli:install_bundle",
+              help: "Extract the packaged cleon bundle into a directory on this machine.",
+              params: { directory: { help: "directory to extract the bundle into", argument: true } } }
+  down:     { impl: "orchestrator.cli:down", help: "Tear the deployment down (placeholder)." }
+
+# The command tree along the CI/CD loop: group -> commands -> { task | depends_on }. The key order
+# within a group is its membership order. `build` is a group whose member shares its name, so it
+# collapses to ONE flat top-level command (`cleon build`); `deploy` is env-first (the kernel's tree
+# declares it so, and env_groups below states it for this manifest too).
+#
+# `build` and `all` are task-less AGGREGATES (#895/#896): they declare no task, only `depends_on`, and
+# the kernel binds them at assembly time (assemble(step_context=...) in orchestrator/cli.py) to run
+# their dependency plan as live-streamed `./cleon.sh <cmd>` steps.
+#
+# `build` sets `stop_on_failure: true` and `all` leaves it false, and the difference is not cosmetic:
+# packaging a failed generation compiles a stale tree and publishes an update site that looks fine, so
+# that chain must stop at the first red. Deploy's `all` reports every step instead, which is what you
+# want from a status sweep.
+# --- the product website ------------------------------------------------------------------------------
+# Read by the kernel's `docs:site` task (simplon.tasks.site), never by the CLI engine. Hugo, Go and Git
+# all live in the pinned image, so changing a page needs docker and nothing else.
+#
+# `output` is build-out/website and NOT build-out/site: that name is taken by the P2 update site this
+# build publishes, and pointing a wipe-before-build task at it would delete the update site.
+site:
+  image: "hugomods/hugo:exts-0.148.2"
+  source: site
+  output: build-out/website
+  theme: "github.com/imfing/hextra@v0.12.3"
+  base_url: "https://marcozwyssig.github.io/cleon/"
+
+groups:
+  build:
+    commands:
+      fetch-bundle: { task: fetch-bundle }
+      compile:      { task: compile }
+      generate-sources: { task: generate-sources }
+      package:      { task: package }
+      install-features: { task: install-features }
+      bundle:       { task: bundle }
+      build:        { help: "The whole build: fetch, compile, generate, package, install, zip.",
+                      depends_on: [fetch-bundle, compile, generate-sources, package, install-features,
+                                   bundle],
+                      stop_on_failure: true }
+  release:
+    commands:
+      publish: { task: publish }
+      publish-updatesite: { task: publish-updatesite }
+      publish-asset: { task: publish-asset }
+  # The website is documentation, so it sits where the kernel places documentation commands rather than
+  # in `build`: it produces no artefact the build chain depends on, and a red site must not stop a bundle.
+  support:
+    # HIDDEN, not removed. cleon vendors nothing since the kernel became a PyPI package, so this command
+    # has nothing to initialise - and its own help still names `lib/platform`. Hiding is the product's
+    # say over a command the kernel places for everyone: it stays invokable for whoever knows it, and
+    # stops being offered to everyone who does not.
+    groups:
+      git:
+        commands:
+          submodules: { task: "vcs:submodules", hidden: true }
+    commands:
+      site: { task: "docs:site" }
+  release:
+    commands:
+      publish: { task: publish }
+      publish-updatesite: { task: publish-updatesite }
+      publish-asset: { task: publish-asset }
+  # The website is documentation, so it sits where the kernel places documentation commands rather than
+  # in `build`: it produces no artefact the build chain depends on, and a red site must not stop a bundle.
+  support:
+    # HIDDEN, not removed. cleon vendors nothing since the kernel became a PyPI package, so this command
+    # has nothing to initialise - and its own help still names `lib/platform`. Hiding is the product's
+    # say over a command the kernel places for everyone: it stays invokable for whoever knows it, and
+    # stops being offered to everyone who does not.
+    groups:
+      git:
+        commands:
+          submodules: { task: "vcs:submodules", hidden: true }
+    commands:
+      site: { task: "docs:site" }
+  deploy:
+    commands:
+      up:      { task: up }
+      install: { task: install }
+      down:    { task: down }
+      all:  { help: "Run build then deploy up end to end (the build->up dependency plan).",
+              depends_on: [build, up], stop_on_failure: false }
+
+# NO `env_groups:` here. `deploy` is a PLATFORM group and the catalogue already declares it
+# `env_first: true`, so restating it said nothing - and si#43 closed the door it was leaning on: a
+# product switching env_first on a platform group is what `merge` forbids everywhere else.
+#
+# `cleon <env> deploy <cmd>` still works, and works because the kernel says so.
+
+# The deployment environment matrix (#15, folded into the one manifest per #651 strand 1): one env per row,
+# `backend` decides HOW it is realised (`local` today; add a cloud backend and widen _VALID_BACKENDS in
+# environments.py later). A deploy command runs against ONE env, selected env-first; `default` is the
+# implicit one.
+default: dev
+environments:
+  dev: { backend: local, description: "Local development environment (the default)." }

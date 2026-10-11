@@ -26,13 +26,24 @@ a sixth for the machine itself, and they are the only groups there are:
 
 ```yaml
 groups:
-  build:   { help: "Produce the artefacts." }
-  test:    { help: "Verify them." }
-  release: { help: "Publish them." }
-  deploy:  { help: "Put them into an environment.", env_first: true }
-  monitor: { help: "Watch what is running there.", env_first: true }
+  ci:
+    transparent: true
+    groups:
+      build:   { help: "Produce the artefacts." }
+      test:    { help: "Verify them." }
+      release: { help: "Publish them." }
+  cd:
+    transparent: true
+    env_first: true
+    groups:
+      deploy:  { help: "Put them into an environment." }
+      monitor: { help: "Watch what is running there." }
   support: { help: "Host preflight, environment introspection and host tooling." }
 ```
+
+`ci` and `cd` are the two halves of the loop, and they are **transparent**: a product writes its commands
+under `ci:` and `cd:`, and neither word ever appears on the command line. Everything under `cd` takes an
+environment, which is why `env_first:` is said once there and not on each group.
 
 A product fills those groups. It cannot invent a seventh, and the refusal is not a rule layered over the
 merge - it *is* the merge. A product's tree is merged onto the platform's, so a path the platform does
@@ -116,7 +127,7 @@ group, and the values pinned for this particular instance. So the same body can 
 in one product or in twenty:
 
 ```yaml
-groups:
+ci:
   test:
     commands:
       unit:   { task: "test:gate", with: { name: "unit" },   help: "Run the unit suite." }
@@ -155,7 +166,7 @@ by the kind of work instead of by the phase it runs in:
 | packaging and publishing | `docker`, `oras`, `gh`, `dotnet` | `build:image`, `release:image`, `release:artifact`, `release:asset`, `release:nuget`, `release:maven`, `release:conan`, `build:nuget-config`, `build:nuget-restore`, `build:conan-cache` |
 | the machine and its services | `oras`, `docker compose`, `claude`, `sudo`/`usermod`, `systemctl`, `docker system prune`, `df`, `systemd-detect-virt`, `apt-get` - and nothing at all for `support:environments`, which only reads the manifest | `support:install`, `support:nexus`, `support:claude-plugins`, `support:environments`, `support:ci-privileges`, `support:ci-disk-hygiene`, `support:ci-arm64`, `support:ci-disk-preflight`, `support:ci-disk-cleanup`, `support:toolchain`, `toolchain:run` |
 | running things | the backend a product registers, `oras` for a client install, and - for the machine underneath - Pulumi and Ansible, each in a pinned container | `deploy:up`, `deploy:down`, `deploy:carrier` |
-| the declarations themselves | nothing external | `tasks:generate`, `tasks:catalogue`, `support:workflows`, `support:completion`, `build:cmake-files`, `build:dotnet-solution` |
+| the declarations themselves | nothing external | `tasks:generate`, `tasks:catalogue`, `support:workflows`, `support:completion`, `support:migrate`, `build:cmake-files`, `build:dotnet-solution` |
 
 Seven kinds of work, and the middle column barely intersects. Every one of them is reached through
 `build`, `test`, `release`, `deploy`, `monitor`, `support` and nothing else. That is the claim the fixed
@@ -238,12 +249,12 @@ becomes "is docker there?", and that second question has an answer a script can 
 brings whatever a moving tag points at today has relocated the problem rather than solved it - the
 machine no longer decides what the build uses, but the calendar does:
 
-> simplon.yaml: 'site': 'image' must pin a version ('<image>:<tag>'), got 'hugomods/hugo' - an untagged
+> simplon.yaml: 'website': 'image' must pin a version ('<image>:<tag>'), got 'hugomods/hugo' - an untagged
 > image means ':latest', which moves under the build; pin it as '<image>:<tag>' (e.g.
 > 'hugomods/hugo:exts-0.148.2'), or by digest
 
 The theme module is refused on the same grounds - `@latest`, `@master` and a bare branch name are
-all queries that resolve differently tomorrow. Both declarations, and the rest of the `site:`
+all queries that resolve differently tomorrow. Both declarations, and the rest of the `website:`
 section, are in [The manifest](../../how/manifest/#product-data-sections).
 
 ### What it costs

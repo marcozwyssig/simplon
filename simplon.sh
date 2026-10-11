@@ -34,6 +34,10 @@ LAUNCH_MODULE=orchestrator
 # such file, or one whose file carries no reference, has no container route - which is a statement rather
 # than a gap, and the refusals below say so.
 LAUNCH_IMAGE_PIN="$ROOT/deploy/image/image.pin"
+# Both reach the kernel's environment, because a refusal it raises can name them (si#344): a manifest in the
+# form the kernel no longer loads is told the migration's two commands, and those are written in terms of
+# where THIS checkout keeps its orchestrator and which image it pins. The kernel only reads them.
+export LAUNCH_ORCH_DIR LAUNCH_IMAGE_PIN
 
 VENV="$LAUNCH_ORCH_DIR/.venv"
 REQ="$LAUNCH_ORCH_DIR/requirements.txt"
@@ -127,6 +131,8 @@ if [ "$DELIVERY_ROUTE" = container ]; then
     # route below derives VENV, REQ and PYTHONPATH from it. A launcher that carried the block path twice
     # would be half-parametrised: `--orch-dir` would move one route and not the other.
     ORCH_IN_SRC="/src/${LAUNCH_ORCH_DIR#"$ROOT/"}"
+    # The pin file the same way, so the kernel inside can read the reference it runs on (si#344).
+    PIN_IN_SRC="/src/${LAUNCH_IMAGE_PIN#"$ROOT/"}"
 
     # THE CONTAINER ROUTE. The kernel runs in the image si#200 builds, this checkout is bind-mounted at
     # /src, and the host's docker socket comes with it so the kernel can still start the toolchain
@@ -217,9 +223,10 @@ if [ "$DELIVERY_ROUTE" = container ]; then
     # anyway would put the gate into its self-healing mode inside a container that has no systemd and no
     # engine to heal.
     DOCKER_RUN+=(-e DELIVERY_ROUTE=inside)
-    # The four launch parameters, restated in the container's own coordinates.
+    # The launch parameters, restated in the container's own coordinates.
     DOCKER_RUN+=(-e "LAUNCH_PRODUCT=$LAUNCH_PRODUCT" -e LAUNCH_ROOT=/src \
-                 -e "LAUNCH_ORCH_DIR=$ORCH_IN_SRC" -e "LAUNCH_MODULE=$LAUNCH_MODULE")
+                 -e "LAUNCH_ORCH_DIR=$ORCH_IN_SRC" -e "LAUNCH_MODULE=$LAUNCH_MODULE" \
+                 -e "LAUNCH_IMAGE_PIN=$PIN_IN_SRC")
     DOCKER_RUN+=(-e "PYTHONPATH=$ORCH_IN_SRC/src/python")
     DOCKER_RUN+=(-e PYTHONUSERBASE=/src/build/container/python -e HOME=/tmp)
     # The caller's git identity, read-only, because `release tag` and every commit the kernel makes want

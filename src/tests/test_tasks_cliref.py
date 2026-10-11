@@ -37,8 +37,15 @@ from simplon.tasks import cliref
 
 _CATALOGUE = """
 groups:
-  build:   { help: "Produce the artefacts." }
-  deploy:  { help: "Put them into an environment.", env_first: true }
+  ci:
+    transparent: true
+    groups:
+      build:   { help: "Produce the artefacts." }
+  cd:
+    transparent: true
+    env_first: true
+    groups:
+      deploy:  { help: "Put them into an environment." }
   support:
     help: "Host preflight and tooling."
     groups:
@@ -70,11 +77,12 @@ tasks:
 
 _MANIFEST = """
 product: sample
-default: dev
-groups:
+ci:
   build:
     commands:
       wheel: { task: "wheel" }
+cd:
+  default: dev
   deploy:
     commands:
       up: { task: "up" }
@@ -226,7 +234,7 @@ tasks:
   build: { impl: "cliref_impls:wheel", help: "Run the build pipeline." }
   docs: { impl: "cliref_impls:site", help: "Render the docs." }
 
-groups:
+ci:
   build:
     commands:
       build: { task: "build" }
@@ -263,14 +271,15 @@ tasks:
   package: { impl: "cliref_impls:wheel", help: "Package the artefacts." }
   wheel: { impl: "cliref_impls:up", help: "Build the wheel." }
 
-groups:
+# a non-phase group under cd: loads only because this manifest is loaded without a catalogue
+cd:
   package:
     commands:
       package: { task: "package" }
+ci:
   build:
     commands:
       wheel: { task: "wheel" }
-env_groups: [package]
 """
 
 

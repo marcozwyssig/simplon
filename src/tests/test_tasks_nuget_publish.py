@@ -35,8 +35,6 @@ artifacts:
     image: mcr.microsoft.com/dotnet/sdk:9.0
     project: src/Core/Core.csproj
     tag: 1.0.0
-groups: {}
-env_groups: []
 """
 
 _TOKEN = "ghp_RECOGNISABLE_SECRET"

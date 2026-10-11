@@ -116,7 +116,7 @@ tasks:
   hollow:    {{ impl: "test_suites_results_from:writes_empty_results", help: "A runner that selects nothing." }}
   ndjson:    {{ impl: "test_suites_results_from:writes_unreadable_results", help: "A foreign format." }}
   gate:      {{ impl: "simplon.tasks.testrun:gate", help: "Run a declared level.", passthrough_args: true }}
-groups:
+ci:
   build:
     commands:
       compile: {{ task: toolchain, with: {{ rc: {compile_rc}, tag: "compile" }}, help: "Compile." }}

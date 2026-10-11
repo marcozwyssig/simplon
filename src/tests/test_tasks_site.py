@@ -23,12 +23,12 @@ _SITE = {"image": _IMAGE, "source": "website", "output": "build/website",
 
 
 def _register(monkeypatch, tmp_path, section=None):
-    data = {"site": dict(_SITE if section is None else section)} if section != {} else {}
+    data = {"website": dict(_SITE if section is None else section)} if section != {} else {}
     # The site source EXISTS, the way it does in any product hugo could build from. A test tree without
     # it would exercise the "looked where there is nothing" path by accident, which is a real refusal
     # of its own and has its own test.
     if data:
-        (tmp_path / data["site"].get("source", "website")).mkdir(parents=True, exist_ok=True)
+        (tmp_path / data["website"].get("source", "website")).mkdir(parents=True, exist_ok=True)
     ctx = ProductContext("sample", tmp_path, tmp_path / "sample.yaml")
     monkeypatch.setattr(context, "_current", ctx)
     monkeypatch.setattr(ProductContext, "manifest_data", lambda self: data)
@@ -101,7 +101,7 @@ def _page(source, name, diagram=None):
 
 def test_declared_reads_every_datum_from_the_manifest_section():
     # arrange: the five product data the task is not allowed to assume
-    data = {"site": dict(_SITE)}
+    data = {"website": dict(_SITE)}
 
     # act
     cfg = site_task.declared(data)
@@ -114,8 +114,29 @@ def test_declared_reads_every_datum_from_the_manifest_section():
     assert cfg.theme == "github.com/imfing/hextra@v0.9.6"
 
 
-@pytest.mark.parametrize("document", [{}, {"site": 5}, {"site": ["docs/site"]}],
-                         ids=["absent", "a scalar", "a list"])
+def test_a_docs_site_under_the_old_section_name_is_no_longer_read():
+    # arrange: `site:` with the docs keys was the section's name before si#344; the loader refuses it by
+    # name now, so a reader that still fell back to it would read a key no loadable manifest carries
+    data = {"site": dict(_SITE)}
+
+    # act / assert
+    with pytest.raises(ValueError, match=r"the 'website' section is missing or is not a mapping"):
+        site_task.declared(data, source="x")
+
+
+def test_website_wins_over_a_leftover_site_section():
+    # arrange: a `site:` that is not the docs site would not matter; one that is must not beat `website:`
+    data = {"website": dict(_SITE, base_url="https://new.test/"), "site": dict(_SITE)}
+
+    # act
+    cfg = site_task.declared(data)
+
+    # assert
+    assert cfg.base_url == "https://new.test/"
+
+
+@pytest.mark.parametrize("document", [{}, {"website": 5}, {"website": ["docs/site"]}, {"site": 5}],
+                         ids=["absent", "a scalar", "a list", "an old site that is not the docs site"])
 def test_declared_refuses_a_manifest_without_a_usable_section(document):
     """A command bound to this task in a product that never declared the data, or declared it wrong.
 
@@ -124,7 +145,7 @@ def test_declared_refuses_a_manifest_without_a_usable_section(document):
     check could not fail. The two malformed shapes were not driven at all.
     """
     # act / assert
-    with pytest.raises(ValueError, match=r"the 'site' section is missing or is not a mapping"):
+    with pytest.raises(ValueError, match=r"the 'website' section is missing or is not a mapping"):
         site_task.declared(document)
 
 
@@ -136,7 +157,7 @@ def test_declared_refuses_a_section_missing_a_required_key(missing):
 
     # act / assert
     with pytest.raises(ValueError, match=missing):
-        site_task.declared({"site": section})
+        site_task.declared({"website": section})
 
 
 def test_a_section_that_names_no_output_builds_into_the_products_output_directory():
@@ -151,7 +172,7 @@ def test_a_section_that_names_no_output_builds_into_the_products_output_director
     section = {key: value for key, value in _SITE.items() if key != "output"}
 
     # act
-    cfg = site_task.declared({"site": section})
+    cfg = site_task.declared({"website": section})
 
     # assert
     assert cfg.output == "build/site"
@@ -162,7 +183,7 @@ def test_a_declared_output_root_carries_the_site_with_it():
     section = {key: value for key, value in _SITE.items() if key != "output"}
 
     # act
-    cfg = site_task.declared({"site": section, "output": "build-out"})
+    cfg = site_task.declared({"website": section, "output": "build-out"})
 
     # assert
     assert cfg.output == "build-out/site"
@@ -170,7 +191,7 @@ def test_a_declared_output_root_carries_the_site_with_it():
 
 def test_a_named_output_still_wins_over_the_kinds_directory():
     # arrange / act: the whole of what makes this a default and not a rule
-    cfg = site_task.declared({"site": {**_SITE, "output": "public"}, "output": "build-out"})
+    cfg = site_task.declared({"website": {**_SITE, "output": "public"}, "output": "build-out"})
 
     # assert
     assert cfg.output == "public"
@@ -186,7 +207,7 @@ def test_a_section_that_names_no_source_takes_the_documentation_root():
     section = {key: value for key, value in _SITE.items() if key != "source"}
 
     # act
-    cfg = site_task.declared({"site": section})
+    cfg = site_task.declared({"website": section})
 
     # assert
     assert cfg.source == "docs/site"
@@ -199,7 +220,7 @@ def test_a_section_that_names_a_source_keeps_it():
     """
     # arrange / act / assert
     for declared_path in ("site", "docs/website"):
-        cfg = site_task.declared({"site": {**_SITE, "source": declared_path}})
+        cfg = site_task.declared({"website": {**_SITE, "source": declared_path}})
         assert cfg.source == declared_path
 
 
@@ -211,7 +232,7 @@ def test_a_source_that_is_present_and_broken_is_still_refused(bad):
     """
     # arrange / act / assert
     with pytest.raises(ValueError, match="source"):
-        site_task.declared({"site": {**_SITE, "source": bad}})
+        site_task.declared({"website": {**_SITE, "source": bad}})
 
 
 def test_a_bare_source_key_defaults_like_an_omitted_one():
@@ -228,7 +249,7 @@ def test_a_bare_source_key_defaults_like_an_omitted_one():
     assert "source" in section
 
     # act
-    cfg = site_task.declared({"site": section})
+    cfg = site_task.declared({"website": section})
 
     # assert
     assert cfg.source == site_task.DEFAULT_SOURCE
@@ -240,7 +261,7 @@ def test_declared_refuses_an_image_that_does_not_pin_a_version(image):
     # makes for the docToolchain tag. An untagged reference means ':latest' and moves just the same
     # act / assert
     with pytest.raises(ValueError, match="pin"):
-        site_task.declared({"site": {**_SITE, "image": image}})
+        site_task.declared({"website": {**_SITE, "image": image}})
 
 
 @pytest.mark.parametrize("image", ["registry.example:5000/hugo:0.148.2",
@@ -249,7 +270,7 @@ def test_declared_accepts_a_registry_port_and_a_digest_pin(image):
     # arrange: the tag is looked for in the LAST path segment, so a registry port is not mistaken for a
     # tag; a digest is the strongest form of the same statement and passes for free
     # act
-    cfg = site_task.declared({"site": {**_SITE, "image": image}})
+    cfg = site_task.declared({"website": {**_SITE, "image": image}})
 
     # assert
     assert cfg.image == image
@@ -258,7 +279,7 @@ def test_declared_accepts_a_registry_port_and_a_digest_pin(image):
 def test_declared_accepts_a_section_with_neither_theme_nor_base_url():
     # arrange: a site with a theme in its own repo needs no module, and a site served from a domain root
     # needs no baseURL override
-    data = {"site": {"image": _IMAGE, "source": "website", "output": "build/website"}}
+    data = {"website": {"image": _IMAGE, "source": "website", "output": "build/website"}}
 
     # act
     cfg = site_task.declared(data)
@@ -270,7 +291,7 @@ def test_declared_accepts_a_section_with_neither_theme_nor_base_url():
 def test_declared_refuses_a_theme_module_without_a_pinned_version():
     # arrange: `hugo mod get` without a version fetches whatever is newest, so a published page would be
     # set by a theme nobody chose
-    data = {"site": {**_SITE, "theme": "github.com/imfing/hextra"}}
+    data = {"website": {**_SITE, "theme": "github.com/imfing/hextra"}}
 
     # act / assert
     with pytest.raises(ValueError, match="@"):
@@ -515,7 +536,7 @@ def test_a_missing_docker_is_neither_ok_nor_failed(monkeypatch, tmp_path):
     _stub_run(monkeypatch)
 
     # act
-    built = site_task.build_site(site_task.declared({"site": dict(_SITE)}), tmp_path)
+    built = site_task.build_site(site_task.declared({"website": dict(_SITE)}), tmp_path)
 
     # assert: nothing was built, but nothing was broken either
     assert (built.ok, built.failed, built.tool) == (False, False, None)
@@ -528,7 +549,7 @@ def test_a_present_docker_that_produced_nothing_is_failed(monkeypatch, tmp_path)
     _stub_run(monkeypatch, rc=0)
 
     # act
-    built = site_task.build_site(site_task.declared({"site": dict(_SITE)}), tmp_path)
+    built = site_task.build_site(site_task.declared({"website": dict(_SITE)}), tmp_path)
 
     # assert
     assert (built.ok, built.failed, built.tool) == (False, True, "docker")
@@ -591,13 +612,13 @@ def test_declared_refuses_a_path_that_leaves_the_product_root(key, bad):
     # in front of it must not delete a directory outside the project. Same rule as `--orch-dir` (#4)
     # act / assert
     with pytest.raises(ValueError, match=key):
-        site_task.declared({"site": {**_SITE, key: bad}})
+        site_task.declared({"website": {**_SITE, key: bad}})
 
 
 def test_the_refusal_of_an_escaping_path_names_the_value_and_the_rule():
     # arrange / act
     with pytest.raises(ValueError) as excinfo:
-        site_task.declared({"site": {**_SITE, "output": "/var/tmp/x"}})
+        site_task.declared({"website": {**_SITE, "output": "/var/tmp/x"}})
 
     # assert: actionable without reading the source
     message = str(excinfo.value)
@@ -608,7 +629,7 @@ def test_the_refusal_of_an_escaping_path_names_the_value_and_the_rule():
 def test_declared_normalises_a_trailing_slash_rather_than_refusing_it():
     # arrange: a trailing slash is a typo, not an escape - it does not deserve a refusal
     # act
-    cfg = site_task.declared({"site": {**_SITE, "output": "build/website/"}})
+    cfg = site_task.declared({"website": {**_SITE, "output": "build/website/"}})
 
     # assert
     assert cfg.output == "build/website"
@@ -630,7 +651,7 @@ def test_declared_refuses_a_theme_whose_version_is_a_moving_query(theme):
     # pin, however loudly the comment said it was
     # act / assert
     with pytest.raises(ValueError, match="theme"):
-        site_task.declared({"site": {**_SITE, "theme": theme}})
+        site_task.declared({"website": {**_SITE, "theme": theme}})
 
 
 @pytest.mark.parametrize("theme", ["github.com/imfing/hextra@v0.9.6",
@@ -640,7 +661,7 @@ def test_declared_refuses_a_theme_whose_version_is_a_moving_query(theme):
 def test_declared_accepts_a_version_tag_or_a_commit(theme):
     # arrange: the two forms that name one revision for good
     # act
-    cfg = site_task.declared({"site": {**_SITE, "theme": theme}})
+    cfg = site_task.declared({"website": {**_SITE, "theme": theme}})
 
     # assert
     assert cfg.theme == theme
@@ -655,7 +676,7 @@ def test_declared_refuses_an_image_reference_that_only_looks_pinned(image):
     # message than this one
     # act / assert
     with pytest.raises(ValueError, match="image"):
-        site_task.declared({"site": {**_SITE, "image": image}})
+        site_task.declared({"website": {**_SITE, "image": image}})
 
 
 @pytest.mark.parametrize("image", ["my.image:1.0", "hugo.mods:0.148.2", "a.b.c:1.0",
@@ -666,7 +687,7 @@ def test_declared_accepts_a_dotted_name_with_no_slash_because_docker_reads_it_as
     # with a tag and refusing them rejects valid input. `registry.example:5000` rides along: docker reads
     # '5000' as a tag there too, and no rule can tell that from a version without guessing
     # act
-    cfg = site_task.declared({"site": {**_SITE, "image": image}})
+    cfg = site_task.declared({"website": {**_SITE, "image": image}})
 
     # assert
     assert cfg.image == image
@@ -679,7 +700,7 @@ def test_the_required_keys_are_checked_before_the_optional_theme():
 
     # act / assert
     with pytest.raises(ValueError, match="image"):
-        site_task.declared({"site": section})
+        site_task.declared({"website": section})
 
 
 # --- the diagram render gate (si#45) ----------------------------------------------------------------
@@ -830,7 +851,7 @@ def test_the_three_states_of_the_gate_are_distinguishable_by_the_caller(monkeypa
     # arrange: None = the gate never ran, 0 = it ran and found nothing, n = it rendered n. A caller
     # handed only a boolean could not tell the first two apart, which is the whole complaint
     _register(monkeypatch, tmp_path, {"image": _IMAGE, "source": "website", "output": "build/website"})
-    cfg = site_task.declared({"site": {"image": _IMAGE, "source": "website", "output": "build/website"}})
+    cfg = site_task.declared({"website": {"image": _IMAGE, "source": "website", "output": "build/website"}})
 
     # act / assert: no docker at all - nothing ran
     _docker(monkeypatch, present=False)

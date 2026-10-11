@@ -11,11 +11,12 @@ declaration rather than a convention, and then enforces it in the dispatch.
 ## The matrix
 
 ```yaml
-default: dev
-environments:
-  dev:  { backend: local,    description: "Local development environment (the default)." }
-  test: { backend: exoscale, description: "Shared integration environment." }
-  prod: { backend: exoscale, description: "Production." }
+cd:
+  default: dev
+  environments:
+    dev:  { backend: local,    description: "Local development environment (the default)." }
+    test: { backend: exoscale, description: "Shared integration environment." }
+    prod: { backend: exoscale, description: "Production." }
 ```
 
 `backend` decides **how** an environment is realised - which is a product's own vocabulary, not the
@@ -23,24 +24,27 @@ kernel's. A product supplies the set of valid backend names, and the registry va
 against it, so a typo'd backend fails at load rather than half-way through a deployment. `default` must
 name a real environment, checked the same way.
 
-This lives in the one manifest alongside the command tree. There is no separate `environments.yml` to
-keep in step.
+This lives in the one manifest, under `cd:` beside the commands that deploy into it. There is no separate
+`environments.yml` to keep in step.
 
 ## Env-first groups
 
 ```yaml
-env_groups: [deploy, monitor]
+cd:
+  deploy:
+    commands:
+      up: { task: up }
+  monitor:
+    commands:
+      status: { task: status }
 ```
 
-`deploy` and `monitor` are declared `env_first: true` in the kernel's own catalogue, so a product
-inherits the gate and the two lines above are a restatement rather than a requirement.
-
-What the key may never do is **contradict** the catalogue. An entry naming a group the catalogue
-declares not env-first is refused, with the same reason - and the same way out - that `env_first: true`
-written onto that group's node already gets: a product adds commands and sub-groups to a platform group,
-it never changes the group's shape. Write `env_groups:` for a top-level group **no catalogue owns**,
-which is a manifest loaded without one; there it is that manifest's own statement about its own group
-and switches the gate on.
+What stands under `cd:` is env-first, and nothing else is. Only `deploy` and `monitor` stand there - the
+catalogue declares both and a product cannot add a third - and the catalogue declares `cd` env-first as a
+whole, so every command under either of them takes an environment in every product without a line saying
+so. The other way round is refused: a
+group under `ci:` that declares `env_first:` gets a load error, because a build, a test and a release run
+the same in every environment - what needs one belongs under `cd:`.
 
 Commands in those groups take the environment as the **outer** token, before the group:
 
@@ -104,10 +108,9 @@ shadowed.
 ## Listing them
 
 ```yaml
-groups:
-  support:
-    commands:
-      environments: { task: "support:environments" }
+support:
+  commands:
+    environments: { task: "support:environments" }
 ```
 
 ```text

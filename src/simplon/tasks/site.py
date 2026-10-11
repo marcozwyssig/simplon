@@ -10,7 +10,7 @@ not instead of it.
 The mechanics are the same kind of product-free that made the docToolchain render the kernel's: invoking
 the tool, wiping the destination and checking that a page came out needs no product knowledge at all.
 What is the product's is the DATA - the image, where the sources live, where the output goes, which theme,
-which base URL - and all of it flows in through the manifest's `site:` section. A kernel default for any
+which base URL - and all of it flows in through the manifest's `website:` section. A kernel default for any
 of them would be simplon's own directory layout imposed on every other product, which is exactly what a
 catalogue task must not do: it is a promise to three products, not a convenience for one.
 
@@ -59,7 +59,7 @@ from simplon.run import run
 #: not a document - one is the product of hugo, the others are its input.
 OUTPUT_KIND = "site"
 
-SECTION = "site"
+SECTION = "website"
 
 #: Where a product's Hugo sources are, when its manifest does not say (si#183). `docs/` is the
 #: documentation root - architecture, specs, plans and the site all belong in it, so one repository stops
@@ -69,7 +69,7 @@ SECTION = "site"
 #: no default at all, on the reasoning that one product's layout must not be imposed on the next. That
 #: reasoning still holds for a REFUSAL and the census says so. Measured over the same population si#159
 #: and si#172 used - every manifest this kernel can reach: its own, the five in
-#: `simplon.surface.CONSUMERS`, and secure-windows-images - three of those seven declare a `site:`
+#: `simplon.surface.CONSUMERS`, and secure-windows-images - three of those seven declare a `site:` (now `website:`)
 #: section, and the three disagree: cleon at `site`, biz-cockpit at `docs/website`, simplon at
 #: `docs/site`. A `source:` outside `docs/` refused would turn away two products that have done nothing
 #: wrong, which is the expression rule si#53, si#85 and si#159 each declined to write.

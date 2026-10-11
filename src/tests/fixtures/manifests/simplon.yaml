@@ -1,0 +1,661 @@
+# Simplon builds and tests itself with itself. The very kernel built here
+# assembles this CLI from this manifest -- if a commit breaks the assembly,
+# it fails in the same round instead of after a release.
+product: simplon
+default: dev
+
+# Simplon's own three bodies. A task is the TEMPLATE for a body, declared once here; a command under
+# `groups:` is an instance of one. These three are one-off callables rather than reusable templates - no
+# other product will ever place `orchestrator.cli:build_wheel` - and they are declared here anyway,
+# because there is no second way to declare a body any more: the flat form that let a command carry its
+# own `impl:` was deleted in si#33, and this manifest was one of the two things still written in it.
+tasks:
+  wheel:
+    impl: "orchestrator.cli:build_wheel"
+    help: "Build the wheel."
+    unattended: true
+  # NAMED `suite` since si#156, and the rename is the whole mechanism of that ticket. This body is the
+  # pytest run and nothing else; `all` is now the AGGREGATE over it and the release-notes guard, and a
+  # command either instantiates a task or plans other commands (si#895/si#896), so the leaf had to give
+  # the name `all` up to get one of its own.
+  suite:
+    impl: "orchestrator.cli:test_suite"
+    help: "Run the pytest suite."
+    unattended: true
+  doctor:
+    impl: "orchestrator.cli:doctor"
+    help: "Check the tools and the environment."
+    unattended: true
+
+# The command tree. `groups:` hangs off the tree the catalogue declares
+# (src/simplon/catalogue.yaml: build/test/release/deploy/monitor/support) rather than inventing groups of
+# its own - which is also what makes the catalogue reachable without an `import:` section: a command names
+# a coordinate with `task: "<namespace>:<name>"` and the merge happens at load time.
+#
+# A group with no command anywhere under it does not render, so `deploy` and `monitor` are absent from
+# this CLI: simplon deploys nothing and watches nothing. They are the catalogue's, not missing.
+groups:
+  build:
+    commands:
+      wheel: { task: wheel }
+      # The command reference the documentation website embeds is GENERATED, so simplon generates its own
+      # with the kernel it ships - the same rule that makes it build and test itself here.
+      #
+      # `output` is PINNED (#2, task 3): the Hugo project exists, so where the page belongs is no longer
+      # an open question a caller answers on the command line. Pinned with `with:`, the parameter leaves
+      # the command line entirely -- `./simplon.sh build reference` takes no arguments -- which is what
+      # makes the aggregate below possible at all, since a planned step is spawned without arguments. The
+      # path points INTO docs/site/content/, because Hugo only renders what is under its content directory;
+      # generated page is gitignored there, since only the sources belong in the repo.
+      reference:
+        task: "docs:reference"
+        with:
+          output: docs/site/content/with-what/commands.md
+          title: "Command reference"
+      # The Hugo run itself. Its values live in the `site:` section below rather than here, because they
+      # are the product's data and `docs:site` reads them through the manifest -- see
+      # src/simplon/tasks/site.py, which is also where the one value that is NOT in that section lives:
+      # `source:` defaults to docs/site and this manifest leaves it out.
+      # The acceptance document (si#204), generated exactly the way the reference above is and pinned for
+      # the same reason: the Hugo project exists, so where the page belongs is not an open question a
+      # caller answers on the command line. `source` is left OUT, so this manifest is the first consumer
+      # of the `tests/acceptance` default rather than a product that happens to agree with it - the same
+      # thing it does for `site: source:` below.
+      acceptance:
+        task: "docs:acceptance"
+        with:
+          output: docs/site/content/with-what/acceptance.md
+          title: "Acceptance scenarios"
+      site: { task: "docs:site" }
+      # The kernel's own container image (si#200). simplon has carried `build:image` and `release:image`
+      # in the catalogue since #31 and had never placed either for itself - the same gap si#8 found in
+      # the type gate and si#89 in the notes guard, and the same repair: a step never run in its own
+      # house rots unseen. What made it urgent is si#199, which wants a product usable as a container
+      # beside the venv; that route needs an image to exist.
+      #
+      # `with: { name: kernel }` pins WHICH image, the shape every catalogue task with a `name` uses. One
+      # image today; a product with two declares two commands rather than making the caller remember a
+      # string.
+      #
+      # NO `--tag` ANYWHERE, and that is si#200's tag decision made visible: the task derives VERSION
+      # from `git describe` and stamps it into the image, and since si#200 the tag defaults to that same
+      # number. A `tag:` under `images:` below would be a second place to keep one version, which is the
+      # arrangement #3 deleted from pyproject.toml.
+      #
+      # IT CANNOT BE RUN FROM A LINKED GIT WORKTREE, and that is worth knowing before it is discovered:
+      # the wheel is built INSIDE the image, so the context has to carry a real `.git` - deploy/image/
+      # Dockerfile states it, guards it and names the fix.
+      image:
+        task: "build:image"
+        with:
+          name: kernel
+      # The documentation website, as ONE command, and an impl-less AGGREGATE rather than a leaf (#2, task
+      # 3). `reference` writes docs/site/content/with-what/commands.md by reading the assembled CLI; `site`
+      # runs Hugo over docs/site/ and publishes into build/site/ (si#314: `<output>/site`). The first WRITES a page the second READS, so
+      # the order is not a preference - run them the other way round and the published site carries the
+      # previous run's reference, or, the very first time, none at all.
+      #
+      # si#204 added a THIRD step in the same relation: `acceptance` writes
+      # docs/site/content/with-what/acceptance.md by reading tests/acceptance/*.feature, and it is the
+      # second page `site` reads. Both writers run before the reader; they do not depend on each other.
+      #
+      # `depends_on` is where that ordering is stated, because the manifest is the only place it can be
+      # STATED rather than merely happen. A script beside the manifest that called the two in order would
+      # be a second declaration of the same fact, invisible to `plan_for`, and the kernel's own rule
+      # against two sources for one thing is what the generated reference exists to enforce in the first
+      # place. Siblings execute in list order, so [reference, site] IS the edge.
+      #
+      # It has to be an aggregate: a command either instantiates a task or plans other commands, never
+      # both, so neither leaf could carry the dependency itself. `stop_on_failure` stays at its default
+      # (false), deliberately: if the reference step fails, the Hugo run is still worth attempting and its
+      # own verdict is still worth seeing - the site simply renders without that one page - and the
+      # aggregate takes the worst rc either way, so nothing is hidden by letting the second step run.
+      docs:
+        help: "Write the command reference, then build the website from it."
+        depends_on: [reference, acceptance, site]
+  test:
+    commands:
+      # The pytest suite (si#156). It answered to `all` until that ticket; what took the name is the
+      # aggregate at the bottom of this group, and the two are not interchangeable - this one is a leaf
+      # with a body, and a leaf may not also plan other commands.
+      suite: { task: suite }
+      # The type gate, on the kernel that ships it (#8). Simplon has carried `test:typecheck-python` for
+      # other products since the catalogue had a `test` namespace and had never placed it for itself, so
+      # `mypy src` was something a developer ran by hand or not at all - and for months the answer was 36
+      # findings that everybody had agreed to read as environment noise. One of them was a real bug.
+      #
+      # Placed here rather than run from ci.yml directly, because a step that exists only in a workflow
+      # file is a second way to do the thing: `./simplon.sh test typecheck-python` has to be the SAME
+      # command in CI and on a developer's machine, or the two drift again and the next divergence is
+      # discovered in the pipeline by whoever has the least context. That is the rule this repository
+      # already applies to `test all` and `build wheel`, and there was never a reason for the type gate to
+      # be the exception.
+      #
+      # No `with:` - the defaults are exactly right here: mypy.ini at the product root, mypy run in the
+      # host venv (`deploy/orchestrator/requirements.txt` installs `-e .[typecheck]`, so the checker sees
+      # same installed set the kernel runs against), and the roots stated by the config rather than on the
+      # argv.
+      typecheck-python: { task: "test:typecheck-python" }
+      # The release-notes guard (si#89), on the kernel that ships it. It lived in
+      # `src/tests/test_releases_page.py` until si#89 - which guarded simplon and nothing else, so every
+      # product consuming this catalogue could tag, publish and never write a word. The mechanism is the
+      # kernel's now; what stayed here is the DATA, in the `releases:` section below, and simplon's own
+      # house rules about its own page, in `src/tests/test_releases_page.py`.
+      #
+      # No `with:` - there is nothing to pin. All three values are the product's data and reach the body
+      # through the manifest, which is the whole shape of the ticket.
+      release-notes: { task: "test:release-notes" }
+      # THE REPORT OVER THE KERNEL'S OWN SUITE (si#248), and the reason it exists is the one this
+      # repository keeps finding in itself: the catalogue carried `test:report` and simplon placed it
+      # nowhere, while `with-what/test-levels.md` describes the report at length. A reader can only
+      # conclude the kernel renders one on itself. It does now.
+      #
+      # IT RUNS NO TESTS, which is why it is not in `all` above. It merges the raw results `test suite`
+      # wrote into the shared results dir and renders the archive, so putting it inside the aggregate
+      # would make one command mean two things - run the tests, and archive whatever ran last. The
+      # workflows call it AFTER the suite, by name, which is the ordering the CI note already argues for.
+      #
+      # AND IT IS GREEN ON A MACHINE WITH NO RENDERER. `test:report` is red only when a render tool was
+      # present and failed; with neither the allure CLI nor Docker it writes what it can and says so.
+      # That is deliberate in the task and worth repeating here: archiving carries no verdict, the gate
+      # does.
+      report: { task: "test:report" }
+      # THE KERNEL RULES ON ITSELF (si#240). This gate was built because a committed generated file had
+      # drifted - and the file was THIS repository's own shell completion, in 0794e24, which left `main`
+      # red with an uncompletable command until somebody noticed. A gate written for that and not placed
+      # here would be the kernel asking of products what it does not ask of itself.
+      #
+      # It REGENERATES INTO THE TREE, so a local `test all` rewrites the two files below. That is the
+      # point rather than a side effect: the comparison is only real if it is the product's own command
+      # that produced what is compared.
+      generated: { task: "test:generated" }
+      # The MANUAL half of the acceptance test (si#205), on the kernel that ships it - the same rule that
+      # makes simplon build its own reference and guard its own release notes with the coordinates it
+      # offers. `build acceptance` above DOCUMENTS the nine scenarios under `tests/acceptance`; this walks
+      # them with a person, and both read the very same files.
+      #
+      # NOT in `test all`, and that is the decision rather than an omission. `all` is the gate a developer
+      # types and CI types, and it must be able to run with nobody in front of it; a command that waits
+      # for a keypress in it would hang every job. The two are comparable by their ADDRESSES, which is
+      # what makes them one verdict, not by sitting under one aggregate.
+      #
+      # No `with:` - `source` takes the kernel's `tests/acceptance` default, exactly as `build acceptance`
+      # leaves it out, so this manifest goes on being the first consumer of that default rather than a
+      # product that happens to agree with it.
+      walk: { task: "test:walk" }
+      # THE LOCAL GATE (si#156), and an impl-less AGGREGATE for the same reason `build docs` above is
+      # one: a command either instantiates a task or plans other commands, never both.
+      #
+      # si#89 moved the release-notes guard out of `src/tests/test_releases_page.py` and into the coordinate
+      # above, which was right and had a side effect nobody stated: the check left the local gate. `test
+      # all` was the pytest suite, `test release-notes` was a command only ci.yml invoked, and a
+      # developer running the gate this project tells them to run learned nothing about their missing
+      # notes until after the push. The command is named `all` and its help says every test; it was not
+      # every test.
+      #
+      # NOT a pytest test that shells out to the guard, which is the obvious repair and the wrong one -
+      # `typecheck-python` above carries the rule it breaks: two ways to reach one verdict is the shape
+      # that produced si#8. An aggregate reaches the SAME command ci.yml reaches, so there is one
+      # implementation and one verdict, invoked from two places rather than written in two.
+      #
+      # `stop_on_failure` stays at its default (false), deliberately, and here that is the load-bearing
+      # half: a red suite must not hide the notes verdict and a missing section must not hide the suite.
+      # Both steps run, both verdicts print, and the aggregate takes the worst rc. That is also why
+      # ci.yml still names the four leaves rather than this command - a GitHub job stops at its first
+      # failed step, so si#89's reason for putting the prose gate LAST there is untouched by this.
+      #
+      # Siblings execute in list order, so the notes guard runs last: it costs 0.3s measured on this
+      # tree, against the suite's 62s, and it rules on prose rather than on code. The type gate sits
+      # between them for the same reason it sits there in ci.yml - a verdict over code is read before a
+      # verdict over prose - and with `stop_on_failure` false the order decides only what a reader sees
+      # first, never what runs.
+      #
+      # THE TYPE GATE IS IN IT since si#163, which is the other half of this comment's last paragraph.
+      # si#156 left it out on purpose and said why: folding it in changes what `src/tests/test_type_gate.py`'s
+      # central rule is ABOUT, and that is a decision rather than a line move. The decision is taken
+      # there now and the rule is narrower rather than gone - a job that reaches the suite through THIS
+      # aggregate cannot miss the gate, so what is left to protect is the job that names the LEAF, which
+      # is what ci.yml does by design. Cost measured on this tree: 3.4s the first time, 0.4s with mypy's
+      # cache warm, against 62s of suite. The name says every test; it now is.
+      #
+      # ONE OBSERVABLE CHANGE beyond the extra gate, named here rather than left to be discovered: the
+      # leaf returned pytest's own exit code (2 interrupted, 5 nothing collected, ...) and an aggregate
+      # returns `steps.overall_rc`, which is 0 or 1 and nothing else. Rc 5 - a collection that found no
+      # tests - now reads as plain failure on `test all`. That is the kernel's established shape rather
+      # than a decision taken here (`build docs` collapses the same way), it is the right one for a
+      # verdict over several steps, and `test suite` still hands the raw number through for anyone who
+      # wants it.
+      #
+      # THE TYPE GATE COSTS NOTHING HERE, and si#163 expected it to cost the same collapse: mypy answers
+      # 1 for findings and 2 for a usage or setup error, but `tasks/typecheck.py:check` already ends both
+      # on `log.die` - SystemExit(1) - so the leaf never handed mypy's own number through in the first
+      # place. There was nothing left for the aggregate to flatten. Measured, not assumed.
+      all:
+        help: "Run every test: the pytest suite, the type gate, the staleness gate, then the release-notes guard."
+        depends_on: [suite, typecheck-python, generated, release-notes]
+  release:
+    commands:
+      # The release itself (#32). Simplon cuts its own releases with the command it ships, for the same
+      # reason it builds and tests itself with itself: a step never run in its own house rots unseen, and
+      # this one had rotted the furthest - it was the only part of the loop that lived in the README as
+      # prose instead of in the manifest as a command.
+      #
+      # The catalogue PLACES `release:tag` itself, so this entry does not bring the command into
+      # existence - it confirms the placement in this product's own tree, which is what an empty-bodied
+      # refinement is for. That it lands in `release` is not a choice made here either: a coordinate that
+      # opens with a phase name belongs to that phase (si#34).
+      #
+      # Note what is NOT here: a version. There is nowhere to put one. `pyproject.toml` declares
+      # `dynamic = ["version"]`, setuptools-scm derives the number from the tag, and the tag is the
+      # argument - so `./simplon.sh release tag v0.1.14` IS the whole act of choosing 0.1.14.
+      tag: { task: "release:tag" }
+      # Publishing that image (si#200, moved to ghcr by si#313). Since 2026-10-10 EVERY RELEASE does it:
+      # release.yml's `image` job runs this command after the wheel is on PyPI, with the run's own
+      # GITHUB_TOKEN, and then opens the pull request that moves deploy/image/image.pin. It used to be on
+      # demand, for three reasons that all ended: Docker Hub needed a stored token (ghcr.io does not); no
+      # consumer existed (firn is one); and the pin was hand-committed, so a publish nothing pointed at
+      # moved the problem. The pin now follows in a pull request, still PUBLISH FIRST, PIN AFTERWARDS,
+      # because a pin naming an image that is not there would send a machine with no python3 to a failure.
+      #
+      # It stays a command a person can type, for a re-publish or a hotfix outside the tag.
+      image:
+        task: "release:image"
+        with:
+          name: kernel
+
+  support:
+    commands:
+      doctor: { task: doctor }
+      # The manifest's second output (si#40), declared here rather than placed by the catalogue for the
+      # reason stated there: it reads the `workflows:` section below, so a product without one would get
+      # a command that refuses on its first line. Simplon has the section, so simplon declares the
+      # command - the same "used in its own house" rule that makes this repository build and test itself
+      # with the kernel it ships.
+      #
+      # It lands in `support` because the coordinate opens with a group name, and si#34 makes that a
+      # placement rather than a preference.
+      workflows: { task: "support:workflows" }
+
+      claude-plugins:
+        task: "support:claude-plugins"
+        params:
+          dry_run: { help: "List what is missing and install nothing.", short: "-n" }      
+
+      # PLACED DELIBERATELY, which is what the catalogue asks of this one (si#92). It is declared there
+      # and placed nowhere, because it grants `NOPASSWD: ALL` and a docker group - "a change nobody wants
+      # appearing in a CLI they did not ask for it in". The reason simplon may now ask for it is that
+      # simplon now PROVISIONS A CI HOST: its own workflows run on a self-hosted runner, and the machine
+      # needs exactly the two privileges this grants before a job on it can reach docker.
+      #
+      # IT DOES NOT FIX A RUNNER THAT EXECUTES AS ROOT, and that is worth writing here because the two
+      # look like one problem. Measured on ghr-8: the job runs with `os.getuid() == 0`, and for root a
+      # docker GROUP is not the obstacle. The order is the other way round - give the runner a normal
+      # user first, then grant that user these privileges, then restart the service, because a group is
+      # inherited at process start and this command deliberately does not know what the service is
+      # called.
+      ci-privileges: { task: "support:ci-privileges" }
+
+      # PLACED FOR THE SAME REASON AND WITH THE SAME CAVEAT (si#327). simplon provisions a CI host, so
+      # simplon is the product that may ask for the command that configures one. `ci-disk-hygiene` needs
+      # root and RESTARTS THE DOCKER ENGINE when the configuration actually moves, which kills every
+      # container on the machine - so it is a command a person types on a host, once, and never a step in
+      # a job.
+      #
+      # The other two are the in-job halves and need no privilege at all. They are placed here because
+      # the generated `ci.yml` below CALLS them by coordinate: the kernel will not write a step for a
+      # command a product has not placed, and says so in the generated file instead - which is the reason
+      # these two lines are load-bearing rather than decorative. Remove them and the workflow loses its
+      # preflight, visibly, in a diff.
+      ci-disk-hygiene: { task: "support:ci-disk-hygiene" }
+      ci-arm64: { task: "support:ci-arm64" }
+      ci-disk-preflight: { task: "support:ci-disk-preflight" }
+      ci-disk-cleanup: { task: "support:ci-disk-cleanup" }
+
+# The documentation website's data (#2). Four values here and a fifth taken from the kernel: `source:` is
+# ABSENT on purpose since si#183, so this manifest is the first consumer of the `docs/site` default rather
+# than a product that happens to agree with it. If the default ever stopped working, `build docs` in this
+# repository would be the thing that said so.
+#
+# The other four are required to BE declared. si#155's reasoning holds for them and no longer holds for
+# `source`: the kernel cannot name a generator on a product's behalf, and it must not guess an `output` it
+# hands to a recursive delete - but WHERE THE DOCUMENTATION LIVES is a convention this platform is now
+# willing to state. The census behind that is in `simplon.tasks.site.DEFAULT_SOURCE`.
+#
+# `image` and `theme` must PIN a version and are refused otherwise - not `:latest`, not `@latest`, not a
+# branch. A build whose output depends on the day it ran is not a build, and a documentation site is
+# committed-to prose: a generator change rewrites it wholesale.
+#
+# `source` and `output` must be plain relative paths under the product root when they are declared at all.
+# That is not tidiness about manifests: `output` is handed to shutil.rmtree before every build, so an
+# absolute one would delete a directory somewhere else entirely - which is also the reason `output` keeps
+# no default while `source` gained one.
+#
+# THE KNOWN POINT, and the publishing job (task 4) has to know it: `theme` here is the single place the
+# theme version is declared, and the task makes docs/site/go.mod agree with it by running
+# `hugo mod get <module>@<version>` before every build. That WRITES docs/site/go.mod and refreshes
+# docs/site/go.sum in this working tree. It is idempotent while the pin and go.mod already agree - the normal
+# state, and both files are committed - but the first build after the pin moves leaves a real diff. A CI
+# gate asserting "working tree clean" after a site build would go red on the mechanism working correctly.
+site:
+  image: "hugomods/hugo:exts-0.148.2"
+  # NO `output:`, and that absence is the point since si#314: a built site is a KIND of build output, so
+  # it lands in `<output>/site` - here `build/site`, because this manifest declares no `output:` either
+  # and takes the convention. The kernel runs its own default rather than declaring around it; a step
+  # never run in its own house rots unseen, and this is the one that moved.
+  base_url: "https://marcozwyssig.github.io/simplon/"
+  theme: "github.com/imfing/hextra@v0.12.3"
+
+# The container image simplon builds of itself (si#200), read by `build:image` / `release:image`.
+#
+# THE REGISTRY IS GHCR, AND IT USED TO BE DOCKER HUB (si#313). The change is a credential rather than a
+# preference, which is also the reason the old line existed: `githubpackages.is_github_packages` stops
+# the GitHub credential reaching any other host - its own docstring records a token that leaked into a
+# repository's history - so under Docker Hub the token this kernel already mints was, by design, not
+# available for its own image. The credential had to be a stored `docker login docker.io`, and in a
+# workflow that means a long-lived Hub token standing in this repository's secrets between releases.
+#
+# ghcr.io needs none. `release:image` asks `is_github_packages` and logs in with the token Actions issues
+# PER RUN, or with `gh auth token` for an operator publishing by hand - the same path `release:artifact`
+# has always used. Nothing is stored, and the check that decides whether the credential may travel at all
+# is the one that was already there. `test_the_kernels_own_registry_is_one_the_run_token_can_reach` holds
+# it: move this line to a host that needs a stored secret and the deferral's reason comes back.
+#
+# It is NOT the OIDC route PyPI and Pages use in release.yml. Same consequence - nothing is kept between
+# releases - by a different mechanism, and whoever reads this later should find the right name for it.
+#
+# A push with no credential is still REFUSED by name rather than attempted and answered by
+# `denied: requested access to the resource is denied`.
+#
+# NO `tag:`. See the `build image` command above: the tag is the derived VERSION, and a constant here
+# would be a second place to keep one number.
+#
+# `context: .` is the product root because the wheel is built INSIDE the image from this tree, which is
+# what makes the image buildable at any commit rather than only after a PyPI release. The root
+# .dockerignore says what that costs and what it keeps (`.git`, on purpose).
+# THE TEST TAXONOMY, AND IT IS ONE LEVEL DEEP ON PURPOSE (si#248). This kernel has ONE suite - the
+# pytest run under `src/tests/` - so the section that exists for products with three or four levels declares
+# exactly one gate here. That is not the section being misused: what it buys is the half beside the
+# gates, `test:report`, which merges the run's raw results into a single-file Allure archive.
+#
+# WHY THE GATE NAMES A COMMAND RATHER THAN A SUITE. A `suite:` gate would hand the pytest root to the
+# kernel and let it run pytest itself - and this suite cannot be run that way. `orchestrator.cli
+# :test_suite` runs from INSIDE `src/tests/` so the conftest there applies, and its docstring records what
+# happens on the container route when thirteen tests bind a `tmp_path` into a `docker run`. A
+# `command:` gate (si#106) keeps that body exactly as it is and takes its rc, which is the whole of what
+# a gate needs from it.
+#
+# `results: clear` BECAUSE IT IS THE ONLY GATE. Exactly one gate must clear the shared results, and with
+# one gate there is no choice to make - but the rule is what stops the second gate, when there is one,
+# from silently appending onto last week's run forever.
+suites:
+  gates:
+    - name: unit
+      command: test suite
+      results: clear
+      # Where `test suite`'s own pytest wrote its raw results - the product's runner put them there, and
+      # this is the line that tells the report step to merge them. `orchestrator.cli:ALLURE_RESULTS` is
+      # the same path spelled absolutely, and a directory that is not there is NAMED by the report step
+      # rather than quietly contributing nothing.
+      results_from: tests/allure-results
+      announce: "unit gate: the pytest suite under src/tests/, run from inside it so its conftest applies"
+  # WHAT THE REPORT STEP MERGES, and the gate's `results_from:` above is NOT it - measured on
+  # 2026-09-14, because the first draft declared only the gate and shipped a 2.5 MB archive of nothing
+  # with an `OK` beside it. `results_from:` is merged when the KERNEL runs that gate (`test:gate`);
+  # simplon's workflows run its own `test suite` and then `test report`, so the report step arrives with
+  # no run behind it and merges what this list names. One path, declared in both places, because the two
+  # routes to the archive are real and a product may take either.
+  report:
+    merge: [tests/allure-results]
+
+# WHICH GENERATED FILES THIS REPOSITORY COMMITS (si#240). Two, and both carry "GENERATED ... do not
+# edit" at the top - which is a promise to a reader and, until this section existed, a promise nothing
+# checked. `docs/site/content/with-what/commands.md` is generated too and is deliberately NOT here: it is
+# gitignored and produced on every build, so there is no committed copy to go stale.
+generated:
+  completion:
+    path: deploy/completions/simplon.bash
+    by: support completion
+  ci-workflow:
+    path: .github/workflows/ci.yml
+    by: support workflows
+
+images:
+  kernel:
+    registry: ghcr.io/marcozwyssig
+    repository: simplon
+    dockerfile: deploy/image/Dockerfile
+    context: .
+    # Both, so a Mac with Apple silicon runs the container route natively (si#368): with amd64 alone
+    # the route did not start there at all ("no matching manifest for linux/arm64"). A release builds
+    # both; CI builds amd64 only (`platform:` on its step), so the runner needs no emulator per push.
+    platforms: [linux/amd64, linux/arm64]
+
+# The release notes' three values (si#89), and there is nothing else the kernel may know about them.
+#
+# `page` is where they live; `from` is the first release that must have a section at all; `complete_from`
+# is the first section that must name every ticket merged into its range. The gap between the two floors
+# IS the excused set, and here it is exactly one release: 0.4.0's notes were written before the rule and
+# name no number anywhere. Retro-fitting them would mean deciding, a release later, which paragraph each
+# of SIXTEEN numbers belongs beside - measured today over v0.3.0..v0.4.0's thirteen merges - and two of
+# them have no paragraph at all, so it would mean writing new prose about a released version from the
+# outside. That is reconstruction, which is the objection the page's own floor paragraph raises against
+# writing the older releases up at all.
+#
+# The old wording said FIFTEEN, and that number was already stale when it was carried here: si#103's rule
+# reads a web merge one level down, which found one more. A typed count going wrong is the defect this
+# repository has now proved five times, and it happened again inside the comment explaining an exemption
+# against it. The count is stated here as measured on a date rather than as a standing fact, and what
+# holds it is the assertion in src/tests/test_releases_page.py, not this sentence.
+#
+# The exemption is PAID FOR rather than merely declared, and not here: `src/tests/test_releases_page.py` pins
+# the excused population at one and requires it to be genuinely incomplete, so the day somebody writes
+# those numbers in, the suite says to move `complete_from` down and delete the exemption. Those are
+# simplon's own house rules about simplon's own page, which is exactly why they did not move into the
+# kernel with the mechanism.
+releases:
+  page: "docs/site/content/when/releases.md"
+  from: "0.4.0"
+  complete_from: "0.5.0"
+
+# Where a refused acceptance step becomes a bug ticket (si#206), on the kernel that ships it - the same
+# rule that makes simplon build its own reference and guard its own release notes with the coordinates it
+# offers. `test walk` reads this when, and only when, a person has actually refused something.
+#
+# THE WORDING IS THIS PRODUCT'S AND THE EVIDENCE IS THE KERNEL'S, which is the split si#206 draws. `title:`
+# and `preamble:` are the two halves a product may word; the block naming the scenario, the step, the
+# version, the provenance, who and when is the kernel's and is not configurable, because "a ticket reading
+# 'acceptance test failed' is worse than none" is a rule about what a ticket must carry and a rule a
+# product can word away is not one.
+#
+# NO `repo:` - `gh` resolves the repository from this checkout's own remote, which is where simplon's
+# tickets live. A product whose tracker is a different repository names it here.
+#
+# `kind:` IS STATED even though `github` is the default, because it is the seam si#206 named: the day a
+# product declares something else, this line is what makes it obvious that a choice was being made rather
+# than a default being inherited.
+tracker:
+  kind: github
+  repo: ""
+  labels: ["bug"]
+  title: "Acceptance refused: {scenario} ({version})"
+  preamble: >
+    A person walked simplon's acceptance scenarios with `./simplon.sh test walk` and refused this step.
+    The verdict is a human judgement rather than a measurement, and the walk's own record (the run
+    transcript under `build/logs/`) is where the rest of that sitting is.
+
+# The workflow declarations (si#40). "One source, two outputs" has stood in
+# src/simplon/orchestrator/manifest.py since it was written: the same manifest assembles the runtime CLI,
+# and - this is that second output - the CI workflows.
+#
+# WHAT IS HERE AND WHAT IS NOT. The runner image, the trigger, the interpreter version and the
+# permissions are declared, because the kernel cannot know them and must not guess: whether a tag
+# publishes is this product's statement. The step SEQUENCE is not declared twice - a step says
+# `command: test suite`, and the generator resolves that against the command tree above before writing
+# `./simplon.sh test suite`. Rename `test suite` and generation fails; without it, renaming it would
+# leave a workflow calling a command that is gone, and the first anybody would hear of it is a red
+# runner. si#156 renamed exactly that command and this is what made it a mechanical edit rather than a
+# discovery.
+#
+# The checkout is not declared either. `fetch-depth: 0` is si#3's invariant - a shallow clone makes
+# setuptools-scm derive a version that is merely wrong rather than failing - and the generator emits it,
+# so a workflow written next year inherits the rule instead of somebody having to remember it.
+#
+# COMMENTS ARE CARRIED. Every `note:` below is rendered as a comment block in the generated file, in the
+# position it is declared in. That is a requirement rather than a nicety: a generator that dropped the
+# reasoning would make these files worse than the hand-written ones it replaced.
+workflows:
+
+  ci:
+    note: |
+      Every push and every pull request, and every step is a command a developer can type in a
+      checkout - not a pipeline's own spelling of them. Two routes to one verdict is the shape that
+      produced si#8, where the CI was green for months because it had never run mypy at all.
+
+      The steps name the LEAVES, not the `test all` aggregate that plans three of them (si#156,
+      si#163). A GitHub job stops at its first failed step, so an aggregate here would put the prose
+      gate in front of the type gate and the wheel, which is exactly what the last step's note
+      refuses. si#163 folded the type gate into that aggregate and deliberately did NOT collapse
+      these steps into it: what the local gate gains is one command that really runs every test, and
+      what this file would lose is the ordering. Every verdict below still has one implementation,
+      and `test all` reaches three of them by name rather than by repeating them.
+    # VERBATIM product data: whether a push runs the suite is nothing the kernel can derive.
+    on: [push, pull_request, workflow_dispatch]
+    jobs:
+      self-build:
+        note: |
+          Stage zero is the working tree. The launcher provisions its own venv and installs this
+          checkout with `-e .`, so the code under test is the code that runs the test - a commit that
+          breaks CLI assembly fails here, in the same round, rather than after a release.
+
+          Why the full history below matters to THIS product in particular (si#3): the version is
+          derived from the git tag by setuptools-scm, so a shallow clone makes it produce a version
+          that is merely wrong rather than failing - and on the release path PyPI accepts the wheel.
+          The kernel emits the setting and states what it does; this is simplon's own reason for
+          caring, which no other product has to inherit.
+        # THE MACHINE, NAMED BY ITS KIND (si#267). Everything that follows from "this is a self-hosted
+        # Debian runner" - no `actions/setup-python`, docker through the bootstrap - is the kernel's
+        # table now, in `simplon.runners`, learned once for everybody instead of a second time here.
+        # What stays this product's is the LABEL: `ghr-8` names one machine, and
+        # `[self-hosted, Linux, X64]` would describe any self-hosted Linux machine this account ever
+        # registers, so the day a second one joins the jobs would be shared out with nothing saying so.
+        #
+        # WHAT IT COSTS, stated rather than buried: nothing here says which Python version CI tests on.
+        # The kernel refuses a `python:` on this kind, which is right - a pin it cannot honour reads as
+        # a guarantee and is a wish - and putting one back means putting an interpreter where the
+        # runner can find it, which is a statement about a machine and not about this product.
+        runner: { kind: self-hosted-debian, labels: ghr-8 }
+        steps:
+          # The pytest suite, and it says `test suite` since si#156 - the name this leaf took when
+          # `test all` became the aggregate over it and the notes guard. The same run, the same body,
+          # renamed; the aggregate is the developer's one command, not the pipeline's.
+          - command: test suite
+          - note: |
+              The type gate (si#8), and it runs HERE rather than as a `mypy src` step of its own,
+              because the command has to be the same one a developer runs. si#8 was raised as "mypy is
+              red locally and green in CI, so it must be the Python version" - and the CI had simply
+              never run mypy at all. Two ways to reach one verdict is the shape that produced that; one
+              way is the fix. What it checks and what it excuses is stated in mypy.ini, not here.
+            command: test typecheck-python
+          - note: |
+              The staleness gate (si#240), and CI is where it earns its keep: it regenerates the two
+              committed generated files and fails if either is not what its own command produces. 0794e24
+              is why - a manifest change that never reached the shell completion, and `main` red with an
+              uncompletable command until a person noticed. It runs AFTER the type gate and before the
+              wheel, because a stale completion is a fact about the tree rather than about the build, and
+              a reader looking at a red run should see it beside the other verdicts about the tree.
+            command: test generated
+          - command: build wheel
+          - note: |
+              The kernel's own container image (si#200), BUILT here and published nowhere. Building
+              needs no credential, so the half of the loop that can run on every push does - which is
+              what keeps the Dockerfile from rotting between the releases that publish it, which are
+              the other half. It is the same argument as every other step in this file: a command a
+              developer can type, run by the pipeline rather than restated in it.
+
+              It goes after the wheel and before the prose gate for the reason the next note gives:
+              a verdict over code is read before a verdict over prose.
+              amd64 ONLY (si#368): the image declares arm64 too, and building that here would put an
+              emulated stage on this runner on every push. A release builds both.
+            command: build image
+            params: { platform: linux/amd64 }
+          - note: |
+              The release-notes guard (si#89), and it is LAST on purpose. A gate that fails early
+              hides everything behind it, and this one rules on prose rather than on code: a
+              release section still to be written must not stop a reader from seeing whether the
+              suite, the type gate and the wheel are green. It is a real gate all the same - a
+              tagged release nobody wrote up is a failure this repository has already shipped once.
+
+              Its range is `<last tag>..HEAD` of whatever this run checked out, so it says
+              different things under the two triggers this workflow declares, and both are
+              correct: a `push` to main has the merge that just landed in range, and a
+              `pull_request` run checks out `refs/pull/N/merge` - the branch AS MERGED with the
+              base - so a branch green on its own tip goes red when the base moves. The command
+              prints what HEAD resolved to on every run, which is what makes that legible instead
+              of surprising. `fetch-depth: 0` above is a precondition for it too: with no tags
+              there is no released version to measure the page against.
+            command: test release-notes
+          - note: |
+              THE REPORT (si#248), and the two `if: always()` below are the whole point of it. A GitHub
+              job stops at its first failed step, so without them the archive would exist for exactly
+              the runs nobody needs it for - the green ones - and be missing from every red one. The
+              report step itself runs no tests and carries no verdict: it merges what the suite wrote
+              and renders it, and it is green on a machine with no renderer at all.
+
+              It sits after the gates rather than beside the suite because it archives THEIR verdict.
+              A report rendered before the type gate ran would be a true report of an incomplete run,
+              which is the kind of half-truth an archive is worst at carrying.
+            command: test report
+            if: always()
+          - note: |
+              The archive as a CI artefact and deliberately NOT on the website: a published report is
+              the last green run frozen in public, including while `main` is red. Ninety days on the
+              run that produced it is the retention this needs.
+
+              `if: always()` for the same reason as the step above, and `if-no-files-found: error`
+              because an upload that finds nothing and says so is this repository's recurring defect at
+              its most ordinary - a step that cannot tell "no report" from "report uploaded".
+            uses: actions/upload-artifact@v4
+            if: always()
+            with:
+              name: allure-report
+              path: tests/reports/*.html
+              if-no-files-found: error
+              retention-days: 90
+
+  # DECLARED HAND-WRITTEN, which is a decision and not a gap - si#40 asked for exactly this to be an
+  # explained possibility rather than an emergency exit. The generator carries comments, so prose is not
+  # what keeps this file out; what keeps it out is that release.yml is roughly two-thirds reasoning and
+  # carries two multi-line shell scripts (the report on whether a tag sits on `main`, and the check that
+  # the wheel which was built is the tag), and moving those into this manifest would move the work
+  # without reducing it. It stays hand-written, and it stays NAMED - so it is accounted for rather than
+  # merely unmanaged, which is the state si#40 exists to make impossible.
+  release:
+    handwritten: >-
+      two-thirds prose and two multi-line shell scripts (the on-main report of si#23, the
+      wheel-is-the-tag check of si#3); declaring it would move that work rather than remove it
+
+# NO `.claude/settings.json` IN THIS REPOSITORY, and that is a statement rather than an omission
+# (si#292). `claudeplugins.py` describes two halves - the native one Claude Code reads when somebody
+# merely opens the repository, and the scripted one for a fresh machine or an unattended agent - and says
+# keeping them in agreement is the PRODUCT's job. simplon ships only the scripted half, because these
+# plugins are a developer convenience here and not part of any delivery path: nothing this repository
+# builds, tests or publishes goes through them. Growing a settings.json so an invariant would hold would
+# be serving the rule rather than meeting it.
+#
+# `ref:` is a BRANCH OR TAG, not a digest - Claude Code's marketplace sources take `ref` and explicitly
+# not `sha`. It stops the silent redraw on every fetch; it does not stop the owner of that repository
+# from moving the tag.
+claude:
+  marketplaces:
+    claude-plugins-official:     { source: github, repo: anthropics/claude-plugins-official }
+    alexgreensh-token-optimizer: { source: github, repo: alexgreensh/token-optimizer }
+  plugins:
+    - superpowers@claude-plugins-official
+    - feature-dev@claude-plugins-official
+    - code-review@claude-plugins-official
+    - code-simplifier@claude-plugins-official
+    - security-guidance@claude-plugins-official
+    - frontend-design@claude-plugins-official
+    - github@claude-plugins-official
+    - pyright-lsp@claude-plugins-official
+    - token-optimizer@alexgreensh-token-optimizer

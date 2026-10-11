@@ -75,3 +75,23 @@ def test_the_prose_above_the_arm_names_the_same_variables_the_arm_forwards():
         for name in _forwarded(text) - {"DELIVERY_*"}:
             assert name in prose, f"{path.name}: the arm forwards {name} and the prose above does not " \
                                   f"name it"
+
+
+def test_the_launch_parameters_a_refusal_names_reach_the_kernel_on_both_routes():
+    """si#344. The cut's refusal names the migration's two commands, written in terms of where THIS
+    checkout keeps its orchestrator and which image it pins; the kernel fills them from `LAUNCH_ORCH_DIR`
+    and `LAUNCH_IMAGE_PIN`, so both have to be in its environment - exported on the venv route, and passed
+    in the container's own coordinates on the container route."""
+    for path in (LAUNCHER, TEMPLATE):
+        # arrange
+        text = path.read_text(encoding="utf-8")
+
+        # act: the export, and the `-e` pairs the container run is given
+        exported = {name for line in re.findall(r"^export ([A-Z_ ]+)$", text, re.M) for name in line.split()}
+        crossing = dict(re.findall(r'-e "(LAUNCH_[A-Z_]+)=([^"]+)"', text))
+
+        # assert
+        assert {"LAUNCH_ORCH_DIR", "LAUNCH_IMAGE_PIN"} <= exported, f"{path.name}: {sorted(exported)}"
+        assert crossing.get("LAUNCH_ORCH_DIR") == "$ORCH_IN_SRC", f"{path.name}: {crossing}"
+        assert crossing.get("LAUNCH_IMAGE_PIN") == "$PIN_IN_SRC", f"{path.name}: {crossing}"
+        assert 'PIN_IN_SRC="/src/${LAUNCH_IMAGE_PIN#"$ROOT/"}"' in text, path.name

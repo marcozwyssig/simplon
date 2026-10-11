@@ -27,6 +27,7 @@ import yaml
 
 from simplon.orchestrator.manifest import Manifest
 from simplon.orchestrator.manifest import load as _load_manifest
+from simplon.orchestrator.model import treeform as _treeform
 
 ROOT_ENV = "DELIVERY_PRODUCT_ROOT"
 MANIFEST_ENV = "DELIVERY_MANIFEST"
@@ -123,6 +124,18 @@ def section(document: Mapping[str, object], *path: str) -> Section:
     return Section(here, "", None)
 
 
+def _first_reference(pin: str) -> str:
+    """The image reference a pin file carries - its first line that is neither blank nor a comment, the
+    same reading the launcher gives it - or "" when there is no file, or nothing in it."""
+    if not pin:
+        return ""
+    try:
+        lines = Path(pin).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    return next((line.strip() for line in lines if line.strip() and not line.strip().startswith("#")), "")
+
+
 @dataclass(frozen=True)
 class ProductContext:
     """One product's identity for the kernel: its name, repo root and manifest path. Immutable; built by
@@ -155,9 +168,50 @@ class ProductContext:
         """
         from simplon import catalogue
 
-        return _load_manifest(self.manifest_path.read_text(encoding="utf-8"),
-                              catalogue=catalogue.load(),
-                              manifest_path=str(self.manifest_path))
+        try:
+            return _load_manifest(self.manifest_path.read_text(encoding="utf-8"),
+                                  catalogue=catalogue.load(),
+                                  manifest_path=str(self.manifest_path))
+        except ValueError as exc:
+            if _treeform.MIGRATE_COMMAND not in str(exc):
+                raise
+            raise ValueError(self._with_the_launchers_paths(str(exc))) from None
+
+    def _with_the_launchers_paths(self, message: str) -> str:
+        """The si#344 cut's way out, with the two placeholders the loader could not fill filled in.
+
+        HERE AND NOT IN `simplon.cli.main`, which is where it was first planned: a product's composition
+        root loads its manifest at IMPORT (`_MANIFEST = paths.CONTEXT.manifest()` in every scaffolded
+        `cli.py`), so a refusal raised there never reaches `main` at all. This is the one call every
+        product's load goes through, and the one that knows the product root.
+
+        Both commands are run from the product root (`$PWD:/src`), so every path in them is written
+        relative to it: the orchestrator block from `LAUNCH_ORCH_DIR`, the manifest itself, and on the
+        container route the image read from the file `LAUNCH_IMAGE_PIN` names - the launcher exports both
+        (si#344). A placeholder whose source is unset or unreadable is LEFT, so the message never prints
+        an empty path where one belongs.
+        """
+        def relative(path: str) -> str | None:
+            # None when the path has no spelling relative to the root at all - `relpath` raises across
+            # Windows drives - so the caller leaves what it had rather than replace the cut's refusal.
+            try:
+                rel = os.path.relpath(path, self.root)
+            except ValueError:
+                return None
+            return path if rel.startswith("..") else rel
+
+        exported = os.environ.get("LAUNCH_ORCH_DIR", "").strip()
+        orch = relative(exported) if exported else None
+        if orch:
+            message = message.replace(_treeform.ORCH_DIR_PLACEHOLDER, orch)
+        image = _first_reference(os.environ.get("LAUNCH_IMAGE_PIN", "").strip())
+        if image:
+            message = message.replace(_treeform.IMAGE_PLACEHOLDER, image)
+        command = _treeform.MIGRATE_COMMAND
+        manifest = relative(str(self.manifest_path))
+        if manifest is None:
+            return message
+        return message.replace(f"{command} {self.manifest_path}", f"{command} {manifest}")
 
     @classmethod
     def resolve(cls, name: str, root: Path, manifest_path: Path) -> "ProductContext":

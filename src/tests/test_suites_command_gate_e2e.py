@@ -91,7 +91,7 @@ DOES_NOT_COMPILE = PASSES.replace("if (argc < 2) return 1;", 'int broken = "not 
 #: `toolchain:run` commands, and a `suites:` section that names them. No Python anywhere in it.
 MANIFEST = textwrap.dedent("""\
     product: gatedemo
-    groups:
+    ci:
       build:
         commands:
           compile:

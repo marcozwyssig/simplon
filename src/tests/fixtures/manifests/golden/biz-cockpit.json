@@ -1,0 +1,366 @@
+{
+  "commands": {
+    "build": {
+      "build": {
+        "depends_on": [
+          "build-ci-image",
+          "typecheck",
+          "build-backend",
+          "build-frontend"
+        ],
+        "help": "Type-check both blocks, then build both container images from source.",
+        "impl": ""
+      },
+      "build-backend": {
+        "depends_on": [],
+        "help": "Build the biz-cockpit-backend image.",
+        "impl": "orchestrator.cli:build_backend"
+      },
+      "build-ci-image": {
+        "depends_on": [],
+        "help": "Build the image the gates run in.",
+        "impl": "orchestrator.cli:build_ci_image"
+      },
+      "build-frontend": {
+        "depends_on": [],
+        "help": "Build the biz-cockpit-frontend image.",
+        "impl": "orchestrator.cli:build_frontend"
+      },
+      "export-spec": {
+        "depends_on": [],
+        "help": "Export the OpenAPI spec from the app factory (no server, temp DB).",
+        "impl": "orchestrator.cli:export_spec"
+      },
+      "generate-api": {
+        "depends_on": [
+          "export-spec",
+          "generate-client"
+        ],
+        "help": "Export the contract, then regenerate the frontend client from it.",
+        "impl": ""
+      },
+      "generate-client": {
+        "depends_on": [],
+        "help": "Generate the frontend's typed schema from the committed contract.",
+        "impl": "orchestrator.cli:generate_client"
+      },
+      "website": {
+        "depends_on": [],
+        "help": "Die Produktwebseite mit Hugo bauen (in Docker, HTML).",
+        "impl": "simplon.tasks.site:build"
+      }
+    },
+    "deploy": {
+      "backup": {
+        "depends_on": [],
+        "help": "Write a consistent SQLite snapshot (VACUUM INTO) into the environment's BACKUP_DIR.",
+        "impl": "orchestrator.cli:backup"
+      },
+      "down": {
+        "depends_on": [],
+        "help": "Tear the target environment's stack down.",
+        "impl": "orchestrator.cli:down"
+      },
+      "local": {
+        "depends_on": [],
+        "help": "Run backend + frontend dev servers together (Ctrl-C stops both).",
+        "impl": "orchestrator.cli:dev"
+      },
+      "local-backend": {
+        "depends_on": [],
+        "help": "Run the backend dev server (uvicorn --reload on :8000).",
+        "impl": "orchestrator.cli:dev_backend"
+      },
+      "local-frontend": {
+        "depends_on": [],
+        "help": "Run the frontend dev server (Next.js on :3000).",
+        "impl": "orchestrator.cli:dev_frontend"
+      },
+      "restore": {
+        "depends_on": [],
+        "help": "Restore a snapshot (app stopped; the previous DB is kept).",
+        "impl": "orchestrator.cli:restore"
+      },
+      "rollout": {
+        "depends_on": [],
+        "help": "Eine ver\u00f6ffentlichte Version \u00fcber Portainer in die Zielumgebung ausliefern.",
+        "impl": "simplon.tasks.deploy:up"
+      },
+      "teardown": {
+        "depends_on": [],
+        "help": "Den Stapel der Zielumgebung in Portainer ENTFERNEN (nicht nur anhalten).",
+        "impl": "simplon.tasks.deploy:down"
+      },
+      "up": {
+        "depends_on": [],
+        "help": "Bring the stack up for the target environment (pull, then up -d).",
+        "impl": "orchestrator.cli:up"
+      },
+      "update": {
+        "depends_on": [
+          "up",
+          "status"
+        ],
+        "help": "Der lokale Weg in einem Schritt: Abbilder ziehen, Stack neu starten, Gesundheit pruefen.",
+        "impl": ""
+      }
+    },
+    "monitor": {
+      "logs": {
+        "depends_on": [],
+        "help": "Show the target environment's container logs.",
+        "impl": "orchestrator.cli:logs"
+      },
+      "status": {
+        "depends_on": [],
+        "help": "Show the target environment's containers and probe its health endpoint.",
+        "impl": "orchestrator.cli:status"
+      }
+    },
+    "release": {
+      "publish": {
+        "depends_on": [],
+        "help": "Push the built images to the container registry (GHCR).",
+        "impl": "orchestrator.cli:publish"
+      },
+      "release": {
+        "depends_on": [
+          "build",
+          "publish"
+        ],
+        "help": "Build both images and push them to the registry.",
+        "impl": ""
+      }
+    },
+    "support": {
+      "check-completion": {
+        "depends_on": [],
+        "help": "Fail if the committed shell completion differs from the manifest.",
+        "impl": "simplon.tasks.completion:generate"
+      },
+      "check-workflows": {
+        "depends_on": [],
+        "help": "Fail if the committed workflows differ from the manifest.",
+        "impl": "simplon.tasks.workflows:generate"
+      },
+      "claude-plugins": {
+        "depends_on": [],
+        "help": "Die im Manifest erklaerten Claude-Code-Erweiterungen einrichten; wiederholbar.",
+        "impl": "simplon.tasks.claudeplugins:install_cmd"
+      },
+      "completion": {
+        "depends_on": [],
+        "help": "Regenerate the product's shell completion from its manifest (--check reports drift and writes nothing).",
+        "impl": "simplon.tasks.completion:generate"
+      },
+      "install": {
+        "depends_on": [],
+        "help": "Provision the host tooling the kernel needs - today oras; idempotent.",
+        "impl": "simplon.tasks.hosttools:install"
+      },
+      "workflows": {
+        "depends_on": [],
+        "help": "Regenerate the GitHub workflows from this manifest.",
+        "impl": "simplon.tasks.workflows:generate"
+      }
+    },
+    "support.git": {
+      "auth-scopes": {
+        "depends_on": [],
+        "help": "Grant the stored gh token the package scopes GHCR needs (interactive, idempotent).",
+        "impl": "simplon.tasks.vcs:auth_scopes"
+      },
+      "commit": {
+        "depends_on": [],
+        "help": "git add -A + git commit -m.",
+        "impl": "simplon.tasks.vcs:commit"
+      },
+      "prune-branches": {
+        "depends_on": [],
+        "help": "Delete local branches already merged into main (squash-aware via gh).",
+        "impl": "simplon.tasks.vcs:prune_branches"
+      },
+      "push": {
+        "depends_on": [],
+        "help": "git pull --rebase then push (current branch).",
+        "impl": "simplon.tasks.vcs:push"
+      },
+      "submodules": {
+        "depends_on": [],
+        "help": "git submodule update --init lib/platform (init the submodule a fresh worktree needs).",
+        "impl": "simplon.tasks.vcs:submodules"
+      }
+    },
+    "support.tasks": {
+      "catalogue": {
+        "depends_on": [],
+        "help": "List the task coordinates the delivery kernel offers, marking the namespaces this product's commands reach.",
+        "impl": "simplon.tasks.tasks:catalogue"
+      },
+      "generate": {
+        "depends_on": [],
+        "help": "Regenerate the product's CLI module from its manifest (--check reports drift and writes nothing).",
+        "impl": "simplon.tasks.tasks:generate"
+      }
+    },
+    "test": {
+      "check-contract": {
+        "depends_on": [
+          "export-spec",
+          "verify-spec"
+        ],
+        "help": "CI staleness gate (rule 3): the committed contract must match the code.",
+        "impl": ""
+      },
+      "ci": {
+        "depends_on": [
+          "build-ci-image",
+          "lint",
+          "check-contract",
+          "check-completion",
+          "check-workflows",
+          "test"
+        ],
+        "help": "The full CI gate: lint, the contract staleness check, then the test suites.",
+        "impl": ""
+      },
+      "lint": {
+        "depends_on": [
+          "lint-backend",
+          "lint-frontend"
+        ],
+        "help": "Lint both blocks: ruff check + ruff format --check, then ESLint.",
+        "impl": ""
+      },
+      "lint-backend": {
+        "depends_on": [],
+        "help": "Lint the backend (ruff check + ruff format --check).",
+        "impl": "orchestrator.cli:lint_backend"
+      },
+      "lint-frontend": {
+        "depends_on": [],
+        "help": "Lint the frontend (ESLint).",
+        "impl": "orchestrator.cli:lint_frontend"
+      },
+      "test": {
+        "depends_on": [
+          "generate-client",
+          "test-backend",
+          "test-frontend",
+          "typecheck",
+          "test-orchestrator"
+        ],
+        "help": "Run every gate the CI test job runs: backend pytest, frontend vitest, tsc --noEmit.",
+        "impl": ""
+      },
+      "test-backend": {
+        "depends_on": [],
+        "help": "Run the backend test suite (pytest).",
+        "impl": "orchestrator.cli:test_backend"
+      },
+      "test-frontend": {
+        "depends_on": [],
+        "help": "Run the frontend test suite (vitest).",
+        "impl": "orchestrator.cli:test_frontend"
+      },
+      "test-orchestrator": {
+        "depends_on": [],
+        "help": "Run the orchestrator's own test suite (pytest).",
+        "impl": "orchestrator.cli:test_orchestrator"
+      },
+      "typecheck": {
+        "depends_on": [
+          "typecheck-backend",
+          "typecheck-frontend"
+        ],
+        "help": "Type-check both blocks: mypy, then tsc --noEmit.",
+        "impl": ""
+      },
+      "typecheck-backend": {
+        "depends_on": [],
+        "help": "Type-check the backend (mypy).",
+        "impl": "simplon.tasks.toolchain:run_toolchain"
+      },
+      "typecheck-frontend": {
+        "depends_on": [],
+        "help": "Type-check the frontend (tsc --noEmit).",
+        "impl": "orchestrator.cli:typecheck_frontend"
+      },
+      "verify-spec": {
+        "depends_on": [],
+        "help": "Fail if the committed contract differs from the exported one.",
+        "impl": "orchestrator.cli:verify_spec"
+      }
+    }
+  },
+  "env_first": [
+    "deploy",
+    "monitor"
+  ],
+  "groups": {
+    "build": [
+      "build",
+      "build-ci-image",
+      "build-backend",
+      "build-frontend",
+      "export-spec",
+      "generate-client",
+      "website",
+      "generate-api"
+    ],
+    "deploy": [
+      "local",
+      "local-backend",
+      "local-frontend",
+      "up",
+      "down",
+      "rollout",
+      "teardown",
+      "backup",
+      "restore",
+      "update"
+    ],
+    "monitor": [
+      "status",
+      "logs"
+    ],
+    "release": [
+      "publish",
+      "release"
+    ],
+    "support": [
+      "install",
+      "completion",
+      "check-completion",
+      "workflows",
+      "check-workflows",
+      "claude-plugins"
+    ],
+    "support.git": [
+      "commit",
+      "push",
+      "prune-branches",
+      "submodules",
+      "auth-scopes"
+    ],
+    "support.tasks": [
+      "catalogue",
+      "generate"
+    ],
+    "test": [
+      "test",
+      "test-backend",
+      "test-frontend",
+      "typecheck",
+      "typecheck-backend",
+      "typecheck-frontend",
+      "test-orchestrator",
+      "lint",
+      "lint-backend",
+      "lint-frontend",
+      "verify-spec",
+      "check-contract",
+      "ci"
+    ]
+  }
+}

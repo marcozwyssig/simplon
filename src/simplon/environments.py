@@ -1,4 +1,5 @@
-"""Named, isolated deployment environments: a product's environments.yml parsed into a validated Registry.
+"""Named, isolated deployment environments: the matrix under a product manifest's `cd:` (`environments:`
+and `default:`, si#344) parsed into a validated Registry.
 
 parse is pure (no I/O). The product supplies the set of valid backend names (each product knows its own
 backends, e.g. a local lab vs a cloud provider) and owns the stateful registry lookup + the
@@ -109,8 +110,8 @@ class Registry(NamedTuple):
 
 
 def parse(text: str, valid_backends: Iterable[str]) -> Registry:
-    """Parse an environments.yml TEXT document into the registry (pure; unit-tested). Thin wrapper over
-    parse_data for the standalone-file form; the validation lives in parse_data."""
+    """Parse a manifest TEXT into the registry (pure; unit-tested), reading the matrix under `cd:` as
+    `matrix_section` does. Thin wrapper over parse_data; the validation lives in parse_data."""
     return parse_data(yaml.safe_load(text) or {}, valid_backends)
 
 
@@ -192,6 +193,24 @@ def _names(raw: object, key: str, where: str) -> tuple[str, ...]:
     return tuple(names)
 
 
+def matrix_section(document: Mapping) -> dict:
+    """The environment matrix's two keys, read from `cd:` (si#344).
+
+    `cd` is where whatever takes an environment stands, so the matrix it takes them from stands there too.
+    ONE accessor for every reader - `parse_data`, completion, `tasks/env`, `tasks/carrier`, `labinstance` -
+    because five readers each walking `document["cd"]` by hand would be five places to get one detail
+    wrong.
+
+    A top-level `default:`/`environments:` is NOT read: since the si#344 cut the loader refuses it by
+    name (`treeform.check_no_pre_si344_form`), so a reader that fell back to it would be reading a key no
+    loadable manifest carries.
+    """
+    cd = document.get("cd") if isinstance(document, Mapping) else None
+    if not isinstance(cd, Mapping):
+        return {"default": None, "environments": None}
+    return {"default": cd.get("default"), "environments": cd.get("environments")}
+
+
 def declared_backends(data: "Mapping[str, object]") -> tuple[str, ...]:
     """The backend tags this document's own matrix uses - the set it is already valid against.
 
@@ -205,7 +224,7 @@ def declared_backends(data: "Mapping[str, object]") -> tuple[str, ...]:
     `data["environments"]` apart itself would become a manifest reader in its own right, and si#61's
     guard says so out loud - which is exactly how this was found.
     """
-    section = data.get("environments") if isinstance(data, Mapping) else None
+    section = matrix_section(data)["environments"]
     declared: "Mapping[object, object]" = section if isinstance(section, Mapping) else {}
     names = {str(spec.get("backend", "")).strip()
              for spec in declared.values() if isinstance(spec, Mapping)}
@@ -214,8 +233,8 @@ def declared_backends(data: "Mapping[str, object]") -> tuple[str, ...]:
 
 def parse_data(data: Mapping[str, object],
                valid_backends: "Iterable[str] | None" = None) -> Registry:
-    """Build the registry from an ALREADY-parsed mapping - a product's standalone environments.yml OR the
-    `environments:`/`default:` section of its one manifest (simplon.context.manifest_data()). Validates
+    """Build the registry from an ALREADY-parsed mapping - the `cd: environments:` / `cd: default:` of a
+    product's one manifest (simplon.context.manifest_data()), read through `matrix_section`. Validates
     that every backend is one of valid_backends and that `default` names a real environment, so a bad
     descriptor fails loudly here, not deep in a deployment.
 
@@ -233,9 +252,10 @@ def parse_data(data: Mapping[str, object],
     # section, which is why a product that names no carrier is unaffected by any of this.
     carrier_names = set(carrierspec.declared(data))
     envs: dict[str, Environment] = {}
-    declared = data.get("environments") or {}
+    matrix = matrix_section(data)
+    declared = matrix["environments"] or {}
     if not isinstance(declared, Mapping):
-        raise ValueError("'environments' must be a mapping of environment name -> descriptor")
+        raise ValueError("'cd: environments' must be a mapping of environment name -> descriptor")
     for name, spec in declared.items():
         spec = spec if isinstance(spec, Mapping) else {}
         backend = str(spec.get("backend", "")).strip()
@@ -281,10 +301,10 @@ def parse_data(data: Mapping[str, object],
                                       carrier=carrier, stack=stack, repository=repository,
                                       required=required, optional=optional, deploys=deploys)
     if not envs:
-        raise ValueError("environment registry defines no environments")
-    default = str(data.get("default", "")).strip()
+        raise ValueError("'cd: environments' defines no environments")
+    default = str(matrix["default"] or "").strip()
     if default not in envs:
-        raise ValueError(f"environment registry default '{default}' is not a defined environment")
+        raise ValueError(f"'cd: default' is '{default}', which is not a defined environment")
     return Registry(envs, default)
 
 
@@ -327,7 +347,7 @@ class Provider:
         from simplon import context  # local: context imports the manifest layer, this module is a leaf
 
         data = context.current().manifest_data()
-        if not data.get("environments"):
+        if not matrix_section(data)["environments"]:
             name = self._fallback
             return Registry({name: Environment(name, self.LOCAL, "Local development environment.")}, name)
         return parse_data(data, self._valid)

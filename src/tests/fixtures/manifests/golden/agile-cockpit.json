@@ -1,0 +1,178 @@
+{
+  "commands": {
+    "build": {
+      "build": {
+        "depends_on": [],
+        "help": "Container-Image bauen (mit VERSION/REVISION aus git).",
+        "impl": "simplon.tasks.image:build"
+      }
+    },
+    "deploy": {
+      "all": {
+        "depends_on": [
+          "build",
+          "up"
+        ],
+        "help": "Bauen und starten.",
+        "impl": ""
+      },
+      "down": {
+        "depends_on": [],
+        "help": "Container stoppen und entfernen.",
+        "impl": "orchestrator.cli:down"
+      },
+      "up": {
+        "depends_on": [],
+        "help": "Container starten.",
+        "impl": "orchestrator.cli:up"
+      }
+    },
+    "release": {
+      "image": {
+        "depends_on": [],
+        "help": "Image nach GHCR schieben und in der Registry nachlesen, dass der Tag liegt.",
+        "impl": "simplon.tasks.image:release"
+      },
+      "tag": {
+        "depends_on": [],
+        "help": "Den Release-Tag am HEAD schneiden und schieben.",
+        "impl": "simplon.tasks.release:tag"
+      }
+    },
+    "support": {
+      "claude-plugins": {
+        "depends_on": [],
+        "help": "Install the Claude Code plugins this repo is developed with, as declared in the manifest's `claude` section (#1286); idempotent, --dry-run previews.",
+        "impl": "simplon.tasks.claudeplugins:install_cmd"
+      },
+      "completion": {
+        "depends_on": [],
+        "help": "Regenerate the product's shell completion from its manifest (--check reports drift and writes nothing).",
+        "impl": "simplon.tasks.completion:generate"
+      },
+      "install": {
+        "depends_on": [],
+        "help": "Provision the host tooling the kernel needs - today oras; idempotent.",
+        "impl": "simplon.tasks.hosttools:install"
+      },
+      "serve": {
+        "depends_on": [],
+        "help": "Entwicklungsserver starten.",
+        "impl": "orchestrator.cli:serve"
+      }
+    },
+    "support.git": {
+      "auth-scopes": {
+        "depends_on": [],
+        "help": "Grant the stored gh token the package scopes GHCR needs (interactive, idempotent).",
+        "impl": "simplon.tasks.vcs:auth_scopes"
+      },
+      "commit": {
+        "depends_on": [],
+        "help": "git add -A + git commit -m.",
+        "impl": "simplon.tasks.vcs:commit"
+      },
+      "prune-branches": {
+        "depends_on": [],
+        "help": "Delete local branches already merged into main (squash-aware via gh).",
+        "impl": "simplon.tasks.vcs:prune_branches"
+      },
+      "push": {
+        "depends_on": [],
+        "help": "git pull --rebase then push (current branch).",
+        "impl": "simplon.tasks.vcs:push"
+      },
+      "submodules": {
+        "depends_on": [],
+        "help": "git submodule update --init lib/platform (init the submodule a fresh worktree needs).",
+        "impl": "simplon.tasks.vcs:submodules"
+      }
+    },
+    "support.tasks": {
+      "catalogue": {
+        "depends_on": [],
+        "help": "List the task coordinates the delivery kernel offers, marking the namespaces this product's commands reach.",
+        "impl": "simplon.tasks.tasks:catalogue"
+      },
+      "generate": {
+        "depends_on": [],
+        "help": "Regenerate the product's CLI module from its manifest (--check reports drift and writes nothing).",
+        "impl": "simplon.tasks.tasks:generate"
+      }
+    },
+    "test": {
+      "delivery": {
+        "depends_on": [],
+        "help": "Die Auslieferung pruefen: Manifest, Workflows, Image, Layout (deploy/tests).",
+        "impl": "simplon.tasks.testrun:gate"
+      },
+      "release-notes": {
+        "depends_on": [],
+        "help": "Die Release-Notes-Seite gegen Tags und Merges pruefen.",
+        "impl": "simplon.tasks.releasenotes:check"
+      },
+      "report": {
+        "depends_on": [],
+        "help": "Die Ergebnisse des Laufs zu einem Allure-Archiv zusammenfuehren.",
+        "impl": "simplon.tasks.testrun:report_cmd"
+      },
+      "system": {
+        "depends_on": [],
+        "help": "Die Systemtests gegen die lokale GitLab-Instanz laufen lassen (setzt deploy/testlab/compose.yaml voraus).",
+        "impl": "simplon.tasks.testrun:gate"
+      },
+      "typecheck-python": {
+        "depends_on": [],
+        "help": "Python-Quellen mit mypy pruefen (kein Docker, kein Labor).",
+        "impl": "simplon.tasks.typecheck:check"
+      },
+      "unit": {
+        "depends_on": [],
+        "help": "Die Anwendungssuite laufen lassen (src/tests, Allure-Ergebnisse).",
+        "impl": "simplon.tasks.testrun:gate"
+      }
+    }
+  },
+  "env_first": [
+    "deploy"
+  ],
+  "groups": {
+    "build": [
+      "build"
+    ],
+    "deploy": [
+      "up",
+      "down",
+      "all"
+    ],
+    "release": [
+      "tag",
+      "image"
+    ],
+    "support": [
+      "install",
+      "completion",
+      "serve",
+      "claude-plugins"
+    ],
+    "support.git": [
+      "commit",
+      "push",
+      "prune-branches",
+      "submodules",
+      "auth-scopes"
+    ],
+    "support.tasks": [
+      "catalogue",
+      "generate"
+    ],
+    "test": [
+      "typecheck-python",
+      "release-notes",
+      "unit",
+      "delivery",
+      "system",
+      "report"
+    ]
+  }
+}

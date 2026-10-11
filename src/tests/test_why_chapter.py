@@ -50,6 +50,7 @@ import ast
 import re
 
 from simplon import catalogue as catalogue_mod
+from simplon.orchestrator.model import treeform
 from simplon.tasks import site as site_mod
 
 import sitepages
@@ -197,7 +198,7 @@ def _catalogue_helps() -> dict[str, str]:
 def _unpinned_image_refusal() -> str:
     """The real load error for an image reference that names no version, normalised to one line."""
     try:
-        site_mod.declared({"site": {"image": "hugomods/hugo", "source": "s", "output": "o"}},
+        site_mod.declared({"website": {"image": "hugomods/hugo", "source": "s", "output": "o"}},
                           source="simplon.yaml")
     except ValueError as caught:
         return " ".join(str(caught).split())
@@ -326,7 +327,7 @@ def test_the_two_ways_of_grouping_are_genuinely_different_groupings():
     # assert: and the one word that is BOTH a phase and a kind of work is named as such. Review found
     # the first round claiming this was said when the section never said it - `test` is a group in the
     # catalogue and 'testing' is a row here, and a reader who is not told trips over it exactly once.
-    assert "test" in catalogue_mod.load().groups
+    assert "test" in treeform.platform_groups(catalogue_mod.load().groups)
     assert [work for work in table if "testing" in work]
     assert "`test` is a phase, and testing is a kind of work" in "\n".join(_section(KINDS_HEADING))
 

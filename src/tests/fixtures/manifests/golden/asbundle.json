@@ -1,0 +1,190 @@
+{
+  "commands": {
+    "build": {
+      "assemble": {
+        "depends_on": [],
+        "help": "Move the JDK and Ant into the Eclipse bundle and point eclipse.ini at the bundled VM.",
+        "impl": "orchestrator.cli:assemble"
+      },
+      "build": {
+        "depends_on": [
+          "fetch-jdk",
+          "fetch-eclipse",
+          "fetch-ant",
+          "assemble",
+          "install-plugins",
+          "package"
+        ],
+        "help": "Run the whole bundle pipeline: fetch, assemble, install plugins, package.",
+        "impl": ""
+      },
+      "fetch-ant": {
+        "depends_on": [],
+        "help": "Download and extract Apache Ant.",
+        "impl": "orchestrator.cli:fetch_ant"
+      },
+      "fetch-eclipse": {
+        "depends_on": [],
+        "help": "Download and extract the Eclipse platform for this host.",
+        "impl": "orchestrator.cli:fetch_eclipse"
+      },
+      "fetch-jdk": {
+        "depends_on": [],
+        "help": "Download and extract the IBM Semeru JDK for this host.",
+        "impl": "orchestrator.cli:fetch_jdk"
+      },
+      "image": {
+        "depends_on": [],
+        "help": "Build the container image carrying this host's bundle (Linux only).",
+        "impl": "orchestrator.cli:image"
+      },
+      "install-plugins": {
+        "depends_on": [],
+        "help": "Install the manifest's install units via the Eclipse P2 director.",
+        "impl": "orchestrator.cli:install_plugins"
+      },
+      "package": {
+        "depends_on": [],
+        "help": "Package the assembled bundle into a distributable archive.",
+        "impl": "orchestrator.cli:package"
+      },
+      "reset": {
+        "depends_on": [],
+        "help": "Remove the working directory (downloads, extractions, the packaged bundle) and start over.",
+        "impl": "orchestrator.cli:reset"
+      }
+    },
+    "deploy": {
+      "install": {
+        "depends_on": [],
+        "help": "Extract the packaged bundle into a directory on this machine.",
+        "impl": "orchestrator.cli:install"
+      },
+      "up": {
+        "depends_on": [],
+        "help": "Run a container from the image built for this host (Linux only).",
+        "impl": "orchestrator.cli:up"
+      }
+    },
+    "release": {
+      "image-coordinates": {
+        "depends_on": [],
+        "help": "Print the image repository, version and multi-arch reference as shell assignments.",
+        "impl": "orchestrator.cli:image_coordinates"
+      },
+      "publish": {
+        "depends_on": [],
+        "help": "Attach this host's packaged bundle to the GitHub release for these component versions.",
+        "impl": "orchestrator.cli:publish"
+      },
+      "publish-bundle": {
+        "depends_on": [],
+        "help": "Push this host's packaged bundle to the container registry as an OCI artifact.",
+        "impl": "orchestrator.cli:publish_bundle"
+      },
+      "publish-image": {
+        "depends_on": [],
+        "help": "Push the container image to the registry (Linux only).",
+        "impl": "orchestrator.cli:publish_image"
+      },
+      "publish-manifest": {
+        "depends_on": [],
+        "help": "Join the per-architecture images into one multi-architecture tag.",
+        "impl": "orchestrator.cli:publish_manifest"
+      }
+    },
+    "support": {
+      "completion": {
+        "depends_on": [],
+        "help": "Regenerate the product's shell completion from its manifest (--check reports drift and writes nothing).",
+        "impl": "simplon.tasks.completion:generate"
+      },
+      "install": {
+        "depends_on": [],
+        "help": "Provision the host tooling the kernel needs - today oras; idempotent.",
+        "impl": "simplon.tasks.hosttools:install"
+      }
+    },
+    "support.git": {
+      "auth-scopes": {
+        "depends_on": [],
+        "help": "Grant the stored gh token the package scopes GHCR needs (interactive, idempotent).",
+        "impl": "simplon.tasks.vcs:auth_scopes"
+      },
+      "commit": {
+        "depends_on": [],
+        "help": "git add -A + git commit -m.",
+        "impl": "simplon.tasks.vcs:commit"
+      },
+      "prune-branches": {
+        "depends_on": [],
+        "help": "Delete local branches already merged into main (squash-aware via gh).",
+        "impl": "simplon.tasks.vcs:prune_branches"
+      },
+      "push": {
+        "depends_on": [],
+        "help": "git pull --rebase then push (current branch).",
+        "impl": "simplon.tasks.vcs:push"
+      },
+      "submodules": {
+        "depends_on": [],
+        "help": "git submodule update --init lib/platform (init the submodule a fresh worktree needs).",
+        "impl": "simplon.tasks.vcs:submodules"
+      }
+    },
+    "support.tasks": {
+      "catalogue": {
+        "depends_on": [],
+        "help": "List the task coordinates the delivery kernel offers, marking the namespaces this product's commands reach.",
+        "impl": "simplon.tasks.tasks:catalogue"
+      },
+      "generate": {
+        "depends_on": [],
+        "help": "Regenerate the product's CLI module from its manifest (--check reports drift and writes nothing).",
+        "impl": "simplon.tasks.tasks:generate"
+      }
+    }
+  },
+  "env_first": [
+    "deploy"
+  ],
+  "groups": {
+    "build": [
+      "reset",
+      "fetch-jdk",
+      "fetch-eclipse",
+      "fetch-ant",
+      "assemble",
+      "install-plugins",
+      "package",
+      "image",
+      "build"
+    ],
+    "deploy": [
+      "up",
+      "install"
+    ],
+    "release": [
+      "publish",
+      "publish-bundle",
+      "publish-image",
+      "publish-manifest",
+      "image-coordinates"
+    ],
+    "support": [
+      "install",
+      "completion"
+    ],
+    "support.git": [
+      "commit",
+      "push",
+      "prune-branches",
+      "submodules",
+      "auth-scopes"
+    ],
+    "support.tasks": [
+      "catalogue",
+      "generate"
+    ]
+  }
+}

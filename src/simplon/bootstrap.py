@@ -17,8 +17,8 @@ It renders, mirroring the shape netctl's own `netctl.yaml` + `netctl.sh` use but
     <product>.sh                                     the entry point (bash): declares the four LAUNCH_*
                                                      params, provisions a host venv, execs the CLI
     <product>.cmd                                    the same entry point for Windows (cmd.exe)
-    <product>.yaml                                   the starter manifest (tasks/groups tree/
-                                                     environments the Pydantic loader accepts)
+    <product>.yaml                                   the starter manifest (tasks + the ci/cd/support
+                                                     tree the Pydantic loader accepts)
     <orch-dir>/requirements.txt                      the host-venv deps: the kernel pinned by version
                                                      (`simplon==...`) + product-only pins
     <orch-dir>/src/python/orchestrator/
@@ -422,10 +422,12 @@ _MANIFEST = """\
 # Sections:
 #   product       the product label (shim/manifest name + diagnostics).
 #   tasks         the BODIES, each declared once: a bare name -> { impl: "module:function", help }.
-#   groups        the COMMAND TREE, hung off the one the kernel's catalogue owns: group ->
-#                 `commands:` -> command -> { task: <name>, ... }. A command is an INSTANCE of a
-#                 task, so it never writes `impl:` itself.
-#   environments  the deployment env matrix (a backend per env) + the default env.
+#   ci            the COMMAND TREE's integration half (build, test, release), hung off the one the
+#                 kernel's catalogue owns: group -> `commands:` -> command -> { task: <name>, ... }.
+#                 A command is an INSTANCE of a task, so it never writes `impl:` itself.
+#   cd            the delivery half: the deployment env matrix (a backend per env) + the default env,
+#                 and the env-first groups (deploy, monitor) that run against one of them.
+#   support       host preflight and tooling - beside the loop, not a stage of it.
 #   layout        where YOUR tree sits, for the two things the kernel would otherwise guess.
 product: @@PRODUCT@@
 
@@ -449,7 +451,7 @@ product: @@PRODUCT@@
 #   tests: tests
 
 # --- product build data (read RAW by your paths adapter, IGNORED by the CLI engine) ---
-# The CLI engine reads only tasks/groups and ignores any other top-level section, so your product's
+# The CLI engine reads only tasks/ci/cd/support and ignores any other top-level section, so your product's
 # own build data lives here. Uncomment + extend as the pipeline grows.
 # images:
 #   app: @@PRODUCT@@:local
@@ -473,16 +475,17 @@ tasks:
 # THE COMMAND TREE, and it is not this file's invention: the kernel's catalogue declares the CI/CD loop
 # - build -> test -> release -> deploy -> monitor, plus support - and every product hangs its commands
 # off those same six slots. That is the whole point: a person moving between two Simplon products finds
-# the same groups holding the same general commands. A group name the catalogue does not declare is
-# refused at load; add it to the platform's catalogue once, for everybody, or find the slot it belongs
-# in.
+# the same groups holding the same general commands. The first three sit under `ci:`, the two env-first
+# ones under `cd:` beside the environments they run against, and `support` stands on its own. A group
+# name the catalogue does not declare is refused at load; add it to the platform's catalogue once, for
+# everybody, or find the slot it belongs in.
 #
 # All six are shown here, each with at least one command, because a group is only useful once something
 # is in it - and because the loop is easiest to learn on the day the product is empty. A group you
 # declare and leave without a single command anywhere under it is a load error naming the group: it is a
 # promise nobody kept. So grow a phase by ADDING to the list under its `commands:`, and if you truly
 # have nothing for one yet, delete the group and let the catalogue's default (nothing rendered) stand.
-groups:
+ci:
   build:
     commands:
       # WHAT YOU PRODUCE: the wheel, the image, the bundle - whatever a later phase hands over.
@@ -501,6 +504,14 @@ groups:
       # `release:artifact` and `release:image` need an `artifacts:`/`images:` section, so declare those
       # the day you have one.
       tag: { task: "release:tag" }
+cd:
+  # The deployment environment matrix (#15, folded into the one manifest per #651 strand 1): one env per
+  # row, `backend` decides HOW it is realised (`local` today; add a cloud backend and widen
+  # _VALID_BACKENDS in environments.py later). An env-first command runs against ONE env, selected as the
+  # outer token; `default` is the implicit one.
+  default: dev
+  environments:
+    dev: { backend: local, description: "Local development environment (the default)." }
   deploy:
     commands:
       # WHERE IT RUNS. `deploy` and `monitor` are ENV-FIRST in the catalogue, so the environment is the
@@ -522,22 +533,14 @@ groups:
       # WHAT IT LOOKS LIKE ONCE IT RUNS: health, logs, the version actually deployed. Env-first, like
       # `deploy` - you watch ONE environment.
       status: { task: status }
-  support:
-    commands:
-      # HOST PREFLIGHT AND TOOLING - not a stage of the loop, which is why it sits beside the five
-      # rather than among them. `install` is the catalogue's `support:install`, placed the same way
-      # `release tag` is above. The catalogue also brings `support git` (commit/push/...) and
-      # `support tasks` with no line from you at all - run `@@PRODUCT@@ support tasks catalogue` to see
-      # every coordinate it offers.
-      install: { task: "support:install" }
-
-# The deployment environment matrix (#15, folded into the one manifest per #651 strand 1): one env per
-# row, `backend` decides HOW it is realised (`local` today; add a cloud backend and widen
-# _VALID_BACKENDS in environments.py later). An env-first command runs against ONE env, selected as the
-# outer token; `default` is the implicit one.
-default: dev
-environments:
-  dev: { backend: local, description: "Local development environment (the default)." }
+support:
+  commands:
+    # HOST PREFLIGHT AND TOOLING - not a stage of the loop, which is why it sits beside the five
+    # rather than among them. `install` is the catalogue's `support:install`, placed the same way
+    # `release tag` is above. The catalogue also brings `support git` (commit/push/...) and
+    # `support tasks` with no line from you at all - run `@@PRODUCT@@ support tasks catalogue` to see
+    # every coordinate it offers.
+    install: { task: "support:install" }
 """
 
 def _render_launcher(name: str, template: str, orch_dir: str) -> str:
@@ -837,16 +840,16 @@ GITIGNORE_MARKER = "# --- written by simplon ---"
 #: something.
 #:
 #: WHAT IS NOT HERE AND CANNOT BE. Three kernel outputs sit at a path the MANIFEST names, and two of
-#: those keys have no default at all - `site: output:` and `docs:reference`'s `output`, which is why this
+#: those keys have no default at all - `website: output:` and `docs:reference`'s `output`, which is why this
 #: kernel gitignores `docs/site/content/with-what/commands.md` by hand. The kernel refuses those sections
 #: rather than guessing a path, so a scaffolder running before any of them exists cannot write their
 #: lines either.
 #:
-#: `site: source:` LEFT THAT LIST IN si#183 and is the one place this block could now grow: hugo's
+#: `website: source:` LEFT THAT LIST IN si#183 and is the one place this block could now grow: hugo's
 #: `resources/`, `public/` and `.hugo_build.lock` live under it, and the kernel knows where it is by
 #: default. It is deliberately NOT added here today. si#155's own rule was that the list came first and
 #: the rule second - every line in the block below was measured by driving a scaffolded product through
-#: real commands - and these three have not been, because `simplon init` scaffolds no `site:` section at
+#: real commands - and these three have not been, because `simplon init` scaffolds no `website:` section at
 #: all, so a fresh product has no website for them to be about. Three lines of noise in every scaffolded
 #: `.gitignore` bought on reasoning rather than measurement is the trade si#155 refused.
 #: They are published on `how/getting-started.md` as the product's own; this constant is the part a
@@ -1127,6 +1130,32 @@ def next_steps(name: str, target: Path, *, orch_dir: str = DEFAULT_ORCH_DIR) -> 
     ])
 
 
+_MANIFEST_USAGE = "usage: simplon manifest migrate [MANIFEST]"
+
+
+def _manifest_migrate(args: list[str]) -> int:
+    """`simplon manifest migrate [MANIFEST]` - the route that works AFTER the cut (si#344).
+
+    Both launcher routes exec `python -m <product>`, which assembles the CLI from the manifest; once the
+    kernel refuses `groups:`, that CLI is never built and `support manifest migrate` cannot be reached.
+    This entry point loads no manifest at all.
+    """
+    from simplon.tasks import migrate as migrate_mod
+    if len(args) > 1:
+        print(_MANIFEST_USAGE, file=sys.stderr)
+        return 2
+    if args:
+        return migrate_mod.migrate(args[0])
+    candidates = [p for p in sorted(Path.cwd().glob("*.yaml"))
+                  if re.search(r"(?m)^product:", p.read_text(encoding="utf-8", errors="replace"))]
+    if len(candidates) != 1:
+        print(f"simplon manifest migrate: name the manifest - found "
+              f"{', '.join(p.name for p in candidates) or 'no *.yaml with a top-level product:'} here",
+              file=sys.stderr)
+        return 2
+    return migrate_mod.migrate(str(candidates[0]))
+
+
 def main(argv: list[str] | None = None) -> int:
     """`simplon init [<product>] [--dir DIR] [--orch-dir DIR] [--force]`: scaffold a product skeleton and
     print the next steps. Returns 0 on success, 2 on a bad product name, a directory with no repository
@@ -1154,6 +1183,13 @@ def main(argv: list[str] | None = None) -> int:
     # typo. The old call pattern stays valid, so `python -m simplon.bootstrap <name>` keeps working.
     if argv is None:
         argv = sys.argv[1:]
+    if argv[:1] == ["manifest"]:
+        # A NAMESPACE, whatever follows it. Falling through to `init` on anything but `migrate` read
+        # `manifest` as a product name and scaffolded one - a typo answered by writing a skeleton.
+        if argv[1:2] == ["migrate"]:
+            return _manifest_migrate(argv[2:])
+        print(_MANIFEST_USAGE, file=sys.stderr)
+        return 2
     if argv and argv[0] == "init":
         argv = argv[1:]
     elif not argv:
@@ -1163,7 +1199,8 @@ def main(argv: list[str] | None = None) -> int:
         # nothing after it is a legal command; `simplon` alone is not, and the two must not collapse.
         print("simplon: nothing to do. The one command is `simplon init [<product>] [--dir DIR] "
               "[--orch-dir DIR] [--force]`, and the product name is optional inside a git repository; "
-              "use `simplon init --help` for the options.", file=sys.stderr)
+              "use `simplon init --help` for the options. The other is `simplon manifest migrate "
+              "[MANIFEST]`, which rewrites a manifest from `groups:` to `ci:` / `cd:` / `support:`.", file=sys.stderr)
         return 2
 
     parser = argparse.ArgumentParser(

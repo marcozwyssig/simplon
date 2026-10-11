@@ -1,0 +1,1002 @@
+# swi - the delivery manifest for the Windows Server template builds.
+#
+# This is the ONLY description of the command line. Simplon reads it and assembles the CLI: which
+# commands exist, what they are called, which group each lives in, and which of their parameters are
+# positional. The bodies are plain callables in `packer.commands` - no decorator, no framework - so
+# there is one place a command is written down and one place it is placed.
+#
+# The configuration is here too, in the two data sections further down: `packer:` for everything a
+# build is given, `transfer:` for what only the tooling reads. packer.pkr.hcl declares the variables
+# and builds the machine; it no longer says what any of them is set to.
+#
+# What stays out of this file: nothing any more. The per-release values used to live in
+# src\packer\<release>.pkrvars.hcl; they are the `templates:` section below.
+product: swi
+
+# --- THE BODIES ---------------------------------------------------------------------------------
+#
+# A task is a TEMPLATE, declared once, no matter how many commands run it. `iso` and `publish` below
+# each carry TWO commands - one that does the work and one that only reports - and that is the whole
+# reason the body is declared here and placed further down: the difference between the two is a
+# pinned value, not a second implementation.
+#
+# Every impl points into `packer.commands`, which sits beside this orchestrator on the launcher's
+# PYTHONPATH. It is not the scaffold's `orchestrator.cli`, deliberately: those bodies are the ported
+# Invoke-Build orchestration with its comments intact, and moving 1500 lines into the composition
+# root to satisfy a naming habit would have been the one change in this migration that nobody could
+# review.
+tasks:
+  template:
+    impl: "packer.commands:build"
+    help: "Build the template(s): Windows Setup, VMware Tools, updates, Sysprep, OVA."
+  iso:
+    impl: "packer.commands:iso"
+    help: "Provide the installation ISO for a release, downloading it if missing."
+  package:
+    impl: "packer.commands:package"
+    help: "Convert an existing build result into an ESXi-compatible OVA."
+  publish:
+    impl: "packer.commands:publish"
+    help: "Release finished template(s) into out\\ with volumes, checksum and fact sheet."
+  upload-ivanti:
+    impl: "packer.commands:upload_ivanti"
+    help: "Upload the transfer volumes to the Ivanti file portal, one file at a time."
+  config:
+    impl: "packer.commands:config"
+    help: "Show the effective configuration of a release, as the build will use it."
+  doctor:
+    impl: "packer.commands:doctor"
+    help: "Check that the tools a build needs are installed."
+  reset:
+    impl: "packer.commands:reset"
+    help: "Stop VMs left by an aborted build and clear this release's scratch area."
+  files:
+    impl: "packer.commands:files"
+    help: "List what would be transferred for a release."
+  esxi-target:
+    impl: "packer.commands:esxi_target"
+    help: "Report the ESXi target for #20: what is configured, what is missing."
+  inspect:
+    impl: "packer.commands:inspect"
+    help: "Report how the page in an already-open browser builds its upload."
+
+# --- THE COMMAND TREE ---------------------------------------------------------------------------
+#
+# The groups are the kernel catalogue's, not this file's invention: build -> test -> release ->
+# deploy -> monitor, plus support. `deploy` and `monitor` are absent because nothing here deploys or
+# watches - a build produces an OVA and hands it over, and what happens to it afterwards happens in
+# vCenter, outside this project. A group with no command under it does not render, so the catalogue
+# keeps offering them and this CLI does not show them.
+#
+# `release` is where publish and upload sit, and `deploy` is not, on purpose: both hand the artefact
+# OVER (into out\, and through the Ivanti portal). Neither one puts anything into a running
+# environment.
+groups:
+
+  build:
+    commands:
+      # The everyday command, and the one every build-*.bat wrapper calls. `release` is POSITIONAL -
+      # `swi build template win2022`, not `--release win2022` - which Typer cannot infer from a
+      # parameter that has a default, so `argument: true` says it.
+      template:
+        task: template
+        params:
+          release: { help: "A release or a combination from `build: matrix:` - win2019, win2019-nobreakglass, ... - or all (the default).", argument: true }
+          # `package` is deliberately NOT declared here. Naming a bool's long decl suppresses the
+          # `--no-x` secondary Typer derives for it, and --no-package is the flag you want while
+          # iterating - a help string is not worth deleting a working flag for.
+          timeout_hours: { help: "Kill a release that exceeds this. 0 disables it. A full build takes 1-3 h." }
+
+      # Providing the media, with `check` PINNED OFF. A pinned parameter leaves the command line
+      # entirely, so this command downloads and never merely reports; `swi test iso` below is the
+      # same body with the pin the other way round. That is the point of one task and two commands:
+      # the reporting half belongs under `test`, and it is not a second implementation.
+      iso:
+        task: iso
+        with: { check: false }
+        help: "Download the installation ISO for a release if it is not already there."
+        params:
+          release: { help: "win2019 (default), win2022 or win2025.", argument: true }
+
+      # The OVA conversion on its own. `build template` already runs it unless you pass
+      # --no-package, so this is for finishing a build that was stopped short of it.
+      package:
+        task: package
+        params:
+          release: { help: "win2019 (default), win2022 or win2025.", argument: true }
+
+  test:
+    commands:
+      # THE LEVELS, AND THEY ARE THE KERNEL'S BODIES - `test:gate` from the catalogue, once per
+      # level, with the level PINNED by `with: { name: ... }`. What each level actually runs is the
+      # `suites:` section at the foot of this file; nothing about the suites is written twice.
+      #
+      # The pin is not decoration. Left off, the kernel renders a real `--name TEXT` option and
+      # falls back to the invoked command name - so `swi test unit --name artefact` would be a
+      # sentence, and one gate could be asked to run another gate's suite. Its own docstring says
+      # "Pin it."
+      #
+      # WHY THREE COMMANDS AND NOT ONE `test gate <level>`: a workflow step names a command and
+      # nothing else, and a level that cannot be a step is a level CI cannot run. That is the same
+      # argument `support completion-check` above makes for being a command rather than a flag.
+      #
+      # `system` is DECLARED in `suites:` and gets no command here, because there is nothing to
+      # type at it yet - see the gate for what it waits on. `test accept` runs it all the same and
+      # reports it as not-run, which is the point of declaring it before it exists.
+      unit:
+        task: "test:gate"
+        with: { name: unit }
+        help: "Run the unit suite: the seams where swi.yaml becomes configuration. No VM."
+      artefact:
+        task: "test:gate"
+        with: { name: artefact }
+        help: "Check a published OVA and the fact sheet beside it. Reads the file; boots nothing."
+
+      # EVERY LEVEL, IN ORDER, AND THEN THE ARCHIVE. `accept` is the whole ladder and `report` is
+      # the render on its own, for re-cutting the HTML after a run without paying for the run.
+      #
+      # `test accept` EXITS NON-ZERO UNTIL #20, and that is the kernel's rule rather than a defect
+      # here: a run containing a gate that never ran cannot claim to have probed the product, so
+      # `not-run` outranks `passed`. The verdict still says not-run and not failed - nothing reads
+      # as "the template is broken" - and CI does not run this command, it runs `test unit`.
+      accept:
+        task: "test:accept"
+        help: "Run every declared suite in order, then render the Allure archive."
+      report:
+        task: "test:report"
+        help: "Merge the suites' results and render the single-file Allure archive."
+
+      # Both of these are the REPORTING half of a body that also does the work, pinned with
+      # `with: { check: true }`. They write nothing, which is what makes them checks rather than
+      # dry runs of a build.
+      iso:
+        task: iso
+        with: { check: true }
+        help: "Report which ISO is present for a release and whether its checksum is cached."
+        params:
+          release: { help: "win2019 (default), win2022 or win2025.", argument: true }
+      published:
+        task: publish
+        with: { check: true }
+        help: "Report what is in out\\ for a release and what is missing. Writes nothing."
+        params:
+          release: { help: "A release or a combination from `build: matrix:` - win2019, win2019-nobreakglass, ... - or all (the default).", argument: true }
+
+  release:
+    commands:
+      publish:
+        task: publish
+        with: { check: false }
+        params:
+          release: { help: "A release or a combination from `build: matrix:` - win2019, win2019-nobreakglass, ... - or all (the default).", argument: true }
+
+      # The Ivanti transfer. THE DESTINATION IS IN THE NAME, and that is the point of the name:
+      # `upload` on its own claimed the whole idea of sending an artefact somewhere, and this is one
+      # particular way of doing it - a browser driven against one vendor's portal. #15 adds Vagrant
+      # boxes and somewhere to put them, which shares no parameter with this: not the browser, not
+      # --target, not the volume splitting. That is a SECOND COMMAND beside this one rather than a
+      # --to flag on it, and it can only be that if this one says which it is.
+      #
+      # It stays ENVIRONMENT-AGNOSTIC and keeps its own --target, rather than becoming an env-first
+      # `deploy` command: preprod and prod here are two folders on one portal reached by one browser
+      # session, not two environments this project deploys into. What guards the expensive direction
+      # is the same thing that always did - upload-prod.bat asks first.
+      upload-ivanti:
+        task: upload-ivanti
+        params:
+          release: { help: "win2019 (default), win2022 or win2025.", argument: true }
+          target: { help: "preprod (default) or prod - the addresses come from `transfer:` in swi.yaml." }
+          url: { help: "A portal URL to use instead of the configured one." }
+          dry_run: { help: "Open the portal and report what would be sent. Uploads nothing.", short: "-n" }
+          browser: { help: "brave (default) or edge." }
+          port: { help: "DevTools port used to reach the browser. Default 9222." }
+          upload_timeout: { help: "Seconds to wait for one volume. 450 MB over a VPN is minutes." }
+
+  # Host preflight, introspection and the one diagnostic tool - which is what the catalogue says this
+  # group is for. None of these produces or moves an artefact, which is why none of them sits in a
+  # phase of the loop.
+  support:
+    commands:
+      doctor: { task: doctor }
+      config:
+        task: config
+        params:
+          release: { help: "win2019 (default), win2022 or win2025.", argument: true }
+      reset:
+        task: reset
+        params:
+          release: { help: "win2019 (default), win2022 or win2025.", argument: true }
+          # Declared here so the help string can say what it costs. Naming a bool suppresses the
+          # `--no-base` Typer would otherwise derive, which is exactly right: the default is off and
+          # a flag to say "definitely do not delete the base" would only make the pair look symmetric.
+          base: { help: "Also delete the BASE for this release - 19.5 GB, and an hour to rebuild." }
+      files:
+        task: files
+        params:
+          release: { help: "win2019 (default), win2022 or win2025.", argument: true }
+      inspect: { task: inspect }
+
+      # REPORTS, and writes nothing - the `support` half that prints, like `config` above. It exists
+      # while there is no host at all on purpose: before it, the only place this project said anything
+      # about a target was the system gate's refusal, which a person sees only by running the whole
+      # acceptance suite. The password is never printed; the one question asked of it is whether the
+      # variable the manifest NAMES is set.
+      esxi:
+        task: "esxi-target"
+        help: "Report the ESXi target for #20: what is configured, what is missing. Writes nothing."
+
+      # The drift gate for the generated completion, as a COMMAND rather than a
+      # flag on the one above. A workflow step names a command and nothing else -
+      # the last token is the command name - so `support completion --check` is
+      # not a thing a workflow can say. Pinning the value with `with:` is the same
+      # move `build iso` and `test iso` already make with one body.
+      #
+      # It stays under `support` because the coordinate opens with that word, and
+      # si#34 makes that a placement rather than a preference - `test` would be
+      # the phase this belongs to by meaning, and is not available by rule.
+      # The manifest's SECOND output. Declared here rather than placed by the
+      # catalogue for the reason the kernel gives: it reads the `workflows:`
+      # section below, so a product without one would get a command that refuses
+      # on its first line.
+      workflows: { task: "support:workflows" }
+
+      completion-check:
+        task: "support:completion"
+        with: { check: true }
+        help: "Report whether deploy\\completions\\swi.bash still agrees with swi.yaml." 
+
+      # The DEVELOPMENT ENVIRONMENT, not the product: this installs the Claude Code plugins the
+      # repo is worked on with, from the `claude:` section at the foot of this file. The body is
+      # the kernel's - `support:claude-plugins` in the catalogue - so nothing here implements it.
+      #
+      # A DATA SECTION ALONE PRODUCES NO COMMAND, and that is why `claude:` appeared to do nothing:
+      # this file is the only description of the command line, so a section is READ BY a command
+      # and never announces itself. The section says WHAT; this placement says where to run it.
+      #
+      # Under `support` because that is the coordinate the catalogue gives it, and si#34 makes a
+      # coordinate a placement rather than a preference.
+      claude-plugins:
+        task: "support:claude-plugins"
+        params:
+          dry_run: { help: "List what is missing and install nothing.", short: "-n" }
+
+# ##################################################################################################
+#
+#   P R O D U C T   D A T A ,   B Y   T H E   P H A S E   T H A T   R E A D S   I T
+#
+#   The keys below - `build:` and `release:` - are DATA SECTIONS, and they are named after the phase
+#   whose commands read them. They are NOT the entries of `groups:` above, which are the command
+#   tree. Two different things wearing the same word, and a reader is owed the warning:
+#
+#       groups: build:     the commands `swi build ...` dispatches to. Structure, and the kernel
+#                          refuses a group name its catalogue does not declare - measured.
+#       build:             the values those commands read. Data, which the kernel ignores entirely;
+#                          only packer/manifest.py looks at it.
+#
+#   That the two are indistinguishable at the top level is a gap in the platform rather than in this
+#   file, and it is reported: marcozwyssig/simplon#159. The naming here is a deliberate answer to it -
+#   putting a value beside the phase that consumes it is the most a manifest can do about it today.
+#
+#   AND THERE IS NOW A THIRD MEANING OF THE WORD. Since simplon 0.10.0 the KERNEL reads a top-level
+#   `build:` section too, for `build: targets:` - the C++/.NET build-file coordinates. So one word at
+#   the top of this file means the command group, this product's build data, and the kernel's build
+#   data. Nothing breaks, and the reason is luck rather than design: the kernel looks only for
+#   `targets:` and finds nothing, because our sub-keys happen to be `packer:` and `templates:`.
+#
+#   DO NOT ADD A `targets:` KEY HERE. It would be read by `build:cmake-files` as a declaration of C++
+#   targets. If this product ever needs one for its own purpose, rename ours instead.
+#
+#   Only phases this product actually HAS appear. There is no `deploy:` data section, because there
+#   is no deploy group: nothing here deploys, and `release upload-ivanti` - which reads the transfer values -
+#   sits under `release`.
+#
+# ##################################################################################################
+
+build:
+
+  # --- THE SHARED PACKER CONFIGURATION --------------------------------------------------------------
+  #
+  # The values that used to sit as `default = ...` in packer.pkr.hcl. That file keeps the variable
+  # DECLARATIONS - name, type, description - and packer.pkr.hcl remains the place that says what a
+  # variable IS. This section says what it is SET TO, and it is the only place that does.
+  #
+  # HOW IT REACHES PACKER. Before every packer run the tooling renders this section into
+  # generated.<release>.pkrvars.hcl and hands it over with `-var-file` (packer/pkrvars.py). The
+  # per-release file follows it, so a release overrides a shared value, and the runtime `-var` flags
+  # follow that. Three layers, in that order, and nothing else sets a variable.
+  #
+  # EVERY KEY IS A VARIABLE NAME from packer.pkr.hcl. There is no mapping table on purpose: a
+  # translation between two namings is a second thing to keep in step, and a key naming no variable is
+  # refused by Packer itself with "Undefined variable" - a better check than one written here.
+  #
+  # WHAT IS NOT HERE. The per-release values - `name`, `guest_os_type` and the four `iso_*` - are in the
+  # `templates:` section further down, because they are what tells the three releases apart. The runtime
+  # values (`vm_name`, `output_directory`, `iso_path`, `iso_checksum`) are computed per build and passed
+  # as `-var`; they are declared in packer.pkr.hcl and appear nowhere as data.
+  #
+  # The four transfer values (the Ivanti addresses, the volume sizes) are NOT here: no Packer block
+  # references them, so they are not Packer's, and they live in the `transfer:` section below.
+  #
+  # THIS SECTION IS A CREDENTIAL STORE. `administrator_password` and `emergency_admin_password` are in
+  # clear text below, which is where they were before - packer.pkr.hcl carried the same warning. Treat
+  # this file as confidential. See the note at emergency_admin_password.
+  packer:
+
+    # --- Template identity -------------------------------------------------------------------------
+    # Together with the per-release `name` and today's date these produce the VM and file name:
+    #   <prefix>-<name>-<version>-<yyyyMMdd>   ->   TPL-WIN2019-STD-1.2.0-20260821
+    prefix: "TPL"
+    version: "1.2.0"
+
+    # --- Virtual hardware --------------------------------------------------------------------------
+    cpus: 2
+    cores_per_socket: 2
+    memory: 4096
+    disk_size: 65536
+
+    # Quoted because the variable is a STRING in packer.pkr.hcl, not a number.
+    #
+    # This decides which ESXi releases will accept the finished OVA, and getting it wrong shows up only
+    # at import time, after the build has been paid for.
+    #
+    #   21  ESXi 8.0 Update 2 and newer  <- this value
+    #   20  ESXi 8.0 and newer
+    #   19  ESXi 7.0 Update 2 and newer
+    #
+    # 21 is a deliberate choice, not an accident of the build host: the target environment runs ESXi 8
+    # Update 2 or later. Drop it to 20 if a host on plain 8.0 or 8.0 U1 ever has to take this template -
+    # such a host refuses a vmx-21 OVA outright. Everything this template needs (EFI, Secure Boot,
+    # LSI SAS, e1000e) exists from version 14 onwards, so lowering it loses nothing functionally.
+    virtual_hardware_version: "21"
+
+    # --- Build behaviour ---------------------------------------------------------------------------
+
+    # Keep this true. With false, Packer starts the VM via 'vmrun start <vmx> gui' and that call was
+    # observed to block on VMware Workstation: the machine powers on but Packer never moves past that
+    # step. Headless uses 'nogui', which returns as it should.
+    #
+    # To watch a build anyway, open VMware Workstation while it runs - the VM shows up in the library
+    # and its console can be attached to.
+    headless: true
+
+    # Packer opens a VNC server to type the boot command, and that is also the only way to watch a
+    # headless build - 'vmrun captureScreen' is no use during Windows Setup, since it logs into the
+    # guest through VMware Tools, which are not installed yet at that point.
+    #
+    # Left to itself Packer picks a random port and password, so neither can be printed before the VM
+    # exists. Fixing the port means the build can show the connection details up front. The build checks
+    # this port is free first and moves to the next one if not, so a collision is not fatal.
+    vnc_port: 5900
+
+    # Set this to false only while working on the build itself. Failures tend to surface at the very
+    # end, after Sysprep, and the updates in front of them cost about 45 minutes per attempt - skipping
+    # them cuts a round trip to roughly 15 minutes while still exercising the whole critical stretch:
+    # cleanup, WinRM, Sysprep, shutdown, packaging.
+    #
+    # Put it back to true before building anything anyone will deploy. The build warns on every run
+    # while it is false, and the fact sheet records the template as unpatched.
+    install_windows_updates: true
+
+    # Search/install/reboot cycles. The plugin already loops and reboots inside a single pass; a second
+    # pass catches updates that only become applicable once earlier ones are in place.
+    windows_update_passes: 2
+
+    # --- The installation ISO ----------------------------------------------------------------------
+    # The four values that name the media are PER RELEASE and live in the `templates:` section below.
+    # This is the one switch that is shared: whether the build resolves the download link at all.
+    #
+    # true  - resolve the link to the file Microsoft currently serves and fetch it when lib\ does not
+    #         have it; the superseded ISO is deleted once the new one is complete.
+    # false - pin the build to iso_file_name, which then has to be present in lib\.
+    iso_auto_update: true
+
+    # --- VMware Tools ------------------------------------------------------------------------------
+    # Fetched from Broadcom's public endpoint - no portal account needed. Only when that endpoint is
+    # unreachable, or when vmware_tools_auto_update is false, does the file have to be in lib\ already.
+    vmware_tools_auto_update: true
+
+    # Directory index of the current Windows x64 release. The trailing slash is required - without it
+    # the server answers 404. This host is a CNAME onto Broadcom's CDN and needs no authentication.
+    vmware_tools_url: "https://packages.vmware.com/tools/releases/latest/windows/x64/"
+
+    # With vmware_tools_auto_update = true this is only the fallback for an offline build; the name
+    # actually used comes from the endpoint above and is passed in as a runtime -var.
+    vmware_tools: "VMware-tools-13.1.0-25218885-x64.exe"
+
+    # --- Credentials -------------------------------------------------------------------------------
+    # These are substituted into autounattend.xml and also used by Packer for the WinRM connection.
+    # That way they cannot drift apart - which was the most common cause of failures in the previous
+    # version.
+    administrator_user: "Administrator"
+    administrator_password: "Template2019!"
+
+    # --- Locale and region -------------------------------------------------------------------------
+    ui_language: "en-US"
+
+    # German (CH), French (CH), English (US) - in that order, so German is the default layout and the
+    # other two are available to switch to.
+    #
+    # The numeric form "<LCID>:<keyboard layout id>" is used rather than tags like "de-CH;fr-CH;en-US"
+    # because it is the canonical form Windows Setup documents, and an InputLocale value Setup does not
+    # understand does not produce an error - it stops at an interactive prompt instead.
+    #
+    # Verify an ID with:
+    #   [System.Globalization.CultureInfo]::GetCultureInfo('fr-CH').KeyboardLayoutId.ToString('x8')
+    input_locale: "0807:00000807;100c:0000100c;0409:00000409"
+
+    system_locale: "de-CH"
+    user_locale: "de-CH"
+
+    # This IS the setting for Switzerland. Windows uses its own time zone IDs, not IANA names - there is
+    # no "Europe/Zurich" here. The display name of this ID reads "(UTC+01:00) Amsterdam, Berlin, Bern,
+    # Rome, Stockholm, Vienna".
+    #
+    # An unknown ID is not rejected with an error: Windows Setup stops at an interactive prompt instead,
+    # which looks exactly like any other hang. List the valid IDs with: Get-TimeZone -ListAvailable
+    time_zone: "W. Europe Standard Time"
+
+    # --- Hardening ---------------------------------------------------------------------------------
+    #
+    # On WSUS: there is no default WSUS server. The update server is configured by hand after
+    # deployment; src\powershell\configure-wsus.ps1 is provided as a helper and is deliberately not part
+    # of the build.
+    #
+    # On WinRM: autounattend.xml enables WinRM only for the duration of the Packer run, and the last
+    # build step disables it again. That always happens and is therefore not configurable.
+    enable_rdp: true
+    disable_legacy_tls: true
+
+    # Disable the built-in Guest account. Found via its well-known SID, so a CIS rename does not defeat
+    # it.
+    disable_guest_account: true
+
+    # Remove the SMBv1 and PowerShell 2.0 Windows features. Group policy can only switch settings, it
+    # cannot uninstall a feature - so this has to happen while the image is built. Neither removal is
+    # covered by CIS Level 1.
+    remove_legacy_features: true
+
+    # CIS Level 1 renames the built-in Administrator, and up to benchmark v1.3.0 disabled it outright. A
+    # machine that then cannot reach its domain has no local way in. This account is that way in - and
+    # it is deliberately not the account the build itself uses.
+    emergency_admin_enabled: true
+    emergency_admin_user: "EmergencyAdmin"
+
+    # KNOW WHAT THIS IS. LAPS is not in use in this environment, so nothing rotates this password
+    # afterwards. Whatever stands here becomes a permanent shared secret: the same local administrator
+    # credential on every VM derived from this template, for as long as the template is in service.
+    # Anyone who recovers it from one machine has local administrator on all of them. That trade-off was
+    # reviewed and accepted - it is not an oversight.
+    #
+    # What follows from that:
+    #   - treat this file as confidential; it is a credential store
+    #   - rotate by changing the value and rebuilding, not per machine
+    #   - if LAPS is ever introduced, take this over first
+    #
+    # WHAT THE CHECK ACTUALLY DOES (#19). The comment that stood here - carried over from packer.pkr.hcl
+    # and then carried again into this file - claimed the field was "deliberately empty: the build refuses
+    # to run until a value is set. There is no default because a default would ship on every server built
+    # from here", while a real password stood directly above it. It described a manifest that has never
+    # existed here, and it is replaced rather than annotated because a note saying "this is wrong" leaves
+    # the wrong sentence in place for the next reader to act on.
+    #
+    # What is true is smaller. `swi build template` (commands.py) and the build itself (build.py) both
+    # refuse an EMPTY value with a readable message, and both do so only when emergency_admin_enabled is
+    # true - the `nobreakglass` variant switches the account off and the check with it, correctly, since
+    # there is then no account for a password to belong to. So: the check exists, it works, and it guards
+    # the empty case. It has also never fired, because this value has never been empty - and what keeps
+    # this credential from the world is not that check. It is that the repository is private.
+    #
+    # THE VALUE STAYS. Emptying this file today would change what is exposed by nothing at all: the same
+    # passwords are in the git history, so anyone who can read this line can read an older one. Sourcing
+    # it from a secret is #49, which deliberately carries the history rewrite with it - a build that
+    # demands an environment variable to protect a password still sitting in `git log` costs every user a
+    # setup step and buys nobody anything.
+    emergency_admin_password: "c0p!K2aQXcL$4aORHT"
+
+  # --- WHAT TELLS THE THREE RELEASES APART ----------------------------------------------------------
+  #
+  # One block per release, holding the six values that differ. Everything else - hardware, locale,
+  # accounts, hardening, all provisioning scripts - is shared and lives in `packer:` above.
+  #
+  # These six are Packer variables like the ones above; they are a section of their own because they are
+  # scoped differently, not because they are a different kind of thing. `packer/pkrvars.py` renders
+  # `packer:` and ONE block from here into a var file per release, the release winning wherever the two
+  # name the same variable, and the runtime `-var` flags winning over both.
+  #
+  # --- What makes a base stale ---------------------------------------------------------------------
+  #
+  # A BASE is what `build template <release> --no-sysprep` leaves behind: through Setup, VMware Tools
+  # and the Windows Update hour, WinRM still open, not generalised. Every variant of that release is
+  # derived from it in six minutes instead of seventy-four.
+  #
+  # Two rules decide whether it may still be used, and only one of them can live in code. A new ISO or
+  # a changed value under `packer:` or `templates:` shows up as a different fingerprint - the tooling
+  # computes that and needs no number. A NEW MONTH OF WINDOWS UPDATES shows up as nothing at all: same
+  # ISO, same manifest, different world. Only the clock knows, so that rule is an age, and an age needs
+  # a number somebody chose.
+  #
+  # NOT under `packer:` above, deliberately. Everything in that section is rendered into the var file as
+  # a Packer variable, and Packer refuses a var file that sets a variable the template never declares.
+  # A number the tooling reads and Packer never sees needs a home of its own.
+  base:
+    # Thirty because the patch rhythm is monthly. The cost of being wrong in one direction is an hour of
+    # rebuilding a base that would have been fine; in the other it is a variant that builds clean, boots,
+    # passes every check and is a month behind on updates, with nothing about it saying so.
+    #
+    # 0 SWITCHES THE AGE RULE OFF, and saying so here is better than the alternative: somebody deriving
+    # all day against a base they just built would otherwise comment this section out, which reads
+    # exactly like never having had one. The fingerprint rule stays on either way.
+    max_age_days: 30
+
+  # NOT CALLED `releases:`, and that is a decision rather than a preference. The Simplon kernel owns that
+  # name: `test:release-notes` reads a `releases:` section of `{page, from, complete_from}`. This product
+  # does not place that command, so nothing collides today - but a section meaning one thing here and
+  # another in the kernel is a trap set for whoever places it later.
+  #
+  # WHERE THESE CAME FROM. src\packer\<release>.pkrvars.hcl, one file each, deleted once this section
+  # was proven to produce the same values. Two things changed on the way and both are improvements
+  # rather than side effects: the win2019 values are no longer ALSO the defaults of packer.pkr.hcl (they
+  # were duplicated), and these definitions are in version control for the first time - the old files
+  # were covered by the `*.pkrvars.hcl` rule in .gitignore, so they existed on one machine only. The
+  # iso_sha256 pins in particular are a record, and a record that lives on one laptop is not one.
+  templates:
+
+    win2019:
+      name: "WIN2019-STD"
+
+      # VMware's identifier for the guest, which drives its defaults for devices and timing. Taken from
+      # VMware's own table, not from guesswork:
+      #   "%ProgramFiles%\VMware\VMware Workstation\OVFTool\env\ovftool-hw22-config-option.xml"
+      #
+      #   windows9srv-64          Server 2016   <- NOT 2019, despite the name
+      #   windows2019srv-64       Server 2019
+      #   windows2019srvNext-64   Server 2022
+      #   windows2022srvNext-64   Server 2025
+      #
+      # The "srvNext" pattern reads as "the release after N", which is why the numbers look off by one.
+      # This template used windows9srv-64 for a long time and built fine, but that is the 2016 identifier.
+      guest_os_type: "windows2019srv-64"
+
+      # Official Microsoft evaluation download (Windows Server 2019, en-us). A forwarding link - the
+      # redirects are followed to determine the real file name.
+      iso_download_url: "https://go.microsoft.com/fwlink/p/?LinkID=2195167&clcid=0x409&culture=en-us&country=US"
+      iso_file_name: "17763.3650.221105-1748.rs5_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.iso"
+
+      # Measured from the file this link actually delivered - build 17763.3650 of 2022-11-05. The only
+      # checksum in this section that was computed here rather than copied.
+      iso_sha256: "6dae072e7f78f4ccab74a45341de0d6e2d45c39be25f1f5920a2ab4f51d7bcbb"
+
+      # The NAME field inside install.wim, not the display name. Setup matches on this; "Windows Server
+      # 2019 Standard (Desktop Experience)" is what it shows and will not match.
+      iso_image_name: "Windows Server 2019 SERVERSTANDARD"
+
+    # NOT YET BUILT. The ISO has been downloaded and its checksum confirmed, but no template has been
+    # produced from these values yet. Expect the first run to surface something.
+    win2022:
+      name: "WIN2022-STD"
+
+      # Server 2022, per VMware's own table above. The "srvNext" reads as "the release after 2019" - the
+      # numbers are off by one on purpose.
+      guest_os_type: "windows2019srvNext-64"
+
+      iso_download_url: "https://go.microsoft.com/fwlink/p/?LinkID=2195280&clcid=0x409&culture=en-us&country=US"
+
+      # Note the generic name: this one carries no build number, so Microsoft can replace the contents
+      # behind the link without the file name changing. Check the checksum the build prints if the
+      # template ever behaves unexpectedly.
+      iso_file_name: "SERVER_EVAL_x64FRE_en-us.iso"
+
+      # CONFIRMED on 2026-08-22: this value started out as a community one, and the ISO Microsoft
+      # actually served that day hashed to exactly the same thing (5'044'094'976 bytes). It is a real pin
+      # now, not a reference point - the build refuses to continue if the file ever differs.
+      iso_sha256: "3e4fa6d8507b554856fc9ca6079cc402df11a8b79344871669f0251535255325"
+
+      # The NAME field inside install.wim, not the display name. A widely copied blog post gets this
+      # wrong and only gets away with it because it also supplies a product key.
+      iso_image_name: "Windows Server 2022 SERVERSTANDARD"
+
+    # NOT YET BUILT. The values below were researched and the download link was checked, but no template
+    # has been produced from them. Expect the first run to surface something.
+    win2025:
+      name: "WIN2025-STD"
+
+      # Server 2025, per VMware's own table above. The "srvNext" reads as "the release after 2022".
+      #
+      # This identifier needs virtual hardware version 20 or higher. The shared value is 21, so there is
+      # nothing to do - but dropping virtual_hardware_version below 20 for an older ESXi would break this
+      # release specifically, and that is the kind of thing a shared setting hides.
+      guest_os_type: "windows2022srvNext-64"
+
+      iso_download_url: "https://go.microsoft.com/fwlink/p/?LinkID=2293312&clcid=0x409&culture=en-us&country=US"
+      iso_file_name: "26100.1742.240906-0331.ge_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.iso"
+
+      # EXTERNAL AND UNCONFIRMED - from community repositories, not from Microsoft and not measured here.
+      # Left in as a reference point rather than a gate; the build computes the real checksum on the
+      # first run and prints it. Replace this with that value once you have it.
+      #
+      # This is why moving these values was not a copy: a checksum with "unconfirmed" written beside it
+      # is a different value from one without, and only the prose says so.
+      iso_sha256: "d0ef4502e350e3c6c53c15b1b3020d38a5ded011bf04998e950720ac8579b23d"
+
+      # The NAME field inside install.wim, not the display name. Setup matches on this; "Windows Server
+      # 2025 Standard (Desktop Experience)" is what it shows and will not match.
+      iso_image_name: "Windows Server 2025 SERVERSTANDARD"
+
+  # --- THE VARIANT AXIS ---------------------------------------------------------------------------
+  #
+  # A variant is a difference that applies to ANY release, written once. `templates:` above is the
+  # release axis; this is the other one, and `matrix:` below says which crossings actually exist.
+  #
+  # Why two axes and not one list of finished templates: #10 asks for COMBINATIONS - Puppet, CIS
+  # Level 1, Ansible, with or without the break-glass admin. Against three releases that is up to
+  # twenty-four blocks written by hand, and eight of them to edit the day the Puppet script changes.
+  #
+  # A variant is three keys because it combines with a release in three DIFFERENT ways:
+  #
+  #     suffix:   APPENDED to the template name.  WIN2019-STD -> WIN2019-STD-NOBG
+  #     values:   REPLACE a value from `packer:` or `templates:`
+  #     scripts:  CONCATENATED as extra provisioners, in the order the matrix lists them
+  #
+  # `suffix` and not `name`: in `templates:` a `name:` REPLACES, here it APPENDS. The same word
+  # behaving differently in two sections is how a manifest starts needing a manual.
+  variants:
+
+    # THE FIRST ONE, and deliberately the smallest (#19). It changes three values that already exist
+    # and already work, so it tests the AXIS without also testing Puppet - if the way a variant is
+    # declared turns out to be wrong, one boolean finds that out in an afternoon.
+    #
+    # It is also the only kind of variant that REMOVES rather than adds, which exercises a path the
+    # others never will.
+    #
+    # WHAT IT REMOVES, and it is not a small thing. From packer.pkr.hcl, on why the account exists:
+    # "CIS Level 1 renames the built-in Administrator, and up to benchmark v1.3.0 disabled it
+    # outright. A machine that then cannot reach its domain has no local way in. This account is that
+    # way in." An image without it is the right answer only where something else provides that way in
+    # - and the fact sheet has to say which image this is.
+    nobreakglass:
+      suffix: "NOBG"
+      values:
+        emergency_admin_enabled: false
+
+  # --- WHAT IS ACTUALLY BUILT ---------------------------------------------------------------------
+  #
+  # A list, not a mapping: an entry is either a release on its own or a release followed by the
+  # variants applied to it, in order.
+  #
+  # THE MATRIX IS THE DECLARATION. A crossing nobody wrote down is not buildable even when both of
+  # its parts exist - `win2022-nobreakglass` refuses until it is a line here. Inferring every
+  # combination would put the number of artefacts out of anyone's hands, and that number is hours.
+  #
+  # `build template all` and `release publish all` loop over THIS, so a release removed from here
+  # stops being built even though its block above remains.
+  matrix:
+    - win2019
+    - win2022
+    - win2025
+
+    # One crossing so far. A second release with the same variant costs one line, which is the whole
+    # argument for the second axis - but each line is also an hour of building, so they are added
+    # when they are wanted rather than because they are cheap to write.
+    - [ win2019, nobreakglass ]
+
+
+release:
+
+  # --- WHAT ONLY THE TOOLING READS ------------------------------------------------------------------
+  #
+  # Four values, and not one block in packer.pkr.hcl references any of them. They were Packer variables
+  # all the same until now: declared there, defaulted there, and read back by running `packer inspect`
+  # and scraping its output. That is why `release upload-ivanti` needed packer.exe installed in order to look
+  # up a URL - on a machine whose whole job is publishing and uploading, which is a machine this project
+  # has always described (`support doctor --no-vmware` exists for it).
+  #
+  # They are read straight from here now (packer/manifest.py), the four variable declarations are gone
+  # from packer.pkr.hcl, and nothing renders them into a generated var file - a var file setting a
+  # variable the template does not declare is refused by Packer, and rightly.
+  #
+  # THE KEYS KEEP THEIR OLD NAMES. `publish_split_mb`, not `split_mb`, even though the prefix is
+  # redundant inside a section called `transfer:`. The fact sheet and two error messages name these to
+  # the person who has to change one; renaming would have been a rename in prose nobody asked for.
+  #
+  # `config.read()` merges this section into what it read from Packer, so the fact sheet and the publish
+  # step see one mapping and never need to know which half a value came from.
+
+  transfer:
+
+    # Where the transfer volumes go on the PREPRODUCTION side.
+    #
+    # The URL of the TARGET FOLDER as it appears in the browser's address bar while looking at that
+    # folder - not the share root. The portal hides its upload form on a folder you may not write to,
+    # and the root is usually one of those.
+    #
+    # This is the default target on purpose: uploading eleven gigabytes into the wrong environment is a
+    # mistake worth making hard, and preproduction is the forgiving half.
+    ivanti_url_preprod: "https://nms.preprod.raspoly.ch/"
+
+    # The same for PRODUCTION. Only reached with `release upload-ivanti --target prod`, which has to be typed
+    # out - there is no short form and no default that reaches this.
+    ivanti_url_prod: "https://nms.raspoly.ch/"
+
+    # What the transfer actually rejects, in DECIMAL megabytes. Only used to check the finished parts -
+    # publish_split_mb is what they are sized to.
+    #
+    # Keeping the two apart matters: the target carries a safety margin, and a margin that fails the
+    # build the moment it is touched is not a margin.
+    publish_limit_mb: 500
+
+    # Publishing also writes the OVA as a split 7-Zip archive with volumes of this size, because Ivanti
+    # Secure Access refuses anything above 500 MB per file. The receiving side extracts the .001 with
+    # 7-Zip and gets the OVA back; nothing has to be joined by hand.
+    #
+    # It has to be 7-Zip over there - Windows Explorer cannot join a split archive in any format, ZIP
+    # included, so switching the format back would not make it double-clickable.
+    #
+    # DECIMAL megabytes: 450 here means 450'000'000 bytes, not 450 MiB. That distinction bit once -
+    # parts built with the binary unit came to 524 million bytes each, which Explorer happily calls
+    # "499 MB" while a transfer counting decimally sees 524 MB and refuses them.
+    #
+    # 450 rather than 500 on top of that: the limit is what the transfer rejects, not what to aim at.
+    # The margin costs a few more parts on a 10 GB template and buys room for whatever the channel
+    # counts differently.
+    #
+    # Raw slices rather than an archive, on purpose. Compression was measured: on a sample from a real
+    # 10 GB template it saved 0.6 % for six minutes of CPU time, because an OVA already contains a
+    # compressed, stream-optimized VMDK. Packing would also have put 7-Zip on the receiving side, which
+    # on a freshly deployed server is not there.
+    #
+    # 0 disables splitting and publishes the OVA on its own.
+    publish_split_mb: 450
+
+
+# --- THE TEST LEVELS ---------------------------------------------------------------------------
+#
+# WHAT EACH `test:gate` ABOVE ACTUALLY RUNS. Read by the kernel (`simplon.tasks.testrun`), not by
+# anything in packer/, which is why it is a TOP-LEVEL key and not nested under a phase the way
+# `build:` and `release:` are: the name `suites:` belongs to the kernel and cannot be moved without
+# the kernel losing it. The warning at the head of the product data sections applies in reverse
+# here - this one looks like ours and is not.
+#
+# THREE LEVELS, TWO OF THEM RUNNABLE (#21, and decision 6 of the M3 execution plan):
+#
+#   unit      the tooling's own seams, no VM             seconds
+#   artefact  the OVA and its fact sheet, without booting anything   ~30 s on an 11 GB image
+#   system    a booted template                          needs #20, lands in M4
+#
+# The middle one is the level #21 asked whether there should be, and it earns its place on one
+# trap: `virtual_hardware_version` decides which ESXi releases will accept the OVA, and a host
+# refuses one it does not know AT IMPORT - three hours after the build that produced it. Four
+# characters, ten kilobytes into the file, and until now nobody read them until a deployment failed.
+#
+# A LOCAL SYSTEM SUITE WAS REFUSED rather than postponed. Booting the VMX in Workstation would mean
+# re-opening WinRM, which the build closes on purpose, and the suite would then assert about an
+# artefact that is not the one shipped. That is worse than no system suite, because it reads as
+# coverage.
+#
+# EVERY GATE IS AN `impl:`, NOT A `suite:`, and the reason is measured rather than stylistic:
+# `simplon.pyvenv` - which a `suite:` gate hands the directory to - spells its interpreter
+# `<venv>/bin/python` and provisions it with `python3 -m venv`. Both are POSIX, and this product
+# builds Windows templates on Windows. An `impl:` gate runs in the launcher's own environment, which
+# is the one `swi.cmd` already provisioned. `packer/suites.py` is the four functions that wiring
+# needs, and the kernel's own allure module says a product is expected to own exactly that half.
+#
+# WHAT `impl:` COSTS, stated rather than discovered: such a gate may not declare `junit:` or
+# `args:`, so the junit path is chosen in packer/suites.py and `swi test unit -k name` is not a
+# thing. `test unit` never took arguments, so the second is a loss on paper.
+# --- THE HOST A TEMPLATE IS PROVEN ON (#20) -----------------------------------------------------------
+#
+# EMPTY ON PURPOSE, and it is not a placeholder waiting to be tidied away. There is no ESXi host for
+# this project yet. The section is declared so that the shape is fixed before the host arrives rather
+# than negotiated afterwards - the same reasoning that put `system` into `suites:` below with a
+# precondition that refuses.
+#
+# What it buys while empty: `swi support esxi` and the system gate say exactly WHICH of these is
+# missing instead of printing an issue number. A refusal a reader can act on is worth a section.
+#
+# NOT UNDER `environments:`, and that was tried on paper first. Two reasons, both measured against
+# simplon 0.12.0:
+#
+#   * the kernel keeps `name`, `backend` and `description` from an environment entry and DROPS
+#     everything else - `simplon.environments.parse_data` builds exactly those three. A `host:` written
+#     there parses without complaint and is then invisible, which is the worst failure shape there is;
+#   * an environment is WHERE COMMANDS RUN, and building stays local - it needs Workstation, an ISO and
+#     an hour. `swi --env esxi build template win2019` would be a sentence with no meaning, and making
+#     esxi an environment offers it on every command in the tree.
+#
+# See docs/plans/2026-09-16-milestone-4.md for the rest of the argument.
+esxi:
+
+  # The host itself. A standalone ESXi host or a vCenter - which one changes what the system suite can
+  # do, not what this section holds. With vCenter there is guest customisation and there are guest
+  # operations through VMware Tools; standalone has neither confirmed, which #13's paper flagged as the
+  # open question its own answer depends on.
+  host: ""
+
+  # A user that may create and delete a VM. Not a secret - the pair is, and the other half is not here.
+  user: ""
+
+  # Where the disk lands, and what the NIC is attached to. ovftool needs both by name for a VI target
+  # (-ds and -nw); with neither it picks, and a test that silently deploys somewhere nobody chose is
+  # how a datastore fills up.
+  datastore: ""
+  network: ""
+
+  # THE NAME OF THE VARIABLE, NEVER THE VALUE. swi.yaml is the reason this repository is private, and a
+  # second live credential in it would widen the problem #49 exists to close.
+  #
+  # Named here rather than hard-coded in the tooling for the same reason as `build: base: max_age_days`:
+  # it is a configuration fact, and a site that spells its secret differently should be able to say so
+  # in a diff rather than in a pull request against the Python.
+  #
+  # MEASURED, and it is the open question of this milestone: ovftool 5.0.0 takes credentials ONLY in the
+  # locator - `vi://[<username>[:<password>]@]<host>[:<port>]/<searchTerm>` - and there is no
+  # --password flag. So the obvious invocation puts a live credential in argv, readable by any process
+  # in the same session. Nothing here chooses a way around that yet; the tooling builds the locator
+  # WITHOUT the password and refuses to deploy, rather than picking a default nobody decided.
+  password_env: "SWI_ESXI_PASSWORD"
+
+suites:
+
+  # Beside the tests rather than under the project root, which is also the kernel's default. Said
+  # anyway: packer/suites.py has to know the same path to write into it, and a default agreed by
+  # silence in two places is the kind that drifts. Covered by .gitignore.
+  reports: tests/reports
+
+  # ORDER IS EXECUTION ORDER for `test accept`, and the first gate is the one that CLEARS - the
+  # kernel refuses any other arrangement. So `unit` opens the run and owns the results directory,
+  # and everything after it appends into the archive it started.
+  gates:
+
+    - name: unit
+      impl: "packer.suites:unit"
+      results: clear
+      # WHERE THE RUNNER PUT ITS RESULTS, so the kernel merges and tags them. Writing straight into
+      # the shared directory would have worked and would have cost the run its verdict: only a gate
+      # that clears or harvests OWNS the results dir, and only an owning gate has the run's verdict
+      # written into the archive as `environment.properties`. That distinction is the whole reason
+      # #21 names `simplon.verdict`, so the extra directory is the price of keeping it.
+      results_from: tests/reports/unit-results
+
+    - name: artefact
+      impl: "packer.suites:artefact"
+      results_from: tests/reports/artefact-results
+      # NO OVA MEANS NOT-RUN, NOT FAILED, and this key is the whole mechanism. A gate whose
+      # precondition refuses is stamped `not-run`: nothing is cleared, nothing is written, and the
+      # previous archive stands. Reporting "there is no OVA" as a failure would say the template is
+      # broken on a machine that has never built one - and would overwrite the last real run's
+      # verdict while doing it.
+      precondition: "packer.suites:an_ova_to_test"
+
+    # DECLARED AND NOT IMPLEMENTED, on purpose: the shape is fixed now so that #20 fills it in
+    # rather than negotiating it afterwards. The precondition refuses every time and names why, so
+    # every run of `test accept` carries a line saying which level it could not reach. Leaving the
+    # level out of this file until #20 lands would have been silence, and silence is what a suite
+    # that could not reach the VM must not produce.
+    - name: system
+      impl: "packer.suites:system"
+      precondition: "packer.suites:a_booted_template"
+
+  # NO `report:` BLOCK, and that is a measurement rather than an omission. Its one useful key here
+  # would be `parent_suite:`, which the kernel stamps onto merged results that carry none - and
+  # allure-pytest has already labelled every one of them `tests.unit` or `tests.artefact`, so the
+  # kernel's own merge reports "107 already labelled" and applies nothing. The level is the parent
+  # suite in the archive for free, which is the grouping that was wanted; declaring the key would
+  # have been a value that never fires, and its default ("Unit") would have been a lie on the
+  # artefact results if it ever did.
+  #
+  # `merge:` is likewise absent: each gate names its own output with `results_from:`, so there is no
+  # third-party result directory left for the report step to pick up.
+
+
+# --- CONTINUOUS INTEGRATION ------------------------------------------------------------------------
+#
+# One source, two outputs. `swi.cmd support workflows` writes .github/workflows/ from this section, and
+# a step names a COMMAND rather than a shell line: rename `test unit` and generation fails in the same
+# commit, where a hand-written `run:` would have kept calling something that is gone until a runner went
+# red. `--check` reports drift, so the generated file cannot quietly stop matching this.
+#
+# WHAT CI CAN AND CANNOT DO HERE, because the limit is unusual and worth stating rather than discovering.
+# This project builds Windows Server templates with VMware Workstation, downloads five gigabytes of
+# media and drives a browser through a VPN. None of that is a runner's business. What CI checks is the
+# half that has no such dependency: that the manifest still merges into what the renderer writes, and
+# that the generated completion still matches the manifest.
+#
+# ubuntu-latest, and that is a measured statement rather than a default. Until this section was written
+# the tooling could not be IMPORTED off Windows - `packer/paths.py` read LOCALAPPDATA at module level, so
+# pytest died with a KeyError before collecting anything. That is resolved on first use now, and the
+# tests pass with the variable taken away. A Windows runner would have been the alternative and a worse
+# one: `swi.sh` is the POSIX launcher and looks for `$VENV/bin/python`, which is not where Windows puts
+# it - so the generated `./swi.sh` step could not have run there at all.
+workflows:
+
+  ci:
+    note: |
+      Every push and every pull request, and it is the SAME two commands a developer types in a
+      checkout. Two routes to one verdict is the shape that lets a pipeline be green for months
+      without having run the thing it claims to check.
+    on: [push, pull_request]
+    jobs:
+      check:
+        note: |
+          The launcher provisions its own virtual environment from
+          deploy/provision/orchestrator/requirements.txt, so there is no install step here and no
+          second list of dependencies to keep in step with that file.
+
+          No `fetch-depth` reasoning of this product's own: the kernel emits it, and nothing here
+          derives a version from a tag. The template version is a value in `build: packer:`.
+
+          OUR OWN RUNNER SINCE 2026-09-17, and not as a preference. The hosted one stopped starting
+          on 2026-09-16: "The job was not started because an Actions budget is preventing further
+          use", zero steps executed, on every push. Making the repository public is not the way out -
+          the credentials in its history are why it is private (#49). And #16 had already established
+          that a hosted runner could never build a template anyway: VMware Workstation, one to three
+          hours and tens of gigabytes of scratch, against a six-hour limit. The budget is that
+          milestone arriving early.
+
+          Setup, resources and the registration are in docs/infrastructure/2026-09-17-the-linux-ci-runner.md.
+
+          ONE LABEL, AND NOT A LIST. `runs-on: [self-hosted, linux, swi]` is what somebody would
+          reach for, and simplon 0.15.0's generator coerces runs-on to a string - so a list arrives
+          in the workflow as a single label named "['self-hosted', 'linux', 'swi']". Valid YAML,
+          valid GitHub syntax, and a job that waits forever for a runner that cannot exist, with
+          nothing reporting anything. Measured, and filed as marcozwyssig/simplon#266.
+
+          A BARE `self-hosted` WOULD WORK TODAY and is the trap for later: the Windows build runner
+          will carry that label too, and a 23-second test job could then be scheduled onto a machine
+          three hours into a template build. One distinctive label per runner class avoids both, and
+          survives si#266 being fixed or not.
+        runs-on: swi-linux
+
+        # KEPT AT 3.12 rather than dropped, so this change moves ONE variable. The container has its
+        # own python3 and the launcher only needs one that can create a venv - but the green runs
+        # this project has were on 3.12, and changing the runner and the interpreter in one step
+        # would leave nothing to compare a failure against. If setup-python cannot serve 3.12 inside
+        # the LXC, dropping this key is the documented fallback.
+        python: "3.12"
+        steps:
+          - note: |
+              The seams where swi.yaml becomes configuration, and the renderer that hands it to
+              Packer. What they are worth was measured rather than assumed: moving the bool check
+              in `literal()` after the number check - bool is a subclass of int, so `true` would
+              render as `1` - fails seven of them, the round trip included.
+
+              THE UNIT LEVEL AND NOT `test accept`, deliberately. The artefact level needs a
+              published OVA and the system level needs a host; on a runner both report not-run,
+              and `accept` exits non-zero when any gate does - correctly, because a run that could
+              not probe the product is not a green run. That is a true statement and a useless
+              pipeline, so CI runs the one level a runner can actually reach.
+            command: test unit
+          - note: |
+              The completion is generated from this manifest, so it is a second description of the
+              command tree, and a second description drifts. Last, because it rules on a generated
+              file rather than on the code: a completion nobody regenerated must not hide whether
+              the tests are green.
+            command: support completion-check
+
+claude:
+  marketplaces:
+    claude-plugins-official:     { source: github, repo: anthropics/claude-plugins-official }
+    alexgreensh-token-optimizer: { source: github, repo: alexgreensh/token-optimizer }
+  plugins:
+    - superpowers@claude-plugins-official
+    - feature-dev@claude-plugins-official
+    - code-review@claude-plugins-official
+    - code-simplifier@claude-plugins-official
+    - security-guidance@claude-plugins-official
+    - frontend-design@claude-plugins-official
+    - github@claude-plugins-official
+    - pyright-lsp@claude-plugins-official
+    - token-optimizer@alexgreensh-token-optimizer
+
+# --- ENVIRONMENTS -------------------------------------------------------------------------------
+#
+# One entry, and it is a formality rather than a matrix: the registry may not be empty, and no group
+# in the tree above is env-first, so no command ever takes an environment token. Everything here runs
+# on the machine in front of you - the build needs VMware Workstation locally, and the upload needs a
+# browser you sign in to yourself.
+#
+# The place a second environment WOULD go is the Ivanti target, and it deliberately did not go here:
+# see `release upload-ivanti` above.
+default: local
+environments:
+  local: { backend: local, description: "This machine - VMware Workstation, and the browser you sign in with." }
+

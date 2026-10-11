@@ -23,16 +23,17 @@ from simplon.tasks import toolchain
 # one (si#105 defect 4), and the two toolchain coordinates placed the way a product places them.
 _MANIFEST = """\
 product: demo
-groups:
+ci:
   build:
     commands:
 {commands}
-  support:
-    commands:
-      toolchain: { task: "support:toolchain" }
-default: dev
-environments:
-  dev: { backend: local, description: "Local." }
+support:
+  commands:
+    toolchain: { task: "support:toolchain" }
+cd:
+  default: dev
+  environments:
+    dev: { backend: local, description: "Local." }
 """
 
 # The design's section 1 block, verbatim in shape: image / workdir / argv at the TOP LEVEL of `with:`.
@@ -241,7 +242,7 @@ def test_the_scaffolder_takes_the_version_from_the_command_line(product):
 
     # assert
     assert result.exit_code == 0, result.output
-    written = yaml.safe_load(product.read_text())["groups"]["build"]["commands"]
+    written = yaml.safe_load(product.read_text())["ci"]["build"]["commands"]
     assert written["compile"]["with"]["image"] == "silkeh/clang:19"
 
 
@@ -249,7 +250,7 @@ def test_the_scaffolder_takes_a_version_the_manifest_pins(product):
     # arrange: the design's 1b - the product declares its parameters and the command carries them
     _write(product, _OTHER)
     data = yaml.safe_load(product.read_text())
-    data["groups"]["support"]["commands"]["toolchain"] = {
+    data["support"]["commands"]["toolchain"] = {
         "task": "support:toolchain", "with": {"version": "20"}}
     product.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
@@ -258,7 +259,7 @@ def test_the_scaffolder_takes_a_version_the_manifest_pins(product):
 
     # assert
     assert result.exit_code == 0, result.output
-    written = yaml.safe_load(product.read_text())["groups"]["build"]["commands"]
+    written = yaml.safe_load(product.read_text())["ci"]["build"]["commands"]
     assert written["compile"]["with"]["image"] == "silkeh/clang:20"
 
 

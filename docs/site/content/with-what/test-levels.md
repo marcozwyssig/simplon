@@ -39,7 +39,7 @@ own chapter is that one body backs *every* level a product has, and the differen
 are data in a manifest section rather than code.
 
 ```yaml
-groups:
+ci:
   test:
     commands:
       unit:       { task: "test:gate", with: { name: "unit" },       help: "Run the unit suite." }
@@ -844,7 +844,7 @@ the page's own `## X.Y.Z` headings. Its three values live in a
 placing it is one line:
 
 ```yaml
-groups:
+ci:
   test:
     commands:
       release-notes: { task: "test:release-notes" }

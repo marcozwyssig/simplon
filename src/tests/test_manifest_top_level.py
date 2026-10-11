@@ -2,7 +2,7 @@
 
 WHAT si#159 ASKED. `groups:` is refused when it names a group the platform's tree does not declare, and
 the message is a good one. Every OTHER top-level key is subject to nothing: it is a product DATA section,
-the mechanism `site:`, `images:`, `releases:`, `workflows:`, `nexus:` and `claude:` all use, and a product
+the mechanism `website:`, `images:`, `releases:`, `workflows:`, `nexus:` and `claude:` all use, and a product
 adds its own freely. The ticket's worry was that a typo in one of those names is therefore silent - the
 section simply does not exist, the task that reads it behaves as though the product opted out, and no run
 says a word.
@@ -106,7 +106,7 @@ PUBLISHED_UNDER = "### The names the kernel has claimed"
 #: declared; the MODULES are derived and checked against this mapping, so a reader cannot join quietly.
 #:
 #: ONE entry reads no key of its own, `tasks.completion`: it fetches the document and hands it to
-#: `completiongen.environments_of`, which reads `environments:` and `default:` - keys `tasks.env` already
+#: `completiongen.environments_of`, which reads the matrix under `cd:` - a key `tasks.env` already
 #: declares. It is here because the derivation finds it, and a module that reads the document is a module
 #: this mapping must rule on, whether or not it has a key of its own. (`tasks.workflows` hands the
 #: document on too, to `workflowgen.parse`, but `workflows:` is read for that command and nobody else's,
@@ -129,8 +129,9 @@ MODULES: dict[str, tuple[str, ...]] = {
     # `carriers:` is read HERE and not in `carrierspec.py`, which is the same shape as `deployment`'s inner
     # half: that module is handed the document and validates it, this one is what reaches the document
     # and cross-checks an environment's `carrier:` against what it declares. The key belongs to whoever
-    # can name it when it is mistyped, and that is the reader with the document in its hand.
-    "environments": ("environments", "default", "carriers"),
+    # can name it when it is mistyped, and that is the reader with the document in its hand. The matrix
+    # itself stands under `cd:` since si#344 (`matrix_section`), so `cd` is the top-level key read.
+    "environments": ("cd", "carriers"),
     "labegress": ("lab_egress",),
     "labinstance": ("instance",),
     "nexusproxy": ("nexus",),
@@ -153,18 +154,18 @@ MODULES: dict[str, tuple[str, ...]] = {
     "tasks.completion": (),          # hands the document to `completiongen.environments_of`
     "tasks.conan": ("artifacts",),   # the same `artifacts:` section as tasks.artifact (si#127)
     "tasks.docs": ("doctoolchain_version",),
-    "tasks.env": ("environments", "default", "env_var"),
+    "tasks.env": ("cd", "env_var"),
     "tasks.image": ("images",),
     "tasks.nuget": ("artifacts",),   # likewise
     "tasks.maven": ("artifacts",),   # likewise, a fourth time (si#329)
     "tasks.releasenotes": ("releases",),
-    "tasks.site": ("site",),
+    "tasks.site": ("website",),
     "tasks.testrun": ("suites", "layout"),   # `layout:` decides where its merged report lands
     "tasks.workflows": ("workflows",),  # hands the document to `workflowgen.parse`
     # A rollout workflow (`flow:`) is written from the ENVIRONMENT MATRIX: the flow says the order, the
     # matrix says what each environment receives. So the generator reads the two sections the matrix
     # lives in, and only when a workflow declares stages - a product with no `flow:` hands it nothing.
-    "workflowgen": ("workflows", "environments", "default", "carriers"),
+    "workflowgen": ("workflows", "cd", "carriers"),
     "tracker": ("tracker",),
 }
 
@@ -209,8 +210,8 @@ SILENT_ON_ABSENCE = {
 DRIVERS: dict[str, tuple[dict, object]] = {
     "images": ({"images": {"web": {}}},
                lambda: image.declared(context.current().manifest_data(), "web")),
-    "site": ({"site": {"image": "x"}},
-             lambda: site.declared(context.current().manifest_data())),
+    "website": ({"website": {"image": "x"}},
+                lambda: site.declared(context.current().manifest_data())),
     "suites": ({"suites": {"gates": []}},
                lambda: testrun.declared(context.current().manifest_data())),
     "claude": ({"claude": {"marketplaces": {}}},
@@ -227,8 +228,8 @@ DRIVERS: dict[str, tuple[dict, object]] = {
     # loud when somebody asked for what the typo hid. That is the real failure and this drives it.
     "carriers": ({"carriers": {"haus": {"proxmox": {"node": "pve1", "kind": "lxc"},
                                         "portainer": {"url_from": "PORTAINER"}}},
-                  "environments": {"prod": {"backend": "local", "carrier": "haus"}},
-                  "default": "prod"},
+                  "cd": {"environments": {"prod": {"backend": "local", "carrier": "haus"}},
+                         "default": "prod"}},
                  lambda: environments.parse_data(context.current().manifest_data(), ("local",))),
     "releases": ({"releases": {"page": "releases.md"}}, releasenotes.declared),
     "assets": ({"assets": {"bundle": {}}}, lambda: asset._declared("bundle")),
@@ -245,17 +246,22 @@ DRIVERS: dict[str, tuple[dict, object]] = {
     "lab_egress": ({"lab_egress": {"interface": "eth0"}}, labegress.spec),
     "doctoolchain_version": ({"doctoolchain_version": "docker/x:1"},
                              lambda: docs._version(context.current().manifest_data())),
-    "environments": ({"environments": {"dev": {}}, "default": "dev"}, env.environments),
-    "default": ({"environments": {"dev": {}}, "default": "dev"}, env.environments),
+    "cd": ({"cd": {"environments": {"dev": {}}, "default": "dev"}}, env.environments),
     "build": ({"build": {"targets": {}}},
               lambda: buildfiles._declared_targets(context.current())),
-    "env_var": ({"environments": {"dev": {}}, "default": "dev", "env_var": "SAMPLE_ENV"},
+    "env_var": ({"cd": {"environments": {"dev": {}}, "default": "dev"}, "env_var": "SAMPLE_ENV"},
                 env.environments),
     "tracker": ({"tracker": {"title": "Refused: {scenario}"}}, tracker.declared),
     "layout": ({"layout": {"build_root": "kernel"}}, lambda: layout.declared({"layout": {}})),
 }
 
 KEYS = tuple(sorted({key for keys in MODULES.values() for key in keys}))
+
+#: The sections the LOADER reads the commands from (si#344), published in the same table because they are
+#: names the kernel has claimed just as much. Not in `MODULES`: `manifest.load` is handed the text and
+#: never calls `manifest_data()`, and a mistyped one is the loader's business, not a data reader's. `cd`
+#: is in both - the commands that take an environment, and the matrix they take it from.
+COMMAND_SECTIONS = ("ci", "cd", "support")
 
 
 def _mistyped(key: str) -> str:
@@ -418,8 +424,8 @@ def test_the_page_publishes_every_key_the_kernel_reads():
     published = _published()
 
     # act
-    unpublished = set(KEYS) - set(published)
-    stale = set(published) - set(KEYS)
+    unpublished = (set(KEYS) | set(COMMAND_SECTIONS)) - set(published)
+    stale = set(published) - set(KEYS) - set(COMMAND_SECTIONS)
 
     # assert
     assert published, f"{PAGE} publishes no key under '{PUBLISHED_UNDER}'"
@@ -445,7 +451,7 @@ def test_a_top_level_key_the_kernel_never_heard_of_is_read_by_nobody_and_refused
         monkeypatch, tmp_path):
     # arrange: the shape every measured product uses - a data section of the product's own invention,
     # here secure-windows-images' `packer:`, beside a correctly spelled kernel section
-    document = {"site": {"image": "hugomods/hugo:exts-0.148.2", "source": "site", "output": "build/site"},
+    document = {"website": {"image": "hugomods/hugo:exts-0.148.2", "source": "site", "output": "build/site"},
                 "packer": {"cpus": 4, "memory": 8192}}
     _register(monkeypatch, tmp_path, document)
 

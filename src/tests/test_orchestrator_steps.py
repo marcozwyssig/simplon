@@ -303,7 +303,7 @@ tasks:
   up-deploy: { impl: "demo.impls:deploy", help: "Deploy the lab." }
   accept: { impl: "demo.impls:accept", help: "The acceptance gate." }
 
-groups:
+ci:
   build:
     commands:
       unit: { task: "unit" }
@@ -312,6 +312,14 @@ groups:
         help: "The full build."
         depends_on: ["unit", "image"]
         stop_on_failure: BUILD_FLAG
+  test:
+    commands:
+      accept: { task: "accept" }
+      all:
+        help: "Every gate."
+        depends_on: ["build", "up", "accept"]
+        stop_on_failure: ROOT_FLAG
+cd:
   deploy:
     commands:
       up-preflight: { task: "up-preflight" }
@@ -320,14 +328,6 @@ groups:
         help: "Bring the lab up."
         depends_on: ["up-preflight", "up-deploy"]
         stop_on_failure: UP_FLAG
-  test:
-    commands:
-      accept: { task: "accept" }
-      all:
-        help: "Every gate."
-        depends_on: ["build", "up", "accept"]
-        stop_on_failure: ROOT_FLAG
-env_groups: [deploy]
 """
 
 # Three levels, so "the NEAREST flagged ancestor" and "the OUTERMOST flagged ancestor" are distinguishable:
@@ -349,7 +349,7 @@ tasks:
   b1: { impl: "demo.impls:b1", help: "The inner aggregate's sibling." }
   tail: { impl: "demo.impls:tail", help: "The step after everything." }
 
-groups:
+ci:
   gate:
     commands:
       a1: { task: "a1" }
@@ -363,6 +363,8 @@ groups:
         help: "The middle aggregate."
         depends_on: ["inner", "b1"]
         stop_on_failure: MID_FLAG
+# a non-phase group under cd: loads only because this manifest is loaded without a catalogue
+cd:
   run:
     commands:
       tail: { task: "tail" }
@@ -370,7 +372,6 @@ groups:
         help: "The whole run."
         depends_on: ["mid", "tail"]
         stop_on_failure: ROOT_FLAG
-env_groups: [run]
 """
 
 
@@ -767,7 +768,7 @@ tasks:
   aot: { impl: "demo.impls:aot", help: "The shared dependency." }
   image: { impl: "demo.impls:image", help: "Build the image." }
 
-groups:
+ci:
   build:
     commands:
       jar: { task: "jar" }
@@ -781,10 +782,11 @@ groups:
         help: "Declares aot too."
         depends_on: ["aot", "image"]
         stop_on_failure: true
+# a non-phase group under cd: loads only because this manifest is loaded without a catalogue
+cd:
   run:
     commands:
       root: { help: "The whole run.", depends_on: ["early", "late"] }
-env_groups: [run]
 """
 
 
@@ -838,7 +840,7 @@ tasks:
   other: { impl: "demo.impls:other", help: "What the guard protects." }
   later: { impl: "demo.impls:later", help: "A step after the guard." }
 
-groups:
+ci:
   gate:
     commands:
       shared: { task: "shared" }
@@ -847,10 +849,11 @@ groups:
       first: { help: "Planned first.", depends_on: ["shared"] }
       mid: { help: "Declares shared too.", depends_on: ["shared", "other"] }
       guarded: { help: "Wants to stop.", depends_on: ["mid"], stop_on_failure: true }
+# a non-phase group under cd: loads only because this manifest is loaded without a catalogue
+cd:
   run:
     commands:
       root: { help: "The whole run.", depends_on: ["first", "guarded", "later"] }
-env_groups: [run]
 """
 
 

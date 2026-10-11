@@ -29,7 +29,7 @@ product: demo
 tasks:
   fmt: { impl: "demo_impls:fmt", help: "Format the sources." }
   lint: { impl: "demo_impls:lint", help: "Lint the sources." }
-groups:
+ci:
   code:
     commands:
       fmt: { task: "fmt" }

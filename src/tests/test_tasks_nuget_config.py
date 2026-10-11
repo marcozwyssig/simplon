@@ -40,8 +40,6 @@ artifacts:
   nohost:
     image: mcr.microsoft.com/dotnet/sdk:9.0
     project: src/Core/Core.csproj
-groups: {}
-env_groups: []
 """
 
 

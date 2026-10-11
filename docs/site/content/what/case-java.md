@@ -112,7 +112,7 @@ The manifest line behind it names a callable, not a tool:
 ```yaml
 tasks:
   build:   { impl: "orchestrator.gradle:build", help: "Compile and jar the product (gradle, in Docker)." }
-groups:
+ci:
   build:
     commands:
       jar:  { task: build }

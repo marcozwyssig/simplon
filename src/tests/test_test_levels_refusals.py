@@ -54,7 +54,7 @@ MANIFEST = textwrap.dedent("""\
     tasks:
       gate:   { impl: "simplon.tasks.testrun:gate", help: "Run a level.", passthrough_args: true }
       accept: { impl: "simplon.tasks.testrun:accept_cmd", help: "Run them all.", passthrough_args: true }
-    groups:
+    ci:
       build:
         commands:
           compile:

@@ -496,3 +496,46 @@ def test_generated_cli_help_runs_end_to_end(tmp_path):
     assert res.returncode == 0, res.stderr
     assert "fooctl orchestrator" in res.stdout
     assert "deploy" in res.stdout
+
+
+def test_simplon_manifest_migrate_runs_without_loading_the_manifest(tmp_path, monkeypatch):
+    # arrange: an OLD-form manifest that the cut kernel will refuse to load - this entry point must not care
+    (tmp_path / "demo.yaml").write_text("product: demo\ngroups:\n  build:\n    commands:\n      w: { task: x }\n")
+    monkeypatch.chdir(tmp_path)
+
+    # act
+    rc = bootstrap.main(["manifest", "migrate"])
+
+    # assert
+    assert rc == 0
+    assert (tmp_path / "demo.yaml").read_text().startswith("product: demo\nci:\n")
+
+
+def test_simplon_manifest_migrate_names_the_candidates_when_it_cannot_choose(tmp_path, monkeypatch, capsys):
+    # arrange: two manifests, so there is no single one to default to
+    for name in ("a.yaml", "b.yaml"):
+        (tmp_path / name).write_text(f"product: {name[0]}\n")
+    monkeypatch.chdir(tmp_path)
+
+    # act
+    rc = bootstrap.main(["manifest", "migrate"])
+
+    # assert
+    assert rc == 2
+    assert "found a.yaml, b.yaml here" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("argv", [["manifest"], ["manifest", "migrat"], ["manifest", "--help"]])
+def test_simplon_manifest_without_a_known_subcommand_is_usage_and_scaffolds_nothing(tmp_path, monkeypatch,
+                                                                                   capsys, argv):
+    # arrange: `manifest` is a namespace, not a product name - falling through to `init` scaffolded a
+    # product called "manifest"
+    monkeypatch.chdir(tmp_path)
+
+    # act
+    rc = bootstrap.main(argv)
+
+    # assert
+    assert rc == 2
+    assert capsys.readouterr().err == "usage: simplon manifest migrate [MANIFEST]\n"
+    assert list(tmp_path.iterdir()) == []

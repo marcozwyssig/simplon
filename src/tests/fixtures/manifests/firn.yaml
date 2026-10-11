@@ -1,0 +1,1496 @@
+# firn's delivery manifest: the one place the build, the test gate and the release say
+# what they are. Simplon (simplon.orchestrator.manifest) assembles ./firn.sh from it.
+#
+# WHAT THIS REPLACED, and why three files became one. The same flow used to be declared
+# three times and nowhere reconciled: `Makefile` (build/test/native/image),
+# `.gitlab-ci.yml` (the long pipeline) and `.github/workflows/ci.yml` ("deliberately the
+# short version"). A step that exists only in a CI file is a second way to do the thing --
+# `./firn.sh test all` has to be the SAME command in the pipeline and on a developer's
+# machine, or the two drift and the next divergence is found by whoever has the least
+# context. The workflow under `workflows:` below is GENERATED from this file, so a renamed
+# command breaks generation loudly instead of leaving a pipeline calling a command that is
+# gone.
+#
+# THERE ARE NO PRODUCT TASK BODIES. Every command below instantiates a catalogue
+# coordinate, so this repository carries no Python of its own beyond the adapter
+# `simplon init` wrote. That is deliberate: AGENTS.md fixes the kernel's dependency budget
+# at picocli, JUnit, AssertJ and JMH, and the smallest delivery layer that does the job is
+# the one that stays out of the way of that rule. See docs/adr/0008.
+product: firn
+
+# --- the toolchain ---------------------------------------------------------------------
+#
+# ONE JDK FOR EVERY STEP. Until this manifest existed, `compile` and `test` ran on
+# Temurin (eclipse-temurin:25-jdk) and only `native` ran on GraalVM
+# (ghcr.io/graalvm/native-image-community:25). The compiler that produced the classes was
+# therefore never the compiler the binary was built from, and any difference between them
+# could only surface in the one stage that costs minutes. deploy/provision/builder/Dockerfile is
+# the single image all three now run in; it also builds src/pkg/Dockerfile's builder stage,
+# so a container image and a local `firn build native` are the same build in the same
+# place.
+#
+# That one JDK is BellSoft Liberica NIK 25, musl flavour, since #78 -- it was GraalVM CE.
+# Only that build ships the JDK's static musl libraries for aarch64, and without them the
+# product's own image was an x86_64 artifact its developers could not build. The image
+# reference below does not change: the tag is pinned to the JDK's MAJOR version, which is
+# still 25, and a vendor move is a rebuild of `build toolchain` rather than a new tag
+# (gradle/libs.versions.toml records the exact build; docs/07-docker.md §1, adr/0002).
+#
+# Gradle is IN the image, pinned to gradle/libs.versions.toml's version. That is
+# what removed the wrapper problem rather than working around it: the wrapper was
+# generated and never committed, so every pipeline that called ./gradlew died at exit 127
+# before it read a build file.
+#
+# No `-p`: the Gradle build root IS the repository root, and `toolchain:run` mounts the
+# product root at `workdir`. Naming a subdirectory there would mount the repository root
+# AT that path rather than descend into it, which is worth knowing before someone tries it.
+# The whole tree has to be visible either way -- the fixture tests walk up from a module
+# directory to find tests/acceptance/ and docs/.
+#
+# GRADLE_USER_HOME IS NAMED HERE NOW, once, in `env:` on every toolchain command; it used to
+# be an `ENV` in deploy/provision/builder/Dockerfile pointing at `/work/.gradle` (#202). What
+# did not change is that the home must be INSIDE the mount: `toolchain:run` runs as the CALLING
+# user, who owns the bind mount and nothing else, so a home under / is not writable for that uid
+# and Gradle dies on "Could not initialize native services" before reading anything. What changed
+# is where inside -- `build/`, this product's output directory, instead of beside the sources.
+#
+# THREE THINGS FOLLOW, and they are why the image's line was struck rather than edited:
+#
+#   - `rm -rf build` takes it. State beside the sources survived every cleanup this repository
+#     has; 18 MB of it was sitting in each worktree, measured 2026-09-24.
+#   - simplon's ownership check (si#319) walks the OUTPUT directory. A `.gradle/` next to the
+#     sources is not walked at all, so the kernel's check went past us rather than over us.
+#     It was not in the kernel pinned when this was written (0.21.0 carried neither
+#     `outputs.py` nor `ensure_home`), so Gradle created the directory itself and this manifest
+#     was the only thing that said where. The line did not wait for a pin bump, and the bump to
+#     0.25.0 (#949) found the state already there: the kernel now creates `build/home` itself.
+#   - the uid fault stops being silent. `firn.sh` runs as `--user "$(id -u):$(id -g)"`, so a
+#     state tree in the mount belongs to whoever created it first and is served by whoever runs
+#     now; a changed uid meets `Could not set file mode 700 on '.../daemon/<version>': Operation
+#     not permitted`. Under the output directory si#319 creates the home host-side as the caller
+#     and refuses a tree somebody else owns, and `rm -rf build` is the whole repair.
+#
+# WHY GRADLE_USER_HOME AND NOT HOME, which is what si#319's kernel hands over. Measured in this
+# image on 2026-09-24: the JVM takes `user.home` from the passwd entry and ignores $HOME whenever
+# that entry names a real directory -- as root, `-e HOME=/tmp/xyz` still yields
+# `user.home = /root`. Every run on this machine is root, so a HOME alone would leave Gradle's
+# state at `/root/.gradle` INSIDE the container, rebuilt from nothing every single run. Gradle
+# reads GRADLE_USER_HOME itself, so it is the one statement that holds for every uid. It names
+# the same directory the kernel's HOME will: `<output>/home/.gradle`.
+#
+# THE PRICE, MEASURED RATHER THAN ESTIMATED (2026-09-24, x86_64, two rounds each, identical task
+# sets): `build compile` is 5 s warm and 21-24 s with the home deleted, `test all` 7 s warm and
+# 27 s with it deleted. So a first run in a fresh output directory costs 16-20 s more, and that
+# is the dependency cache being fetched once per OUTPUT DIRECTORY instead of once per worktree.
+# docs/07-docker.md §1 carries the table. That is the whole of the trade.
+#
+# `.gradle/` stays gitignored: Gradle's PROJECT cache dir is `<build root>/.gradle` and no
+# environment variable moves it -- only `--project-cache-dir` does -- so a small one is still
+# written beside the sources. Measured: 227 KB after `build compile`, 482 KB after `test all`,
+# holding 9.7.1/, buildOutputCleanup/ and vcs-1/. What left is the big half, 17-22 MB of
+# caches/, daemon/, native/, native-build-tools/ and notifications/.
+
+# The three tasks this product declares of its own. Everything else in the tree is a catalogue
+# coordinate, which is the point of the kernel; these are the parts of `dev deploy up` the
+# kernel has nothing to instantiate for, because each of them runs a program on the HOST.
+#
+# THE CATALOGUE WAS CHECKED RATHER THAN ASSUMED for the two that arrived with #283 and #287: its 43
+# coordinates run things inside a container (`toolchain:run`), build and push images, cut releases
+# and render documents, and not one of them runs a program on the HOST. The container reading of
+# `build extension` -- a node image to build, and `toolchain:run` to run `tsc` in -- is the variant
+# Marco did not choose on 2026-09-25; the extension is packaged with whatever node the person has.
+tasks:
+  devcontainer-open:
+    impl: "orchestrator.devcontainer:open_editor"
+    help: "Open the development container in VS Code, or print the address to open."
+  # THE ONE BUILD STEP THAT HAD NO COMMAND (#283). It was eleven lines of shell inside
+  # `.devcontainer/host-image.sh` ending in `return 0` when the host had no `npx`, which made it the
+  # only step in this tree that could do nothing and report success.
+  extension-package:
+    impl: "orchestrator.extension:package"
+    help: "Package src/typescript/vscode into build/firn.vsix with the host's node."
+  # THE OTHER HALF OF #197, and on the host for the same reason as the packaging: `vsce` is npm and
+  # the toolchain image carries no node. It publishes the FILE the step above wrote rather than
+  # packaging again -- the task's docstring has why -- and it reads its token from `VSCE_PAT` so that
+  # no secret is ever a line in this manifest.
+  extension-publish:
+    impl: "orchestrator.extension:publish"
+    help: "Publish build/firn.vsix to the Visual Studio Marketplace. Needs VSCE_PAT."
+  # WHAT THE EDITOR CHECKS BEFORE FIRN IS CALLED (#287). VS Code's `Check Docker is running` runs
+  # ahead of `initializeCommand`, so on the "Reopen in Container" path firn never gets to speak;
+  # this is the same question asked on the way in that firn does own.
+  docker-preflight:
+    impl: "orchestrator.preflight:check"
+    help: "Check that docker answers and that the socket the editor looks for exists."
+
+groups:
+  build:
+    commands:
+      # The toolchain image itself, built before anything runs in it. Declared as an
+      # ordinary image so it is built by the same command that builds the product's, and
+      # so the reference a build tags is the reference the commands below name.
+      toolchain:
+        task: "build:image"
+        with: { name: toolchain }
+        help: "Build the toolchain image every other build step runs in."
+      # `assemble testClasses`, not `build` and not `assemble` alone, and the pair is
+      # measured rather than chosen: `gradle build` depends on `check` and therefore runs
+      # the tests, so a failing assertion would make the COMPILE red; `gradle assemble`
+      # alone never runs compileTestJava, so a test source that does not compile is green
+      # here and red in the gate. The pair means what the two commands are called.
+      #
+      # ALL THREE LEVELS, and `systemClasses` was missing (#156). The system level is the one
+      # `check` does not carry, so a system test that did not compile was green here AND green
+      # in the gate, and the first thing to say so was the separate `System` job. That is the
+      # same argument `testClasses` is on this line for, applied to the level it had been
+      # forgotten for.
+      compile:
+        task: toolchain:run
+        with:
+          image: ghcr.io/marcozwyssig/firn-toolchain:25
+          workdir: /work
+          # Where Gradle keeps its state: under the output directory, so `rm -rf build` takes it
+          # and simplon's ownership check sees it. Stated once and aliased by every command
+          # below -- the reasoning is in the toolchain section at the top of this file (#202).
+          env: &gradle_home { GRADLE_USER_HOME: /work/build/home/.gradle }
+          argv: [gradle, assemble, testClasses, acceptanceClasses, systemClasses, --no-daemon, --console=plain]
+        help: "Compile every module and its test sources, all three levels."
+      # THE SAME BINARY THE IMAGE SHIPS. -PnativeStatic=true was dropped here by #12 -- the
+      # command was "the host's binary", the image's static one was the image's business,
+      # and on aarch64 the static build could not run at all. #78 made the second reason
+      # false and the first one useless, and both halves are measured, in the NIK musl
+      # toolchain image:
+      #
+      #   with    -PnativeStatic=true   static-pie linked, no interpreter
+      #   without -PnativeStatic=true   interpreter /lib/ld-musl-<arch>.so.1, + libz.so.1
+      #
+      # THIS BLOCK USED TO SAY "runs anywhere" ON THAT FIRST ROW, AND IT WAS NOT TRUE. #78
+      # read it off `file`, which reports linkage; nothing started the binary. #110 did, and
+      # it segfaulted before printing its version -- for eleven months, on every machine
+      # (#148). The cause was the toolchain image's libc rather than the flag: Alpaquita's
+      # musl-perf resolves strlen and three more through IFUNC, native-image's object file
+      # declares them UND STT_FUNC, and GNU ld then binds the call to the IFUNC RESOLVER, so
+      # strlen returns a function pointer. deploy/provision/builder/Dockerfile installs
+      # musl-default instead and docs/adr/0021 records the trade.
+      #
+      # So the row is a measurement now, taken 2026-09-19 on x86_64 with the rebuilt image.
+      # `firn --version` answers `firn 0.1.0-SNAPSHOT`, rc 0, in three places: the glibc
+      # host, this musl toolchain image, and gcr.io/distroless/static-debian13, which has no
+      # libc at all. THAT is what "runs anywhere" was claiming, and it is what the three
+      # rows now show.
+      #
+      # The toolchain image is musl, so the binary WITHOUT the property is linked against
+      # Alpaquita's musl and does not run on the glibc host that asked for it. The useful
+      # binary and the shipped binary are the same binary, so this command builds that one.
+      # src/pkg/Dockerfile still passes the property itself and that is not redundancy: the
+      # two are separate builds and neither may depend on the other's flags
+      # (docs/07-docker.md §1, docs/08-m2-plan.md D1).
+      #
+      # THE PROPERTY IS AN OVERRIDE RATHER THAN A SWITCH SINCE #156, and this line is why it
+      # stays spelled out here. With the property absent the build asks the JDK whether it
+      # carries the static musl libraries, so `test all` and `test system` build this same
+      # binary and stop proving a near relative of what the image ships. Stating it here still
+      # says what THIS command produces, which is what a help line is for, and it would keep
+      # producing it if the default ever moved.
+      native:
+        task: toolchain:run
+        with:
+          image: ghcr.io/marcozwyssig/firn-toolchain:25
+          workdir: /work
+          env: *gradle_home
+          argv: [gradle, ":firn-cli:nativeCompile", -PnativeStatic=true, --no-daemon, --console=plain]
+        help: "Build the static native firn binary."
+      # linux/amd64 ONLY, on purpose (#949). The image declares two platforms, and without
+      # `platform:` this command would build arm64 under QEMU too: about 46 minutes cold, on every CI
+      # `system` job and every `deploy devcontainer`. Every consumer of this command wants the one
+      # image it can run: CI's image checks, host-image.sh, a developer. simplon loads it as
+      # `<ref>-linux-amd64` and, on an amd64 host, also as the plain `<ref>` everything else names.
+      #
+      # ONE EMULATED STEP REMAINS, AND IT IS SIMPLON'S (measured, #949): 0.25.0 bakes the
+      # `contexts:` toolchain for EVERY declared platform even when `platform:` narrows the image,
+      # so a cold builder also builds the arm64 toolchain stage under QEMU (about 155 s, once; it is
+      # cached after). A runner without an arm64 emulator therefore fails a cold `build image` too
+      # (docs/07-docker.md §7).
+      # [amended, #949] Gone since simplon 0.25.1 (si#355): the toolchain is baked for the narrowed
+      # platform only, so this command needs no emulator.
+      image:
+        task: "build:image"
+        with: { name: firn, platform: linux/amd64 }
+        help: "Build the container image from src/pkg/Dockerfile, for linux/amd64 only."
+      # THE RELEASE'S BUILD, A COMMAND OF ITS OWN (#949). The same image for every declared platform,
+      # linux/amd64 and linux/arm64, which is what `release push-image` refuses to publish without:
+      # simplon records each platform's digest here and holds the pushed index against that
+      # record (after the push, not before: docs/07-docker.md §7).
+      #
+      # A SECOND ENTRY RATHER THAN A PARAMETER on `build image`. Left unpinned, `platform:` would be
+      # a flag every everyday caller has to remember, and the one that forgets pays 46 minutes;
+      # pinned on one command and omitted on the other, each name says what it costs. It is the
+      # shape this file already uses for `support workflows` and `support workflows-check`.
+      release-image:
+        task: "build:image"
+        with: { name: firn }
+        help: "Build the container image for every platform a release publishes (linux/amd64, and linux/arm64 under QEMU: about 46 min cold)."
+      # THE EVERYDAY BUILD FOR AN ARM64 DAEMON (#949), which is what a Mac with Apple silicon runs
+      # (docs/07-docker.md §5 records Marco's Colima as darwin/arm64). `build image` there would be an
+      # amd64 build under emulation, and simplon tags the plain `<ref>` only when the platform built
+      # is the daemon's own, so `.devcontainer/host-image.sh` would find no image under the name it
+      # tags for the test bed. The script asks the daemon its architecture and calls this one on
+      # arm64; on this x86_64 runner nothing calls it, and under QEMU it is the 46-minute build.
+      image-arm64:
+        task: "build:image"
+        with: { name: firn, platform: linux/arm64 }
+        help: "Build the container image for linux/arm64 only: the everyday build on an arm64 host."
+      # THE .vsix, AND IT IS A BUILD STEP LIKE THE FOUR ABOVE IT NOW (#283). It was the only one
+      # without a command: `.devcontainer/host-image.sh` carried npm, tsc and vsce inline and
+      # returned 0 when the host had no npx, so the single step that could silently produce nothing
+      # was also the single step nobody could run, name or gate.
+      #
+      # ON THE HOST, with the host's node, which is Marco's decision of 2026-09-25 over the other
+      # reading of the same issue -- a node image, built and pulled for one `tsc`. The test bed
+      # carries no node (docs/07-docker.md §5 lists the absences and why each is the point), so the
+      # `.vsix` has to be written on this side of the mount either way.
+      #
+      # A HOST WITHOUT NODE NOW FAILS, with the reason and what to install. That is the whole of the
+      # behaviour change, and it is the point: the line it replaces was indistinguishable from a
+      # green run except by reading the log.
+      extension:
+        task: "extension-package"
+        help: "Package the VS Code extension into build/firn.vsix. Needs node on the host."
+      # THE PROJECT `test image-model-error` MOUNTS, written rather than committed (#185).
+      #
+      # It is a `build` command because it ends in a file rather than in a verdict, which is
+      # the line this group already draws for `acceptance-document` two entries down.
+      #
+      # WHY IT IS NOT COMMITTED, in one sentence, with the rest in the task's own comment:
+      # a project is a directory with a `firn.toml`, `:firn-cli:modelFormatCheck` walks every
+      # one of them, and `firn fmt` cannot write a model that does not resolve -- so the one
+      # project the image has to be REFUSED by is the one project this tree cannot carry. The
+      # task writes it under `build/`, which the walk prunes by name, so both gates keep
+      # exactly the meaning they have today and neither learns an exception.
+      #
+      # A COMMAND OF ITS OWN RATHER THAN A `dependsOn`, because the command that consumes it
+      # runs host-side and this one runs in the toolchain: nothing in Gradle can order the two,
+      # so the ordering is written where it is real, which is the CI job and this help line.
+      image-fixture:
+        task: toolchain:run
+        with:
+          image: ghcr.io/marcozwyssig/firn-toolchain:25
+          workdir: /work
+          env: *gradle_home
+          argv: [gradle, ":firn-cli:systemImageProject", --no-daemon, --console=plain]
+        help: "Write build/system/broken-project, the unresolvable project `test image-model-error` mounts."
+      # THE ACCEPTANCE DOCUMENT, read off tests/acceptance/**/*.feature (#19). The same files
+      # `test all` executes and `test walk` walks, rendered as Markdown -- what is derivable is
+      # generated, so nobody maintains a list of what firn verifies beside the scenarios that
+      # verify it.
+      #
+      # UNDER `build` AND NOT UNDER `test`, and the coordinate leaves that open on purpose:
+      # `docs:` is a FAMILY rather than a placement (si#34), so it names what the task IS and
+      # the product says where it belongs. Everything under `test` here ends in a verdict or a
+      # number; this ends in a file, which is what `build` is for.
+      #
+      # THE PAGE IS NOT COMMITTED, and that is a decision rather than an omission. It is read
+      # off feature files this repository already carries, so a committed copy is a second
+      # spelling of a fact the tree has -- exactly what `support workflows-check` exists to
+      # police for .github/workflows/, which is committed only because GitHub requires the file
+      # to be in the repository. Nothing requires this one: firn has no website and no `site:`
+      # section. So `output` points into build/, which .gitignore already covers.
+      #
+      # The day firn publishes a site that changes, and it is a small change: point `output` at
+      # the page, commit it, and declare it in a `generated:` section so that `test:generated`
+      # regenerates it and fails when the committed copy has drifted.
+      #
+      # [#294, adr/0040] THE DAY ABOVE CAME, HALF-WAY: firn has a website now, and the page is one of
+      # its sources, so `output` points into the Hugo content tree -- Hugo renders nothing outside it.
+      # It is still NOT COMMITTED, for the reason above: docs/site/content/scenarios.md is gitignored
+      # the way simplon's docs/site/content/with-what/acceptance.md is, and the site is built into
+      # build/website/ and published nowhere (#197/#198 are Marco's).
+      acceptance-document:
+        task: "docs:acceptance"
+        with:
+          output: docs/site/content/scenarios.md
+          title: "Every scenario"
+        help: "Write the acceptance document into docs/site/content/, read off tests/acceptance/**/*.feature."
+      # THE "USING FIRN" PAGES (#294, adr/0040 decision 3): one page per acceptance fixture, with the
+      # files the fixture hands to firn, its scenarios and its expected/ tree. simplon's
+      # `docs:acceptance` lists what the scenarios ARE; a reader learning firn also needs the model
+      # and the output they are about, and those are in the fixture, not in the feature file. A
+      # Gradle task rather than a task body here because it reads the feature files through
+      # `FeatureFile`, the reader the suite executes them with, and a second Gherkin reader is how
+      # a page and a run come to disagree.
+      site-pages:
+        task: toolchain:run
+        with:
+          image: ghcr.io/marcozwyssig/firn-toolchain:25
+          workdir: /work
+          env: *gradle_home
+          argv: [gradle, ":firn-cli:sitePages", --no-daemon, --console=plain]
+        help: "Write docs/site/content/using/, one page per acceptance fixture."
+      # The Hugo run itself, simplon's coordinate unchanged: its values are the `site:` section
+      # below. It renders whatever is in the content tree, so on its own it renders the pages the
+      # last `site-pages` and `acceptance-document` wrote -- `docs` is the command that orders them.
+      site:
+        task: "docs:site"
+        help: "Render docs/site/ into build/website/ with Hugo, in its pinned container."
+      # THE WEBSITE AS ONE COMMAND, simplon's `build docs` in firn's tree: the two writers, then the
+      # reader. `depends_on` is where that order is STATED; siblings run in list order, so the list
+      # is the edge. Not a CI step and not published: it ends in a directory under build/.
+      docs:
+        help: "Write the generated pages, then build the website from them into build/website/."
+        depends_on: [site-pages, acceptance-document, site]
+      # FIRN'S OWN KERNEL CODE, WRITTEN BY FIRN (adr/0079). Runs the kernel this checkout builds
+      # over src/firn/bootstrap and replaces src/java/<module>/src/generated/java with what it writes.
+      # The one way to change a generated file: edit the model, then run this.
+      bootstrap:
+        task: toolchain:run
+        with:
+          image: ghcr.io/marcozwyssig/firn-toolchain:25
+          workdir: /work
+          env: *gradle_home
+          argv: [gradle, ":firn-cli:bootstrap", --no-daemon, --console=plain]
+        help: "Regenerate the checked-in kernel sources (Handles, the Java function registry) from src/firn/bootstrap's models."
+  test:
+    commands:
+      # `check`, not `test`, because this project's `check` is not the stock one:
+      # build.gradle.kts wires formatCheck into it, so `check` runs the suite AND
+      # the format gate. .gitlab-ci.yml said the same thing in prose ("there is no
+      # separate lint job"); here it is the command.
+      #
+      # IT BUILDS THE BINARY THE IMAGE SHIPS (#156). `check` has depended on `nativeCompile`
+      # since #110 because the acceptance level runs a binary rather than the test JVM; since
+      # #156 that binary is linked the way src/pkg/Dockerfile links it, and
+      # `:firn-cli:nativeImageRuns` starts it once before the levels so that a binary which
+      # links and does not run is one line rather than one per scenario. It costs nothing
+      # measurable -- the workflow note below has the alternating runs.
+      all:
+        task: toolchain:run
+        with:
+          image: ghcr.io/marcozwyssig/firn-toolchain:25
+          workdir: /work
+          env: *gradle_home
+          argv: [gradle, check, --no-daemon, --console=plain]
+        help: "Run the tests and the format check. The gate AGENTS.md requires."
+      # THE TWO LEVELS, EACH ON ITS OWN (#110). Until this issue the levels were three
+      # directory names and nothing else: `test all` was one `gradle check` returning one
+      # exit code, so a red build did not say which level went red and neither level could
+      # be run by itself. The `suites:` section at the bottom of this file is the taxonomy
+      # those two commands are the runnable half of.
+      #
+      # `gradle test` is the unit level exactly because the acceptance suite left it: since
+      # #110 `AcceptanceScenarioTest` lives in src/test/acceptance/java/firn-cli and has
+      # its own source set, so `test` and `acceptanceTest` no longer overlap.
+      #
+      # NEITHER REPLACES `test all`, and that is the point rather than a gap. `check`
+      # carries the two levels AND the two format gates (formatCheck over *.java,
+      # modelFormatCheck over *.firn), which is what AGENTS.md's "green" means; a command
+      # that ran the levels alone would be a weaker gate wearing the same name.
+      #
+      # `test unit --tests X` RUNS X WHEREVER IT LIVES (#850). The extra arguments reach
+      # `gradle test`, which selects the task in every module; build.gradle.kts turns off each
+      # module's "no matching tests" failure for a filtered run and fails once, in
+      # `testFilterMatched`, when no module ran a test. The reason it is there and not here is
+      # beside that task: the setting has no command-line flag.
+      unit:
+        task: toolchain:run
+        with:
+          image: ghcr.io/marcozwyssig/firn-toolchain:25
+          workdir: /work
+          env: *gradle_home
+          argv: [gradle, test, --no-daemon, --console=plain]
+        help: "Run the unit level on its own: src/test/unit/java/<module>. `--tests X` finds X in any module."
+      acceptance:
+        task: toolchain:run
+        with:
+          image: ghcr.io/marcozwyssig/firn-toolchain:25
+          workdir: /work
+          env: *gradle_home
+          argv: [gradle, acceptanceTest, --no-daemon, --console=plain]
+        help: "Run the acceptance level on its own: every scenario under tests/acceptance/."
+      # THE CONTAINER ITEM, executable at last (#110, simplon si#301).
+      #
+      # `tests/system/README.md` carried this item on its "what the level does not execute" list
+      # for one reason that no commit in this repository could close: every command that runs
+      # anything was `toolchain:run`, which mounts the product root and named cache volumes and
+      # nothing else, so a test that shelled out to `docker` was red for a reason that had
+      # nothing to do with the image. simplon 0.19.0 adds the verb that was missing -- it runs
+      # what the daemon already holds, host-side, and never pulls -- and the item moves off that
+      # list and into this line.
+      #
+      # WHAT IT PROVES, and it is exactly the half the other four items cannot reach: the
+      # RUNTIME STAGE of src/pkg/Dockerfile. `--version` would prove the binary starts; `check`
+      # over a bind-mounted project proves the three directives that stage actually consists of
+      # -- the binary copied into a distroless base, the bootstrap models copied to
+      # /usr/local/share/firn/, and WORKDIR /workspace where a mount lands. A `check` needs
+      # core.firn, so an image that shipped the binary and forgot the models fails here and
+      # nowhere else.
+      #
+      # `[]` is the whole expectation and it is a precise one: `check --format json` prints an
+      # EMPTY array for a project with no findings, and a project with one prints `[{...}]`,
+      # which does not contain it. The fixture is read only in this command -- nothing writes
+      # into the checkout -- so `gen` is deliberately not what runs here.
+      #
+      # `platform: linux/amd64` on this command and its two siblings below, for `build image`'s
+      # reason (#949): the image declares two platforms, and without it every run would also start
+      # the arm64 image under QEMU, which `build image` no longer builds. The release asks the same
+      # three questions of arm64 through the `-arm64` commands further down.
+      container:
+        task: "test:image"
+        with: &container
+          name: firn
+          platform: linux/amd64
+          mount: "tests/acceptance/03-hello-entity:/workspace"
+          argv: "check --format json"
+          expect: "[]"
+        help: "Run the shipped linux/amd64 container image over a bind-mounted project."
+      # THE OTHER HALF OF THE SAME IMAGE (si#303). `container` above proves the runtime stage
+      # answers; this proves it REFUSES, which is the half a green-path check cannot reach --
+      # an entrypoint that ignored its arguments and exited 0 would pass the command above.
+      #
+      # `rc:` IS AN EXPECTATION, NOT A TOLERANCE, and that is simplon's formulation of the rule
+      # this repository asked for: `rc: 3` means exactly 3, so an image that started answering 0
+      # here goes red rather than quietly widening what counts as green.
+      #
+      # WHY 3 AND NOT 1, AND WHY THAT IS NO LONGER THE WHOLE STORY (#185).
+      # `tests/system/projects/broken` carries a model that does not resolve, which is
+      # `MODEL_ERROR` (1) -- but it carries no `firn.toml`, because every directory in this
+      # repository holding one is walked by the `.firn` format gate and formatting needs a model
+      # that resolves (docs/03 §4.1 writes every reference qualified). So it is not a PROJECT,
+      # the image finds none in it, and the refusal it gives is `IO_ERROR` (3) -- measured, not
+      # assumed. That is a claim worth keeping on its own: "firn could not read it" is a
+      # different outcome from "your model is wrong", and a Makefile branches on the difference.
+      #
+      # What used to be written here is that 1 was reachable from no fixture at all. It is
+      # reachable now, from the command below, which mounts THE SAME MODEL with the two lines of
+      # `firn.toml` the tree cannot carry written into it at build time. The pair is the point:
+      # one model file, one difference between the two mounts, two exit codes.
+      image-refuses:
+        task: "test:image"
+        with: &image_refuses
+          name: firn
+          platform: linux/amd64
+          mount: "tests/system/projects/broken:/workspace"
+          argv: "check"
+          rc: 3
+        help: "Run the shipped linux/amd64 image over a directory that is not a project, and expect its refusal."
+      # THE OTHER REFUSAL, AND THE ONE THE IMAGE COULD NOT BE ASKED FOR (#185). `MODEL_ERROR`
+      # (1) is what firn answers when it READ a project and the model does not resolve. The
+      # acceptance level has reached it since `08-enum` (E007) and the JUnit half of the system
+      # level since #110 (`ExitCodeSystemTest.aModelErrorExitsOneAndIsNotACrash`); the shipped
+      # IMAGE was never run against it, which is the gap this issue measured.
+      #
+      # `build image-fixture` FIRST, and the ordering is real rather than tidy: the mount is
+      # written by a Gradle task inside the toolchain and this command runs host-side, so no
+      # build tool can order the two. Without it this refuses by name -- the mount is not a
+      # directory -- rather than testing something else.
+      #
+      # `expect:` BESIDE `rc:` because 1 alone would not say the model was READ. A container whose
+      # binary died before `main` exits with a number too, and `ExitCode.LSP_UNEXPECTED_EXIT`
+      # carries this very one (docs/02-architecture.md §7); `error[E200]: cannot resolve 'emails'`
+      # can only have come from a project that was loaded, resolved against the metamodel the
+      # image ships at /usr/local/share/firn/, and refused on its merits. The string is the one
+      # `ExitCodeSystemTest` asserts against the binary, so the image and the binary are held to
+      # one sentence rather than two. It bites: with the model failing on a different reference
+      # this goes red on `exited 1 and did not say what was expected` (tests/system/README.md).
+      image-model-error:
+        task: "test:image"
+        with: &image_model_error
+          name: firn
+          platform: linux/amd64
+          mount: "build/system/broken-project:/workspace"
+          argv: "check"
+          rc: 1
+          expect: "error[E200]: cannot resolve 'emails'"
+        help: "Run the shipped linux/amd64 image over a project whose model does not resolve, and expect MODEL_ERROR (run `build image-fixture` first)."
+      # THE SAME THREE QUESTIONS, ASKED OF THE ARM64 IMAGE (#949). Only the release runs them, after
+      # `build release-image` has loaded that platform as `<ref>-linux-arm64`; `docker run --platform
+      # linux/arm64` then starts it under QEMU, a few seconds each. An arm64 image that cannot start,
+      # forgot the models or exits with the wrong code is found here, before the push, rather than by
+      # an arm64 user.
+      #
+      # ONE COMMAND PER PLATFORM RATHER THAN THE UNPINNED DEFAULT, which would run every declared
+      # platform in one step. Pinned, the Actions log names the platform in the step that went red,
+      # and amd64 is asked by the very commands CI asks it with. The bodies are the three above with
+      # one key changed (a YAML merge), so the two platforms cannot be asked different questions.
+      container-arm64:
+        task: "test:image"
+        with: { <<: *container, platform: linux/arm64 }
+        help: "Run the shipped linux/arm64 image (under QEMU) over a bind-mounted project; the release runs it."
+      image-refuses-arm64:
+        task: "test:image"
+        with: { <<: *image_refuses, platform: linux/arm64 }
+        help: "Run the shipped linux/arm64 image over a directory that is not a project, and expect its refusal."
+      image-model-error-arm64:
+        task: "test:image"
+        with: { <<: *image_model_error, platform: linux/arm64 }
+        help: "Run the shipped linux/arm64 image over a project whose model does not resolve, and expect MODEL_ERROR."
+      # THE SYSTEM LEVEL (#110, the second half). It asks what neither level above it asks:
+      # not "does firn generate the right thing" but "does the thing we ship work as a
+      # system" -- the exit codes a Makefile branches on, the `--format json` a wrapper
+      # parses, and the startup budget docs/06-roadmap.md M2 makes a gate. tests/system/
+      # holds what it runs against and says, item by item, what it executes and what it
+      # does not.
+      #
+      # NOT IN `test all`, and this is the one level that is not. `check` is what a
+      # developer types before every commit, and the two levels in it ask about THIS
+      # COMMIT'S SOURCES; this one asks about an artefact, and its questions do not change
+      # when a source file does. It has a CI job of its own below for the reason the
+      # regression gate has one: a red job should be called "System" rather than "Check",
+      # so the first hour of an investigation is not spent in the wrong place.
+      #
+      # `:firn-cli:systemTest` builds the binary it runs -- the task depends on
+      # `nativeCompile` -- so this one command works on a clean checkout. Since #110 `check`
+      # depends on it too, through the acceptance level, so on a machine that has just run
+      # `test all` this costs nothing but the tests.
+      #
+      # "THE SHIPPED BINARY" IN THE HELP LINE BECAME TRUE IN #156. It was the binary built
+      # without -PnativeStatic=true until then, while src/pkg/Dockerfile passes it -- which is
+      # how #148 stayed invisible for four weeks. The link mode costs this level nothing
+      # measurable: 36 s and 31 s without it against 33 s and 31 s with it, 2026-09-19.
+      system:
+        task: toolchain:run
+        with:
+          image: ghcr.io/marcozwyssig/firn-toolchain:25
+          workdir: /work
+          env: *gradle_home
+          argv: [gradle, ":firn-cli:systemTest", --no-daemon, --console=plain]
+        help: "Run the system level on its own: the shipped binary, against tests/system/."
+      # THE SAME SCENARIOS, WITH A PERSON ANSWERING (#19). `all` above EXECUTES every
+      # `.feature` file under tests/acceptance/ -- AcceptanceScenarioTest reads them and turns
+      # each scenario into a JUnit test that runs `firn` -- and this walks the same files with
+      # a human giving the verdict on each Given/When/Then. What a caller chooses by typing
+      # this instead of `test all` is WHO answers, never WHICH scenarios exist: there is one
+      # set of files and no second list anywhere.
+      #
+      # Directly under `all` because that is the verdict it has to be comparable with, and
+      # because simplon's `test:` namespace makes that a placement rule rather than a taste.
+      # Declared only now: the coordinate refuses a product with no `.feature` files, so
+      # before #19 this line would have been a command that failed on sight.
+      walk:
+        task: "test:walk"
+        help: "Walk the acceptance scenarios with a person answering each step."
+      # The `.firn` FORMAT GATE, run ON ITS OWN. `all` above carries it too: firn-cli's
+      # build file wires modelFormatCheck into `check`, the way the root build wires
+      # formatCheck over *.java into it. That is deliberate -- AGENTS.md tells every
+      # contributor to run `test all` before every commit, so a gate outside it is a gate
+      # the developer loop does not have, and CI would be the first to say the models went
+      # non-canonical.
+      #
+      # This command therefore adds no coverage. It exists because the two gates fail for
+      # unrelated reasons: this one runs THE PRODUCT over this repository's own models,
+      # once per firn.toml in the tree, and needs the CLI to have been built first. When
+      # `all` goes red on canonical form, this is how you re-run just that half.
+      #
+      # It is NOT a CI step for the same reason formatCheck is not one: `Check` already
+      # ran it, and a pipeline step that repeats the previous step's work reports the same
+      # fact twice and takes twice as long to say it.
+      #
+      # `--continue` so a single run names EVERY project that is not canonical rather than
+      # the first one: the projects are independent, and stopping at the first turns one fix
+      # into four rounds. `firn fmt` with no --check is the way back, as
+      # `gradle :firn-cli:modelFormat`.
+      model-format:
+        task: toolchain:run
+        with:
+          image: ghcr.io/marcozwyssig/firn-toolchain:25
+          workdir: /work
+          env: *gradle_home
+          argv: [gradle, ":firn-cli:modelFormatCheck", --continue, --no-daemon, --console=plain]
+        help: "Check every .firn in a project here for canonical form: `firn fmt --check`."
+      # Inside `test all` as well; its own command so that a red one says which gate it was.
+      bootstrap:
+        task: toolchain:run
+        with:
+          image: ghcr.io/marcozwyssig/firn-toolchain:25
+          workdir: /work
+          env: *gradle_home
+          argv: [gradle, ":firn-cli:bootstrapCheck", --no-daemon, --console=plain]
+        help: "Check that the generated kernel sources are what src/firn/bootstrap generates (adr/0079)."
+      # THE GRAMMARS, RUN RATHER THAN READ (#292). adr/0030 shipped two TextMate grammars and a
+      # Java guard that holds their WORD LISTS to the lexer, and that guard's own javadoc named
+      # what it could not do: nothing in this repository ran a TextMate engine. #292 is the bill.
+      # A grammar's meaning is which rule wins where, so a rule whose scopes all exist and whose
+      # words all come from the lexer can still be shadowed by the rule above it -- green in
+      # every check this repository had, and wrong in the only place anybody looks at it.
+      #
+      # IT IS THE ENGINE VS CODE RUNS, not a second reading of the JSON: `vscode-textmate` over
+      # `vscode-oniguruma`, which is why it is node and not Java. adr/0030 weighs the three ways
+      # #292 offered and says why this is the one taken.
+      #
+      # A STEP OF ITS OWN RATHER THAN PART OF `test all`, for the reason `system` and the three
+      # image commands above are: `test all` is one `gradle check` inside the pinned toolchain
+      # image, and that image carries a JDK and no node. This is not "outside the gate" -- the
+      # `ci` workflow below runs it on every pull request, beside `test all`, and the `suites:`
+      # section declares it. What it does cost is named in adr/0030: a grammar edited by somebody
+      # who types only `test all` is a grammar nobody tokenized until CI says so.
+      #
+      # WHAT IT COSTS, measured on 2026-09-25 on this machine, three runs each: 0.87-1.00 s with
+      # the npm cache deleted, 0.76-0.80 s with it warm. The whole gate is under a second.
+      #
+      # `npm_config_cache` UNDER build/ for the reason GRADLE_USER_HOME is (#202): `rm -rf build`
+      # takes it. The two tarballs are fetched once per output directory and never again --
+      # driven with `--network none`, a cold cache fails naming both URLs and a warm one installs
+      # in 223 ms and runs green. `node_modules` stays beside the sources like the extension's
+      # and is gitignored; it is 386 KB, which is the whole of why #202's argument does not
+      # reach it.
+      #
+      # `npm ci` AND NOT `npm install`: the lockfile carries both integrity hashes, and a gate
+      # free to resolve a different tree than the one that was reviewed is not one.
+      grammar:
+        task: toolchain:run
+        with:
+          image: node:22-alpine
+          workdir: /work
+          env: { npm_config_cache: /work/build/home/.npm }
+          argv:
+            - sh
+            - -c
+            - >-
+              npm --prefix src/typescript/grammar ci --no-audit --no-fund
+              && npm --prefix src/typescript/grammar test
+        help: "Run the editor's TextMate grammars through the engine VS Code runs them through."
+      # THE EXTENSION'S OWN TESTS, which nothing ran until the form became a keyboard (spec
+      # 2026-10-02-resource-editor-design.md §7). Same shape as `grammar` and for the same reason: the
+      # toolchain image has no node, so this cannot live in `gradle check`. `node --test` drives the
+      # extension against `test/fake-editor.js`, so it needs no editor and no server. Measured on
+      # 2026-10-02: 278 tests in about 3 s with a warm npm cache.
+      #
+      # `extension-tests` AND NOT `extension`, AND THE KERNEL DECIDED THAT, for the fourth time in this
+      # file (`push-image`, `toolchain-pin`, `publish-extension`). A `depends_on` entry is a bare command
+      # name and `deploy devcontainer` depends on `build extension`, so a second `extension` in `test`
+      # was refused at load:
+      #
+      #   ValueError: command 'deploy.devcontainer': dependency 'extension' is ambiguous
+      #   (owned by groups ['build', 'test'])
+      #
+      # `build extension` is the name five other files use, so this is the half that moves.
+      extension-tests:
+        task: toolchain:run
+        with:
+          image: node:22-alpine
+          workdir: /work
+          env: { npm_config_cache: /work/build/home/.npm }
+          argv:
+            - sh
+            - -c
+            - >-
+              npm --prefix src/typescript/vscode ci --no-audit --no-fund
+              && npm --prefix src/typescript/vscode test
+        help: "Run the VS Code extension's tests against the fake editor."
+      # NOT part of `test all`, and that is AGENTS.md's rule rather than a preference: a
+      # benchmark is not a test, it lives in src/test/bench/java/<module> and it runs in its own
+      # job. It is declared here so the number a pipeline takes and the number a developer
+      # takes come from the same command in the same pinned image -- the reason this file
+      # exists at all.
+      #
+      # `-PbenchWork=/tmp/firn-bench` puts the corpus on the container's own file system.
+      # Without it the gigabytes land in the bind mount, and on a laptop the generate column
+      # then measures virtiofs rather than firn (docs/benchmarks.md says which one a row was
+      # taken on).
+      baseline:
+        task: toolchain:run
+        with:
+          image: ghcr.io/marcozwyssig/firn-toolchain:25
+          workdir: /work
+          env: *gradle_home
+          argv: [gradle, ":firn-bench:baseline", --no-daemon, --console=plain]
+        help: "One whole run per size over the D8 corpus, as docs/benchmarks.md records it."
+      jmh:
+        task: toolchain:run
+        with:
+          image: ghcr.io/marcozwyssig/firn-toolchain:25
+          workdir: /work
+          env: *gradle_home
+          argv: [gradle, ":firn-bench:jmh", --no-daemon, --console=plain]
+        help: "The JMH benchmarks for load, resolve, rules and generate."
+      # THE SUMMANDS OF #306. Every LSP request resolves the whole project and keeps nothing, so
+      # one costs 16-20 s whatever it asks -- and 16 s is a SUM. This prints its parts.
+      #
+      # TWO GRADLE TASKS IN ONE INVOCATION, because the corpus and the measurement must meet
+      # inside the same container. `/root/bench-work` is not mounted -- `toolchain:run` mounts the
+      # product root and nothing else -- so the corpus a person made on the host is invisible
+      # here, and a corpus written into the mount would be measured through virtiofs. So
+      # `baseline` writes it into the container's own /tmp (and reports load and resolve on the
+      # way, which is the cross-check), and the report then reads it from there.
+      #
+      # NOT in `test all`, for the reason `baseline` and `jmh` are not: a measurement is not a
+      # test (AGENTS.md).
+      request-cost:
+        task: toolchain:run
+        with:
+          image: ghcr.io/marcozwyssig/firn-toolchain:25
+          workdir: /work
+          env: *gradle_home
+          argv: [gradle, ":firn-bench:baseline", -PbenchSizes=1000000, -PbenchPhases=resolve,
+                 -PbenchWork=/tmp/firn-306, ":firn-lsp:requestCostReport",
+                 -PrequestCostProject=/tmp/firn-306/corpus-999999-1, --no-daemon,
+                 --console=plain]
+        help: "What one LSP request spends its 16 s on, phase by phase over a 1M corpus (#306)."
+      # WHAT A REFERENCE FIELD'S LIST COSTS (#346). The resolve is memoised since #306, so what is
+      # left to price is the walk over a `range` -- and at this size a range admits up to 142,857
+      # resources, so building all of them to show two hundred would be #306's mistake one layer
+      # down. It reports the bounded walk against the unbounded one as its control.
+      #
+      # The same two-task shape `request-cost` has, and for the same reason: the corpus and the
+      # measurement must meet inside one container, because `toolchain:run` mounts the product root
+      # and nothing else.
+      candidate-cost:
+        task: toolchain:run
+        with:
+          image: ghcr.io/marcozwyssig/firn-toolchain:25
+          workdir: /work
+          env: *gradle_home
+          argv: [gradle, ":firn-bench:baseline", -PbenchSizes=1000000, -PbenchPhases=resolve,
+                 -PbenchWork=/tmp/firn-346, ":firn-lsp:candidateCostReport",
+                 -PcandidateCostProject=/tmp/firn-346/corpus-999999-1, --no-daemon,
+                 --console=plain]
+        help: "What a reference field's candidate list costs over a 1M corpus (#346)."
+      # THE REGRESSION GATE of docs/08-m2-plan.md D10 (#69). One whole 10k run over the D8
+      # corpus, compared against the numbers docs/benchmarks.md §9.3 commits: red when any
+      # tracked number is more than 20 % worse, and red -- rather than wrong -- when the
+      # numbers were taken on another JVM or over another corpus.
+      #
+      # NOT in `test all`, for the reason `baseline` and `jmh` are not: a benchmark is not a
+      # test (AGENTS.md). It is its own CI job below, so that a red gate is called "Regression
+      # gate" and not "Check", and so that a shared runner's worst minute never stands in
+      # front of a commit.
+      #
+      # `-PbenchWork=/tmp/firn-gate` is load-bearing and not tidiness. The gate compares a
+      # `generate` column, and without this the corpus and the output tree land in the
+      # repository's build/bench -- a bind mount, measured at 11x for that phase
+      # (docs/benchmarks.md §2). /tmp inside the container is the container's own file system,
+      # and it is what makes §4.3's two virtiofs columns trackable at all here.
+      regression:
+        task: toolchain:run
+        with:
+          image: ghcr.io/marcozwyssig/firn-toolchain:25
+          workdir: /work
+          env: *gradle_home
+          argv: [gradle, ":firn-bench:regression", -PbenchWork=/tmp/firn-gate, --no-daemon, --console=plain]
+        help: "Fail when a tracked number of docs/benchmarks.md is over 20 % worse (D10)."
+  release:
+    commands:
+      # The catalogue's own body: cut the tag at HEAD and push that ONE tag, refusing a
+      # commit main does not carry. This line confirms the placement, nothing more.
+      tag: { task: "release:tag" }
+      # `push-image` AND NOT `image`, for the reason `support toolchain-pin` is not `toolchain`
+      # (#283): a `depends_on` entry is a BARE command name, so `deploy devcontainer` could not
+      # name the image it builds while two groups both spelled a command `image` --
+      #
+      #   ValueError: command 'deploy.devcontainer': dependency 'image' is ambiguous
+      #   (owned by groups ['build', 'release'])
+      #
+      # `build image` is the one the whole repository names -- CI, host-image.sh, docs/07-docker.md,
+      # tests/system/README.md -- and this one was named in this file and in one line of
+      # docs/07-docker.md. It also says what it does: `build image` makes the image, this pushes it.
+      push-image:
+        task: "release:image"
+        with: { name: firn }
+        help: "Push the image for every platform as one manifest list, and verify each platform is in the registry with the digest the build recorded (run `build release-image` first)."
+      # A PRODUCT TASK UNDER `release`, like `build extension` is one under `build`: the catalogue
+      # publishes images and tags and has nothing that uploads to a marketplace, and this runs on the
+      # HOST rather than in the toolchain image, which is what makes it this product's body.
+      #
+      # `publish-extension` AND NOT `extension`, AND THE KERNEL DECIDED THAT, for the third time in
+      # this file (`push-image`, `toolchain-pin`, and now this). `extension` matches `build extension`
+      # and reads better, and it was written that way first; a `depends_on` entry is a bare command
+      # name, so the load refused it in one line:
+      #
+      #   ValueError: command 'deploy.devcontainer': dependency 'extension' is ambiguous
+      #   (owned by groups ['build', 'release'])
+      #
+      # `build extension` is the one `deploy devcontainer` depends on and the one every other file
+      # names, so this is the half that moves.
+      #
+      # IT DOES NOT DEPEND ON `build extension`. That looks like the obvious edge and it is the wrong
+      # one: a publish is the one step in this tree that cannot be undone, and a dependency would
+      # silently repackage the tree as it stands, which is how a publish comes to carry a change
+      # nobody reviewed. It refuses a missing `build/firn.vsix` instead, and the sentence names the
+      # command to run.
+      publish-extension:
+        task: "extension-publish"
+        help: "Publish build/firn.vsix to the Visual Studio Marketplace. Needs VSCE_PAT."
+  support:
+    commands:
+      # THE ADR INDEX, from the records rather than by hand (#305). Under `support` and not
+      # `build`, because it changes a file in the tree rather than producing an artefact -- the
+      # same reason `fmt` is not a build step. `test all` holds the result: the table is red when
+      # it no longer matches the records, and this is the fix.
+      adr-index:
+        task: toolchain:run
+        with:
+          image: ghcr.io/marcozwyssig/firn-toolchain:25
+          workdir: /work
+          env: *gradle_home
+          argv: [gradle, ":firn-core:adrIndex", --no-daemon, --console=plain]
+        help: "Write docs/adr/README.md's table from the records' own Index: lines."
+      # THE TEXT METRICS TABLE, from the font the toolchain image carries (adr/0062 D1). Under
+      # `support` beside `adr-index` for the same reason: it rewrites a checked-in file rather than
+      # producing an artefact. It runs in the toolchain because that is where the font is, pinned
+      # by version and hash in deploy/provision/builder/Dockerfile; the generator refuses any
+      # other file, so an unchanged font rewrites the same table.
+      font-table:
+        task: toolchain:run
+        with:
+          image: ghcr.io/marcozwyssig/firn-toolchain:25
+          workdir: /work
+          env: *gradle_home
+          argv: [gradle, ":firn-diagram:fontTable", --no-daemon, --console=plain]
+        help: "Write LiberationSerif13.java from the Liberation Serif in the toolchain image."
+      # THE KERNEL'S CLASS ICONS (adr/0076, Q-I6), drawn by a generator from their descriptions
+      # and checked in under src/firn/kernel/icons, beside adr-index for the same reason.
+      kernel-icons:
+        task: toolchain:run
+        with:
+          image: ghcr.io/marcozwyssig/firn-toolchain:25
+          workdir: /work
+          env: *gradle_home
+          argv: [gradle, ":firn-core:kernelIcons", --no-daemon, --console=plain]
+        help: "Write src/firn/kernel/icons, the kernel's own class icons, from their generator."
+      install: { task: "support:install" }
+      # Kept reachable because it is what wrote the toolchain block above; a later JDK
+      # bump is `firn support toolchain-pin java 26` rather than a hand edit.
+      #
+      # `toolchain-pin` AND NOT `toolchain`, AND THE KERNEL DECIDED THAT (#283). A `depends_on`
+      # entry is a BARE command name -- simplon.orchestrator.manifest rule 4 -- so a name two
+      # groups both use can never be depended on. `deploy devcontainer` naming `toolchain` was
+      # refused in exactly those words:
+      #
+      #   ValueError: command 'deploy.devcontainer': dependency 'toolchain' is ambiguous
+      #   (owned by groups ['build', 'support'])
+      #
+      # One of the two had to move and this is the cheaper one by twenty references to two: the
+      # whole repository says `build toolchain` -- CI, host-image.sh, the builder Dockerfile,
+      # docs/07-docker.md -- and `support toolchain` was named in this file and nowhere else. It
+      # also reads better for what it is: it edits the pin, it does not build anything.
+      toolchain-pin:
+        task: "support:toolchain"
+        help: "Rewrite the toolchain block in this manifest, e.g. for a JDK bump."
+      # The generator behind `workflows:` below.
+      workflows: { task: "support:workflows" }
+
+      claude-plugins:
+        task: "support:claude-plugins"
+        help: "Install the Claude Code plugins this repo is developed with, as declared in the manifest's `claude` section (#1286); idempotent, --dry-run previews."
+        params:
+          dry_run: { help: "print what is missing, change nothing", short: "-n" }
+
+      # The same body, pinned to report-only. Two commands over one task rather than a
+      # flag on the CI line, because a `command:` step names a command and nothing else --
+      # that is what lets the generator resolve it against the tree and go red when a
+      # command is renamed.
+      workflows-check:
+        task: "support:workflows"
+        with: { check: true }
+        help: "Report drift between .github/workflows/ and this manifest, writing nothing."
+      # PREPARING A RUNNER FOR THE RELEASE'S ARM64 HALF (#951). `build release-image` builds linux/arm64
+      # under QEMU on an x86_64 runner (#949), so the runner needs the emulator registered, and
+      # registered again after every reboot. The recipe in docs/07-docker.md section 7 differs between a
+      # VM and an LXC; simplon 0.26.0 (si#358) turned it into this coordinate, which asks
+      # `systemd-detect-virt`, installs nothing when the `simplon` builder already lists linux/arm64,
+      # and checks the builder afterwards. Offered by the catalogue rather than placed, so it is placed
+      # here. Run it as root on the runner, with `-n` first: `sudo ./firn.sh support ci-arm64 -n`.
+      ci-arm64: { task: "support:ci-arm64" }
+
+# --- images ------------------------------------------------------------------------------
+#
+# `registry` is required even for a purely local build, deliberately: the reference a build
+# tags is the reference a release pushes, and an unqualified name is what docker resolves
+# against Docker Hub.
+# ---------------------------------------------------------------------------------------------------
+# THE TEST LEVELS, DECLARED (#110). Until this section existed firn had three directory names --
+# src/test/unit/java/<module>, tests/acceptance/, tests/system/ -- and nothing anywhere checked them
+# against anything. One of the three was not even true: the acceptance suite lived inside the unit
+# directory, so the level that runs the product end to end was a file in the level that does not.
+#
+# `command:` GATES, NOT `impl:`. The issue asked for `impl:` "because the runner is Gradle and the
+# kernel is not taught Gradle" -- and si#106 is exactly that case, answered in the kernel rather than
+# worked around here: a product whose runner is a containerised toolchain has no Python body to point
+# an `impl:` at, so a gate may name A COMMAND IN THIS TREE and the kernel runs it the way the CLI
+# does, with the command's own `with:` pinned. The gate therefore reports on the command a person
+# actually types, and the two cannot come to mean different things. simplon 0.16.0 (#119) is what
+# brought it within reach; before that the issue's reading was the right one.
+#
+# `results: clear` ON THE FIRST GATE, which si#61 makes the rule for a product with no pytest
+# anywhere in it: the run opens with this gate and the results directory starts empty. Without it a
+# product like this one cannot write a loadable taxonomy at all.
+#
+# WHAT IS DELIBERATELY NOT A GATE HERE:
+#   - the benchmarks (`test baseline`, `test jmh`, `test regression`). A benchmark is not a test
+#     (AGENTS.md), and `test regression` goes red on a 20 % regression -- a thing that must not be
+#     called "Check". This is #110's own Gap 4 and it survives the issue unchanged.
+#   - the format gates (formatCheck over *.java, modelFormatCheck over *.firn). They are gates but
+#     not levels: they ask whether the source is canonical, not whether the product works. They run
+#     inside `test all` because AGENTS.md's gate is what a developer types before every commit.
+#   - `integration`. It does not exist, and it is not declared empty: that is the lesson of
+#     tests/system/, where a level that could not run looked like coverage for four milestones.
+#     tests/README.md carries the decision that firn has none and what would create one.
+#
+# `system` JOINED THE LIST THE DAY IT EXECUTED SOMETHING, which is the other half of the same rule.
+# #110 declared `unit` and `acceptance` and deliberately left this one out while tests/system/ held
+# a README and nothing else; it is here now because `./firn.sh test system` runs the binary and can
+# be red on its own. What it does NOT execute -- the container image, the language server -- is
+# named in tests/system/README.md with the measurement, rather than declared and skipped.
+#
+# IT IS THE ONE GATE `test all` DOES NOT CARRY, and the command beside it says why.
+# ---------------------------------------------------------------------------------------------------
+# --- the development environment -------------------------------------------------------
+#
+# WHAT `dev deploy up` DOES, and why it is a deployment at all. An environment is a place a
+# version is put, and the place this one names is a container described by this repository:
+# `.devcontainer/` carries the toolchain, node for `src/typescript/vscode`, and firn itself built
+# and installed inside. `local` is pinned because it is the only selector that means
+# anything here -- a development environment IS the working tree, and a published tag would
+# be a deployment of something else under the same verb (si#308).
+#
+# THE KERNEL BRINGS IT UP AND NAMES NO EDITOR. That is si#308's decision and it is right:
+# `devcontainer.json` is an open specification that JetBrains Gateway and DevPod read too,
+# and a delivery kernel that opened VS Code would couple every product using it to VS Code.
+# The opening is ours, because the extension is ours -- `orchestrator.devcontainer` computes
+# the `vscode-remote://` address from the folder and hands it to `code`, or prints it on a
+# machine with no screen.
+#
+# THE PIN MOVED WITH IT. `backend: devcontainer` arrived in simplon 0.21.0 and this product
+# pins that, so the section below is exercised rather than declared. What it took to know
+# that is in requirements.txt beside the pin: the refusal changed from "no backend
+# registered for 'devcontainer'" to the backend's own, which is the only thing a version
+# number cannot show.
+  deploy:
+    commands:
+      # AN AGGREGATE, because one command is what a person types. The kernel brings the
+      # container up; the second step opens it. Splitting them would make the useful thing
+      # two commands and the second one easy to forget.
+      #
+      # `stop_on_failure` HERE AND ON `devcontainer`, so a refused preflight does not end in an
+      # editor pointed at a container that was never built. The flag scopes to the subtree of the
+      # outermost ancestor that carries it, so the two agree by saying the same thing rather than
+      # by one shadowing the other.
+      up:
+        depends_on: [devcontainer, open]
+        stop_on_failure: true
+        help: "Bring up the development container and open it in VS Code."
+      # THE BUILD PLAN, DECLARED (#283). `.devcontainer/host-image.sh` used to be the only place
+      # that said what a bring-up builds, and it says it as a shell script because it has to: VS
+      # Code's own "Reopen in Container" calls `initializeCommand` and never goes through
+      # `firn.sh`, so a declaration here cannot reach that way in. Both ways therefore run the SAME
+      # commands -- this one declares them, the adapter calls them -- rather than two build plans
+      # that drift.
+      #
+      # WHAT THAT COSTS ON THIS WAY IN, stated rather than hidden: `host-image.sh` runs again as
+      # `initializeCommand` inside `devcontainer-only` below, and it re-packages the extension,
+      # because the only guard that would stop it is a freshness rule and this repository has
+      # already learned once what a timestamp guard is worth here (the comment in host-image.sh
+      # about containers). `build toolchain` runs twice too, and the second run is a cached second.
+      # Since #949 the image build is the script's alone, and it runs on every bring-up before the
+      # script's currency check, so a dirty-tree edit still reaches the container (#221); unchanged,
+      # it is all `CACHED` in about 3 s. The extension's cost is unmeasured: the machine this was
+      # written on has no node at all.
+      #
+      # AND WHAT IT DOES NOT EXPRESS: with `FIRN_IMAGE` set to a published release, `host-image.sh`
+      # exits before it builds anything, while the graph below still builds the toolchain.
+      # `depends_on` is a list and not a condition, so that case cannot be written here;
+      # nothing is published yet (#197, #198), and the day one is, this line is what has to change.
+      #
+      # `image` LEFT THIS LIST WITH #949, for the same reason one step further. Since the image
+      # declares two platforms the everyday build has to name one, and the right one is the
+      # daemon's: `build image` (linux/amd64) on an x86_64 host, `build image-arm64` on an arm64
+      # one, where the other would be an emulated build whose plain tag the test bed never sees.
+      # Which daemon answers is a condition, so `host-image.sh` (run by `devcontainer-only`) asks
+      # it and calls the matching command; on an x86_64 host that is `build image`, as before.
+      devcontainer:
+        depends_on: [preflight, toolchain, extension, devcontainer-only]
+        stop_on_failure: true
+        help: "Bring up the development container this repository describes."
+      # WHAT THE EDITOR ASKS BEFORE FIRN IS CALLED, asked on the way firn owns (#287).
+      preflight:
+        task: "docker-preflight"
+        help: "Check that docker answers and that /var/run/docker.sock exists, before anything builds."
+      # THE LEAF, SPLIT OFF ITS OWN AGGREGATE, and the split is the kernel's answer rather than a
+      # preference: a command carries `task:` OR `depends_on:` and never both. Measured on
+      # simplon 0.21.0 by writing both onto this command --
+      #
+      #   ValueError: command 'deploy devcontainer' declares both `task:` and `depends_on:`.
+      #   A command either instantiates a task or plans other commands, never both - split it into two
+      #
+      # -- which is the v1 lock in simplon.orchestrator.manifest: a plan step runs as a
+      # `./firn.sh <leaf>` SUBPROCESS, so an impl-bearing command that also carried dependencies
+      # would re-expand them in the child and break the dedup-once the plan rests on. `hidden`
+      # keeps it out of `--help` and fully invocable, which is what a plan step has to be.
+      devcontainer-only:
+        task: "deploy:up"
+        with: { version: local }
+        hidden: true
+        help: "Bring up the development container without building anything first."
+      open:
+        task: "devcontainer-open"
+        help: "Open the running development container in VS Code."
+      down:
+        task: "deploy:down"
+        help: "Remove the development container."
+
+# WHERE A DEPLOYED VERSION IS LOOKED UP. The development environment never reaches this --
+# it deploys `local`, which is the working tree and touches no registry -- but `deploy:up`
+# reads the section before it reads the selector, so a manifest without it cannot run the
+# command at all. Naming the image firn already publishes is the true answer rather than a
+# placation: a `deploy <env> up 1.2.3` would resolve against exactly that.
+deploy:
+  # A SERVER rather than a client: the thing that comes up is a container on a target,
+  # reached through the environment's backend, not a directory installed on this machine.
+  kind: server
+  source: { images: firn }
+
+default: dev
+environments:
+  dev:
+    backend: devcontainer
+    description: "The development container: the toolchain, node, and firn built inside it."
+
+suites:
+  gates:
+    - name: unit
+      command: "test unit"
+      results: clear
+    - name: acceptance
+      command: "test acceptance"
+    - name: system
+      command: "test system"
+    # A GATE AND NOT A LEVEL, listed for the reason the three above are (#292). The exclusions a
+    # few lines up turn on whether a thing runs inside `test all`: the format gates are left out
+    # because they do, and `integration` because it does not exist. `grammar` is neither -- it
+    # runs, it can be red on its own, and it cannot live in `gradle check` because the toolchain
+    # image has no node. Leaving it out would put a gate CI performs in no taxonomy at all, which
+    # is #110's own defect wearing a different hat.
+    - name: grammar
+      command: "test grammar"
+    - name: extension
+      command: "test extension-tests"
+
+# THE DOCUMENTATION WEBSITE'S DATA (#294, adr/0040 decision 3), read by `docs:site`. simplon's own
+# `site:` section is the model, down to the two pins: a build whose output depends on the day it ran
+# is not a build, so `image` and `theme` name versions and never `latest`. `source:` is left out, so
+# the kernel's `docs/site` default is what is used. No `base_url`: the site is not published, and
+# where it will stand is #197/#198.
+site:
+  image: "hugomods/hugo:exts-0.148.2"
+  output: "build/website"
+  theme: "github.com/imfing/hextra@v0.12.3"
+
+images:
+  toolchain:
+    registry: ghcr.io
+    repository: marcozwyssig/firn-toolchain
+    dockerfile: deploy/provision/builder/Dockerfile
+    context: .
+    # Pinned to the JDK the image carries, not to the product's version: this image moves
+    # when the JDK moves and at no other time.
+    tag: "25"
+  # TWO PLATFORMS, ONE MANIFEST LIST (#949, simplon 0.25.0's si#347). A release publishes
+  # `ghcr.io/marcozwyssig/firn:<tag>` for linux/amd64 and linux/arm64 together. Declaring
+  # `platforms:` moves EVERY build of this image, the everyday one too, from a plain `docker build`
+  # to `docker buildx bake` on a docker-container builder simplon names `simplon`; arm64 runs under
+  # QEMU there, 46 minutes cold against about 3 for amd64 (docs/07-docker.md §7). That is why every
+  # everyday command pins `platform: linux/amd64` and only `build release-image` and the `-arm64`
+  # checks ask for arm64.
+  #
+  # `contexts: [toolchain]` because src/pkg/Dockerfile starts FROM the toolchain image, which is
+  # never published and which a docker-container builder cannot see in the daemon. simplon derives
+  # the context's name from the `toolchain` entry above, so the FROM line and this file cannot
+  # drift, and bakes the toolchain alongside, for the same platform. The consequence worth knowing:
+  # `build image` no longer reads the toolchain `build toolchain` put in the daemon; it builds its
+  # own copy in the builder's cache. `build toolchain` is still what every `toolchain:run` step
+  # runs in.
+  #
+  # `toolchain` itself declares no `platforms:`: it is a development image, built natively by
+  # `build toolchain` with the argv it always had.
+  firn:
+    registry: ghcr.io
+    repository: marcozwyssig/firn
+    dockerfile: src/pkg/Dockerfile
+    context: .
+    platforms: [linux/amd64, linux/arm64]
+    contexts: [toolchain]
+
+claude:
+  # WHAT A MARKETPLACE WITHOUT A `ref:` DOES (si#292): it follows the default branch, so every
+  # fetch may bring a different marketplace and nothing says so. `ref:` stops that.
+  #
+  # IT IS A REF AND NOT A DIGEST, which is simplon's own caveat and worth repeating where it
+  # is used: it holds against a branch moving, and not against an owner moving the tag. That
+  # is a smaller promise than it looks, and it is still the difference between a fetch that
+  # can change and one that has to be changed.
+  #
+  # ONE OF THE TWO IS PINNED AND THE OTHER IS NOT, which is a measurement rather than a
+  # preference: `anthropics/claude-plugins-official` publishes NO TAGS (`gh api
+  # repos/.../tags` answers with an empty list), so there is no ref to name that is not a
+  # branch -- and naming a branch would be the unpinned state spelled out at greater length.
+  marketplaces:
+    claude-plugins-official:     { source: github, repo: anthropics/claude-plugins-official }
+    alexgreensh-token-optimizer: { source: github, repo: alexgreensh/token-optimizer, ref: v5.13.17 }
+  plugins:
+    - superpowers@claude-plugins-official
+    - feature-dev@claude-plugins-official
+    - code-review@claude-plugins-official
+    - code-simplifier@claude-plugins-official
+    - security-guidance@claude-plugins-official
+    - frontend-design@claude-plugins-official
+    - github@claude-plugins-official
+    - pyright-lsp@claude-plugins-official
+    - token-optimizer@alexgreensh-token-optimizer
+
+# --- workflows ---------------------------------------------------------------------------
+#
+# GENERATED into .github/workflows/ by `firn support workflows`. A step that runs a product
+# command says `command: test all` and nothing else; the generator resolves that against
+# the command tree above and renders `./firn.sh test all`. A command that is renamed or
+# deleted therefore breaks generation rather than leaving a workflow calling something that
+# no longer exists -- which is the whole reason the pipeline is derived from this file
+# instead of restating it.
+workflows:
+  ci:
+    name: CI
+    note: |
+      Build and test on every pull request, and on main.
+
+      The toolchain image is built first because every step after it runs INSIDE it, and
+      nothing has published it yet: `build toolchain` is a local `docker build`, cached by
+      the layer cache between runs. The day it is pushed to ghcr.io, this step becomes a
+      pull and the line can go.
+
+      THE CACHE HOLDS BECAUSE THE RUNNER IS OURS (#769). Every job runs on the
+      self-hosted `firn` runner, whose docker daemon outlives a job, so the builder cache
+      is the one the previous job left. Read off the logs of three consecutive green runs
+      on 2026-10-08 (37815290465, 37819916893, 37829369343), all on ghr-7: in all nine
+      jobs the Gradle download (`gradle-dist`, an `ADD --checksum`) and every later layer
+      were `CACHED`, and the build took 4 s to 7 s, once 18 s, 14 s of which was
+      resolving the base image's metadata. A GitHub-hosted runner starts with an empty
+      builder cache and would download every layer every run; simplon's `build:image`
+      has no way to name a cache backend such as `type=gha`, so moving to one is a
+      simplon change first. Since #949 (simplon 0.25.0) `build image` runs on buildx's
+      docker-container builder `simplon` rather than the daemon's own, so the shipped
+      image's cache lives in that builder container: it outlives a job like the daemon
+      does, and `docker buildx rm simplon` throws it away.
+
+      THE NATIVE BUILD IS HERE SINCE #110, and it arrived with the two gates that needed
+      it. `Check` builds one because the acceptance scenarios now run the binary rather
+      than the test JVM, and the `system` job below builds one because that is the whole
+      of what it asks about.
+
+      WHAT IT COSTS, measured rather than feared, in the pinned toolchain image on
+      2026-09-19 on the runner class this repository uses: a cold `gradle check` went from
+      28 s to 47 s. `nativeCompile` is 23.7 s of that and the acceptance level gave 4 s
+      back, because a scenario that starts a binary no longer starts a JVM (4.8 s to
+      0.9 s for the whole level). The `system` job is 35 s end to end from a clean
+      checkout. The two jobs do not share the binary -- a job starts from its own
+      checkout -- so a full run pays for two.
+
+      That is under a minute, and the line this note used to carry said "it costs
+      minutes". Nobody had measured it: the estimate was made when `firn build native`
+      produced neither binary nor image (#12) and it outlived its own reason.
+
+      SINCE #156 IT IS THE BINARY THE IMAGE SHIPS. `nativeCompile` links statically
+      against musl wherever the JDK carries the libraries for it, which inside this
+      toolchain image is always, so `Check` and `System` run the artefact
+      src/pkg/Dockerfile produces rather than a near relative of it.
+
+      AND IT COSTS NOTHING MEASURABLE, which is a measurement and not a shrug. The only
+      task the flag changes is nativeCompile, so that is what was timed, alternating the
+      two modes with the Java build warm, five runs each, 2026-09-19 on x86_64:
+      native-image reports a median of 22.6 s without --static (22.0 to 23.0) against
+      22.3 s with it (21.6 to 22.8) -- the lower median is the static one. Whole gates
+      from a cold build directory, two runs each: `gradle check` 45 s and 49 s without
+      against 47 s and 55 s with; the system level 36 s and 31 s without against 33 s
+      and 31 s with. Two runs of the same mode differ by more than
+      the two modes do. #110's +27 s -- the native build itself -- is the whole of what
+      these jobs pay for running the artefact, and this issue adds nothing to it.
+      Compared against this machine's own runs rather than against the 47 s and 35 s
+      above, because a number from another machine is not a delta.
+
+      WHAT A STALE TOOLCHAIN IMAGE GETS IS A DIAGNOSIS, and that is the half #148's lane
+      deliberately left out. Every job here rebuilds the image at the top, so CI is never
+      stale; a developer's copy is whatever they last pulled, and the tag says nothing
+      about which libc is inside it. `:firn-cli:nativeImageRuns` starts the fresh binary
+      once before either level and, when it does not run, reads the toolchain's own libc
+      and names `./firn.sh build toolchain`.
+
+      The gate no longer has to say which architecture it runs on: since #78 the toolchain
+      links on amd64 and aarch64 alike, so the runner is a scheduling question rather than
+      a correctness one (docs/07-docker.md §1).
+    on:
+      # ONCE PER PUSH, not twice. `branches: ["**"]` here beside `pull_request:` meant every
+      # push to a branch with a PR open fired the workflow TWICE -- six jobs where three were
+      # asked for. On a self-hosted runner that is one machine, so the duplicates do not run
+      # beside the originals, they queue behind them. Measured on a green run before this
+      # change: `build` started 8 minutes after the run was created, `regression` and `system`
+      # 31 minutes after, while the work inside them was 2, 0 and 2 minutes. Four minutes of
+      # build inside a 34-minute wall clock, and half the queue was our own duplicate.
+      #
+      # THE TRADE-OFF, so that nobody rediscovers it as a surprise: a branch pushed WITHOUT a
+      # pull request now gets no CI at all. That is the right way round for this repository --
+      # every change here arrives through a PR, and a branch nobody has proposed is work in
+      # progress rather than something to gate.
+      push:
+        branches: [main]
+      pull_request:
+    permissions:
+      contents: read
+    jobs:
+      build:
+        # A self-hosted runner, because GitHub-hosted minutes on a private repository are
+        # metered and this repository exhausted them: the jobs stopped starting at all,
+        # which reads exactly like a red build and is not one. A self-hosted runner costs no
+        # minutes.
+        #
+        # The `firn` label is what keeps this workflow off any other self-hosted runner the
+        # account may have. Two requirements the runner host must meet, both learned the
+        # hard way rather than guessed:
+        #
+        #   - docker, because every step runs inside the pinned toolchain image;
+        #   - on a macOS host, a work directory under $HOME. Colima only mounts $HOME, so a
+        #     runner working anywhere else produces bind mounts that are silently empty and
+        #     failures that blame the tool. The runner in use today (ghr-7) is Linux with
+        #     native docker, where this does not apply -- but it applies again the moment
+        #     anyone runs the gate on their Mac, which is every local `./firn.sh test all`.
+        #
+        # Safe here because the repository is private and single-author. A self-hosted
+        # runner executes whatever a pull request contains, so this line would need
+        # rethinking the day the repository takes outside contributions.
+        #
+        # One label rather than the usual [self-hosted, firn]: Simplon serialises a list
+        # here as a quoted string, which GitHub does not accept. A single custom label
+        # selects the runner just as well -- reported as simplon#259, and this line goes back
+        # to a list when that lands.
+        runs-on: firn
+        env:
+          # The runner host has no docker, and every step runs inside the toolchain image.
+          # Simplon provisions one itself when asked, which is the documented CI path and
+          # keeps the runner a plain machine rather than one configured by hand for firn.
+          DELIVERY_DOCKER_BOOTSTRAP: "1"
+        steps:
+          - command: build toolchain
+            name: Build the toolchain image
+          - command: build compile
+            name: Compile
+          - command: test all
+            name: Check
+          # THE GRAMMAR GATE, HERE AND NOT IN `Check` (#292). `test all` is one `gradle check`
+          # inside the toolchain image, which carries a JDK and no node; this runs
+          # `vscode-textmate` in `node:22-alpine` over the same tree. A step rather than a job
+          # because it is about this commit's sources, like `Check` and unlike `System`, and
+          # because under a second does not earn a job's checkout.
+          - command: test grammar
+            name: The editor's grammars do what they say
+          - command: test extension-tests
+            name: The extension does what its tests say
+          - command: support workflows-check
+            name: Workflows agree with the manifest
+      # THE SYSTEM LEVEL, its own job (#110).
+      #
+      # A job and not a step in `build`, for the reason the regression gate below is one: the
+      # Actions UI names the JOB, and this level's red is "the artefact we ship misbehaves",
+      # which is a different first hour from "this commit does not compile". It is also the
+      # one level `test all` does not carry, so a step inside `Check` would be claiming
+      # otherwise.
+      #
+      # `needs: build` because there is ONE runner with the `firn` label: the jobs serialise
+      # anyway, so the dependency costs no wall time and stops the level from asking about a
+      # binary built from a tree that does not compile.
+      #
+      # `build toolchain` again rather than relying on the previous job's docker daemon, for
+      # the reason the regression job restates it: a layer-cache hit of a few seconds today,
+      # and the difference between a working job and a missing image the day there are two
+      # runners.
+      system:
+        runs-on: firn
+        needs: build
+        env:
+          DELIVERY_DOCKER_BOOTSTRAP: "1"
+        steps:
+          - command: build toolchain
+            name: Build the toolchain image
+          - command: test system
+            name: System
+          # THE CONTAINER ITEM (#110, simplon si#301), and it lands in THIS job because it is
+          # the same claim the four items above make: the artefact we ship misbehaves. It costs
+          # the image build -- 49 s measured on a warm toolchain image -- and it is the only
+          # thing in the pipeline that executes src/pkg/Dockerfile's runtime stage at all.
+          # linux/amd64 only (#949): `build image` and the three checks pin that platform, so
+          # no pull request pays for an emulated arm64 image build (a cold builder still bakes the
+          # arm64 toolchain stage once, a simplon defect named at `build image`). The release asks
+          # arm64.
+          #
+          # `build image` first, because `test container` runs what the daemon holds and never
+          # pulls: without the build it refuses, by name, rather than testing yesterday's image.
+          - command: build image
+            name: Build the shipped image
+          - command: test container
+            name: Container
+          # THE REFUSAL, beside the answer (si#303). The image build is already paid for by
+          # the two steps above, so this costs a container start -- and it is the only step in
+          # the pipeline that would notice an entrypoint which ignored its arguments and
+          # exited 0, because every other one asks the image to SUCCEED.
+          - command: test image-refuses
+            name: Container refuses
+          # THE SECOND REFUSAL, and the exit code this job could not ask the image for (#185).
+          # `image-refuses` proves the image says "I could not read a project here" (3); this
+          # proves it says "I read your model and it is wrong" (1), which is the other branch a
+          # caller writes. The fixture step before it writes the one file the tree cannot carry
+          # -- `build/system/broken-project/firn.toml` -- because a committed one would enlist a
+          # deliberately unresolvable model in the `.firn` format gate.
+          - command: build image-fixture
+            name: Write the unresolvable project
+          - command: test image-model-error
+            name: Container refuses a broken model
+      # THE REGRESSION GATE, its own job (#69, docs/08-m2-plan.md D10).
+      #
+      # A job and not a step in `build`, for two reasons that are both about what a red build
+      # says. AGENTS.md keeps benchmarks out of the test gate -- a benchmark is not a test --
+      # and a job of its own is where that line is drawn in the pipeline. And the Actions UI
+      # names the JOB: a 20 % regression reported under "Check" reads as a broken test, which
+      # is the wrong first hour of anybody's investigation.
+      #
+      # `needs: build` because a gate over a tree that does not compile measures nothing, and
+      # because there is ONE runner with the `firn` label: the jobs serialise anyway, so the
+      # dependency costs no wall time and stops a benchmark from running against a red tree.
+      #
+      # `build toolchain` again rather than relying on the previous job's docker daemon. On
+      # today's single runner it is a layer-cache hit of a few seconds; the day there are two
+      # runners it is the difference between a job that works and one that fails on a missing
+      # image.
+      regression:
+        runs-on: firn
+        needs: build
+        env:
+          DELIVERY_DOCKER_BOOTSTRAP: "1"
+        steps:
+          - command: build toolchain
+            name: Build the toolchain image
+          - command: test regression
+            name: Regression gate
+  release:
+    name: Release
+    note: |
+      Publish the container image to ghcr.io when a release tag is pushed (#945).
+
+      A RELEASE IS A TAG, AND THE TAG IS CUT BY `./firn.sh release tag vX.Y.Z`, which
+      refuses a commit main does not carry and pushes that one tag. This workflow is what
+      the push starts: it builds the image at the tag, runs the image's own checks against
+      it, and only then pushes `ghcr.io/marcozwyssig/firn:<tag>`. Nothing is pushed from a
+      developer machine, and no registry secret is stored: `release push-image` logs in with
+      the job's own GITHUB_TOKEN, which `packages: write` below lets it publish with.
+
+      THE PACKAGE STAYS PRIVATE, as the repository is. A consuming repository is given read
+      access in the package's settings; docs/07-docker.md says how another project pulls it.
+
+      ONE TAG, NO `latest`. The tag is simplon's derived VERSION, `git describe --tags`,
+      which at a release tag is the tag itself; the first step refuses the run when it is
+      anything else, so the reference pushed and the number `firn --version` prints are the
+      tag pushed and nothing near it.
+
+      LINUX/AMD64 AND LINUX/ARM64, ONE MANIFEST LIST (#949). `build release-image` builds
+      both platforms through simplon's buildx builder, arm64 under QEMU on this x86_64
+      runner; every check below runs once per platform; `release push-image` pushes one
+      manifest list, reads it back, and goes red unless each platform is in it with the
+      digest the build recorded. That comparison runs AFTER the push: if the builder's
+      cache was pruned between build and push, the push rebuilds, the tag already serves
+      images no check ran, and the run is red. Do not announce such a release; re-run
+      this workflow for the same tag, which overwrites it with checked images.
+
+      WHAT IT COSTS, AND WHAT THE RUNNER NEEDS. arm64 was measured at 46 minutes from a
+      cold cache (docs/07-docker.md §7), against about 3 for amd64, and a warm cache saves
+      only the toolchain stage, because the native compile reruns at every tag. Hence the
+      job's `timeout-minutes`. The runner needs the buildx plugin and a QEMU registration
+      for arm64 that survives a reboot; simplon never registers one itself, it warns, and
+      the bake then fails on `exec format error` at the first arm64 RUN. docs/07-docker.md
+      §7 has the setup, including the one for a runner that is itself a container.
+    on:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: read
+      packages: write
+    jobs:
+      image:
+        # The self-hosted `firn` runner, for the reasons the `ci` workflow gives: metered minutes
+        # on a private repository, and a docker daemon whose layer cache outlives a job.
+        runs-on: firn
+        # 46 minutes for arm64 from a cold cache, measured; amd64, the checks under QEMU and the
+        # push add a few more. 120 leaves room for a slower day without letting a hung emulator
+        # hold the one runner for GitHub's default six hours.
+        timeout-minutes: 120
+        env:
+          DELIVERY_DOCKER_BOOTSTRAP: "1"
+        steps:
+          - name: The tag is one main carries, and it is what the build will be stamped with
+            note: |
+              A VERBATIM STEP, because no command asks this question of a tag that is already
+              pushed. `release tag` refuses a commit main does not carry, but `git push origin
+              vX` bypasses it, so the workflow asks again: the tagged commit has to be an
+              ancestor of origin/main. The second half holds the derivation to the tag: simplon
+              tags and stamps the image with `git describe --tags --always --dirty`, and a commit
+              carrying two tags, or a tree the job dirtied, would publish under a name that is
+              not the one pushed. main is fetched by name rather than trusted to the checkout,
+              and a fetch that fails fails the step: unlike simplon's own release.yml, which only
+              reports, this is a gate (Marco, #945), so an unanswerable question publishes nothing.
+            run: |
+              git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main
+              git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main || {
+                echo "::error::$GITHUB_REF_NAME names $GITHUB_SHA, which main does not carry; cut releases with ./firn.sh release tag"
+                exit 1
+              }
+              described="$(git describe --tags --always --dirty)"
+              [ "$described" = "$GITHUB_REF_NAME" ] || {
+                echo "::error::the build would be stamped $described, not $GITHUB_REF_NAME"
+                exit 1
+              }
+          - command: build toolchain
+            name: Build the toolchain image
+          - command: build release-image
+            name: Build the shipped image for linux/amd64 and linux/arm64
+          - name: Each platform's image names the tag
+            note: |
+              A VERBATIM STEP, because the expectation is the tag and a command's `expect:` is a
+              constant in the manifest. The images are the ones `build release-image` just loaded
+              under the derived VERSION, which the first step proved is the tag, one reference per
+              platform (`<tag>-linux-amd64`, `<tag>-linux-arm64`); arm64 starts under QEMU. The
+              platform list repeats `images: firn: platforms:`, which is the price of a verbatim
+              step: a third platform added there and not here is published without this check.
+              `build/tools/bin` is where simplon puts the docker client it fetches when the runner
+              has none on PATH.
+            run: |
+              export PATH="$PWD/build/tools/bin:$PATH"
+              for platform in linux/amd64 linux/arm64; do
+                ref="ghcr.io/marcozwyssig/firn:$GITHUB_REF_NAME-${platform//\//-}"
+                answer="$(docker run --rm --platform "$platform" "$ref" --version)"
+                [ "$answer" = "firn $GITHUB_REF_NAME" ] || {
+                  echo "::error::the $platform image answers '$answer', not 'firn $GITHUB_REF_NAME'"
+                  exit 1
+                }
+                echo "$platform: $answer"
+              done
+          - command: test container
+            name: Container (linux/amd64)
+          - command: test image-refuses
+            name: Container refuses (linux/amd64)
+          - command: build image-fixture
+            name: Write the unresolvable project
+          - command: test image-model-error
+            name: Container refuses a broken model (linux/amd64)
+          - command: test container-arm64
+            name: Container (linux/arm64)
+          - command: test image-refuses-arm64
+            name: Container refuses (linux/arm64)
+          - command: test image-model-error-arm64
+            name: Container refuses a broken model (linux/arm64)
+          - command: release push-image
+            name: Publish the image
+            note: |
+              Last, so nothing is published that failed a check above. simplon logs in to ghcr.io
+              with GITHUB_TOKEN, pushes one manifest list for both platforms out of the builder's
+              cache, and reads the index back before it reports success: every declared platform
+              has to be in it, each with the digest `build release-image` recorded. The comparison
+              runs AFTER the push (simplon 0.25.0): if the builder's cache was pruned since the
+              build, the push rebuilds, the tag then serves images no check above ran, and only
+              then does this step go red. Do not announce that release; re-run the workflow for
+              the same tag, which overwrites it with checked images (docs/07-docker.md §7). The
+              read-back's client, oras, is provided by simplon itself.
+            env:
+              GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"

@@ -735,7 +735,7 @@ def _refused_state(product, *, address: str = ADDRESS, index: int = 2) -> walk_m
 
 def _manifest(product, section: dict | None) -> None:
     """Give the registered product a real manifest, with or without a `tracker:` section."""
-    document = {"groups": {}} if section is None else {"groups": {}, "tracker": section}
+    document = {"ci": {}} if section is None else {"ci": {}, "tracker": section}
     (product / "demo.yaml").write_text(json.dumps(document), encoding="utf-8")
 
 

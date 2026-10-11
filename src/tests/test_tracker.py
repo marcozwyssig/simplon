@@ -86,7 +86,7 @@ def gh(monkeypatch):
 
 def test_a_product_that_declares_no_tracker_is_told_so_by_name(monkeypatch, tmp_path, capsys):
     # arrange: a manifest with everything but the section
-    _register(monkeypatch, tmp_path, {"groups": {}})
+    _register(monkeypatch, tmp_path, {"ci": {}})
 
     # act
     declared = tracker.declared()

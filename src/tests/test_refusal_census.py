@@ -504,10 +504,7 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("manifest", "_reject_removed_composites", "which has been removed"): DIAGNOSIS,
     ("manifest", "_coerce_groups", "'groups' must be a mapping of group name"): DIAGNOSIS,
     ("manifest", "_coerce_groups", "must be a mapping of command name -> spec"): DIAGNOSIS,
-    ("manifest", "_coerce_env_groups", "'env_groups' must be a list of group names"): DIAGNOSIS,
-    ("manifest", "_validate_taxonomy", "manifest defines no groups"): DIAGNOSIS,
-    ("manifest", "_validate_taxonomy", "names a NESTED group"): DIAGNOSIS,
-    ("manifest", "_validate_taxonomy", "is not a declared group"): DIAGNOSIS,
+    ("manifest", "_validate_taxonomy", "declares no commands under ci:, cd: or support:"): DIAGNOSIS,
     # The v1 lock. A command with both would run - the forward path is named in the comment beside it
     # and deliberately not built - so this forbids something expressible.
     ("manifest", "_validate_taxonomy", "impl and depends_on are mutually exclusive"): EXPRESSION,
@@ -532,7 +529,6 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # product it would have produced - and it is the only refusal that takes out every command at
     # once, which is why it is worth a sentence of its own rather than the parser's traceback.
     ("manifest", "load", "is not valid YAML"): DIAGNOSIS,
-    ("manifest", "load", "`groups:` is not a mapping"): DIAGNOSIS,
     ("manifest", "load", "`tasks:` is not a mapping"): DIAGNOSIS,
     ("manifest", "load", "generate names group(s)"): DIAGNOSIS,
     ("manifest", "load", "names a nested group the `taxonomy:` block"): DIAGNOSIS,
@@ -565,6 +561,16 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("treeform", "_resolve_one", "names no task"): DIAGNOSIS,
     ("treeform", "_resolve_one", "with `with:` and also declares `params:`"): DIAGNOSIS,
     ("treeform", "check_no_old_form", "is written in the flat command form"): EXPRESSION,
+    # si#344, the cut. DIAGNOSIS, all five: `_ManifestModel` ignores an unknown top-level key, so each of
+    # these would otherwise load as a product with no commands, a deploy with no matrix or a site that is
+    # not built - green at load and wrong at the first command. The form they name does not load at all
+    # any more, so nothing expressible is forbidden: the refusal is what replaces the silence.
+    ("treeform", "check_no_pre_si344_form", "A manifest maps its top-level keys"): DIAGNOSIS,
+    ("treeform", "check_no_pre_si344_form", "declares `groups:`, which si#344 replaced"): DIAGNOSIS,
+    ("treeform", "check_no_pre_si344_form", "which si#344 deleted"): DIAGNOSIS,
+    ("treeform", "check_no_pre_si344_form", "at the top level; since si#344"): DIAGNOSIS,
+    ("treeform", "check_no_pre_si344_form", "with the documentation site's keys"): DIAGNOSIS,
+    ("treeform", "check_no_pre_si344_form", "The deployment location stands under"): DIAGNOSIS,
     # si#81, and it is DIAGNOSIS by the sorting question rather than by preference. What is refused is a
     # `tasks:` declaration that is accepted and INERT: a command of the same name already runs a
     # different body, so the one written here is dead in the tree and nothing said so. That is the same
@@ -574,7 +580,23 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("treeform", "check_no_shadowed_task_declaration",
      "is declared under `tasks:` and instantiated by no command"): DIAGNOSIS,
     ("treeform", "check_coordinate_placement", "places the coordinate"): EXPRESSION,
-    ("treeform", "check_env_groups", "shape_is_the_platforms"): EXPRESSION,
+    # si#344, the transparent level. All three are DIAGNOSIS: none forbids a shape that would have
+    # produced a working product. Two names reaching one command-line path would be two groups the CLI
+    # cannot tell apart; a command on a transparent node would have no path at all and, unrefused, would
+    # load green and run nowhere; an area section that is not a mapping is an indentation slip.
+    ("treeform", "_refuse_a_second_path", "is reached through two transparent nodes"): DIAGNOSIS,
+    ("treeform", "elide_transparent", "is transparent and declares `commands:`"): DIAGNOSIS,
+    ("treeform", "tree_from_areas", "is not a mapping"): DIAGNOSIS,
+    # si#344. A product may not make a node transparent: the CLI would lose a path segment the platform
+    # did not decide to drop. The refused manifest assembles a working CLI, a different one.
+    ("treeform", "refuse_area_shape", "declares `transparent:`"): EXPRESSION,
+    # si#344, decision 5: nothing under ci takes an environment. A ci group made env-first would assemble
+    # and run - gated - so this forbids something expressible.
+    ("treeform", "refuse_area_shape", "Nothing under `ci:` takes an environment"): EXPRESSION,
+    ("treeform", "tree_from_areas", "is neither a phase group nor a data key"): DIAGNOSIS,
+    # si#344. `commands:` written on the area itself: the area is skipped on the command line, so the
+    # commands would have no path. Unrefused it reads as a phase group called "commands".
+    ("treeform", "tree_from_areas", "stands directly under the area"): DIAGNOSIS,
 
     # --- tasks/testrun.py: the `suites:` section (si#61) --------------------------------------------
     #
@@ -822,7 +844,12 @@ REACH: dict[tuple[str, str, str], str] = {
     ("treeform", "_resolve_one", "declares both `task:` and `depends_on:`"): REACH_MERGED,
     ("treeform", "check_no_old_form", "is written in the flat command form"): REACH_SEAM,
     ("treeform", "check_coordinate_placement", "places the coordinate"): REACH_MERGED,
-    ("treeform", "check_env_groups", "shape_is_the_platforms"): REACH_SEAM,
+    ("treeform", "refuse_area_shape", "declares `transparent:`"): REACH_SEAM,
+    # Labelled SEAM, not MERGED, on a measurement: `load` does run this over the catalogue's own `ci`
+    # groups, but those carry no command at all (every coordinate the catalogue places is under `support`),
+    # so the recorder below is never handed a coordinate of the kernel's half. REACH_MERGED here would be
+    # a claim the measurement cannot back; it becomes true the day the catalogue places one under `ci`.
+    ("treeform", "refuse_area_shape", "Nothing under `ci:` takes an environment"): REACH_SEAM,
     # The `suites:` section is not part of the merged tree at all - it is product data end to end - so
     # "the kernel too" is a real statement here rather than an empty one: a kernel manifest declaring
     # `suites:` goes through the same `declared()` with no exemption path.
@@ -1444,8 +1471,19 @@ def _the_kernels_own_coordinates() -> tuple[str, ...]:
         placed |= _catalogue_placements(node)
     document = yaml.safe_load((ROOT / "simplon.yaml").read_text(encoding="utf-8")) or {}
     own: set[str] = set()
-    for node in (document.get("groups") or {}).values():
-        own |= _catalogue_placements(node)
+    # The product's tree in the ci / cd / support form (si#344): the phase groups stand under the two
+    # areas, `support` on its own, and `cd:`'s data keys (`default`, `environments`) place nothing.
+    nodes = [*(document.get("ci") or {}).values(), *(document.get("cd") or {}).values(),
+             document.get("support") or {}]
+    for node in nodes:
+        if isinstance(node, dict):
+            own |= _catalogue_placements(node)
+    # An empty `own` subtracts nothing and every assertion below still holds - which is exactly what
+    # happened when simplon.yaml left `groups:` and this read stayed on it. Refused rather than trusted.
+    if not own:
+        raise ValueError(
+            "simplon.yaml places no coordinate under ci / cd / support as read here, so the subtraction "
+            "below would remove nothing - the read is broken, not the manifest")
     coordinates = placed - own
     if not coordinates:
         raise ValueError(

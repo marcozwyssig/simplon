@@ -1,0 +1,378 @@
+# Der Befehlsbaum von agile-cockpit. Abgeleitet aus dem, was das Projekt heute
+# tut -- kein Befehl auf Vorrat.
+#
+# Baumform (netctl#1469): `groups:` haengt sich an den Baum, den Simplons Katalog
+# vorgibt (build/test/release/deploy/monitor/support), statt eine eigene flache
+# Gruppe->Befehl-Zuordnung zu deklarieren. Das ist es, was den Katalog ueberhaupt
+# erreichbar macht -- kein `import:` noetig, die Zusammenfuehrung passiert beim
+# Laden. Die eigenen Befehlskoerper stehen einmal unter `tasks:`, und eine
+# Gruppe benennt sie mit `task: <name>` (ohne Doppelpunkt = dieses Manifest;
+# mit Doppelpunkt = Katalog-Koordinate).
+#
+# Sichtbar sind nur Gruppen, die auch Befehle tragen (simplon 0.1.4): `monitor`
+# deklariert der Katalog zwar, agile-cockpit fuellt es aber nicht -- es
+# erscheint deshalb nicht im Menue. Eine leere Gruppe ist ein Versprechen, das
+# niemand einloest; wer hier etwas eintraegt, sieht sie sofort.
+#
+# `release` GALT BIS SIMPLON 0.2.1 EBENSO, GALT VON 0.3.0 BIS 0.3.x NICHT MEHR
+# (ac#15) UND GILT SEIT 0.4.0 WIEDER ANDERS (ac#31).
+#
+# Bis 0.3.x platzierte der Katalog dort selbst `release:tag`, und ein Produkt
+# kann einen platzierten Befehl nicht ABWAEHLEN -- agile-cockpit trug also ein
+# `release tag`, das es nie bestellt hatte. Seit 0.4.0 wird `release:tag`
+# ANGEBOTEN statt platziert; wer es will, deklariert es. Dieses Produkt will es
+# nicht (ac#18: kein Tag-Pfad, der unveraenderliche Zeiger ist `sha-<7>`), also
+# steht es unten nicht, und damit ist es weg. GEMESSEN, nicht erinnert, gegen
+# 0.6.0: `./agile-cockpit.sh release --help` zeigt genau einen Befehl, `image`.
+#
+# Was `release image` angeht, hat sich nichts geaendert: ein Befehl, den dieses
+# Produkt sehr wohl bestellt hat (ac#16).
+product: agile-cockpit
+
+tasks:
+  serve:    { impl: "orchestrator.cli:serve",    help: "Entwicklungsserver starten." }
+  up:       { impl: "orchestrator.cli:up",       help: "Container starten." }
+  down:     { impl: "orchestrator.cli:down",     help: "Container stoppen und entfernen." }
+
+# Was `build:image` und `release:image` (simplon 0.3.0, si#31) ueber DIESES
+# Produkt wissen muessen. Alles Produktspezifische steht hier und nur hier; die
+# sechs Kommandos -- bauen, anmelden, schieben, nachlesen -- besitzt der Kernel.
+# Vorher standen zwei Zeilen `docker build -t agile-cockpit:local .` in
+# orchestrator/cli.py, OHNE `--build-arg`: das Image, das den Bau ueberlebte,
+# trug keine Herkunft, waehrend das weggeworfene CI-Image sie trug (ac#16).
+#
+# `registry:` IST AUCH FUER DEN REINEN LOKALEN BAU PFLICHT, und das ist keine
+# Schikane des Kernels: der Bau taggt, was der Release schiebt. Ein lokal
+# gebautes `agile-cockpit:local` und ein anderswo gepushtes
+# `ghcr.io/.../agile-cockpit` waeren zwei Namen fuer eine Sache, und genau so
+# landet ein Image irgendwann dort, wo es niemand hinhaben wollte. Deshalb
+# heisst das lokal gebaute Image ab jetzt so, wie es in der Registry heisst --
+# `deploy up` startet dieselbe Referenz (orchestrator/cli.py liest sie HIER).
+#
+# TAG-SCHEMA (ac#16). Die tote .gitlab-ci.yml hatte DREI Push-Pfade; hier sind
+# ZWEI davon. Weggefallen ist ihr `build:release` (Ausloeser `$CI_COMMIT_TAG`),
+# das `v1.2.0` als Tag `1.2.0` PLUS `latest` schob.
+#
+# DARAUF WIRD BEWUSST VERZICHTET (Entscheidung des Eigentuemers, ac#18). Dieses
+# Produkt wird als Image auf einen Server gebracht, nicht als Bibliothek
+# versioniert -- und `sha-<7>` IST bereits der unveraenderliche Zeiger, den
+# eine Versionsnummer liefern wuerde. Ein dritter Push-Pfad haette gepflegt
+# werden muessen, ohne etwas zu koennen, was die zwei hier nicht koennen.
+#
+# Die Folge, damit sie niemanden ueberrascht: ein `v*`-Tag-Push baut hier
+# nichts und veroeffentlicht nichts. Wer ein Image zu einem bestimmten Stand
+# will, nimmt `sha-<7>`.
+#   latest      -- der bewegliche Zeiger auf den Stand von master. `tag:` unten
+#                  ist der Vorgabewert, also das, was ein Bau OHNE Argument
+#                  baut: lokal wie in Actions derselbe Befehl.
+#   sha-<7>     -- der unveraenderliche Zeiger auf genau einen Commit, per
+#                  `--tag` aus dem Workflow. Ohne ihn gaebe es nichts, worauf
+#                  ein Betrieb sich festnageln koennte; `latest` verschiebt sich
+#                  unter den Fuessen.
+# BEIDE nur von master, und BEIDE nur aus dem Workflow -- gepusht wird im
+# CI/CD-Prozess, nicht auf einem Entwicklerrechner.
+#
+# SICHTBARKEIT: das Paket erbt beim ersten Push die Sichtbarkeit des Repos,
+# und dieses Repo ist privat. Ein fremder Rechner braucht deshalb
+# `docker login ghcr.io` mit einem Token, das `read:packages` traegt. Wer das
+# Image oeffentlich will, stellt es EINMAL von Hand auf public (GHCR-Paket ->
+# Package settings -> Change visibility); das ist keine Manifest-Angabe und
+# kann hier auch nicht stehen.
+#
+# KEIN `build_args:` HIER, obwohl der Abschnitt es koennte. Deklarierte
+# Build-Argumente SCHLAGEN die Ableitung des Kernels, und genau die Ableitung
+# ist der Punkt: VERSION = `git describe --tags --always --dirty`,
+# REVISION = `git rev-parse HEAD`, aus DIESEM Checkout. Das Dockerfile nimmt
+# beide als `ARG` entgegen und schreibt sie in
+# `org.opencontainers.image.version`/`.revision`. Ein VERSION hier waere eine
+# Zahl, die jemand von Hand pflegen muesste, und sie waere irgendwann falsch.
+images:
+  app:
+    registry: ghcr.io/marcozwyssig
+    repository: agile-cockpit
+    dockerfile: deploy/Dockerfile
+    # Die Projektwurzel. Was NICHT hineingeht, steht in .dockerignore -- nicht
+    # hier: ein engerer Kontext waere eine zweite Fassung derselben Aussage.
+    context: "."
+    tag: latest
+
+# Was Simplons test:gate braucht, um die Suiten zu laufen: WO sie liegen, in
+# welcher REIHENFOLGE die Gates laufen und welches den Ergebnisordner LEERT.
+# Genau ein Gate eines Laufs leert; alle spaeteren haengen an. Bei DREI Suiten
+# (ac#29) heisst das: `unit` leert, `delivery` und `system` haengen an.
+#
+# JEDE SUITE STEHT NEBEN DEM, WAS SIE PRUEFT (ac#29):
+#
+#   src/tests/       Unit und Integration der Anwendung
+#   deploy/tests/    Auslieferung: Manifest, Workflows, Image, Layout, Labor
+#   tests/           System und Akzeptanz gegen eine echte GitLab-Instanz
+#
+# UND KEINE DARF EINE ANDERE ENTHALTEN. Der Grund ist derselbe wie vor ac#29
+# und hat sich nur umgedreht: ein Gate laesst pytest auf SEINEN Ordner los und
+# saugt jedes Unterverzeichnis mit ein. Ein `src/tests/system/` liefe damit bei
+# jedem `test unit` mit -- also auch in der CI, wo keine GitLab-Instanz steht,
+# und die dritte Auflage der Spec sagt, die CI darf nicht so tun, als pruefe
+# sie es. Frueher war `tests/` die Unit-Suite und `systemtests/` der
+# Geschwisterordner; heute ist `tests/` die Systemsuite und `src/tests/` der
+# Geschwisterordner. Das Verbot bleibt, die Rollen haben getauscht.
+#
+# WIE DER DRITTE GATE ZU SEINEM NAMEN KAM (Koordinatenregel, simplon si#34):
+# ein Name, der mit einem Phasennamen beginnt, gehoert in diese Phase. Der
+# Katalog kennt build/test/release/deploy/monitor/support -- `deploy`,
+# `build-image` oder `release-check` waeren damit Namen, die sich unter `test`
+# als etwas ausgeben, was sie nicht sind. `delivery` beginnt mit keinem
+# Phasennamen und sagt, was die Suite prueft: den Weg des Produkts nach
+# draussen.
+#
+# WAS DIE CI ZIEHT: `unit`, `delivery` und `typecheck-python` -- nicht
+# `system`. Vor ac#29 lagen die Auslieferungspruefungen in `tests/` und liefen
+# als Teil von `unit` mit; ohne die Zeile in ci.yml waeren mit dem Umzug sieben
+# Dateien still aus der CI gefallen. Genau die Sorte Luecke, die gruen aussieht.
+suites:
+  # KEIN `reports:`. Seit Simplon 0.7.0 ist der Schluessel optional und faellt
+  # auf `tests/reports` zurueck -- neben die Suite statt unter die Wurzel. Die
+  # Zeile stand hier, solange der Kernel sie verlangte, und sagte damit nichts:
+  # jedes Produkt schrieb dieselbe. Ein deklarierter Wert gewinnt weiterhin,
+  # dieses Produkt hat aber keinen Grund fuer einen eigenen.
+  gates:
+    - name: unit
+      suite: src/tests
+      results: clear
+      junit: unit.xml
+      # Erlaubt `./agile-cockpit.sh test unit -k <ausdruck>`. Ein solcher Lauf ist
+      # unvollstaendig und wird vom Kernel in einen eigenen Ergebnisordner
+      # abgesondert, damit das Archiv des letzten vollen Gates unberuehrt bleibt.
+      args: true
+    - name: delivery
+      # Manifest, Workflows, Image, Shims, mypy.ini, Layout und die
+      # Labor-Mechanik. Braucht weder GitLab noch die App-Abhaengigkeiten --
+      # deploy/tests/requirements.txt zaehlt auf, was wirklich importiert wird.
+      #
+      # WARUM DIESER NAME BLEIBT, obwohl der Kern ihn seit simplon 0.22.0
+      # (si#283) anmahnt: die vier normierten Ebenen -- unit, integration,
+      # system, acceptance -- beantworten alle dieselbe Frage, naemlich WIE
+      # VIEL vom Produkt eine Pruefung anfasst. Eine Ebene sagt, was ein
+      # Fehlschlag BEDEUTET.
+      #
+      # Diese Suite fasst vom Produkt nichts an. Sie prueft die AUSLIEFERUNG
+      # selbst: ob das Manifest stimmt, ob die Workflows das tun, was sie
+      # ankuendigen, ob das Image baut, ob das Layout sitzt. Faellt sie, ist
+      # nicht eine Schicht der Anwendung kaputt, sondern die Verpackung --
+      # und das ist keine Aussage ueber eine Ebene, sondern ueber eine
+      # andere Achse.
+      #
+      # `acceptance` waere darum ein Name, der die falsche Bedeutung traegt:
+      # er behauptet, hier werde geprueft, ob das Produkt die Anforderungen
+      # erfuellt. `acceptance-delivery` waere normgerecht und truege die
+      # Bedeutung trotzdem als Praefix mit. Der Kern verweigert nichts und
+      # laedt ausdruecklich ein, den Grund aufzuschreiben statt umzubenennen
+      # ("rename it, or say on the ticket why this product needs a level the
+      # platform does not carry") -- das ist hiermit getan, und der Preis
+      # ist eine gelbe Zeile je Lauf. Siehe ac#104.
+      #
+      # Faellt die Entscheidung spaeter anders, ziehen mit: die getippte
+      # Gewohnheit `./agile-cockpit.sh test delivery`, README, CI-Workflows
+      # und `deploy/tests/test_platform_cli.py`.
+      suite: deploy/tests
+      # append, nicht clear: `unit` leert.
+      results: append
+      junit: delivery.xml
+      announce: "delivery gate: deploy/tests -- Manifest, Workflows, Image, Layout"
+    - name: system
+      suite: tests
+      # append, nicht clear: der unit-Gate leert, dieser haengt an. Genau ein
+      # Gate eines Laufs darf leeren, und es muss das erste sein.
+      results: append
+      junit: system.xml
+      # Der laute Abbruch, wenn die Instanz fehlt. Ein nicht-null rc bricht ab,
+      # BEVOR etwas geleert wird -- das Archiv des letzten echten Laufs
+      # ueberlebt einen Lauf, der nie angefangen hat. Bewusst KEIN skip: in ac#1
+      # ist ein pytest.skip beseitigt worden, unter dem fuenf Aussagen still
+      # verschwunden waeren.
+      precondition: "orchestrator.gitlab_testlab:precondition"
+      # KEIN preamble. Der Kernel kennt kein Gegenstueck danach, und Aufbau ohne
+      # zugehoerigen Abbau waere die Haelfte eines Paares in einem anderen
+      # Prozess und einem anderen venv. Beide Haelften stehen in der
+      # Session-Fixture in tests/conftest.py.
+      announce: "system gate: tests/ gegen die lokale GitLab-Instanz (deploy/testlab/compose.yaml)"
+  report:
+    # Der Zeitstempel des letzten Systemtestlaufs. Der Ordner wird vom
+    # leerenden Gate nicht angefasst (geleert werden nur allure-results und
+    # allure-report), also traegt JEDER kuenftige Bericht das Datum mit -- auch
+    # einer ueber einen Lauf, der nur die Unit-Suiten enthielt. Genau das ist
+    # der Punkt: er sagt dann, wann die Systemtests ZULETZT liefen, statt zu
+    # schweigen. Fehlt der Ordner (noch nie gelaufen), wird er still
+    # uebersprungen, und der Bericht sagt nichts -- was ebenfalls die Wahrheit
+    # ist.
+    #
+    # DAS HAENGT SEIT SIMPLON 0.6.0 AN EINER BEDINGUNG (si#70, ac#31). Der
+    # Berichtsschritt zieht Quelldateien, die AELTER sind als der Lauf, nicht
+    # mehr ein -- aber nur, wenn ihm jemand sagt, wann der Lauf begann, und das
+    # tut allein `test:accept`, der Sammelbefehl ueber alle Gates in EINEM
+    # Prozess. Dieses Produkt deklariert `test:accept` nicht: es ruft `test
+    # report` als eigenen Befehl, dort ist `since` None, und dann wird alles
+    # Vorhandene eingezogen -- das ist die dokumentierte Aufgabe dieses
+    # Befehls. GEMESSEN gegen 0.6.0: ein Lauf aus nur `unit` + `delivery` +
+    # `report` zog den Stempel weiterhin ein ("merged 1 file from 1 of 1
+    # declared source dirs"), und die Zahl der Ergebnisdateien blieb 537 vor wie
+    # nach dem Sprung von 0.3.0.
+    #
+    # Wer hier je auf `test:accept` umstellt, nimmt dem Bericht dieses Datum:
+    # dann traegt nur noch ein Lauf, der die Systemtests WIRKLICH enthielt, den
+    # Stempel. Das ist dann kein Defekt, sondern der Preis -- und er gehoert
+    # aufgeschrieben, bevor jemand ihn bezahlt, ohne ihn zu kennen.
+    merge: [tests/reports/system-stamp]
+
+# Was `test:release-notes` (Katalog-Task, simplon 0.16.0, si#89) ueber DIESES Produkt wissen muss: wo
+# die Notizen liegen, ab welcher Version ueberhaupt eine Sektion Pflicht ist, und ab welcher Version die
+# Sektion jedes gemergte Ticket nennen muss. Der Kernel liest genau diese drei Werte und sonst nichts --
+# er kann weder die Seite raten (`simplon.tasks.releasenotes.declared`: "the kernel cannot guess ...
+# a default would be one product's layout imposed on every other") noch wissen, ab wann eine
+# Vollstaendigkeitspruefung ueberhaupt etwas misst.
+#
+# `page: docs/releases.md`. `docs/` traegt heute nur `docs/superpowers/` -- Planungsnotizen der
+# Superpowers-Skill, kein Lesestoff fuer wer installiert. `docs/releases.md` ist damit der erste
+# tatsaechliche Lesestoff dort und braucht keinen tieferen Pfad; ein Unterordner waere eine Struktur
+# fuer eine Seite.
+#
+# `from: 0.1.0`. Dieses Release ist das erste, das dieses Projekt je schneidet -- also auch das erste,
+# das eine Sektion TRAGEN MUSS. Ein `from:` oberhalb waere ein Freibrief fuer genau das Release, das
+# diese Deklaration ueberhaupt ausloest.
+#
+# `complete_from: 0.2.0`, NICHT 0.1.0 -- und das ist GEMESSEN, nicht geraten. `ranges_under_test`
+# (simplon.tasks.releasenotes) ueberspringt jede dokumentierte Version ohne AELTEREN Tag, denn ihr
+# Bereich hat keine untere Grenze: "there is nothing to compute" (Docstring dort). 0.1.0 ist der erste
+# Tag ueberhaupt und hat also keinen Vorgaenger -- seine Vollstaendigkeit ist damit UNMESSBAR, ganz
+# gleich, was hier steht. Erst 0.2.0 hat mit v0.1.0 einen unteren Rand, den `git log v0.1.0..v0.2.0`
+# bilden kann; das ist die erste Version, ueber die dieses Gate ueberhaupt eine Vollstaendigkeitsaussage
+# treffen KANN. `complete_from: 0.1.0` haette nichts zusaetzlich verlangt, aber eine Zusage geweckt, die
+# der Kernel an dieser Version gar nicht einloesen kann.
+#
+# WARUM DER BEFEHL UNTEN NICHT IN .github/workflows/ci.yml STEHT, obwohl er im `test:`-Zweig platziert
+# ist (Praezedenzfall `typecheck-python`): GEMESSEN gegen dieses Repository mit null Tags (`git tag`
+# antwortet leer) bricht das Gate mit "this checkout carries no `vX.Y.Z` tag at all" ab -- rc 1, kein
+# Vorbeischummeln an einer leeren Menge, aber auch keine sinnvolle Aussage, bevor der erste Tag liegt.
+# In den automatischen Testlauf gehoert er erst, sobald `v0.1.0` tatsaechlich geschnitten ist (Sache des
+# Eigentuemers, `release:tag`); vorher waere jeder Push rot, ohne dass irgendjemand etwas Neues falsch
+# gemacht haette -- genau die Sorte rotes Rot, an das man sich gewoehnt (CLAUDE.md).
+releases:
+  page: docs/releases.md
+  from: 0.1.0
+  complete_from: 0.2.0
+
+groups:
+  build:
+    commands:
+      # Der Befehl heisst weiter `build`, damit `deploy all` (depends_on:
+      # [build, up]) und jede getippte Gewohnheit stehenbleiben -- was sich
+      # aendert, ist WER ihn ausfuehrt: der Katalog-Task statt zweier Zeilen
+      # Produkt-Python. `with: { name: app }` pinnt, WELCHES Image aus dem
+      # `images:`-Abschnitt gemeint ist; ein zweites Image waere ein zweiter
+      # Befehl, kein zu merkender String.
+      build:
+        task: "build:image"
+        with: { name: app }
+        help: "Container-Image bauen (mit VERSION/REVISION aus git)."
+  test:
+    commands:
+      # Der Python-Typ-Gate aus dem Katalog (netctl#1437): mypy laeuft im Host-venv
+      # gegen mypy.ini im Projektwurzel-Verzeichnis. Kein eigener Task-Koerper --
+      # der Kernel besitzt den Mechanismus, dieses Manifest nur die Zeile plus
+      # mypy.ini.
+      typecheck-python: { task: "test:typecheck-python", help: "Python-Quellen mit mypy pruefen (kein Docker, kein Labor)." }
+      # Der Release-Notes-Gate aus dem Katalog (simplon 0.16.0, si#89): prueft `docs/releases.md` gegen
+      # die Tags und Merges dieses Repositories. Kein eigener Task-Koerper -- der Kernel besitzt den
+      # Mechanismus, dieses Manifest nur die Zeile plus die `releases:`-Deklaration weiter oben, wo auch
+      # steht, warum er (noch) nicht in .github/workflows/ci.yml haengt.
+      release-notes: { task: "test:release-notes", help: "Die Release-Notes-Seite gegen Tags und Merges pruefen." }
+      unit:
+        task: "test:gate"
+        with: { name: unit }
+        help: "Die Anwendungssuite laufen lassen (src/tests, Allure-Ergebnisse)."
+      delivery:
+        task: "test:gate"
+        with: { name: delivery }
+        help: "Die Auslieferung pruefen: Manifest, Workflows, Image, Layout (deploy/tests)."
+      system:
+        task: "test:gate"
+        with: { name: system }
+        help: "Die Systemtests gegen die lokale GitLab-Instanz laufen lassen (setzt deploy/testlab/compose.yaml voraus)."
+      report:
+        task: "test:report"
+        help: "Die Ergebnisse des Laufs zu einem Allure-Archiv zusammenfuehren."
+  support:
+    commands:
+      serve: { task: serve }
+      claude-plugins:
+        task: "support:claude-plugins"
+        help: "Install the Claude Code plugins this repo is developed with, as declared in the manifest's `claude` section (#1286); idempotent, --dry-run previews."
+        params:
+          dry_run: { help: "print what is missing, change nothing", short: "-n" }
+    groups:
+      # Die vier Versionskontroll-Befehle kommen bereits fertig aus dem Katalog
+      # (support.groups.git, siehe simplon.catalogue.yaml) -- diese Eintraege
+      # bestaetigen die Platzierung explizit, statt sie nur stillschweigend zu
+      # erben. Leerer Rumpf ist die tersteste Form: der Befehlsname IST schon die
+      # Koordinate, `task:`/`params:` kommen unveraendert vom Katalog mit.
+      git:
+        commands:
+          commit: {}
+          push: {}
+          prune-branches: {}
+          submodules: {}
+
+  release:
+    commands:
+      # Den Release-Tag schneiden und schieben (`git push origin <tag>`, NIE `--tags`).
+      # Kein eigener Task-Koerper -- der Kernel besitzt den Mechanismus.
+      #
+      # WARUM EIN PLATZIERTER BEFEHL UND NICHT `git tag` VON HAND: der Tag IST die
+      # Version (si#3). Ein `git tag` prueft nichts; dieser Task prueft, bevor er
+      # schiebt -- und `--tags` schiebt Tags mit, an die niemand gedacht hat.
+      tag: { task: "release:tag", help: "Den Release-Tag am HEAD schneiden und schieben." }
+      # Die andere Haelfte, und BEWUSST ein zweiter Befehl: `release:image`
+      # baut nichts. Es prueft, ob das Image lokal liegt, meldet sonst "run the
+      # build first", meldet sich an, schiebt -- und fragt danach die REGISTRY
+      # per `oras`, ob der Tag wirklich dort liegt. Dieser Nachlesen-Schritt ist
+      # der ganze Grund, warum das ein Kernel-Task ist: ein `docker push`, dessen
+      # rc niemand liest, ist derselbe Defekt wie ein Bericht, den niemand
+      # oeffnet.
+      #
+      # Aufgerufen wird er NUR aus .github/workflows/ci.yml. Nichts hier
+      # verbietet einem Menschen, ihn zu tippen -- aber der Weg, auf dem dieses
+      # Produkt veroeffentlicht, ist der CI/CD-Prozess, und ein Befehl, der
+      # lokal Gewohnheit wird, schiebt irgendwann einen ungetesteten Stand.
+      image:
+        task: "release:image"
+        with: { name: app }
+        help: "Image nach GHCR schieben und in der Registry nachlesen, dass der Tag liegt."
+
+  deploy:
+    commands:
+      up:   { task: up }
+      down: { task: down }
+      all:
+        help: "Bauen und starten."
+        depends_on: [build, up]
+        stop_on_failure: true
+
+env_groups: [deploy]
+
+default: dev
+environments:
+  dev: { backend: local, description: "Lokale Entwicklungsumgebung." }
+
+claude:
+  marketplaces:
+    claude-plugins-official:     { source: github, repo: anthropics/claude-plugins-official }
+    alexgreensh-token-optimizer: { source: github, repo: alexgreensh/token-optimizer }
+  plugins:
+    - superpowers@claude-plugins-official
+    - feature-dev@claude-plugins-official
+    - code-review@claude-plugins-official
+    - code-simplifier@claude-plugins-official
+    - security-guidance@claude-plugins-official
+    - frontend-design@claude-plugins-official
+    - github@claude-plugins-official
+    - pyright-lsp@claude-plugins-official
+    - token-optimizer@alexgreensh-token-optimizer

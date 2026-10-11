@@ -81,11 +81,18 @@ NOT_A_SURFACE = {
 #: groups and their `help:` - so between the two every source of a description is exercised.
 _CATALOGUE = """
 groups:
-  build: { help: "Produce the artefacts." }
-  # The one group with no description, so "carries the declaration" cannot be satisfied by a renderer that
-  # prints the same synthesized sentence for every group.
-  code: {}
-  deploy: { help: "Put them into an environment.", env_first: true }
+  ci:
+    transparent: true
+    groups:
+      build: { help: "Produce the artefacts." }
+      # The one group with no description, so "carries the declaration" cannot be satisfied by a renderer
+      # that prints the same synthesized sentence for every group.
+      code: {}
+  cd:
+    transparent: true
+    env_first: true
+    groups:
+      deploy: { help: "Put them into an environment." }
   support:
     help: "Host preflight, environment introspection and host tooling."
     commands:
@@ -106,19 +113,20 @@ tasks:
 #: the catalogue's own placements, which is how the kernel's own nested group gets there too.
 _MANIFEST = """
 product: sample
-default: dev
-environments:
-  dev: { backend: local }
 tasks:
   up: { impl: "blurb_impls:up", help: "Bring it up." }
   fmt: { impl: "blurb_impls:fmt", help: "Format." }
-groups:
+ci:
   build:
     commands:
       wheel: { task: "build:wheel" }
   code:
     commands:
       fmt: { task: "fmt" }
+cd:
+  default: dev
+  environments:
+    dev: { backend: local }
   deploy:
     commands:
       up: { task: "up" }

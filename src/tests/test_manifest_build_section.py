@@ -139,7 +139,7 @@ def _run(monkeypatch, tmp_path, build_section):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
 
-    document: dict = {"product": "demo", "groups": GROUPS}
+    document: dict = {"product": "demo", "ci": GROUPS}
     if build_section is not None:
         document["build"] = build_section
     text = yaml.safe_dump(document, sort_keys=False)
@@ -209,7 +209,7 @@ def test_a_tree_with_no_targets_is_still_refused_when_a_build_section_exists(mon
     """
     # arrange: a product with the section and a tree the generator cannot read a target out of
     (tmp_path / "README.md").write_text("no sources here\n", encoding="utf-8")
-    document = yaml.safe_dump({"product": "demo", "groups": GROUPS, "build": SWI_BUILD}, sort_keys=False)
+    document = yaml.safe_dump({"product": "demo", "ci": GROUPS, "build": SWI_BUILD}, sort_keys=False)
     (tmp_path / "demo.yaml").write_text(document, encoding="utf-8")
     monkeypatch.setattr(context, "_current",
                         ProductContext("demo", tmp_path, tmp_path / "demo.yaml"))
@@ -299,7 +299,7 @@ def test_the_kernel_no_longer_says_the_two_names_never_meet():
 
 def test_the_page_names_the_coordinates_that_actually_read_the_build_section():
     """The manifest page's `build:` row said `support:toolchain`, and `support:toolchain` never reads a
-    top-level `build:` at all - it edits `groups: build: commands:`, the GROUP.
+    top-level `build:` at all - it edits `ci: build: commands:` (`groups:` before si#344), the GROUP.
 
     That is not a typo worth a one-line fix and nothing else: it is si#172's own confusion, committed to
     the page si#159 wrote to end exactly this class of guessing, and it is the evidence that the
@@ -324,7 +324,7 @@ def test_the_page_names_the_coordinates_that_actually_read_the_build_section():
             f"so: {row}")
     assert "support:toolchain" not in row, (
         f"the page still names `support:toolchain` as a reader of the top-level "
-        f"`{buildfiles.SECTION}:` section; it reads `groups: {buildfiles.SECTION}: commands:`, which is "
+        f"`{buildfiles.SECTION}:` section; it reads `ci: {buildfiles.SECTION}: commands:`, which is "
         f"the group of the same name - si#172's confusion, in the documentation")
 
 

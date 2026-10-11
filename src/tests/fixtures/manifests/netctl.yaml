@@ -1,0 +1,776 @@
+# netctl CLI manifest (#437, #434) - the declarative source the kernel manifest engine
+# (simplon.orchestrator.manifest) assembles netctl's Typer CLI from. It encodes the command
+# taxonomy (groups + which groups are env-first) and, per command, the implementation reference
+# ("module:function", the existing orchestrator.cli callback) plus a one-line help summary. orchestrator.cli loads
+# this file at import and assembles the app from it; the env-gate reuses the same taxonomy.
+#
+# This manifest is now the SINGLE source of the taxonomy: the hand-written orchestrator.groups module was
+# retired in Train E (#592, decision D6), so `groups` / `env_groups` here are authoritative, not a mirror.
+# The CLI-surface snapshot (test_cli_surface_snapshot.py, #621) is the UX guard; test_manifest_parity.py
+# additionally asserts the manifest is internally consistent and every `impl` resolves. Keep them in sync
+# when adding a command. The impls reference orchestrator.cli functions (the Typer command callbacks) because those carry
+# the Option/Argument/Context signatures Typer introspects; pointing at a bare delegate (e.g.
+# orchestrator.lab:seed) would drop them. Help lives here as the canonical short summary (Phase-2 CI-doc
+# generation consumes it); the runtime per-command help now comes from this `help:` first, falling back
+# to the impl's docstring only for a command that declares none (netctl#1469 spec 3.7).
+product: netctl
+
+# --- static build data lifted from paths.py (#439) ---
+# The image names, cache volumes, docToolchain version and clab topology name that used to be Python
+# literals in orchestrator.paths. They live here so a second product supplies its own via its own manifest;
+# paths.py reads these RAW (import yaml + yaml.safe_load), not through the manifest engine. The engine
+# (simplon.orchestrator.manifest.load) reads only groups/env_groups and IGNORES these
+# extra top-level sections, so CLI assembly and the manifest-parity test are unaffected.
+images:
+  web: netctl:local
+  builder: netctl-builder:local
+  sidecar: netctl-sidecar:local
+  frr: netctl-frr:local
+  unmanaged: netctl-unmanaged:local   # #1338: the lab's one deliberately unregistered LLDP neighbour
+  radius: netctl-radius:local         # #1115: FreeRADIUS as a southbound target, not a fixture
+  supplicant: netctl-supplicant:local # #1115: the 802.1X client behind lns-<site>2
+  vyos: netctl-vyos:local
+  iol: netctl-iol:17.18.02            # #1475: built from the CML release asset, no longer pulled
+  iol_l2: netctl-iol-l2:17.18.02      # the L2-switch variant; same release, same recipe
+volumes:
+  gradle_cache: netctl-gradle-cache
+  vaadin_cache: netctl-vaadin-cache
+doctoolchain_version: v3.5.0
+topology:
+  clab_topo_name: netctl.clab.yml
+
+# --- the multi-tenant lab instance (#453/#564/#465, moved to the kernel in #1404) ---
+# The RESOLUTION (flag -> env var -> linked-git-worktree-derived id -> default) is platform mechanics and
+# lives in `simplon.labinstance`; netctl holds no function for it. These three values are the only
+# product-specific parts of that precedence and reach the kernel as DATA through this manifest, read raw
+# via ProductContext.manifest_data() exactly like images/volumes above.
+instance:
+  # The variable carrying the RESOLVED id to every child process the orchestrator spawns. Its spelling is
+  # netctl's, so it is declared here rather than hardcoded in the kernel.
+  env_var: NETCTL_INSTANCE
+  # The reserved default instance. It collapses EVERY derived name to the pre-#453 literal, so the
+  # single-tenant human UX stays byte-for-byte identical.
+  default: dev
+  # netctl's instance-id length budget. Derived, not chosen: clab names the host-netns veth end attached
+  # to each OOB bridge `oob-<id>-<site>-<suffix>`, and that is the tightest derived name against the
+  # 15-char Linux IFNAMSIZ ceiling. `paths.MAX_INSTANCE_LEN` recomputes it from the OOB naming parts and
+  # test_instance.py asserts the two agree, so a widened suffix cannot silently outgrow this number.
+  max_id_len: 2
+# --- the lab-based test-level taxonomy (#860, moved out of Python in #1406) ---
+# The RUNNER of these suites is kernel plumbing (`simplon.tasks.testrun`): make the per-suite venv, run
+# pytest into a shared Allure results dir, merge the per-module results, render the archive. None of that
+# needs to know it is serving netctl, so netctl holds no code for it.
+#
+# What IS netctl's is everything below: which suite lives at which path, in which ORDER the levels run, and
+# - the load-bearing bit - which gate CLEARS the shared results dir versus APPENDS into it. That was a
+# Python `if` until #1406, which made it a statement about netctl's own test tree hidden inside the kernel's
+# would-be mechanism. As data it is checkable: the kernel refuses a taxonomy with two clearing gates (the
+# second would delete the first's results) or none (every run would append onto the last one forever), and
+# refuses one whose clearing gate is not the first to run.
+#
+# The two callbacks the kernel needs from netctl arrive the same way, as "module:function" refs it resolves
+# exactly like a command's `impl:` - no import of netctl anywhere in the kernel:
+#   - `precondition` - the fail-fast Raft/cluster-health verdict (#424). A non-zero rc aborts before any
+#     suite work AND before any clear, because nothing ran and the last real run's results must survive.
+#   - `preamble`     - netctl's own definition of "the lab is ready" (#1364/#1365: a converged, non-empty
+#     inventory, provisioned overlay services, a settled forwarding plane).
+#
+# `acceptance-ui` is declared as a bare `impl:` because its runner is netctl's own (Playwright in a pinned
+# image against this instance's controller), not a pytest root the kernel could run. It appears here so the
+# `accept` convenience still chains it in the right place; `test acceptance-ui` dispatches it directly
+# through its own command in the `test` group.
+suites:
+  reports: test/reports
+  # The SAME hook is declared here and again on the `system` gate below, and that duplication is
+  # deliberate rather than a copy-paste. The two answer different questions. Here it makes a CHAINED run
+  # (`accept`, `deploy all`) abort in seconds over a broken cluster instead of collecting three suites
+  # against it - `accept` runs every gate without fail-fast on purpose, so without this line an unhealthy
+  # cluster would cost the full ~30 minutes to say what it could say at once. On the gate it makes a
+  # STANDALONE `test system` carry the same guard, which the section-level one never reaches. The price is
+  # one extra ~5s health probe per chained run; the alternative is one of the two paths being unguarded.
+  precondition: "orchestrator.clusterhealth:precondition"
+  # Where an EXPLORATORY run goes (#1406). `test system -k <expr>` answers in ~60s where the gate takes
+  # ~24 minutes, which is what makes a hunt like #1271 affordable - but such a run is PARTIAL by
+  # definition. Letting it clear and refill the shared dir would leave an archive that reports one test
+  # and looks like a full gate; letting it append would mix two runs. So the whole run is quarantined
+  # here instead, and the archive of the last real gate is left exactly as it was.
+  filtered_results: allure-results-filtered
+  gates:
+    - name: system
+      suite: test/system/python
+      results: clear          # FIRST lab suite: it clears the shared results the others then append into
+      junit: junit.xml
+      args: true              # the one gate the passthrough pytest args belong to
+      precondition: "orchestrator.clusterhealth:precondition"
+      preamble: "orchestrator.lab:ensure_lab_ready"
+      announce: "system gate: test/system/python suite (allure) against the running lab"
+    - name: acceptance-dataplane
+      suite: test/acceptance/python
+      results: append
+      # Its OWN junit file (#927): the system suite already owns junit.xml in this same dir and CI
+      # publishes the two as SEPARATE per-level Check Runs, so they must not overwrite each other.
+      junit: junit-acceptance-dataplane.xml
+      preamble: "orchestrator.lab:ensure_lab_ready"
+      announce: "running acceptance tests (black-box dataplane reachability) against the running lab"
+    - name: acceptance-ui
+      impl: "orchestrator.tooling:acceptance_ui"
+  # The report step merges the Java per-module Allure results the unit/component/integration/boot gates
+  # ALREADY wrote (it runs no Java tests) and tags them as one suite. A dir that is not there is skipped,
+  # so a standalone `report` archives whatever is present instead of failing.
+  report:
+    parent_suite: Unit
+    merge:
+      - src/netctl/src/java/domain/build/allure-results
+      - src/netctl/src/java/application/build/allure-results
+      - src/netctl/src/java/infrastructure/build/allure-results
+      - src/netctl/src/java/web/build/allure-results
+
+# --- lab egress isolation, as DATA (#1003/#1004, moved out of Python by #1408) ---
+# The MECHANISM - the DOCKER-USER default-deny on the mgmt bridge, the instance-scoped rule comments, the
+# uplink ARP hardening - is `simplon.labegress`, because "an emulated network must not touch the LAN" is
+# a property of running clab on a developer's machine, not of netctl. netctl holds no function for it.
+#
+# What is netctl's is the three names below. They are spellings, not switches, and none of them can be
+# defaulted by the kernel: a guessed env-var name would make the operator's documented escape hatch do
+# nothing at all, and a guessed tag would let one product's `down` delete another's rules.
+#
+# The two values that are DERIVED rather than declared - this instance's mgmt network name and the LAN
+# uplink set - reach the kernel as call arguments from `lab.py`, because only netctl's paths adapter can
+# compute them.
+lab_egress:
+  isolation_env: NETCTL_LAB_ISOLATION   # =0 disables the default-deny, loudly. Debugging only: a lab
+                                        # without it can repeat the #1003 LAN incident.
+  harden_env: NETCTL_HOST_HARDEN        # =0 opts out of the ARP hardening (defence in depth, layer 2)
+  rule_tag: netctl                      # every rule is tagged `netctl:<instance>`, so install/remove of
+                                        # concurrent labs (#453) can never touch each other's rules
+
+# --- the agent setup this repo is developed with (#1286) ---
+# The Claude Code plugin set, declared HERE and not only in .claude/settings.json. Two reasons: the manifest
+# is what a second product of the *ctl family copies when it wants the same setup, and a list here is
+# SCRIPTABLE - `netctl support claude-plugins` asks the `claude` CLI what is already present and installs
+# only the difference. .claude/settings.json stays the NATIVE half: Claude Code reads enabledPlugins from
+# every settings.json it finds, so a human who merely opens the repo is offered the plugins with no command
+# at all, whereas the command is what serves a fresh machine, an unattended agent or a CI image where
+# nobody is there to accept a trust prompt. A unit test (test_claude_plugins.py) asserts the two declare
+# the same thing, so the pair cannot drift silently.
+#
+# The CLI engine IGNORES this section exactly as it ignores images/volumes above (unknown top-level keys are
+# tolerated); it is read raw via ProductContext.manifest_data(), like the build data.
+#
+# `claude-plugins-official` is Claude Code's BUILT-IN marketplace: its own settings schema exempts that name
+# from needing an extraKnownMarketplaces entry, since only the official source can register under it. It is
+# declared here anyway, so this section describes every source a plugin comes from, and it is deliberately
+# ABSENT from settings.json - the parity test encodes that one exemption.
+claude:
+  marketplaces:
+    claude-plugins-official:     { source: github, repo: anthropics/claude-plugins-official }
+    alexgreensh-token-optimizer: { source: github, repo: alexgreensh/token-optimizer }
+  plugins:
+    - superpowers@claude-plugins-official
+    - feature-dev@claude-plugins-official
+    - code-review@claude-plugins-official
+    - code-simplifier@claude-plugins-official
+    - security-guidance@claude-plugins-official
+    - frontend-design@claude-plugins-official
+    - github@claude-plugins-official
+    - pyright-lsp@claude-plugins-official
+    - token-optimizer@alexgreensh-token-optimizer
+
+# --- the LAN Sonatype Nexus artefact proxy, as DATA (#948/#994/#996, moved out of Python by #1405) ---
+# The lifecycle - start the container, create the proxy repositories, report honest state - is MECHANISM
+# and lives in `simplon.nexusproxy`. What is netctl's is exactly what stands below, and it is the reason the
+# `nexus` command's impl can be the kernel's without netctl keeping a forwarding function: the kernel reads
+# this section RAW through ProductContext.manifest_data(), like images/volumes/claude above.
+#
+# `content_probe_path` is the load-bearing one. `status` decides "serving" from an ANONYMOUS CONTENT FETCH
+# and never from a repository listing - measured on a virgin 3.94.1 instance, a listing answers 200 with the
+# COMPLETE repository list while every artefact answers 403, because the EULA gate sits on the
+# /repository/... content path only. The path below is the one the BUILD resolves through
+# (tooling.NEXUS_MAVEN_PATH, the shipped `maven-public` group) plus a tiny immutable pom from netctl's own
+# test closure, verified 200 / 1526 bytes on the live instance; test_nexus_manifest.py asserts it still
+# agrees with tooling.py, so the probe cannot drift away from the URL gradle asks.
+#
+# `proxy_repositories` is the five create-repositories.sh creates PLUS the shipped `maven-central`, which is
+# the biggest cache of all (it is what `maven-public` proxies through) and would otherwise be the one
+# repository still growing unbounded. `format` is what a cleanup policy is scoped by, `api` is the segment
+# in the repository path - they differ for maven only, which is exactly the detail that makes a guessed URL
+# 404 silently.
+nexus:
+  cli: netctl                       # how the report names the commands it tells the operator to run
+  container: netctl-nexus
+  volume: sonatype_nexus-data       # the compose project is the `sonatype` dir, so compose prefixes it
+  compose_file: deploy/provision/sonatype/docker-compose.yml
+  repositories_script: deploy/provision/sonatype/create-repositories.sh
+  base_url_env: NETCTL_NEXUS_URL    # the ONE knob; tooling.py derives maven/npm/pypi/node from it
+  http_port: "8181"                 # container-internal 8081; host 8081 is netctl's portal, 8080-8083 the lab
+  probe_image: gradle:jdk25         # the image every gradle invocation already runs in, so no extra pull
+  content_probe_path: /repository/maven-public/org/apiguardian/apiguardian-api/1.1.2/apiguardian-api-1.1.2.pom
+  proxy_repositories:
+    - { name: maven-central,        format: maven2, api: maven }
+    - { name: gradle-plugins-proxy, format: maven2, api: maven }
+    - { name: npm-proxy,            format: npm,    api: npm }
+    - { name: pypi-proxy,           format: pypi,   api: pypi }
+    - { name: nodejs-proxy,         format: raw,    api: raw }
+    - { name: docker-hub-proxy,     format: docker, api: docker }
+
+# The command taxonomy is ONE hierarchy (#729): `groups` maps each group to a group -> command -> spec TREE,
+# so a command's membership and its spec (impl + one-line help) live together. The former separate flat
+# `commands:` map is gone; the dotted group-scoped keys it needed (`test.all` / `deploy.all`, because `all`
+# collides across groups in a flat namespace) collapse to a plain nested `all` - NESTING resolves the
+# collision. Key order within a group is the command MEMBERSHIP order; the env-gate + the flat back-compat
+# aliases are derived. Groups are ordered as the CI/CD loop (build -> test -> release -> deploy -> monitor),
+# then the two cross-cutting agnostic groups (git, support); the two CD disciplines (deploy, monitor) are
+# env-first (see env_groups). `package` is NOT a canonical CI/CD phase - the DevOps loop is
+# build/test/release/deploy/monitor - so building the images (package) and shipping them (publish) both live
+# under `release`. The impls reference orchestrator.cli callbacks (they carry the Typer Option/Argument
+# signatures Typer introspects); the runtime per-command --help still comes from each impl's docstring, while
+# `help` here is the canonical short summary (composite step labels + the Phase-2 CI-doc generation consume it).
+# No `taxonomy:` block any more (#1444, spec step 7). The SHAPE of the CI/CD loop - build, test, release,
+# deploy, monitor, support and support.git - is the kernel's, declared once in simplon's own catalogue (simplon/catalogue.yaml, shipped in the wheel)
+# so a second *ctl product inherits it instead of restating it. netctl contributes MEMBERS through the
+# `groups:` keys below and never redeclares a shape; declaring one in both files is a contradiction the
+# loader rejects. A group netctl alone needed would be declared here, and would be visible as the
+# exception it is.
+
+# netctl#1469 (plan 2): netctl's own task templates. A task declares `impl:` + `help:` (+ optional
+# `params:`); the command that instantiates it lives under `groups:` and names it with `task: <name>`.
+tasks:
+  # --- build ---
+  gradle:             { impl: "orchestrator.cli:gradle_cmd" }
+  diff:               { impl: "orchestrator.cli:diff" }
+  compile-java:       { impl: "orchestrator.cli:compile_java_cmd" }
+  compile-python:     { impl: "orchestrator.cli:compile_python_cmd" }
+  builder-image:      { impl: "orchestrator.cli:builder_image_cmd" }
+  web-jar-only:       { impl: "orchestrator.cli:web_jar_only_cmd" }
+  aot-only:           { impl: "orchestrator.cli:aot_only_cmd" }
+  web-image-only:     { impl: "orchestrator.cli:web_image_only_cmd" }
+  sidecar-image:      { impl: "orchestrator.cli:sidecar_image_cmd" }
+  lab-image:          { impl: "orchestrator.tooling:lab_image" }
+  vyos-image:         { impl: "orchestrator.cli:vyos_image_cmd" }
+  iol-image:          { impl: "orchestrator.tooling:iol_image" }
+  reclaim-workspace:  { impl: "orchestrator.cli:reclaim_workspace_cmd" }
+  verify-freshness:   { impl: "orchestrator.cli:verify_freshness_cmd" }
+  # --- test ---
+  unit-java:          { impl: "orchestrator.cli:unit" }
+  unit-java-core:     { impl: "orchestrator.cli:unit_core_cmd" }
+  unit-java-web-only: { impl: "orchestrator.cli:unit_web_only_cmd" }
+  component-java:     { impl: "orchestrator.cli:component" }
+  component-db:       { impl: "orchestrator.cli:component_db" }
+  integration-java:   { impl: "orchestrator.cli:integration" }
+  boot-java:          { impl: "orchestrator.cli:boot" }
+  unit-typescript:    { impl: "orchestrator.cli:frontend" }
+  unit-python:        { impl: "orchestrator.cli:unit_py_cmd" }
+  acceptance-ui:      { impl: "orchestrator.cli:acceptance_ui" }
+  lint-shell:         { impl: "orchestrator.cli:lint" }
+  # --- release ---
+  package:            { impl: "orchestrator.cli:package" }
+  publish:            { impl: "orchestrator.cli:publish" }
+  # --- deploy ---
+  up-preflight:       { impl: "orchestrator.cli:up_preflight_cmd" }
+  up-deploy:          { impl: "orchestrator.cli:up_deploy_cmd" }
+  up-finish:          { impl: "orchestrator.cli:up_finish_cmd" }
+  down:               { impl: "orchestrator.cli:down" }
+  clean:              { impl: "orchestrator.cli:clean" }
+  seed:               { impl: "orchestrator.cli:seed" }
+  render:             { impl: "orchestrator.cli:render" }
+  reset:              { impl: "orchestrator.cli:reset" }
+  provision:          { impl: "orchestrator.cli:provision" }
+  add-client:         { impl: "orchestrator.cli:add_client_cmd" }
+  rm-client:          { impl: "orchestrator.cli:rm_client_cmd" }
+  backup:             { impl: "orchestrator.cli:backup" }
+  zabbix:             { impl: "orchestrator.cli:zabbix" }
+  openbao-pki:        { impl: "orchestrator.cli:openbao_pki_cmd" }
+  rescue:             { impl: "orchestrator.cli:rescue_cmd" }
+  # --- monitor ---
+  status:             { impl: "orchestrator.cli:status_cmd" }
+  logs:               { impl: "orchestrator.cli:logs" }
+  collect-logs:       { impl: "orchestrator.cli:collect_logs" }
+  clients:            { impl: "orchestrator.cli:clients" }
+  connect:            { impl: "orchestrator.cli:connect" }
+  # --- support ---
+  check:              { impl: "orchestrator.cli:check" }
+  disk-guard:         { impl: "orchestrator.cli:disk_guard_cmd" }
+  doctor:             { impl: "orchestrator.cli:doctor" }
+  install:            { impl: "orchestrator.cli:install" }
+  lab-sites:          { impl: "orchestrator.cli:lab_sites_cmd" }
+
+groups:
+  # build: the build pipeline (group-default, #592 D4) + diff/docs (moved from the old `code` group) +
+  # the per-image commands (#901). `build` is an impl-less AGGREGATE (#1238): the step list that used to be
+  # `tooling.build_pipeline()` - a hand-ordered list of up to thirteen steps in product Python, two of them
+  # appended or not by an `if` - is the depends_on plan below, resolved by the ONE kernel resolver
+  # (`Manifest.plan_for`: transitive, deduped, ordered) and dispatched by
+  # `simplon.orchestrator.product.run_command`. The three "internal non-command steps" that
+  # were the stated blocker (the Linux ownership reclaim #498, the freshness verification #424 and the
+  # frontend clear #1047) are gone as blockers: two became first-class commands (reclaim-workspace,
+  # verify-freshness) and the third lives inside `web-jar-only`, which has always cleared the generated
+  # frontend before its gradle call (#989/#1142).
+  build:
+    commands:
+      # The dependency ORDER is the former pipeline's order, step for step (test_manifest_parity pins the
+      # resolved plan against it). Two entries are redundant for CORRECTNESS and load-bearing for ORDER:
+      # `unit-java-web` pulls the web-jar chain forward so the jar is built before the AOT training rather
+      # than after it, and `aot` keeps the training between the web tests and the image packaging - both are
+      # reachable anyway through `web-image`. `stop_on_failure` because a red gate or a missing jar makes
+      # every later image doomed work; `keep_awake` because the plan runs for tens of minutes and the
+      # command that used to wrap it in an idle-sleep inhibitor (#546) no longer exists.
+      build:
+        depends_on: [disk-guard, unit-java-core, unit-python, unit-java-web, reclaim-workspace, aot,
+                     sidecar-image, web-image, frr-image, unmanaged-image, radius-image,
+                     supplicant-image, vyos-image,
+                     iol-image, iol-l2-image,
+                     verify-freshness]
+        stop_on_failure: true
+        keep_awake: true
+        help: "Build the container images as a live split-pane pipeline (unit gates first, then web jar + sidecar/web/FRR/unmanaged images, VyOS on demand)."
+      # #1091: the ONE supported containerised gradle invocation. There is no gradlew, so without this every
+      # ad-hoc gate was a hand-assembled `docker run ... gradle:jdk25 gradle ...` that carried neither the
+      # cache volumes nor the Nexus mirror. passthrough_args, because the whole point is that the task list
+      # and gradle's own flags (`--tests '*Foo*'`, `--rerun-tasks`) reach gradle verbatim.
+      gradle: { task: gradle, help: "Run arbitrary gradle tasks in the containerised toolchain (the missing ./gradlew): persistent gradle + Vaadin caches and the Nexus mirror wiring applied for you.", passthrough_args: true }
+      diff:  { task: diff, help: "Generate a Liquibase changelog from the orm.xml model (Docker)." }
+      # The impl is the KERNEL's (#1280's rule), like nexus and claude-plugins: rendering AsciiDoc needs no
+      # product knowledge - docToolchain reads its own `docToolchainConfig.groovy` and writes its own
+      # `build/docToolchain/` tree, and neither is a netctl convention. What stays netctl's is the DATA (the
+      # `doctoolchain_version` pin above and the config file's inputFiles) and the assertion that the config
+      # still names documents that exist, because only netctl knows where its documents live.
+      docs:  { task: "docs:render", help: "Render the project docs via docToolchain in Docker." }
+      # #1278: developer commands ("does this compile, without running tests?"), NOT in `build`'s depends_on.
+      # One reason covers both: every gate already compiles what it tests (`unit-java-core` alone compiles
+      # the three framework-free modules), so a compile step in the plan would be exactly the duplicated
+      # work #1238 removed.
+      compile-java:   { task: compile-java, help: "Compile the four Java modules (gradle classes testClasses) in the containerised toolchain, without running any tests." }
+      compile-python: { task: compile-python, help: "Byte-compile the sidecar, orchestrator and labgen Python sources (python -m compileall -q) in the host venv, without running any tests." }
+      # #901: build_pipeline's native image steps promoted to first-class dependable commands. The kernel's
+      # v1 lock (#895) makes impl and depends_on mutually exclusive, so each CHAINED stage is a PAIR: an
+      # impl-bearing `-only` leaf (the raw step, no dependency expansion) plus an impl-less aggregate under
+      # the commissioned name carrying the depends_on edge. `Manifest.plan_for` dedups transitively, so
+      # `web-image` cold-runs builder-image -> web-jar-only -> aot-only -> web-image-only exactly once.
+      # Every leaf is idempotent in the depends_on sense: the docker layer cache makes reruns cheap. The
+      # chain aggregates ARE stop_on_failure - a failed prerequisite makes every later stage doomed work.
+      builder-image:  { task: builder-image, help: "Build the gradle builder image (netctl-builder:local) the web-jar step runs in; layer-cached, cheap to rerun." }
+      web-jar-only:   { task: web-jar-only, hidden: true, help: "RAW step: the production web bootJar (gradle :web:bootJar -Pvaadin.productionMode) in the builder image, WITHOUT dependency expansion; prefer `web-jar`." }
+      web-jar:
+        depends_on: [builder-image, web-jar-only]
+        stop_on_failure: true
+        help: "Build the production web bootJar dependably (#901): builder-image first, then the gradle run."
+      aot-only:       { task: aot-only, hidden: true, help: "RAW step: extract the run layout + train the Leyden AOT cache against a throwaway Postgres (#257), WITHOUT dependency expansion; prefer `aot`." }
+      aot:
+        depends_on: [web-jar, aot-only]
+        stop_on_failure: true
+        help: "Extract + train the Leyden AOT cache dependably (#901): the web-jar chain first, then the training run."
+      web-image-only: { task: web-image-only, hidden: true, help: "RAW step: docker build the deployable web image (netctl:local) from the extracted build/aot layout, WITHOUT dependency expansion; prefer `web-image`." }
+      web-image:
+        depends_on: [aot, web-image-only]
+        stop_on_failure: true
+        help: "Build the deployable web image dependably (#901): the full builder-image -> web-jar -> aot chain first, then the image build."
+      sidecar-image:  { task: sidecar-image, help: "Build the sidecar image (netctl-sidecar:local); no prerequisites." }
+      # frr-image and unmanaged-image are the same three lines with two constants swapped (a tag and a
+      # Dockerfile path, both at a repo-root build context): two instances of the shared `lab-image` task,
+      # each `with:` pinning its own key/dockerfile (netctl#1469 plan 2).
+      frr-image:
+        task: lab-image
+        with: { key: frr, dockerfile: deploy/provision/lab/frr/Dockerfile }
+        help: "Build the FRR lab node image (netctl-frr:local) (#901)."
+      # #1338: the unmanaged LLDP neighbour. An unconditional step like frr-image rather than a conditional
+      # one like vyos-image: this is a slim Debian plus lldpd, nothing like the VyOS ISO fetch that earned
+      # that conditional, so gating it on a lab.yml probe would buy nothing and cost the reader a second
+      # condition to reason about.
+      unmanaged-image:
+        task: lab-image
+        with: { key: unmanaged, dockerfile: deploy/provision/lab/unmanaged/Dockerfile }
+        help: "Build the unmanaged LLDP-neighbour lab node image (netctl-unmanaged:local) (#1338)."
+      # #1115 slice 3: the two 802.1X lab nodes. Same three lines as frr-image/unmanaged-image with the
+      # two constants swapped. Unconditional like those, not conditional like vyos-image: both are small
+      # Alpine builds, nothing like the VyOS ISO fetch that earned the condition.
+      radius-image:
+        task: lab-image
+        with: { key: radius, dockerfile: deploy/provision/lab/radius/Dockerfile }
+        help: "Build the FreeRADIUS lab node image (netctl-radius:local) (#1115)."
+      supplicant-image:
+        task: lab-image
+        with: { key: supplicant, dockerfile: deploy/provision/lab/supplicant/Dockerfile }
+        help: "Build the 802.1X supplicant lab client image (netctl-supplicant:local) (#1115)."
+      vyos-image:     { task: vyos-image, help: "Build the VyOS lab node image (netctl-vyos:local) when lab.yml requests a VyOS node; a no-op otherwise (the ISO fetch + ~2.8GB image is on-demand only)." }
+      # #1475: the IOL images are BUILT from the licensed CML release asset now, not pulled. ONE
+      # task with two instances, exactly as the ticket proposed - the task/command model (#1469
+      # plan 2) landed first, so the two raw `impl:` leaves it settled for are no longer needed.
+      # The `variant` key is the same key in `images:` above and in iolsource.ASSETS; a test pins
+      # that agreement, because a drift shows up only after a ~100 MB download.
+      iol-image:
+        task: iol-image
+        with: { variant: iol }
+        help: "Build the router Cisco IOL lab node image (netctl-iol:17.18.02) from the pinned CML release asset; needs gh authenticated."
+      iol-l2-image:
+        task: iol-image
+        with: { variant: iol_l2 }
+        help: "Build the L2-switch Cisco IOL lab node image (netctl-iol-l2:17.18.02) from the pinned CML release asset; needs gh authenticated."
+      # #1238: the last two steps of the former build_pipeline that were not commands. Both are CONDITIONAL
+      # work, and a static plan cannot express a condition - so each leaf carries its own and says so when it
+      # does nothing (the vyos-image no-op is the precedent). A stable step list that sometimes reports
+      # "nothing to do" beats a list whose shape depends on the host.
+      reclaim-workspace: { task: reclaim-workspace, help: "Reclaim workspace ownership after the root gradle containers (#498): chown the checkout back to you on native Linux; a no-op on macOS, where virtiofs already maps container-root writes to the host user." }
+      verify-freshness:  { task: verify-freshness, help: "Verify the build left DEPLOYABLE artifacts (#424/#1047): the web bootJar and netctl:local exist, and both the jar and the app.jar inside the image say productionMode true." }
+  # test: the CI gates, one per standard test level (unit -> component -> integration -> system ->
+  # acceptance/e2e + static); `all` runs the COMPLETE e2e (#720) and shares the name with deploy.all
+  # (nested, #519). #860 cleaned up the taxonomy: `migration` became `component-db` (a DB component gate,
+  # not a test file), `frontend` dropped the duplicated boot smoke, and the former lab-based `accept`
+  # collection is split into `system` + `acceptance-dataplane` + `acceptance-ui` + `report`. #1278 named
+  # the LANGUAGE a gate executes (unit -> unit-java, frontend -> unit-typescript, unit-py -> unit-python,
+  # ...): a gate that runs code written in a language names that language, so Java stopped being the
+  # unnamed default. `component-db`/`system`/`acceptance-*`/`report`/`all` execute no single language
+  # (a DB component gate resp. black-box suites against the running lab), so they keep their names.
+  test:
+    commands:
+      unit-java:             { task: unit-java, help: "UNIT-JAVA gate: domain + application + framework-free infrastructure tests plus spotless static analysis in Docker (fast, lab-free)." }
+      # #1238: the Java unit gate SPLIT in two, because the build needs the halves at different points and
+      # running them together built the Vaadin frontend twice. `unit-java-core` needs no frontend, so the
+      # build runs it FIRST (a compile error or a spotless regression fails in seconds); `unit-java-web`
+      # needs one, so it runs AFTER the production jar and reuses what that jar built. The `-only` leaf +
+      # aggregate PAIR is the kernel's impl-XOR-depends_on lock (#895), same shape as the #901 image chain.
+      # The developer's `unit-java` above is unchanged and still runs all four modules in one go.
+      unit-java-core:        { task: unit-java-core, help: "UNIT-JAVA-CORE gate: spotless plus the three FRAMEWORK-FREE Java modules (domain, application, infrastructure) in Docker - the half of the unit gate that needs no Vaadin frontend." }
+      unit-java-web-only:    { task: unit-java-web-only, hidden: true, help: "RAW step: the web module's unit tests (gradle :web:test) in the builder image, WITHOUT dependency expansion; prefer `unit-java-web`." }
+      unit-java-web:
+        depends_on: [web-jar, unit-java-web-only]
+        stop_on_failure: true
+        help: "UNIT-JAVA-WEB gate, dependably (#1238): the production web jar first (its frontend is what :web:test needs), then the web module's unit tests."
+      component-java:        { task: component-java, help: "COMPONENT-JAVA gate: the web view/controller component-logic tests in Docker (#234)." }
+      component-db:          { task: component-db, help: "COMPONENT-DB gate: assert the real Liquibase changelog applies against a throwaway TimescaleDB (the Postgres-only Timescale changesets), a DB component test in its own lane (#253/#860)." }
+      integration-java:      { task: integration-java, help: "INTEGRATION-JAVA gate: the infrastructure @DataJpaTest persistence slices (Spring + H2 + Liquibase) in Docker (#234)." }
+      boot-java:             { task: boot-java, help: "BOOT-JAVA gate: the context-load smoke test that boots the full web Spring ApplicationContext (#288)." }
+      unit-typescript:       { task: unit-typescript, help: "UNIT-TYPESCRIPT gate: build the React/TS production bundle then run the vitest frontend tests in Docker (#693/#860)." }
+      unit-python:           { task: unit-python, help: "UNIT-PYTHON gate: the host-Python unit tests (pytest over the per-block test/unit roots, in its own venv)." }
+      # The type gate, from the KERNEL (simplon.tasks.typecheck). netctl contributes only the
+      # command line and `mypy.ini`; the mechanism and the pinned mypy are the kernel's, so
+      # infractl and cockpit adopt the same gate the same way. Covers the same three Python roots
+      # `compile-python` byte-compiles - the sidecar, the orchestrator and labgen.
+      typecheck-python:      { task: "test:typecheck-python", help: "TYPECHECK-PYTHON gate: mypy over the sidecar, orchestrator and labgen sources in the host venv (fast, lab-free)." }
+      # #1406: the two lab-based pytest gates + `report` (and `accept`, which #1748 moved in beside them) point straight at
+      # the KERNEL's suite runner. netctl holds no callback for them; what it contributes is the level
+      # TAXONOMY in the top-level `suites` section below. `system` declares passthrough_args so a hunt can
+      # run one test (`./netctl.sh test system -k <expr>`, ~60s) instead of the ~24-minute gate; a run
+      # carrying args is quarantined into its own results dir, so it can never half-clear the archive.
+      #
+      # The two gates SHARE one kernel task (`test:gate`, netctl#1469 plan 2); `with: { name: ... }` pins
+      # which suite each command runs and drops `name` from the command line - the pre-migration mechanism
+      # read the invocation name instead, which is why a `tasks:` coordinate could not place two commands
+      # (#1406). A shared callback has one docstring, so the kernel renders the `help:` below as their
+      # --help summary. `test:gate` also declares `passthrough_args: true` (only `system` forwards extra
+      # pytest args, #1406), and treeform inherits a task's `passthrough_args` onto every command that
+      # does not say otherwise - so `acceptance-dataplane` pins it back to `false` to keep its pre-migration
+      # behaviour (test_manifest_parity's arg-forwarding set stays exactly {accept, gradle, system}).
+      system:
+        task: "test:gate"
+        with: { name: system }
+        passthrough_args: true
+        help: "SYSTEM gate: the test/system/python suite against the running lab, into the shared Allure results; it runs FIRST and clears them (#860). Trailing args reach pytest verbatim (`-k <expr>`) and quarantine that run into its own results dir (#1406)."
+      acceptance-dataplane:
+        task: "test:gate"
+        with: { name: acceptance-dataplane }
+        passthrough_args: false
+        help: "ACCEPTANCE-DATAPLANE gate: the test/acceptance/python black-box dataplane reachability suite against the running lab, APPENDING into the shared Allure results (#860)."
+      acceptance-ui:        { task: acceptance-ui, help: "ACCEPTANCE-UI gate: the Playwright frontend/e2e journeys against this instance's seeded lab controller, resolved not hardcoded (#680/#860/#706)." }
+      report:               { task: "test:report", help: "REPORT step: merge the Java unit results into the shared Allure results and render the single-file Allure HTML archive (#860)." }
+      # MOVED here from `monitor` by the simplon 0.4.0 bump (#1748). The kernel's rule since that
+      # release: a coordinate that starts with a PHASE NAME belongs in exactly that phase, and this one
+      # is `test:accept`. It sat under `monitor` because #860 split the former lab-based `accept` into
+      # the four gates above and left the convenience where the operator had always typed it - so the
+      # CLI surface moves with it: `netctl monitor accept` becomes `netctl test accept`.
+      accept:
+        task: "test:accept"
+        passthrough_args: true
+        help: "Convenience: run the lab-based suites in sequence (system + acceptance-dataplane + acceptance-ui + report) against the running lab; extra args pass through to the system pytest."
+      # `all` is an impl-less AGGREGATE (#895/#899): the COMPLETE e2e (#720/#860) as a depends_on plan
+      # instead of a composite. It prepends the lab bring-up (`up` + `seed`, deploy group), runs every
+      # test-group gate, then the lab-based suites split out of the former `accept` (#860): `system`
+      # (runs first among them and clears the shared Allure results), `acceptance-dataplane`,
+      # `acceptance-ui`, and finally `report` (the merged single-file Allure archive). The GATES are
+      # independent, so all run and the overall verdict is the worst step's rc - NOT stop_on_failure
+      # (matches the former composite). Slow + Docker/colima-dependent by design.
+      #
+      # The BRING-UP half is not independent, and #1279 exposed that the flag cannot say so: `up` was an
+      # opaque leaf running its OWN stop_on_failure pipeline in a subprocess, and once its four phases
+      # became THIS plan's steps they inherited the root's `false`. A dead `up-preflight` (say the #1088
+      # provenance guard refusing a stale netctl:local) would no longer skip the deploy - it would spend
+      # ~40 minutes deploying that stale image and then run every gate and both lab suites against last
+      # week's logic, which is #1088/#1072 with the guard that exists to prevent it disabled. The cure is
+      # SUBTREE-scoped stop_on_failure in the kernel (#1317): a failure walks up to the nearest ancestor
+      # that sets the flag and skips the rest of THAT subtree, so `up`'s own `true` aborts the bring-up
+      # while these gates still all run. `false` here is correct and stays; do not "fix" it to true.
+      all:
+        depends_on: [up, seed, unit-java, component-java, component-db, integration-java, boot-java, unit-typescript, unit-python, lint-shell, system, acceptance-dataplane, acceptance-ui, report]
+        stop_on_failure: false
+        # #1279: `up` is an aggregate now, so its four phases are THIS plan's steps and the #546 inhibitor
+        # `uppipe.run_up` used to hold inside the opaque `up` leaf is gone with it. Declared here so the
+        # host still cannot idle-sleep through the bring-up half of a multi-hour e2e run.
+        keep_awake: true
+        help: "Run the COMPLETE e2e (#720): bring the lab up + seed, run every test stage, then the lab-based system + acceptance suites and the Allure report - no longer lab-free."
+      lint-shell:           { task: lint-shell, help: "LINT-SHELL gate (static analysis): shellcheck netctl.sh via Docker." }
+  # release: build the registry-tagged images (package) + ship them (publish); package is not a CI/CD phase.
+  release:
+    # #1444: both bodies are framework-free (plain parameters, an exit code returned), so the group is
+    # assembled from the generated module. The `target` argument's presentation lives here now - it is
+    # POSITIONAL, which Typer cannot infer from a `str = "all"` parameter on its own.
+    commands:
+      package:
+        task: package
+        help: "Build registry-tagged images for the current arch."
+        params:
+          target: { help: "web | sidecar | all", argument: true }
+      publish:
+        task: publish
+        help: "Push the packaged images to the registry (multi-arch when PUBLISH_PLATFORMS is set)."
+        params:
+          target: { help: "web | sidecar | all", argument: true }
+  # deploy (env-first): the lab lifecycle + the former `operate` set; `all` is the full bring-up (nested vs test.all).
+  deploy:
+    commands:
+      # #1279: `up` is an impl-less AGGREGATE, the last hand-built Pipeline in product Python (uppipe.py)
+      # to go. It was a LEAF that built its own four-step pipeline, which is why the displayed task list
+      # changed with the entry point: four rows standalone, ONE row inside `bringup`, where the phases
+      # degraded to log text. As a plan the four rows are the same from every entry point.
+      #
+      # The dependency ORDER is the retired pipeline's order, step for step. stop_on_failure because a hard
+      # phase failure (a failed preflight, a total deploy) makes every later phase doomed work and must
+      # never reach the `up-finish` verdict; keep_awake (#546) because the plan runs for tens of minutes and
+      # `run_up`, which held the inhibitor, no longer exists.
+      up:
+        depends_on: [up-preflight, render, up-deploy, up-finish]
+        stop_on_failure: true
+        keep_awake: true
+        help: "Deploy the lab as a live split-pane TUI pipeline (up-preflight -> render -> up-deploy -> up-finish): LEFT the phases with their state, RIGHT the live output of the highlighted phase. Authoritative verdict last; NETCTL_STRICT_UP=1 fails on any degraded condition."
+      # The three phases, hidden (#1277): a plan step must NAME a manifest command, and these are steps, not
+      # things an operator reaches for - invocable, absent from --help. They replace the single `_up <phase>`
+      # internal command that took the phase as an argument, which could never be a depends_on entry.
+      #
+      # `up-deploy` stays ONE command and is deliberately not decomposed further: its internal ordering (OOB
+      # bridges -> amd64/Rosetta binfmt -> watchdog -> clab deploy with retry -> verdict) is load-bearing,
+      # because lima flushes binfmt when the x86 IOL containers start.
+      up-preflight: { task: up-preflight, hidden: true, help: "PHASE of `up`: the host preflight (docker/Colima, the disk/WireGuard/capability guards, image presence + provenance), the local-backend assertion, and the reset of the shared degraded file." }
+      up-deploy:    { task: up-deploy, hidden: true, help: "PHASE of `up`: the ATOMIC containerlab deploy (OOB bridges, amd64 binfmt + Rosetta watchdog, clab deploy with retry, verdict) plus the #1004 mgmt egress isolation." }
+      up-finish:    { task: up-finish, hidden: true, help: "PHASE of `up`: IOS slot-1 recovery, Zabbix + OpenBao PKI provisioning, the controller-readiness gate, the portal, and the verdict over every phase's degraded conditions." }
+      down:        { task: down, help: "Destroy the containerlab topology (--cleanup wipes the IOL NVRAM) and remove the OOB bridges." }
+      # #1444: the four bodies with parameters in this group are framework-free, so `deploy` - the last
+      # group - is assembled from the generated module and their argument presentation lives here.
+      clean:
+        task: clean
+        help: "Destroy the lab and remove build outputs, images, generated artifacts (`clean vm` also deletes the Colima VM)."
+        params:
+          scope: { help: "'vm' to also delete the Colima VM", argument: true }
+      seed:        { task: seed, help: "Run the end-to-end bootstrap/smoke test: wait for every controller's REST API, then run the generated seed.sh." }
+      render:      { task: render, help: "Render the lab artifacts (clab topology, device configs, seed scripts) from deploy/env/dev/lab.yml." }
+      reset:       { task: reset, help: "Full from-scratch reset: clean + delete the Colima VM (= clean vm)." }
+      provision:   { task: provision, help: "Provision the overlay services against the running lab (no tests)." }
+      # `bringup` is an impl-less AGGREGATE (#895/#899): cold-host bring-up as a depends_on plan instead
+      # of a composite. install FIRST so it works from a COLD host, then build -> up -> seed -> zabbix.
+      bringup:
+        depends_on: [install, build, up, seed, zabbix]
+        # #1279: TRUE for the same reason stop_on_failure is, one slice later. `up` used to be an opaque
+        # leaf that held the #546 idle-sleep inhibitor internally (uppipe.run_up wrapped its dispatch in
+        # keep_awake); now that its four phases are bringup's OWN plan steps, only the ROOT's flag arms an
+        # inhibitor - so without this the host could idle-sleep in the middle of a 40-minute clab deploy.
+        keep_awake: true
+        # #1238: TRUE since `build` became an aggregate. Only the ROOT's flag governs a plan, so once
+        # bringup expanded the build's own steps into its plan, `build`'s stop_on_failure stopped applying
+        # to them - a red unit gate would have gone on to spend ten minutes building images that cannot be
+        # right. False was correct while `build` was one opaque leaf that carried its own flag internally;
+        # it stopped being correct the moment the steps became bringup's.
+        stop_on_failure: true
+        help: "Bring the lab up from a COLD host (install -> build -> up -> seed -> zabbix) as a live-streamed split-pane pipeline."
+      # #1279: `deploy all` is an impl-less AGGREGATE. It was `lab.run_all` = `lab.bringup()` (build + up +
+      # seed + zabbix, in hand-written product Python) followed by the lab-based suite chain, i.e. TWO
+      # dispatches for one command - which is why it opened two TUIs in sequence. The depends_on below is
+      # exactly that sequence, `accept` being the command that chains the suites (the kernel's since #1406).
+      #
+      # stop_on_failure is FALSE, which is what `lab.run_all` did: it ignored the rc of up/seed/zabbix and
+      # ran the tests regardless. Do NOT "fix" this to true. The obvious argument for true - the plan
+      # expands `build`'s thirteen steps as its OWN, and only the ROOT's flag governs a plan (#1238), so a
+      # red unit gate would go on to build images that cannot be right - was made and is answered by
+      # SUBTREE-scoped stop_on_failure in the kernel (#1317) rather than by this flag: a red step walks up
+      # to the nearest ancestor that sets it, so `build`'s own `true` aborts build's steps, and `up` cannot
+      # then proceed on stale images because `up-preflight`'s #1088 provenance guard dies and aborts the
+      # `up` subtree in turn. A root-level `true` would additionally stop the tests on a red bring-up,
+      # which is a different command than the one this replaced. keep_awake per `bringup`.
+      all:
+        depends_on: [build, up, seed, zabbix, accept]
+        stop_on_failure: false
+        keep_awake: true
+        help: "Full end-to-end bring-up + tests (build + up + seed + zabbix + accept) as ONE live-streamed plan."
+      add-client:
+        task: add-client
+        help: "Deploy a client on a free l3s port and bind it to a service."
+        params:
+          site:    { help: "site name (e.g. be)" }
+          service: { help: "service to bind", argument: true }
+          name:    { help: "client name (default <site>-add<n>)", argument: true }
+          ip:      { help: "static client IP (ignored for DHCP services)", argument: true }
+      rm-client:
+        task: rm-client
+        help: "Remove an add-client client (binding + container)."
+        params:
+          name: { help: "client name (without clab-netctl-client-)" }
+      backup:      { task: backup, help: "Dump every site catalog DB (pg_dump) into backup/ for DR (lab only)." }
+      zabbix:      { task: zabbix, help: "Provision the Zabbix hosts (all nodes + SNMP devices) via the generated zabbix-provision.sh." }
+      openbao-pki: { task: openbao-pki, help: "Provision the env's OpenBao PKI (NMS root + per-node issuing CAs + scoped tokens); idempotent (#171 E1a)." }
+      rescue:
+        task: rescue
+        help: "OOB rescue (#566): reassert a site sidecar's cached last-known-good SYSTEM config through the device backend over mgmt/OOB, with no consensus."
+        params:
+          site:   { help: "site name (e.g. zh)" }
+          device: { help: "device id (e.g. ogw-zh); omit to reassert every device the site's sidecar has cached",
+                    argument: true }
+  # monitor (env-first): the running-lab views + connect (moved here from the old `operate` group).
+  monitor:
+    # #1444: the three bodies below are framework-free, so the group is assembled from the generated
+    # module and their option/argument presentation lives here. `logs`'s `follow` declares
+    # `short_first: true` because Click renders the decls in DECLARATION order and that flag has always
+    # read `-f, --follow` - the neighbouring `--watch, -w` is the other order, so neither is a default.
+    commands:
+      status:
+        task: status
+        help: "Show the lab dashboard (container state + app/browser reachability)."
+        params:
+          watch: { help: "refresh every 5s", short: "-w" }
+      logs:
+        task: logs
+        help: "Show a container's logs, or list the lab containers when no node is given."
+        params:
+          node:   { help: "lab node (e.g. netctl-zh); omit to list containers", argument: true }
+          follow: { help: "follow the log (Ctrl-C to stop)", short: "-f", short_first: true }
+          tail:   { help: "number of trailing lines" }
+      collect-logs:
+        task: collect-logs
+        help: "Dump every lab container's log, gzipped, into test/reports/logs (evidence for a failing run)."
+        params:
+          out_dir: { help: "destination directory (default test/reports/logs)" }
+      clients: { task: clients, help: "List the deployed client containers." }
+      connect:
+        task: connect
+        help: "Open an interactive session on a lab target: SSH to a managed device, or a shell in a container."
+        params:
+          target: { help: "device (SSH) or controller/container (shell)", argument: true }
+  # `support.git` holds no LOCAL members any more - every command in it is placed directly by the
+  # kernel's own command tree (simplon/catalogue.yaml, shipped in the wheel). `tasks` is placed the same way, plus the
+  # `generate` refinement netctl declares in its own new-form `groups:` entry above.
+  #
+  # support.git: the version-control helpers, NESTED under support (#1444, plan 5). They are host tooling
+  # like doctor/install/nexus, not a CI/CD discipline of their own, and a top-level `git` claimed a very
+  # generic token for four commands. The hidden flat aliases are untouched, so `netctl commit`,
+  # `netctl push`, `netctl prune-branches` and `netctl submodules` keep working exactly as before - what
+  # changes is the group PATH: `netctl git commit` becomes `netctl support git commit`.
+  #
+  # This is the first exercise of nesting in a product manifest, and the reason the taxonomy became
+  # path-based in #1431.
+  # support: host preflight + environment introspection + host tooling (agnostic).
+  #
+  # nexus (#948, moved here from its own single-member group, #1024): the LAN Sonatype Nexus artefact
+  # proxy is host tooling, not a CI/CD discipline, so it rides as a support member. Its actions stay a
+  # member ARGUMENT (`netctl support nexus up|down|status|repos|cleanup`, bare lists them) rather than a
+  # sub-group: `up`+`down` are owned by `deploy` and `status` by `monitor`, and a second owner makes a
+  # name AMBIGUOUS in the shared CommandTaxonomy - which deletes its hidden flat alias (simplon.cli only
+  # registers one `if not tax.is_ambiguous(name)`). That would silently break the bare `netctl up` /
+  # `netctl down` / `netctl status` that CLAUDE.md, the README, the CI workflows and every runbook use.
+  # `nexus` itself is unambiguous, so the flat `netctl nexus ...` keeps working as a hidden alias.
+  #
+  # NOT in any composite (`up`, `bringup`, `test all`) on purpose: a build must not hard-depend on the
+  # proxy (an unreachable mirror ABORTS gradle resolution - that measurement is why tooling.mirror_args
+  # probes first), the service is long-lived rather than per-build, and accepting the EULA is a legal
+  # operator action no unattended step may click through.
+  #
+  # The impl is the KERNEL's since #1405 (#1280's rule again): probe, reconcile, report needs no product
+  # knowledge, so a netctl function forwarding the call would be a shim rather than a seam. What stays
+  # netctl's is the DATA - the `nexus` section above - and the test asserting it agrees with tooling.py and
+  # with create-repositories.sh.
+  support:
+    commands:
+      # #1238: `disk-guard` moves OUT of the hand-registered "Internal (used by other commands)" panel and
+      # into the manifest, because `build` now DEPENDS on it - a dependency must name a manifest command, and
+      # a step of the build plan is not internal, it is the first thing the operator watches run. Host
+      # tooling, so it rides in support beside nexus/doctor/install. The flat `netctl disk-guard` survives as
+      # the usual hidden alias, so the bash-era delegation and any muscle memory keep working.
+      disk-guard:   { task: disk-guard, help: "Prune docker dangling images + build cache when the data fs is low on space (NETCTL_DISK_GUARD=0 disables, NETCTL_DISK_MIN_FREE_PCT sets the bar)." }
+      # #1286: the agent setup as a command. Host tooling, so it rides in support beside nexus/doctor/install.
+      # Deliberately NOT a dependency of `install`: `lab.yml` runs `netctl install` on the CI runner, and that
+      # runner has no business acquiring agent plugins into a user's ~/.claude.
+      #
+      # The impl is the KERNEL's, not netctl's (#1280's rule, applied here first): the mechanism needs no
+      # product knowledge - it reads the `claude` section above through ProductContext.manifest_data() and
+      # drives the `claude` CLI - so a netctl function forwarding the call would be a shim, not a seam. What
+      # stays netctl's is the DATA (the section) and the assertion that it agrees with .claude/settings.json.
+      doctor:       { task: doctor, help: "Run read-only preflight checks in a split-pane TUI (docker, colima, egress, images, lab containers, topology)." }
+      # override: true is REQUIRED since simplon 0.3.0, and it is a statement rather than a formality
+      # (#1744). The kernel also ships a `support install` (`simplon.tasks.hosttools:install`), and the
+      # loader now refuses to pick silently between two bodies under one name - rightly: `install` and
+      # `install` look the same, `simplon.tasks.hosttools:install` and `orchestrator.cli:install` do not.
+      #
+      # They are two different JOBS, not two versions of one. The kernel's provisions its own host tooling
+      # (today exactly one gate: `oras`). netctl's installs the LAB SUBSTRATE - the platform submodule,
+      # Docker + containerlab on Linux or Colima + docker + containerlab on macOS, and the Keycloak
+      # host.docker.internal alias.
+      #
+      # Measured before choosing: netctl references `oras` nowhere outside the venv, so replacing the
+      # kernel's body costs nothing today. What it does cost is the future: a gate the kernel ADDS to
+      # hosttools._GATES will not run here. That is accepted because the override is now written down and
+      # findable, where before 0.3.0 the same shadowing happened silently.
+      install:      { task: install, override: true, help: "Install the host prerequisites (containerlab on Linux; Colima + docker + containerlab on macOS)." }
+      check:        { task: check, help: "Verify tools, OS, and the cisco_iol image." }
+      lab-sites:    { task: lab-sites, help: "Print the sites straight from lab.yml: '<name> <http_port> <platform> <mon|-> <id>'." }
+      nexus:
+        task: "support:nexus"
+        help: "Drive the LAN Sonatype Nexus artefact proxy (#948): up | down | status | repos | cleanup; bare lists the members."
+        # The member argument's PRESENTATION, moved out of the (framework-free) kernel body. The metavar is
+        # the placeholder Click prints in the usage line, so it is what makes a bare `netctl support nexus
+        # --help` list the members instead of showing `[MEMBER]`.
+        params:
+          member: { help: "the group member to run; omit to list them", argument: true,
+                    metavar: "[up|down|status|repos|cleanup]" }
+      claude-plugins:
+        task: "support:claude-plugins"
+        help: "Install the Claude Code plugins this repo is developed with, as declared in the manifest's `claude` section (#1286); idempotent, --dry-run previews."
+        params:
+          dry_run: { help: "print what is missing, change nothing", short: "-n" }
+      environments:
+        task: "support:environments"
+        help: "List the named environments (#15) and the backend each targets, marking the active one."
+    groups:
+      # support.tasks: the task machinery itself, placed by the platform (catalogue, generate); netctl pins
+      # `generate`'s target here (#1444) - where the generated CLI module lives is product data.
+      #
+      # NESTED under support, like support.git and for the same reason: it is host tooling for whoever
+      # develops the product, not a stage of the CI/CD loop the other six groups describe. The task
+      # coordinates (`tasks:catalogue`, `tasks:generate`) are untouched, so this `with:` pin still reaches
+      # the same task; only the group PATH moved, and the flat `netctl generate` alias survives it.
+      tasks:
+        commands:
+          generate:
+            with: { target: "deploy/provision/orchestrator/src/python/orchestrator/_generated_cli.py" }
+
+# netctl#1444: the groups netctl assembles from its GENERATED module
+# (orchestrator/_generated_cli.py) instead of reflectively through simplon.cli.assemble. Migration
+# state, and the ratchet for it: a group listed here is generated, a group NOT listed must be held back
+# by a body that still carries typer.Option/Argument in its signature - test_generated_cli.py asserts
+# exactly that, so a clean group cannot be left behind and forgotten.
+generate: [build, test, support.git, support.tasks, support, release, monitor, deploy]
+
+# The two CD disciplines are env-first (`netctl <env> <group> <cmd>`, default dev); every other group is env-free.
+# EMPTY since #1444 spec step 7: env-gating is part of a group's SHAPE, and the shape is the catalogue's
+# now (`deploy`/`monitor` carry `env_first: true` in the kernel catalogue). The key stays for a group netctl
+# alone declares - that group would need its own gating stated here.
+env_groups: []
+
+# Named, isolated deployment environments (#15), folded into the one manifest (#651 strand 1; was a
+# standalone deploy/env/environments.yml). A deployment command runs against ONE environment, selected
+# env-first (`netctl <env> <cmd>`, default `dev`); `backend` decides HOW: `local` (containerlab, today) or
+# `exoscale` (cloud VM per site, scaffolded #11/#13). Each environment owns a sibling dir deploy/env/<name>/
+# (dev holds the containerlab source). The CLI engine ignores these keys; the env provider reads them.
+default: dev
+# The variable the env-first prefix publishes the active environment into. Naming it HERE is what lets
+# the kernel's `simplon.tasks.env:environments` mark the active row without a second, netctl-owned
+# registry beside `context` just to learn which variable to read (#1280).
+env_var: NETCTL_ENV
+environments:
+  dev:  { backend: local,    description: "Local development lab on containerlab (the default)." }
+  test: { backend: exoscale, description: "QA / internal integration + system testing." }
+  uat:  { backend: exoscale, description: "User acceptance testing - stakeholder sign-off before release." }
+  prod: { backend: exoscale, description: "Live production environment." }

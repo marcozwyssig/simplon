@@ -45,15 +45,47 @@ PLATFORM_GROUPS = frozenset({"build", "test", "release", "deploy", "monitor", "s
 #: the refusal and the website all have to keep straight.
 PHASES = frozenset({"build", "test", "release", "deploy", "monitor"})
 
+#: The area each phase stands in (si#344), spelled out for the same reason as `PLATFORM_GROUPS`. The
+#: refusal names the place the manifest WRITES a group - `ci: build:` - and that place needs the area.
+AREAS = {"build": "ci", "test": "ci", "release": "ci", "deploy": "cd", "monitor": "cd"}
+
 
 def test_the_catalogue_still_declares_exactly_the_six_groups_the_rule_is_written_against():
-    """The rule's set is the catalogue's top-level groups, so a seventh group added without a thought
-    for this rule must show up here rather than silently widen it."""
-    # arrange / act
-    groups = frozenset(catalogue_mod.load().groups)
+    """The rule's set is the catalogue's first VISIBLE level of groups, so a seventh group added without a
+    thought for this rule must show up here rather than silently widen it."""
+    # arrange / act: the rule's set is the first VISIBLE level, not the top-level keys (si#344)
+    groups = treeform.platform_groups(catalogue_mod.load().groups)
 
     # assert
     assert groups == PLATFORM_GROUPS
+
+
+def test_build_image_under_ci_test_is_still_refused_through_the_transparent_level():
+    # arrange
+    text = textwrap.dedent("""\
+        product: demo
+        ci:
+          test:
+            commands:
+              image: { task: "build:image", with: { name: kernel } }
+    """)
+
+    # act / assert
+    with pytest.raises(ValueError, match="'build:image' belongs under"):
+        manifest_mod.load(text, catalogue=catalogue_mod.load())
+
+
+def test_the_old_first_segment_comparison_would_have_let_it_through():
+    """The failure si#344 measured, shown rather than asserted away: compared against the catalogue's
+    TOP-LEVEL keys, `build:image` is a family and the misplacement loads green."""
+    # arrange
+    flat = {"test": {"image": {"task": "build:image"}}}
+
+    # act
+    ruled = treeform.check_coordinate_placement(flat, frozenset(catalogue_mod.load().groups))
+
+    # assert: nothing refused, nothing ruled on - the rule silently stopped applying
+    assert ruled == 0
 
 
 def test_support_is_a_group_the_rule_covers_and_not_a_sixth_phase():
@@ -91,16 +123,16 @@ def test_the_rejection_names_both_coordinates_the_allowed_group_and_the_way_out(
 
     # act
     with pytest.raises(ValueError) as caught:
-        treeform.check_coordinate_placement(flat, PLATFORM_GROUPS)
+        treeform.check_coordinate_placement(flat, PLATFORM_GROUPS, areas=AREAS)
     message = str(caught.value)
 
     # assert: both coordinates - the placement in the tree, and the one in the catalogue
     assert "'test image'" in message
     assert "'build:image'" in message
-    # the allowed group, named as the manifest spells it
-    assert "`groups: build:`" in message
+    # the allowed group, named where the manifest writes it (si#344)
+    assert "`ci: build:`" in message
     # and both ways out: move the command, or make the namespace a family
-    assert "`groups: build: commands: image:`" in message
+    assert "`ci: build: commands: image:`" in message
     assert "names no group" in message
     assert "docs:site" in message
     # the group set itself, so "does my namespace name one?" is answerable from the message alone -
@@ -151,13 +183,16 @@ def test_the_rejection_reaches_a_product_through_the_loader():
         tasks:
           build:image: { impl: "simplon.tasks.image:build", help: "Build the image." }
         groups:
-          build:   { help: "Produce the artefacts." }
-          test:    { help: "Verify them." }
-          release: { help: "Publish them." }
+          ci:
+            transparent: true
+            groups:
+              build:   { help: "Produce the artefacts." }
+              test:    { help: "Verify them." }
+              release: { help: "Publish them." }
     """))
     text = textwrap.dedent("""
         product: demo
-        groups:
+        ci:
           test:
             commands:
               image: { task: "build:image" }
@@ -176,12 +211,15 @@ def test_the_same_coordinate_under_its_own_group_loads():
         tasks:
           build:image: { impl: "simplon.tasks.image:build", help: "Build the image." }
         groups:
-          build:   { help: "Produce the artefacts." }
-          test:    { help: "Verify them." }
+          ci:
+            transparent: true
+            groups:
+              build:   { help: "Produce the artefacts." }
+              test:    { help: "Verify them." }
     """))
     text = textwrap.dedent("""
         product: demo
-        groups:
+        ci:
           build:
             commands:
               image: { task: "build:image" }
@@ -278,10 +316,16 @@ def _placements(text: str) -> dict:
     onto the catalogue's, so the platform's OWN placed commands are counted too."""
     catalogue = catalogue_mod.load()
     data = yaml.safe_load(text) or {}
-    merged = treeform.merge(catalogue.groups, data.get("groups") or {},
+    # The ci / cd / support sections as one tree the catalogue's `ci`/`cd` merge onto (si#344), and the
+    # transparent level folded away after the merge - exactly as `load` does it. `phases` is what the
+    # catalogue declares under each transparent area, read off it the way `load` reads it.
+    phases = {area: tuple((node.get("groups") or {}).keys())
+              for area, node in catalogue.groups.items() if node.get("transparent")}
+    tree = treeform.tree_from_areas(data, phases)
+    merged = treeform.merge(catalogue.groups, tree,
                             product_tasks=dict(data.get("tasks") or {}),
                             catalogue_tasks=catalogue.tasks, locked=True)
-    return treeform.lower(merged)[1]
+    return treeform.lower(treeform.elide_transparent(merged)[0])[1]
 
 
 def test_the_rule_holds_over_this_repositorys_own_manifest():
@@ -322,7 +366,7 @@ AGILE_COCKPIT = textwrap.dedent("""
       serve: { impl: "orchestrator.cli:serve", help: "Serve it." }
       up:    { impl: "orchestrator.cli:up",    help: "Bring it up." }
       down:  { impl: "orchestrator.cli:down",  help: "Take it down." }
-    groups:
+    ci:
       build:
         commands:
           build: { task: "build:image", with: { name: app } }
@@ -332,24 +376,25 @@ AGILE_COCKPIT = textwrap.dedent("""
           unit:   { task: "test:gate", with: { name: unit } }
           system: { task: "test:gate", with: { name: system } }
           report: { task: "test:report" }
-      support:
-        commands:
-          serve: { task: serve }
-        groups:
-          git:
-            commands:
-              commit: {}
-              push: {}
-              prune-branches: {}
-              submodules: {}
       release:
         commands:
           image: { task: "release:image", with: { name: app } }
+    cd:
       deploy:
         commands:
           up:   { task: up }
           down: { task: down }
           all:  { help: "Build and start.", depends_on: [build, up], stop_on_failure: true }
+    support:
+      commands:
+        serve: { task: serve }
+      groups:
+        git:
+          commands:
+            commit: {}
+            push: {}
+            prune-branches: {}
+            submodules: {}
 """)
 
 
@@ -404,9 +449,36 @@ def test_the_website_quotes_the_refusal_word_for_word():
 
     # act
     with pytest.raises(ValueError) as caught:
-        treeform.check_coordinate_placement(flat, PLATFORM_GROUPS)
+        treeform.check_coordinate_placement(flat, PLATFORM_GROUPS, areas=AREAS)
     real = " ".join(str(caught.value).replace("`", "").split())
 
     # assert: not "close enough" - the page shows a reader what they will see, so a full stop the
     # loader does not print is a small lie in the one place a reader checks their own output against
     assert _quoted_refusal() == real
+
+
+#: The count si#34 ruled on over simplon.yaml with the pre-si#344 kernel (commit d7b4fcd), measured on
+#: 2026-10-11 with the spy below on a worktree of that commit: a typed constant, because the number is a
+#: fact about a past kernel that nothing live can recompute.
+PLACEMENTS_BEFORE_THE_TRANSPARENT_LEVEL = 17
+
+
+def test_the_kernels_own_manifest_rules_on_as_many_placements_as_before_the_transparent_level():
+    """si#344, spec A.3: the count si#34 rules on over simplon.yaml must not drop when `ci`/`cd` became a
+    tree level. A drop means the rule stopped applying to something. The one addition is
+    `support:migrate`, the catalogue's own placement under `support` (the `support.manifest` subgroup)."""
+    # arrange
+    calls = []
+    original = treeform.check_coordinate_placement
+
+    def spy(*args, **kwargs):
+        calls.append(original(*args, **kwargs))
+        return calls[-1]
+
+    # act
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(treeform, "check_coordinate_placement", spy)
+        manifest_mod.load((ROOT / "simplon.yaml").read_text(), catalogue=catalogue_mod.load())
+
+    # assert
+    assert calls == [PLACEMENTS_BEFORE_THE_TRANSPARENT_LEVEL + 1]

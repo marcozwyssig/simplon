@@ -12,6 +12,7 @@ from conftest import ROOT
 from simplon import catalogue as catalogue_mod
 from simplon.orchestrator import manifest
 from simplon.orchestrator.model import treeform
+from simplon.tasks import migrate
 
 
 def test_a_flat_group_lowers_to_a_taxonomy_entry_and_a_member_map():
@@ -225,7 +226,7 @@ def test_a_product_declared_nested_group_left_with_no_commands_is_rejected():
     product = {"support": {"groups": {"empty-sub": {}}}}
 
     # act / assert
-    with pytest.raises(ValueError, match="support.empty-sub.*declares no commands"):
+    with pytest.raises(ValueError, match="`support: groups: empty-sub:` declares no commands"):
         treeform.merge(kernel, product)
 
 
@@ -421,8 +422,11 @@ def test_a_mixed_manifest_loads_both_halves(tmp_path):
         tasks:
           vcs:push: { impl: simplon.tasks.vcs:push, help: "push it." }
         groups:
-          build: { help: "Produce the artefacts." }
-          test:  { help: "Verify them." }
+          ci:
+            transparent: true
+            groups:
+              build: { help: "Produce the artefacts." }
+              test:  { help: "Verify them." }
     """))
     text = textwrap.dedent("""
         product: demo
@@ -430,7 +434,7 @@ def test_a_mixed_manifest_loads_both_halves(tmp_path):
           img: { impl: "demo.tooling:image", help: "Build an image." }
           unit-java: { impl: "demo.cli:unit_java", help: "Run the Java unit gate." }
 
-        groups:
+        ci:
           build:
             commands:
               web-image: { task: "img", with: { key: "web" }, help: "Build the web image." }
@@ -453,15 +457,18 @@ def test_a_catalogue_group_the_product_never_fills_does_not_render(tmp_path):
     catalogue = catalogue_mod.loads(textwrap.dedent("""
         tasks: {}
         groups:
-          build:   { help: "Produce the artefacts." }
-          test:    { help: "Verify them." }
-          release: { help: "Publish them." }
+          ci:
+            transparent: true
+            groups:
+              build:   { help: "Produce the artefacts." }
+              test:    { help: "Verify them." }
+              release: { help: "Publish them." }
     """))
     text = textwrap.dedent("""
         product: demo
         tasks:
           img: { impl: "demo.tooling:image", help: "Build an image." }
-        groups:
+        ci:
           build:
             commands:
               web-image: { task: img, help: "Build the web image." }
@@ -487,8 +494,11 @@ def test_a_catalogue_group_the_product_fills_old_form_still_renders_even_though_
     catalogue = catalogue_mod.loads(textwrap.dedent("""
         tasks: {}
         groups:
-          build: { help: "Produce the artefacts." }
-          test:  { help: "Verify them." }
+          ci:
+            transparent: true
+            groups:
+              build: { help: "Produce the artefacts." }
+              test:  { help: "Verify them." }
     """))
     text = textwrap.dedent("""
         product: demo
@@ -496,7 +506,7 @@ def test_a_catalogue_group_the_product_fills_old_form_still_renders_even_though_
           img: { impl: "demo.tooling:image", help: "Build an image." }
           unit-java: { impl: "demo.cli:unit_java", help: "Run the Java unit gate." }
 
-        groups:
+        ci:
           build:
             commands:
               web-image: { task: "img", help: "Build the web image." }
@@ -521,8 +531,11 @@ def test_a_product_adding_to_a_group_the_platform_already_placed_a_command_in_ke
         tasks:
           test:unit-py: { impl: "simplon.tasks.x:y", help: "run the python gate." }
         groups:
-          build: { help: "Produce the artefacts." }
-          test:  { help: "Verify them.", commands: { unit-py: { task: "test:unit-py", help: "run it." } } }
+          ci:
+            transparent: true
+            groups:
+              build: { help: "Produce the artefacts." }
+              test:  { help: "Verify them.", commands: { unit-py: { task: "test:unit-py", help: "run it." } } }
     """))
     text = textwrap.dedent("""
         product: demo
@@ -530,7 +543,7 @@ def test_a_product_adding_to_a_group_the_platform_already_placed_a_command_in_ke
           img: { impl: "demo.tooling:image", help: "Build an image." }
           unit-java: { impl: "demo.cli:unit_java", help: "Run the Java unit gate." }
 
-        groups:
+        ci:
           build:
             commands:
               web-image: { task: "img", help: "Build the web image." }
@@ -571,10 +584,9 @@ def test_a_product_command_that_points_a_placed_name_at_a_different_task_is_reje
         product: netctl
         tasks:
           install: { impl: "orchestrator.cli:install", help: "Provision Colima and containerlab." }
-        groups:
-          support:
-            commands:
-              install: { task: install, help: "Provision Colima and containerlab." }
+        support:
+          commands:
+            install: { task: install, help: "Provision Colima and containerlab." }
     """)
 
     # act / assert: the message must name BOTH bodies by their real `module:function` - `install` and
@@ -593,10 +605,9 @@ def test_a_product_refining_help_and_params_on_a_placed_command_stays_silent():
     catalogue = _support_install_catalogue()
     text = textwrap.dedent("""
         product: netctl
-        groups:
-          support:
-            commands:
-              install: { task: "support:install", help: "Provision the host tools this product needs." }
+        support:
+          commands:
+            install: { task: "support:install", help: "Provision the host tools this product needs." }
     """)
 
     # act
@@ -616,10 +627,9 @@ def test_a_product_command_with_explicit_override_replaces_the_placed_task_silen
         product: netctl
         tasks:
           install: { impl: "orchestrator.cli:install", help: "Provision Colima and containerlab." }
-        groups:
-          support:
-            commands:
-              install: { task: install, override: true, help: "Provision Colima and containerlab." }
+        support:
+          commands:
+            install: { task: install, override: true, help: "Provision Colima and containerlab." }
     """)
 
     # act
@@ -691,10 +701,28 @@ def test_an_import_section_is_rejected():
 
 def test_a_tree_form_manifest_passes_the_flat_form_check():
     # arrange / act / assert: no exception
-    treeform.check_no_old_form({"product": "demo", "groups": {}})
+    treeform.check_no_old_form({"product": "demo", "ci": {}})
     treeform.check_no_old_form({"product": "demo",
                                 "tasks": {"img": {"impl": "a:b", "help": "h."}},
-                                "groups": {"build": {"commands": {"img": {"task": "img"}}}}})
+                                "ci": {"build": {"commands": {"img": {"task": "img"}}}},
+                                "cd": {"default": "dev", "environments": {"dev": {}}},
+                                "support": {"commands": {"img": {"task": "img"}}}})
+
+
+def test_the_flat_form_is_found_in_the_areas_where_the_migration_leaves_it():
+    # arrange: a flat node under each area - what `manifest migrate` makes of a flat `groups:` block
+    data = {"ci": {"build": {"wheel": {"impl": "a:b"}}},
+            "cd": {"default": "dev", "deploy": {"up": {"impl": "a:up"}}},
+            "support": {"doctor": {"impl": "a:doctor"}}}
+
+    # act
+    with pytest.raises(ValueError) as exc:
+        treeform.check_no_old_form(data)
+
+    # assert: every flat group named, and the cd data key is not mistaken for one
+    message = str(exc.value)
+    assert "group(s) 'build', 'deploy', 'support' name commands directly" in message
+    assert "'default'" not in message
 
 
 def test_a_declared_task_no_command_places_is_accepted():
@@ -717,7 +745,7 @@ product: demo
 tasks:
   placed: { impl: "simplon.tasks.docs:site", help: "Placed." }
   offered: { impl: "simplon.tasks.docs:site", help: "Declared and not placed - an offer." }
-groups:
+ci:
   build:
     commands:
       placed: { task: "placed", help: "The one command." }
@@ -741,7 +769,12 @@ groups:
 # The manifest below is not an illustration. It is simplon's OWN `simplon.yaml` as it stood at 0.3.0 -
 # flat groups, `import:`, and coordinate-keyed `tasks:` entries all three - which is what makes these
 # tests a measurement rather than a restatement of the renderer.
-
+#
+# Since si#344 such a manifest meets the cut first: it declares `groups:`, and the loader refuses that by
+# name and hands over `simplon manifest migrate`. The migration moves `groups:` into the areas without
+# reading the nodes, so the flat form is still there afterwards, under `ci:` and `support:` - and THAT
+# is the manifest the si#33 refusal now has to answer. `_MIGRATED_OLD_MANIFEST` is the real migration's
+# output, not a hand-written guess at it.
 _REAL_OLD_MANIFEST = """
 product: simplon
 default: dev
@@ -787,13 +820,29 @@ site:
 """
 
 
+_MIGRATED_OLD_MANIFEST = migrate.migrate_text(_REAL_OLD_MANIFEST).text
+
+
+def test_a_real_old_manifest_meets_the_cut_before_the_flat_form_refusal():
+    # act
+    with pytest.raises(ValueError) as exc:
+        manifest.load(_REAL_OLD_MANIFEST, catalogue=catalogue_mod.load())
+
+    # assert: the si#344 refusal, which is the one whose way out runs on this file
+    assert "declares `groups:`, which si#344 replaced" in str(exc.value)
+    # and the migration really did leave the flat form for the next refusal to find, or the three tests
+    # below would be measuring a manifest nobody can arrive at
+    assert migrate.migrate_text(_REAL_OLD_MANIFEST).status == "migrated"
+    assert "impl:" in _MIGRATED_OLD_MANIFEST
+
+
 def test_a_real_old_manifest_is_refused_and_the_message_names_every_flat_section():
     # arrange: all three flat shapes at once, which is the realistic case - a product that wrote `impl:`
     # on a command also placed its catalogue tasks the old way. Reporting one per load would be three
     # guessing games instead of none.
     # act
     with pytest.raises(ValueError) as exc:
-        manifest.load(_REAL_OLD_MANIFEST, catalogue=catalogue_mod.load())
+        manifest.load(_MIGRATED_OLD_MANIFEST, catalogue=catalogue_mod.load())
 
     # assert
     message = str(exc.value)
@@ -815,7 +864,7 @@ def test_the_refusal_names_the_release_that_abolished_the_form_and_the_page_that
     """
     # arrange / act
     with pytest.raises(ValueError) as exc:
-        manifest.load(_REAL_OLD_MANIFEST, catalogue=catalogue_mod.load())
+        manifest.load(_MIGRATED_OLD_MANIFEST, catalogue=catalogue_mod.load())
     message = str(exc.value)
 
     # assert: the release, and the page - the deep link by its ANCHOR rather than by a heading a reader
@@ -835,7 +884,7 @@ def test_the_refusal_no_longer_promises_a_rewrite():
     "Rewrite those sections as:" and then prints nothing is worse than one that never offered it."""
     # arrange / act
     with pytest.raises(ValueError) as exc:
-        manifest.load(_REAL_OLD_MANIFEST, catalogue=catalogue_mod.load())
+        manifest.load(_MIGRATED_OLD_MANIFEST, catalogue=catalogue_mod.load())
     message = str(exc.value)
 
     # assert
@@ -902,11 +951,10 @@ def test_a_command_inherits_unattended_from_the_task_it_instantiates():
     loaded = _loaded("""
         tasks:
           gate: { impl: "simplon.test_impls:nullary", help: "Gate.", unattended: true }
-        groups:
+        ci:
           test:
             commands:
               gate: { task: gate }
-        env_groups: []
         """)
 
     assert loaded.commands["test"]["gate"].unattended is True
@@ -919,11 +967,10 @@ def test_a_command_may_override_what_its_task_says():
     loaded = _loaded("""
         tasks:
           gate: { impl: "simplon.test_impls:nullary", help: "Gate.", unattended: true }
-        groups:
+        ci:
           test:
             commands:
               gate: { task: gate, unattended: false }
-        env_groups: []
         """)
 
     assert loaded.commands["test"]["gate"].unattended is False
@@ -936,11 +983,10 @@ def test_a_task_that_says_nothing_leaves_the_command_saying_nothing():
     loaded = _loaded("""
         tasks:
           gate: { impl: "simplon.test_impls:nullary", help: "Gate." }
-        groups:
+        ci:
           test:
             commands:
               gate: { task: gate }
-        env_groups: []
         """)
 
     assert loaded.commands["test"]["gate"].unattended is None
@@ -954,11 +1000,10 @@ def test_an_unattended_that_is_not_written_true_or_false_is_refused(value):
         _loaded(f"""
             tasks:
               gate: {{ impl: "simplon.test_impls:nullary", help: "Gate.", unattended: {value} }}
-            groups:
+            ci:
               test:
                 commands:
                   gate: {{ task: gate }}
-            env_groups: []
             """)
 
     assert "unattended" in str(exc.value)
@@ -972,11 +1017,10 @@ def test_a_task_misspelling_the_flag_is_refused_rather_than_silently_ignored():
         _loaded("""
             tasks:
               gate: { impl: "simplon.test_impls:nullary", help: "Gate.", unattend: true }
-            groups:
+            ci:
               test:
                 commands:
                   gate: { task: gate }
-            env_groups: []
             """)
 
     assert "unattend" in str(exc.value)

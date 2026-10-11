@@ -21,7 +21,7 @@ from simplon.tasks import toolchain
 def manifest(tmp_path, monkeypatch):
     """A product manifest with an empty build group, and the seam pointed at it."""
     path = tmp_path / "product.yaml"
-    path.write_text("product: demo\ngroups:\n  build:\n    commands: {}\n", encoding="utf-8")
+    path.write_text("product: demo\nci:\n  build:\n    commands: {}\n", encoding="utf-8")
     monkeypatch.setattr(toolchain, "_manifest_path", lambda: path)
     return path
 
@@ -32,7 +32,7 @@ def test_scaffolding_writes_the_expanded_form_into_the_manifest(manifest):
 
     # assert: the product reads its own build in its own file, which is what makes reviewing it possible
     data = yaml.safe_load(manifest.read_text())
-    compile_cmd = data["groups"]["build"]["commands"]["compile"]
+    compile_cmd = data["ci"]["build"]["commands"]["compile"]
     assert rc == 0
     assert compile_cmd["task"] == "toolchain:run"
     assert compile_cmd["with"]["image"] == "silkeh/clang:19"
@@ -54,7 +54,7 @@ def test_scaffolding_twice_changes_nothing_the_second_time(manifest):
 def test_a_hand_edited_command_is_never_clobbered(manifest, capsys):
     # arrange: a scaffolder that silently overwrites an edited build is worse than no scaffolder
     data = yaml.safe_load(manifest.read_text())
-    data["groups"]["build"]["commands"]["compile"] = {
+    data["ci"]["build"]["commands"]["compile"] = {
         "task": "toolchain:run", "with": {"image": "gcc:14", "argv": ["make"]}}
     manifest.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
@@ -63,7 +63,7 @@ def test_a_hand_edited_command_is_never_clobbered(manifest, capsys):
 
     # assert: the edit survives, the reader is TOLD which command was left alone, and the rest still lands
     after = yaml.safe_load(manifest.read_text())
-    commands = after["groups"]["build"]["commands"]
+    commands = after["ci"]["build"]["commands"]
     assert commands["compile"]["with"]["image"] == "gcc:14"
     assert "unit" in commands
     assert "compile" in capsys.readouterr().out
@@ -150,9 +150,9 @@ def test_the_spliced_block_still_loads_and_assembles(scaffolded):
 
 def test_a_shape_the_splice_cannot_place_is_refused_with_the_block_to_paste(tmp_path, monkeypatch,
                                                                             capsys):
-    # arrange: `groups:` in flow style - legal YAML, and no line for the splice to insert after
+    # arrange: `ci:` in flow style - legal YAML, and no line for the splice to insert after
     path = tmp_path / "product.yaml"
-    path.write_text("product: demo\ngroups: { build: { commands: {} } }\n", encoding="utf-8")
+    path.write_text("product: demo\nci: { build: { commands: {} } }\n", encoding="utf-8")
     monkeypatch.setattr(toolchain, "_manifest_path", lambda: path)
     monkeypatch.setattr(toolchain.log, "die",
                         lambda m, *a, **k: (_ for _ in ()).throw(RuntimeError(m)))

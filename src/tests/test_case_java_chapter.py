@@ -168,7 +168,7 @@ def _product():
 def _environments() -> set[str]:
     """The env names the fixture declares - the outer token an env-first command takes."""
     raw = yaml.safe_load(FIXTURE.read_text(encoding="utf-8"))
-    names = set(raw.get("environments") or {})
+    names = set((raw.get("cd") or {}).get("environments") or {})
     if not names:
         raise ValueError(f"{FIXTURE} declares no environment, so an env-first command could not be read")
     return names

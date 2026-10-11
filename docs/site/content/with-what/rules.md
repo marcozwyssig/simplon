@@ -71,9 +71,14 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 180 | nothing - the declaration had no working meaning |
-| expression rule | 28 | something it could otherwise have said |
-| **all load-time refusals** | **208** | |
+| diagnosis | 187 | nothing - the declaration had no working meaning |
+| expression rule | 29 | something it could otherwise have said |
+| **all load-time refusals** | **216** | |
+
+si#344 deleted the `env_groups:` key and took its rule (si#43) with it - everything under `cd:` takes an
+environment and nothing under `ci:` does, so there is no second spelling left to contradict. It added two:
+a product may not declare `transparent:` on a group, and nothing under `ci:` may declare `env_first:`.
+One deleted, two added: the expression-rule count went up by one, from 28 to 29, not down.
 
 A **load-time refusal** is one raised on the way from the manifest to a decision, with no tool consulted
 in between. Refusals that happen later - a task whose tool is missing, a build the daemon rejected - are a
@@ -114,7 +119,7 @@ Self-binding is not a third bucket of refusals; it is how far an expression rule
 | reach | count | meaning |
 | --- | --- | --- |
 | the kernel is held to it too | 22 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
-| a statement about the platform/product seam | 6 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
+| a statement about the platform/product seam | 7 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
 | the kernel exempts itself | 0 | there is no longer a rule the kernel declines to apply to itself |
 
 **That last row used to say one, and how it got to zero is the point of measuring it.** The rule was
@@ -137,9 +142,9 @@ being talked about? The second one is the one that keeps going missing.
 **What replaces it is a measurement rather than a label.** The reach column above was hand-written, and a
 hand-written word beside a rule is exactly the kind of thing that was wrong. So the kernel's own manifest is
 now loaded against the real catalogue with every rule-bearing function on the merge path recorded, and each
-rule is asked what it was actually handed. The catalogue holds **48** coordinates and its own tree places
-**9** of them; those 9 are the platform's half - in the merged tree because the catalogue put them there,
-not because this product asked - and all 9 reach every rule the table calls *held to it too*. Exactly two
+rule is asked what it was actually handed. The catalogue holds **49** coordinates and its own tree places
+**10** of them; those 10 are the platform's half - in the merged tree because the catalogue put them there,
+not because this product asked - and all 10 reach every rule the table calls *held to it too*. Exactly two
 functions never see them, `check_no_old_form` (which rules on the product's document alone; it was shown
 the catalogue until si#85, for the rewrite it no longer prints) and the one that enforces which groups
 exist, and every rule in both is a seam statement. A rule labelled *held to it too* that was handed only the product's

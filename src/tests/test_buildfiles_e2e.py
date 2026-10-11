@@ -297,8 +297,8 @@ def test_a_product_that_declares_the_coordinate_gets_a_command_that_takes_nothin
     root = _product(monkeypatch, tmp_path, "e2edemo", CPP_SOURCES, CPP_TARGETS)
     text = yaml.safe_dump({
         "product": "e2edemo",
-        "groups": {"build": {"commands": {"cmake-files": {"task": "build:cmake-files"},
-                                          "dotnet-solution": {"task": "build:dotnet-solution"}}}},
+        "ci": {"build": {"commands": {"cmake-files": {"task": "build:cmake-files"},
+                                      "dotnet-solution": {"task": "build:dotnet-solution"}}}},
         "build": {"targets": CPP_TARGETS},
     }, sort_keys=False)
     (root / "e2edemo.yaml").write_text(text, encoding="utf-8")

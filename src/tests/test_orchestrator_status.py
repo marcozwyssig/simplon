@@ -35,17 +35,17 @@ tasks:
   compile: { impl: "demo.impls:compile", help: "Compile the artefacts." }
   up: { impl: "demo.impls:up", help: "Deploy up." }
 
-groups:
+ci:
   build:
     commands:
       install: { task: "install" }
       compile: { task: "compile" }
       prep: { help: "Install + compile.", depends_on: ["install", "compile"] }
+cd:
   deploy:
     commands:
       up: { task: "up" }
       bringup: { help: "Full bring-up.", depends_on: ["prep", "up"] }
-env_groups: [deploy]
 """
 
 

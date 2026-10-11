@@ -22,17 +22,17 @@ tasks:
   compile: { impl: "demo.impls:compile", help: "Compile the artefacts." }
   up: { impl: "demo.impls:up", help: "Deploy up." }
 
-groups:
+ci:
   build:
     commands:
       install: { task: "install" }
       compile: { task: "compile" }
       prep: { help: "Install + compile.", depends_on: ["install", "compile"] }
+cd:
   deploy:
     commands:
       up: { task: "up" }
       bringup: { help: "Full bring-up.", depends_on: ["prep", "up"] }
-env_groups: [deploy]
 """
 
 
@@ -196,16 +196,16 @@ def test_the_root_row_explains_a_dependency_that_dedup_left_without_a_row():
 tasks:
   install: { impl: "demo.impls:install", help: "Install host prereqs." }
 
-groups:
+ci:
   build:
     commands:
       install: { task: "install" }
       prep: { help: "Install.", depends_on: ["install"] }
       build: { help: "The full build.", depends_on: ["prep"] }
+cd:
   deploy:
     commands:
       bringup: { help: "Full bring-up.", depends_on: ["prep", "build"] }
-env_groups: [deploy]
 """
     tree = manifest_load(manifest).plan_tree_for("bringup")
     steps = [Step(label=leaf.name, command=leaf.path, action=lambda: Outcome(rc=0, output=""))
@@ -348,11 +348,10 @@ def test_a_pipeline_whose_root_IS_its_only_step_still_paints_and_streams():
 tasks:
   seed: { impl: "demo.impls:seed", help: "Seed the lab." }
 
-groups:
+cd:
   deploy:
     commands:
       seed: { task: "seed" }
-env_groups: [deploy]
 """
     tree = manifest_load(manifest).plan_tree_for("seed")
     assert tree.children == () and len(tree.leaves()) == 1, "the shape under test is a leaf-rooted tree"
@@ -412,7 +411,7 @@ tasks:
   compile: { impl: "demo.impls:compile", help: "Compile the artefacts." }
   up: { impl: "demo.impls:up", help: "Deploy up." }
 
-groups:
+ci:
   build:
     commands:
       install: { task: "install" }
@@ -421,11 +420,11 @@ groups:
         help: "Install + compile."
         depends_on: ["install", "compile"]
         stop_on_failure: true
+cd:
   deploy:
     commands:
       up: { task: "up" }
       bringup: { help: "Full bring-up.", depends_on: ["prep", "up"] }
-env_groups: [deploy]
 """
     tree = manifest_load(manifest).plan_tree_for("bringup")
     pipeline = Pipeline("bringup", [
@@ -464,7 +463,7 @@ tasks:
   compile: { impl: "demo.impls:compile", help: "Compile the artefacts." }
   up: { impl: "demo.impls:up", help: "Deploy up." }
 
-groups:
+ci:
   build:
     commands:
       install: { task: "install" }
@@ -473,11 +472,11 @@ groups:
         help: "Install + compile."
         depends_on: ["install", "compile"]
         stop_on_failure: true
+cd:
   deploy:
     commands:
       up: { task: "up" }
       bringup: { help: "Full bring-up.", depends_on: ["prep", "up"] }
-env_groups: [deploy]
 """
     tree = manifest_load(manifest).plan_tree_for("bringup")
     pipeline = Pipeline("bringup", [
@@ -1575,8 +1574,8 @@ def _wide_manifest(count: int) -> str:
     tasks = "\n".join(f'  t{i}: {{ impl: "demo.impls:t{i}", help: "Task {i}." }}' for i in range(count))
     commands = "\n".join(f'      c{i}: {{ task: "t{i}" }}' for i in range(count))
     depends = ", ".join(f'"c{i}"' for i in range(count))
-    return (f"tasks:\n{tasks}\n\ngroups:\n  build:\n    commands:\n{commands}\n"
-            f'      wide: {{ help: "All of them.", depends_on: [{depends}] }}\nenv_groups: []\n')
+    return (f"tasks:\n{tasks}\n\nci:\n  build:\n    commands:\n{commands}\n"
+            f'      wide: {{ help: "All of them.", depends_on: [{depends}] }}\n')
 
 
 def test_the_repaint_of_an_aggregate_does_not_drag_a_reader_back_to_the_bottom(monkeypatch):
@@ -1643,13 +1642,12 @@ tasks:
   one: { impl: "demo.impls:one", help: "Image one." }
   two: { impl: "demo.impls:two", help: "Image two." }
 
-groups:
+ci:
   build:
     commands:
       one: { task: "one" }
       two: { task: "two" }
       pair: { help: "Both images at once.", depends_on: ["one", "two"], parallel: true }
-env_groups: []
 """
 
 

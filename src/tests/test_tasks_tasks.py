@@ -23,14 +23,12 @@ _MANIFEST = """
 tasks:
   stamp: { impl: "simplon.test_impls:nullary", help: "Stamp the tree." }
 
-groups:
-  support:
-    groups:
-      git:
-        commands:
-          stamp: { task: "stamp" }
+support:
+  groups:
+    git:
+      commands:
+        stamp: { task: "stamp" }
 generate: [support.git]
-env_groups: []
 """
 
 
@@ -139,12 +137,10 @@ def test_catalogue_marks_the_namespace_a_task_coordinate_reaches(tmp_path, monke
     # arrange: a new-form command tree naming a platform coordinate under `task:` (netctl#1469 plan 2)
     manifest_path = tmp_path / "sample.yaml"
     manifest_path.write_text(textwrap.dedent("""
-        groups:
-          support:
-            commands:
-              push: { task: "vcs:push", help: "Push." }
+        support:
+          commands:
+            push: { task: "vcs:push", help: "Push." }
         generate: [support]
-        env_groups: []
     """), encoding="utf-8")
     monkeypatch.setattr(context, "_current", context.ProductContext(
         name="sample", root=tmp_path, manifest_path=manifest_path))
@@ -171,12 +167,11 @@ def test_catalogue_marks_a_namespace_the_platform_places_with_no_task_ref_anywhe
     manifest_path.write_text(textwrap.dedent("""
         tasks:
           lab-image: { impl: "demo.tooling:image", help: "Build an image." }
-        groups:
+        ci:
           build:
             commands:
               frr-image: { task: lab-image, help: "Build the FRR image." }
         generate: [build]
-        env_groups: []
     """), encoding="utf-8")
     monkeypatch.setattr(context, "_current", context.ProductContext(
         name="sample", root=tmp_path, manifest_path=manifest_path))
@@ -212,7 +207,7 @@ def test_catalogue_marks_a_namespace_reached_via_a_raw_impl_naming_a_kernel_modu
           local-task: { impl: "demo.tooling:noop", help: "Do nothing." }
           report: { impl: "simplon.tasks.testrun:report_cmd", help: "Merge results." }
 
-        groups:
+        ci:
           build:
             commands:
               noop: { task: "local-task", help: "Do nothing." }
@@ -220,7 +215,6 @@ def test_catalogue_marks_a_namespace_reached_via_a_raw_impl_naming_a_kernel_modu
             commands:
               report: { task: "report" }
         generate: [test]
-        env_groups: []
     """), encoding="utf-8")
     monkeypatch.setattr(context, "_current", context.ProductContext(
         name="sample", root=tmp_path, manifest_path=manifest_path))
@@ -243,15 +237,14 @@ def test_catalogue_marks_a_namespace_a_command_names_a_coordinate_from(tmp_path,
         tasks:
           frr-image: { impl: "simplon.test_impls:nullary", help: "Build the FRR image." }
 
-        groups:
+        ci:
           build:
             commands:
               frr-image: { task: "frr-image" }
-          support:
-            commands:
-              push: { task: "vcs:push" }
+        support:
+          commands:
+            push: { task: "vcs:push" }
         generate: [build]
-        env_groups: []
     """), encoding="utf-8")
     monkeypatch.setattr(context, "_current", context.ProductContext(
         name="sample", root=tmp_path, manifest_path=manifest_path))

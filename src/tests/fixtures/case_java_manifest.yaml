@@ -17,7 +17,7 @@ tasks:
   down:    { impl: "orchestrator.cli:down",     help: "Tear the deployment down (placeholder)." }
   status:  { impl: "orchestrator.cli:status",   help: "Report what is running in the target environment (placeholder)." }
 
-groups:
+ci:
   build:
     commands:
       jar:  { task: build }
@@ -30,6 +30,10 @@ groups:
   release:
     commands:
       tag: { task: "release:tag" }
+cd:
+  default: dev
+  environments:
+    dev: { backend: local, description: "Local development environment (the default)." }
   deploy:
     commands:
       up:   { task: up }
@@ -37,13 +41,9 @@ groups:
   monitor:
     commands:
       status: { task: status }
-  support:
-    commands:
-      install: { task: "support:install" }
-
-default: dev
-environments:
-  dev: { backend: local, description: "Local development environment (the default)." }
+support:
+  commands:
+    install: { task: "support:install" }
 
 # THE TEST TAXONOMY, and it is the whole point of the case: one gate, no `suite:` anywhere, and the
 # gate that opens the run is the product's own runner.

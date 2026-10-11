@@ -25,7 +25,6 @@ ValidationError as a plain ValueError so a raw ValidationError never escapes.
 """
 from __future__ import annotations
 
-import dataclasses
 import re
 
 import importlib
@@ -165,6 +164,14 @@ class Manifest(NamedTuple):
     # Migration state, and deliberately in the model: the diff of this list per wave is the ratchet, and
     # a group left out of it must be held back by a body that cannot be rendered (taskgen.unrenderable).
     generate: frozenset[str] = frozenset()
+    # The area each phase group stands in (si#344): group -> "ci" / "cd". `support` and a product's own
+    # groups are absent. Read off the merged tree, so it is the catalogue's statement and not a table.
+    areas: dict[str, str] = {}
+
+    def area_of(self, group: str) -> str | None:
+        """`ci` or `cd` for a phase group and everything nested under it; None for `support` and its
+        subtree (si#344). Read off the merged tree, so it is the catalogue's statement and not a table."""
+        return self.areas.get(group.split(".", 1)[0])
 
     def taxonomy(self) -> CommandTaxonomy:
         """The shared env-gate engine built from this manifest's tree (one env-gate, not a copy)."""
@@ -461,17 +468,16 @@ class _ManifestModel(BaseModel):
     `composites:` key is rejected LOUDLY (never silently dropped by the extra-ignore tolerance), pointing
     the manifest author at `depends_on`. `groups` is the ONE command tree (group -> command -> spec, #729);
     the former separate flat `commands` map and its dotted group-scoped keys are gone - NESTING resolves a
-    name owned by several groups. The six validation rules run here (rule 1 groups non-empty; rule 2
-    env_groups subset; rule 3 every spec has a non-empty help plus impl XOR depends_on; rule 4 every
-    `depends_on` entry names a known, unambiguous command (#895); rule 5 the dependency graph is acyclic
-    (#895); rule 6 two aggregates in ONE plan agree on `stop_on_failure` over a dependency they both
-    declare (netctl#1319)), each raised as a ValueError so `load()` surfaces the same clean message the
-    imperative loader did."""
+    name owned by several groups. The validation rules run here (rule 1 groups non-empty; rule 2, the
+    `env_groups` subset, went with the key in the si#344 cut; rule 3 every spec has a non-empty help plus
+    impl XOR depends_on; rule 4 every `depends_on` entry names a known, unambiguous command (#895);
+    rule 5 the dependency graph is acyclic (#895); rule 6 two aggregates in ONE plan agree on
+    `stop_on_failure` over a dependency they both declare (netctl#1319)), each raised as a ValueError so
+    `load()` surfaces the same clean message the imperative loader did."""
 
     model_config = ConfigDict(extra="ignore")
 
     groups: dict[str, dict[str, _CommandSpecModel]] = {}
-    env_groups: tuple[str, ...] = ()
     generate: tuple[str, ...] = ()
 
     @model_validator(mode="before")
@@ -510,33 +516,17 @@ class _ManifestModel(BaseModel):
 
     taxonomy: dict[str, dict] = {}
 
-    @field_validator("env_groups", mode="before")
-    @classmethod
-    def _coerce_env_groups(cls, value: object) -> tuple[str, ...]:
-        if not value:
-            return ()
-        if not isinstance(value, Iterable):
-            raise ValueError("'env_groups' must be a list of group names")
-        return tuple(str(group) for group in value)
-
     @model_validator(mode="after")
     def _validate_taxonomy(self) -> "_ManifestModel":
-        # rule 1: `groups` maps each declared group to its ordered command tree (the ONE membership + spec source).
+        # rule 1: `groups` - the loader's own member map, built from `ci:` / `cd:` / `support:` - maps
+        # each placed group to its ordered command tree (the ONE membership + spec source). Empty only
+        # where nothing placed a command; with a catalogue `support:` always has some, so this is the
+        # catalogue-less load's refusal.
         if not self.groups:
-            raise ValueError("manifest defines no groups")
+            raise ValueError("manifest declares no commands under ci:, cd: or support:")
 
-        # rule 2: every `env_groups` entry names a declared TOP-LEVEL group. A dotted entry is rejected
-        # rather than honoured: `env_groups` is the flat key, a nested node declares `env_first: true` in
-        # the `taxonomy:` block, and accepting the dotted spelling loaded cleanly while making the env
-        # gate a silent no-op for that group - a CD command that must be backend-gated reached "ok".
-        for group in self.env_groups:
-            if "." in group:
-                raise ValueError(
-                    f"env_groups entry '{group}' names a NESTED group. env_groups takes top-level "
-                    f"groups only - declare `env_first: true` on that group in the `taxonomy:` block "
-                    f"instead; every descendant inherits it")
-            if group not in self.groups:
-                raise ValueError(f"env_groups entry '{group}' is not a declared group")
+        # rule 2 was `env_groups:` naming a declared top-level group. The key went in the si#344 cut,
+        # refused by name before this model is ever built (`treeform.check_no_pre_si344_form`).
 
         # rule 3: every command spec declares a non-empty `help`, plus EITHER a well-formed
         # "module:function" `impl` (a leaf) OR a non-empty `depends_on` (an impl-less aggregate, #895) -
@@ -768,13 +758,11 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
 
     Validates through the private `_ManifestModel`, failing loudly with ValueError so a bad manifest is
     caught here and not deep in the CLI:
-      - `groups` maps each declared group to its ordered command tree (group -> command -> spec, the ONE
-        membership + spec source);
-      - every `env_groups` entry is a declared group, and AGREES with the merged node's `env_first:`
-        (si#43): the key states a group's SHAPE, so where the platform owns that shape the entry may
-        restate it and may not contradict it - the same refusal `env_first:` written onto that group
-        already gets. Where no platform owns the group it still gates it on, which is what the key is
-        for;
+      - the form si#344 replaced - `groups:`, `env_groups:`, a top-level `default:` / `environments:` /
+        `site:` - is refused by name, with the migration that rewrites it
+        (`treeform.check_no_pre_si344_form`);
+      - `ci:` / `cd:` / `support:` place at least one command (the loader's member map, group -> command
+        -> spec, is the ONE membership + spec source);
       - every command spec declares a non-empty `help`, plus either a well-formed "module:function" `impl`
         (a leaf) or a non-empty `depends_on` (an impl-less aggregate, #895) - never both;
       - every `depends_on` entry (#895) names a known, UNAMBIGUOUS command, and the dependency graph is
@@ -797,10 +785,11 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
         that is the whole difference from `check_every_task_is_used`, which si#53 struck.
 
     `catalogue` (netctl#1437) supplies the platform's coordinate space AND its command tree: the product's
-    `groups:` is merged onto the catalogue's before validation, and every command's `task:` is resolved
-    into an `impl:` there - which is the point of doing it before rather than after, since every rule above
-    then applies to a platform-placed command exactly as it does to a declared one. With no catalogue a
-    manifest is simply its own whole tree, which is what lets this loader be exercised without one.
+    `ci:` / `cd:` / `support:` are merged onto the catalogue's before validation, and every command's
+    `task:` is resolved into an `impl:` there - which is the point of doing it before rather than after,
+    since every rule above then applies to a platform-placed command exactly as it does to a declared one.
+    With no catalogue a manifest is simply its own whole tree, which is what lets this loader be exercised
+    without one.
 
     The FLAT form - `impl:` written straight onto a command, `import:`, a coordinate-keyed `tasks:` entry -
     is gone (netctl#1469 plan 3, si#33). A manifest still written that way is refused before anything else
@@ -846,10 +835,14 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
                  else f"position {position}: " if position is not None else "")
         raise ValueError(
             f"{manifest_path or 'the manifest'} is not valid YAML:\n  {where}{detail}") from exc
+    # The form si#344 replaced is refused FIRST, by name, with the migration that rewrites it - ahead of
+    # `check_no_old_form` too: a flat-form manifest is a `groups:` manifest, its first way out is this
+    # migration, and the flat groups it carries across are found in the areas afterwards.
+    treeform.check_no_pre_si344_form(data, manifest_path)
     # The flat form is gone (netctl#1469 plan 3, si#33) and a manifest still written in it is refused
-    # HERE, first - before any of the checks below can report a symptom of it instead. `impl:` on a
-    # command would otherwise surface as `treeform.resolve`'s "declare the body once under `tasks:`" one
-    # command at a time, which is true and useless: it names the rule, not the file's way out of it.
+    # HERE - before any of the checks below can report a symptom of it instead. `impl:` on a command
+    # would otherwise surface as `treeform.resolve`'s "declare the body once under `tasks:`" one command
+    # at a time, which is true and useless: it names the rule, not the file's way out of it.
     treeform.check_no_old_form(data)
     # The catalogue's own tree. `taxonomy:` is `groups:`'s predecessor (netctl#1444, superseded by
     # netctl#1469) and a catalogue carries one or the other, never both. The two spell a node the same
@@ -857,11 +850,17 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     # it, and reading it here is what keeps a catalogue that has not moved yet owning the shape AND the
     # existence of its groups.
     catalogue_groups = (getattr(catalogue, "groups", {}) or {}) or (getattr(catalogue, "taxonomy", {}) or {})
-    tree = data.get("groups") or {}
-    if not isinstance(tree, dict):
-        raise ValueError(
-            f"`groups:` is not a mapping: found {type(tree).__name__} instead. It maps each group name "
-            f"to its node (help, env_first, groups, commands) - check the indentation under this key")
+    # The areas (si#344): a product writes its commands under `ci:` / `cd:` / `support:`, and the
+    # catalogue's `ci` and `cd` are transparent nodes those sections merge onto. A load with no
+    # catalogue merges onto `AREA_SKELETON` instead, so it reads `ci:` exactly as a product does.
+    kernel_tree: dict = catalogue_groups or treeform.AREA_SKELETON
+    phases = {area: tuple((node.get("groups") or {}).keys())
+              for area, node in kernel_tree.items() if node.get("transparent")}
+    tree = treeform.tree_from_areas(data, phases)
+    # The platform's own `ci` groups are held to the same shape rule (`env_first:` under `ci:`), so the
+    # rule binds the kernel with the product rather than exempting it.
+    for name, node in ((kernel_tree.get("ci") or {}).get("groups") or {}).items():
+        treeform.refuse_area_shape(node, "ci", name)
     tasks_block = data.get("tasks")
     if tasks_block is not None and not isinstance(tasks_block, dict):
         raise ValueError(
@@ -883,10 +882,14 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     # says nothing about groups at all - and an unconditional lock against an empty kernel tree would
     # reject every group any manifest could possibly declare, which is a rule about nothing enforced over
     # everything. The kernel's own catalogue declares all six, so every real product is locked.
-    merged = treeform.merge(catalogue_groups, tree,
+    merged = treeform.merge(kernel_tree, tree,
                             product_tasks=product_tasks,
                             catalogue_tasks=getattr(catalogue, "tasks", {}) or {},
                             locked=bool(catalogue_groups))
+    # The transparent level folded away (si#344): from here on `merged` holds `build`, `deploy`, ...
+    # where the tree holds `ci.build`, `cd.deploy`, and every path below is the one the CLI has always
+    # had. `areas` is what the fold remembers of the level it removed.
+    merged, areas = treeform.elide_transparent(merged)
     lowered_taxonomy, flat = treeform.lower(merged)
     # `merged` deliberately keeps every group the CATALOGUE offers, touched or not (see `merge`'s own
     # docstring), because `lowered_taxonomy` is what the "which groups exist" check below reads. `flat`
@@ -898,7 +901,15 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     # survives for its child to hang from. The "declares no commands" load error in `merge` already
     # catches the other case (a path the manifest DOES name, left empty), so nothing empty and
     # self-declared ever reaches this filter.
-    keep = treeform.declared_paths(tree) | treeform.paths_with_commands(flat)
+    #
+    # The product's own tree is in area form too, and its `ci`/`cd` nodes do not say `transparent:` -
+    # the platform's do, and a product may not restate a platform group's shape. So they are folded by
+    # the KERNEL's word on them, or `declared_paths` would name `ci.build` where `flat` has `build`.
+    own_tree = {name: ({**(node or {}), "transparent": True}
+                       if (kernel_tree.get(name) or {}).get("transparent") else node)
+                for name, node in tree.items()}
+    keep = (treeform.declared_paths(treeform.elide_transparent(own_tree)[0])
+            | treeform.paths_with_commands(flat))
     flat = {path: members for path, members in flat.items() if path in keep}
     # A declared task whose NAME a command has taken for a different body (si#81). This is what is left
     # of `check_every_task_is_used` after si#53 struck it: that rule refused every `tasks:` entry no
@@ -908,7 +919,7 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     # in a platform group nobody took cannot count as the one that took the name; and BEFORE `resolve`,
     # which consumes the `task:` this rule reads.
     treeform.check_no_shadowed_task_declaration(flat, product_tasks,
-                                                getattr(catalogue, "tasks", {}) or {})
+                                                getattr(catalogue, "tasks", {}) or {}, areas=areas)
     # Placement or family (si#34): a coordinate whose namespace is one of the platform's own top-level
     # group names is a PLACEMENT (`build:image` is under `build`, always); any other namespace is a
     # FAMILY, and the product places it where it likes (`docs:site` under `build` here, under `release`
@@ -919,7 +930,7 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     # tree, so the catalogue's own placed commands are held to the rule beside the product's. Runs
     # BEFORE `resolve`, because `resolve` consumes the `task:` this rule is about and hands back an
     # `impl:` the coordinate is no longer visible in.
-    treeform.check_coordinate_placement(flat, frozenset(catalogue_groups))
+    treeform.check_coordinate_placement(flat, treeform.platform_groups(catalogue_groups), areas=areas)
     resolved = treeform.resolve(flat, product_tasks, getattr(catalogue, "tasks", {}) or {})
     data = {**data, "groups": resolved, "tasks": {}}
     try:
@@ -942,7 +953,6 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
                 for name, spec in members.items()}
         for group, members in model.groups.items()
     }
-    env_groups = frozenset(model.env_groups)
     unknown = sorted(set(model.generate) - set(groups))
     if unknown:
         raise ValueError(f"generate names group(s) the manifest does not declare: {', '.join(unknown)}")
@@ -957,23 +967,16 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     shaped = merge_trees(_catalogue_tree(catalogue_taxonomy, groups),
                          _catalogue_tree(model.taxonomy, groups))
     tree = {**shaped,
-            **_flat_tree(groups, env_groups,
-                         frozenset(catalogue_taxonomy) | frozenset(model.taxonomy))}
-    # `env_groups:` is the flat, top-level way of saying what a group node says with `env_first: true`,
-    # and it has to keep meaning something now that every manifest is a tree: a node built from the
-    # taxonomy carries the flag the NODE declared, so without this the key would validate, list a real
-    # group, and gate nothing - the silent no-op this loader rejects everywhere else.
-    #
-    # It is CHECKED against the merged node before it is applied (si#43), and that order is the whole
-    # point: applying it first made the key a way around the rule `merge` enforces on `env_first:`, so a
-    # product could turn a platform group env-first from the top level of the file after being refused
-    # the same statement inside the group node. What survives the check is an entry naming a group no
-    # platform owns - the manifest's own group, which is the case the key was written for - so this
-    # replacement now only ever fires there.
-    treeform.check_env_groups(merged, model.env_groups, frozenset(catalogue_groups))
-    tree = {name: (dataclasses.replace(node, env_first=True)
-                   if name in env_groups and not node.env_first else node)
-            for name, node in tree.items()}
+            **_flat_tree(groups, frozenset(catalogue_taxonomy) | frozenset(model.taxonomy))}
+    # Which top-level groups take an environment is the TREE's statement since si#344 - `cd:` is
+    # env-first as a whole, `ci:` never is - so the field the `env_groups:` key used to fill is read off
+    # it. Only groups that PLACE a command (directly or below) count: the tree keeps every catalogue
+    # group, placed or not, and a product that deploys nothing would otherwise report `deploy` and
+    # `monitor` as its env-first groups. That is the subset the deleted key was held to (rule 2: every
+    # entry a declared group), so the field means what it always meant.
+    env_groups = frozenset(name for name, node in tree.items()
+                           if node.env_first and any(group == name or group.startswith(f"{name}.")
+                                                     for group in groups))
     # Every DOTTED `groups:` key must name a node the `taxonomy:` block actually declares. Without this,
     # an unmatched path was dropped from the tree while `groups`/`commands` kept it: the commands stayed
     # registered and runnable but were invisible to the taxonomy, so they were never env-gated and never
@@ -981,13 +984,16 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     taxonomy = CommandTaxonomy.from_tree(tree)
     for name in groups:
         if "." in name and taxonomy.resolve_path(name) is None:
+            # Unreachable from a product since the tree form: `groups` is `lower`'s output over the same
+            # merged tree, so every dotted key names a node in it. Kept as the guard; worded in the
+            # loader's own terms because no manifest can make a reader see it.
             raise ValueError(
                 f"groups entry '{name}' names a nested group the `taxonomy:` block does not declare - "
                 f"declare it there, or move its commands to a top-level group")
     if validate_with:
         _validate_param_bindings(commands)
     return Manifest(groups=groups, env_groups=env_groups, commands=commands, tree=tree,
-                    generate=generate)
+                    generate=generate, areas=areas)
 
 
 def _catalogue_tree(declared: dict[str, dict],
@@ -1017,7 +1023,6 @@ def _catalogue_tree(declared: dict[str, dict],
 
 
 def _flat_tree(members: dict[str, tuple[str, ...]],
-               env_groups: frozenset[str],
                declared: frozenset[str] = frozenset()) -> dict[str, TaxonomyNode]:
     """The depth-1 tree for every BARE `groups:` key that the manifest's own `taxonomy:` block does not
     already declare - the product's plain top-level groups.
@@ -1035,7 +1040,7 @@ def _flat_tree(members: dict[str, tuple[str, ...]],
     The merge rule still catches what it was written for, a group owned by the CATALOGUE and redeclared by
     the product, because that clash is between two files rather than two sections of one.
     """
-    return {name: TaxonomyNode(name=name, commands=cmds, env_first=name in env_groups)
+    return {name: TaxonomyNode(name=name, commands=cmds)
             for name, cmds in members.items() if "." not in name and name not in declared}
 
 
@@ -1090,11 +1095,15 @@ def _enforce_the_catalogue_owns_the_groups(members: dict[str, tuple[str, ...]],
         raise ValueError(
             "a product manifest may not declare `taxonomy:` when the catalogue declares one: the platform "
             "owns the CI/CD loop's shape so every product runs the same one (declared here: "
-            f"{', '.join(sorted(product_taxonomy))}). Contribute MEMBERS through `groups:` instead, or add "
-            "the group to the catalogue's `taxonomy:`, where every product gets it")
+            f"{', '.join(sorted(product_taxonomy))}). Contribute MEMBERS through `ci:`, `cd:` or "
+            "`support:` instead, or add the group to the catalogue's `taxonomy:`, where every product "
+            "gets it")
 
     unknown = sorted(name for name in members if "." not in name and name not in catalogue_taxonomy)
     if unknown:
+        # Unreachable from a product since the tree form: `load` hands in the taxonomy LOWERED from the
+        # merged tree whose `flat` gave `members`, and `merge`'s lock (`ci: x:` named where it is
+        # written) refuses a group the catalogue lacks before this runs. Kept as the guard.
         raise ValueError(
             f"groups entry '{unknown[0]}' names a group the catalogue's `groups:` does not declare"
             + (f" (also: {', '.join(unknown[1:])})" if len(unknown) > 1 else "")
