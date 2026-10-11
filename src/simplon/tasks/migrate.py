@@ -28,12 +28,15 @@ from typing import NamedTuple
 
 import yaml
 
-from simplon import context, log
+from simplon import log
+from simplon.orchestrator.model.treeform import DOCS_SITE_KEYS
 
+#: The phase groups each area holds. A second statement of the catalogue's `ci` / `cd` groups, kept here
+#: because this module reads a manifest the catalogue-backed loader refuses;
+#: `test_the_migrations_areas_are_the_catalogues` holds the two together.
 CI = ("build", "test", "release")
 CD = ("deploy", "monitor")
 ENV_KEYS = ("default", "environments")
-DOCS_SITE_KEYS = ("image", "base_url", "theme", "source", "output")
 _TOP = re.compile(r"^(?P<key>[A-Za-z0-9_][A-Za-z0-9_.-]*):(?P<rest>.*)$")
 _CHILD = re.compile(r"^  (?P<key>[A-Za-z0-9_][A-Za-z0-9_.-]*):(?P<rest>.*)$")
 
@@ -95,10 +98,24 @@ def _is_docs_site(value: object) -> bool:
     return isinstance(value, dict) and any(key in value for key in DOCS_SITE_KEYS)
 
 
+def _collision(written: str, source: str) -> str:
+    return f"`{written}:` already exists beside `{source}:` - merge them by hand, then run again"
+
+
 def _expected(old: dict, unknown_groups_into: str | None = None) -> dict:
     """What the new form must contain, built from the old form's DATA - the oracle the splice is
-    checked against. It knows nothing about lines, which is why it can check them."""
+    checked against. It knows nothing about lines, which is why it can check them.
+
+    It REFUSES (ValueError) to set a key the old form already has, rather than overwrite it: an oracle
+    that overwrites agrees with a splice that writes a second copy, because YAML keeps the last of two
+    equal keys - the first one's content is gone either way, and the check passes."""
     out = {k: v for k, v in old.items() if k not in ("groups", "env_groups", "default", "environments")}
+
+    def put(key: str, value: object, source: str) -> None:
+        if key in out:
+            raise ValueError(_collision(key, source))
+        out[key] = value
+
     groups = old.get("groups") or {}
     ci = {n: groups[n] for n in CI if n in groups}
     cd = {k: old[k] for k in ENV_KEYS if k in old}
@@ -107,13 +124,13 @@ def _expected(old: dict, unknown_groups_into: str | None = None) -> dict:
         area = ci if unknown_groups_into == "ci" else cd
         area.update({n: v for n, v in groups.items() if n not in CI + CD + ("support",)})
     if ci:
-        out["ci"] = ci
+        put("ci", ci, "groups")
     if cd:
-        out["cd"] = cd
+        put("cd", cd, "groups" if any(n in groups for n in CD) else next(k for k in ENV_KEYS if k in old))
     if "support" in groups:
-        out["support"] = groups["support"]
+        put("support", groups["support"], "groups")
     if _is_docs_site(old.get("site")):
-        out["website"] = out.pop("site")
+        put("website", out.pop("site"), "site")
     return out
 
 
@@ -212,13 +229,37 @@ def migrate_text(text: str, *, unknown_groups_into: str | None = None) -> Migrat
         block = blocks[index][1]
         at = next(i for i, line in enumerate(block) if _TOP.match(line))
         number = sum(len(prior) for _, prior in blocks[:index]) + at + 1  # 1-based, of the key line
-        rest = _TOP.match(block[at]).group("rest")
+        key_line = _TOP.match(block[at])
+        assert key_line is not None  # `at` is the first line `_TOP` matches
+        rest = key_line.group("rest")
+        # A `groups:` with no section moves nothing, and "migrated (0 section(s) moved)" would be the
+        # green of a run that did nothing. Its key line is deleted, so a comment on it would go too.
+        if not old.get("groups"):
+            comment = rest.strip()
+            if comment.startswith("#"):
+                return refused(f"groups: on line {number} holds no section to move, so its comment "
+                               f"({comment!r}) has no area to travel onto - move the comment or delete it, "
+                               "and run again")
+            if not (any(k in old for k in ("env_groups",) + ENV_KEYS) or docs_site):
+                return refused(f"groups: on line {number} holds no section, so there is nothing to move "
+                               "into ci: / cd: / support: - delete the key by hand, and run again")
         if rest.lstrip().startswith(("{", "[")):
             return refused(f"groups: is written in flow style on line {number}; the splice moves "
                            "block-style sections only - rewrite it in block style and run again")
         groups_head = block[:at]
         groups_comment = rest
         removed.append(block[at])
+        # The splice reads a section at exactly two spaces. A manifest indented by more is valid YAML
+        # that `_CHILD` sees no section in, and the refusal it then earned ("does not parse back: ci")
+        # named a symptom; this names the cause.
+        body = next(((n, line) for n, line in enumerate(block[at + 1:], number + 1)
+                     if line.strip() and not line.lstrip().startswith("#")), None)
+        if body is not None and body[1].startswith(" "):
+            indent = len(body[1]) - len(body[1].lstrip())
+            if indent != 2:
+                return refused(f"groups: indents its sections by {indent} spaces (line {body[0]}); the "
+                               "splice moves a manifest indented by two spaces per level, the way `simplon "
+                               "init` writes one - reindent it, and run again")
         children = _blocks(block[at + 1:], _CHILD, 2)
         groups_preamble = children[0][1]
         first = number + 1 + len(groups_preamble)  # line number of each child block's first line
@@ -264,7 +305,7 @@ def migrate_text(text: str, *, unknown_groups_into: str | None = None) -> Migrat
         # An entry naming a group the manifest does not declare was REFUSED by the loader the key
         # belonged to. Deleting it here would turn a manifest that did not load into one that does,
         # silently - the migration would have fixed a mistake nobody was told about.
-        declared = old.get("groups") if isinstance(old.get("groups"), dict) else {}
+        declared = old["groups"] if isinstance(old.get("groups"), dict) else {}
         missing = [group for group in value if group not in declared]
         if missing:
             return refused(f"env_groups: {_render(value)} names '{missing[0]}', which groups: does not "
@@ -276,6 +317,15 @@ def migrate_text(text: str, *, unknown_groups_into: str | None = None) -> Migrat
         comments = sum(1 for line in owned if line.strip().startswith("#"))
         said = f" with the {comments} comment line{'s' if comments != 1 else ''} it owns" if comments else ""
         moved.append(f"env_groups: deleted ({_render(value)}){said}")
+
+    # A key the splice writes may not already stand at the top level: YAML keeps the last of two equal
+    # keys, so writing a second one "migrates" and loses the first one's content on load.
+    writes = [("ci", "groups", bool(ci)), ("support", "groups", bool(support)),
+              ("cd", "groups" if cd else next((k for k in keys if k in ENV_KEYS), ""), bool(cd or env_lines)),
+              ("website", "site", docs_site)]
+    for written, source, happens in writes:
+        if happens and written in keys:
+            return refused(_collision(written, source))
 
     # Assemble: the new areas replace groups: in place; cd: stands at the first env key if there is
     # no groups: to stand in for, or groups: had no deploy/monitor to give it.
@@ -321,7 +371,10 @@ def migrate_text(text: str, *, unknown_groups_into: str | None = None) -> Migrat
         parsed = yaml.safe_load(new)
     except yaml.YAMLError as error:
         return refused(f"the spliced text does not parse back to the same manifest: {error}")
-    expected = _expected(old, unknown_groups_into)
+    try:
+        expected = _expected(old, unknown_groups_into)
+    except ValueError as error:
+        return refused(str(error))
     if parsed != expected:
         return refused("the spliced text does not parse back to the same manifest: "
                        f"{_first_difference(expected, parsed)}")
@@ -339,8 +392,19 @@ def migrate(manifest: str = "") -> int:
     rc 0 when it migrated and when there was nothing to migrate - with a different sentence each, because
     those are two answers. rc 1 when it could not, with nothing written.
     """
-    path = Path(manifest) if manifest else context.current().manifest_path
-    result = migrate_text(path.read_text(encoding="utf-8"))
+    if manifest:
+        path = Path(manifest)
+    else:
+        # Imported here, not at the top: `simplon.context` imports the manifest LOADER, and the package
+        # route (`simplon manifest migrate`) exists for a manifest that loader refuses.
+        from simplon import context
+        path = context.current().manifest_path
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        log.error(f"{path.name}: not migrated, nothing written - cannot read it: {error}")
+        return 1
+    result = migrate_text(text)
     if result.status == "current":
         log.ok(f"{path.name}: already in the ci/cd form - nothing to migrate")
         return 0

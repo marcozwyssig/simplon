@@ -853,7 +853,7 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     # The areas (si#344): a product writes its commands under `ci:` / `cd:` / `support:`, and the
     # catalogue's `ci` and `cd` are transparent nodes those sections merge onto. A load with no
     # catalogue merges onto `AREA_SKELETON` instead, so it reads `ci:` exactly as a product does.
-    kernel_tree = catalogue_groups or treeform.AREA_SKELETON
+    kernel_tree: dict = catalogue_groups or treeform.AREA_SKELETON
     phases = {area: tuple((node.get("groups") or {}).keys())
               for area, node in kernel_tree.items() if node.get("transparent")}
     tree = treeform.tree_from_areas(data, phases)

@@ -188,11 +188,11 @@ def test_a_site_section_without_docs_keys_is_left_alone():
     assert result.status == "current"
 
 
-def test_a_splice_that_does_not_parse_back_is_refused_and_names_where():
-    # arrange: a `ci:` written by hand after groups: - YAML keeps the last, so the spliced ci: is shadowed
-    text = ("product: demo\n"
-            "groups:\n  build:\n    commands:\n      w: { task: wheel }\n"
-            "ci: { x: 1 }\n")
+def test_a_splice_that_does_not_parse_back_is_refused_and_names_where(monkeypatch):
+    # arrange: an oracle that disagrees with the splice - the guard has to name where, whatever the cause
+    from simplon.tasks import migrate as migrate_mod
+    monkeypatch.setattr(migrate_mod, "_expected", lambda old, into=None: {"product": "demo", "ci": {}})
+    text = "product: demo\ngroups:\n  build:\n    commands:\n      w: { task: wheel }\n"
 
     # act
     result = migrate_text(text)
@@ -201,6 +201,97 @@ def test_a_splice_that_does_not_parse_back_is_refused_and_names_where():
     assert result.status == "refused"
     assert result.text == text
     assert result.reason == "the spliced text does not parse back to the same manifest: ci.build"
+
+
+#: A key the splice writes, already standing at the top level beside what it would move there - in both
+#: orders. YAML keeps the last of two equal keys, so a splice that wrote a second one "migrated" and the
+#: first one's content vanished on load (measured: `ci: build:` + `groups: test:` lost `build`).
+COLLISIONS = {
+    "ci, before groups": ("product: demo\nci:\n  build:\n    commands:\n      a: { task: wheel }\n"
+                          "groups:\n  test:\n    commands:\n      t: { task: pytest }\n", "ci", "groups"),
+    "ci, after groups": ("product: demo\ngroups:\n  test:\n    commands:\n      t: { task: pytest }\n"
+                         "ci:\n  build:\n    commands:\n      a: { task: wheel }\n", "ci", "groups"),
+    "cd, before default": ("product: demo\ncd:\n  deploy:\n    commands:\n      u: { task: up }\n"
+                           "default: dev\n", "cd", "default"),
+    "cd, after default": ("product: demo\ndefault: dev\n"
+                          "cd:\n  deploy:\n    commands:\n      u: { task: up }\n", "cd", "default"),
+    "support, before groups": ("product: demo\nsupport:\n  commands:\n    a: { task: doctor }\n"
+                               "groups:\n  support:\n    commands:\n      b: { task: doctor }\n",
+                               "support", "groups"),
+    "support, after groups": ("product: demo\ngroups:\n  support:\n    commands:\n      b: { task: doctor }\n"
+                              "support:\n  commands:\n    a: { task: doctor }\n", "support", "groups"),
+    "website, before site": ("product: demo\nwebsite:\n  image: x\nsite:\n  image: y\n", "website", "site"),
+    "website, after site": ("product: demo\nsite:\n  image: y\nwebsite:\n  image: x\n", "website", "site"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(COLLISIONS))
+def test_a_key_the_splice_writes_that_already_exists_is_refused_by_name(case):
+    # arrange
+    text, written, source = COLLISIONS[case]
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "refused"
+    assert result.text == text
+    assert result.reason == (f"`{written}:` already exists beside `{source}:` - merge them by hand, "
+                             "then run again")
+
+
+def test_the_oracle_refuses_a_key_it_would_overwrite():
+    # arrange: the second guard - should the pre-check ever miss a key, the data check must not pass by
+    # overwriting the existing one the way YAML would
+    from simplon.tasks.migrate import _expected
+
+    # act / assert
+    with pytest.raises(ValueError, match="`ci:` already exists beside `groups:`"):
+        _expected({"product": "demo", "ci": {"build": {}}, "groups": {"test": {}}})
+
+
+def test_an_empty_groups_with_a_comment_on_its_key_line_is_refused_rather_than_losing_it():
+    # arrange: no section moves, so there is no area for the comment to travel onto
+    text = "product: demo\ngroups:  # c\n"
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "refused"
+    assert result.text == text
+    assert result.reason == ("groups: on line 2 holds no section to move, so its comment ('# c') has no "
+                             "area to travel onto - move the comment or delete it, and run again")
+
+
+@pytest.mark.parametrize("text", ["product: demo\ngroups:\n", "product: demo\ngroups: null\n",
+                                  "product: demo\ngroups: {}\n"])
+def test_an_empty_groups_that_moves_nothing_is_refused_not_migrated(text):
+    # arrange: "migrated (0 section(s) moved)" was the old answer - green, and nothing done
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "refused"
+    assert result.text == text
+    assert result.reason == ("groups: on line 2 holds no section, so there is nothing to move into ci: / "
+                             "cd: / support: - delete the key by hand, and run again")
+
+
+def test_a_groups_indented_by_four_spaces_is_refused_naming_the_indentation():
+    # arrange
+    text = "product: demo\ngroups:\n    build:\n        commands:\n            a: { task: wheel }\n"
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "refused"
+    assert result.text == text
+    assert result.reason == ("groups: indents its sections by 4 spaces (line 3); the splice moves a "
+                             "manifest indented by two spaces per level, the way `simplon init` writes "
+                             "one - reindent it, and run again")
 
 
 def test_groups_declared_twice_is_refused_naming_both_lines():
@@ -241,7 +332,8 @@ def test_a_groups_holding_only_comments_is_refused_rather_than_losing_them():
     # assert
     assert result.status == "refused"
     assert result.text == text
-    assert result.reason == "the spliced text loses a line the original had: line 3: # nothing yet"
+    assert result.reason == ("groups: on line 2 holds no section, so there is nothing to move into ci: / "
+                             "cd: / support: - delete the key by hand, and run again")
 
 
 def test_a_support_line_too_shallow_to_dedent_is_refused_naming_its_column():
@@ -407,6 +499,53 @@ def test_migrate_on_a_document_that_does_not_parse_is_rc_1_and_writes_nothing(tm
     assert rc == 1
     assert path.read_text() == text
     assert "not valid YAML" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("make", ["missing", "not utf-8"])
+def test_migrate_on_a_file_it_cannot_read_is_rc_1_with_a_reason_not_a_traceback(tmp_path, capsys, make):
+    # arrange
+    path = tmp_path / "demo.yaml"
+    if make == "not utf-8":
+        path.write_bytes(b"product: d\xe9mo\n")
+
+    # act
+    rc = migrate_mod.migrate(str(path))
+
+    # assert
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "demo.yaml: not migrated, nothing written - cannot read it: " in err
+    assert ("No such file or directory" if make == "missing" else "can't decode byte 0xe9") in err
+    assert path.exists() == (make == "not utf-8")
+
+
+def test_importing_the_migration_does_not_import_the_manifest_loader():
+    # arrange: `simplon manifest migrate` exists for a manifest the loader refuses; the route must not
+    # depend on the loader at all, even at import
+    import subprocess
+    import sys
+    code = ("import sys, simplon.tasks.migrate; "
+            "print('simplon.orchestrator.manifest' in sys.modules, 'simplon.context' in sys.modules)")
+
+    # act
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout
+
+    # assert
+    assert out.split() == ["False", "False"]
+
+
+def test_the_migrations_areas_are_the_catalogues():
+    # arrange: CI / CD here, and `_phases_of` in the loader's messages, restate which phase groups stand
+    # under which area; the catalogue is the statement
+    from simplon.orchestrator.model import treeform
+    groups = catalogue.load().groups
+
+    # act
+    ci, cd = (tuple(groups[area]["groups"]) for area in ("ci", "cd"))
+
+    # assert
+    assert (migrate_mod.CI, migrate_mod.CD) == (ci, cd)
+    assert (treeform._phases_of("ci"), treeform._phases_of("cd")) == (", ".join(ci), ", ".join(cd))
 
 
 def test_support_manifest_migrate_is_placed_for_every_product():

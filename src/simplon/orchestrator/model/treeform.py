@@ -826,7 +826,7 @@ _MIGRATE = (
 
 #: The keys that make a top-level `site:` the DOCUMENTATION site (now `website:`) rather than the
 #: deployment location, which si#344 reserved under `cd:`.
-_DOCS_SITE_KEYS = ("image", "base_url", "theme", "source", "output")
+DOCS_SITE_KEYS = ("image", "base_url", "theme", "source", "output")
 
 
 def check_no_pre_si344_form(data: dict, manifest_path: str | None) -> None:
@@ -865,7 +865,7 @@ def check_no_pre_si344_form(data: dict, manifest_path: str | None) -> None:
         # `in`, not `is not None`: a bare `site:` is a key of the old form too, and ignoring it is the
         # silence this function exists to break.
         site = data["site"]
-        if isinstance(site, dict) and any(k in site for k in _DOCS_SITE_KEYS):
+        if isinstance(site, dict) and any(k in site for k in DOCS_SITE_KEYS):
             raise ValueError(
                 f"{name} declares a top-level `site:` with the documentation site's keys; since si#344 "
                 f"that section is `website:`, and `site:` is the deployment location under `cd:`.\n{how}")

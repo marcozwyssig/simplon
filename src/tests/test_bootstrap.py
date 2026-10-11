@@ -523,3 +523,19 @@ def test_simplon_manifest_migrate_names_the_candidates_when_it_cannot_choose(tmp
     # assert
     assert rc == 2
     assert "found a.yaml, b.yaml here" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("argv", [["manifest"], ["manifest", "migrat"], ["manifest", "--help"]])
+def test_simplon_manifest_without_a_known_subcommand_is_usage_and_scaffolds_nothing(tmp_path, monkeypatch,
+                                                                                   capsys, argv):
+    # arrange: `manifest` is a namespace, not a product name - falling through to `init` scaffolded a
+    # product called "manifest"
+    monkeypatch.chdir(tmp_path)
+
+    # act
+    rc = bootstrap.main(argv)
+
+    # assert
+    assert rc == 2
+    assert capsys.readouterr().err == "usage: simplon manifest migrate [MANIFEST]\n"
+    assert list(tmp_path.iterdir()) == []

@@ -1130,6 +1130,9 @@ def next_steps(name: str, target: Path, *, orch_dir: str = DEFAULT_ORCH_DIR) -> 
     ])
 
 
+_MANIFEST_USAGE = "usage: simplon manifest migrate [MANIFEST]"
+
+
 def _manifest_migrate(args: list[str]) -> int:
     """`simplon manifest migrate [MANIFEST]` - the route that works AFTER the cut (si#344).
 
@@ -1139,7 +1142,7 @@ def _manifest_migrate(args: list[str]) -> int:
     """
     from simplon.tasks import migrate as migrate_mod
     if len(args) > 1:
-        print("usage: simplon manifest migrate [MANIFEST]", file=sys.stderr)
+        print(_MANIFEST_USAGE, file=sys.stderr)
         return 2
     if args:
         return migrate_mod.migrate(args[0])
@@ -1180,8 +1183,13 @@ def main(argv: list[str] | None = None) -> int:
     # typo. The old call pattern stays valid, so `python -m simplon.bootstrap <name>` keeps working.
     if argv is None:
         argv = sys.argv[1:]
-    if argv[:2] == ["manifest", "migrate"]:
-        return _manifest_migrate(argv[2:])
+    if argv[:1] == ["manifest"]:
+        # A NAMESPACE, whatever follows it. Falling through to `init` on anything but `migrate` read
+        # `manifest` as a product name and scaffolded one - a typo answered by writing a skeleton.
+        if argv[1:2] == ["migrate"]:
+            return _manifest_migrate(argv[2:])
+        print(_MANIFEST_USAGE, file=sys.stderr)
+        return 2
     if argv and argv[0] == "init":
         argv = argv[1:]
     elif not argv:
