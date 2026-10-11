@@ -1,0 +1,38 @@
+// The kernel's artifact kinds (spec B.2), as M1 instances of simplon.pipeline.ArtifactKind. The catalogue
+// owns this vocabulary and a product cannot add to it. `test_result` and `release_notes` are spelled with
+// `_`, because a firn name has no `-`; the kernel's spelling (`test-result`) is what Task 5's mangling
+// maps to these.
+package simplon.vocabulary
+
+artifact typeOf simplon.pipeline.ArtifactKind {
+}
+image typeOf simplon.pipeline.ArtifactKind {
+  refines = simplon.vocabulary.artifact
+}
+directory typeOf simplon.pipeline.ArtifactKind {
+  refines = simplon.vocabulary.artifact
+}
+site typeOf simplon.pipeline.ArtifactKind {
+  refines = simplon.vocabulary.directory
+}
+nuget typeOf simplon.pipeline.ArtifactKind {
+  refines = simplon.vocabulary.artifact
+}
+maven typeOf simplon.pipeline.ArtifactKind {
+  refines = simplon.vocabulary.artifact
+}
+conan typeOf simplon.pipeline.ArtifactKind {
+  refines = simplon.vocabulary.artifact
+}
+test_result typeOf simplon.pipeline.ArtifactKind {
+  refines = simplon.vocabulary.artifact
+}
+release_notes typeOf simplon.pipeline.ArtifactKind {
+  refines = simplon.vocabulary.artifact
+}
+tag typeOf simplon.pipeline.ArtifactKind {
+  refines = simplon.vocabulary.artifact
+}
+release typeOf simplon.pipeline.ArtifactKind {
+  refines = simplon.vocabulary.artifact
+}

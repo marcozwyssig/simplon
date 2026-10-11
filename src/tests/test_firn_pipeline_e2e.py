@@ -51,3 +51,19 @@ def test_every_selector_relation_answers_what_the_fixture_says(demo, selector, e
     # assert: a value, not merely a clean exit - empty is exactly the failure firn does not report
     assert rc == 0
     assert sorted(out.split()) == sorted(expected)
+
+
+@needs_docker
+def test_every_kind_refines_artifact_and_artifact_refines_nothing():
+    # arrange / act: spec B.2 - one root, and every other kind reaches it
+    rc, kinds = firn_rc(SRC_FIRN.parents[1], "query", "ArtifactKind", cwd="src/firn")
+    _, refines = firn_rc(SRC_FIRN.parents[1], "query", "ArtifactKind.refines", cwd="src/firn")
+
+    # assert: the kernel's vocabulary is the simplon.vocabulary.* set. The unfiltered answer also carries
+    # simplon.kernel.Wheel (si#346's hand-written M1), so the count is taken over the vocabulary prefix only.
+    assert rc == 0
+    names = {n for n in kinds.split() if n.startswith("simplon.vocabulary.")}
+    targets = {n for n in refines.split() if n.startswith("simplon.vocabulary.")}
+    assert "simplon.vocabulary.artifact" in names
+    assert targets <= names
+    assert len(names) == 11
