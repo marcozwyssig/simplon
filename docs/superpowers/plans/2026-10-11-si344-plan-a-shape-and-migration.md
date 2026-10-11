@@ -21,8 +21,9 @@ pure text function, `simplon.tasks.migrate.migrate_text`, with two entry points.
 failures are root-bound and pre-existing).
 
 **Spec:** `docs/superpowers/specs/2026-10-11-ci-cd-support-and-the-artifact-chain-design.md`, part A.
-Plans B–D follow separately. **A and B ship in one kernel release** (the cut), so this plan's branch is
-merged to `main` but not tagged until plan B has landed.
+Plans B–D follow separately. **A is released on its own** (spec decision 17): it is the first cut, and its
+release waits for nothing. The `images:` fold is a second, small cut later, rerunning the same migrate
+command.
 
 ## Global Constraints
 
@@ -2038,8 +2039,9 @@ site's keys"` and `"The deployment location stands under"`.
 Run: `../../deploy/orchestrator/.venv/bin/python -m pytest test_refusal_census.py -v`
 Expected: PASS, after updating `with-what/rules.md`'s printed counts to what
 `test_the_page_prints_the_census_count_for_each_kind` demands. Add one sentence there, under the
-expression-rule count, saying that si#344 deleted the `env_groups:` rule (si#43) with its key: the first
-change in this series that lowered the expression-rule count.
+expression-rule count, saying that si#344 deleted the `env_groups:` rule (si#43) with its key and added
+two (`transparent:` written by a product, `env_first:` under `ci:`): one out, two in, so the
+expression-rule count rose by one, 28 to 29.
 
 - [ ] **Step 6: Commit**
 

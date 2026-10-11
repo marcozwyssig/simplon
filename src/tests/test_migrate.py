@@ -264,6 +264,22 @@ def test_an_empty_groups_with_a_comment_on_its_key_line_is_refused_rather_than_l
                              "area to travel onto - move the comment or delete it, and run again")
 
 
+@pytest.mark.parametrize("value", ["null  ", "~ "])
+def test_a_comment_after_an_empty_groups_value_is_refused_even_when_something_else_moves(value):
+    # arrange: `default:` moves, so the run "migrated" - and the comment after `null` / `~` went with the
+    # deleted key line (measured: `cd:\n  default: dev\n`, the comment gone)
+    text = f"product: demo\ngroups: {value}# c\ndefault: dev\n"
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "refused"
+    assert result.text == text
+    assert result.reason == ("groups: on line 2 holds no section to move, so its comment ('# c') has no "
+                             "area to travel onto - move the comment or delete it, and run again")
+
+
 @pytest.mark.parametrize("text", ["product: demo\ngroups:\n", "product: demo\ngroups: null\n",
                                   "product: demo\ngroups: {}\n"])
 def test_an_empty_groups_that_moves_nothing_is_refused_not_migrated(text):
@@ -499,6 +515,46 @@ def test_migrate_on_a_document_that_does_not_parse_is_rc_1_and_writes_nothing(tm
     assert rc == 1
     assert path.read_text() == text
     assert "not valid YAML" in capsys.readouterr().err
+
+
+def test_migrate_on_a_file_it_cannot_write_is_rc_1_with_a_reason_not_a_traceback(tmp_path, capsys):
+    # arrange: a read-only manifest
+    import os
+    if os.geteuid() == 0:
+        pytest.skip("root writes through a 0o444 file mode, so the write cannot be made to fail this way")
+    path = tmp_path / "demo.yaml"
+    path.write_text(OLD)
+    path.chmod(0o444)
+
+    # act
+    rc = migrate_mod.migrate(str(path))
+
+    # assert
+    assert rc == 1
+    assert path.read_text() == OLD
+    assert "demo.yaml: not migrated - cannot write demo.yaml: " in capsys.readouterr().err
+
+
+def test_a_failed_write_is_rc_1_with_a_reason_whoever_runs_it(tmp_path, capsys, monkeypatch):
+    # arrange: the same failure without the file mode, so the test also runs as root (where the chmod
+    # variant above has to skip)
+    import pathlib as _pathlib
+    path = tmp_path / "demo.yaml"
+    path.write_text(OLD)
+
+    def refuse(self, *args, **kwargs):
+        raise PermissionError(13, "Permission denied", str(self))
+
+    monkeypatch.setattr(_pathlib.Path, "write_text", refuse)
+
+    # act
+    rc = migrate_mod.migrate(str(path))
+
+    # assert
+    assert rc == 1
+    assert path.read_text() == OLD
+    assert ("demo.yaml: not migrated - cannot write demo.yaml: [Errno 13] Permission denied"
+            in capsys.readouterr().err)
 
 
 @pytest.mark.parametrize("make", ["missing", "not utf-8"])

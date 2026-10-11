@@ -233,10 +233,14 @@ def migrate_text(text: str, *, unknown_groups_into: str | None = None) -> Migrat
         assert key_line is not None  # `at` is the first line `_TOP` matches
         rest = key_line.group("rest")
         # A `groups:` with no section moves nothing, and "migrated (0 section(s) moved)" would be the
-        # green of a run that did nothing. Its key line is deleted, so a comment on it would go too.
+        # green of a run that did nothing. Its key line is deleted, so a comment on it would go too - and
+        # not only one standing alone: `groups: null  # c` and `groups: ~ # c` carry one after the value.
+        # A YAML comment starts at a `#` that opens the rest or follows whitespace; an empty value holds
+        # no string a `#` could hide in, so that is the whole test.
         if not old.get("groups"):
-            comment = rest.strip()
-            if comment.startswith("#"):
+            hash_at = re.search(r"(?:^|\s)(#.*)$", rest)
+            comment = hash_at.group(1).strip() if hash_at else ""
+            if comment:
                 return refused(f"groups: on line {number} holds no section to move, so its comment "
                                f"({comment!r}) has no area to travel onto - move the comment or delete it, "
                                "and run again")
@@ -411,7 +415,13 @@ def migrate(manifest: str = "") -> int:
     if result.status == "refused":
         log.error(f"{path.name}: not migrated, nothing written - {result.reason}")
         return 1
-    path.write_text(result.text, encoding="utf-8")
+    try:
+        path.write_text(result.text, encoding="utf-8")
+    except OSError as error:
+        # A read-only file or directory: said with rc 1, like every other way this run can fail to
+        # migrate, not as a traceback. Nothing is claimed about the file beyond the reason the OS gave.
+        log.error(f"{path.name}: not migrated - cannot write {path.name}: {error}")
+        return 1
     for line in result.moved:
         log.info(line)
     log.ok(f"{path.name}: migrated to ci / cd / support ({len(result.moved)} section(s) moved)")
