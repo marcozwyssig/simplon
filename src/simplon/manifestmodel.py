@@ -19,6 +19,10 @@ already did (`t_`), so no two sections can meet by construction:
     i_  an `images:` entry                a_  an `artifacts:` entry
     s_  a kernel section                  d_  a section only the product reads
 
+The price: a product group literally named like a prefixed child (`e_dev`, `d_jdk`, `t_...`) is
+refused by ModelExportError - a manifest `load` accepts, but one the model cannot hold without merging
+two resources.
+
 What is left to meet is two originals in one owner that mangle alike (`nuget-config` and
 `nuget_config`), and that is refused by name: firn would merge them into one resource, and a model that
 silently holds one command where the manifest has two is the defect this kernel hunts.

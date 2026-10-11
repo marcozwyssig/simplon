@@ -6,11 +6,18 @@ catalogue allows under build. It loads with no cd group: the matrix alone is eno
 
 AAA throughout.
 """
+import re
+from pathlib import Path
+
 import pytest
 import yaml
 
 from simplon import catalogue, manifestmodel
+from simplon.environments import matrix_section
 from simplon.orchestrator import manifest as manifest_mod
+from simplon.tasks.migrate import migrate_text
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "manifests"
 
 DEMO = """\
 product: demo
@@ -230,3 +237,38 @@ def test_the_guard_refuses_one_original_named_twice_in_one_owner():
     # act / assert
     with pytest.raises(manifestmodel.ModelExportError, match="'build' and 'build' are both 'build'"):
         names("build")
+
+
+def _source(name: str) -> tuple[manifest_mod.Manifest, str]:
+    """DEMO, or a reachable manifest migrated and loaded exactly as test_migrate's golden test does."""
+    if name == "demo":
+        return _load(DEMO), DEMO
+    text = migrate_text((FIXTURES / f"{name}.yaml").read_text(encoding="utf-8")).text
+    return manifest_mod.load(text, catalogue=catalogue.load(), manifest_path=f"{name}.yaml"), text
+
+
+def _count(out: str, pattern: str) -> int:
+    return len(re.findall(rf"^\s*{pattern} typeOf .*\{{$", out, re.MULTILINE))
+
+
+@pytest.mark.parametrize("name", ["demo", *sorted(p.stem for p in FIXTURES.glob("*.yaml"))])
+def test_the_export_drops_nothing(name):
+    # arrange: `firn check` rc 0 only says the model is well-formed - a model missing half the commands
+    # is well-formed too, so every count is held against the number the manifest itself gives
+    mf, text = _source(name)
+    document = yaml.safe_load(text)
+    envs = matrix_section(document)["environments"] or {}
+    structure = {"product", "ci", "cd", "support", "tasks", "images", "artifacts"}
+
+    # act
+    out = manifestmodel.export(mf, document, name, manifestmodel.KERNEL_SECTIONS)
+
+    # assert
+    assert sum(len(members) for members in mf.groups.values()) > 0
+    assert _count(out, r"command \w+") == sum(len(members) for members in mf.groups.values())
+    assert len(re.findall(r"typeOf simplon\.pipeline\.Group \{$", out, re.MULTILINE)) == len(mf.groups)
+    assert _count(out, r"environments \w+") == len(envs)
+    assert _count(out, r"(images|artifacts) \w+") == (
+        len(document.get("images") or {}) + len(document.get("artifacts") or {}))
+    assert len(re.findall(r"typeOf simplon\.manifest\.(KernelSection|ProductData) \{$", out, re.MULTILINE)) == len(
+        [key for key in document if key not in structure])
