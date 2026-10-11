@@ -192,6 +192,24 @@ def _names(raw: object, key: str, where: str) -> tuple[str, ...]:
     return tuple(names)
 
 
+def matrix_section(document: Mapping) -> dict:
+    """The environment matrix's two keys, read from `cd:` (si#344).
+
+    `cd` is where whatever takes an environment stands, so the matrix it takes them from stands there too.
+    ONE accessor for every reader - `parse_data`, completion, `tasks/env`, `tasks/carrier`, `labinstance` -
+    because five readers each walking `document["cd"]` by hand would be five places to forget the
+    transitional fallback below when it is removed.
+
+    TRANSITIONAL (si#344 plan A, removed in the cut): a top-level `default:`/`environments:` is still read
+    when `cd:` carries neither, so the not-yet-migrated fixtures keep loading.
+    """
+    cd = document.get("cd") if isinstance(document, Mapping) else None
+    source = cd if isinstance(cd, Mapping) and ("default" in cd or "environments" in cd) else document
+    if not isinstance(source, Mapping):
+        return {"default": None, "environments": None}
+    return {"default": source.get("default"), "environments": source.get("environments")}
+
+
 def declared_backends(data: "Mapping[str, object]") -> tuple[str, ...]:
     """The backend tags this document's own matrix uses - the set it is already valid against.
 
@@ -205,7 +223,7 @@ def declared_backends(data: "Mapping[str, object]") -> tuple[str, ...]:
     `data["environments"]` apart itself would become a manifest reader in its own right, and si#61's
     guard says so out loud - which is exactly how this was found.
     """
-    section = data.get("environments") if isinstance(data, Mapping) else None
+    section = matrix_section(data)["environments"]
     declared: "Mapping[object, object]" = section if isinstance(section, Mapping) else {}
     names = {str(spec.get("backend", "")).strip()
              for spec in declared.values() if isinstance(spec, Mapping)}
@@ -233,7 +251,8 @@ def parse_data(data: Mapping[str, object],
     # section, which is why a product that names no carrier is unaffected by any of this.
     carrier_names = set(carrierspec.declared(data))
     envs: dict[str, Environment] = {}
-    declared = data.get("environments") or {}
+    matrix = matrix_section(data)
+    declared = matrix["environments"] or {}
     if not isinstance(declared, Mapping):
         raise ValueError("'environments' must be a mapping of environment name -> descriptor")
     for name, spec in declared.items():
@@ -282,7 +301,7 @@ def parse_data(data: Mapping[str, object],
                                       required=required, optional=optional, deploys=deploys)
     if not envs:
         raise ValueError("environment registry defines no environments")
-    default = str(data.get("default", "")).strip()
+    default = str(matrix["default"] or "").strip()
     if default not in envs:
         raise ValueError(f"environment registry default '{default}' is not a defined environment")
     return Registry(envs, default)
@@ -327,7 +346,7 @@ class Provider:
         from simplon import context  # local: context imports the manifest layer, this module is a leaf
 
         data = context.current().manifest_data()
-        if not data.get("environments"):
+        if not matrix_section(data)["environments"]:
             name = self._fallback
             return Registry({name: Environment(name, self.LOCAL, "Local development environment.")}, name)
         return parse_data(data, self._valid)

@@ -126,3 +126,17 @@ def test_environments_rejects_a_default_that_names_no_declared_environment(monke
     # act / assert
     with pytest.raises(ValueError, match="'default' must name a declared environment"):
         env_cmd.environments()
+
+
+def test_environments_lists_a_cd_matrix(monkeypatch, tmp_path, capsys):
+    # arrange: the matrix stands under `cd:`
+    _register(monkeypatch, tmp_path, {"cd": {"environments": _ENVS, "default": "dev"}})
+    monkeypatch.delenv("SAMPLE_ENV", raising=False)
+
+    # act
+    env_cmd.environments()
+
+    # assert
+    out = capsys.readouterr().out
+    assert "active: dev" in out
+    assert "  uat" in out

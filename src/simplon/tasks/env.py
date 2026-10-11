@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 
 from simplon import context, log
+from simplon import environments as environments_mod
 
 
 def _active(envs: dict, default: str, env_var: str) -> str:
@@ -38,10 +39,11 @@ def environments() -> int:
     ctx = context.current()
     data = ctx.manifest_data()
 
-    envs = data.get("environments") or {}
+    matrix = environments_mod.matrix_section(data)
+    envs = matrix["environments"] or {}
     if not envs:
         raise ValueError(f"{ctx.manifest_path}: 'environments' section is missing or empty")
-    default = str(data.get("default", "")).strip()
+    default = str(matrix["default"] or "").strip()
     if default not in envs:
         raise ValueError(f"{ctx.manifest_path}: 'default' must name a declared environment, got '{default}'")
     env_var = str(data.get("env_var", "")).strip()

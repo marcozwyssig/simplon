@@ -411,3 +411,11 @@ def test_a_grown_manifest_makes_check_report_the_new_command(tmp_path):
     # assert
     assert drift is not None
     assert "smoke" in drift.diff
+
+
+def test_environments_of_reads_a_cd_matrix():
+    # arrange
+    data = {"cd": {"default": "dev", "environments": {"dev": {"backend": "local"}, "prod": {"backend": "x"}}}}
+
+    # act / assert
+    assert completiongen.environments_of(data) == ("dev", "prod")

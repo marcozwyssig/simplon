@@ -66,6 +66,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from simplon import clitaxonomy, context
+from simplon import environments as environments_mod
 from simplon.orchestrator.manifest import Manifest
 
 #: Where the generated file goes, relative to the product root. STILL not configurable, and for the
@@ -127,7 +128,7 @@ def environments_of(data: Mapping[str, object]) -> tuple[str, ...]:
     which has not reached deployment, and completing a name no manifest states would put a token on
     screen that this file cannot show the source of.
     """
-    declared = data.get("environments")
+    declared = environments_mod.matrix_section(data)["environments"]
     if not isinstance(declared, Mapping):
         return ()
     return tuple(str(name) for name in declared)

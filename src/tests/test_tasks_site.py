@@ -114,8 +114,31 @@ def test_declared_reads_every_datum_from_the_manifest_section():
     assert cfg.theme == "github.com/imfing/hextra@v0.9.6"
 
 
-@pytest.mark.parametrize("document", [{}, {"site": 5}, {"site": ["docs/site"]}],
-                         ids=["absent", "a scalar", "a list"])
+def test_declared_reads_the_website_section():
+    # arrange
+    data = {"website": dict(_SITE)}
+
+    # act
+    cfg = site_task.declared(data, source="x")
+
+    # assert: the same config the old `site:` key returned
+    assert cfg == site_task.declared({"site": dict(_SITE)})
+    assert cfg.image == _IMAGE
+
+
+def test_website_wins_over_a_leftover_site_section():
+    # arrange: a `site:` that is not the docs site would not matter; one that is must not beat `website:`
+    data = {"website": dict(_SITE, base_url="https://new.test/"), "site": dict(_SITE)}
+
+    # act
+    cfg = site_task.declared(data)
+
+    # assert
+    assert cfg.base_url == "https://new.test/"
+
+
+@pytest.mark.parametrize("document", [{}, {"website": 5}, {"website": ["docs/site"]}, {"site": 5}],
+                         ids=["absent", "a scalar", "a list", "an old site that is not the docs site"])
 def test_declared_refuses_a_manifest_without_a_usable_section(document):
     """A command bound to this task in a product that never declared the data, or declared it wrong.
 
@@ -124,7 +147,7 @@ def test_declared_refuses_a_manifest_without_a_usable_section(document):
     check could not fail. The two malformed shapes were not driven at all.
     """
     # act / assert
-    with pytest.raises(ValueError, match=r"the 'site' section is missing or is not a mapping"):
+    with pytest.raises(ValueError, match=r"the 'website' section is missing or is not a mapping"):
         site_task.declared(document)
 
 

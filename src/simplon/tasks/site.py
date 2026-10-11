@@ -10,7 +10,7 @@ not instead of it.
 The mechanics are the same kind of product-free that made the docToolchain render the kernel's: invoking
 the tool, wiping the destination and checking that a page came out needs no product knowledge at all.
 What is the product's is the DATA - the image, where the sources live, where the output goes, which theme,
-which base URL - and all of it flows in through the manifest's `site:` section. A kernel default for any
+which base URL - and all of it flows in through the manifest's `website:` section. A kernel default for any
 of them would be simplon's own directory layout imposed on every other product, which is exactly what a
 catalogue task must not do: it is a promise to three products, not a convenience for one.
 
@@ -59,7 +59,13 @@ from simplon.run import run
 #: not a document - one is the product of hugo, the others are its input.
 OUTPUT_KIND = "site"
 
-SECTION = "site"
+SECTION = "website"
+
+#: TRANSITIONAL (si#344 plan A, removed in the cut): the section's old name, still read when `website:` is
+#: absent and `site:` carries one of the docs keys - a `site:` without them is something else a product
+#: named site, exactly as `migrate` leaves it alone.
+_OLD_SECTION = "site"
+_OLD_SECTION_KEYS = ("image", "base_url", "theme", "source", "output")
 
 #: Where a product's Hugo sources are, when its manifest does not say (si#183). `docs/` is the
 #: documentation root - architecture, specs, plans and the site all belong in it, so one repository stops
@@ -69,7 +75,7 @@ SECTION = "site"
 #: no default at all, on the reasoning that one product's layout must not be imposed on the next. That
 #: reasoning still holds for a REFUSAL and the census says so. Measured over the same population si#159
 #: and si#172 used - every manifest this kernel can reach: its own, the five in
-#: `simplon.surface.CONSUMERS`, and secure-windows-images - three of those seven declare a `site:`
+#: `simplon.surface.CONSUMERS`, and secure-windows-images - three of those seven declare a `site:` (now `website:`)
 #: section, and the three disagree: cleon at `site`, biz-cockpit at `docs/website`, simplon at
 #: `docs/site`. A `source:` outside `docs/` refused would turn away two products that have done nothing
 #: wrong, which is the expression rule si#53, si#85 and si#159 each declined to write.
@@ -294,12 +300,18 @@ def declared(data: Mapping[str, object], source: str = "manifest") -> Site:
     `_str` rules on a value that is there; a bare `source:` carries no value at all and defaults, which
     is what `theme:` and `base_url:` have always done with one.
     """
-    section, blame, _ = context.section(data, SECTION)
+    name = SECTION
+    # TRANSITIONAL (si#344 plan A, removed in the cut): the not-yet-migrated `site:` still builds.
+    old = data.get(_OLD_SECTION) if isinstance(data, Mapping) else None
+    if (isinstance(data, Mapping) and SECTION not in data and isinstance(old, Mapping)
+            and any(key in old for key in _OLD_SECTION_KEYS)):
+        name = _OLD_SECTION
+    section, blame, _ = context.section(data, name)
     if blame:
-        raise ValueError(f"{source}: the '{SECTION}' section is missing or is not a mapping "
+        raise ValueError(f"{source}: the '{name}' section is missing or is not a mapping "
                          f"- declare the pinned hugo image and where the site is built to (the sources "
                          f"default to '{DEFAULT_SOURCE}')")
-    where = f"{source}: '{SECTION}'"
+    where = f"{source}: '{name}'"
     # The REQUIRED keys first, then their shape: a section missing `image` altogether should say so, not
     # complain about the optional theme it also got wrong.
     image = _str(section, "image", where, required=True)

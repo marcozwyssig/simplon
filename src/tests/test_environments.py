@@ -239,3 +239,48 @@ def test_the_missing_instance_names_the_registration_and_not_the_matrix():
     said = str(exc.value)
     assert "no backend registered for 'local'" in said
     assert "must be" not in said, "the refusal names a requirement again instead of the cause"
+
+
+_CD_DOC = {"cd": {"default": "dev", "environments": {"dev": {"backend": "local"}}}}
+
+
+def test_the_matrix_is_read_from_cd():
+    # act
+    section = envs_mod.matrix_section(_CD_DOC)
+
+    # assert
+    assert section == {"default": "dev", "environments": {"dev": {"backend": "local"}}}
+
+
+def test_parse_data_reads_a_cd_matrix():
+    # act
+    matrix = parse_data(_CD_DOC)
+
+    # assert
+    assert matrix.default == "dev"
+    assert set(matrix.environments) == {"dev"}
+
+
+def test_a_cd_matrix_beats_a_top_level_one():
+    # arrange: TRANSITIONAL fallback must only apply when `cd:` carries neither key
+    doc = {**_CD_DOC, "default": "old", "environments": {"old": {"backend": "local"}}}
+
+    # act
+    section = envs_mod.matrix_section(doc)
+
+    # assert
+    assert section["default"] == "dev"
+
+
+def test_the_top_level_matrix_is_still_read_while_the_fixtures_move():
+    # arrange: TRANSITIONAL (si#344 plan A, removed in the cut)
+    doc = {"default": "dev", "environments": {"dev": {"backend": "local"}}}
+
+    # act / assert
+    assert envs_mod.matrix_section(doc) == {"default": "dev", "environments": {"dev": {"backend": "local"}}}
+
+
+def test_a_cd_without_a_matrix_yields_neither_key_rather_than_failing():
+    # act / assert
+    assert envs_mod.matrix_section({"cd": {"site": {}}}) == {"default": None, "environments": None}
+    assert envs_mod.matrix_section({}) == {"default": None, "environments": None}
