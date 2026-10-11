@@ -54,16 +54,22 @@ def test_every_selector_relation_answers_what_the_fixture_says(demo, selector, e
 
 
 @needs_docker
-def test_every_kind_refines_artifact_and_artifact_refines_nothing():
+def test_the_vocabulary_is_eleven_kinds_rooted_in_artifact_and_refining_only_within_itself():
     # arrange / act: spec B.2 - one root, and every other kind reaches it
     rc, kinds = firn_rc(SRC_FIRN.parents[1], "query", "ArtifactKind", cwd="src/firn")
-    _, refines = firn_rc(SRC_FIRN.parents[1], "query", "ArtifactKind.refines", cwd="src/firn")
+    rc_refines, refines = firn_rc(SRC_FIRN.parents[1], "query", "ArtifactKind.refines", cwd="src/firn")
 
-    # assert: the kernel's vocabulary is the simplon.vocabulary.* set. The unfiltered answer also carries
-    # simplon.kernel.Wheel (si#346's hand-written M1), so the count is taken over the vocabulary prefix only.
+    # assert: both queries exited clean, so an empty answer cannot be a failed query passing as green
     assert rc == 0
+    assert rc_refines == 0
+    # the vocabulary is the simplon.vocabulary.* set; simplon.kernel.Wheel (si#346's hand-written M1) is
+    # also an ArtifactKind and is left out of the count on purpose
     names = {n for n in kinds.split() if n.startswith("simplon.vocabulary.")}
-    targets = {n for n in refines.split() if n.startswith("simplon.vocabulary.")}
-    assert "simplon.vocabulary.artifact" in names
-    assert targets <= names
     assert len(names) == 11
+    assert "simplon.vocabulary.artifact" in names
+    # positive: the refines answer is non-empty and reaches the root, so `<=` below cannot pass vacuously
+    targets = set(refines.split())
+    assert targets
+    assert "simplon.vocabulary.artifact" in targets
+    # every refines target, unfiltered, is inside the vocabulary: a target outside it is a failure here
+    assert targets <= names
