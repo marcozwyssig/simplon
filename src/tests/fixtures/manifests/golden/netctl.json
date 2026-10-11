@@ -1,0 +1,595 @@
+{
+  "commands": {
+    "build": {
+      "aot": {
+        "depends_on": [
+          "web-jar",
+          "aot-only"
+        ],
+        "help": "Extract + train the Leyden AOT cache dependably (#901): the web-jar chain first, then the training run.",
+        "impl": ""
+      },
+      "aot-only": {
+        "depends_on": [],
+        "help": "RAW step: extract the run layout + train the Leyden AOT cache against a throwaway Postgres (#257), WITHOUT dependency expansion; prefer `aot`.",
+        "impl": "orchestrator.cli:aot_only_cmd"
+      },
+      "build": {
+        "depends_on": [
+          "disk-guard",
+          "unit-java-core",
+          "unit-python",
+          "unit-java-web",
+          "reclaim-workspace",
+          "aot",
+          "sidecar-image",
+          "web-image",
+          "frr-image",
+          "unmanaged-image",
+          "radius-image",
+          "supplicant-image",
+          "vyos-image",
+          "iol-image",
+          "iol-l2-image",
+          "verify-freshness"
+        ],
+        "help": "Build the container images as a live split-pane pipeline (unit gates first, then web jar + sidecar/web/FRR/unmanaged images, VyOS on demand).",
+        "impl": ""
+      },
+      "builder-image": {
+        "depends_on": [],
+        "help": "Build the gradle builder image (netctl-builder:local) the web-jar step runs in; layer-cached, cheap to rerun.",
+        "impl": "orchestrator.cli:builder_image_cmd"
+      },
+      "compile-java": {
+        "depends_on": [],
+        "help": "Compile the four Java modules (gradle classes testClasses) in the containerised toolchain, without running any tests.",
+        "impl": "orchestrator.cli:compile_java_cmd"
+      },
+      "compile-python": {
+        "depends_on": [],
+        "help": "Byte-compile the sidecar, orchestrator and labgen Python sources (python -m compileall -q) in the host venv, without running any tests.",
+        "impl": "orchestrator.cli:compile_python_cmd"
+      },
+      "diff": {
+        "depends_on": [],
+        "help": "Generate a Liquibase changelog from the orm.xml model (Docker).",
+        "impl": "orchestrator.cli:diff"
+      },
+      "docs": {
+        "depends_on": [],
+        "help": "Render the project docs via docToolchain in Docker.",
+        "impl": "simplon.tasks.docs:render"
+      },
+      "frr-image": {
+        "depends_on": [],
+        "help": "Build the FRR lab node image (netctl-frr:local) (#901).",
+        "impl": "orchestrator.tooling:lab_image"
+      },
+      "gradle": {
+        "depends_on": [],
+        "help": "Run arbitrary gradle tasks in the containerised toolchain (the missing ./gradlew): persistent gradle + Vaadin caches and the Nexus mirror wiring applied for you.",
+        "impl": "orchestrator.cli:gradle_cmd"
+      },
+      "iol-image": {
+        "depends_on": [],
+        "help": "Build the router Cisco IOL lab node image (netctl-iol:17.18.02) from the pinned CML release asset; needs gh authenticated.",
+        "impl": "orchestrator.tooling:iol_image"
+      },
+      "iol-l2-image": {
+        "depends_on": [],
+        "help": "Build the L2-switch Cisco IOL lab node image (netctl-iol-l2:17.18.02) from the pinned CML release asset; needs gh authenticated.",
+        "impl": "orchestrator.tooling:iol_image"
+      },
+      "radius-image": {
+        "depends_on": [],
+        "help": "Build the FreeRADIUS lab node image (netctl-radius:local) (#1115).",
+        "impl": "orchestrator.tooling:lab_image"
+      },
+      "reclaim-workspace": {
+        "depends_on": [],
+        "help": "Reclaim workspace ownership after the root gradle containers (#498): chown the checkout back to you on native Linux; a no-op on macOS, where virtiofs already maps container-root writes to the host user.",
+        "impl": "orchestrator.cli:reclaim_workspace_cmd"
+      },
+      "sidecar-image": {
+        "depends_on": [],
+        "help": "Build the sidecar image (netctl-sidecar:local); no prerequisites.",
+        "impl": "orchestrator.cli:sidecar_image_cmd"
+      },
+      "supplicant-image": {
+        "depends_on": [],
+        "help": "Build the 802.1X supplicant lab client image (netctl-supplicant:local) (#1115).",
+        "impl": "orchestrator.tooling:lab_image"
+      },
+      "unmanaged-image": {
+        "depends_on": [],
+        "help": "Build the unmanaged LLDP-neighbour lab node image (netctl-unmanaged:local) (#1338).",
+        "impl": "orchestrator.tooling:lab_image"
+      },
+      "verify-freshness": {
+        "depends_on": [],
+        "help": "Verify the build left DEPLOYABLE artifacts (#424/#1047): the web bootJar and netctl:local exist, and both the jar and the app.jar inside the image say productionMode true.",
+        "impl": "orchestrator.cli:verify_freshness_cmd"
+      },
+      "vyos-image": {
+        "depends_on": [],
+        "help": "Build the VyOS lab node image (netctl-vyos:local) when lab.yml requests a VyOS node; a no-op otherwise (the ISO fetch + ~2.8GB image is on-demand only).",
+        "impl": "orchestrator.cli:vyos_image_cmd"
+      },
+      "web-image": {
+        "depends_on": [
+          "aot",
+          "web-image-only"
+        ],
+        "help": "Build the deployable web image dependably (#901): the full builder-image -> web-jar -> aot chain first, then the image build.",
+        "impl": ""
+      },
+      "web-image-only": {
+        "depends_on": [],
+        "help": "RAW step: docker build the deployable web image (netctl:local) from the extracted build/aot layout, WITHOUT dependency expansion; prefer `web-image`.",
+        "impl": "orchestrator.cli:web_image_only_cmd"
+      },
+      "web-jar": {
+        "depends_on": [
+          "builder-image",
+          "web-jar-only"
+        ],
+        "help": "Build the production web bootJar dependably (#901): builder-image first, then the gradle run.",
+        "impl": ""
+      },
+      "web-jar-only": {
+        "depends_on": [],
+        "help": "RAW step: the production web bootJar (gradle :web:bootJar -Pvaadin.productionMode) in the builder image, WITHOUT dependency expansion; prefer `web-jar`.",
+        "impl": "orchestrator.cli:web_jar_only_cmd"
+      }
+    },
+    "deploy": {
+      "add-client": {
+        "depends_on": [],
+        "help": "Deploy a client on a free l3s port and bind it to a service.",
+        "impl": "orchestrator.cli:add_client_cmd"
+      },
+      "all": {
+        "depends_on": [
+          "build",
+          "up",
+          "seed",
+          "zabbix",
+          "accept"
+        ],
+        "help": "Full end-to-end bring-up + tests (build + up + seed + zabbix + accept) as ONE live-streamed plan.",
+        "impl": ""
+      },
+      "backup": {
+        "depends_on": [],
+        "help": "Dump every site catalog DB (pg_dump) into backup/ for DR (lab only).",
+        "impl": "orchestrator.cli:backup"
+      },
+      "bringup": {
+        "depends_on": [
+          "install",
+          "build",
+          "up",
+          "seed",
+          "zabbix"
+        ],
+        "help": "Bring the lab up from a COLD host (install -> build -> up -> seed -> zabbix) as a live-streamed split-pane pipeline.",
+        "impl": ""
+      },
+      "clean": {
+        "depends_on": [],
+        "help": "Destroy the lab and remove build outputs, images, generated artifacts (`clean vm` also deletes the Colima VM).",
+        "impl": "orchestrator.cli:clean"
+      },
+      "down": {
+        "depends_on": [],
+        "help": "Destroy the containerlab topology (--cleanup wipes the IOL NVRAM) and remove the OOB bridges.",
+        "impl": "orchestrator.cli:down"
+      },
+      "openbao-pki": {
+        "depends_on": [],
+        "help": "Provision the env's OpenBao PKI (NMS root + per-node issuing CAs + scoped tokens); idempotent (#171 E1a).",
+        "impl": "orchestrator.cli:openbao_pki_cmd"
+      },
+      "provision": {
+        "depends_on": [],
+        "help": "Provision the overlay services against the running lab (no tests).",
+        "impl": "orchestrator.cli:provision"
+      },
+      "render": {
+        "depends_on": [],
+        "help": "Render the lab artifacts (clab topology, device configs, seed scripts) from deploy/env/dev/lab.yml.",
+        "impl": "orchestrator.cli:render"
+      },
+      "rescue": {
+        "depends_on": [],
+        "help": "OOB rescue (#566): reassert a site sidecar's cached last-known-good SYSTEM config through the device backend over mgmt/OOB, with no consensus.",
+        "impl": "orchestrator.cli:rescue_cmd"
+      },
+      "reset": {
+        "depends_on": [],
+        "help": "Full from-scratch reset: clean + delete the Colima VM (= clean vm).",
+        "impl": "orchestrator.cli:reset"
+      },
+      "rm-client": {
+        "depends_on": [],
+        "help": "Remove an add-client client (binding + container).",
+        "impl": "orchestrator.cli:rm_client_cmd"
+      },
+      "seed": {
+        "depends_on": [],
+        "help": "Run the end-to-end bootstrap/smoke test: wait for every controller's REST API, then run the generated seed.sh.",
+        "impl": "orchestrator.cli:seed"
+      },
+      "up": {
+        "depends_on": [
+          "up-preflight",
+          "render",
+          "up-deploy",
+          "up-finish"
+        ],
+        "help": "Deploy the lab as a live split-pane TUI pipeline (up-preflight -> render -> up-deploy -> up-finish): LEFT the phases with their state, RIGHT the live output of the highlighted phase. Authoritative verdict last; NETCTL_STRICT_UP=1 fails on any degraded condition.",
+        "impl": ""
+      },
+      "up-deploy": {
+        "depends_on": [],
+        "help": "PHASE of `up`: the ATOMIC containerlab deploy (OOB bridges, amd64 binfmt + Rosetta watchdog, clab deploy with retry, verdict) plus the #1004 mgmt egress isolation.",
+        "impl": "orchestrator.cli:up_deploy_cmd"
+      },
+      "up-finish": {
+        "depends_on": [],
+        "help": "PHASE of `up`: IOS slot-1 recovery, Zabbix + OpenBao PKI provisioning, the controller-readiness gate, the portal, and the verdict over every phase's degraded conditions.",
+        "impl": "orchestrator.cli:up_finish_cmd"
+      },
+      "up-preflight": {
+        "depends_on": [],
+        "help": "PHASE of `up`: the host preflight (docker/Colima, the disk/WireGuard/capability guards, image presence + provenance), the local-backend assertion, and the reset of the shared degraded file.",
+        "impl": "orchestrator.cli:up_preflight_cmd"
+      },
+      "zabbix": {
+        "depends_on": [],
+        "help": "Provision the Zabbix hosts (all nodes + SNMP devices) via the generated zabbix-provision.sh.",
+        "impl": "orchestrator.cli:zabbix"
+      }
+    },
+    "monitor": {
+      "clients": {
+        "depends_on": [],
+        "help": "List the deployed client containers.",
+        "impl": "orchestrator.cli:clients"
+      },
+      "collect-logs": {
+        "depends_on": [],
+        "help": "Dump every lab container's log, gzipped, into test/reports/logs (evidence for a failing run).",
+        "impl": "orchestrator.cli:collect_logs"
+      },
+      "connect": {
+        "depends_on": [],
+        "help": "Open an interactive session on a lab target: SSH to a managed device, or a shell in a container.",
+        "impl": "orchestrator.cli:connect"
+      },
+      "logs": {
+        "depends_on": [],
+        "help": "Show a container's logs, or list the lab containers when no node is given.",
+        "impl": "orchestrator.cli:logs"
+      },
+      "status": {
+        "depends_on": [],
+        "help": "Show the lab dashboard (container state + app/browser reachability).",
+        "impl": "orchestrator.cli:status_cmd"
+      }
+    },
+    "release": {
+      "package": {
+        "depends_on": [],
+        "help": "Build registry-tagged images for the current arch.",
+        "impl": "orchestrator.cli:package"
+      },
+      "publish": {
+        "depends_on": [],
+        "help": "Push the packaged images to the registry (multi-arch when PUBLISH_PLATFORMS is set).",
+        "impl": "orchestrator.cli:publish"
+      }
+    },
+    "support": {
+      "check": {
+        "depends_on": [],
+        "help": "Verify tools, OS, and the cisco_iol image.",
+        "impl": "orchestrator.cli:check"
+      },
+      "claude-plugins": {
+        "depends_on": [],
+        "help": "Install the Claude Code plugins this repo is developed with, as declared in the manifest's `claude` section (#1286); idempotent, --dry-run previews.",
+        "impl": "simplon.tasks.claudeplugins:install_cmd"
+      },
+      "completion": {
+        "depends_on": [],
+        "help": "Regenerate the product's shell completion from its manifest (--check reports drift and writes nothing).",
+        "impl": "simplon.tasks.completion:generate"
+      },
+      "disk-guard": {
+        "depends_on": [],
+        "help": "Prune docker dangling images + build cache when the data fs is low on space (NETCTL_DISK_GUARD=0 disables, NETCTL_DISK_MIN_FREE_PCT sets the bar).",
+        "impl": "orchestrator.cli:disk_guard_cmd"
+      },
+      "doctor": {
+        "depends_on": [],
+        "help": "Run read-only preflight checks in a split-pane TUI (docker, colima, egress, images, lab containers, topology).",
+        "impl": "orchestrator.cli:doctor"
+      },
+      "environments": {
+        "depends_on": [],
+        "help": "List the named environments (#15) and the backend each targets, marking the active one.",
+        "impl": "simplon.tasks.env:environments"
+      },
+      "install": {
+        "depends_on": [],
+        "help": "Install the host prerequisites (containerlab on Linux; Colima + docker + containerlab on macOS).",
+        "impl": "orchestrator.cli:install"
+      },
+      "lab-sites": {
+        "depends_on": [],
+        "help": "Print the sites straight from lab.yml: '<name> <http_port> <platform> <mon|-> <id>'.",
+        "impl": "orchestrator.cli:lab_sites_cmd"
+      },
+      "nexus": {
+        "depends_on": [],
+        "help": "Drive the LAN Sonatype Nexus artefact proxy (#948): up | down | status | repos | cleanup; bare lists the members.",
+        "impl": "simplon.tasks.nexus:nexus_cmd"
+      }
+    },
+    "support.git": {
+      "auth-scopes": {
+        "depends_on": [],
+        "help": "Grant the stored gh token the package scopes GHCR needs (interactive, idempotent).",
+        "impl": "simplon.tasks.vcs:auth_scopes"
+      },
+      "commit": {
+        "depends_on": [],
+        "help": "git add -A + git commit -m.",
+        "impl": "simplon.tasks.vcs:commit"
+      },
+      "prune-branches": {
+        "depends_on": [],
+        "help": "Delete local branches already merged into main (squash-aware via gh).",
+        "impl": "simplon.tasks.vcs:prune_branches"
+      },
+      "push": {
+        "depends_on": [],
+        "help": "git pull --rebase then push (current branch).",
+        "impl": "simplon.tasks.vcs:push"
+      },
+      "submodules": {
+        "depends_on": [],
+        "help": "git submodule update --init lib/platform (init the submodule a fresh worktree needs).",
+        "impl": "simplon.tasks.vcs:submodules"
+      }
+    },
+    "support.tasks": {
+      "catalogue": {
+        "depends_on": [],
+        "help": "List the task coordinates the delivery kernel offers, marking the namespaces this product's commands reach.",
+        "impl": "simplon.tasks.tasks:catalogue"
+      },
+      "generate": {
+        "depends_on": [],
+        "help": "Regenerate the product's CLI module from its manifest (--check reports drift and writes nothing).",
+        "impl": "simplon.tasks.tasks:generate"
+      }
+    },
+    "test": {
+      "accept": {
+        "depends_on": [],
+        "help": "Convenience: run the lab-based suites in sequence (system + acceptance-dataplane + acceptance-ui + report) against the running lab; extra args pass through to the system pytest.",
+        "impl": "simplon.tasks.testrun:accept_cmd"
+      },
+      "acceptance-dataplane": {
+        "depends_on": [],
+        "help": "ACCEPTANCE-DATAPLANE gate: the test/acceptance/python black-box dataplane reachability suite against the running lab, APPENDING into the shared Allure results (#860).",
+        "impl": "simplon.tasks.testrun:gate"
+      },
+      "acceptance-ui": {
+        "depends_on": [],
+        "help": "ACCEPTANCE-UI gate: the Playwright frontend/e2e journeys against this instance's seeded lab controller, resolved not hardcoded (#680/#860/#706).",
+        "impl": "orchestrator.cli:acceptance_ui"
+      },
+      "all": {
+        "depends_on": [
+          "up",
+          "seed",
+          "unit-java",
+          "component-java",
+          "component-db",
+          "integration-java",
+          "boot-java",
+          "unit-typescript",
+          "unit-python",
+          "lint-shell",
+          "system",
+          "acceptance-dataplane",
+          "acceptance-ui",
+          "report"
+        ],
+        "help": "Run the COMPLETE e2e (#720): bring the lab up + seed, run every test stage, then the lab-based system + acceptance suites and the Allure report - no longer lab-free.",
+        "impl": ""
+      },
+      "boot-java": {
+        "depends_on": [],
+        "help": "BOOT-JAVA gate: the context-load smoke test that boots the full web Spring ApplicationContext (#288).",
+        "impl": "orchestrator.cli:boot"
+      },
+      "component-db": {
+        "depends_on": [],
+        "help": "COMPONENT-DB gate: assert the real Liquibase changelog applies against a throwaway TimescaleDB (the Postgres-only Timescale changesets), a DB component test in its own lane (#253/#860).",
+        "impl": "orchestrator.cli:component_db"
+      },
+      "component-java": {
+        "depends_on": [],
+        "help": "COMPONENT-JAVA gate: the web view/controller component-logic tests in Docker (#234).",
+        "impl": "orchestrator.cli:component"
+      },
+      "integration-java": {
+        "depends_on": [],
+        "help": "INTEGRATION-JAVA gate: the infrastructure @DataJpaTest persistence slices (Spring + H2 + Liquibase) in Docker (#234).",
+        "impl": "orchestrator.cli:integration"
+      },
+      "lint-shell": {
+        "depends_on": [],
+        "help": "LINT-SHELL gate (static analysis): shellcheck netctl.sh via Docker.",
+        "impl": "orchestrator.cli:lint"
+      },
+      "report": {
+        "depends_on": [],
+        "help": "REPORT step: merge the Java unit results into the shared Allure results and render the single-file Allure HTML archive (#860).",
+        "impl": "simplon.tasks.testrun:report_cmd"
+      },
+      "system": {
+        "depends_on": [],
+        "help": "SYSTEM gate: the test/system/python suite against the running lab, into the shared Allure results; it runs FIRST and clears them (#860). Trailing args reach pytest verbatim (`-k <expr>`) and quarantine that run into its own results dir (#1406).",
+        "impl": "simplon.tasks.testrun:gate"
+      },
+      "typecheck-python": {
+        "depends_on": [],
+        "help": "TYPECHECK-PYTHON gate: mypy over the sidecar, orchestrator and labgen sources in the host venv (fast, lab-free).",
+        "impl": "simplon.tasks.typecheck:check"
+      },
+      "unit-java": {
+        "depends_on": [],
+        "help": "UNIT-JAVA gate: domain + application + framework-free infrastructure tests plus spotless static analysis in Docker (fast, lab-free).",
+        "impl": "orchestrator.cli:unit"
+      },
+      "unit-java-core": {
+        "depends_on": [],
+        "help": "UNIT-JAVA-CORE gate: spotless plus the three FRAMEWORK-FREE Java modules (domain, application, infrastructure) in Docker - the half of the unit gate that needs no Vaadin frontend.",
+        "impl": "orchestrator.cli:unit_core_cmd"
+      },
+      "unit-java-web": {
+        "depends_on": [
+          "web-jar",
+          "unit-java-web-only"
+        ],
+        "help": "UNIT-JAVA-WEB gate, dependably (#1238): the production web jar first (its frontend is what :web:test needs), then the web module's unit tests.",
+        "impl": ""
+      },
+      "unit-java-web-only": {
+        "depends_on": [],
+        "help": "RAW step: the web module's unit tests (gradle :web:test) in the builder image, WITHOUT dependency expansion; prefer `unit-java-web`.",
+        "impl": "orchestrator.cli:unit_web_only_cmd"
+      },
+      "unit-python": {
+        "depends_on": [],
+        "help": "UNIT-PYTHON gate: the host-Python unit tests (pytest over the per-block test/unit roots, in its own venv).",
+        "impl": "orchestrator.cli:unit_py_cmd"
+      },
+      "unit-typescript": {
+        "depends_on": [],
+        "help": "UNIT-TYPESCRIPT gate: build the React/TS production bundle then run the vitest frontend tests in Docker (#693/#860).",
+        "impl": "orchestrator.cli:frontend"
+      }
+    }
+  },
+  "env_first": [
+    "deploy",
+    "monitor"
+  ],
+  "groups": {
+    "build": [
+      "build",
+      "gradle",
+      "diff",
+      "docs",
+      "compile-java",
+      "compile-python",
+      "builder-image",
+      "web-jar-only",
+      "web-jar",
+      "aot-only",
+      "aot",
+      "web-image-only",
+      "web-image",
+      "sidecar-image",
+      "frr-image",
+      "unmanaged-image",
+      "radius-image",
+      "supplicant-image",
+      "vyos-image",
+      "iol-image",
+      "iol-l2-image",
+      "reclaim-workspace",
+      "verify-freshness"
+    ],
+    "deploy": [
+      "up",
+      "up-preflight",
+      "up-deploy",
+      "up-finish",
+      "down",
+      "clean",
+      "seed",
+      "render",
+      "reset",
+      "provision",
+      "bringup",
+      "all",
+      "add-client",
+      "rm-client",
+      "backup",
+      "zabbix",
+      "openbao-pki",
+      "rescue"
+    ],
+    "monitor": [
+      "status",
+      "logs",
+      "collect-logs",
+      "clients",
+      "connect"
+    ],
+    "release": [
+      "package",
+      "publish"
+    ],
+    "support": [
+      "install",
+      "completion",
+      "disk-guard",
+      "doctor",
+      "check",
+      "lab-sites",
+      "nexus",
+      "claude-plugins",
+      "environments"
+    ],
+    "support.git": [
+      "commit",
+      "push",
+      "prune-branches",
+      "submodules",
+      "auth-scopes"
+    ],
+    "support.tasks": [
+      "catalogue",
+      "generate"
+    ],
+    "test": [
+      "unit-java",
+      "unit-java-core",
+      "unit-java-web-only",
+      "unit-java-web",
+      "component-java",
+      "component-db",
+      "integration-java",
+      "boot-java",
+      "unit-typescript",
+      "unit-python",
+      "typecheck-python",
+      "system",
+      "acceptance-dataplane",
+      "acceptance-ui",
+      "report",
+      "accept",
+      "all",
+      "lint-shell"
+    ]
+  }
+}

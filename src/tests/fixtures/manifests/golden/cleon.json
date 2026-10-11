@@ -1,0 +1,187 @@
+{
+  "commands": {
+    "build": {
+      "build": {
+        "depends_on": [
+          "fetch-bundle",
+          "compile",
+          "generate-sources",
+          "package",
+          "install-features",
+          "bundle"
+        ],
+        "help": "The whole build: fetch, compile, generate, package, install, zip.",
+        "impl": ""
+      },
+      "bundle": {
+        "depends_on": [],
+        "help": "Zip the bundle, now carrying cleon, into a publishable archive.",
+        "impl": "orchestrator.cli:bundle"
+      },
+      "compile": {
+        "depends_on": [],
+        "help": "Compile the model plugins, so the generator can load their Java functions.",
+        "impl": "orchestrator.cli:compile"
+      },
+      "fetch-bundle": {
+        "depends_on": [],
+        "help": "Pull the asbundle bundle for this host from the registry and unpack it.",
+        "impl": "orchestrator.cli:fetch_bundle"
+      },
+      "generate-sources": {
+        "depends_on": [],
+        "help": "Run Actifsource headless: generate the plugin sources, features and update site, then validate.",
+        "impl": "orchestrator.cli:generate"
+      },
+      "install-features": {
+        "depends_on": [],
+        "help": "Install the freshly built cleon features into the bundle's Eclipse.",
+        "impl": "orchestrator.cli:install"
+      },
+      "package": {
+        "depends_on": [],
+        "help": "Compile, jar the plugins and features, and publish the P2 update site.",
+        "impl": "orchestrator.cli:package"
+      }
+    },
+    "deploy": {
+      "all": {
+        "depends_on": [
+          "build",
+          "up"
+        ],
+        "help": "Run build then deploy up end to end (the build->up dependency plan).",
+        "impl": ""
+      },
+      "down": {
+        "depends_on": [],
+        "help": "Tear the deployment down (placeholder).",
+        "impl": "orchestrator.cli:down"
+      },
+      "install": {
+        "depends_on": [],
+        "help": "Extract the packaged cleon bundle into a directory on this machine.",
+        "impl": "orchestrator.cli:install_bundle"
+      },
+      "up": {
+        "depends_on": [],
+        "help": "Deploy the product to the target environment (placeholder).",
+        "impl": "orchestrator.cli:up"
+      }
+    },
+    "release": {
+      "publish": {
+        "depends_on": [],
+        "help": "Push the combined cleon+Actifsource bundle to the registry.",
+        "impl": "orchestrator.cli:publish"
+      },
+      "publish-asset": {
+        "depends_on": [],
+        "help": "Attach the built bundle to the GitHub release for this version (mechanics: the kernel's release:asset).",
+        "impl": "orchestrator.cli:publish_asset"
+      },
+      "publish-updatesite": {
+        "depends_on": [],
+        "help": "Push the P2 update site to the registry (mechanics: the kernel's release:artifact).",
+        "impl": "orchestrator.cli:publish_updatesite"
+      }
+    },
+    "support": {
+      "completion": {
+        "depends_on": [],
+        "help": "Regenerate the product's shell completion from its manifest (--check reports drift and writes nothing).",
+        "impl": "simplon.tasks.completion:generate"
+      },
+      "install": {
+        "depends_on": [],
+        "help": "Provision the host tooling the kernel needs - today oras; idempotent.",
+        "impl": "simplon.tasks.hosttools:install"
+      },
+      "site": {
+        "depends_on": [],
+        "help": "Build the product's documentation website with Hugo, in Docker (HTML only).",
+        "impl": "simplon.tasks.site:build"
+      }
+    },
+    "support.git": {
+      "auth-scopes": {
+        "depends_on": [],
+        "help": "Grant the stored gh token the package scopes GHCR needs (interactive, idempotent).",
+        "impl": "simplon.tasks.vcs:auth_scopes"
+      },
+      "commit": {
+        "depends_on": [],
+        "help": "git add -A + git commit -m.",
+        "impl": "simplon.tasks.vcs:commit"
+      },
+      "prune-branches": {
+        "depends_on": [],
+        "help": "Delete local branches already merged into main (squash-aware via gh).",
+        "impl": "simplon.tasks.vcs:prune_branches"
+      },
+      "push": {
+        "depends_on": [],
+        "help": "git pull --rebase then push (current branch).",
+        "impl": "simplon.tasks.vcs:push"
+      },
+      "submodules": {
+        "depends_on": [],
+        "help": "git submodule update --init lib/platform (init the submodule a fresh worktree needs).",
+        "impl": "simplon.tasks.vcs:submodules"
+      }
+    },
+    "support.tasks": {
+      "catalogue": {
+        "depends_on": [],
+        "help": "List the task coordinates the delivery kernel offers, marking the namespaces this product's commands reach.",
+        "impl": "simplon.tasks.tasks:catalogue"
+      },
+      "generate": {
+        "depends_on": [],
+        "help": "Regenerate the product's CLI module from its manifest (--check reports drift and writes nothing).",
+        "impl": "simplon.tasks.tasks:generate"
+      }
+    }
+  },
+  "env_first": [
+    "deploy"
+  ],
+  "groups": {
+    "build": [
+      "fetch-bundle",
+      "compile",
+      "generate-sources",
+      "package",
+      "install-features",
+      "bundle",
+      "build"
+    ],
+    "deploy": [
+      "up",
+      "install",
+      "down",
+      "all"
+    ],
+    "release": [
+      "publish",
+      "publish-updatesite",
+      "publish-asset"
+    ],
+    "support": [
+      "install",
+      "completion",
+      "site"
+    ],
+    "support.git": [
+      "commit",
+      "push",
+      "prune-branches",
+      "submodules",
+      "auth-scopes"
+    ],
+    "support.tasks": [
+      "catalogue",
+      "generate"
+    ]
+  }
+}

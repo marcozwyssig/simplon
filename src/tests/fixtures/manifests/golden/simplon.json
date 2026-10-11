@@ -1,0 +1,232 @@
+{
+  "commands": {
+    "build": {
+      "acceptance": {
+        "depends_on": [],
+        "help": "Write the product's acceptance document as Markdown, read off its own .feature files.",
+        "impl": "simplon.tasks.acceptance:document"
+      },
+      "docs": {
+        "depends_on": [
+          "reference",
+          "acceptance",
+          "site"
+        ],
+        "help": "Write the command reference, then build the website from it.",
+        "impl": ""
+      },
+      "image": {
+        "depends_on": [],
+        "help": "Build the product's container image from its declared Dockerfile, with VERSION/REVISION, for every declared platform.",
+        "impl": "simplon.tasks.image:build"
+      },
+      "reference": {
+        "depends_on": [],
+        "help": "Write the product's command reference as Markdown, read off its BUILT command line.",
+        "impl": "simplon.tasks.cliref:reference"
+      },
+      "site": {
+        "depends_on": [],
+        "help": "Build the product's documentation website with Hugo, in Docker (HTML only).",
+        "impl": "simplon.tasks.site:build"
+      },
+      "wheel": {
+        "depends_on": [],
+        "help": "Build the wheel.",
+        "impl": "orchestrator.cli:build_wheel"
+      }
+    },
+    "release": {
+      "image": {
+        "depends_on": [],
+        "help": "Push the product's container image and verify the tag, and every declared platform, is in the registry.",
+        "impl": "simplon.tasks.image:release"
+      },
+      "tag": {
+        "depends_on": [],
+        "help": "Cut the release tag at HEAD and push it (`git push origin <tag>`, never `--tags`).",
+        "impl": "simplon.tasks.release:tag"
+      }
+    },
+    "support": {
+      "ci-arm64": {
+        "depends_on": [],
+        "help": "Check that THIS host can build linux/arm64, and register the emulator if not (VM or LXC; needs root).",
+        "impl": "simplon.tasks.ciarm64:arm64"
+      },
+      "ci-disk-cleanup": {
+        "depends_on": [],
+        "help": "Prune build cache older than a day - the step a job runs when it is done, whatever it decided.",
+        "impl": "simplon.tasks.cidisk:cleanup"
+      },
+      "ci-disk-hygiene": {
+        "depends_on": [],
+        "help": "Cap docker logs, bound the build cache and install a daily prune on THIS host (needs root).",
+        "impl": "simplon.tasks.cidisk:hygiene"
+      },
+      "ci-disk-preflight": {
+        "depends_on": [],
+        "help": "Refuse to start a job on a runner whose docker disk is too full to finish one.",
+        "impl": "simplon.tasks.cidisk:preflight"
+      },
+      "ci-privileges": {
+        "depends_on": [],
+        "help": "Give a user passwordless sudo and the docker group on THIS host (needs root; idempotent).",
+        "impl": "simplon.tasks.ciprivileges:grant"
+      },
+      "claude-plugins": {
+        "depends_on": [],
+        "help": "Install the Claude Code plugins declared in the manifest's `claude` section; idempotent.",
+        "impl": "simplon.tasks.claudeplugins:install_cmd"
+      },
+      "completion": {
+        "depends_on": [],
+        "help": "Regenerate the product's shell completion from its manifest (--check reports drift and writes nothing).",
+        "impl": "simplon.tasks.completion:generate"
+      },
+      "doctor": {
+        "depends_on": [],
+        "help": "Check the tools and the environment.",
+        "impl": "orchestrator.cli:doctor"
+      },
+      "install": {
+        "depends_on": [],
+        "help": "Provision the host tooling the kernel needs - today oras; idempotent.",
+        "impl": "simplon.tasks.hosttools:install"
+      },
+      "workflows": {
+        "depends_on": [],
+        "help": "Regenerate the product's GitHub workflows from its manifest (--check reports drift and writes nothing).",
+        "impl": "simplon.tasks.workflows:generate"
+      }
+    },
+    "support.git": {
+      "auth-scopes": {
+        "depends_on": [],
+        "help": "Grant the stored gh token the package scopes GHCR needs (interactive, idempotent).",
+        "impl": "simplon.tasks.vcs:auth_scopes"
+      },
+      "commit": {
+        "depends_on": [],
+        "help": "git add -A + git commit -m.",
+        "impl": "simplon.tasks.vcs:commit"
+      },
+      "prune-branches": {
+        "depends_on": [],
+        "help": "Delete local branches already merged into main (squash-aware via gh).",
+        "impl": "simplon.tasks.vcs:prune_branches"
+      },
+      "push": {
+        "depends_on": [],
+        "help": "git pull --rebase then push (current branch).",
+        "impl": "simplon.tasks.vcs:push"
+      },
+      "submodules": {
+        "depends_on": [],
+        "help": "git submodule update --init lib/platform (init the submodule a fresh worktree needs).",
+        "impl": "simplon.tasks.vcs:submodules"
+      }
+    },
+    "support.tasks": {
+      "catalogue": {
+        "depends_on": [],
+        "help": "List the task coordinates the delivery kernel offers, marking the namespaces this product's commands reach.",
+        "impl": "simplon.tasks.tasks:catalogue"
+      },
+      "generate": {
+        "depends_on": [],
+        "help": "Regenerate the product's CLI module from its manifest (--check reports drift and writes nothing).",
+        "impl": "simplon.tasks.tasks:generate"
+      }
+    },
+    "test": {
+      "all": {
+        "depends_on": [
+          "suite",
+          "typecheck-python",
+          "generated",
+          "release-notes"
+        ],
+        "help": "Run every test: the pytest suite, the type gate, the staleness gate, then the release-notes guard.",
+        "impl": ""
+      },
+      "generated": {
+        "depends_on": [],
+        "help": "Fail if a committed generated file is not what its own command produces.",
+        "impl": "simplon.tasks.generated:check"
+      },
+      "release-notes": {
+        "depends_on": [],
+        "help": "Check the product's releases page against the tags and merges its repository carries.",
+        "impl": "simplon.tasks.releasenotes:check"
+      },
+      "report": {
+        "depends_on": [],
+        "help": "Merge the unit results into the shared Allure results and render the HTML archive.",
+        "impl": "simplon.tasks.testrun:report_cmd"
+      },
+      "suite": {
+        "depends_on": [],
+        "help": "Run the pytest suite.",
+        "impl": "orchestrator.cli:test_suite"
+      },
+      "typecheck-python": {
+        "depends_on": [],
+        "help": "Type-check the product's Python sources with mypy, in the host venv (no Docker, no lab).",
+        "impl": "simplon.tasks.typecheck:check"
+      },
+      "walk": {
+        "depends_on": [],
+        "help": "Walk the product's acceptance scenarios with a person answering each step.",
+        "impl": "simplon.tasks.walk:walk"
+      }
+    }
+  },
+  "env_first": [],
+  "groups": {
+    "build": [
+      "wheel",
+      "reference",
+      "acceptance",
+      "site",
+      "image",
+      "docs"
+    ],
+    "release": [
+      "tag",
+      "image"
+    ],
+    "support": [
+      "install",
+      "completion",
+      "doctor",
+      "workflows",
+      "claude-plugins",
+      "ci-privileges",
+      "ci-disk-hygiene",
+      "ci-arm64",
+      "ci-disk-preflight",
+      "ci-disk-cleanup"
+    ],
+    "support.git": [
+      "commit",
+      "push",
+      "prune-branches",
+      "submodules",
+      "auth-scopes"
+    ],
+    "support.tasks": [
+      "catalogue",
+      "generate"
+    ],
+    "test": [
+      "suite",
+      "typecheck-python",
+      "release-notes",
+      "report",
+      "generated",
+      "walk",
+      "all"
+    ]
+  }
+}

@@ -1,0 +1,323 @@
+# asbundle delivery manifest - the single declarative source the delivery kernel
+# (delivery.orchestrator.manifest) assembles asbundle's CLI from. Scaffolded by
+# `python -m delivery.bootstrap` (netctl#651 strand 4). Fill it in: add your real groups + commands and
+# wire each `impl` to a "module:function" your orchestrator package exports.
+#
+# Sections:
+#   product       the product label (shim/manifest name + diagnostics).
+#   groups        the ONE command tree: group -> command -> { impl: "module:function", help: "one-line
+#                 summary" }. The key order within a group is its membership order; the env-gate is derived.
+#   env_groups    the subset of groups that are env-first (`asbundle <env> <group> <cmd>`, default below).
+#   environments  the deployment env matrix (a backend per env) + the default env.
+product: asbundle
+
+# --- product build data (read RAW via ProductContext.manifest_data(), IGNORED by the CLI engine) ---
+# Moved here verbatim from the former build/config.yaml (#4). The delivery CLI engine reads only
+# groups/env_groups/environments and ignores every other top-level key, which is exactly what makes this
+# the right home for it: ONE file, not a manifest beside a config.
+#
+# `github.token` is deliberately absent - the token comes from the GITHUB_TOKEN environment variable,
+# falling back to `gh auth token`, and must never live in a committed file again (#1).
+jdk:
+  api_url: "https://api.github.com/repos/ibmruntimes/semeru25-binaries/releases/latest"
+  base_url_ibm_semeru: "https://github.com/ibmruntimes/semeru25-binaries/releases/download"
+
+ant:
+  # The Apache CDN, NOT archive.apache.org. The archive exists for OLD releases, is rate-limited, and
+  # Apache asks automation to stay off it - a matrix of five cells hitting it every run is exactly the
+  # traffic it pushes back on. It also currently answers this path with 404, while the CDN serves it in
+  # 3.7 KB listing two versions instead of fifty.
+  #
+  # Two hosts, tried in order. They serve identical content, so the second is a genuine fallback rather
+  # than a different answer - and because the download URL is built per base, the archive download gets
+  # the same fallback for free.
+  base_urls:
+    - "https://dlcdn.apache.org/ant/binaries/"
+    - "https://downloads.apache.org/ant/binaries/"
+
+eclipse:
+  api_url: "https://download.eclipse.org/eclipse/downloads/"
+  base_url_eclipse: "https://www.eclipse.org/downloads/download.php?file=/eclipse/downloads/drops4/"
+  mirrors:
+    - https://eclipse.mirror.liteserver.nl/eclipse/downloads/drops4/
+    - https://rhlx01.hs-esslingen.de/pub/Mirrors/eclipse/eclipse/downloads/drops4/
+
+  install_units:
+    org.eclipse.pde.feature.group:
+      url: "https://download.eclipse.org/releases/latest"
+    org.eclipse.emf.mwe2.runtime:
+      url: "https://download.eclipse.org/releases/latest"
+    org.eclipse.emf.mwe.core:
+      url: "https://download.eclipse.org/releases/latest"
+    org.eclipse.egit.feature.group:
+      url: "https://download.eclipse.org/releases/latest"
+    org.eclipse.ui.browser:
+      url: "https://download.eclipse.org/releases/latest"
+    org.eclipse.draw2d.feature.group:
+      url: "https://download.eclipse.org/releases/latest"
+    org.eclipse.gef.feature.group:
+      url: "https://download.eclipse.org/releases/latest"
+    org.eclipse.gmf.feature.group:
+      url: "https://download.eclipse.org/releases/latest"
+    org.sf.feeling.decompiler:
+      url: "https://ecd-plugin.github.io/update"
+    org.sf.feeling.decompiler.cfr.feature.group:
+      url: "https://ecd-plugin.github.io/update"
+    org.sf.feeling.decompiler.fernflower.feature.group:
+      url: "https://ecd-plugin.github.io/update"
+    org.sf.feeling.decompiler.jd.feature.group:
+      url: "https://ecd-plugin.github.io/update"
+    org.sf.feeling.decompiler.procyon.feature.group:
+      url: "https://ecd-plugin.github.io/update"
+    org.sf.feeling.decompiler.vineflower.feature.group:
+      url: "https://ecd-plugin.github.io/update"
+    org.eclipse.cdt.feature.group:
+      url: "https://download.eclipse.org/tools/cdt/releases/11.6"
+    org.eclipse.cdt.cmake.feature.group:
+      url: "https://download.eclipse.org/tools/cdt/releases/11.6"
+    org.eclipse.cdt.debug.standalone.feature.group:
+      url: "https://download.eclipse.org/tools/cdt/releases/11.6"
+    org.eclipse.cdt.testsrunner.feature.feature.group:
+      url: "https://download.eclipse.org/tools/cdt/releases/11.6"
+    de.anbos.eclipse.easyshell.feature.feature.group:
+      url: https://anb0s.github.io/EasyShell
+    # Actifsource's Ant task library requires `org.hamcrest.core` and Eclipse no longer installs it as
+    # a side effect of anything else we ask for. Without it `actifsource.tasks.detect.xml` refuses to
+    # build a classpath and reports `missing libs: [org.hamcrest.core]` - which is not a cleon problem
+    # but a bundle that ships an Actifsource unable to run headlessly (cleon run 33723063926).
+    #
+    # It is a plain bundle IU, not a feature group: the id has no `.feature.group` suffix because
+    # hamcrest is published as an OSGi bundle.
+    org.hamcrest.core:
+      url: "https://download.eclipse.org/releases/latest"
+
+    ch.actifsource.enterprise.feature.group:
+      url: "https://updates.actifsource.com/updates-enterprise"
+      # This repository requires HTTP Basic auth. `credentials_from` names an environment PREFIX, so the
+      # values arrive as ACTIFSOURCE_USER / ACTIFSOURCE_PASSWORD and this file holds no secret and has
+      # no field one could be written into - which is how a token ended up in this repository's history
+      # once already.
+      #
+      # Without those variables the unit is SKIPPED, with a message naming it. A bundle built without
+      # the secret is therefore smaller and says so, instead of dying on a 401 halfway through.
+      credentials_from: ACTIFSOURCE
+
+  # Written into eclipse.ini's -vmargs section. Product data: how much heap the bundled IDE gets and
+  # which collector it uses is a decision about THIS product, not about how to assemble a bundle.
+  jvm_options:
+    - "-Xms256m"
+    - "-Xmx16g"
+    - "-XX:+UseG1GC"
+    - "-XX:+UseStringDeduplication"
+
+  # How the P2 director is driven. A healthy install unit takes 13-31 seconds, so the timeout sits far
+  # above any real duration and far below "forever" - a stalled director used to hang the build until a
+  # human noticed (#33). A non-zero EXIT is never retried; only a stall is.
+  director:
+    timeout_seconds: 600
+    attempts: 3
+    # JVM properties, passed after `-vmargs`. p2 follows a mirror redirect by default and a stalled
+    # mirror is the likeliest thing a hung director is waiting on; ECF ships no read timeout at all,
+    # which is what makes such a wait unbounded on its own side.
+    vmargs:
+      - "-Declipse.p2.mirrors=false"
+      - "-Dorg.eclipse.ecf.provider.filetransfer.retrieve.readTimeout=60000"
+      - "-Dorg.eclipse.ecf.provider.filetransfer.retrieve.connectTimeout=30000"
+      # Eclipse 4.28 made p2 rewrite every `http://` repository to `https://` (bug 581914), and that
+      # rewrite has to be off for the credentialed repository to work AT ALL.
+      #
+      # A forward proxy can only add an Authorization header to a request it can read, and an `https://`
+      # request reaches it as an opaque CONNECT tunnel. So the Actifsource repository is named over
+      # `http://` on purpose - p2 then sends it through the proxy, which fetches it over HTTPS on the
+      # way out. Left to upgrade the URL itself, p2 would go straight to the server, unauthenticated,
+      # and we would be back at "Authentication failed" (runs 33683078099 and 33687258770).
+      #
+      # The flag applies to EVERY repository, so a test asserts that every `http://` one here is a
+      # repository we proxy. The exemption cannot quietly widen into plaintext traffic to the internet.
+      - "-Dp2.httpRule=allow"
+
+# The container image and the registry artefact this product publishes.
+container:
+  # The runtime base. The bundle brings its own JDK, so this only has to provide a libc.
+  base_image: "debian:trixie-slim"
+  # The repository the packaged bundles are pushed to as OCI artifacts. The host tuple goes in the TAG,
+  # so all cells share one repository and a consumer picks its platform by tag.
+  bundle_repository: "asbundle-bundle"
+
+system:
+  temp_dir: null  # Uses system temp if null
+
+  # Looking up the newest version of a tool. Five cells x three upstreams is fifteen requests a run,
+  # and one refusal used to end a cell before a byte had been downloaded (#36). Few attempts and a
+  # short delay: this answers a TRANSIENT failure. A rate limit wants a different endpoint, not
+  # persistence - which is why Ant moved to the Apache CDN rather than gaining a retry.
+  version_lookup:
+    attempts: 3
+    retry_delay_seconds: 3
+
+  # Downloading an upstream archive. Ten attempts because eclipse.org answers a burst of parallel
+  # matrix cells with 403 and then relents; the delay is per attempt, in seconds.
+  download:
+    attempts: 10
+    retry_delay_seconds: 5
+  dest_dir: "eclipse-working-dir"
+  eclipse_dir: "eclipse-extracted"
+  jdk_dir: "jdk-extracted"
+  ant_dir: "ant-extracted"
+  installed_cache: "installed_components.txt"
+
+github:
+  api_url: "https://api.github.com"
+  repository: marcozwyssig/asbundle
+  username: marcozwyssig
+  # `docker_registry` is deliberately absent (#32). It used to hold "ghcr.io" - a registry with no owner
+  # segment, which `images.require_registry` accepts because it only guards emptiness. A push then built
+  # `ghcr.io/asbundle:...` and failed at the registry rather than at the guard that exists to catch it.
+  # The owner segment is deployment configuration, not product data: it comes from IMAGE_REGISTRY, which
+  # CI sets, and without it a publish now fails immediately and says so.
+
+# The groups whose commands are rendered into the committed CLI module by `support tasks generate`.
+# Every group this product puts commands in, plus the two the platform places for us - a group left out
+# would silently fall back to reflective assembly and drift from the generated surface.
+generate: [build, release, deploy, support.git, support.tasks]
+
+# THE COMMAND TREE, in the platform's new form (netctl#1469): a group node carries `help`, `env_first`,
+# `groups` and `commands`; a COMMAND is an instance of a TASK, declared once below and pointed at with
+# `task:`. Nothing here declares `impl:` - that is what `tasks:` is for.
+#
+# The platform OWNS which groups exist (build/test/release/deploy/monitor/support, plus support.git and
+# support.tasks). `treeform.merge` rejects a path the kernel's delivery.yaml does not declare, so the
+# group lock is the structure rather than a check over it - and `support git` / `support tasks` arrive
+# here for free, without this file mentioning them.
+#
+# `build.build` is an impl-less AGGREGATE: no task, only `depends_on`, bound by the kernel at assembly
+# time via assemble(step_context=...) in orchestrator/cli.py. Each dependency runs as its own
+# `./asbundle.sh <cmd>` subprocess, in the order listed.
+#
+# `stop_on_failure: true` because these steps are a CHAIN, not independent gates. Installing plugins
+# into an Eclipse that never downloaded, or packaging a bundle whose JDK was never moved in, produces a
+# broken artefact rather than a useful error - after the download minutes are already spent.
+groups:
+  build:
+    commands:
+      # In `build`, not in `deploy`: it removes what the BUILD produced. `deploy` is env-first, and an
+      # environment token in front of "delete my local temp directory" would say something untrue.
+      reset:           { task: reset }
+      fetch-jdk:       { task: fetch-jdk }
+      fetch-eclipse:   { task: fetch-eclipse }
+      fetch-ant:       { task: fetch-ant }
+      assemble:        { task: assemble }
+      install-plugins: { task: install-plugins }
+      package:         { task: package }
+      image:           { task: image }
+      build:
+        help: "Run the whole bundle pipeline: fetch, assemble, install plugins, package."
+        depends_on: [fetch-jdk, fetch-eclipse, fetch-ant, assemble, install-plugins, package]
+        stop_on_failure: true
+
+  # The release tag names only the component versions, so all six matrix cells publish into ONE release;
+  # each ASSET carries the host tuple so they cannot collide.
+  release:
+    commands:
+      publish:           { task: publish }
+      publish-bundle:    { task: publish-bundle }
+      publish-image:     { task: publish-image }
+      publish-manifest:  { task: publish-manifest }
+      image-coordinates: { task: image-coordinates }
+
+  # env_first comes from the platform's own declaration of `deploy`; a product may not rewrite it.
+  deploy:
+    commands:
+      up:      { task: up }
+      install: { task: install }
+
+  # The platform places `support git` and `support tasks` itself; this only PINS the generator's target,
+  # so `support tasks generate` and its --check drift gate take no argument. Refining a command the
+  # kernel declares is allowed; redeclaring the group is not.
+  support:
+    groups:
+      git:
+        commands:
+          # HIDDEN, not removed. asbundle vendors nothing since the kernel became a PyPI package, so
+          # this command has nothing to initialise - and its own help still names `lib/platform`. Hiding
+          # is the product's say over a command the kernel places for everyone: it stays invokable for
+          # whoever knows it, and stops being offered to everyone who does not.
+          submodules: { task: "vcs:submodules", hidden: true }
+      tasks:
+        commands:
+          generate:
+            task: "tasks:generate"
+            with: { target: deploy/provision/orchestrator/src/python/orchestrator/generated_cli.py }
+
+# THE TASKS: each body declared once, with the help text that describes it. A command above instantiates
+# one. Signatures are introspected from the body, never restated here - restating them is how a manifest
+# and its code drift.
+tasks:
+  # Derived, not typed: `temp_dir` is the manifest's or the platform's, and `dest_dir` is a name below
+  # it. A person starting clean would otherwise re-derive that path by hand on a machine where TMPDIR
+  # looks like nothing in particular - and a typo there deletes the wrong tree.
+  reset:
+    impl: orchestrator.cli:reset
+    help: "Remove the working directory (downloads, extractions, the packaged bundle) and start over."
+
+  fetch-jdk:
+    impl: orchestrator.cli:fetch_jdk
+    help: "Download and extract the IBM Semeru JDK for this host."
+  fetch-eclipse:
+    impl: orchestrator.cli:fetch_eclipse
+    help: "Download and extract the Eclipse platform for this host."
+  fetch-ant:
+    impl: orchestrator.cli:fetch_ant
+    help: "Download and extract Apache Ant."
+  assemble:
+    impl: orchestrator.cli:assemble
+    help: "Move the JDK and Ant into the Eclipse bundle and point eclipse.ini at the bundled VM."
+  install-plugins:
+    impl: orchestrator.cli:install_plugins
+    help: "Install the manifest's install units via the Eclipse P2 director."
+    params:
+      # The USERNAME only. The password is asked for on the terminal (getpass) and never becomes an
+      # argument: argv is world-readable - `/proc` on Linux, `ps` on macOS - and lands in the shell
+      # history. `build` cannot carry this flag (an impl-less aggregate has no signature to introspect
+      # a parameter from), so there it is `export ACTIFSOURCE_USER=...`; the prompt is the same one,
+      # raised before the first step rather than at the fifth.
+      actifsource_user: { help: "Actifsource username; the password is then asked for on the terminal" }
+      # Eclipse's secure store can itself be sealed with a master password, and nothing readable in the
+      # store says whether this one is - so the operator asks to be asked. For the whole pipeline the
+      # same request is ASBUNDLE_ASK_ECLIPSE_MASTER_PASSWORD=1, because `build` carries no flag to a step.
+      eclipse_master_password: { help: "ask for the Eclipse secure-store master password before installing" }
+  package:
+    impl: orchestrator.cli:package
+    help: "Package the assembled bundle into a distributable archive."
+  image:
+    impl: orchestrator.cli:image
+    help: "Build the container image carrying this host's bundle (Linux only)."
+  publish:
+    impl: orchestrator.cli:publish
+    help: "Attach this host's packaged bundle to the GitHub release for these component versions."
+  publish-bundle:
+    impl: orchestrator.cli:publish_bundle
+    help: "Push this host's packaged bundle to the container registry as an OCI artifact."
+  publish-manifest:
+    impl: orchestrator.cli:publish_manifest
+    help: "Join the per-architecture images into one multi-architecture tag."
+  publish-image:
+    impl: orchestrator.cli:publish_image
+    help: "Push the container image to the registry (Linux only)."
+  image-coordinates:
+    impl: orchestrator.cli:image_coordinates
+    help: "Print the image repository, version and multi-arch reference as shell assignments."
+  up:
+    impl: orchestrator.cli:up
+    help: "Run a container from the image built for this host (Linux only)."
+  install:
+    impl: orchestrator.cli:install
+    help: "Extract the packaged bundle into a directory on this machine."
+    params:
+      directory: { help: "directory to extract the bundle into", argument: true }
+
+# The deployment environment matrix. This product has no real environments - the OS/architecture matrix
+# is a CI matrix, not an environment matrix - so `dev` is the whole of it.
+default: dev
+environments:
+  dev: { backend: local, description: "Local development environment (the default)." }

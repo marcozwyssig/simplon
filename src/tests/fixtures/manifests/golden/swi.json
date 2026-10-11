@@ -1,0 +1,205 @@
+{
+  "commands": {
+    "build": {
+      "iso": {
+        "depends_on": [],
+        "help": "Download the installation ISO for a release if it is not already there.",
+        "impl": "packer.commands:iso"
+      },
+      "package": {
+        "depends_on": [],
+        "help": "Convert an existing build result into an ESXi-compatible OVA.",
+        "impl": "packer.commands:package"
+      },
+      "template": {
+        "depends_on": [],
+        "help": "Build the template(s): Windows Setup, VMware Tools, updates, Sysprep, OVA.",
+        "impl": "packer.commands:build"
+      }
+    },
+    "release": {
+      "publish": {
+        "depends_on": [],
+        "help": "Release finished template(s) into out\\ with volumes, checksum and fact sheet.",
+        "impl": "packer.commands:publish"
+      },
+      "upload-ivanti": {
+        "depends_on": [],
+        "help": "Upload the transfer volumes to the Ivanti file portal, one file at a time.",
+        "impl": "packer.commands:upload_ivanti"
+      }
+    },
+    "support": {
+      "claude-plugins": {
+        "depends_on": [],
+        "help": "Install the Claude Code plugins declared in the manifest's `claude` section; idempotent.",
+        "impl": "simplon.tasks.claudeplugins:install_cmd"
+      },
+      "completion": {
+        "depends_on": [],
+        "help": "Regenerate the product's shell completion from its manifest (--check reports drift and writes nothing).",
+        "impl": "simplon.tasks.completion:generate"
+      },
+      "completion-check": {
+        "depends_on": [],
+        "help": "Report whether deploy\\completions\\swi.bash still agrees with swi.yaml.",
+        "impl": "simplon.tasks.completion:generate"
+      },
+      "config": {
+        "depends_on": [],
+        "help": "Show the effective configuration of a release, as the build will use it.",
+        "impl": "packer.commands:config"
+      },
+      "doctor": {
+        "depends_on": [],
+        "help": "Check that the tools a build needs are installed.",
+        "impl": "packer.commands:doctor"
+      },
+      "esxi": {
+        "depends_on": [],
+        "help": "Report the ESXi target for #20: what is configured, what is missing. Writes nothing.",
+        "impl": "packer.commands:esxi_target"
+      },
+      "files": {
+        "depends_on": [],
+        "help": "List what would be transferred for a release.",
+        "impl": "packer.commands:files"
+      },
+      "inspect": {
+        "depends_on": [],
+        "help": "Report how the page in an already-open browser builds its upload.",
+        "impl": "packer.commands:inspect"
+      },
+      "install": {
+        "depends_on": [],
+        "help": "Provision the host tooling the kernel needs - today oras; idempotent.",
+        "impl": "simplon.tasks.hosttools:install"
+      },
+      "reset": {
+        "depends_on": [],
+        "help": "Stop VMs left by an aborted build and clear this release's scratch area.",
+        "impl": "packer.commands:reset"
+      },
+      "workflows": {
+        "depends_on": [],
+        "help": "Regenerate the product's GitHub workflows from its manifest (--check reports drift and writes nothing).",
+        "impl": "simplon.tasks.workflows:generate"
+      }
+    },
+    "support.git": {
+      "auth-scopes": {
+        "depends_on": [],
+        "help": "Grant the stored gh token the package scopes GHCR needs (interactive, idempotent).",
+        "impl": "simplon.tasks.vcs:auth_scopes"
+      },
+      "commit": {
+        "depends_on": [],
+        "help": "git add -A + git commit -m.",
+        "impl": "simplon.tasks.vcs:commit"
+      },
+      "prune-branches": {
+        "depends_on": [],
+        "help": "Delete local branches already merged into main (squash-aware via gh).",
+        "impl": "simplon.tasks.vcs:prune_branches"
+      },
+      "push": {
+        "depends_on": [],
+        "help": "git pull --rebase then push (current branch).",
+        "impl": "simplon.tasks.vcs:push"
+      },
+      "submodules": {
+        "depends_on": [],
+        "help": "git submodule update --init lib/platform (init the submodule a fresh worktree needs).",
+        "impl": "simplon.tasks.vcs:submodules"
+      }
+    },
+    "support.tasks": {
+      "catalogue": {
+        "depends_on": [],
+        "help": "List the task coordinates the delivery kernel offers, marking the namespaces this product's commands reach.",
+        "impl": "simplon.tasks.tasks:catalogue"
+      },
+      "generate": {
+        "depends_on": [],
+        "help": "Regenerate the product's CLI module from its manifest (--check reports drift and writes nothing).",
+        "impl": "simplon.tasks.tasks:generate"
+      }
+    },
+    "test": {
+      "accept": {
+        "depends_on": [],
+        "help": "Run every declared suite in order, then render the Allure archive.",
+        "impl": "simplon.tasks.testrun:accept_cmd"
+      },
+      "artefact": {
+        "depends_on": [],
+        "help": "Check a published OVA and the fact sheet beside it. Reads the file; boots nothing.",
+        "impl": "simplon.tasks.testrun:gate"
+      },
+      "iso": {
+        "depends_on": [],
+        "help": "Report which ISO is present for a release and whether its checksum is cached.",
+        "impl": "packer.commands:iso"
+      },
+      "published": {
+        "depends_on": [],
+        "help": "Report what is in out\\ for a release and what is missing. Writes nothing.",
+        "impl": "packer.commands:publish"
+      },
+      "report": {
+        "depends_on": [],
+        "help": "Merge the suites' results and render the single-file Allure archive.",
+        "impl": "simplon.tasks.testrun:report_cmd"
+      },
+      "unit": {
+        "depends_on": [],
+        "help": "Run the unit suite: the seams where swi.yaml becomes configuration. No VM.",
+        "impl": "simplon.tasks.testrun:gate"
+      }
+    }
+  },
+  "env_first": [],
+  "groups": {
+    "build": [
+      "template",
+      "iso",
+      "package"
+    ],
+    "release": [
+      "publish",
+      "upload-ivanti"
+    ],
+    "support": [
+      "install",
+      "completion",
+      "doctor",
+      "config",
+      "reset",
+      "files",
+      "inspect",
+      "esxi",
+      "workflows",
+      "completion-check",
+      "claude-plugins"
+    ],
+    "support.git": [
+      "commit",
+      "push",
+      "prune-branches",
+      "submodules",
+      "auth-scopes"
+    ],
+    "support.tasks": [
+      "catalogue",
+      "generate"
+    ],
+    "test": [
+      "unit",
+      "artefact",
+      "accept",
+      "report",
+      "iso",
+      "published"
+    ]
+  }
+}
