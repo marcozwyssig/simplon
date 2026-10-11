@@ -713,8 +713,10 @@ def test_the_shipped_catalogue_places_the_general_commands_and_nothing_that_need
     # a completion that has to be asked for is a completion nobody has, because the way somebody would
     # discover it is by pressing TAB, and that is precisely what does not work yet. `tasks:generate` is
     # the standing precedent for the write - placed, and writing a generated file at a kernel-chosen path.
+    # `support:migrate` (si#344) joins by the same test: it reads no section a product might lack, it
+    # publishes nothing and it touches only the product's own manifest.
     assert placed == {"vcs:commit", "vcs:push", "vcs:prune-branches", "vcs:submodules",
-                      "vcs:auth-scopes", "support:install", "support:completion",
+                      "vcs:auth-scopes", "support:install", "support:completion", "support:migrate",
                       "tasks:catalogue", "tasks:generate"}
     # `release` is DECLARED and holds nothing. The group exists so a product can place its own release
     # commands into it - the rule that a coordinate opening with a phase name belongs to that phase is
@@ -761,7 +763,7 @@ def test_the_shipped_catalogue_declares_the_whole_ci_cd_loop():
     # assert: the shape every *ctl product inherits, and the two env-first groups - env-first because
     # they stand under `cd`, which says it once for both
     assert set(visible) == {"build", "test", "release", "deploy", "monitor", "support"}
-    assert set(visible["support"]["groups"]) == {"git", "tasks"}
+    assert set(visible["support"]["groups"]) == {"git", "tasks", "manifest"}
     assert visible["deploy"]["env_first"] is True
     assert visible["monitor"]["env_first"] is True
 

@@ -23,9 +23,12 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from pathlib import Path
 from typing import NamedTuple
 
 import yaml
+
+from simplon import context, log
 
 CI = ("build", "test", "release")
 CD = ("deploy", "monitor")
@@ -308,3 +311,24 @@ def migrate_text(text: str, *, unknown_groups_into: str | None = None) -> Migrat
     if extra:
         return refused(f"the spliced text has a line the original did not: {extra}")
     return Migration("migrated", new, tuple(moved))
+
+
+def migrate(manifest: str = "") -> int:
+    """Rewrite THIS product's manifest (or the one named) from `groups:` to `ci:` / `cd:` / `support:`.
+
+    rc 0 when it migrated and when there was nothing to migrate - with a different sentence each, because
+    those are two answers. rc 1 when it could not, with nothing written.
+    """
+    path = Path(manifest) if manifest else context.current().manifest_path
+    result = migrate_text(path.read_text(encoding="utf-8"))
+    if result.status == "current":
+        log.ok(f"{path.name}: already in the ci/cd form - nothing to migrate")
+        return 0
+    if result.status == "refused":
+        log.error(f"{path.name}: not migrated, nothing written - {result.reason}")
+        return 1
+    path.write_text(result.text, encoding="utf-8")
+    for line in result.moved:
+        log.info(line)
+    log.ok(f"{path.name}: migrated to ci / cd / support ({len(result.moved)} section(s) moved)")
+    return 0

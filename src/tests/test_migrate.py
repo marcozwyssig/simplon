@@ -285,3 +285,58 @@ def test_every_real_manifest_migrates_and_parses_back_to_the_same_content(produc
     assert result.status == "migrated", result.reason
     assert "groups:" not in [line.split("#")[0].strip() for line in result.text.splitlines()
                              if not line.startswith(" ")]
+
+
+# --- the task body: migrate() -----------------------------------------------------------------------
+from simplon.tasks import migrate as migrate_mod  # noqa: E402
+
+
+def test_migrate_writes_the_file_and_says_what_moved(tmp_path, capsys):
+    # arrange
+    path = tmp_path / "demo.yaml"
+    path.write_text(OLD)
+
+    # act
+    rc = migrate_mod.migrate(str(path))
+
+    # assert
+    assert rc == 0
+    assert path.read_text() == NEW
+    assert "groups: build -> ci: build" in capsys.readouterr().out
+
+
+def test_migrate_on_a_current_manifest_is_rc_0_with_its_own_sentence(tmp_path, capsys):
+    # arrange
+    path = tmp_path / "demo.yaml"
+    path.write_text(NEW)
+
+    # act
+    rc = migrate_mod.migrate(str(path))
+
+    # assert
+    assert rc == 0
+    assert path.read_text() == NEW
+    assert "already in the ci/cd form - nothing to migrate" in capsys.readouterr().out
+
+
+def test_migrate_refused_is_rc_1_and_writes_nothing(tmp_path, capsys):
+    # arrange
+    path = tmp_path / "demo.yaml"
+    text = "product: demo\ngroups: { build: {} }\n"
+    path.write_text(text)
+
+    # act
+    rc = migrate_mod.migrate(str(path))
+
+    # assert
+    assert rc == 1
+    assert path.read_text() == text
+    assert "flow style on line 2" in capsys.readouterr().err
+
+
+def test_support_manifest_migrate_is_placed_for_every_product():
+    # act
+    mf = manifest.load("product: demo\n", catalogue=catalogue.load())
+
+    # assert
+    assert "migrate" in mf.groups["support.manifest"]

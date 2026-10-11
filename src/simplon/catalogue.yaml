@@ -125,6 +125,13 @@ groups:
             task: "tasks:generate"
             params:
               check: { help: "report drift and write nothing" }
+      # manifest: tools over the product's manifest itself (si#344). PLACED for the reason `tasks
+      # generate` is placed: it reads no section a product might lack, touches only the product's own
+      # root and publishes nothing.
+      manifest:
+        help: "Tools over this product's manifest."
+        commands:
+          migrate: { task: "support:migrate" }
 
 # PLACEMENT OR FAMILY (si#34). The namespace half of a coordinate answers one of two questions, and which
 # one it answers is decided by whether it is one of the six GROUP NAMES declared above.
@@ -736,6 +743,14 @@ tasks:
     impl: simplon.tasks.tasks:catalogue
     help: "List the task coordinates the delivery kernel offers, marking the namespaces this product's commands reach."
     unattended: true
+
+  # --- manifest: the product's own manifest as the thing worked on (si#344) -------------------------
+  support:migrate:
+    impl: simplon.tasks.migrate:migrate
+    help: "Rewrite this product's manifest from `groups:` to `ci:` / `cd:` / `support:` (si#344)."
+    unattended: true
+    params:
+      manifest: { help: "the manifest to rewrite (default: this product's own)", argument: true }
 
   # --- toolchain: a pinned image over the product tree (si#95) -----------------------------------------
   # A FAMILY, not a placement: si#34 would confine `build:toolchain` to `build`, and ctest / dotnet test /

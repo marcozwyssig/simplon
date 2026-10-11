@@ -1127,6 +1127,29 @@ def next_steps(name: str, target: Path, *, orch_dir: str = DEFAULT_ORCH_DIR) -> 
     ])
 
 
+def _manifest_migrate(args: list[str]) -> int:
+    """`simplon manifest migrate [MANIFEST]` - the route that works AFTER the cut (si#344).
+
+    Both launcher routes exec `python -m <product>`, which assembles the CLI from the manifest; once the
+    kernel refuses `groups:`, that CLI is never built and `support manifest migrate` cannot be reached.
+    This entry point loads no manifest at all.
+    """
+    from simplon.tasks import migrate as migrate_mod
+    if len(args) > 1:
+        print("usage: simplon manifest migrate [MANIFEST]", file=sys.stderr)
+        return 2
+    if args:
+        return migrate_mod.migrate(args[0])
+    candidates = [p for p in sorted(Path.cwd().glob("*.yaml"))
+                  if re.search(r"(?m)^product:", p.read_text(encoding="utf-8", errors="replace"))]
+    if len(candidates) != 1:
+        print(f"simplon manifest migrate: name the manifest - found "
+              f"{', '.join(p.name for p in candidates) or 'no *.yaml with a top-level product:'} here",
+              file=sys.stderr)
+        return 2
+    return migrate_mod.migrate(str(candidates[0]))
+
+
 def main(argv: list[str] | None = None) -> int:
     """`simplon init [<product>] [--dir DIR] [--orch-dir DIR] [--force]`: scaffold a product skeleton and
     print the next steps. Returns 0 on success, 2 on a bad product name, a directory with no repository
@@ -1154,6 +1177,8 @@ def main(argv: list[str] | None = None) -> int:
     # typo. The old call pattern stays valid, so `python -m simplon.bootstrap <name>` keeps working.
     if argv is None:
         argv = sys.argv[1:]
+    if argv[:2] == ["manifest", "migrate"]:
+        return _manifest_migrate(argv[2:])
     if argv and argv[0] == "init":
         argv = argv[1:]
     elif not argv:
@@ -1163,7 +1188,8 @@ def main(argv: list[str] | None = None) -> int:
         # nothing after it is a legal command; `simplon` alone is not, and the two must not collapse.
         print("simplon: nothing to do. The one command is `simplon init [<product>] [--dir DIR] "
               "[--orch-dir DIR] [--force]`, and the product name is optional inside a git repository; "
-              "use `simplon init --help` for the options.", file=sys.stderr)
+              "use `simplon init --help` for the options. The other is `simplon manifest migrate "
+              "[MANIFEST]`, which rewrites a manifest from `groups:` to `ci:` / `cd:` / `support:`.", file=sys.stderr)
         return 2
 
     parser = argparse.ArgumentParser(
