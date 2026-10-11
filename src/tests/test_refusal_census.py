@@ -213,7 +213,7 @@ READS_INLINE = {
                            "with the already-validated Manifest, to `manifestmodel.export` - the "
                            "validation is `ctx.manifest()`, which IS the walked seam, and the export's "
                            "own refusals (`ModelExportError`) are raised at run time, after the load, "
-                           "and catch into rc 1 (si#346)",
+                           "and are caught, with RuntimeError from an unreadable document, into rc 1 (si#346)",
 }
 
 #: The funnel that re-raises a Pydantic error as the plain ValueError `load()` promises. It refuses

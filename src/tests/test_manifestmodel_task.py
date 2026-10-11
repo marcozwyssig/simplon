@@ -52,6 +52,45 @@ def test_a_refused_manifest_writes_no_model_and_keeps_a_failing_rc(tmp_path, mon
     assert rc != 0 and not (tmp_path / "p.firn").exists()
 
 
+def test_an_unreadable_manifest_is_rc_1_not_a_traceback(tmp_path, monkeypatch, product_context):
+    # arrange: manifest_data() raises RuntimeError for a missing or corrupt document
+    def unreadable():
+        raise RuntimeError("cannot read demo.yaml")
+    monkeypatch.setattr(task, "_load", unreadable)
+
+    # act
+    rc = task.model(output=str(tmp_path / "p.firn"))
+
+    # assert
+    assert rc == 1 and not (tmp_path / "p.firn").exists()
+
+
+def test_an_unwritable_output_is_rc_1_not_a_traceback(tmp_path, product_context):
+    # arrange: the output's parent is a file, so mkdir cannot succeed
+    (tmp_path / "file").write_text("x")
+
+    # act
+    rc = task.model(output=str(tmp_path / "file" / "p.firn"))
+
+    # assert
+    assert rc == 1
+
+
+def test_a_failed_write_leaves_no_partial_model(tmp_path, monkeypatch, product_context):
+    # arrange: the temp write dies half way, after having created the file
+    def dies(path, text):
+        path.write_text(text[:5])
+        raise OSError("disk full")
+    monkeypatch.setattr(task, "_write", dies)
+    target = tmp_path / "p.firn"
+
+    # act
+    rc = task.model(output=str(target))
+
+    # assert: neither the target nor the temp file is left behind
+    assert rc == 1 and not target.exists() and list(tmp_path.glob("*.tmp")) == []
+
+
 def test_the_catalogue_places_it_beside_migrate():
     # act
     cat = catalogue.load()
