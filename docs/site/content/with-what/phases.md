@@ -407,12 +407,17 @@ product declares its parameters and receives the rest.
 
 `support:model` (`support manifest model <path>`, si#346) writes the validated manifest as a firn model,
 `package product.<product>`, and it writes only after the manifest has loaded: a manifest the kernel
-refuses leaves no file, so a model on disk is always one of a manifest that works. Only the sections the
+refuses leaves no file, so a model on disk is always one of a manifest that worked - a refused run leaves
+the previous model in place, and the rc says whether it is the current one. Only the sections the
 kernel reads are modelled; a product's own sections are `ProductData` with their key and nothing else.
 firn names take no `-` yet (firn#962 will allow it), so names are mangled - the non-group children get a
 `t_`, `e_`, `i_`, `a_`, `s_` or `d_` prefix - and the original is kept in `key`. simplon checks its own
 model in CI: `simplon.yaml` lists it under `generated:`, so `test generated` fails when the committed file
 is not what the command writes, and `test model` runs `firn check` over it with the M2 packages beside it.
+A product's exported model names `simplon.manifest.*` and `simplon.pipeline.*`, and those packages live in
+this repository's `src/firn/`, not in the kernel's interface: checking a product's model needs simplon's
+M2 beside it, and shipping the M2 for that is not done yet. (The wheel happens to carry `src/firn/` today
+as a top-level `firn/` directory - a packaging accident, not a place to read it from.)
 
 `support:ci-privileges` is the one that is offered for a different reason (si#92). It reads no section at
 all, so by the test above it could be placed - and it deliberately is not, because it grants

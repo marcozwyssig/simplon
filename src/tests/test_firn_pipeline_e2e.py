@@ -54,8 +54,10 @@ def test_every_selector_relation_answers_what_the_fixture_says(demo, selector, e
 
 
 @needs_docker
-def test_the_vocabulary_is_eleven_kinds_rooted_in_artifact_and_refining_only_within_itself():
-    # arrange / act: spec B.2 - one root, and every other kind reaches it
+def test_the_vocabulary_is_eleven_kinds_each_reaching_artifact_and_refining_only_within_itself():
+    # arrange / act: spec B.2 - one root, and every other kind reaches it. `ArtifactKind.refines` answers
+    # the targets as one flat set, which says nothing about WHICH kind reaches the root; so each kind is
+    # asked for its own parent and the chain is walked here (si#346's final review)
     rc, kinds = firn_rc(SRC_FIRN.parents[1], "query", "ArtifactKind", cwd="src/firn")
     rc_refines, refines = firn_rc(SRC_FIRN.parents[1], "query", "ArtifactKind.refines", cwd="src/firn")
 
@@ -64,12 +66,28 @@ def test_the_vocabulary_is_eleven_kinds_rooted_in_artifact_and_refining_only_wit
     assert rc_refines == 0
     # the vocabulary is the simplon.vocabulary.* set; the product models beside it (product.simplon, the
     # exported manifest) are left out of the count by the prefix filter on purpose
+    root = "simplon.vocabulary.artifact"
     names = {n for n in kinds.split() if n.startswith("simplon.vocabulary.")}
     assert len(names) == 11
-    assert "simplon.vocabulary.artifact" in names
-    # positive: the refines answer is non-empty and reaches the root, so `<=` below cannot pass vacuously
-    targets = set(refines.split())
-    assert targets
-    assert "simplon.vocabulary.artifact" in targets
+    assert root in names
     # every refines target, unfiltered, is inside the vocabulary: a target outside it is a failure here
-    assert targets <= names
+    targets = set(refines.split())
+    assert targets and targets <= names
+
+    # the parent of each kind, one query per kind - rc 0 every time, so an empty answer is a real "none"
+    parent: dict[str, set[str]] = {}
+    for name in sorted(names):
+        rc_one, answer = firn_rc(SRC_FIRN.parents[1], "query",
+                                 f'ArtifactKind[name=="{name.rsplit(".", 1)[1]}"].refines', cwd="src/firn")
+        assert rc_one == 0, answer
+        parent[name] = set(answer.split())
+    assert parent[root] == set(), "the root refines nothing"
+    # positive: the per-kind answers are the flat answer, split - so none of them was lost on the way
+    assert set().union(*parent.values()) == targets
+    # every kind other than the root reaches it through refines (refines is 0..N, so: through ANY chain)
+    for name in sorted(names - {root}):
+        seen, frontier = {name}, {name}
+        while frontier and root not in seen:
+            frontier = set().union(*(parent[k] for k in frontier)) - seen
+            seen |= frontier
+        assert root in seen, f"{name} does not reach {root} through refines: it reaches {sorted(seen)}"

@@ -40,8 +40,9 @@ def test_the_manifest_package_models_exactly_what_the_kernel_reads():
 
 
 def test_the_bridges_typed_section_list_is_the_census_and_the_model():
-    # arrange: KERNEL_SECTIONS is typed (the wheel ships no src/firn/), so it is the third copy, and
-    # it is held by both of the other two - the census that derives the set, and the Product it models
+    # arrange: KERNEL_SECTIONS is typed (src/firn/ is no part of the simplon package), so it is the third
+    # copy, and it is held by both of the other two - the census that derives the set, and the Product it
+    # models
     typed = manifestmodel.KERNEL_SECTIONS
 
     # act / assert

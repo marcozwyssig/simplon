@@ -1340,7 +1340,7 @@ Expected:
 ## Self-Review
 
 - **Spec coverage, part D.**
-  - D.1 `simplon.pipeline`: Task 1 covers every listed class, including TestResult.about, Release, ReleaseCommand, Area, Environment.next, Site, Registry and Deploy.
+  - D.1 `simplon.pipeline`: Task 1 covers every listed class, including TestResult.about, Release, ReleaseCommand, Area, Environment.next, Site, Registry and Deploy - but not every listed PROPERTY: Release carries `published` only, and its `notes` and `tag` arrive with part C, when a command first produces a `release-notes` and a `tag` (corrected in the final review; the spec says so too).
   - The kinds are in Task 2.
   - D.1 `simplon.manifest` is Tasks 3 and 4, including the both-directions test and ProductData.
   - D.2 bridge and command are Tasks 5 and 6, including the "runs only after load" rc.

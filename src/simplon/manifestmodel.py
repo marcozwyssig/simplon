@@ -57,7 +57,9 @@ from simplon.orchestrator.manifest import Manifest
 _NOT_NAME = re.compile(r"[^A-Za-z0-9_]")
 
 #: The top-level sections the kernel reads - exactly `test_refusal_census.sections_read()`, typed once
-#: (the kernel wheel does not ship `src/firn/`, so it cannot be read off `manifest.firn` at run time).
+#: (`src/firn/` is no part of the `simplon` package, so `manifest.firn` is not something it can read at
+#: run time. The wheel DOES carry it today - as a top-level `firn/` directory, by setuptools' namespace
+#: discovery, measured in si#346's final review - which is a packaging accident, not an interface).
 #: Typed, so held twice: `test_firn_manifest_coverage` checks it against the census and against the
 #: Product's properties, which is what keeps the three copies one statement. `product:` is not here: it
 #: is the Product resource's own key, and no reader of the kernel's reads it as a section.
