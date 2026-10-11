@@ -352,7 +352,7 @@ def test_the_project_page_links_the_documentation_website():
     linked = project["urls"]["Documentation"]
 
     # Assert
-    assert linked == manifest["site"]["base_url"]
+    assert linked == manifest["website"]["base_url"]
     assert linked.startswith("https://")
 
 

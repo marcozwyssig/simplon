@@ -97,7 +97,7 @@ SOURCES = {
 
 MANIFEST = textwrap.dedent("""\
     product: e2edemo
-    groups:
+    ci:
       build:
         commands:
           unit:

@@ -22,8 +22,6 @@ artifacts:
     registry: nuget.example.com/team
     image: mcr.microsoft.com/dotnet/sdk:9.0
     project: src/App/App.csproj
-groups: {}
-env_groups: []
 """
 
 _TOKEN = "ghp_RECOGNISABLE_SECRET"

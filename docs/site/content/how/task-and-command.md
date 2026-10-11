@@ -25,21 +25,21 @@ tasks:
     impl: "orchestrator.cli:build_wheel"
     help: "Build the wheel."
 
-groups:
+ci:
   build:
     commands:
       wheel: { task: "wheel" }
 ```
 
 The `tasks:` entry is the template: a name, a body, and the wording that goes with the body. The
-`groups:` entry is the placement: this template, under this group, called this. They are two entries
+`ci:` entry is the placement: this template, under this group, called this. They are two entries
 because they answer two questions, and a product very often wants the same answer to the first one and a
 different answer to the second one twice over.
 
 | | **task** | **command** |
 |---|---|---|
 | answers | *what does this do* | *what is it called, where does it live, with what data* |
-| declared under | `tasks:` | `groups: <group>: commands:` |
+| declared under | `tasks:` | `<group>: commands:`, under `ci:`, `cd:` or `support:` |
 | how many of the other | any number of commands | exactly one task (or none, if it is an aggregate) |
 | may name a body | yes, and must | never |
 | may pin a value | never | yes, with `with:` |
@@ -156,7 +156,7 @@ exists.
 This is the payoff, and it is the reason the split earns its keep:
 
 ```yaml
-groups:
+ci:
   test:
     commands:
       unit:   { task: "test:gate", with: { name: "unit" },   help: "Run the unit suite." }
@@ -294,8 +294,8 @@ does, and no product that has adopted declares a group outside the six.**
 |---|---|---|
 | `lint:` | a command in **`test`** | it verifies. `test lint`, `test lint-backend` |
 | `contract:` | **`test`** when it checks a contract, **`build`** when it generates from a schema | the group is what the command DOES, and only that product knows which |
-| `ci:` | a command or an [aggregate](#the-third-kind-of-command-an-aggregate) in **`test`** | a pipeline is not a phase; it names the phases it runs |
-| `dev:` | an entry in **`environments:`** | it is a place to deploy to, reached as `dev deploy up` |
+| a `ci` group | a command or an [aggregate](#the-third-kind-of-command-an-aggregate) in **`test`** | a pipeline is not a phase; it names the phases it runs. (`ci:` is the manifest's area for `build`, `test` and `release` since si#344, so a group of that name could not stand beside them anyway) |
+| `dev:` | an entry in **`cd: environments:`** | it is a place to deploy to, reached as `dev deploy up` |
 
 The evidence is not four opinions. `dev` is an environment in five of the eight manifests and a group in
 none; `ci` is a workflow key in three and a group in none; and one product had already filed `lint`,

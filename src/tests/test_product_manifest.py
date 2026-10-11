@@ -63,7 +63,7 @@ def test_the_site_section_is_declared_and_valid(product):
     # manifest's: the section must not carry the key at all, and the value must still be `docs/site`.
     # That makes this repository the first consumer of the default rather than a product that happens to
     # agree with it - so if the default ever stopped working, simplon's own `build docs` would say so.
-    assert "source" not in data["site"], (
+    assert "source" not in data["website"], (
         "simplon declares `site: source:` again; si#183 leaves it out on purpose, so that the kernel's "
         "own default is exercised by the one product this suite can actually build")
     assert declared.source == "docs/site"
@@ -72,7 +72,7 @@ def test_the_site_section_is_declared_and_valid(product):
     # build output, so the section must not carry the key at all and the value must still resolve - here
     # to `build/site`, because this manifest declares no `output:` either and takes the convention. The
     # kernel is the first consumer of both defaults rather than a product that happens to agree.
-    assert "output" not in data["site"], (
+    assert "output" not in data["website"], (
         "simplon declares `site: output:` again; si#314 leaves it out on purpose, so that the kernel's "
         "own `<output>/site` is exercised by the one product this suite can actually build")
     assert declared.output == f"{outputs.DEFAULT}/{site_task.OUTPUT_KIND}" == "build/site"

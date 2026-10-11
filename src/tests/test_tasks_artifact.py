@@ -24,8 +24,6 @@ artifacts:
     source: build-out/website
     media_type: application/vnd.demo.website.v1+zip
     tag: latest
-groups: {}
-env_groups: []
 """
 
 

@@ -25,8 +25,6 @@ assets:
     source: "build-out/site.zip"
     repository: owner/other
     tag: latest
-groups: {}
-env_groups: []
 """
 
 

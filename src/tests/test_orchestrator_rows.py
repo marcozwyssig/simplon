@@ -47,18 +47,18 @@ tasks:
   compile: { impl: "demo.impls:compile", help: "Compile the artefacts." }
   up: { impl: "demo.impls:up", help: "Deploy up." }
 
-groups:
+ci:
   build:
     commands:
       install: { task: "install" }
       compile: { task: "compile" }
       prep: { help: "Install + compile.", depends_on: ["install", "compile"] }
       build: { help: "The full build.", depends_on: ["prep"] }
+cd:
   deploy:
     commands:
       up: { task: "up" }
       bringup: { help: "Full bring-up.", depends_on: ["prep", "build", "install", "up"] }
-env_groups: [deploy]
 """
 
 
@@ -86,7 +86,7 @@ tasks:
   install: { impl: "demo.impls:install", help: "Install host prereqs." }
   compile: { impl: "demo.impls:compile", help: "Compile the artefacts." }
 
-groups:
+cd:
   build:
     commands:
       install: { task: "install" }
@@ -95,7 +95,6 @@ groups:
         help: "Install + compile."
         depends_on: ["install", "compile"]
         stop_on_failure: true
-env_groups: [build]
 """
 
 

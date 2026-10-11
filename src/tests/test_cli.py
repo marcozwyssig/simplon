@@ -47,7 +47,7 @@ tasks:
   up: { impl: "demo_impls:up", help: "Deploy up." }
   deploy-all: { impl: "demo_impls:deploy_all", help: "Full bring-up." }
 
-groups:
+ci:
   code:
     commands:
       fmt: { task: "fmt" }
@@ -59,11 +59,11 @@ groups:
     commands:
       unit: { task: "unit" }
       all: { task: "all" }
+cd:
   deploy:
     commands:
       up: { task: "up" }
       all: { task: "deploy-all" }
-env_groups: [deploy]
 """
 
 
@@ -179,7 +179,7 @@ tasks:
   docs: { impl: "gd_impls:docs", help: "Render the docs." }
   package: { impl: "gd_impls:package", help: "Package the images." }
 
-groups:
+ci:
   build:
     commands:
       build: { task: "build" }
@@ -188,7 +188,6 @@ groups:
   package:
     commands:
       package: { task: "package" }
-env_groups: []
 """
 
 
@@ -292,7 +291,7 @@ tasks:
   lint: { impl: "hidden_impls:lint", help: "Lint the sources." }
   package: { impl: "hidden_impls:package", help: "Package the artefacts." }
 
-groups:
+ci:
   code:
     commands:
       fmt: { task: "fmt" }
@@ -300,7 +299,6 @@ groups:
   package:
     commands:
       package: { task: "package", hidden: true }
-env_groups: []
 """
 
 
@@ -395,17 +393,17 @@ tasks:
   up: { impl: "agg_impls:up", help: "Deploy up." }
   seed: { impl: "agg_impls:seed", help: "Seed." }
 
-groups:
+ci:
   build:
     commands:
       install: { task: "install" }
       build: { task: "build" }
+cd:
   deploy:
     commands:
       up: { task: "up" }
       seed: { task: "seed" }
       bringup: { help: "Full bring-up.", depends_on: ["build", "up", "seed"] }
-env_groups: [deploy]
 """
 
 
@@ -544,13 +542,12 @@ tasks:
   smoke: { impl: "demo_impls:unit", help: "SMOKE gate: the fastest reachability check." }
   lint: { impl: "demo_impls:lint", help: "Lint the sources." }
 
-groups:
+ci:
   test:
     commands:
       system: { task: "system" }
       smoke: { task: "smoke" }
       lint: { task: "lint" }
-env_groups: []
 """
 
 
@@ -609,7 +606,7 @@ tasks:
   report: { impl: "simplon.test_impls:no_context", help: "Merge the results." }
   commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
 
-groups:
+ci:
   test:
     commands:
       unit: { task: "unit" }
@@ -617,7 +614,6 @@ groups:
   git:
     commands:
       commit: { task: "commit" }
-env_groups: []
 """
 
 
@@ -680,13 +676,12 @@ tasks:
   fail: { impl: "rc_impls:fail", help: "Fail with 3." }
   chatty: { impl: "rc_impls:chatty", help: "Return something that is not an exit code." }
 
-groups:
+ci:
   code:
     commands:
       ok: { task: "ok" }
       fail: { task: "fail" }
       chatty: { task: "chatty" }
-env_groups: []
 """
 
 
@@ -748,12 +743,11 @@ tasks:
     params: { message: { help: "commit message", argument: true }, dry_run: { help: "preview only", short: "-n" } }
   pin: { impl: "pres_impls:pin", help: "Pin a site." }
 
-groups:
+ci:
   code:
     commands:
       commit: { task: "commit" }
       pin: { task: "pin", with: { site: "be" } }
-env_groups: []
 """
 
 
@@ -825,15 +819,13 @@ tasks:
   doctor: { impl: "demo_impls:lint", help: "Check the host." }
   push: { impl: "demo_impls:up", help: "Push." }
 
-groups:
-  support:
-    commands:
-      doctor: { task: "doctor" }
-    groups:
-      git:
-        commands:
-          push: { task: "push" }
-env_groups: []
+support:
+  commands:
+    doctor: { task: "doctor" }
+  groups:
+    git:
+      commands:
+        push: { task: "push" }
 """
 
 
@@ -875,22 +867,23 @@ tasks:
   up: { impl: "demo_impls:up", help: "Bring it up." }
   push: { impl: "demo_impls:up", help: "Push." }
 
-groups:
+ci:
   code:
     commands:
       fmt: { task: "fmt" }
+cd:
   deploy:
     help: "Put them into an environment."
     env_first: true
     commands:
       up: { task: "up" }
-  support:
-    help: "Host preflight, environment introspection and host tooling."
-    groups:
-      git:
-        help: "Version-control helpers."
-        commands:
-          push: { task: "push" }
+support:
+  help: "Host preflight, environment introspection and host tooling."
+  groups:
+    git:
+      help: "Version-control helpers."
+      commands:
+        push: { task: "push" }
 """
 
 
@@ -972,10 +965,11 @@ def test_every_group_the_shipped_catalogue_describes_renders_that_description():
     product: demo
     tasks:
       one: { impl: "demo_impls:fmt", help: "One." }
-    groups:
+    ci:
       build:   { commands: { one: { task: one } } }
       test:    { commands: { one: { task: one } } }
       release: { commands: { one: { task: one } } }
+    cd:
       deploy:  { commands: { one: { task: one } } }
       monitor: { commands: { one: { task: one } } }
     """
@@ -1021,7 +1015,7 @@ def test_a_group_default_groups_blurb_stays_its_namesake_members_help():
         tasks:
           build: { impl: "demo_impls:build", help: "Build every image, unit gates first." }
           lint: { impl: "demo_impls:lint", help: "Lint the sources." }
-        groups:
+        ci:
           build:
             help: "Produce the artefacts."
             commands:
@@ -1061,7 +1055,7 @@ def test_an_annotation_the_generator_cannot_write_is_dropped_rather_than_handed_
     text = ('product: demo\n'
             'tasks:\n'
             '  mapped: { impl: "annot_impls:mapped", help: "A body with a mapping parameter." }\n'
-            'groups:\n'
+            'ci:\n'
             '  build:\n'
             '    commands:\n'
             '      mapped: { task: "mapped" }\n')

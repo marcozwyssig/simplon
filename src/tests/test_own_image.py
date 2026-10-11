@@ -81,7 +81,7 @@ def test_the_declared_dockerfile_and_context_are_on_the_disk():
 @pytest.mark.parametrize("group", ["build", "release"])
 def test_both_verbs_are_placed_and_pin_the_one_image(group):
     # arrange / act
-    command = _manifest()["groups"][group]["commands"]["image"]
+    command = _manifest()["ci"][group]["commands"]["image"]
 
     # assert: the catalogue coordinate, not a body of its own, and the name pinned so the command line
     # carries no argument a caller has to remember

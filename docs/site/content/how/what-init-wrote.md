@@ -162,7 +162,7 @@ tasks:
   down:    { impl: "orchestrator.cli:down",    help: "Tear the deployment down (placeholder)." }
   status:  { impl: "orchestrator.cli:status",  help: "Report what is running in the target environment (placeholder)." }
 
-groups:
+ci:
   build:
     commands:
       build: { task: build }
@@ -172,6 +172,10 @@ groups:
   release:
     commands:
       tag: { task: "release:tag" }
+cd:
+  default: dev
+  environments:
+    dev: { backend: local, description: "Local development environment (the default)." }
   deploy:
     commands:
       up:   { task: up }
@@ -183,13 +187,9 @@ groups:
   monitor:
     commands:
       status: { task: status }
-  support:
-    commands:
-      install: { task: "support:install" }
-
-default: dev
-environments:
-  dev: { backend: local, description: "Local development environment (the default)." }
+support:
+  commands:
+    install: { task: "support:install" }
 ```
 
 **All five phases of the loop are there, plus `support`** - `build`, `test`, `release`, `deploy`,
@@ -199,10 +199,12 @@ does not declare is refused at load. A scaffold that showed two of them would te
 corset you are going to be wearing anyway. Each starts with one command so you can run it today; grow a
 phase by adding to its `commands:` list.
 
-Two sections, and the split is the model:
+Two kinds of section, and the split is the model:
 
 - **`tasks:`** holds the **bodies**, each written down once as a `module:function`.
-- **`groups:`** holds the **placements**. A command is an *instance* of a task, so it names one with
+- **`ci:`**, **`cd:`** and **`support:`** hold the **placements**: the integration phases, the delivery
+  phases beside the environments they run in, and the host tooling beside the loop. The area never
+  appears on the command line - `myctl test check`, not `myctl ci test check`. A command is an *instance* of a task, so it names one with
   `task:` and never writes an `impl:` of its own. That is what lets the same body sit at two commands
   with different pinned values - `test unit` and `test system` over one `test:gate` - without being
   copied.
@@ -212,8 +214,8 @@ Six commands, and each is a live example of a different shape:
 - **`build`** is a single-member group whose member shares the group's name. Simplon collapses that to
   one flat top-level command, so you type `myctl build`, not `myctl build build`.
 - **`up`**, **`down`** and **`status`** sit in env-first groups. They take a target environment as the
-  outer token: `myctl dev deploy up`. Which groups are env-first is the catalogue's statement, not a
-  second list in your manifest.
+  outer token: `myctl dev deploy up`. They are env-first because they stand under `cd:`, which is the
+  catalogue's statement, not a second list in your manifest.
 - **`tag`** and **`install`** name a **catalogue coordinate** - `task: "release:tag"`, with a colon. The
   body lives in the kernel; the line only says where the command sits in your tree. A `task:` without a
   colon names one of your own tasks above.

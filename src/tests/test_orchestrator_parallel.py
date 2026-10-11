@@ -52,7 +52,7 @@ tasks:
   c: { impl: "demo.impls:c", help: "Image c." }
   verify: { impl: "demo.impls:verify", help: "Check what was built." }
 
-groups:
+ci:
   build:
     commands:
       a: { task: "a" }
@@ -67,7 +67,6 @@ groups:
         help: "The images, then the check over them."
         depends_on: ["images", "verify"]
         stop_on_failure: STOP_FLAG
-env_groups: []
 """
 
 # A fan whose branches are CHAINS, which is the shape the kernel's own #901 idiom produces: an aggregate
@@ -85,7 +84,7 @@ tasks:
   right-first: { impl: "demo.impls:rf", help: "Right, first." }
   right-second: { impl: "demo.impls:rs", help: "Right, second." }
 
-groups:
+ci:
   build:
     commands:
       left-first: { task: "left-first" }
@@ -95,7 +94,6 @@ groups:
       left: { help: "The left chain.", depends_on: ["left-first", "left-second"] }
       right: { help: "The right chain.", depends_on: ["right-first", "right-second"] }
       both: { help: "Both chains at once.", depends_on: ["left", "right"], parallel: true }
-env_groups: []
 """
 
 
@@ -539,7 +537,7 @@ tasks:
   b: { impl: "demo.impls:b", help: "The inner fan's sibling." }
   tail: { impl: "demo.impls:tail", help: "After everything." }
 
-groups:
+ci:
   build:
     commands:
       a1: { task: "a1" }
@@ -549,7 +547,6 @@ groups:
       inner: { help: "Two at once.", depends_on: ["a1", "a2"], parallel: true }
       outer: { help: "The inner fan beside b.", depends_on: ["inner", "b"], parallel: true }
       whole: { help: "Then the tail.", depends_on: ["outer", "tail"] }
-env_groups: []
 """
 
 

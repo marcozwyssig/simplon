@@ -13,11 +13,10 @@ images:
 tasks:
   lint: { impl: "sample.cli:lint", help: "Lint the thing." }
 
-groups:
+ci:
   test:
     commands:
       lint: { task: "lint" }
-env_groups: []
 """
 
 

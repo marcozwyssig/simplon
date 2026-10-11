@@ -499,7 +499,7 @@ def test_the_images_the_transcript_shows_are_the_ones_the_manifest_pins():
     """The docs transcript prints the Hugo image and the theme module. Both are pinned in `simplon.yaml`
     and a pin moves; a transcript that kept the old one would show a build that no longer happens."""
     # arrange
-    site = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))["site"]
+    site = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))["website"]
     body = _text()
 
     # act / assert

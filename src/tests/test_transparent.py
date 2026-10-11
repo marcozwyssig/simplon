@@ -142,6 +142,7 @@ def test_a_command_under_ci_build_is_build_on_the_command_line():
 
 
 def test_the_old_groups_form_assembles_the_same_cli_while_both_are_read():
+    # si#344 Task 9: becomes a cut diagnosis
     # arrange
     old = NEW_FORM.replace("ci:\n  build:", "groups:\n  build:")
 

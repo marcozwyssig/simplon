@@ -177,7 +177,7 @@ def _product():
 
 def _build_commands() -> dict[str, dict]:
     """The fixture's three `build` commands, refusing to be empty."""
-    commands = (_fixture_data().get("groups", {}).get("build", {}).get("commands") or {})
+    commands = (_fixture_data().get("ci", {}).get("build", {}).get("commands") or {})
     if not commands:
         raise ValueError(f"{FIXTURE} declares no `build` command, so the toolchain could not be read")
     return commands
@@ -185,7 +185,7 @@ def _build_commands() -> dict[str, dict]:
 
 def _environments() -> set[str]:
     """The env names the fixture declares - the outer token an env-first command takes."""
-    names = set(_fixture_data().get("environments") or {})
+    names = set((_fixture_data().get("cd") or {}).get("environments") or {})
     if not names:
         raise ValueError(f"{FIXTURE} declares no environment, so an env-first command could not be read")
     return names
@@ -564,7 +564,7 @@ def test_the_design_shape_the_chapter_says_is_refused_now_assembles():
     body = _build_commands()["compile"]["with"]["body"]
     command = {"task": "toolchain:run", "with": dict(body)}
     flat = {"product": "dotnetdemo",
-            "groups": {"build": {"commands": {"compile": command}}}}
+            "ci": {"build": {"commands": {"compile": command}}}}
     parsed = manifest_mod.load(yaml.safe_dump(flat), catalogue=catalogue_mod.load())
     quoted = [block for block in _blocks("text") if "the impl does not take" in block]
     assert len(quoted) == 1, f"the chapter shows {len(quoted)} binder refusals; it argues from one"

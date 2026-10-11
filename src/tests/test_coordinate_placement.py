@@ -179,13 +179,16 @@ def test_the_rejection_reaches_a_product_through_the_loader():
         tasks:
           build:image: { impl: "simplon.tasks.image:build", help: "Build the image." }
         groups:
-          build:   { help: "Produce the artefacts." }
-          test:    { help: "Verify them." }
-          release: { help: "Publish them." }
+          ci:
+            transparent: true
+            groups:
+              build:   { help: "Produce the artefacts." }
+              test:    { help: "Verify them." }
+              release: { help: "Publish them." }
     """))
     text = textwrap.dedent("""
         product: demo
-        groups:
+        ci:
           test:
             commands:
               image: { task: "build:image" }
@@ -204,12 +207,15 @@ def test_the_same_coordinate_under_its_own_group_loads():
         tasks:
           build:image: { impl: "simplon.tasks.image:build", help: "Build the image." }
         groups:
-          build:   { help: "Produce the artefacts." }
-          test:    { help: "Verify them." }
+          ci:
+            transparent: true
+            groups:
+              build:   { help: "Produce the artefacts." }
+              test:    { help: "Verify them." }
     """))
     text = textwrap.dedent("""
         product: demo
-        groups:
+        ci:
           build:
             commands:
               image: { task: "build:image" }
@@ -306,11 +312,12 @@ def _placements(text: str) -> dict:
     onto the catalogue's, so the platform's OWN placed commands are counted too."""
     catalogue = catalogue_mod.load()
     data = yaml.safe_load(text) or {}
-    # Either form, wrapped into the area tree the catalogue's `ci`/`cd` merge onto (si#344), and the
-    # transparent level folded away after the merge - exactly as `load` does it.
-    _, phase_areas = treeform.elide_transparent(catalogue.groups)
-    tree = (treeform.tree_from_groups(data["groups"] or {}, phase_areas) if data.get("groups") is not None
-            else treeform.tree_from_areas(data))
+    # The ci / cd / support sections as one tree the catalogue's `ci`/`cd` merge onto (si#344), and the
+    # transparent level folded away after the merge - exactly as `load` does it. `phases` is what the
+    # catalogue declares under each transparent area, read off it the way `load` reads it.
+    phases = {area: tuple((node.get("groups") or {}).keys())
+              for area, node in catalogue.groups.items() if node.get("transparent")}
+    tree = treeform.tree_from_areas(data, phases)
     merged = treeform.merge(catalogue.groups, tree,
                             product_tasks=dict(data.get("tasks") or {}),
                             catalogue_tasks=catalogue.tasks, locked=True)
@@ -355,7 +362,7 @@ AGILE_COCKPIT = textwrap.dedent("""
       serve: { impl: "orchestrator.cli:serve", help: "Serve it." }
       up:    { impl: "orchestrator.cli:up",    help: "Bring it up." }
       down:  { impl: "orchestrator.cli:down",  help: "Take it down." }
-    groups:
+    ci:
       build:
         commands:
           build: { task: "build:image", with: { name: app } }
@@ -365,24 +372,25 @@ AGILE_COCKPIT = textwrap.dedent("""
           unit:   { task: "test:gate", with: { name: unit } }
           system: { task: "test:gate", with: { name: system } }
           report: { task: "test:report" }
-      support:
-        commands:
-          serve: { task: serve }
-        groups:
-          git:
-            commands:
-              commit: {}
-              push: {}
-              prune-branches: {}
-              submodules: {}
       release:
         commands:
           image: { task: "release:image", with: { name: app } }
+    cd:
       deploy:
         commands:
           up:   { task: up }
           down: { task: down }
           all:  { help: "Build and start.", depends_on: [build, up], stop_on_failure: true }
+    support:
+      commands:
+        serve: { task: serve }
+      groups:
+        git:
+          commands:
+            commit: {}
+            push: {}
+            prune-branches: {}
+            submodules: {}
 """)
 
 

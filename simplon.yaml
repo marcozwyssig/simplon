@@ -2,7 +2,8 @@
 # assembles this CLI from this manifest -- if a commit breaks the assembly,
 # it fails in the same round instead of after a release.
 product: simplon
-default: dev
+cd:
+  default: dev
 
 # Simplon's own three bodies. A task is the TEMPLATE for a body, declared once here; a command under
 # `groups:` is an instance of one. These three are one-off callables rather than reusable templates - no
@@ -34,7 +35,7 @@ tasks:
 #
 # A group with no command anywhere under it does not render, so `deploy` and `monitor` are absent from
 # this CLI: simplon deploys nothing and watches nothing. They are the catalogue's, not missing.
-groups:
+ci:
   build:
     commands:
       wheel: { task: wheel }
@@ -263,53 +264,53 @@ groups:
         with:
           name: kernel
 
-  support:
-    commands:
-      doctor: { task: doctor }
-      # The manifest's second output (si#40), declared here rather than placed by the catalogue for the
-      # reason stated there: it reads the `workflows:` section below, so a product without one would get
-      # a command that refuses on its first line. Simplon has the section, so simplon declares the
-      # command - the same "used in its own house" rule that makes this repository build and test itself
-      # with the kernel it ships.
-      #
-      # It lands in `support` because the coordinate opens with a group name, and si#34 makes that a
-      # placement rather than a preference.
-      workflows: { task: "support:workflows" }
+support:
+  commands:
+    doctor: { task: doctor }
+    # The manifest's second output (si#40), declared here rather than placed by the catalogue for the
+    # reason stated there: it reads the `workflows:` section below, so a product without one would get
+    # a command that refuses on its first line. Simplon has the section, so simplon declares the
+    # command - the same "used in its own house" rule that makes this repository build and test itself
+    # with the kernel it ships.
+    #
+    # It lands in `support` because the coordinate opens with a group name, and si#34 makes that a
+    # placement rather than a preference.
+    workflows: { task: "support:workflows" }
 
-      claude-plugins:
-        task: "support:claude-plugins"
-        params:
-          dry_run: { help: "List what is missing and install nothing.", short: "-n" }      
+    claude-plugins:
+      task: "support:claude-plugins"
+      params:
+        dry_run: { help: "List what is missing and install nothing.", short: "-n" }      
 
-      # PLACED DELIBERATELY, which is what the catalogue asks of this one (si#92). It is declared there
-      # and placed nowhere, because it grants `NOPASSWD: ALL` and a docker group - "a change nobody wants
-      # appearing in a CLI they did not ask for it in". The reason simplon may now ask for it is that
-      # simplon now PROVISIONS A CI HOST: its own workflows run on a self-hosted runner, and the machine
-      # needs exactly the two privileges this grants before a job on it can reach docker.
-      #
-      # IT DOES NOT FIX A RUNNER THAT EXECUTES AS ROOT, and that is worth writing here because the two
-      # look like one problem. Measured on ghr-8: the job runs with `os.getuid() == 0`, and for root a
-      # docker GROUP is not the obstacle. The order is the other way round - give the runner a normal
-      # user first, then grant that user these privileges, then restart the service, because a group is
-      # inherited at process start and this command deliberately does not know what the service is
-      # called.
-      ci-privileges: { task: "support:ci-privileges" }
+    # PLACED DELIBERATELY, which is what the catalogue asks of this one (si#92). It is declared there
+    # and placed nowhere, because it grants `NOPASSWD: ALL` and a docker group - "a change nobody wants
+    # appearing in a CLI they did not ask for it in". The reason simplon may now ask for it is that
+    # simplon now PROVISIONS A CI HOST: its own workflows run on a self-hosted runner, and the machine
+    # needs exactly the two privileges this grants before a job on it can reach docker.
+    #
+    # IT DOES NOT FIX A RUNNER THAT EXECUTES AS ROOT, and that is worth writing here because the two
+    # look like one problem. Measured on ghr-8: the job runs with `os.getuid() == 0`, and for root a
+    # docker GROUP is not the obstacle. The order is the other way round - give the runner a normal
+    # user first, then grant that user these privileges, then restart the service, because a group is
+    # inherited at process start and this command deliberately does not know what the service is
+    # called.
+    ci-privileges: { task: "support:ci-privileges" }
 
-      # PLACED FOR THE SAME REASON AND WITH THE SAME CAVEAT (si#327). simplon provisions a CI host, so
-      # simplon is the product that may ask for the command that configures one. `ci-disk-hygiene` needs
-      # root and RESTARTS THE DOCKER ENGINE when the configuration actually moves, which kills every
-      # container on the machine - so it is a command a person types on a host, once, and never a step in
-      # a job.
-      #
-      # The other two are the in-job halves and need no privilege at all. They are placed here because
-      # the generated `ci.yml` below CALLS them by coordinate: the kernel will not write a step for a
-      # command a product has not placed, and says so in the generated file instead - which is the reason
-      # these two lines are load-bearing rather than decorative. Remove them and the workflow loses its
-      # preflight, visibly, in a diff.
-      ci-disk-hygiene: { task: "support:ci-disk-hygiene" }
-      ci-arm64: { task: "support:ci-arm64" }
-      ci-disk-preflight: { task: "support:ci-disk-preflight" }
-      ci-disk-cleanup: { task: "support:ci-disk-cleanup" }
+    # PLACED FOR THE SAME REASON AND WITH THE SAME CAVEAT (si#327). simplon provisions a CI host, so
+    # simplon is the product that may ask for the command that configures one. `ci-disk-hygiene` needs
+    # root and RESTARTS THE DOCKER ENGINE when the configuration actually moves, which kills every
+    # container on the machine - so it is a command a person types on a host, once, and never a step in
+    # a job.
+    #
+    # The other two are the in-job halves and need no privilege at all. They are placed here because
+    # the generated `ci.yml` below CALLS them by coordinate: the kernel will not write a step for a
+    # command a product has not placed, and says so in the generated file instead - which is the reason
+    # these two lines are load-bearing rather than decorative. Remove them and the workflow loses its
+    # preflight, visibly, in a diff.
+    ci-disk-hygiene: { task: "support:ci-disk-hygiene" }
+    ci-arm64: { task: "support:ci-arm64" }
+    ci-disk-preflight: { task: "support:ci-disk-preflight" }
+    ci-disk-cleanup: { task: "support:ci-disk-cleanup" }
 
 # The documentation website's data (#2). Four values here and a fifth taken from the kernel: `source:` is
 # ABSENT on purpose since si#183, so this manifest is the first consumer of the `docs/site` default rather
@@ -336,7 +337,7 @@ groups:
 # docs/site/go.sum in this working tree. It is idempotent while the pin and go.mod already agree - the normal
 # state, and both files are committed - but the first build after the pin moves leaves a real diff. A CI
 # gate asserting "working tree clean" after a site build would go red on the mechanism working correctly.
-site:
+website:
   image: "hugomods/hugo:exts-0.148.2"
   # NO `output:`, and that absence is the point since si#314: a built site is a KIND of build output, so
   # it lands in `<output>/site` - here `build/site`, because this manifest declares no `output:` either

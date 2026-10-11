@@ -17,8 +17,8 @@ It renders, mirroring the shape netctl's own `netctl.yaml` + `netctl.sh` use but
     <product>.sh                                     the entry point (bash): declares the four LAUNCH_*
                                                      params, provisions a host venv, execs the CLI
     <product>.cmd                                    the same entry point for Windows (cmd.exe)
-    <product>.yaml                                   the starter manifest (tasks/groups tree/
-                                                     environments the Pydantic loader accepts)
+    <product>.yaml                                   the starter manifest (tasks + the ci/cd/support
+                                                     tree the Pydantic loader accepts)
     <orch-dir>/requirements.txt                      the host-venv deps: the kernel pinned by version
                                                      (`simplon==...`) + product-only pins
     <orch-dir>/src/python/orchestrator/
@@ -422,10 +422,12 @@ _MANIFEST = """\
 # Sections:
 #   product       the product label (shim/manifest name + diagnostics).
 #   tasks         the BODIES, each declared once: a bare name -> { impl: "module:function", help }.
-#   groups        the COMMAND TREE, hung off the one the kernel's catalogue owns: group ->
-#                 `commands:` -> command -> { task: <name>, ... }. A command is an INSTANCE of a
-#                 task, so it never writes `impl:` itself.
-#   environments  the deployment env matrix (a backend per env) + the default env.
+#   ci            the COMMAND TREE's integration half (build, test, release), hung off the one the
+#                 kernel's catalogue owns: group -> `commands:` -> command -> { task: <name>, ... }.
+#                 A command is an INSTANCE of a task, so it never writes `impl:` itself.
+#   cd            the delivery half: the deployment env matrix (a backend per env) + the default env,
+#                 and the env-first groups (deploy, monitor) that run against one of them.
+#   support       host preflight and tooling - beside the loop, not a stage of it.
 #   layout        where YOUR tree sits, for the two things the kernel would otherwise guess.
 product: @@PRODUCT@@
 
@@ -449,7 +451,7 @@ product: @@PRODUCT@@
 #   tests: tests
 
 # --- product build data (read RAW by your paths adapter, IGNORED by the CLI engine) ---
-# The CLI engine reads only tasks/groups and ignores any other top-level section, so your product's
+# The CLI engine reads only tasks/ci/cd/support and ignores any other top-level section, so your product's
 # own build data lives here. Uncomment + extend as the pipeline grows.
 # images:
 #   app: @@PRODUCT@@:local
@@ -473,7 +475,8 @@ tasks:
 # THE COMMAND TREE, and it is not this file's invention: the kernel's catalogue declares the CI/CD loop
 # - build -> test -> release -> deploy -> monitor, plus support - and every product hangs its commands
 # off those same six slots. That is the whole point: a person moving between two Simplon products finds
-# the same groups holding the same general commands. A group name the catalogue does not declare is
+# the same groups holding the same general commands. The first three sit under `ci:`, the two env-first
+# ones under `cd:` beside the environments they run against, and `support` stands on its own. A group name the catalogue does not declare is
 # refused at load; add it to the platform's catalogue once, for everybody, or find the slot it belongs
 # in.
 #
@@ -482,7 +485,7 @@ tasks:
 # declare and leave without a single command anywhere under it is a load error naming the group: it is a
 # promise nobody kept. So grow a phase by ADDING to the list under its `commands:`, and if you truly
 # have nothing for one yet, delete the group and let the catalogue's default (nothing rendered) stand.
-groups:
+ci:
   build:
     commands:
       # WHAT YOU PRODUCE: the wheel, the image, the bundle - whatever a later phase hands over.
@@ -501,6 +504,14 @@ groups:
       # `release:artifact` and `release:image` need an `artifacts:`/`images:` section, so declare those
       # the day you have one.
       tag: { task: "release:tag" }
+cd:
+  # The deployment environment matrix (#15, folded into the one manifest per #651 strand 1): one env per
+  # row, `backend` decides HOW it is realised (`local` today; add a cloud backend and widen
+  # _VALID_BACKENDS in environments.py later). An env-first command runs against ONE env, selected as the
+  # outer token; `default` is the implicit one.
+  default: dev
+  environments:
+    dev: { backend: local, description: "Local development environment (the default)." }
   deploy:
     commands:
       # WHERE IT RUNS. `deploy` and `monitor` are ENV-FIRST in the catalogue, so the environment is the
@@ -522,22 +533,14 @@ groups:
       # WHAT IT LOOKS LIKE ONCE IT RUNS: health, logs, the version actually deployed. Env-first, like
       # `deploy` - you watch ONE environment.
       status: { task: status }
-  support:
-    commands:
-      # HOST PREFLIGHT AND TOOLING - not a stage of the loop, which is why it sits beside the five
-      # rather than among them. `install` is the catalogue's `support:install`, placed the same way
-      # `release tag` is above. The catalogue also brings `support git` (commit/push/...) and
-      # `support tasks` with no line from you at all - run `@@PRODUCT@@ support tasks catalogue` to see
-      # every coordinate it offers.
-      install: { task: "support:install" }
-
-# The deployment environment matrix (#15, folded into the one manifest per #651 strand 1): one env per
-# row, `backend` decides HOW it is realised (`local` today; add a cloud backend and widen
-# _VALID_BACKENDS in environments.py later). An env-first command runs against ONE env, selected as the
-# outer token; `default` is the implicit one.
-default: dev
-environments:
-  dev: { backend: local, description: "Local development environment (the default)." }
+support:
+  commands:
+    # HOST PREFLIGHT AND TOOLING - not a stage of the loop, which is why it sits beside the five
+    # rather than among them. `install` is the catalogue's `support:install`, placed the same way
+    # `release tag` is above. The catalogue also brings `support git` (commit/push/...) and
+    # `support tasks` with no line from you at all - run `@@PRODUCT@@ support tasks catalogue` to see
+    # every coordinate it offers.
+    install: { task: "support:install" }
 """
 
 def _render_launcher(name: str, template: str, orch_dir: str) -> str:

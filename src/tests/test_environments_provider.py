@@ -12,30 +12,29 @@ tasks:
   test: { impl: "sample.cli:test", help: "Run the suite." }
   up: { impl: "sample.cli:up", help: "Bring it up." }
 
-groups:
+ci:
   test:
     commands:
       test: { task: "test" }
+cd:
+  default: prod
+  environments:
+    dev:  { backend: local, description: "Local." }
+    test: { backend: local, description: "Trial." }
+    prod: { backend: local, description: "Live." }
   deploy:
     commands:
       up: { task: "up" }
-env_groups: [deploy]
-default: prod
-environments:
-  dev:  { backend: local, description: "Local." }
-  test: { backend: local, description: "Trial." }
-  prod: { backend: local, description: "Live." }
 """
 
 _NO_ENVIRONMENTS = """product: sample
 tasks:
   lint: { impl: "sample.cli:lint", help: "Lint it." }
 
-groups:
+ci:
   code:
     commands:
       lint: { task: "lint" }
-env_groups: []
 """
 
 

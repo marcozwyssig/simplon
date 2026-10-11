@@ -12,10 +12,10 @@ The whole top level of a manifest, and where each part is explained:
 ```yaml
 product: myctl            # the product's name
 tasks:                    # the BODIES, each a module:function, declared once
-groups:                   # the COMMAND TREE - build, test, release, deploy, monitor, support
-default: dev              # the environment used when no env token is given
-environments:             # the environment matrix
-site:                     # ... and any other product data section a catalogue task reads
+ci:                       # the COMMAND TREE's integration half - build, test, release
+cd:                       # the delivery half - deploy, monitor - and the environments they run in
+support:                  # host preflight and tooling, beside the loop rather than in it
+website:                  # ... and any other product data section a catalogue task reads
 ```
 
 | what you want to do | where |
@@ -44,22 +44,25 @@ any of that is also true.
 ## The command tree
 
 Groups are slots in the CI/CD loop; commands are the members of a group. The kernel's catalogue owns
-which groups exist - `build`, `test`, `release`, `deploy`, `monitor`, `support` - and a product fills
-them:
+which groups exist - `build`, `test` and `release` under `ci:`, `deploy` and `monitor` under `cd:`, and
+`support` on its own - and a product fills them:
 
 ```yaml
 product: myctl
 
-groups:
+ci:
   build:
     commands:
       wheel: { task: "pkg:wheel", help: "Build the wheel." }
-  support:
-    groups:
-      git:
-        commands:
-          commit: { task: "vcs:commit" }
+support:
+  groups:
+    git:
+      commands:
+        commit: { task: "vcs:commit" }
 ```
+
+`ci` and `cd` are **areas**, not groups: they say which half of the loop a phase belongs to, and they never
+appear on the command line. The command above is `myctl build wheel`, exactly as it would be without them.
 
 A group node has exactly four keys: `help`, `env_first`, `groups` and `commands`. Members live under
 `commands:` rather than directly on the node, and that is not tidiness - without it `help:` would be a
@@ -89,7 +92,7 @@ tasks:
     impl: "orchestrator.cli:build_wheel"
     help: "Build the wheel."
 
-groups:
+ci:
   build:
     commands:
       wheel: { task: "wheel" }
@@ -103,7 +106,7 @@ a colon names a catalogue coordinate, whose body lives in the kernel.
 The same body, placed twice, with different data:
 
 ```yaml
-groups:
+ci:
   test:
     commands:
       unit:   { task: "test:gate", with: { name: "unit" },   help: "Run the unit suite." }
@@ -214,21 +217,22 @@ menu meant for a human.
 ## Environments
 
 ```yaml
-env_groups: [deploy, monitor]
-
-default: dev
-environments:
-  dev:  { backend: local,    description: "Local development environment." }
-  prod: { backend: exoscale, description: "Production." }
+cd:
+  default: dev
+  environments:
+    dev:  { backend: local,    description: "Local development environment." }
+    prod: { backend: exoscale, description: "Production." }
+  deploy:
+    commands:
+      up: { task: "up" }
 ```
 
-A group's env gate is normally the **catalogue's** statement, not yours: `deploy` and `monitor` carry
-`env_first: true` on their nodes there, so every product gates them the same way and no manifest has to
-say it twice. `env_groups:` is the flat spelling of the same statement, and it is held to the same rule:
-listing a group the catalogue already gates is a harmless restatement, listing one the catalogue
-declares **not** env-first is refused exactly as `env_first: true` on that group's node is. It is the
-manifest's own statement only for a **top-level group no catalogue owns**. Everything not gated refuses
-the token. See [Environments](../../with-what/environments/) for what the dispatch does with it.
+The environment matrix stands under `cd:`, beside the commands that run against it. What stands under
+`cd:` takes an environment and nothing else does: the catalogue's `cd` node is env-first as a whole, so
+`deploy` and `monitor` are gated the same way in every product and no manifest has to say it. A group
+under `ci:` that declares `env_first:` is refused - a build, a test and a release run the same in every
+environment. Everything not gated refuses the token. See [Environments](../../with-what/environments/) for
+what the dispatch does with it.
 
 ## Product data sections
 
@@ -237,7 +241,7 @@ catalogue task a promise to three products instead of a convenience for one: the
 kernel's, the values are the product's, and the section is where they meet.
 
 ```yaml
-site:
+website:
   image: "hugomods/hugo:exts-0.148.2"
   output: "build/website"
   base_url: "https://example.github.io/myctl/"
@@ -627,9 +631,10 @@ are refused for the same reason.
 per stage:
 
 ```yaml
-environments:
-  test: { backend: portainer, carrier: haus, stack: app-test, deploys: latest }
-  prod: { backend: portainer, carrier: haus, stack: app-prod, deploys: "1.4.0" }
+cd:
+  environments:
+    test: { backend: portainer, carrier: haus, stack: app-test, deploys: latest }
+    prod: { backend: portainer, carrier: haus, stack: app-prod, deploys: "1.4.0" }
 
 workflows:
   rollout:
@@ -978,30 +983,31 @@ carriers:
       endpoint: 1               # Portainer's own id; 1 is what a single-host install has
       insecure: true            # Portainer makes its own certificate on first start
 
-environments:
-  test:
-    backend: portainer
-    carrier: hausportainer
-    stack: myctl-test
-    repository:
-      url: github.com/you/myctl
-      compose: deploy/docker-compose.yml   # default: docker-compose.yml at the root
-  prod:
-    backend: portainer
-    carrier: hausportainer      # the SAME carrier
-    stack: myctl-prod
-    repository:
-      url: github.com/you/myctl
-      ref: release/2.x          # default: main; `refs/tags/v2.1.0` deploys a tag
-      compose: deploy/docker-compose.yml
-      credential_from: GIT      # a PREFIX -> GIT_USER, GIT_PASSWORD; omit it for a public repository
-    required:                   # must have a value, or the deployment stops
-      - COCKPIT_DATA_DIR
-      - BACKUP_DIR
-      - HTTP_BIND
-    optional:                   # travels when set, absent when not
-      - SMALLINVOICE_CLIENT_SECRET
-      - APP_TITLE
+cd:
+  environments:
+    test:
+      backend: portainer
+      carrier: hausportainer
+      stack: myctl-test
+      repository:
+        url: github.com/you/myctl
+        compose: deploy/docker-compose.yml   # default: docker-compose.yml at the root
+    prod:
+      backend: portainer
+      carrier: hausportainer      # the SAME carrier
+      stack: myctl-prod
+      repository:
+        url: github.com/you/myctl
+        ref: release/2.x          # default: main; `refs/tags/v2.1.0` deploys a tag
+        compose: deploy/docker-compose.yml
+        credential_from: GIT      # a PREFIX -> GIT_USER, GIT_PASSWORD; omit it for a public repository
+      required:                   # must have a value, or the deployment stops
+        - COCKPIT_DATA_DIR
+        - BACKUP_DIR
+        - HTTP_BIND
+      optional:                   # travels when set, absent when not
+        - SMALLINVOICE_CLIENT_SECRET
+        - APP_TITLE
 ```
 
 **The sizes you leave out are the ones the community Proxmox helper script uses** - 2 cores, 2048 MB,
@@ -1052,8 +1058,9 @@ name still wins.
 repository describes.**
 
 ```yaml
-environments:
-  dev: { backend: devcontainer, description: "The development container." }
+cd:
+  environments:
+    dev: { backend: devcontainer, description: "The development container." }
 ```
 
 `deploy dev up local` brings up what `.devcontainer/devcontainer.json` describes; `deploy dev down`
@@ -1337,7 +1344,7 @@ The manifest above becomes:
 tasks:
   wheel: { impl: "orchestrator.cli:build_wheel", help: "Build the wheel." }
 
-groups:
+ci:
   build:
     commands:
       wheel: { task: "wheel" }
@@ -1364,7 +1371,8 @@ Seven things to know while you convert:
   platform's *own* body, it is a refinement and needs no key.
 - **A `tasks:` entry with `group:` keeps its body and loses the key.** Its body is already where the
   tree form wants it; what makes it flat is that it places its own command. Delete `group:`, and add the
-  command under `groups: <group>: commands:` pointing at the task with `task:`. Leaving the key behind is
+  command under its group's `commands:` - in `ci:`, `cd:` or `support:` - pointing at the task with
+  `task:`. Leaving the key behind is
   the one case where a manifest fixed by eye is refused a second time.
 - **A coordinate-shaped name with its own `impl:` is *your* body, not the platform's.** `docs:site:` with
   no `impl:` names the kernel's task and copies nothing; `docs:site:` carrying an `impl:` was never a

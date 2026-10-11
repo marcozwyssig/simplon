@@ -62,7 +62,7 @@ tasks:
   ctxbody:   {{ impl: "test_suites_command_gate:reads_the_command_path", help: "Takes a CLI context." }}
   strict:    {{ impl: "simplon.test_impls:needs_a_value", help: "Needs a value nothing pins." }}
   framed:    {{ impl: "test_suites_command_gate:framed_body", help: "A body with a typer default." }}
-groups:
+ci:
   build:
     commands:
       compile: {{ task: toolchain, with: {{ rc: {compile_rc}, tag: "compile" }}, help: "Compile." }}

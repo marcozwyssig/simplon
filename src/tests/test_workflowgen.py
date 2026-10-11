@@ -39,16 +39,15 @@ tasks:
   stamp: { impl: "simplon.test_impls:nullary", help: "Stamp the tree." }
   suite: { impl: "simplon.test_impls:nullary", help: "Run every test." }
 
-groups:
+ci:
   test:
     commands:
       all: { task: suite }
-  support:
-    groups:
-      git:
-        commands:
-          stamp: { task: "stamp" }
-env_groups: []
+support:
+  groups:
+    git:
+      commands:
+        stamp: { task: "stamp" }
 """
 
 
@@ -1496,7 +1495,7 @@ tasks:
   wheel:   { impl: "simplon.test_impls:nullary", help: "Build the wheel.", unattended: true }
   ask:     { impl: "simplon.test_impls:nullary", help: "Ask somebody." }
 
-groups:
+ci:
   build:
     commands:
       wheel: { task: wheel }
@@ -1505,7 +1504,6 @@ groups:
       suite: { task: suite }
       walk:  { task: "test:walk" }
       all:   { depends_on: [suite], help: "Every gate." }
-env_groups: []
 """
 
 _DERIVED = """
@@ -1670,11 +1668,10 @@ def test_a_group_whose_every_leaf_needs_a_person_is_refused_rather_than_rendered
     only_attended = manifest_mod.load("""
 tasks:
   suite: { impl: "simplon.test_impls:nullary", help: "x", unattended: true }
-groups:
+ci:
   test:
     commands:
       walk: { task: "test:walk" }
-env_groups: []
 """, catalogue=catalogue_mod.load())
 
     with pytest.raises(ValueError) as exc:
@@ -1693,14 +1690,14 @@ env_groups: []
 _ROLLOUT_PRODUCT = """
 tasks:
   gate: { impl: "simplon.test_impls:nullary", help: "Gate.", unattended: true }
-groups:
+ci:
   test:
     commands:
       gate: { task: gate }
+cd:
   deploy:
     commands:
       up: { task: "deploy:up" }
-env_groups: [deploy]
 """
 
 _ROLLOUT_SECTION = """
@@ -1883,15 +1880,14 @@ _WITH_DISK_COMMANDS = """
 tasks:
   suite: { impl: "simplon.test_impls:nullary", help: "Run every test." }
 
-groups:
+ci:
   test:
     commands:
       all: { task: suite }
-  support:
-    commands:
-      ci-disk-preflight: { task: "support:ci-disk-preflight" }
-      ci-disk-cleanup: { task: "support:ci-disk-cleanup" }
-env_groups: []
+support:
+  commands:
+    ci-disk-preflight: { task: "support:ci-disk-preflight" }
+    ci-disk-cleanup: { task: "support:ci-disk-cleanup" }
 """
 
 _SELF_HOSTED = """

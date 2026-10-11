@@ -17,7 +17,7 @@ tasks:
   down:    { impl: "orchestrator.cli:down",    help: "Tear the deployment down (placeholder)." }
   status:  { impl: "orchestrator.cli:status",  help: "Report what is running in the target environment (placeholder)." }
 
-groups:
+ci:
   # All three sit under `build`, which is where `support:toolchain` writes them - not under `test`,
   # which is where the design's own command table put `unit` and `analyse`. si#111 settled that in the
   # scaffolder's favour: `build` holds the raw toolchain invocations, which return the container's rc
@@ -65,6 +65,10 @@ groups:
   release:
     commands:
       tag: { task: "release:tag" }
+cd:
+  default: dev
+  environments:
+    dev: { backend: local, description: "Local development environment (the default)." }
   deploy:
     commands:
       up:   { task: up }
@@ -72,12 +76,12 @@ groups:
   monitor:
     commands:
       status: { task: status }
-  support:
-    commands:
-      install:   { task: "support:install" }
-      # Declared, and it raises `KeyError: 'version'` on every language (si#105). It is here because the
-      # chapter shows that refusal; a product that could not reach the command at all could not show it.
-      toolchain: { task: "support:toolchain" }
+support:
+  commands:
+    install:   { task: "support:install" }
+    # Declared, and it raises `KeyError: 'version'` on every language (si#105). It is here because the
+    # chapter shows that refusal; a product that could not reach the command at all could not show it.
+    toolchain: { task: "support:toolchain" }
 
 # NOT optional, and nothing writes it: `toolchain:run` resolves the lab instance for its cache-volume
 # names BEFORE it looks at whether the command declares a cache, so a product scaffolded by
@@ -86,7 +90,3 @@ instance:
   env_var: DOTNETDEMO_INSTANCE
   default: dev
   max_id_len: 2
-
-default: dev
-environments:
-  dev: { backend: local, description: "Local development environment (the default)." }

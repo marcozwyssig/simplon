@@ -38,8 +38,6 @@ artifacts:
     repository: demo-conan
     source: build/conan/demo.tgz
     tag: 1.0.0
-groups: {}
-env_groups: []
 """
 
 

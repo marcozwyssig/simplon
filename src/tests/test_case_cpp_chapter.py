@@ -174,7 +174,7 @@ def _raw() -> dict:
 
 def _bodies() -> dict[str, dict]:
     """The `with: body:` block of every build command the fixture declares, by command name."""
-    commands = _raw()["groups"]["build"]["commands"]
+    commands = _raw()["ci"]["build"]["commands"]
     found = {name: spec["with"]["body"] for name, spec in commands.items()}
     if not found:
         raise ValueError(f"{FIXTURE} declares no build command, so nothing could be compared")
@@ -183,7 +183,7 @@ def _bodies() -> dict[str, dict]:
 
 def _environments() -> set[str]:
     """The env names the fixture declares - the outer token an env-first command takes."""
-    names = set(_raw().get("environments") or {})
+    names = set((_raw().get("cd") or {}).get("environments") or {})
     if not names:
         raise ValueError(f"{FIXTURE} declares no environment, so an env-first command could not be read")
     return names
@@ -511,7 +511,7 @@ def test_the_block_the_chapter_shows_the_scaffolder_writing_is_the_one_it_writes
     """
     # arrange
     manifest = tmp_path / "cppdemo.yaml"
-    manifest.write_text("product: cppdemo\ngroups:\n  build:\n    commands: {}\n", encoding="utf-8")
+    manifest.write_text("product: cppdemo\nci:\n  build:\n    commands: {}\n", encoding="utf-8")
     monkeypatch.setattr(toolchain, "_manifest_path", lambda: manifest)
     quoted = [block for block in _blocks("text") if "task: toolchain:run" in block]
 
@@ -566,7 +566,7 @@ def test_the_scaffolded_manifest_now_assembles_and_the_chapter_says_so(tmp_path,
     """
     # arrange
     manifest = tmp_path / "cppdemo.yaml"
-    manifest.write_text("product: cppdemo\ngroups:\n  build:\n    commands: {}\n", encoding="utf-8")
+    manifest.write_text("product: cppdemo\nci:\n  build:\n    commands: {}\n", encoding="utf-8")
     monkeypatch.setattr(toolchain, "_manifest_path", lambda: manifest)
     toolchain.scaffold(LANGUAGE, version=VERSION)
     parsed = manifest_mod.load(manifest.read_text(encoding="utf-8"), catalogue=catalogue_mod.load())

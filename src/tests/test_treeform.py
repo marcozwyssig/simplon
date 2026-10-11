@@ -421,8 +421,11 @@ def test_a_mixed_manifest_loads_both_halves(tmp_path):
         tasks:
           vcs:push: { impl: simplon.tasks.vcs:push, help: "push it." }
         groups:
-          build: { help: "Produce the artefacts." }
-          test:  { help: "Verify them." }
+          ci:
+            transparent: true
+            groups:
+              build: { help: "Produce the artefacts." }
+              test:  { help: "Verify them." }
     """))
     text = textwrap.dedent("""
         product: demo
@@ -430,7 +433,7 @@ def test_a_mixed_manifest_loads_both_halves(tmp_path):
           img: { impl: "demo.tooling:image", help: "Build an image." }
           unit-java: { impl: "demo.cli:unit_java", help: "Run the Java unit gate." }
 
-        groups:
+        ci:
           build:
             commands:
               web-image: { task: "img", with: { key: "web" }, help: "Build the web image." }
@@ -453,15 +456,18 @@ def test_a_catalogue_group_the_product_never_fills_does_not_render(tmp_path):
     catalogue = catalogue_mod.loads(textwrap.dedent("""
         tasks: {}
         groups:
-          build:   { help: "Produce the artefacts." }
-          test:    { help: "Verify them." }
-          release: { help: "Publish them." }
+          ci:
+            transparent: true
+            groups:
+              build:   { help: "Produce the artefacts." }
+              test:    { help: "Verify them." }
+              release: { help: "Publish them." }
     """))
     text = textwrap.dedent("""
         product: demo
         tasks:
           img: { impl: "demo.tooling:image", help: "Build an image." }
-        groups:
+        ci:
           build:
             commands:
               web-image: { task: img, help: "Build the web image." }
@@ -487,8 +493,11 @@ def test_a_catalogue_group_the_product_fills_old_form_still_renders_even_though_
     catalogue = catalogue_mod.loads(textwrap.dedent("""
         tasks: {}
         groups:
-          build: { help: "Produce the artefacts." }
-          test:  { help: "Verify them." }
+          ci:
+            transparent: true
+            groups:
+              build: { help: "Produce the artefacts." }
+              test:  { help: "Verify them." }
     """))
     text = textwrap.dedent("""
         product: demo
@@ -496,7 +505,7 @@ def test_a_catalogue_group_the_product_fills_old_form_still_renders_even_though_
           img: { impl: "demo.tooling:image", help: "Build an image." }
           unit-java: { impl: "demo.cli:unit_java", help: "Run the Java unit gate." }
 
-        groups:
+        ci:
           build:
             commands:
               web-image: { task: "img", help: "Build the web image." }
@@ -521,8 +530,11 @@ def test_a_product_adding_to_a_group_the_platform_already_placed_a_command_in_ke
         tasks:
           test:unit-py: { impl: "simplon.tasks.x:y", help: "run the python gate." }
         groups:
-          build: { help: "Produce the artefacts." }
-          test:  { help: "Verify them.", commands: { unit-py: { task: "test:unit-py", help: "run it." } } }
+          ci:
+            transparent: true
+            groups:
+              build: { help: "Produce the artefacts." }
+              test:  { help: "Verify them.", commands: { unit-py: { task: "test:unit-py", help: "run it." } } }
     """))
     text = textwrap.dedent("""
         product: demo
@@ -530,7 +542,7 @@ def test_a_product_adding_to_a_group_the_platform_already_placed_a_command_in_ke
           img: { impl: "demo.tooling:image", help: "Build an image." }
           unit-java: { impl: "demo.cli:unit_java", help: "Run the Java unit gate." }
 
-        groups:
+        ci:
           build:
             commands:
               web-image: { task: "img", help: "Build the web image." }
@@ -571,10 +583,9 @@ def test_a_product_command_that_points_a_placed_name_at_a_different_task_is_reje
         product: netctl
         tasks:
           install: { impl: "orchestrator.cli:install", help: "Provision Colima and containerlab." }
-        groups:
-          support:
-            commands:
-              install: { task: install, help: "Provision Colima and containerlab." }
+        support:
+          commands:
+            install: { task: install, help: "Provision Colima and containerlab." }
     """)
 
     # act / assert: the message must name BOTH bodies by their real `module:function` - `install` and
@@ -593,10 +604,9 @@ def test_a_product_refining_help_and_params_on_a_placed_command_stays_silent():
     catalogue = _support_install_catalogue()
     text = textwrap.dedent("""
         product: netctl
-        groups:
-          support:
-            commands:
-              install: { task: "support:install", help: "Provision the host tools this product needs." }
+        support:
+          commands:
+            install: { task: "support:install", help: "Provision the host tools this product needs." }
     """)
 
     # act
@@ -616,10 +626,9 @@ def test_a_product_command_with_explicit_override_replaces_the_placed_task_silen
         product: netctl
         tasks:
           install: { impl: "orchestrator.cli:install", help: "Provision Colima and containerlab." }
-        groups:
-          support:
-            commands:
-              install: { task: install, override: true, help: "Provision Colima and containerlab." }
+        support:
+          commands:
+            install: { task: install, override: true, help: "Provision Colima and containerlab." }
     """)
 
     # act
@@ -690,6 +699,7 @@ def test_an_import_section_is_rejected():
 
 
 def test_a_tree_form_manifest_passes_the_flat_form_check():
+    # si#344 Task 9: becomes a cut diagnosis
     # arrange / act / assert: no exception
     treeform.check_no_old_form({"product": "demo", "groups": {}})
     treeform.check_no_old_form({"product": "demo",
@@ -717,7 +727,7 @@ product: demo
 tasks:
   placed: { impl: "simplon.tasks.docs:site", help: "Placed." }
   offered: { impl: "simplon.tasks.docs:site", help: "Declared and not placed - an offer." }
-groups:
+ci:
   build:
     commands:
       placed: { task: "placed", help: "The one command." }
@@ -742,6 +752,7 @@ groups:
 # flat groups, `import:`, and coordinate-keyed `tasks:` entries all three - which is what makes these
 # tests a measurement rather than a restatement of the renderer.
 
+# si#344 Task 9: becomes a cut diagnosis
 _REAL_OLD_MANIFEST = """
 product: simplon
 default: dev
@@ -902,11 +913,10 @@ def test_a_command_inherits_unattended_from_the_task_it_instantiates():
     loaded = _loaded("""
         tasks:
           gate: { impl: "simplon.test_impls:nullary", help: "Gate.", unattended: true }
-        groups:
+        ci:
           test:
             commands:
               gate: { task: gate }
-        env_groups: []
         """)
 
     assert loaded.commands["test"]["gate"].unattended is True
@@ -919,11 +929,10 @@ def test_a_command_may_override_what_its_task_says():
     loaded = _loaded("""
         tasks:
           gate: { impl: "simplon.test_impls:nullary", help: "Gate.", unattended: true }
-        groups:
+        ci:
           test:
             commands:
               gate: { task: gate, unattended: false }
-        env_groups: []
         """)
 
     assert loaded.commands["test"]["gate"].unattended is False
@@ -936,11 +945,10 @@ def test_a_task_that_says_nothing_leaves_the_command_saying_nothing():
     loaded = _loaded("""
         tasks:
           gate: { impl: "simplon.test_impls:nullary", help: "Gate." }
-        groups:
+        ci:
           test:
             commands:
               gate: { task: gate }
-        env_groups: []
         """)
 
     assert loaded.commands["test"]["gate"].unattended is None
@@ -954,11 +962,10 @@ def test_an_unattended_that_is_not_written_true_or_false_is_refused(value):
         _loaded(f"""
             tasks:
               gate: {{ impl: "simplon.test_impls:nullary", help: "Gate.", unattended: {value} }}
-            groups:
+            ci:
               test:
                 commands:
                   gate: {{ task: gate }}
-            env_groups: []
             """)
 
     assert "unattended" in str(exc.value)
@@ -972,11 +979,10 @@ def test_a_task_misspelling_the_flag_is_refused_rather_than_silently_ignored():
         _loaded("""
             tasks:
               gate: { impl: "simplon.test_impls:nullary", help: "Gate.", unattend: true }
-            groups:
+            ci:
               test:
                 commands:
                   gate: { task: gate }
-            env_groups: []
             """)
 
     assert "unattend" in str(exc.value)

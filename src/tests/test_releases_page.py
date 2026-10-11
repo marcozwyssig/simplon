@@ -201,7 +201,7 @@ def test_the_local_gate_reaches_the_notes_guard():
     mf = manifest_mod.load(source, catalogue=catalogue_mod.load())
 
     # act: whichever command in the `test` group instantiates the kernel's notes coordinate
-    guards = [name for name, spec in raw["groups"]["test"]["commands"].items()
+    guards = [name for name, spec in raw["ci"]["test"]["commands"].items()
               if spec.get("task") == "test:release-notes"]
     plan = mf.plan_for("all", group="test")
 

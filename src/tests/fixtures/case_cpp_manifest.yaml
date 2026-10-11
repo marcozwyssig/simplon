@@ -7,7 +7,7 @@
 # This is the manifest the C++ chapter's transcripts were produced with, on 2026-09-09.
 product: cppdemo
 
-groups:
+ci:
   build:
     commands:
       # THE FOUR THE C++ PROFILE CARRIES (si#95), in the order they run. `body:`/`where:`/`extra:` are
@@ -57,6 +57,10 @@ groups:
   release:
     commands:
       tag: { task: "release:tag" }
+cd:
+  default: dev
+  environments:
+    dev: { backend: local, description: "Local development environment (the default)." }
   deploy:
     commands:
       # The same coordinate again, filed under a different group - which is what makes `toolchain:run`
@@ -71,14 +75,10 @@ groups:
             argv: ["./build/cppdemo"]
           where: "deploy up"
           extra: []
-  support:
-    commands:
-      install: { task: "support:install" }
-      toolchain: { task: "support:toolchain" }
-
-default: dev
-environments:
-  dev: { backend: local, description: "Local development environment (the default)." }
+support:
+  commands:
+    install: { task: "support:install" }
+    toolchain: { task: "support:toolchain" }
 
 # Read by `toolchain:run` alone, and it is read even for a command that declares no caches at all
 # (si#105). `simplon init` writes no such section, so every product that adopts the uniform build has to

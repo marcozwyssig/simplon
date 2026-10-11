@@ -1467,8 +1467,13 @@ def _the_kernels_own_coordinates() -> tuple[str, ...]:
         placed |= _catalogue_placements(node)
     document = yaml.safe_load((ROOT / "simplon.yaml").read_text(encoding="utf-8")) or {}
     own: set[str] = set()
-    for node in (document.get("groups") or {}).values():
-        own |= _catalogue_placements(node)
+    # The product's tree in the ci / cd / support form (si#344): the phase groups stand under the two
+    # areas, `support` on its own, and `cd:`'s data keys (`default`, `environments`) place nothing.
+    nodes = [*(document.get("ci") or {}).values(), *(document.get("cd") or {}).values(),
+             document.get("support") or {}]
+    for node in nodes:
+        if isinstance(node, dict):
+            own |= _catalogue_placements(node)
     coordinates = placed - own
     if not coordinates:
         raise ValueError(

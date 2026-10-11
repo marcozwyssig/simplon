@@ -221,12 +221,11 @@ def _loaded(text):
 def test_an_imported_task_lands_in_the_group_its_namespace_names():
     # arrange: a product places a task without restating anything else about it
     text = """
-groups:
+ci:
   vcs:
     commands:
       commit: { task: "vcs:commit" }
       push: { task: "vcs:push" }
-env_groups: []
 """
 
     # act
@@ -240,11 +239,10 @@ env_groups: []
 def test_an_imported_task_can_be_placed_into_a_group_of_the_products_choosing():
     # arrange: netctl wants the vcs verbs under `git`
     text = """
-groups:
+ci:
   git:
     commands:
       commit: { task: "vcs:commit" }
-env_groups: []
 """
 
     # act / assert
@@ -254,11 +252,10 @@ env_groups: []
 def test_an_override_wins_over_the_catalogues_own_declaration():
     # arrange: an entry without `impl:` defines nothing and overrides what the catalogue declared
     text = """
-groups:
+ci:
   test:
     commands:
       gate: { task: "test:gate", help: "SYSTEM gate." }
-env_groups: []
 """
 
     # act
@@ -274,11 +271,10 @@ def test_an_override_that_resolves_to_no_imported_coordinate_is_rejected():
     # arrange: a silent no-op here is exactly the failure `impl:` already has - a command that quietly
     # is not there
     text = """
-groups:
+ci:
   git:
     commands:
       comit: { task: "vcs:comit" }
-env_groups: []
 """
 
     # act / assert
@@ -290,11 +286,10 @@ def test_a_coordinate_from_a_namespace_the_catalogue_does_not_carry_is_rejected(
     # arrange: the catalogue IS the coordinate space, so a name it never declared is a typo - and a typo
     # that loads clean is a command that quietly is not there
     text = """
-groups:
+ci:
   build:
     commands:
       site: { task: "docs:site" }
-env_groups: []
 """
 
     # act / assert
@@ -308,11 +303,9 @@ def test_a_products_own_definition_needs_no_catalogue_and_keeps_its_key_as_the_c
 tasks:
   disk-guard: { impl: "simplon.test_impls:nullary", help: "Guard the disk." }
 
-groups:
-  support:
-    commands:
-      disk-guard: { task: "disk-guard" }
-env_groups: []
+support:
+  commands:
+    disk-guard: { task: "disk-guard" }
 """
 
     # act
@@ -331,7 +324,6 @@ tasks:
     impl: "simplon.test_impls:nullary"
     help: "Guard the disk."
     group: support
-env_groups: []
 """
 
     # act / assert
@@ -343,11 +335,10 @@ def test_imported_tasks_are_validated_by_every_rule_a_declared_command_is():
     # arrange: expansion happens BEFORE validation, which is the point of expanding there - an imported
     # command with no help is as broken as a declared one with no help
     text = """
-groups:
+ci:
   git:
     commands:
       commit: { task: "vcs:commit", help: "" }
-env_groups: []
 """
 
     # act / assert
@@ -361,11 +352,10 @@ def test_a_manifest_with_neither_section_is_untouched_by_the_expansion():
 tasks:
   commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
 
-groups:
+ci:
   git:
     commands:
       commit: { task: "commit" }
-env_groups: []
 """
 
     # act / assert
@@ -377,13 +367,11 @@ def test_naming_a_coordinate_without_a_catalogue_is_a_manifest_error_not_an_attr
     # which reads as a broken loader rather than as the caller mistake it is. The colon is what says
     # "the platform's", so with no platform passed in there is nothing that could answer.
     text = """
-groups:
-  support:
-    groups:
-      git:
-        commands:
-          commit: { task: "vcs:commit" }
-env_groups: []
+support:
+  groups:
+    git:
+      commands:
+        commit: { task: "vcs:commit" }
 """
 
     # act / assert
@@ -411,11 +399,10 @@ def test_a_products_own_body_left_behind_by_a_coordinate_placement_is_named():
 tasks:
   commit: { impl: "simplon.test_impls:nullary", help: "The product's own commit." }
 
-groups:
+ci:
   git:
     commands:
       commit: { task: "vcs:commit" }
-env_groups: []
 """
 
     # act / assert: it is refused, and the message names the dead body rather than only the rule
@@ -437,11 +424,9 @@ tasks:
     impl: "simplon.test_impls:no_context"
     help: "Guard it differently."
 
-groups:
-  support:
-    commands:
-      disk-guard: { task: "support-disk-guard" }
-env_groups: []
+support:
+  commands:
+    disk-guard: { task: "support-disk-guard" }
 """
 
     # act / assert
@@ -465,11 +450,10 @@ tasks:
   commit: { impl: "simplon.test_impls:nullary", help: "The product's own commit." }
   push: { impl: "simplon.test_impls:no_context", help: "Declared and not placed - an offer." }
 
-groups:
+ci:
   git:
     commands:
       commit: { task: "commit" }
-env_groups: []
 """
 
     # act
@@ -485,8 +469,15 @@ env_groups: []
 
 _SHAPED = """
 taxonomy:
-  build:   { help: "Produce the artefacts." }
-  deploy:  { help: "Put them somewhere.", env_first: true }
+  ci:
+    transparent: true
+    groups:
+      build:   { help: "Produce the artefacts." }
+  cd:
+    transparent: true
+    env_first: true
+    groups:
+      deploy:  { help: "Put them somewhere." }
   support:
     help: "Host upkeep."
     groups:
@@ -504,11 +495,10 @@ def test_a_product_contributes_members_to_a_group_the_catalogue_shapes():
 tasks:
   compile: { impl: "simplon.test_impls:nullary", help: "Compile." }
 
-groups:
+ci:
   build:
     commands:
       compile: { task: "compile" }
-env_groups: []
 """
 
     # act
@@ -530,11 +520,10 @@ taxonomy:
 tasks:
   compile: { impl: "simplon.test_impls:nullary", help: "Compile." }
 
-groups:
+ci:
   build:
     commands:
       compile: { task: "compile" }
-env_groups: []
 """
 
     # act / assert
@@ -549,11 +538,10 @@ def test_env_gating_comes_with_the_shape_so_the_product_need_not_restate_it():
 tasks:
   up: { impl: "simplon.test_impls:nullary", help: "Bring it up." }
 
-groups:
+cd:
   deploy:
     commands:
       up: { task: "up" }
-env_groups: []
 """
 
     # act
@@ -574,11 +562,10 @@ def test_a_group_the_catalogue_does_not_declare_is_rejected():
 tasks:
   thing: { impl: "simplon.test_impls:nullary", help: "Do the thing." }
 
-groups:
+ci:
   bespoke:
     commands:
       thing: { task: "thing" }
-env_groups: []
 """
 
     # act / assert: the message has to name the way out, because "not allowed" alone leaves an author
@@ -599,11 +586,10 @@ tasks:
     impl: "simplon.test_impls:nullary"
     help: "Very specific."
 
-groups:
+ci:
   build:
     commands:
       something-only-this-product-has: { task: "something-only-this-product-has" }
-env_groups: []
 """
 
     # act
@@ -621,13 +607,11 @@ def test_a_nested_group_the_catalogue_declares_is_reachable_by_its_dotted_path()
 tasks:
   push: { impl: "simplon.test_impls:nullary", help: "Push." }
 
-groups:
-  support:
-    groups:
-      git:
-        commands:
-          push: { task: "push" }
-env_groups: []
+support:
+  groups:
+    git:
+      commands:
+        push: { task: "push" }
 """
 
     # act
@@ -649,11 +633,10 @@ tasks:
 tasks:
   thing: { impl: "simplon.test_impls:nullary", help: "Do the thing." }
 
-groups:
+ci:
   bespoke:
     commands:
       thing: { task: "thing" }
-env_groups: []
 """
 
     # act
@@ -735,12 +718,11 @@ def test_the_shipped_gate_task_documents_name_while_every_real_instantiation_pin
     # documents a parameter once and every pinning instance still resolves clean.
     cat = catalogue.load()
     text = """
-groups:
+ci:
   test:
     commands:
       system:              { task: "test:gate", with: { name: system } }
       acceptance-dataplane: { task: "test:gate", with: { name: acceptance-dataplane } }
-env_groups: []
 """
 
     # act
@@ -812,29 +794,32 @@ def test_a_groups_block_that_is_not_a_mapping_is_rejected():
         catalogue.loads(text)
 
 
-def test_an_old_form_product_still_cannot_invent_a_group_after_the_tree_moved():
+def test_a_product_still_cannot_invent_a_group_after_the_tree_moved():
     # arrange: the netctl#1462 lock, now reading the tree instead of the deleted `taxonomy:` block. Not
     # a hypothetical - Plan 1 Task 7 removed the block the lock used to read.
     cat = catalogue.loads(textwrap.dedent("""
         tasks:
           vcs:push: { impl: simplon.tasks.vcs:push, help: "push it." }
         groups:
-          build: { help: "Produce the artefacts." }
+          ci:
+            transparent: true
+            groups:
+              build: { help: "Produce the artefacts." }
     """))
-    old_form = textwrap.dedent("""
+    text = textwrap.dedent("""
         product: demo
         tasks:
           yeehaw: { impl: "demo.cli:yeehaw", help: "ride." }
 
-        groups:
+        ci:
           wildwest:
             commands:
               yeehaw: { task: "yeehaw" }
     """)
 
     # act / assert
-    with pytest.raises(ValueError, match="does not declare"):
-        manifest.load(old_form, catalogue=cat)
+    with pytest.raises(ValueError, match="'ci.wildwest' names a group the platform's tree does not declare"):
+        manifest.load(text, catalogue=cat)
 
 
 # --- si#267: the catalogue says what a machine may run unwatched --------------------------------------

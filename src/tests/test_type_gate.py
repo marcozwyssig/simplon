@@ -168,7 +168,7 @@ def _gate_command() -> str:
     by the test named above, and pinning it a second time here would turn a rename into two failures
     saying the same thing - and would make this helper's own promise false.
     """
-    commands = _manifest()["groups"]["test"]["commands"]
+    commands = _manifest()["ci"]["test"]["commands"]
     placed = [name for name, spec in commands.items() if spec.get("task") == COORDINATE]
     assert len(placed) == 1, (
         f"simplon's `test` group no longer instantiates {COORDINATE} exactly once - found {placed}; si#8 "
@@ -216,7 +216,7 @@ def test_theManifestPlacesTheKernelsOwnTypeGate() -> None:
     # assert: a command in the `test` group instantiates the coordinate. Reading the manifest rather than
     # the loaded model is deliberate - what si#8 is about is the DECLARATION being present in this file,
     # and a command that merely resolves would still be one somebody could delete here without noticing.
-    commands = data["groups"]["test"]["commands"]
+    commands = data["ci"]["test"]["commands"]
     assert commands["typecheck-python"]["task"] == COORDINATE
 
 

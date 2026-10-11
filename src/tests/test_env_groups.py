@@ -39,7 +39,9 @@ tasks:
 """
 
 #: One command placed in one group, with the group's name and the `env_groups:` entry left open: every
-#: case below is that same manifest with the two spellings varied.
+#: case below is that same manifest with the two spellings varied. `env_groups:` exists only in the
+#: `groups:` form, so this module's subject IS the old form and its manifests stay in it.
+# si#344 Task 9: becomes a cut diagnosis
 _PRODUCT = """
 tasks:
   compile: { impl: "simplon.test_impls:nullary", help: "Compile." }
@@ -73,6 +75,7 @@ def test_env_groups_cannot_switch_on_a_group_the_platform_shapes():
 def test_the_back_door_and_the_front_door_are_refused_with_the_same_reason():
     # arrange: `env_first: true` on the node is the front door, and it has always been refused. The two
     # refusals must give the same reason and the same way out, or the back door is merely a second rule.
+    # si#344 Task 9: becomes a cut diagnosis
     front = """
 tasks:
   compile: { impl: "simplon.test_impls:nullary", help: "Compile." }

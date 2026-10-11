@@ -22,7 +22,7 @@ _MANIFEST = """
 tasks:
   seed: { impl: "simplon.test_impls:seed", help: "Seed the lab." }
 
-groups:
+ci:
   lab:
     commands:
       seed: { task: "seed", with: { sites: "zh" } }
@@ -132,10 +132,9 @@ def test_a_command_name_with_a_dash_becomes_a_legal_identifier(tmp_path):
 tasks:
   disk-guard: { impl: "simplon.test_impls:seed", help: "Guard the disk." }
 
-groups:
-  support:
-    commands:
-      disk-guard: { task: "disk-guard" }
+support:
+  commands:
+    disk-guard: { task: "disk-guard" }
 """)
 
     # act
@@ -153,7 +152,7 @@ def test_a_variadic_body_renders_a_command_with_no_declared_parameters():
 tasks:
   gradle: { impl: "simplon.test_impls:gradle", help: "Run gradle.", passthrough_args: true }
 
-groups:
+ci:
   build:
     commands:
       gradle: { task: "gradle" }
@@ -173,7 +172,7 @@ def test_a_command_whose_impl_cannot_be_imported_fails_at_render():
 tasks:
   seed: { impl: "simplon.nope:missing", help: "Seed the lab." }
 
-groups:
+ci:
   lab:
     commands:
       seed: { task: "seed" }
@@ -193,7 +192,7 @@ def test_an_impl_less_aggregate_is_rendered_and_dispatches_through_the_product()
 tasks:
   seed: { impl: "simplon.test_impls:seed", help: "Seed the lab." }
 
-groups:
+ci:
   build:
     commands:
       build: { depends_on: ["seed"], help: "Build it." }
@@ -285,7 +284,7 @@ tasks:
     impl: "simplon.test_impls:seed"
     help: "Seed it.\\"\\"\\"\\nimport os\\nBREACH = os.getcwd()\\nx = \\"\\"\\""
 
-groups:
+ci:
   lab:
     commands:
       seed: { task: "seed" }
@@ -308,7 +307,7 @@ def test_a_command_name_containing_a_quote_cannot_escape_the_task_decorator():
 tasks:
   seed: { impl: "simplon.test_impls:seed", help: "Seed it." }
 
-groups:
+ci:
   lab:
     commands:
       'se"ed': { task: "seed" }
@@ -325,7 +324,7 @@ def test_a_command_named_after_a_python_keyword_is_rejected():
 tasks:
   import: { impl: "simplon.test_impls:seed", help: "Import it." }
 
-groups:
+ci:
   lab:
     commands:
       import: { task: "import" }
@@ -344,7 +343,7 @@ def test_a_with_value_yaml_typed_into_a_datetime_is_rejected():
 tasks:
   seed: { impl: "simplon.test_impls:seed", help: "Seed it." }
 
-groups:
+ci:
   lab:
     commands:
       seed: { task: "seed", with: { sites: 2026-01-01 } }
@@ -362,7 +361,7 @@ def test_a_required_parameter_stays_required(tmp_path):
 tasks:
   pin: { impl: "simplon.test_impls:needs_site", help: "Pin a site." }
 
-groups:
+ci:
   lab:
     commands:
       pin: { task: "pin" }
@@ -383,7 +382,7 @@ def test_a_body_without_a_context_parameter_is_not_handed_one(tmp_path):
 tasks:
   commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
 
-groups:
+ci:
   git:
     commands:
       commit: { task: "commit" }
@@ -403,7 +402,7 @@ def test_a_body_with_no_parameters_at_all_is_called_with_none(tmp_path):
 tasks:
   push: { impl: "simplon.test_impls:nullary", help: "Push." }
 
-groups:
+ci:
   git:
     commands:
       push: { task: "push" }
@@ -425,7 +424,7 @@ def test_binding_the_context_parameter_by_name_is_rejected():
 tasks:
   seed: { impl: "simplon.test_impls:seed", help: "Seed it." }
 
-groups:
+ci:
   lab:
     commands:
       seed: { task: "seed", with: { ctx: "nonsense" } }
@@ -447,7 +446,7 @@ tasks:
     help: "Delete merged branches."
     params: { dry_run: { help: "preview only", short: "-n" } }
 
-groups:
+ci:
   git:
     commands:
       prune-branches: { task: "prune-branches" }
@@ -467,12 +466,11 @@ def test_a_nested_group_is_named_by_its_own_segment_and_addressed_by_its_path():
 tasks:
   push: { impl: "simplon.test_impls:nullary", help: "Push." }
 
-groups:
-  support:
-    groups:
-      git:
-        commands:
-          push: { task: "push" }
+support:
+  groups:
+    git:
+      commands:
+        push: { task: "push" }
 """)
 
     # act
@@ -485,14 +483,13 @@ groups:
 
 def test_a_nested_env_first_group_spells_its_usage_hint_with_spaces():
     # arrange: the hint is a command line, so a dotted path there would be unusable. A NESTED group takes
-    # its env-first flag from the taxonomy node - `env_groups:` names top-level groups only.
+    # its env-first flag from the tree - here from `cd:`, which is env-first as a whole (si#344).
     m = _load("""
 tasks:
   up: { impl: "simplon.test_impls:nullary", help: "Bring it up." }
 
-groups:
+cd:
   cloud:
-    env_first: true
     groups:
       stack:
         commands:
@@ -517,7 +514,7 @@ tasks:
     help: "Show logs."
     params: { dry_run: { help: "follow the log", short: "-f", short_first: true } }
 
-groups:
+cd:
   monitor:
     commands:
       logs: { task: "logs" }
@@ -539,7 +536,7 @@ tasks:
     help: "Show logs."
     params: { dry_run: { help: "follow the log", short: "-f" } }
 
-groups:
+cd:
   monitor:
     commands:
       logs: { task: "logs" }
@@ -564,7 +561,7 @@ tasks:
     help: "Delete merged branches."
     params: { dry_run: { help: "preview only" } }
 
-groups:
+ci:
   git:
     commands:
       prune-branches: { task: "prune-branches" }
@@ -587,7 +584,7 @@ tasks:
     help: "Delete merged branches."
     params: { dry_run: { help: "preview only" } }
 
-groups:
+ci:
   git:
     commands:
       prune-branches: { task: "prune-branches" }
@@ -613,10 +610,9 @@ tasks:
     help: "Drive the proxy."
     params: { member: { help: "the group member to run; omit to list them", argument: true, metavar: "[up|down|status|repos|cleanup]" } }
 
-groups:
-  support:
-    commands:
-      nexus: { task: "nexus" }
+support:
+  commands:
+    nexus: { task: "nexus" }
 """)
 
     # act
@@ -640,10 +636,9 @@ tasks:
     help: "Drive the proxy."
     params: { member: { argument: true, metavar: "[up|down]" } }
 
-groups:
-  support:
-    commands:
-      nexus: { task: "nexus" }
+support:
+  commands:
+    nexus: { task: "nexus" }
 """)
 
     # act
@@ -663,7 +658,7 @@ tasks:
     help: "Pin a site."
     params: { site: { help: "site name (e.g. be)" } }
 
-groups:
+ci:
   lab:
     commands:
       pin: { task: "pin" }
@@ -685,7 +680,7 @@ tasks:
   prune-branches: { impl: "simplon.test_impls:pruner", help: "Delete merged branches." }
   other: { impl: "simplon.test_impls:nullary", help: "Other." }
 
-groups:
+ci:
   git:
     commands:
       prune-branches: { task: "prune-branches" }
@@ -714,7 +709,7 @@ tasks:
   gradle: { impl: "simplon.test_impls:gradle", help: "Run gradle.", passthrough_args: true }
   package: { impl: "simplon.test_impls:nullary", help: "Package it." }
 
-groups:
+ci:
   build:
     commands:
       build: { depends_on: ["diff"], help: "Build it." }
@@ -724,14 +719,14 @@ groups:
       all: { task: "all" }
       unit: { task: "unit" }
       internal: { task: "internal", hidden: true }
+  package:
+    commands:
+      package: { task: "package" }
+cd:
   deploy:
     commands:
       all: { task: "deploy-all" }
       gradle: { task: "gradle" }
-  package:
-    commands:
-      package: { task: "package" }
-env_groups: [deploy]
 """
 
 
@@ -852,13 +847,11 @@ def test_a_nested_group_registers_beneath_its_parent(tmp_path):
 tasks:
   commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
 
-groups:
-  support:
-    groups:
-      git:
-        commands:
-          commit: { task: "commit" }
-env_groups: []
+support:
+  groups:
+    git:
+      commands:
+        commit: { task: "commit" }
 """)
 
     # act
@@ -881,7 +874,7 @@ tasks:
   seed: { impl: "simplon.test_impls:seed", help: "A DIFFERENT summary." }
   other: { impl: "simplon.test_impls:nullary", help: "Other." }
 
-groups:
+ci:
   lab:
     commands:
       seed: { task: "seed" }
@@ -902,13 +895,16 @@ def test_a_task_help_wins_over_the_body_docstring_when_the_command_declares_none
     # compared the manifest against the docstring, could not express at all.
     cat = catalogue_mod.loads(textwrap.dedent("""
         groups:
-          lab: {}
+          ci:
+            transparent: true
+            groups:
+              lab: {}
     """))
     m = manifest.load(textwrap.dedent("""
         product: demo
         tasks:
           seed: { impl: "simplon.test_impls:seed", help: "Seed every declared site." }
-        groups:
+        ci:
           lab:
             commands:
               seed: { task: seed }
@@ -945,7 +941,7 @@ tasks:
   system: { impl: "simplon.test_impls:nullary", help: "The SYSTEM gate." }
   acceptance: { impl: "simplon.test_impls:nullary", help: "The ACCEPTANCE gate." }
 
-groups:
+ci:
   test:
     commands:
       system: { task: "system" }
@@ -966,7 +962,7 @@ def test_an_aggregate_takes_its_summary_from_the_manifest_because_it_has_no_body
 tasks:
   diff: { impl: "simplon.test_impls:nullary", help: "Diff it." }
 
-groups:
+ci:
   build:
     commands:
       build: { depends_on: ["diff"], help: "Build the images." }
@@ -993,17 +989,17 @@ tasks:
   deploy-all: { impl: "simplon.test_impls:no_context", help: "Every deploy step." }
   test_all: { impl: "simplon.test_impls:seed", help: "Something else entirely." }
 
-groups:
+ci:
   test:
     commands:
       all: { task: "all" }
-  deploy:
-    commands:
-      all: { task: "deploy-all" }
   misc:
     commands:
       test_all: { task: "test_all" }
-env_groups: [deploy]
+cd:
+  deploy:
+    commands:
+      all: { task: "deploy-all" }
 """)
 
     # act / assert: named, both culprits, rather than silently shadowed
@@ -1019,11 +1015,10 @@ tasks:
   disk-guard: { impl: "simplon.test_impls:nullary", help: "Guard the disk." }
   disk_guard: { impl: "simplon.test_impls:no_context", help: "Guard it differently." }
 
-groups:
-  support:
-    commands:
-      disk-guard: { task: "disk-guard" }
-      disk_guard: { task: "disk_guard" }
+support:
+  commands:
+    disk-guard: { task: "disk-guard" }
+    disk_guard: { task: "disk_guard" }
 """)
 
     # act / assert
@@ -1086,7 +1081,7 @@ tasks:
   pin: { impl: "simplon.test_impls:needs_site", help: "Pin a site." }
   other: { impl: "simplon.test_impls:nullary", help: "Other." }
 
-groups:
+ci:
   lab:
     commands:
       pin: { task: "pin", with: { site: "be" } }
@@ -1112,7 +1107,7 @@ tasks:
   pin: { impl: "simplon.test_impls:needs_site", help: "Pin a site." }
   other: { impl: "simplon.test_impls:nullary", help: "Other." }
 
-groups:
+ci:
   lab:
     commands:
       pin: { task: "pin", with: { site: "be" } }
@@ -1135,7 +1130,7 @@ tasks:
   seed: { impl: "simplon.test_impls:seed", help: "Seed." }
   other: { impl: "simplon.test_impls:nullary", help: "Other." }
 
-groups:
+ci:
   lab:
     commands:
       seed: { task: "seed", with: { sites: "zh" } }
@@ -1160,7 +1155,7 @@ tasks:
     impl: "simplon.test_impls:needs_site"
     help: "Pin a site."
 
-groups:
+ci:
   lab:
     commands:
       pin:
@@ -1226,16 +1221,15 @@ tasks:
   commit: { impl: "simplon.test_impls:no_context", help: "Commit." }
   unit: { impl: "simplon.test_impls:nullary", help: "One gate." }
 
-groups:
-  support:
-    groups:
-      git:
-        commands:
-          commit: { task: "commit" }
+ci:
   test:
     commands:
       unit: { task: "unit" }
-env_groups: []
+support:
+  groups:
+    git:
+      commands:
+        commit: { task: "commit" }
 """)
 
     # act
@@ -1263,7 +1257,7 @@ tasks:
   legacy: { impl: "simplon.test_impls:legacy", help: "Legacy." }
   push: { impl: "simplon.test_impls:nullary", help: "Push." }
 
-groups:
+ci:
   git:
     commands:
       legacy: { task: "legacy" }
@@ -1315,17 +1309,17 @@ tasks:
   deploy-all: { impl: "simplon.test_impls:no_context", help: "Every deploy step." }
   test_all: { impl: "simplon.test_impls:seed", help: "Something else." }
 
-groups:
+ci:
   test:
     commands:
       all: { task: "all" }
-  deploy:
-    commands:
-      all: { task: "deploy-all" }
   misc:
     commands:
       test_all: { task: "test_all" }
-env_groups: [deploy]
+cd:
+  deploy:
+    commands:
+      all: { task: "deploy-all" }
 """)
 
     # act / assert: nothing is rendered and the clash is still found
@@ -1353,22 +1347,23 @@ tasks:
   up: { impl: "simplon.test_impls:nullary", help: "Bring it up." }
   push: { impl: "simplon.test_impls:nullary", help: "Push." }
 
-groups:
+ci:
   code:
     commands:
       fmt: { task: "fmt" }
+cd:
   deploy:
     help: "Put them into an environment."
     env_first: true
     commands:
       up: { task: "up" }
-  support:
-    help: "Host preflight, environment introspection and host tooling."
-    groups:
-      git:
-        help: "Version-control helpers."
-        commands:
-          push: { task: "push" }
+support:
+  help: "Host preflight, environment introspection and host tooling."
+  groups:
+    git:
+      help: "Version-control helpers."
+      commands:
+        push: { task: "push" }
 """
 
 

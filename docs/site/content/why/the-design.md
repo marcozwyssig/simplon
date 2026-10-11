@@ -26,13 +26,24 @@ a sixth for the machine itself, and they are the only groups there are:
 
 ```yaml
 groups:
-  build:   { help: "Produce the artefacts." }
-  test:    { help: "Verify them." }
-  release: { help: "Publish them." }
-  deploy:  { help: "Put them into an environment.", env_first: true }
-  monitor: { help: "Watch what is running there.", env_first: true }
+  ci:
+    transparent: true
+    groups:
+      build:   { help: "Produce the artefacts." }
+      test:    { help: "Verify them." }
+      release: { help: "Publish them." }
+  cd:
+    transparent: true
+    env_first: true
+    groups:
+      deploy:  { help: "Put them into an environment." }
+      monitor: { help: "Watch what is running there." }
   support: { help: "Host preflight, environment introspection and host tooling." }
 ```
+
+`ci` and `cd` are the two halves of the loop, and they are **transparent**: a product writes its commands
+under `ci:` and `cd:`, and neither word ever appears on the command line. Everything under `cd` takes an
+environment, which is why `env_first:` is said once there and not on each group.
 
 A product fills those groups. It cannot invent a seventh, and the refusal is not a rule layered over the
 merge - it *is* the merge. A product's tree is merged onto the platform's, so a path the platform does
@@ -116,7 +127,7 @@ group, and the values pinned for this particular instance. So the same body can 
 in one product or in twenty:
 
 ```yaml
-groups:
+ci:
   test:
     commands:
       unit:   { task: "test:gate", with: { name: "unit" },   help: "Run the unit suite." }

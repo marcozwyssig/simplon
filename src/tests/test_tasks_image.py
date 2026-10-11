@@ -48,8 +48,6 @@ images:
     build_args:
       PYTHON_VERSION: "3.12"
       SLIM: true
-groups: {}
-env_groups: []
 """
 
 
@@ -1273,7 +1271,7 @@ _SINGLE_MANIFEST = """{"schemaVersion": 2, "mediaType": "application/vnd.oci.ima
 def _multi(_product):
     """The fixture manifest with three more images: a dependency with a constant tag, a two-platform image
     built FROM it, and a single-platform image built FROM it."""
-    (_product / "demo.yaml").write_text(_MANIFEST.replace("groups: {}", _MULTI.lstrip("\n") + "groups: {}"),
+    (_product / "demo.yaml").write_text(_MANIFEST + _MULTI.lstrip("\n"),
                                         encoding="utf-8")
     (_product / "docker" / "base.Dockerfile").write_text("FROM busybox:1.36\n", encoding="utf-8")
     return _product
