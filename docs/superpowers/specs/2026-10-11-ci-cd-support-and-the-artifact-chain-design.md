@@ -32,6 +32,9 @@ All of them were taken by Marco through choice lists, and none of them is reopen
 | 11 | Diagnoses change only in the cut, in both directions | 2026-10-11 |
 | 12 | "Tested" is explicit: a test produces its own artifact (`kind: test-result`), and a release consumes the test results about what it publishes. That need not be a `test:image`: any test that writes a test result will do | 2026-10-11 |
 | 13 | One spec, four plans, in the order A → B → C → D | 2026-10-11 |
+| 14 | A command can have several inputs and several outputs. A release is an aggregate of leaves: it generates the release notes, puts the artifact into the registry and cuts a tag | 2026-10-11 |
+| 15 | The release is one artifact, a `kind: release` bundle, and that is what a deploy consumes | 2026-10-11 |
+| 16 | The release notes are generated from the merges and tickets since the previous tag | 2026-10-11 |
 
 firn's metamodel advice (si#346, last comment, grounded in firn main a9e59dd5) supplies the vocabulary:
 a **task** is a filter type with ports, a **command** is a filter instance (TaskCommand or
@@ -290,13 +293,16 @@ kinds:
   maven:     { refines: artifact }
   conan:     { refines: artifact }
   test-result: { refines: artifact }  # what a test produces (decision 12, C.3)
+  release-notes: { refines: artifact } # generated notes for one version (C.4)
+  tag:       { refines: artifact }    # a cut tag: a value, no path (C.4)
+  release:   { refines: artifact }    # the bundle a release aggregate stands for (C.4)
 ```
 
 - **The set is measured.** These are the kinds that today's `artifacts:`/`images:` readers already
   distinguish by which task reads them: `release:artifact`, `release:nuget`, `release:maven`,
   `release:conan`, `build:image`/`test:image`/`release:image` and `docs:site`. Nothing is added in advance.
-- **`test-result` is the one kind no reader distinguishes today.** It is added because decision 12 needs
-  it, not in advance: it is what a test produces (C.3).
+- **`test-result`, `release-notes`, `tag` and `release` are the kinds no reader distinguishes today.**
+  They are added because decisions 12, 14 and 15 need them, not in advance (C.3, C.4).
 - **A product cannot declare kinds.** The catalogue owns the vocabulary, which is the point of
   prescribing it (memory: "the terms have to be PRESCRIBED across products").
 - **`kind:` naming an unknown kind** gets a diagnosis that lists the catalogue's kinds.
@@ -306,7 +312,7 @@ kinds:
 An image entry keeps every key `images:` entries carry today: `registry`, `repository`, `dockerfile`,
 `context`, `platforms`, `contexts`, `build_contexts`, `name`, `tag`. `path:` is **optional** for an
 image. When present, it is an OCI archive under `output:`, and only then can an image cross a job
-boundary (C.5).
+boundary (C.6).
 
 **netctl's bare strings** (`web: netctl:local`, ten of them) are not mappings. The migration rewrites each
 as `{ kind: image, local: "netctl:local" }`. `local:` is the one new key: a locally tagged image that no
@@ -378,11 +384,15 @@ image: { task: "build:image", produces: { image: kernel } }
 
 - **`produces: { <port>: <artifact> }`** and **`consumes: { <port>: <artifact> | [<artifact>, ...] }`**.
   This is the one form; there is no list shorthand (#33).
+- **Several inputs and several outputs are the normal case, not an extension** (decision 14). A task has
+  as many ports on each side as it needs, and a command binds each one. `release:image` consumes the
+  image *and* its test results. A product's build step may produce a binary *and* a report.
 - **`produces: { image: kernel }` replaces `with: { name: kernel }`.** Both on one command is a second
-  source for one fact and is refused (expression rule, see C.6). The migration rewrites `with: name:`
+  source for one fact and is refused (expression rule, see C.7). The migration rewrites `with: name:`
   into the port binding wherever the task's port has `param: name`.
 - **An aggregate (`depends_on`)** has no ports. Its outputs are derived as the union of its members'
-  `produces` (firn: SelectorRelation `self.member.produces`), and nothing is stored.
+  `produces` (firn: SelectorRelation `self.member.produces`), and nothing is stored. The one aggregate
+  that names an output of its own is the release (C.4), and even its content is derived.
 
 ### C.3 Test results (decision 12)
 
@@ -425,7 +435,62 @@ artifact a test produces is **its own**: a test result, not a relabelled copy of
 The rule binds the kernel with the product: simplon's own `release image` is refused until simplon tests
 its image. That is intended. A step never run in its own house rots unseen.
 
-### C.4 Load-time rules
+### C.4 The release: one aggregate, several outputs, one bundle (decisions 14, 15, 16)
+
+A release does three things: it **generates the release notes**, **puts the artifact into the
+registry** and **cuts a tag**. Those are three leaves under one aggregate, because a command either runs
+a body or plans others (`impl XOR depends_on`), and each of the three already fails differently today.
+A tag that is cut while the push failed has to stay visible as exactly that.
+
+```yaml
+ci:
+  release:
+    commands:
+      notes: { task: "release:notes", produces: { notes: kernel-notes } }
+      image: { task: "release:image", consumes: { image: kernel, evidence: kernel-checked } }
+      tag:   { task: "release:tag",   consumes: { notes: kernel-notes }, produces: { tag: kernel-tag } }
+      all:
+        depends_on: [notes, image, tag]
+        produces: { release: kernel-release }
+artifacts:
+  kernel-notes:   { kind: release-notes, path: build/release/notes.md }
+  kernel-tag:     { kind: tag }
+  kernel-release: { kind: release }
+```
+
+- **`release:notes`** is a new catalogue task (decision 16). It writes the notes for the version being
+  released, generated from the merges and the tickets they close since the previous tag, to its
+  `release-notes` output. The reading half already exists: `tasks/releasenotes.py` (`test:release-notes`)
+  walks exactly that range, merge by merge, to check a hand-written page. Generation reuses that walk,
+  and it does not grow a second one.
+- **The publish leaf** (`release:image`, `release:artifact`, `release:nuget`, `release:maven`,
+  `release:conan`) consumes the artifact and its test results (C.3) and produces nothing new. A published
+  artifact is the same artifact with its `registry:` (decision 6).
+- **`release:tag`** consumes the notes and produces a `tag`. A `tag` has no `path:`, because its value is
+  the tag name, and it is never uploaded.
+- **The bundle.** The aggregate under `ci: release:` may name **exactly one** output of `kind: release`.
+  It is the only aggregate that names an output, and the bundle's *content* is still derived and never
+  stored: the notes and the tag its members produce, plus every artifact its publish leaves consumed,
+  each with its `registry:`. That is firn's SelectorRelation, given a name so that a deploy can refer to
+  it.
+- **Order inside the aggregate** is still `depends_on` (decision 2). C.5 rule 8 refuses a list that runs
+  `tag` before a publish leaf of the same aggregate. A tag for a release whose artifact never reached the
+  registry would be a public statement that is false.
+- **A deploy consumes the bundle:** `deploy: { consumes: { release: kernel-release } }`.
+  `deployment.source` points at the `release` artifact, and the version selector (`1.4.0`, `latest`,
+  `local`, si#235) chooses which release of it. That is firn's "Deploy consumes a Release".
+
+**The hand-written releases page** (simplon's `releases:` section, with `test:release-notes` as its guard)
+is not deleted by this spec. Generated notes name every ticket in their range by construction, which is
+what the guard enforces on prose. A product with a `releases:` page keeps the guard, and the plan for C
+measures which of the eight manifests have such a page before anything about it changes.
+
+**What it costs:** simplon, agile-cockpit and firn place `release:tag` and `release:image` today as
+separate commands, and none of them has an aggregate over them (measured, C.3 table). Each gains
+`notes`, the aggregate and three `artifacts:` entries. The migration does not write these, because
+nothing in today's manifest says which publish leaves belong to which release.
+
+### C.5 Load-time rules
 
 All of them run over the merged tree, before `resolve`:
 
@@ -440,8 +505,10 @@ All of them run over the merged tree, before `resolve`:
 6. **The release rule** (C.3): a release consuming X consumes every test result about X, and at least one
    exists. Test results are produced only under `ci: test:`.
 7. **No `with:` on a parameter that a port binds** (C.2).
+8. **The bundle:** only an aggregate under `ci: release:` names an output, and only one `kind: release`
+   (C.4). A `release:tag` member must come after every publish member in `depends_on`.
 
-### C.5 The workflow generator
+### C.6 The workflow generator
 
 `workflowgen.py` contains no `upload-artifact`/`download-artifact` today (measured, si#344). From the
 derived edges:
@@ -457,7 +524,7 @@ derived edges:
 
 Simplon's own CI is one job, so its generated `ci.yml` stays byte-identical. A test holds that too.
 
-### C.6 Census classification
+### C.7 Census classification
 
 Each new refusal in parts A–C is entered in `tests/test_refusal_census.py` with its kind before the
 plan that adds it is merged:
@@ -471,12 +538,14 @@ plan that adds it is merged:
 | `env_first:` under `ci:` | expression rule | merged |
 | unknown kind | diagnosis | — |
 | artifact kind ≠ the task reading it (B.4) | diagnosis | — |
-| C.4 rules 1, 2, 3, 4 | diagnosis | merged |
-| C.4 rule 5 (aggregate contradicts data) | diagnosis | merged |
-| C.4 rule 6 (release consumes every test result about X, at least one) | **expression rule** | merged, binds the kernel (simplon must add a test) |
+| C.5 rules 1, 2, 3, 4 | diagnosis | merged |
+| C.5 rule 5 (aggregate contradicts data) | diagnosis | merged |
+| C.5 rule 6 (release consumes every test result about X, at least one) | **expression rule** | merged, binds the kernel (simplon must add a test) |
 | test result produced outside `ci: test:` | expression rule | merged |
 | test producer exits 0 without writing its result path | diagnosis (run time) | — |
-| C.4 rule 7 (`with:` beside a port binding) | expression rule | merged |
+| C.5 rule 7 (`with:` beside a port binding) | expression rule | merged |
+| C.5 rule 8: an aggregate output other than one `release` bundle under `ci: release:` | expression rule | merged |
+| C.5 rule 8: tag ordered before a publish member | diagnosis | merged |
 | image without `path:` across jobs | diagnosis | — |
 
 `check_env_groups` and rule 2 leave the census (A.4).
@@ -493,9 +562,11 @@ Decision 10 puts the **whole manifest** into firn, not only the pipeline.
   - **ArtifactKind** has `refines`. `test-result` is one ArtifactKind among the others.
   - **Port**, **Task** (`body`, `input`, `output`), **Artifact** (`path`, `kind`, `registry`), plus
     **TestResult** extends Artifact, with `about` as a SelectorRelation over its producer's `consumes`
-    (derived, never stored, as C.3 requires).
+    (derived, never stored, as C.3 requires). **Release** extends Artifact, and its `notes`, `tag` and
+    `published` are SelectorRelations over the producing aggregate's members (C.4).
   - **Command** is abstract. **TaskCommand** has `task`, `consumes` and `produces`.
-    **AggregateCommand** has `member` and `produced` (SelectorRelation), and no output of its own.
+    **AggregateCommand** has `member` and `produced` (SelectorRelation). **ReleaseCommand** extends it
+    with `release` (composition of Release, 1..1), which is C.4's one named output.
   - **Area**, an Enum `ci | cd | support`, and **Group**. A Group belongs to an Area, and `transparent`
     is a property of an Area, not of a Group.
   - **Environment** has `next`, the promotion order, which is an association and not a list position.
@@ -544,7 +615,7 @@ Decision 10 puts the **whole manifest** into firn, not only the pipeline.
 |---|---|---|---|
 | A | shape, transparent level, si#34, readers, migration (A.5), diagnoses (A.6), env_groups deleted | together with B in **one** kernel release, which is the cut | — |
 | B | `artifacts:` + `kinds:`, `images:` folded, kind checks, migration extended | same release as A | A; the four products' named costs (B.4) |
-| C | ports, produces/consumes, test results, load rules, workflowgen hand-off | the next release; additive except for the release rule | B; agile-cockpit's cost for its test |
+| C | ports, produces/consumes, test results, the release aggregate and `release:notes`, load rules, workflowgen hand-off | the next release; additive except for the release rule | B; agile-cockpit's cost for its test |
 | D | `simplon.pipeline` + `simplon.manifest`, `support manifest model`, drift gate | after C | si#371, firn back from pause |
 
 A and B ship in one release because they share the cut. Two cuts would mean migrating every manifest
