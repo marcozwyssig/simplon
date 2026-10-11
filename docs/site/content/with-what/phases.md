@@ -536,6 +536,20 @@ exactly the one that reports last week's binaries as a full green suite. `toolch
 family for the reason above and not for this one: a product may file it anywhere it needs, and the C++
 use case files the very same coordinate under `deploy up` to run the binary it compiled.
 
+**One profile places a command under `test`, and the exception is measured rather than waived**
+(si#371). `support toolchain firn <version>` writes `firn check` as `test model` and `firn gen` as
+`build model`. The argument above is about a number that can describe something older than the tree:
+`ctest` runs the binaries the last build left behind. `firn check` reads the model files as they stand,
+with no build step between, so its exit code is the verdict about the tree - the same shape as
+`test typecheck-python`, which runs mypy over the source and stands under `test` for that reason. firn's
+codes are 0 clean, 1 model wrong, 2 usage, 3 no project and 70 internal, and `toolchain:run` hands every
+one back unchanged, so "no project" can never read as "clean".
+
+**`cwd:` starts a command below the mount** (si#371). firn reads `firn.toml` from the directory it starts
+in and takes no project option, so a firn project under `src/firn/` needs `cwd: src/firn` on both
+commands. The tree stays mounted whole; only the working directory moves. A value that is absolute or
+climbs out with `..` is refused by the same gate `layout: build_root:` uses.
+
 **One of the scaffolded commands writes an API contract** (si#240). The `python` and `java` profiles
 carry a `spec` command that exports the product's OpenAPI document into a file it commits - because an
 API contract is a *build* output like any other generated file, and the group its one real consumer

@@ -19,7 +19,7 @@ data, and swapping 19 for 20 is a one-line diff.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from simplon import log
 
@@ -30,10 +30,21 @@ class Profile:
 
     A command body is exactly what a `toolchain:run` command's `with:` block takes minus the image -
     a non-empty `argv` and the `workdir` it runs in - so the scaffolder writes it out verbatim.
+
+    `placements` SAYS WHERE A COMMAND GOES WHEN IT IS NOT A BUILD STEP (si#371). Every command of the
+    first four languages is written under `ci: build:`, and that stays the default. firn's `check` is a
+    verdict, not a product, so it belongs under `test:`, and its `gen` under `build:` - and both are
+    called `model`, which a table keyed by command name alone cannot say. A placement is
+    `(phase, command name)`; a command it does not name is `("build", <its key>)`, exactly as before.
     """
 
     image: str
     commands: dict[str, dict[str, object]]
+    placements: dict[str, tuple[str, str]] = field(default_factory=dict)
+
+    def placement(self, key: str) -> tuple[str, str]:
+        """The `(phase, command name)` the scaffolder writes command `key` at."""
+        return self.placements.get(key, ("build", key))
 
 
 #: THE OPENAPI EXPORT, as a program rather than a tool, because for a Python web framework there is no
@@ -451,6 +462,23 @@ PROFILES: dict[str, Profile] = {
                               "app.main:create_app", "api/rest/openapi.json"]},
         },
     ),
+    # si#371. Not a language: a model checker and generator, which simplon and every product run over their
+    # own model. Measured against the published image on 2026-10-11: its ENTRYPOINT is `/firn` and its
+    # WORKDIR `/workspace`, so `argv` is firn's own subcommand and the tree is mounted where firn looks.
+    # firn reads `firn.toml` from the directory it starts in and takes no project option, so a product
+    # whose firn project is not at its root adds `cwd:` to both commands. Neither needs a network: the
+    # model, the templates and the metamodels firn ships are all on the mount or in the image. The image
+    # runs as uid 65532, and `toolchain:run` runs it as the caller instead, which is what firn's docs/07
+    # recommends for anything that writes - `gen` writes, and the files belong to whoever ran it.
+    # Exit codes pass through unchanged: 0 clean, 1 model wrong, 2 usage, 3 no project, 70 internal.
+    "firn": Profile(
+        image="ghcr.io/marcozwyssig/firn:v{version}",
+        commands={
+            "check": {"workdir": "/workspace", "network": "none", "argv": ["check"]},
+            "gen": {"workdir": "/workspace", "network": "none", "argv": ["gen"]},
+        },
+        placements={"check": ("test", "model"), "gen": ("build", "model")},
+    ),
 }
 
 
@@ -458,7 +486,7 @@ def profile(language: str, **params: str) -> Profile:
     """The profile for a language, with its image resolved from the caller's parameters.
 
     An unknown language is refused by NAME and told what exists, because the answer a reader needs there
-    is which four words are spelled how - not that the lookup failed.
+    is which names exist and how they are spelled - not that the lookup failed.
 
     `cpp`'s `compiler` parameter is accepted and unused in this first cut: the image reference decides
     the compiler, so `compiler: gcc` would select a different profile entry rather than a different
@@ -470,4 +498,5 @@ def profile(language: str, **params: str) -> Profile:
         )
         raise SystemExit(1)
     prof = PROFILES[language]
-    return Profile(image=prof.image.format(**params), commands=prof.commands)
+    return Profile(image=prof.image.format(**params), commands=prof.commands,
+                   placements=prof.placements)

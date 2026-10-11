@@ -37,6 +37,7 @@ reaches the disk.
 from __future__ import annotations
 
 import os
+import posixpath
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -68,6 +69,7 @@ class Toolchain:
     workdir: str = "/work"
     env: dict[str, str] = field(default_factory=dict)
     caches: list[Cache] = field(default_factory=list)
+    cwd: str = ""
 
 
 def declared(body: Mapping[str, object], where: str) -> Toolchain:
@@ -89,6 +91,7 @@ def declared(body: Mapping[str, object], where: str) -> Toolchain:
         raise SystemExit(1)
     return Toolchain(
         image=_pinned(image, where),
+        cwd=_cwd(body.get("cwd"), where),
         argv=[str(a) for a in argv],
         workdir=str(body.get("workdir", "/work")),
         env=_env(body.get("env"), where),
@@ -130,16 +133,22 @@ def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
             *(["--network", network] if network else []),
             *docker.user_args(),
             "-v", f"{hostpath.translate(root)}:{cfg.workdir}",
-            "-w", layout.Layout(build_root=build_root).workdir(cfg.workdir),
+            "-w", _start_in(cfg, build_root),
             *volumes,
             *(["-e", f"HOME={home}"] if home else []), *env,
             cfg.image, *cfg.argv, *extra]
 
 
+def _start_in(cfg: Toolchain, build_root: str) -> str:
+    """The container's working directory: the mount, then the product's build root, then `cwd:`."""
+    base = layout.Layout(build_root=build_root).workdir(cfg.workdir)
+    return posixpath.join(base, cfg.cwd) if cfg.cwd else base
+
+
 def run_toolchain(ctx: typer.Context, image: str = "", argv: list[str] | None = None,
                   workdir: str = "/work", env: dict[str, str] | None = None,
                   caches: list[dict[str, str]] | None = None, network: str | None = None,
-                  extra: list[str] | None = None) -> int:
+                  cwd: str | None = None, extra: list[str] | None = None) -> int:
     """Run one toolchain invocation. Thin: `declared` decides what is legal, `docker_argv` decides the line.
 
     THE PARAMETERS ARE THE MANIFEST'S KEYS, one for one, and that is a correction rather than a style
@@ -197,7 +206,7 @@ def run_toolchain(ctx: typer.Context, image: str = "", argv: list[str] | None = 
     # length 1` - a traceback where the module head promises a diagnosis. `_env` and `_caches` take
     # `object` for exactly this reason, None included.
     cfg = declared({"image": image, "argv": argv, "workdir": workdir,
-                    "env": env, "caches": caches}, where)
+                    "env": env, "caches": caches, "cwd": cwd}, where)
     product = context.current()
     # The instance is resolved WHERE it is needed and not one line earlier (si#105): it is read from the
     # product's `instance:` section, `simplon init` writes no such section, and resolving it up front
@@ -235,6 +244,25 @@ def _pinned(image: str, where: str) -> str:
     """The one image gate, with its refusal delivered the way a command refuses (see the module head)."""
     try:
         return docker.pinned_image(image, where, hint="a toolchain must name its version")
+    except ValueError as exc:
+        log.die(str(exc))
+        raise SystemExit(1) from exc
+
+
+def _cwd(raw: object, where: str) -> str:
+    """The subdirectory of the mount a command starts in (si#371), or "" for the mount itself.
+
+    firn reads `firn.toml` from the directory it starts in and takes no project option, so a firn project
+    under `src/firn/` needs the container to START there while the whole tree stays mounted - which is
+    all `cwd:` says. ABSENT IS THE DEFAULT and changes no byte of the line; a value goes through
+    `layout._relative`, the gate `build_root:` already uses, so the two cannot disagree about what is
+    inside the tree. That gate raises `ValueError` for the load-time section it serves; here it ends the
+    way every other fault in `declared` ends, as `log.die` in the command's name.
+    """
+    if raw is None:
+        return ""
+    try:
+        return layout._relative(raw, "cwd", where)
     except ValueError as exc:
         log.die(str(exc))
         raise SystemExit(1) from exc
@@ -298,17 +326,27 @@ def scaffold(language: str, version: str) -> int:
     prof = profiles.profile(language, version=version)
     path = _manifest_path()
     text = path.read_text(encoding="utf-8")
-    declared = _declared_build_commands(text)
     written, kept = [], []
-    additions: dict[str, object] = {}
-    for name, body in prof.commands.items():
-        if name in declared:
-            kept.append(name)
+    by_phase: dict[str, dict[str, object]] = {}
+    for key, body in prof.commands.items():
+        phase, name = prof.placement(key)
+        # A profile that places commands outside `build` names every command with its phase, so the
+        # report cannot say `test model, model`; the four that do not keep the bare name they printed.
+        label = f"{phase} {name}" if prof.placements else name
+        if name in _declared_commands(text, phase):
+            kept.append(label)
             continue
-        additions[name] = {"task": "toolchain:run", "with": {"image": prof.image, **body}}
-        written.append(name)
-    if additions:
-        path.write_text(_spliced(text, additions, path.name), encoding="utf-8")
+        by_phase.setdefault(phase, {})[name] = {"task": "toolchain:run",
+                                                "with": {"image": prof.image, **body}}
+        written.append(label)
+    # ALL OR NOTHING (si#371). Every phase is spliced into the text before anything is written, so a
+    # phase the splice cannot place refuses the whole profile: a `build model` without the `test model`
+    # that checks it would be half a toolchain, written silently.
+    spliced = text
+    for phase, additions in by_phase.items():
+        spliced = _spliced(spliced, additions, path.name, phase)
+    if spliced != text:
+        path.write_text(spliced, encoding="utf-8")
     log.ok(f"{language}: wrote {len(written)} command(s)"
            + (f" - {', '.join(written)}" if written else ", nothing was missing"))
     for name in kept:
@@ -328,23 +366,23 @@ _KEY = re.compile(r"^(?P<indent> *)(?P<key>[A-Za-z0-9_][A-Za-z0-9_.-]*):(?P<rest
 _AREA = "ci"
 
 
-def _declared_build_commands(text: str) -> Mapping[str, object]:
-    """The command names already under `ci: build: commands:`, read through the ordinary loader.
+def _declared_commands(text: str, phase: str) -> Mapping[str, object]:
+    """The command names already under `ci: <phase>: commands:`, read through the ordinary loader.
 
     READING is what a plain loader is good at, and the never-clobber rule needs nothing more than the
     names. Only the WRITE goes through the splice.
     """
     data = yaml.safe_load(text) or {}
     node: object = data
-    for key in (_AREA, "build", "commands"):
+    for key in (_AREA, phase, "commands"):
         if not isinstance(node, Mapping):
             return {}
         node = node.get(key)
     return node if isinstance(node, Mapping) else {}
 
 
-def _spliced(text: str, additions: Mapping[str, object], where: str) -> str:
-    """`text` with the new commands inserted under its build group, or a refusal that writes nothing.
+def _spliced(text: str, additions: Mapping[str, object], where: str, phase: str = "build") -> str:
+    """`text` with the new commands inserted under its `phase` group, or a refusal that writes nothing.
 
     The verification at the end is the reason this can be trusted with somebody's manifest: the spliced
     text is parsed back and compared against the data the old loader-based path would have produced. A
@@ -352,9 +390,9 @@ def _spliced(text: str, additions: Mapping[str, object], where: str) -> str:
     """
     raw = text.splitlines(keepends=True)
     lines = [line.rstrip("\r\n") for line in raw]
-    place = _place(lines)
+    place = _place(lines, phase)
     if place is None:
-        _refuse(where, additions, indent=6)
+        _refuse(where, additions, indent=6, phase=phase)
     commands_at, empty_flow, insert_at, indent = place
     out = list(raw)
     if empty_flow:
@@ -368,12 +406,12 @@ def _spliced(text: str, additions: Mapping[str, object], where: str) -> str:
     block = _entries(additions, indent)
     out[insert_at:insert_at] = [line + newline for line in block]
     spliced = "".join(out)
-    if not _same_data(spliced, text, additions):
-        _refuse(where, additions, indent=indent)
+    if not _same_data(spliced, text, additions, phase):
+        _refuse(where, additions, indent=indent, phase=phase)
     return spliced
 
 
-def _place(lines: list[str]) -> tuple[int, bool, int, int] | None:
+def _place(lines: list[str], phase: str = "build") -> tuple[int, bool, int, int] | None:
     """Where the new commands go: (the `commands:` line, whether it holds an empty `{}`, the line to
     insert before, the indent to write them at). None when the shape is not the one this can splice."""
     groups = _find(lines, _AREA, 0, len(lines), 0)
@@ -383,7 +421,7 @@ def _place(lines: list[str]) -> tuple[int, bool, int, int] | None:
     group_indent = _child_indent(lines, groups[0] + 1, groups_end)
     if group_indent is None:
         return None
-    build = _find(lines, "build", groups[0] + 1, groups_end, group_indent)
+    build = _find(lines, phase, groups[0] + 1, groups_end, group_indent)
     if build is None or build[1]:
         return None
     _, build_end = _extent(lines, build[0] + 1, group_indent, groups_end)
@@ -501,7 +539,7 @@ def _entries(additions: Mapping[str, object], indent: int) -> list[str]:
     return out
 
 
-def _same_data(spliced: str, text: str, additions: Mapping[str, object]) -> bool:
+def _same_data(spliced: str, text: str, additions: Mapping[str, object], phase: str = "build") -> bool:
     """Does the spliced file carry EXACTLY the original data plus the added commands, and nothing else?"""
     try:
         got = yaml.safe_load(spliced)
@@ -509,20 +547,20 @@ def _same_data(spliced: str, text: str, additions: Mapping[str, object]) -> bool
         return False
     want = yaml.safe_load(text) or {}
     groups = want.get(_AREA) or {}
-    build = groups.get("build") or {}
+    build = groups.get(phase) or {}
     build["commands"] = {**(build.get("commands") or {}), **additions}
-    groups["build"] = build
+    groups[phase] = build
     want[_AREA] = groups
     return bool(got == want)
 
 
-def _refuse(where: str, additions: Mapping[str, object], indent: int) -> NoReturn:
+def _refuse(where: str, additions: Mapping[str, object], indent: int, phase: str = "build") -> NoReturn:
     """Say where the block was meant to go, hand over the block, and change nothing.
 
     A shape the splice does not recognise is a manifest somebody wrote by hand in a way this scanner
     cannot read - not a licence to guess. What a reader can act on is the text itself, so it is printed.
     """
-    log.info(f"{where}: no `ci:` -> `build:` -> `commands:` block mapping to splice into. "
-             f"Paste this under `ci: build: commands:`:")
+    log.info(f"{where}: no `ci:` -> `{phase}:` -> `commands:` block mapping to splice into. "
+             f"Paste this under `ci: {phase}: commands:`:")
     print("\n".join(_entries(additions, indent)))
     log.die(f"{where} was left unchanged - a scaffolder that guessed at the shape would corrupt it.")

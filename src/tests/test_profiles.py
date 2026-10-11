@@ -355,3 +355,33 @@ def test_the_python_unit_and_analyse_name_no_network_and_deps_keeps_one():
     assert "network" not in commands["deps"], (
         "deps installs from the index; pinning it offline makes the one command that needs a network "
         "the one command that cannot have one")
+
+
+def test_the_firn_profile_runs_the_pinned_firn_image_in_its_own_workspace():
+    # arrange / act: si#371 - the image's WORKDIR is /workspace and firn's docs/07 mounts there
+    prof = profiles.profile("firn", version="0.1.0")
+
+    # assert: a release tag, never a moving one
+    assert prof.image == "ghcr.io/marcozwyssig/firn:v0.1.0"
+    assert set(prof.commands) == {"check", "gen"}
+    for body in prof.commands.values():
+        assert body["workdir"] == "/workspace"
+        assert body["network"] == "none"
+
+
+def test_the_firn_check_is_a_test_and_gen_is_a_build():
+    # arrange / act
+    prof = profiles.profile("firn", version="0.1.0")
+
+    # assert: the image's entrypoint is /firn, so argv is firn's own subcommand
+    assert prof.commands["check"]["argv"] == ["check"]
+    assert prof.commands["gen"]["argv"] == ["gen"]
+    assert prof.placement("check") == ("test", "model")
+    assert prof.placement("gen") == ("build", "model")
+
+
+def test_every_other_profile_still_places_everything_under_build():
+    # arrange / act / assert: the placement table is additive, it moves no existing command
+    for language in ("cpp", "java", "dotnet", "python"):
+        prof = profiles.profile(language, version="1")
+        assert {prof.placement(name) for name in prof.commands} == {("build", n) for n in prof.commands}

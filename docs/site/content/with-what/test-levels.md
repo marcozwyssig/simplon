@@ -284,8 +284,8 @@ What is refused, and only when the gate actually runs, because deciding it needs
 > no single rc for a gate to report - name one of the commands it plans
 
 > 'suites.gates.unit.command': 'build unit' pins imag with `with:`, which
-> simplon.tasks.toolchain:run_toolchain does not take (it takes: argv, caches, env, extra, image,
-> network, workdir)
+> simplon.tasks.toolchain:run_toolchain does not take (it takes: argv, caches, cwd, env, extra,
+> image, network, workdir)
 
 That last one is the calling convention in a refusal, and it is the one `simplon.cli._bound` already
 makes: a gate runs a command with what the manifest pinned and nothing else, so a `with:` key naming no

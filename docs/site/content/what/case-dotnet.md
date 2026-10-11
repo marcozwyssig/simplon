@@ -244,7 +244,7 @@ $ ./dotnetdemo.sh support toolchain dotnet
 KeyError: 'version'
 ```
 
-It is not a .NET quirk: all four profiles carry the same template, so the command raises for every
+It is not a .NET quirk: all five profiles carry the same template, so the command raises for every
 language it offers. `dotnetdemo`'s manifest was therefore written by hand - to the letter of what the
 scaffolder would have produced, which is why the page can still claim the argv are the kernel's.
 
