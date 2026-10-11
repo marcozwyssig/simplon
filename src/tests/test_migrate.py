@@ -158,7 +158,22 @@ def test_a_site_section_without_docs_keys_is_left_alone():
 
 
 def test_a_splice_that_does_not_parse_back_is_refused_and_names_where():
-    # arrange: two top-level groups: - YAML keeps the last, the splice moves only the first
+    # arrange: a `ci:` written by hand after groups: - YAML keeps the last, so the spliced ci: is shadowed
+    text = ("product: demo\n"
+            "groups:\n  build:\n    commands:\n      w: { task: wheel }\n"
+            "ci: { x: 1 }\n")
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "refused"
+    assert result.text == text
+    assert result.reason == "the spliced text does not parse back to the same manifest: ci.build"
+
+
+def test_groups_declared_twice_is_refused_naming_both_lines():
+    # arrange
     text = ("product: demo\n"
             "groups:\n  build:\n    commands:\n      w: { task: wheel }\n"
             "groups:\n  test:\n    commands:\n      t: { task: pytest }\n")
@@ -169,7 +184,61 @@ def test_a_splice_that_does_not_parse_back_is_refused_and_names_where():
     # assert
     assert result.status == "refused"
     assert result.text == text
-    assert result.reason == "the spliced text does not parse back to the same manifest: ci.test"
+    assert result.reason == ("groups: is declared twice at the top level, on lines 2 and 6 - "
+                             "merge them by hand first")
+
+
+def test_a_comment_on_the_groups_key_line_is_carried_onto_the_first_area():
+    # arrange
+    text = "product: demo\ngroups:   # the command groups\n  build:\n    commands:\n      w: { task: wheel }\n"
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "migrated", result.reason
+    assert result.text == "product: demo\nci:   # the command groups\n  build:\n    commands:\n      w: { task: wheel }\n"
+
+
+def test_a_groups_holding_only_comments_is_refused_rather_than_losing_them():
+    # arrange: there is no area to carry the comment into, and the data check cannot see it go
+    text = "product: demo\ngroups:\n  # nothing yet\n"
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "refused"
+    assert result.text == text
+    assert result.reason == "the spliced text loses a line the original had: line 3: # nothing yet"
+
+
+def test_a_support_line_too_shallow_to_dedent_is_refused_naming_its_column():
+    # arrange: a column-1 comment trailing the support group, with no group after it to take it
+    text = "product: demo\ngroups:\n  support:\n    commands:\n      d: { task: doctor }\n # stray\n"
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "refused"
+    assert result.reason == ("groups: support carries line 6 at column 1 ('# stray'); support: moves to the "
+                             "top level by removing two spaces from each of its lines, and that line has "
+                             "only 1 to remove - indent it or move it out of the support group, and run again")
+
+
+def test_a_comment_above_env_groups_is_deleted_with_it_and_the_move_says_so():
+    # arrange
+    text = ("product: demo\ngroups:\n  deploy:\n    commands:\n      u: { task: up }\n"
+            "# deploy only\nenv_groups: [deploy]\n")
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "migrated", result.reason
+    assert result.text == "product: demo\ncd:\n  deploy:\n    commands:\n      u: { task: up }\n"
+    assert result.moved[-1] == "env_groups: deleted ([deploy]) with the 1 comment line it owns"
 
 
 def test_a_group_written_twice_keeps_both_copies_and_drops_no_line():

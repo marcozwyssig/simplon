@@ -22,6 +22,7 @@ along: they explained a key the ci/cd form no longer has.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from typing import NamedTuple
 
 import yaml
@@ -143,6 +144,24 @@ def _area(key: str, head: list[str], children: list[list[str]]) -> list[str]:
     return head + [f"{key}:"] + body
 
 
+def _accounting(old: list[str], new: list[str], removed: list[str], added: list[str]) -> tuple[str, str]:
+    """The check the data comparison cannot make: every non-blank line of the original is in the new
+    text, compared stripped (a move reindents), except the ones the splice deletes on purpose, and
+    nothing else appears but the key lines it writes. YAML keeps the last of two equal keys and drops
+    every comment, so a splice that loses either still parses back to the same data - measured on
+    cleon, whose duplicated `support:` group was dropped by a first draft that the data check passed.
+    Returns the first lost line ('line N: ...') and the first extra line, '' for none."""
+    def counted(lines: list[str]) -> Counter:
+        return Counter(line.strip() for line in lines if line.strip())
+
+    lost = counted(old) - counted(removed) - counted(new)
+    extra = counted(new) - counted(added) - (counted(old) - counted(removed))
+    first_lost = next((f"line {n}: {line.strip()}" for n, line in enumerate(old, 1)
+                       if lost[line.strip()]), "")
+    first_extra = next((line.strip() for line in new if extra[line.strip()]), "")
+    return first_lost, first_extra
+
+
 def migrate_text(text: str, *, unknown_groups_into: str | None = None) -> Migration:
     """Splice `text` from the `groups:` form into the ci/cd form; see the module head for the rules."""
     if unknown_groups_into not in (None, "ci", "cd"):
@@ -168,15 +187,25 @@ def migrate_text(text: str, *, unknown_groups_into: str | None = None) -> Migrat
     support: list[str] = []  # a list of lines, not one block: a duplicate key keeps both copies
     groups_head: list[str] = []
     groups_preamble: list[str] = []
+    groups_comment = ""  # a trailing comment on the `groups:` key line, carried onto the first area
+    removed: list[str] = []  # lines the splice deletes on purpose - the line accounting's allowance
+    added: list[str] = []    # lines the splice writes that the original did not have
+    if keys.count("groups") > 1:
+        numbers = [n for n, line in enumerate(lines, 1) if _TOP.match(line) and line.startswith("groups:")]
+        return refused(f"groups: is declared twice at the top level, on lines {numbers[0]} and "
+                       f"{numbers[1]} - merge them by hand first")
     if "groups" in keys:
         index = keys.index("groups")
         block = blocks[index][1]
         at = next(i for i, line in enumerate(block) if _TOP.match(line))
         number = sum(len(prior) for _, prior in blocks[:index]) + at + 1  # 1-based, of the key line
-        if _TOP.match(block[at]).group("rest").lstrip().startswith(("{", "[")):
+        rest = _TOP.match(block[at]).group("rest")
+        if rest.lstrip().startswith(("{", "[")):
             return refused(f"groups: is written in flow style on line {number}; the splice moves "
                            "block-style sections only - rewrite it in block style and run again")
         groups_head = block[:at]
+        groups_comment = rest
+        removed.append(block[at])
         children = _blocks(block[at + 1:], _CHILD, 2)
         groups_preamble = children[0][1]
         first = number + 1 + len(groups_preamble)  # line number of each child block's first line
@@ -192,10 +221,12 @@ def migrate_text(text: str, *, unknown_groups_into: str | None = None) -> Migrat
                 shallow = next((i for i, line in enumerate(child)
                                 if line.strip() and not line.startswith("  ")), None)
                 if shallow is not None:
-                    return refused(f"groups: support carries line {starts + shallow} at column 0 "
+                    column = len(child[shallow]) - len(child[shallow].lstrip())
+                    return refused(f"groups: support carries line {starts + shallow} at column {column} "
                                    f"({child[shallow].strip()[:40]!r}); support: moves to the top level by "
-                                   "removing two spaces from each of its lines, and that line has none to "
-                                   "remove - indent it or move it out of the support group, and run again")
+                                   "removing two spaces from each of its lines, and that line has only "
+                                   f"{column} to remove - indent it or move it out of the support group, "
+                                   "and run again")
                 support += _reindent(child, -2)
                 moved.append("groups: support -> support")
             else:
@@ -217,7 +248,11 @@ def migrate_text(text: str, *, unknown_groups_into: str | None = None) -> Migrat
             return refused(f"env_groups: {_render(value)} names a group outside cd:. Under the ci/cd form "
                            "only what stands under cd: takes an environment, so this manifest has to "
                            "decide by hand where those commands belong")
-        moved.append(f"env_groups: deleted ({_render(value)})")
+        owned = [line for line in blocks[keys.index("env_groups")][1] if line.strip()]
+        removed += owned
+        comments = sum(1 for line in owned if line.strip().startswith("#"))
+        said = f" with the {comments} comment line{'s' if comments != 1 else ''} it owns" if comments else ""
+        moved.append(f"env_groups: deleted ({_render(value)}){said}")
 
     # Assemble: the new areas replace groups: in place; cd: stands at the first env key if there is
     # no groups: to stand in for, or groups: had no deploy/monitor to give it.
@@ -237,16 +272,22 @@ def migrate_text(text: str, *, unknown_groups_into: str | None = None) -> Migrat
                 areas += support
             if areas:
                 head_end = areas.index(next(line for line in areas if _TOP.match(line))) + 1
+                areas[head_end - 1] += groups_comment
                 areas[head_end:head_end] = [line for line in groups_preamble if line.strip()]
+            added += [line for line in areas if _TOP.match(line) and line.split(":")[0] in ("ci", "cd")]
             out += groups_head + areas
         elif key in ENV_KEYS:
             if cd_block and not cd_with_groups and not cd_placed:
                 out += cd_block
+                added.append(cd_block[0])
                 cd_placed = True
         elif key == "env_groups":
             continue
         elif key == "site" and docs_site:
-            out += [re.sub(r"^site:", "website:", line, count=1) for line in block]
+            renamed = [re.sub(r"^site:", "website:", line, count=1) for line in block]
+            removed += [line for line in block if line.startswith("site:")]
+            added += [line for line in renamed if line.startswith("website:")]
+            out += renamed
             moved.append("site -> website")
         else:
             out += block
@@ -261,4 +302,9 @@ def migrate_text(text: str, *, unknown_groups_into: str | None = None) -> Migrat
     if parsed != expected:
         return refused("the spliced text does not parse back to the same manifest: "
                        f"{_first_difference(expected, parsed)}")
+    lost, extra = _accounting(lines, new.splitlines(), removed, added)
+    if lost:
+        return refused(f"the spliced text loses a line the original had: {lost}")
+    if extra:
+        return refused(f"the spliced text has a line the original did not: {extra}")
     return Migration("migrated", new, tuple(moved))
