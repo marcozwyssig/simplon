@@ -698,8 +698,11 @@ def test_the_shipped_catalogue_places_the_general_commands_and_nothing_that_need
     # the standing precedent for the write - placed, and writing a generated file at a kernel-chosen path.
     # `support:migrate` (si#344) joins by the same test: it reads no section a product might lack, it
     # publishes nothing and it touches only the product's own manifest.
+    # `support:model` (si#346) joins by the same test: it reads the manifest every product has, validated
+    # by the loader that already ran, publishes nothing and writes one file under the output root.
     assert placed == {"vcs:commit", "vcs:push", "vcs:prune-branches", "vcs:submodules",
                       "vcs:auth-scopes", "support:install", "support:completion", "support:migrate",
+                      "support:model",
                       "tasks:catalogue", "tasks:generate"}
     # `release` is DECLARED and holds nothing. The group exists so a product can place its own release
     # commands into it - the rule that a coordinate opening with a phase name belongs to that phase is

@@ -570,7 +570,10 @@ Decision 10 puts the **whole manifest** into firn, not only the pipeline.
   - **Port**, **Task** (`body`, `input`, `output`), **Artifact** (`path`, `kind`, `registry`), plus
     **TestResult** extends Artifact, with `about` as a SelectorRelation over its producer's `consumes`
     (derived, never stored, as C.3 requires). **Release** extends Artifact, and its `notes`, `tag` and
-    `published` are SelectorRelations over the producing aggregate's members (C.4).
+    `published` are SelectorRelations over the producing aggregate's members (C.4). **As built in part
+    D, Release carries `published` only:** `notes` and `tag` select the members that produce a
+    `release-notes` and a `tag`, and no command produces either until part C adds `release:notes` and
+    `release:tag`, so they arrive with part C.
   - **Command** is abstract. **TaskCommand** has `task`, `consumes` and `produces`.
     **AggregateCommand** has `member` and `produced` (SelectorRelation). **ReleaseCommand** extends it
     with `release` (composition of Release, 1..1), which is C.4's one named output.
@@ -580,9 +583,12 @@ Decision 10 puts the **whole manifest** into firn, not only the pipeline.
     **Site**, **Registry**, and **Deploy** (extends TaskCommand, with `environment` 1..1 and `site`
     0..1). `site` stays 0..1 until a body reads it (see "What this is NOT").
 - **`simplon.manifest`** imports `simplon.pipeline` and models every top-level section **the kernel
-  reads**: `product`, `tasks`, `ci`/`cd`/`support`, `artifacts`, `website`, `suites`, `releases`,
+  reads**: `tasks`, `ci`/`cd`/`support`, `artifacts`, `website`, `suites`, `releases`,
   `tracker`, `workflows`, `generated`, `claude`, `nexus`, `carriers`, `deploy`, `lab_egress`,
   `instance`, `output`, and the rest.
+  - **`product` is not among them, measured rather than assumed:** an earlier draft of this list named
+    it, and the census found no reader. The product's name comes from the launcher and the manifest's
+    file name, so the bridge exports `product:` as the Product resource's own `key`, not as a section.
   - **The list is not typed here,** because a typed list is wrong on the first day nobody checks it. The
     package covers exactly the sections the refusal census's derived reader population reads, and a test
     compares the two in both directions. A kernel reader with no class turns it red, and so does a class
@@ -600,13 +606,18 @@ Decision 10 puts the **whole manifest** into firn, not only the pipeline.
 - **It runs only after `manifest.load` has accepted the manifest.** A manifest the kernel refuses
   produces no model and passes on the refusal's rc, so "no model because it is broken" never reads as
   "no model because there is nothing to model".
-- **Diagrams:** `firn diagram` over the output draws the chain.
+- **Diagrams:** not yet. This spec said `firn diagram` over the output draws the chain, and firn
+  v0.1.0 - the image the gates run - has no `diagram` command (measured: `firn diagram` answers
+  "Unmatched argument"; its commands are init, check, gen, query, fmt, library, import, snapshot, lsp).
+  A diagram waits for a firn that draws one, or for a `gen` template that does.
 
 ### D.3 Checking it
 
-- **The M2 packages live in this repository** under `model/`, with its own `firn.toml` at the top (firn
-  expects the project at the mount root, si#371), and simplon places `test model: { task: "toolchain:run", with: { profile: firn,
-  command: check } }` (si#371's done-when).
+- **The M2 packages live in this repository** under `src/firn/` (si#371, Marco: firn under src), started
+  there through `toolchain:run`'s `cwd:`. The check is `test model`, written by `support toolchain firn
+  0.1.0` in its expanded form (profiles are scaffolded, si#95).
+- **`firn check` does not compile a SelectorRelation's selector** (measured on v0.1.0, reported to firn):
+  every SelectorRelation has a test asserting its non-empty answer over a fixture.
 - **A drift gate in CI** regenerates `simplon.firn` from `simplon.yaml` and runs `firn check` over it.
   rc 0 is the only green. firn's exit codes are 0/1/2/3/70, and the gate compares against 0, never
   against 1.

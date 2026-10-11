@@ -166,7 +166,7 @@ by the kind of work instead of by the phase it runs in:
 | packaging and publishing | `docker`, `oras`, `gh`, `dotnet` | `build:image`, `release:image`, `release:artifact`, `release:asset`, `release:nuget`, `release:maven`, `release:conan`, `build:nuget-config`, `build:nuget-restore`, `build:conan-cache` |
 | the machine and its services | `oras`, `docker compose`, `claude`, `sudo`/`usermod`, `systemctl`, `docker system prune`, `df`, `systemd-detect-virt`, `apt-get` - and nothing at all for `support:environments`, which only reads the manifest | `support:install`, `support:nexus`, `support:claude-plugins`, `support:environments`, `support:ci-privileges`, `support:ci-disk-hygiene`, `support:ci-arm64`, `support:ci-disk-preflight`, `support:ci-disk-cleanup`, `support:toolchain`, `toolchain:run` |
 | running things | the backend a product registers, `oras` for a client install, and - for the machine underneath - Pulumi and Ansible, each in a pinned container | `deploy:up`, `deploy:down`, `deploy:carrier` |
-| the declarations themselves | nothing external | `tasks:generate`, `tasks:catalogue`, `support:workflows`, `support:completion`, `support:migrate`, `build:cmake-files`, `build:dotnet-solution` |
+| the declarations themselves | nothing external | `tasks:generate`, `tasks:catalogue`, `support:workflows`, `support:completion`, `support:migrate`, `support:model`, `build:cmake-files`, `build:dotnet-solution` |
 
 Seven kinds of work, and the middle column barely intersects. Every one of them is reached through
 `build`, `test`, `release`, `deploy`, `monitor`, `support` and nothing else. That is the claim the fixed

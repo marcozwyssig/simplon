@@ -40,7 +40,7 @@ The `NOT_LOAD_TIME` class list this docstring used to describe is GONE and its a
 them, because nothing reaches them from either seam. One exclusion is left, `_validation_message`'s
 funnel, and `test_the_only_excluded_raise_is_the_funnel_that_re_raises_the_model` holds it at exactly one.
 
-WHAT THE WALK CANNOT DO, said here rather than left to be discovered. Ten modules read the manifest
+WHAT THE WALK CANNOT DO, said here rather than left to be discovered. Eleven modules read the manifest
 document INLINE, in the middle of a task body, so the reading and the tool-running are one function and no
 static rule separates them. They are named in `READS_INLINE` with the reason - and which modules read the
 document is COMPUTED, so a new one that is in neither half turns
@@ -85,8 +85,10 @@ classified fifty-five.
 AAA throughout.
 """
 import ast
+import builtins
 import functools
 import re
+from typing import NamedTuple
 
 import pytest
 import yaml
@@ -207,6 +209,11 @@ READS_INLINE = {
                           "a return code rather than a raise, because the caller is a gate whose whole "
                           "output is an rc and a sentence, so the walk would collect nothing from it "
                           "even if it could follow it",
+    "tasks.manifestmodel": "`_load()` fetches the document with `ctx.manifest_data()` only to hand it, "
+                           "with the already-validated Manifest, to `manifestmodel.export` - the "
+                           "validation is `ctx.manifest()`, which IS the walked seam, and the export's "
+                           "own refusals (`ModelExportError`) are raised at run time, after the load, "
+                           "and are caught, with RuntimeError from an unreadable document, into rc 1 (si#346)",
 }
 
 #: The funnel that re-raises a Pydantic error as the plain ValueError `load()` promises. It refuses
@@ -1023,6 +1030,273 @@ def _inline_readers() -> tuple[str, ...]:
     return tuple(sorted(out))
 
 
+# --- which top-level SECTIONS the kernel reads (si#346) ---------------------------------------------------
+#
+# The firn model of a manifest (`simplon.manifest`) has one property per section the kernel reads, and the
+# list of those sections is the same kind of number the census is: typed, it is wrong on the first day
+# nobody checks it. So it is DERIVED, from the same two seams the population is - `manifest.load(text)` and
+# `ProductContext.manifest_data()` - by following the document itself rather than guessing it by name.
+#
+# THE FIRST DRAFT GUESSED IT BY NAME, and the guess is worth recording because it is si#83's mistake in a
+# new place: a set that looks right and is not the set being talked about. Taking any local called `data`,
+# `document`, `doc`, `raw` or `mapping` for the manifest found 30 keys, and eleven of them were not
+# top-level manifest keys at all: `name` and `jobs` off a RENDERED workflow (`workflowgen`), `reference`,
+# `platforms` and `manifests` off an image's JSON (`tasks.image`), `url`/`ref`/`compose`/`credential_from`
+# off a `repository:` entry (`environments`), `max_id_len` off the `instance:` section `labinstance` binds
+# to `data`, and `"\n"` from a `"\n" in data` on a YAML scalar. It also MISSED `ci`, `images`, `website`,
+# `suites`, `releases`, `tracker`, `claude`, `nexus`, `build`, `instance`, `lab_egress`, `generate` and
+# `taxonomy` - every section read through a loop variable, `context.section(...)` or a pydantic model.
+# Renaming kernel locals to fit a heuristic would have made the test pass and the derivation no truer.
+#
+# So the walk is a data flow, and every step of it is a rule stated here:
+#   - The document is born at a seam: a `.manifest_data()` call, or - inside `manifest.load` - the local
+#     parsed from the text the loader was handed (`data = yaml.safe_load(text) or {}`).
+#   - It travels by assignment (`data = ctx.manifest_data()`, `x = data or {}`, `{**data, ...}`) and by
+#     being handed to a kernel function, whose parameter at that position then IS the document.
+#   - It is READ by `X.get(k)`, `X[k]`, `k in X`, the first path step of `context.section(X, k, ...)`, and
+#     `Model.model_validate(X)`, which reads the model's fields - except a key the kernel itself wrote into
+#     the spread it validates (`load` validates `{**data, "groups": ..., "tasks": {}}`, so `groups` there
+#     is the kernel's own output, not the manifest's).
+#   - `k` is a string, a module constant bound to strings (`SECTION`, `SOURCE_SECTIONS`), or a loop
+#     variable over them (`for area in ("ci", "cd")`).
+#
+# AND ONE RULE SEPARATES A KEY THE KERNEL MODELS FROM ONE IT READS ONLY TO REFUSE. si#344 refuses
+# `groups:`, `env_groups:`, a top-level `default:`/`environments:`/`site:` and the flat form's `import:` BY
+# NAME, so all of them are read - and none of them is a section a product may write. What tells them apart
+# is not a list of those keys (a second source of `check_no_pre_si344_form`'s own sentences) but the shape
+# of the function that reads them: A FUNCTION HANDED THE DOCUMENT THAT RETURNS NO VALUE IS A CHECK. It
+# hands no section on to anything, so whatever it reads it reads to refuse or to let pass. HANDED is part
+# of the rule, not a figure of speech: a function where the document is BORN - a task body calling
+# `ctx.manifest_data()` and returning nothing, a seam - is never a check, however it ends, because there
+# the reading and the using are one body (the first cut dropped every read in any value-less function,
+# and `env_var` survived only because `tasks.env.environments` happens to `return 0`). A key read only
+# in checks is refused, not modelled; a key a check reads AND a reader reads (`tasks`, which
+# `check_no_old_form` inspects and `load` consumes) is modelled, because the reader is what makes it so.
+# `test_a_key_the_kernel_reads_only_to_refuse_is_not_a_section` pins the dropped set EXACTLY to the keys
+# si#344 cut, so the rule cannot quietly widen and drop a real section with them.
+#
+# A HAND-OFF THE WALK CANNOT RESOLVE IS A SECTION IT CANNOT SEE: `Cls.method(data)`, `self.m(data)`, a
+# constructor, a function from a module outside the kernel. Each would shrink the answer silently, so the
+# walk collects them and `test_every_hand_off_of_the_document_is_followed` holds that list at empty.
+#
+# A READ BY A KEY THE WALK CANNOT RESOLVE IS THE SAME BLIND SPOT FROM THE OTHER END: `document.get(kind)`
+# with `kind` a parameter reads a section, and `_strings` turns it into no key at all. The walk collects
+# those sites too, and `test_every_unresolved_key_read_is_named` pins them to `KEY_READS_COVERED`, each
+# with the route by which its section is counted anyway - so a new one goes red instead of shrinking the
+# answer (si#346's final review measured `deployment._entry` dropping both of its reads this way).
+#
+# What this cannot see, said rather than discovered: a manifest TEXT parsed somewhere other than the two
+# seams (`environments.parse`, `tasks/toolchain.py`'s splice) - measured on the day this was written to
+# read `cd` and `ci` only, both found here through the seams anyway - and a pydantic validator's own reads,
+# because a model reads its FIELDS and a before-validator that tests for a key the model does not carry
+# (`_reject_removed_composites`) is refusing it by construction. Three more, named by si#346's final
+# review and not followed:
+#   - the document flowing OUT through a return value. The walk follows it into callees, never back to
+#     a caller, so a helper that returns the parsed document hands it to reads nobody walks.
+#     `tasks/manifestmodel._load` is the one there is, and it is in `READS_INLINE` for that reason;
+#   - a starred or double-starred hand-off (`f(*args)`, `f(**data)`): `positions` and `keywords` see
+#     only plain arguments, so the parameter that receives the document is never marked;
+#   - `_model_fields` reads a model's own annotated fields only - not a `ClassVar` (which it wrongly
+#     counts), not `validation_alias`/`AliasChoices`, and not a field inherited from a base model.
+
+
+def _string_constants(module: _Module) -> dict[str, tuple[str, ...]]:
+    """name -> the strings a module-level constant binds (`SECTION = "x"`, `SOURCE_SECTIONS = ("a", "b")`)."""
+    out: dict[str, tuple[str, ...]] = {}
+    for node in module.tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            items = node.value.elts if isinstance(node.value, ast.Tuple) else [node.value]
+            strings = tuple(i.value for i in items if isinstance(i, ast.Constant) and isinstance(i.value, str))
+            if strings and len(strings) == len(items):
+                out[node.targets[0].id] = strings
+    return out
+
+
+def _strings(node: ast.AST, names: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return (node.value,)
+    if isinstance(node, ast.Name):
+        return names.get(node.id, ())
+    if isinstance(node, ast.Tuple):
+        return tuple(s for element in node.elts for s in _strings(element, names))
+    return ()
+
+
+def _returns_a_value(function: ast.AST) -> bool:
+    return any(isinstance(node, (ast.Yield, ast.YieldFrom))
+               or (isinstance(node, ast.Return) and node.value is not None
+                   and not (isinstance(node.value, ast.Constant) and node.value.value is None))
+               for node in ast.walk(function))
+
+
+def _positional(function) -> list[str]:
+    return [p.arg for p in (*function.args.posonlyargs, *function.args.args)]
+
+
+def _model_fields(klass: ast.ClassDef) -> tuple[str, ...]:
+    """The keys a pydantic model reads: its annotated fields, by `alias=` where it has one."""
+    out = []
+    for statement in klass.body:
+        if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+            alias = [kw.value.value for kw in getattr(statement.value, "keywords", ())
+                     if kw.arg == "alias" and isinstance(kw.value, ast.Constant)]
+            out.append(alias[0] if alias else statement.target.id)
+    return tuple(out)
+
+
+class _Read(NamedTuple):
+    """One reading site of a top-level key."""
+
+    key: str
+    module: str
+    function: str
+    line: int
+    check: bool  # read in a function HANDED the document that returns no value
+
+
+@functools.lru_cache(maxsize=None)
+def _document_reads() -> tuple[_Read, ...]:
+    """Every place the manifest DOCUMENT is read by key, following the document from both seams."""
+    return _document_flow()[0]
+
+
+@functools.lru_cache(maxsize=None)
+def _document_flow() -> tuple[tuple[_Read, ...], tuple[str, ...], tuple[str, ...]]:
+    """The reads; every call handed the document that resolves to no kernel function; every read of the
+    document by a key the walk cannot resolve to a string (`document.get(kind)`)."""
+    queue: list[tuple[str, str, frozenset[str] | None]] = []
+    for dotted in _kernel_modules():
+        for name, functions in _module(dotted).funcs.items():
+            if any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                   and node.func.attr == DOCUMENT_ACCESSOR for f in functions for node in ast.walk(f)):
+                queue.append((dotted, name, frozenset()))
+    queue.append((*LOADER_ENTRY, None))  # None: the document is what the loader parses its text into
+
+    reads: list[_Read] = []
+    unresolved: list[str] = []
+    blind: list[str] = []
+    seen: set = set()
+    while queue:
+        item = queue.pop()
+        if item in seen:
+            continue
+        seen.add(item)
+        dotted, name, handed = item
+        module = _module(dotted)
+        for function in module.funcs.get(name, []):
+            reads.extend(_reads_in(module, function, handed, queue, unresolved, blind))
+    return tuple(sorted(set(reads))), tuple(sorted(set(unresolved))), tuple(sorted(set(blind)))
+
+
+def _reads_in(module: _Module, function, handed: frozenset[str] | None, queue: list,
+              unresolved: list[str], blind: list[str]) -> list[_Read]:
+    names = dict(_string_constants(module))
+    if handed is None:
+        text = _positional(function)[0]
+        bound = {node.targets[0].id for node in ast.walk(function)
+                 if isinstance(node, ast.Assign) and len(node.targets) == 1
+                 and isinstance(node.targets[0], ast.Name)
+                 and any(isinstance(call, ast.Call) and any(isinstance(a, ast.Name) and a.id == text
+                                                            for a in call.args)
+                         for call in ast.walk(node.value))}
+    else:
+        bound = set(handed)
+
+    def is_document(node) -> bool:
+        if isinstance(node, ast.Name):
+            return node.id in bound
+        if isinstance(node, ast.BoolOp):
+            return any(is_document(value) for value in node.values)
+        if isinstance(node, ast.IfExp):
+            return is_document(node.body) or is_document(node.orelse)
+        return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == DOCUMENT_ACCESSOR)
+
+    # The keys the kernel WRITES into a spread of the document (`{**data, "groups": ...}`) are its own.
+    written: set[str] = set()
+    grew = True
+    while grew:
+        grew = False
+        for node in ast.walk(function):
+            if isinstance(node, ast.Assign) and len(node.targets) == 1:
+                target, value = node.targets[0], node.value
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                target, value = node.target, node.value
+            else:
+                continue
+            if not isinstance(target, ast.Name):
+                continue
+            spread = isinstance(value, ast.Dict) and any(
+                key is None and is_document(item) for key, item in zip(value.keys, value.values))
+            if spread:
+                written.update(s for key in value.keys if key is not None for s in _strings(key, names))
+            if target.id not in bound and (spread or is_document(value)):
+                bound.add(target.id)
+                grew = True
+    for node in ast.walk(function):
+        if isinstance(node, ast.For) and isinstance(node.target, ast.Name) and _strings(node.iter, names):
+            names[node.target.id] = _strings(node.iter, names)
+
+    dotted, name = module.dotted, function.name
+    check = bool(handed) and not _returns_a_value(function)
+    out: list[_Read] = []
+    for node in ast.walk(function):
+        keys: tuple[str, ...] = ()
+        key_node: ast.AST | None = None  # the expression a by-key read of the document reads with
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get"
+                and node.args and is_document(node.func.value)):
+            key_node = node.args[0]
+        elif isinstance(node, ast.Subscript) and is_document(node.value):
+            key_node = node.slice
+        elif (isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.In)
+              and is_document(node.comparators[0])):
+            key_node = node.left
+        elif isinstance(node, ast.Call) and _is_the_section_walk(node.func, module):
+            if len(node.args) > 1 and is_document(node.args[0]):
+                key_node = node.args[1]  # the first path step is the top-level key
+        elif isinstance(node, ast.Call):
+            positions = [i for i, arg in enumerate(node.args) if is_document(arg)]
+            keywords = {kw.arg for kw in node.keywords if kw.arg and is_document(kw.value)}
+            called = node.func
+            if not (positions or keywords):
+                pass
+            elif (isinstance(called, ast.Attribute) and called.attr == "model_validate"
+                  and isinstance(called.value, ast.Name) and module.is_model(called.value.id)):
+                keys = tuple(k for k in _model_fields(module.classes[called.value.id]) if k not in written)
+            else:
+                target = None
+                if isinstance(called, ast.Name) and called.id in module.funcs:
+                    target = (dotted, called.id)
+                elif isinstance(called, ast.Attribute) and isinstance(called.value, ast.Name):
+                    imported = module.imports.get(called.value.id)
+                    target = (imported, called.attr) if imported else None
+                callees = _module(target[0]).funcs.get(target[1], []) if target else []
+                if not callees and not (isinstance(called, ast.Name) and called.id in vars(builtins)):
+                    unresolved.append(f"{dotted}:{node.lineno} {ast.unparse(called)}(...)")
+                for callee in callees:
+                    positional = _positional(callee)
+                    every = {*positional, *(p.arg for p in callee.args.kwonlyargs)}
+                    params = {positional[i] for i in positions if i < len(positional)} | (keywords & every)
+                    queue.append((target[0], target[1], frozenset(params)))
+        if key_node is not None:
+            keys = _strings(key_node, names)
+            if not keys:
+                # The document IS read here, by a key no rule above resolves (a parameter, a
+                # comprehension variable). Dropping it would shrink sections_read() silently (si#346).
+                blind.append(f"{dotted}.{name}: {ast.unparse(node)}")
+        out.extend(_Read(key, dotted, name, node.lineno, check) for key in keys)
+    return out
+
+
+def sections_read() -> frozenset[str]:
+    """The top-level manifest keys this kernel reads, derived from both seams (si#346).
+
+    A key read only by a CHECK - a function handed the document that returns no value - is not among
+    them: it is read to be refused. See the block above for why that is a shape and not a list.
+    """
+    return frozenset(read.key for read in _document_reads() if not read.check)
+
+
 def _closure(entries):
     """Every function body reachable from `entries`, as (module, FunctionDef)."""
     seen: set[tuple[str, str]] = set()
@@ -1266,6 +1540,94 @@ def test_the_section_walk_is_an_accessor_and_not_a_reader():
     assert unaccounted == [], (
         "a module reads a section through `context.section` and fell out of both halves of the census. "
         f"The accessor covers nothing for its caller - the refusal is still the caller's: {unaccounted}")
+
+
+# --- which top-level SECTIONS the kernel reads, derived like the population is (si#346) -------------------
+
+
+def test_the_sections_the_kernel_reads_include_every_declared_section_constant():
+    """A module that names its section in a `SECTION` constant reads it, so the derivation must find it.
+
+    This cross-check keeps `sections_read()` honest. It is a second route to the same answer, and the
+    two routes have to agree.
+    """
+    constants: set[str] = set()
+    for dotted in _kernel_modules():
+        for node in _module(dotted).tree.body:
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name) and "SECTION" in node.targets[0].id):
+                value = node.value
+                items = value.elts if isinstance(value, ast.Tuple) else [value]
+                constants |= {item.value for item in items
+                              if isinstance(item, ast.Constant) and isinstance(item.value, str)}
+
+    assert constants and constants <= sections_read(), sorted(constants - sections_read())
+
+
+def test_the_kernel_reads_its_command_tree_sections():
+    """The loader's own keys, read in `manifest.load` and `treeform` rather than through a SECTION constant.
+
+    `product:` IS NOT AMONG THEM, and that was measured, not forgotten: every reachable manifest writes it
+    and nothing in the kernel reads it. The product's name comes from the launcher (`context.bootstrap
+    (product, ...)`) and the manifest's own file name, so `product:` is a key the kernel ignores - which
+    the brief this was written from assumed the other way round.
+    """
+    assert {"tasks", "ci", "cd", "support", "generate"} <= sections_read()
+
+
+def test_a_key_the_kernel_reads_only_to_refuse_is_not_a_section():
+    """si#344 refuses the old form BY NAME, so the kernel reads those keys - and models none of them.
+
+    The rule that drops them is a shape (a check returns no value), not a list of these keys; this is the
+    list, held from the other side. Each one is a refusal in `treeform.check_no_pre_si344_form` or
+    `check_no_old_form`, and the derivation must still SEE them read - otherwise the rule is dropping
+    nothing and the emptiness below proves nothing.
+    """
+    cut = {"groups", "env_groups", "default", "environments", "site", "import"}
+    dropped = {read.key for read in _document_reads()} - sections_read()
+
+    # EXACTLY, not "at least": a rule that also dropped a real section would pass a subset check
+    assert dropped == cut, (sorted(dropped - cut), sorted(cut - dropped))
+
+
+def test_every_hand_off_of_the_document_is_followed():
+    """A call handed the document that resolves to no kernel function is a section nobody counted.
+
+    Builtins (`isinstance`, `type`) are not hand-offs; everything else - a method, a constructor, a
+    function from outside the kernel - is, and the walk cannot follow it. Empty on the day this was
+    written, so the first one is news.
+    """
+    reads, unresolved, _ = _document_flow()
+
+    assert reads, "the walk found no read at all - it is broken, and an empty list below would mean nothing"
+    assert unresolved == (), (
+        "the manifest document is handed to a call the section walk cannot follow, so whatever that call "
+        f"reads is missing from sections_read(): {list(unresolved)}")
+
+
+KEY_READS_COVERED = {
+    # `_entry(document, kind, ...)` reads the section a `cd: source:` names, so `kind` is a parameter.
+    # Both sections it can be are counted anyway: `SOURCE_SECTIONS = ("images", "artifacts")` is a
+    # SECTION constant, and test_the_sections_the_kernel_reads_include_every_declared_section_constant
+    # holds every such constant inside sections_read().
+    "deployment._entry: document.get(kind)": "SOURCE_SECTIONS, via the SECTION-constant cross-check",
+    "deployment._entry: document.get(k)": "SOURCE_SECTIONS, via the SECTION-constant cross-check",
+}
+
+
+def test_every_unresolved_key_read_is_named():
+    """A read of the document by a key the walk cannot resolve is a section it may not have counted.
+
+    Each one is named in KEY_READS_COVERED with the route by which its section is counted anyway; a new
+    one is neither, and this goes red. EXACTLY, so an entry outliving its read goes red too.
+    """
+    reads, _, blind = _document_flow()
+
+    assert reads, "the walk found no read at all - it is broken, and the comparison below would mean nothing"
+    assert set(blind) == set(KEY_READS_COVERED), (
+        "the manifest document is read by a key the section walk cannot resolve, so that section may be "
+        f"missing from sections_read() - new: {sorted(set(blind) - set(KEY_READS_COVERED))}, "
+        f"gone: {sorted(set(KEY_READS_COVERED) - set(blind))}")
 
 
 def test_the_only_excluded_raise_is_the_funnel_that_re_raises_the_model():

@@ -132,6 +132,7 @@ groups:
         help: "Tools over this product's manifest."
         commands:
           migrate: { task: "support:migrate" }
+          model: { task: "support:model" }
 
 # PLACEMENT OR FAMILY (si#34). The namespace half of a coordinate answers one of two questions, and which
 # one it answers is decided by whether it is one of the six GROUP NAMES declared above.
@@ -751,6 +752,12 @@ tasks:
     unattended: true
     params:
       manifest: { help: "the manifest to rewrite (default: this product's own)", argument: true }
+  support:model:
+    impl: simplon.tasks.manifestmodel:model
+    help: "Write this product's validated manifest as a firn model (si#346)."
+    unattended: true
+    params:
+      output: { help: "the .firn file to write (default: <output>/model/<product>.firn)", argument: true }
 
   # --- toolchain: a pinned image over the product tree (si#95) -----------------------------------------
   # A FAMILY, not a placement: si#34 would confine `build:toolchain` to `build`, and ctest / dotnet test /

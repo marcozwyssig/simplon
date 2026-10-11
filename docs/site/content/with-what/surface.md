@@ -193,7 +193,7 @@ no product manifest, command or import is affected either way.
 
 Short enough to state, and the half you most need, because everything else at the top level is yours:
 
-`bootstrap` · `catalogue` · `clitaxonomy` · `diskguard` · `oras` · `runners` · `signatures` ·
+`bootstrap` · `catalogue` · `clitaxonomy` · `diskguard` · `manifestmodel` · `oras` · `runners` · `signatures` ·
 `steplog` · `test_impls` · `tools`
 
 `runners` needs a word too, because `workflowgen` beside it is a library module and this is not. It is a

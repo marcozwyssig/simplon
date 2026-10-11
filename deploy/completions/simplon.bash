@@ -27,7 +27,7 @@ _simplon_nodes() {
         'support') _simplon_reply=('git' 'tasks' 'manifest' 'install' 'completion' 'doctor' 'workflows' 'claude-plugins' 'ci-privileges' 'ci-disk-hygiene' 'ci-arm64' 'ci-disk-preflight' 'ci-disk-cleanup') ;;
         'support.git') _simplon_reply=('commit' 'push' 'prune-branches' 'submodules' 'auth-scopes') ;;
         'support.tasks') _simplon_reply=('catalogue' 'generate') ;;
-        'support.manifest') _simplon_reply=('migrate') ;;
+        'support.manifest') _simplon_reply=('migrate' 'model') ;;
     esac
 }
 

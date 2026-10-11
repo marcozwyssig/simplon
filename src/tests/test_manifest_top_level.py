@@ -121,6 +121,9 @@ MODULES: dict[str, tuple[str, ...]] = {
     # hands the document to `environments.parse_data` and `carrierspec.declared`, the same shape as
     # `tasks.deploy` - it declares no key of its own
     "tasks.carrier": (),
+    # si#346: fetches the document and hands it, with the validated Manifest, to `manifestmodel.export`
+    # - the same shape as tasks.deploy; it declares no key of its own
+    "tasks.manifestmodel": (),
     "tasks.generated": ("generated",),
     # si#314: the one directory a build writes into. A top-level SCALAR rather than a section - it
     # carries one value, and a section would invite a second key to grow beside it saying the same thing

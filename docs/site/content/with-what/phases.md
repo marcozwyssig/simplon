@@ -149,13 +149,13 @@ the number that says whether a rib is filled:
 | `release` | phase, agnostic | 7 |
 | `deploy` | phase, env-first | 3 |
 | `monitor` | phase, env-first | 0 |
-| `support` | not a phase | 13 |
+| `support` | not a phase | 14 |
 | `vcs` | family | 5 |
 | `docs` | family | 4 |
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Forty-nine coordinates: thirty-seven carrying a placement, twelve free to be filed. The numbers in this sentence, in that
+Fifty coordinates: thirty-eight carrying a placement, twelve free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -376,7 +376,7 @@ environment.
 
 *Host preflight, environment introspection and host tooling.* Not a phase - the group the five stand on.
 
-**In the catalogue today: 13 tasks.**
+**In the catalogue today: 14 tasks.**
 
 - `support:install`
 - `support:nexus`
@@ -385,6 +385,7 @@ environment.
 - `support:workflows`
 - `support:completion`
 - `support:migrate`
+- `support:model`
 - `support:ci-privileges`
 - `support:ci-disk-hygiene`
 - `support:ci-arm64`
@@ -403,6 +404,20 @@ asked for is a completion nobody has. Four of the rest each read a section (`nex
 placed - but it WRITES the product's own manifest, and a command that edits the file a product is defined
 by should be one the product asked for. What it writes is a language's ready-made build, so that a
 product declares its parameters and receives the rest.
+
+`support:model` (`support manifest model <path>`, si#346) writes the validated manifest as a firn model,
+`package product.<product>`, and it writes only after the manifest has loaded: a manifest the kernel
+refuses leaves no file, so a model on disk is always one of a manifest that worked - a refused run leaves
+the previous model in place, and the rc says whether it is the current one. Only the sections the
+kernel reads are modelled; a product's own sections are `ProductData` with their key and nothing else.
+firn names take no `-` yet (firn#962 will allow it), so names are mangled - the non-group children get a
+`t_`, `e_`, `i_`, `a_`, `s_` or `d_` prefix - and the original is kept in `key`. simplon checks its own
+model in CI: `simplon.yaml` lists it under `generated:`, so `test generated` fails when the committed file
+is not what the command writes, and `test model` runs `firn check` over it with the M2 packages beside it.
+A product's exported model names `simplon.manifest.*` and `simplon.pipeline.*`, and those packages live in
+this repository's `src/firn/`, not in the kernel's interface: checking a product's model needs simplon's
+M2 beside it, and shipping the M2 for that is not done yet. (The wheel happens to carry `src/firn/` today
+as a top-level `firn/` directory - a packaging accident, not a place to read it from.)
 
 `support:ci-privileges` is the one that is offered for a different reason (si#92). It reads no section at
 all, so by the test above it could be placed - and it deliberately is not, because it grants
