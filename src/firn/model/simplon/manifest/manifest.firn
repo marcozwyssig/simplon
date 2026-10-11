@@ -1,0 +1,173 @@
+// simplon.manifest (spec D.1): the manifest's top level, as far as the kernel reads it. Each property is
+// one section `test_firn_manifest_coverage` derived from the census - add a reader and this file has to
+// follow, delete one and it has to shrink. A section only a product reads is never here; it is a
+// ProductData entry holding its key and nothing else.
+package simplon.manifest
+
+// A section the kernel reads and whose inside is not modelled yet. Parts B and C give a section a real
+// class when they generate from it.
+KernelSection typeOf firn.core.Class extends firn.core.NamedResource {
+  property key typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+}
+
+// A section only the product reads (asbundle's jdk:, netctl's topology:, ...). The model does not claim
+// to understand it.
+ProductData typeOf firn.core.Class extends firn.core.NamedResource {
+  property key typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+}
+
+Product typeOf firn.core.Class extends firn.core.NamedResource {
+  allowRoot = true
+  property key typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property data typeOf firn.core.Composition {
+    range = simplon.manifest.ProductData
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+  // Structure, not a section: since si#344 the environment matrix lives under `cd:`, so the kernel reads
+  // no top-level `environments`; the bridge exports the matrix here. The coverage test excludes it.
+  property environments typeOf firn.core.Composition {
+    range = simplon.pipeline.Environment
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+  property artifacts typeOf firn.core.Composition {
+    range = simplon.pipeline.Artifact
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+  property assets typeOf firn.core.Composition {
+    range = simplon.manifest.KernelSection
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+  property build typeOf firn.core.Composition {
+    range = simplon.manifest.KernelSection
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+  property carriers typeOf firn.core.Composition {
+    range = simplon.manifest.KernelSection
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+  property cd typeOf firn.core.Composition {
+    range = simplon.pipeline.Group
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+  property ci typeOf firn.core.Composition {
+    range = simplon.pipeline.Group
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+  property claude typeOf firn.core.Composition {
+    range = simplon.manifest.KernelSection
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+  property deploy typeOf firn.core.Composition {
+    range = simplon.manifest.KernelSection
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+  property doctoolchain_version typeOf firn.core.Composition {
+    range = simplon.manifest.KernelSection
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+  property env_var typeOf firn.core.Composition {
+    range = simplon.manifest.KernelSection
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+  property generate typeOf firn.core.Composition {
+    range = simplon.manifest.KernelSection
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+  property generated typeOf firn.core.Composition {
+    range = simplon.manifest.KernelSection
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+  property images typeOf firn.core.Composition {
+    range = simplon.pipeline.Artifact
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+  property instance typeOf firn.core.Composition {
+    range = simplon.manifest.KernelSection
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+  property lab_egress typeOf firn.core.Composition {
+    range = simplon.manifest.KernelSection
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+  property layout typeOf firn.core.Composition {
+    range = simplon.manifest.KernelSection
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+  property nexus typeOf firn.core.Composition {
+    range = simplon.manifest.KernelSection
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+  property output typeOf firn.core.Composition {
+    range = simplon.manifest.KernelSection
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+  property releases typeOf firn.core.Composition {
+    range = simplon.manifest.KernelSection
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+  property suites typeOf firn.core.Composition {
+    range = simplon.manifest.KernelSection
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+  property support typeOf firn.core.Composition {
+    range = simplon.pipeline.Group
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+  property tasks typeOf firn.core.Composition {
+    range = simplon.pipeline.Task
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+  property taxonomy typeOf firn.core.Composition {
+    range = simplon.manifest.KernelSection
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+  property tracker typeOf firn.core.Composition {
+    range = simplon.manifest.KernelSection
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+  property website typeOf firn.core.Composition {
+    range = simplon.manifest.KernelSection
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+  property workflows typeOf firn.core.Composition {
+    range = simplon.manifest.KernelSection
+    subjectCardinality = 0..1
+    objectCardinality = 0..1
+  }
+}

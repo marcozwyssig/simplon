@@ -171,8 +171,10 @@ PACKAGES = frozenset({"orchestrator", "tasks"})
 #: naming a kind in its manifest - never by importing the table. That is the whole point of carrying it
 #: here: the kernel learns a machine once, for everybody, and is free to add a kind or correct a
 #: measured field without that being a promise it broke.
+#: `manifestmodel` (si#346) is the bridge to firn's M1 model; nobody outside the kernel's own tooling
+#: has a reason to import it, so it is not promised.
 INTERNAL = frozenset({
-    "bootstrap", "catalogue", "clitaxonomy", "diskguard", "oras", "runners", "signatures", "steplog",
+    "bootstrap", "catalogue", "clitaxonomy", "diskguard", "manifestmodel", "oras", "runners", "signatures", "steplog",
     "test_impls", "tools",
 })
 
