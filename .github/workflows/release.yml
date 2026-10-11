@@ -312,6 +312,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # The image declares linux/arm64 too (si#368), and this runner is amd64. Its runtime stage RUNs
+      # apt-get and pip, which needs an emulator; on an ephemeral GitHub-hosted runner registering one
+      # changes nobody's machine, which is why here - and only here - the job does it itself.
+      # The same pinned binfmt image the kernel names everywhere else (labhost.BINFMT_IMAGE), never the
+      # action's floating default.
+      - uses: docker/setup-qemu-action@v3
+        with:
+          image: tonistiigi/binfmt:qemu-v10.2.3
+          platforms: arm64
       - run: ./simplon.sh build image --tag "$GITHUB_REF_NAME"
       - run: ./simplon.sh release image --tag "$GITHUB_REF_NAME"
         env:
@@ -321,8 +330,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ref="ghcr.io/marcozwyssig/simplon:${GITHUB_REF_NAME}"
-          digest="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$ref" \
-                    | sed -n 's|^ghcr.io/marcozwyssig/simplon@||p' | head -n1)"
+          # The digest of the INDEX the tag names (si#368: one manifest list for two platforms), read from
+          # the registry rather than from a local image, which holds one platform at most.
+          digest="$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' \
+                    | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])')"
           test -n "$digest" || { echo "::error::$ref was published but its digest could not be read"; exit 1; }
           branch="pin/kernel-image-${GITHUB_REF_NAME}"
           git fetch --quiet origin main

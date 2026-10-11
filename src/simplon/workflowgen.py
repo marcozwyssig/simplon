@@ -654,7 +654,16 @@ def _step(item: object, where: str) -> Step:
             raise ValueError(
                 f"{where}: `command:` already gives this step its body, so it cannot also declare "
                 f"{', '.join(clash)} - drop one of the two")
-        return Step(command=command, modifiers=rest, note=note)
+        # `params:` is the command's, not GitHub's (si#368). It used to fall through into the modifiers
+        # and be written out as a step key GitHub does not have, so `params: { platform: linux/amd64 }`
+        # produced a workflow that ran the command WITHOUT the parameter, and said nothing. It is read
+        # here and rendered as `--name value`, checked against what the command declares.
+        raw = rest.pop("params", None) or {}
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"{where}: `params:` must map parameter names to values, not "
+                             f"{type(raw).__name__}")
+        params = {str(k): str(v) for k, v in raw.items()}
+        return Step(command=command, modifiers=rest, note=note, params=params)
     if not rest:
         raise ValueError(f"{where}: declares neither `command:` nor a verbatim GitHub step")
     if "uses" not in rest and "run" not in rest:

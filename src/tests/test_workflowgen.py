@@ -2002,3 +2002,42 @@ def test_the_note_about_the_disk_steps_says_which_machine_it_is_about(disk_manif
     # assert
     assert "self-hosted" in text
     assert "disk" in text.lower()
+
+
+# --- a manifest step's params: (si#368) ------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def kernel_manifest():
+    """simplon's own manifest: its `build image` declares a `platform` parameter to pass."""
+    from conftest import ROOT
+    return manifest_mod.load((ROOT / "simplon.yaml").read_text(encoding="utf-8"), catalogue=catalogue_mod.load())
+
+
+_PARAMS = """
+    workflows:
+      ci:
+        on: [push]
+        jobs:
+          build:
+            runner: github-ubuntu
+            steps:
+              - command: build image
+                params: {{ {param}: linux/amd64 }}
+"""
+
+
+def test_a_manifest_steps_params_become_the_commands_flags_and_not_a_github_step_key(kernel_manifest):
+    """si#368: `params:` fell through as a step key GitHub does not have, so the command ran without it."""
+    # act
+    text = _render(kernel_manifest, _PARAMS.format(param="platform"))
+
+    # assert
+    assert "run: ./sample.sh build image --platform linux/amd64" in text
+    assert "params:" not in text
+
+
+def test_a_manifest_step_naming_a_parameter_the_command_lacks_is_refused(kernel_manifest):
+    # act / assert
+    with pytest.raises(ValueError, match="platfrom"):
+        _render(kernel_manifest, _PARAMS.format(param="platfrom"))

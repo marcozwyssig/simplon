@@ -54,7 +54,7 @@
 # and PEP 440 wants `0.12.1.dev6+gf3862e6`, so it would need a rule that rewrites the number, and a
 # rewritten number is a second statement about the version - which is the thing si#200 removed.
 
-FROM python:3.12-slim AS build
+FROM --platform=$BUILDPLATFORM python:3.12-slim AS build
 
 # git, because setuptools-scm shells out to it. Without it the wheel builds as the 0.1.dev1 no-tag
 # sentinel and the image would carry a version nobody chose.

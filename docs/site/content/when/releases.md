@@ -23,9 +23,32 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
-## 0.26.3
+## 0.27.0
 
-**What a product has to do:** nothing.
+**What a product has to do:** nothing. A product whose workflow step carried `params:` and silently ran
+without them now gets the flags it asked for, or a refusal naming a parameter its command does not have.
+
+### The kernel image is published for linux/arm64 too (si#368)
+
+Measured by firn on firn#198: the image index carried linux/amd64 only, so on Apple silicon the container
+route did not start at all (`no matching manifest for linux/arm64`). `images: kernel:` now declares
+`platforms: [linux/amd64, linux/arm64]`, and a release builds and pushes one manifest list for both. The
+wheel stage runs `FROM --platform=$BUILDPLATFORM`, because a pure-Python wheel needs no emulation. Only
+the runtime stage runs under QEMU, which the release job registers on its ephemeral runner through
+`docker/setup-qemu-action` with the kernel's pinned `tonistiigi/binfmt:qemu-v10.2.3`. The pin step now
+takes the digest of the index from `docker buildx imagetools inspect`. CI keeps building amd64 only, so
+the runner needs no emulator on every push. Measured on an amd64 LXC host with an emulator registered:
+both platforms built in 552 s from cold, and the arm64 image answered `aarch64` and its own simplon
+version.
+
+### A manifest workflow step's `params:` reaches the command (si#368)
+
+Found while doing the above. `params: { platform: linux/amd64 }` on a `command:` step fell through as
+a step key GitHub does not have, so the generated workflow ran the command **without** the parameter and
+said nothing. The generator now reads `params:` and renders each one as `--name value`, checked against
+what the command declares. A parameter the command lacks is refused by name, and a `params:` that is not
+a mapping is a new diagnosis.
+
 
 ### The pin pull request the release opens now carries a CI result (si#365)
 
