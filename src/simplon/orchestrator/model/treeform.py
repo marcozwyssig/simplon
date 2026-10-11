@@ -141,12 +141,16 @@ CD_DATA_KEYS = ("default", "environments", "site")
 AREA_SKELETON = {"ci": {"transparent": True}, "cd": {"transparent": True, "env_first": True}}
 
 
-def tree_from_areas(data: dict) -> dict:
+def tree_from_areas(data: dict, phases: dict[str, tuple[str, ...]]) -> dict:
     """The product's `ci:` / `cd:` / `support:` sections as ONE tree for `merge`.
 
     Under `ci:` and `cd:` the phase groups stand directly (`ci: build:`), where the tree nests children
     under `groups:`; this wraps them. The data keys under `cd:` are not groups and are left out here -
     `simplon.environments` reads them from the document. `support:` already IS a group node.
+
+    `phases` maps an area to the phase groups the PLATFORM declares under it (read off the catalogue's
+    tree by the loader, so this module keeps no second list). It is empty for a load with no catalogue,
+    and then there is nothing to name an unknown key against.
     """
     tree: dict = {}
     for area in ("ci", "cd"):
@@ -157,16 +161,60 @@ def tree_from_areas(data: dict) -> dict:
             raise ValueError(
                 f"`{area}:` is not a mapping: found {type(section).__name__} instead. It maps each phase "
                 f"group ({_phases_of(area)}) to its node - check the indentation under this key")
-        groups = {name: node for name, node in section.items()
-                  if not (area == "cd" and name in CD_DATA_KEYS)}
+        known = phases.get(area, ())
+        groups = {}
+        for name, node in section.items():
+            if area == "cd" and name in CD_DATA_KEYS:
+                continue
+            # The area is skipped on the command line, so a command written on it has no path. Said here,
+            # first, because left alone it is read as a phase group called "commands" and surfaces as a
+            # group-lock message about a group the product never meant (or, with no catalogue, as a group).
+            if name == "commands":
+                first = known[0] if known else ("build" if area == "ci" else "deploy")
+                raise ValueError(
+                    f"`{area}: commands:` stands directly under the area. Commands belong to a phase "
+                    f"group - `{area}: {first}: commands:` - because the area itself is skipped on the "
+                    f"command line")
+            if area == "cd" and known and name not in known:
+                raise ValueError(
+                    f"`cd: {name}:` is neither a phase group nor a data key. Under `cd:` stand the phase "
+                    f"groups {', '.join(known)} and the data keys {', '.join(CD_DATA_KEYS)}")
+            refuse_area_shape(node, area, name)
+            groups[name] = node
         # A section holding only data (`cd:` with nothing but its environments) names no group. Left out
         # rather than handed to `merge` as an empty node, which a catalogue-less load would refuse as a
         # group that "declares no commands" - a promise the product never made.
         if groups:
             tree[area] = {"groups": groups}
     if data.get("support") is not None:
+        # `support:` IS a group node, so its own `transparent:` is checked as well as its children's.
+        refuse_area_shape(data["support"], "support", "")
         tree["support"] = data["support"]
     return tree
+
+
+def refuse_area_shape(node: object, area: str, name: str) -> None:
+    """Refuse what a group under `ci:` / `cd:` / `support:` may not say about its own shape (si#344).
+
+    `node` comes first because the census measures a rule by the first argument it was handed, and the
+    loader also runs this over the CATALOGUE's `ci` groups - the kernel is held to `env_first:` too.
+    """
+    if not isinstance(node, dict):
+        return
+    where = f"{area}: {name}:" if name else f"{area}:"
+    if "transparent" in node:
+        raise ValueError(
+            f"`{where}` declares `transparent:`. Which nodes are transparent is the platform's "
+            f"statement (the catalogue's `groups:`), so that `ci` and `cd` are skipped on the command "
+            f"line in every product and nothing else is - remove the key")
+    if area == "ci" and "env_first" in node:
+        raise ValueError(
+            f"`{where}` declares `env_first:`. Nothing under `ci:` takes an environment - a build, a "
+            f"test and a release run the same in every environment; what takes one stands under `cd:`, "
+            f"which is env-first as a whole. Remove the key, or move the commands that need an "
+            f"environment under `cd:`")
+    for child, child_node in (node.get("groups") or {}).items():
+        refuse_area_shape(child_node, area, f"{name}: groups: {child}")
 
 
 def _phases_of(area: str) -> str:

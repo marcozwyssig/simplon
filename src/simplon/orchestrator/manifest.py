@@ -879,7 +879,13 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
         # TRANSITIONAL (deleted in plan A Task 9): the old form, wrapped into the area tree.
         tree = treeform.tree_from_groups(old_groups or {}, phase_areas)
     else:
-        tree = treeform.tree_from_areas(data)
+        phases = {area: tuple((node.get("groups") or {}).keys())
+                  for area, node in kernel_tree.items() if node.get("transparent")}
+        tree = treeform.tree_from_areas(data, phases)
+    # The platform's own `ci` groups are held to the same shape rule (`env_first:` under `ci:`), so the
+    # rule binds the kernel with the product rather than exempting it.
+    for name, node in ((kernel_tree.get("ci") or {}).get("groups") or {}).items():
+        treeform.refuse_area_shape(node, "ci", name)
     tasks_block = data.get("tasks")
     if tasks_block is not None and not isinstance(tasks_block, dict):
         raise ValueError(

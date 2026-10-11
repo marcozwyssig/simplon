@@ -182,3 +182,70 @@ def test_the_skeleton_agrees_with_the_catalogue_on_the_areas():
     for area, node in treeform.AREA_SKELETON.items():
         assert bool(node.get("transparent")) == bool(cat[area].get("transparent"))
         assert bool(node.get("env_first")) == bool(cat[area].get("env_first"))
+
+
+# --- what a product may not say about the area shape (si#344, plan A Task 4) ---------------------------
+
+def test_a_product_writing_transparent_is_refused():
+    # arrange
+    text = NEW_FORM.replace("  build:\n", "  build:\n    transparent: true\n")
+
+    # act / assert
+    with pytest.raises(ValueError) as caught:
+        _load(text)
+    assert str(caught.value) == (
+        "`ci: build:` declares `transparent:`. Which nodes are transparent is the platform's statement "
+        "(the catalogue's `groups:`), so that `ci` and `cd` are skipped on the command line in every "
+        "product and nothing else is - remove the key")
+
+
+def test_env_first_under_ci_is_refused():
+    # arrange
+    text = NEW_FORM.replace("  build:\n", "  build:\n    env_first: true\n")
+
+    # act / assert
+    with pytest.raises(ValueError) as caught:
+        _load(text)
+    assert str(caught.value) == (
+        "`ci: build:` declares `env_first:`. Nothing under `ci:` takes an environment - a build, a test "
+        "and a release run the same in every environment; what takes one stands under `cd:`, which is "
+        "env-first as a whole. Remove the key, or move the commands that need an environment under `cd:`")
+
+
+def test_an_unknown_key_under_cd_names_both_lists():
+    # arrange
+    text = NEW_FORM.replace("  default: dev\n", "  default: dev\n  rollout: {}\n")
+
+    # act / assert
+    with pytest.raises(ValueError) as caught:
+        _load(text)
+    assert str(caught.value) == (
+        "`cd: rollout:` is neither a phase group nor a data key. Under `cd:` stand the phase "
+        "groups deploy, monitor and the data keys default, environments, site")
+
+
+def test_an_area_that_is_not_a_mapping_is_refused():
+    # arrange
+    text = NEW_FORM.replace("ci:\n  build:\n    commands:\n      wheel: { task: wheel }\n", "ci: [build]\n")
+
+    # act / assert
+    with pytest.raises(ValueError) as caught:
+        _load(text)
+    assert str(caught.value) == (
+        "`ci:` is not a mapping: found list instead. It maps each phase group (build, test, release) "
+        "to its node - check the indentation under this key")
+
+
+@pytest.mark.parametrize("area, first", [("ci", "build"), ("cd", "deploy")])
+@pytest.mark.parametrize("with_catalogue", [True, False])
+def test_commands_directly_under_an_area_are_refused(area, first, with_catalogue):
+    # arrange
+    text = NEW_FORM.replace(f"{area}:\n", f"{area}:\n  commands: {{}}\n")
+    load = _load if with_catalogue else manifest_mod.load
+
+    # act / assert
+    with pytest.raises(ValueError) as caught:
+        load(text)
+    assert str(caught.value) == (
+        f"`{area}: commands:` stands directly under the area. Commands belong to a phase group - "
+        f"`{area}: {first}: commands:` - because the area itself is skipped on the command line")

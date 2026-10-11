@@ -582,6 +582,16 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("treeform", "_refuse_a_second_path", "is reached through two transparent nodes"): DIAGNOSIS,
     ("treeform", "elide_transparent", "is transparent and declares `commands:`"): DIAGNOSIS,
     ("treeform", "tree_from_areas", "is not a mapping"): DIAGNOSIS,
+    # si#344. A product may not make a node transparent: the CLI would lose a path segment the platform
+    # did not decide to drop. The refused manifest assembles a working CLI, a different one.
+    ("treeform", "refuse_area_shape", "declares `transparent:`"): EXPRESSION,
+    # si#344, decision 5: nothing under ci takes an environment. A ci group made env-first would assemble
+    # and run - gated - so this forbids something expressible.
+    ("treeform", "refuse_area_shape", "Nothing under `ci:` takes an environment"): EXPRESSION,
+    ("treeform", "tree_from_areas", "is neither a phase group nor a data key"): DIAGNOSIS,
+    # si#344. `commands:` written on the area itself: the area is skipped on the command line, so the
+    # commands would have no path. Unrefused it reads as a phase group called "commands".
+    ("treeform", "tree_from_areas", "stands directly under the area"): DIAGNOSIS,
 
     # --- tasks/testrun.py: the `suites:` section (si#61) --------------------------------------------
     #
@@ -830,6 +840,12 @@ REACH: dict[tuple[str, str, str], str] = {
     ("treeform", "check_no_old_form", "is written in the flat command form"): REACH_SEAM,
     ("treeform", "check_coordinate_placement", "places the coordinate"): REACH_MERGED,
     ("treeform", "check_env_groups", "shape_is_the_platforms"): REACH_SEAM,
+    ("treeform", "refuse_area_shape", "declares `transparent:`"): REACH_SEAM,
+    # Labelled SEAM, not MERGED, on a measurement: `load` does run this over the catalogue's own `ci`
+    # groups, but those carry no command at all (every coordinate the catalogue places is under `support`),
+    # so the recorder below is never handed a coordinate of the kernel's half. REACH_MERGED here would be
+    # a claim the measurement cannot back; it becomes true the day the catalogue places one under `ci`.
+    ("treeform", "refuse_area_shape", "Nothing under `ci:` takes an environment"): REACH_SEAM,
     # The `suites:` section is not part of the merged tree at all - it is product data end to end - so
     # "the kernel too" is a real statement here rather than an empty one: a kernel manifest declaring
     # `suites:` goes through the same `declared()` with no exemption path.
