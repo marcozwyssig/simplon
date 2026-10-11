@@ -476,9 +476,9 @@ tasks:
 # - build -> test -> release -> deploy -> monitor, plus support - and every product hangs its commands
 # off those same six slots. That is the whole point: a person moving between two Simplon products finds
 # the same groups holding the same general commands. The first three sit under `ci:`, the two env-first
-# ones under `cd:` beside the environments they run against, and `support` stands on its own. A group name the catalogue does not declare is
-# refused at load; add it to the platform's catalogue once, for everybody, or find the slot it belongs
-# in.
+# ones under `cd:` beside the environments they run against, and `support` stands on its own. A group
+# name the catalogue does not declare is refused at load; add it to the platform's catalogue once, for
+# everybody, or find the slot it belongs in.
 #
 # All six are shown here, each with at least one command, because a group is only useful once something
 # is in it - and because the loop is easiest to learn on the day the product is empty. A group you

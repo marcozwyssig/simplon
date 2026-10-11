@@ -39,9 +39,10 @@ cd:
       status: { task: status }
 ```
 
-What stands under `cd:` is env-first, and nothing else is. The kernel's catalogue declares `cd` env-first
-as a whole, so `deploy` and `monitor` take an environment in every product without a line saying so, and
-a product's own group placed under `cd:` takes one for the same reason. The other way round is refused: a
+What stands under `cd:` is env-first, and nothing else is. Only `deploy` and `monitor` stand there - the
+catalogue declares both and a product cannot add a third - and the catalogue declares `cd` env-first as a
+whole, so every command under either of them takes an environment in every product without a line saying
+so. The other way round is refused: a
 group under `ci:` that declares `env_first:` gets a load error, because a build, a test and a release run
 the same in every environment - what needs one belongs under `cd:`.
 

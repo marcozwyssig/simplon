@@ -1641,19 +1641,20 @@ def test_a_new_form_manifest_cannot_invent_a_group():
 
 
 def test_a_coordinate_keyed_entry_under_a_new_form_tasks_block_is_rejected():
-    # arrange: the shape a migration leaves behind - `groups:` was added but a coordinate placement was
+    # arrange: the shape a migration leaves behind - the tree was written but a coordinate placement was
     # never moved out of `tasks:`. Filtering it out used to make it vanish: not resolved, not rejected,
     # and invisible to the orphan check because that check only ever saw the filtered map.
-    # si#344 Task 9: becomes a cut diagnosis
-    catalogue = catalogue_mod.loads('tasks: {}\ngroups:\n  build: { help: "Produce." }\n')
+    catalogue = catalogue_mod.loads('tasks: {}\ngroups:\n  ci:\n    transparent: true\n'
+                                    '    groups:\n      build: { help: "Produce." }\n')
     text = textwrap.dedent("""
         product: demo
         tasks:
           vcs:push: { impl: "demo.tooling:push", help: "push it." }
-        groups:
+          noop: { impl: "demo.tooling:noop", help: "does nothing." }
+        ci:
           build:
             commands:
-              noop: { impl: "demo.tooling:noop", help: "does nothing." }
+              noop: { task: noop }
     """)
 
     # act / assert
@@ -1667,7 +1668,6 @@ def test_a_new_form_tasks_block_that_is_not_a_mapping_is_rejected():
     catalogue = catalogue_mod.loads('tasks: {}\ngroups:\n  ci:\n    transparent: true\n'
                                     '    groups:\n      build: { help: "Produce." }\n')
     text = 'product: demo\ntasks: [lab-image]\nci:\n  build:\n    commands:\n      noop: { task: lab-image }\n'
-
 
     # act / assert
     with pytest.raises(ValueError, match="`tasks:` is not a mapping"):

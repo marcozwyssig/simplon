@@ -1474,6 +1474,12 @@ def _the_kernels_own_coordinates() -> tuple[str, ...]:
     for node in nodes:
         if isinstance(node, dict):
             own |= _catalogue_placements(node)
+    # An empty `own` subtracts nothing and every assertion below still holds - which is exactly what
+    # happened when simplon.yaml left `groups:` and this read stayed on it. Refused rather than trusted.
+    if not own:
+        raise ValueError(
+            "simplon.yaml places no coordinate under ci / cd / support as read here, so the subtraction "
+            "below would remove nothing - the read is broken, not the manifest")
     coordinates = placed - own
     if not coordinates:
         raise ValueError(
