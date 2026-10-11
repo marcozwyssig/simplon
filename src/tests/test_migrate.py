@@ -318,6 +318,35 @@ def test_every_real_manifest_migrates_and_parses_back_to_the_same_content(produc
                              if not line.startswith(" ")]
 
 
+#: What the migrated surface may differ by, and nothing else: si#344 places one new command for every
+#: product (`support manifest migrate`).
+NEW_IN_EVERY_PRODUCT = {"support.manifest": ["migrate"]}
+
+
+@pytest.mark.parametrize("product", PRODUCTS)
+def test_a_migrated_real_manifest_assembles_the_cli_it_always_did(product):
+    # arrange
+    golden = json.loads((FIXTURES / "golden" / f"{product}.json").read_text())
+    migrated = migrate_text((FIXTURES / f"{product}.yaml").read_text())
+
+    # act
+    surface = cli_surface(manifest.load(migrated.text, catalogue=catalogue.load(),
+                                        manifest_path=f"{product}.yaml"))
+
+    # assert
+    for group, members in NEW_IN_EVERY_PRODUCT.items():
+        assert surface["groups"].pop(group) == members
+        surface["commands"].pop(group)
+    assert surface == golden
+
+
+@pytest.mark.parametrize("product", PRODUCTS)
+def test_the_unmigrated_real_manifest_is_refused_by_the_cut(product):
+    # act / assert
+    with pytest.raises(ValueError, match="which si#344 replaced"):
+        manifest.load((FIXTURES / f"{product}.yaml").read_text(), catalogue=catalogue.load())
+
+
 # --- the task body: migrate() -----------------------------------------------------------------------
 from simplon.tasks import migrate as migrate_mod  # noqa: E402
 

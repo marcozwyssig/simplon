@@ -455,3 +455,30 @@ def test_the_website_quotes_the_refusal_word_for_word():
     # assert: not "close enough" - the page shows a reader what they will see, so a full stop the
     # loader does not print is a small lie in the one place a reader checks their own output against
     assert _quoted_refusal() == real
+
+
+#: The count si#34 ruled on over simplon.yaml with the pre-si#344 kernel (commit d7b4fcd), measured on
+#: 2026-10-11 with the spy below on a worktree of that commit: a typed constant, because the number is a
+#: fact about a past kernel that nothing live can recompute.
+PLACEMENTS_BEFORE_THE_TRANSPARENT_LEVEL = 17
+
+
+def test_the_kernels_own_manifest_rules_on_as_many_placements_as_before_the_transparent_level():
+    """si#344, spec A.3: the count si#34 rules on over simplon.yaml must not drop when `ci`/`cd` became a
+    tree level. A drop means the rule stopped applying to something. The one addition is
+    `support:migrate`, the catalogue's own placement under `support` (the `support.manifest` subgroup)."""
+    # arrange
+    calls = []
+    original = treeform.check_coordinate_placement
+
+    def spy(*args, **kwargs):
+        calls.append(original(*args, **kwargs))
+        return calls[-1]
+
+    # act
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(treeform, "check_coordinate_placement", spy)
+        manifest_mod.load((ROOT / "simplon.yaml").read_text(), catalogue=catalogue_mod.load())
+
+    # assert
+    assert calls == [PLACEMENTS_BEFORE_THE_TRANSPARENT_LEVEL + 1]
