@@ -149,13 +149,13 @@ the number that says whether a rib is filled:
 | `release` | phase, agnostic | 7 |
 | `deploy` | phase, env-first | 3 |
 | `monitor` | phase, env-first | 0 |
-| `support` | not a phase | 13 |
+| `support` | not a phase | 14 |
 | `vcs` | family | 5 |
 | `docs` | family | 4 |
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Forty-nine coordinates: thirty-seven carrying a placement, twelve free to be filed. The numbers in this sentence, in that
+Fifty coordinates: thirty-eight carrying a placement, twelve free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -376,7 +376,7 @@ environment.
 
 *Host preflight, environment introspection and host tooling.* Not a phase - the group the five stand on.
 
-**In the catalogue today: 13 tasks.**
+**In the catalogue today: 14 tasks.**
 
 - `support:install`
 - `support:nexus`
@@ -385,6 +385,7 @@ environment.
 - `support:workflows`
 - `support:completion`
 - `support:migrate`
+- `support:model`
 - `support:ci-privileges`
 - `support:ci-disk-hygiene`
 - `support:ci-arm64`

@@ -427,8 +427,9 @@ def test_every_real_manifest_migrates_and_parses_back_to_the_same_content(produc
 
 
 #: What the migrated surface may differ by, and nothing else: si#344 places one new command for every
-#: product (`support manifest migrate`).
-NEW_IN_EVERY_PRODUCT = {"support.manifest": ["migrate"]}
+#: product (`support manifest migrate`), and si#346 a second (`support manifest model`). The goldens are
+#: not refreshed (fixtures/manifests/README.md), so each kernel command is named here instead.
+NEW_IN_EVERY_PRODUCT = {"support.manifest": ["migrate", "model"]}
 
 
 @pytest.mark.parametrize("product", PRODUCTS)
