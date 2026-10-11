@@ -85,8 +85,10 @@ classified fifty-five.
 AAA throughout.
 """
 import ast
+import builtins
 import functools
 import re
+from typing import NamedTuple
 
 import pytest
 import yaml
@@ -1058,10 +1060,19 @@ def _inline_readers() -> tuple[str, ...]:
 # NAME, so all of them are read - and none of them is a section a product may write. What tells them apart
 # is not a list of those keys (a second source of `check_no_pre_si344_form`'s own sentences) but the shape
 # of the function that reads them: A FUNCTION HANDED THE DOCUMENT THAT RETURNS NO VALUE IS A CHECK. It
-# hands no section on to anything, so whatever it reads it reads to refuse or to let pass. A key read only
-# in such functions is refused, not modelled; a key a check reads AND a reader reads (`tasks`, which
+# hands no section on to anything, so whatever it reads it reads to refuse or to let pass. HANDED is part
+# of the rule, not a figure of speech: a function where the document is BORN - a task body calling
+# `ctx.manifest_data()` and returning nothing, a seam - is never a check, however it ends, because there
+# the reading and the using are one body (the first cut dropped every read in any value-less function,
+# and `env_var` survived only because `tasks.env.environments` happens to `return 0`). A key read only
+# in checks is refused, not modelled; a key a check reads AND a reader reads (`tasks`, which
 # `check_no_old_form` inspects and `load` consumes) is modelled, because the reader is what makes it so.
-# `test_a_key_the_kernel_reads_only_to_refuse_is_not_a_section` holds the rule against the keys si#344 cut.
+# `test_a_key_the_kernel_reads_only_to_refuse_is_not_a_section` pins the dropped set EXACTLY to the keys
+# si#344 cut, so the rule cannot quietly widen and drop a real section with them.
+#
+# A HAND-OFF THE WALK CANNOT RESOLVE IS A SECTION IT CANNOT SEE: `Cls.method(data)`, `self.m(data)`, a
+# constructor, a function from a module outside the kernel. Each would shrink the answer silently, so the
+# walk collects them and `test_every_hand_off_of_the_document_is_followed` holds that list at empty.
 #
 # What this cannot see, said rather than discovered: a manifest TEXT parsed somewhere other than the two
 # seams (`environments.parse`, `tasks/toolchain.py`'s splice) - measured on the day this was written to
@@ -1114,13 +1125,25 @@ def _model_fields(klass: ast.ClassDef) -> tuple[str, ...]:
     return tuple(out)
 
 
-#: One reading site: (key, module, function, line, the function returns a value).
-_Read = tuple[str, str, str, int, bool]
+class _Read(NamedTuple):
+    """One reading site of a top-level key."""
+
+    key: str
+    module: str
+    function: str
+    line: int
+    check: bool  # read in a function HANDED the document that returns no value
 
 
 @functools.lru_cache(maxsize=None)
 def _document_reads() -> tuple[_Read, ...]:
     """Every place the manifest DOCUMENT is read by key, following the document from both seams."""
+    return _document_flow()[0]
+
+
+@functools.lru_cache(maxsize=None)
+def _document_flow() -> tuple[tuple[_Read, ...], tuple[str, ...]]:
+    """The reads, and every call that is handed the document and resolves to no kernel function."""
     queue: list[tuple[str, str, frozenset[str] | None]] = []
     for dotted in _kernel_modules():
         for name, functions in _module(dotted).funcs.items():
@@ -1130,6 +1153,7 @@ def _document_reads() -> tuple[_Read, ...]:
     queue.append((*LOADER_ENTRY, None))  # None: the document is what the loader parses its text into
 
     reads: list[_Read] = []
+    unresolved: list[str] = []
     seen: set = set()
     while queue:
         item = queue.pop()
@@ -1139,11 +1163,12 @@ def _document_reads() -> tuple[_Read, ...]:
         dotted, name, handed = item
         module = _module(dotted)
         for function in module.funcs.get(name, []):
-            reads.extend(_reads_in(module, function, handed, queue))
-    return tuple(sorted(set(reads)))
+            reads.extend(_reads_in(module, function, handed, queue, unresolved))
+    return tuple(sorted(set(reads))), tuple(sorted(set(unresolved)))
 
 
-def _reads_in(module: _Module, function, handed: frozenset[str] | None, queue: list) -> list[_Read]:
+def _reads_in(module: _Module, function, handed: frozenset[str] | None, queue: list,
+              unresolved: list[str]) -> list[_Read]:
     names = dict(_string_constants(module))
     if handed is None:
         text = _positional(function)[0]
@@ -1161,6 +1186,8 @@ def _reads_in(module: _Module, function, handed: frozenset[str] | None, queue: l
             return node.id in bound
         if isinstance(node, ast.BoolOp):
             return any(is_document(value) for value in node.values)
+        if isinstance(node, ast.IfExp):
+            return is_document(node.body) or is_document(node.orelse)
         return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                 and node.func.attr == DOCUMENT_ACCESSOR)
 
@@ -1170,21 +1197,27 @@ def _reads_in(module: _Module, function, handed: frozenset[str] | None, queue: l
     while grew:
         grew = False
         for node in ast.walk(function):
-            if not (isinstance(node, ast.Assign) and len(node.targets) == 1
-                    and isinstance(node.targets[0], ast.Name)):
+            if isinstance(node, ast.Assign) and len(node.targets) == 1:
+                target, value = node.targets[0], node.value
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                target, value = node.target, node.value
+            else:
                 continue
-            spread = isinstance(node.value, ast.Dict) and any(
-                key is None and is_document(value) for key, value in zip(node.value.keys, node.value.values))
+            if not isinstance(target, ast.Name):
+                continue
+            spread = isinstance(value, ast.Dict) and any(
+                key is None and is_document(item) for key, item in zip(value.keys, value.values))
             if spread:
-                written.update(s for key in node.value.keys if key is not None for s in _strings(key, names))
-            if node.targets[0].id not in bound and (spread or is_document(node.value)):
-                bound.add(node.targets[0].id)
+                written.update(s for key in value.keys if key is not None for s in _strings(key, names))
+            if target.id not in bound and (spread or is_document(value)):
+                bound.add(target.id)
                 grew = True
     for node in ast.walk(function):
         if isinstance(node, ast.For) and isinstance(node.target, ast.Name) and _strings(node.iter, names):
             names[node.target.id] = _strings(node.iter, names)
 
-    dotted, name, returns = module.dotted, function.name, _returns_a_value(function)
+    dotted, name = module.dotted, function.name
+    check = bool(handed) and not _returns_a_value(function)
     out: list[_Read] = []
     for node in ast.walk(function):
         keys: tuple[str, ...] = ()
@@ -1215,12 +1248,15 @@ def _reads_in(module: _Module, function, handed: frozenset[str] | None, queue: l
                 elif isinstance(called, ast.Attribute) and isinstance(called.value, ast.Name):
                     imported = module.imports.get(called.value.id)
                     target = (imported, called.attr) if imported else None
-                for callee in (_module(target[0]).funcs.get(target[1], []) if target else ()):
+                callees = _module(target[0]).funcs.get(target[1], []) if target else []
+                if not callees and not (isinstance(called, ast.Name) and called.id in vars(builtins)):
+                    unresolved.append(f"{dotted}:{node.lineno} {ast.unparse(called)}(...)")
+                for callee in callees:
                     positional = _positional(callee)
                     every = {*positional, *(p.arg for p in callee.args.kwonlyargs)}
                     params = {positional[i] for i in positions if i < len(positional)} | (keywords & every)
                     queue.append((target[0], target[1], frozenset(params)))
-        out.extend((key, dotted, name, node.lineno, returns) for key in keys)
+        out.extend(_Read(key, dotted, name, node.lineno, check) for key in keys)
     return out
 
 
@@ -1230,7 +1266,7 @@ def sections_read() -> frozenset[str]:
     A key read only by a CHECK - a function handed the document that returns no value - is not among
     them: it is read to be refused. See the block above for why that is a shape and not a list.
     """
-    return frozenset(key for key, _, _, _, returns in _document_reads() if returns)
+    return frozenset(read.key for read in _document_reads() if not read.check)
 
 
 def _closure(entries):
@@ -1520,10 +1556,25 @@ def test_a_key_the_kernel_reads_only_to_refuse_is_not_a_section():
     nothing and the emptiness below proves nothing.
     """
     cut = {"groups", "env_groups", "default", "environments", "site", "import"}
-    checked = {key for key, _, _, _, returns in _document_reads() if not returns}
+    dropped = {read.key for read in _document_reads()} - sections_read()
 
-    assert cut <= checked, sorted(cut - checked)
-    assert cut & sections_read() == set(), sorted(cut & sections_read())
+    # EXACTLY, not "at least": a rule that also dropped a real section would pass a subset check
+    assert dropped == cut, (sorted(dropped - cut), sorted(cut - dropped))
+
+
+def test_every_hand_off_of_the_document_is_followed():
+    """A call handed the document that resolves to no kernel function is a section nobody counted.
+
+    Builtins (`isinstance`, `type`) are not hand-offs; everything else - a method, a constructor, a
+    function from outside the kernel - is, and the walk cannot follow it. Empty on the day this was
+    written, so the first one is news.
+    """
+    reads, unresolved = _document_flow()
+
+    assert reads, "the walk found no read at all - it is broken, and an empty list below would mean nothing"
+    assert unresolved == (), (
+        "the manifest document is handed to a call the section walk cannot follow, so whatever that call "
+        f"reads is missing from sections_read(): {list(unresolved)}")
 
 
 def test_the_only_excluded_raise_is_the_funnel_that_re_raises_the_model():
