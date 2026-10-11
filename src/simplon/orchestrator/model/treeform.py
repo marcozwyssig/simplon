@@ -21,7 +21,7 @@ from collections.abc import Iterable
 # A group node's own keys. Everything else under a node would be ambiguous, which is why members live
 # under `commands:` rather than directly on the node: otherwise `help:` would be a group attribute in one
 # place and a command name in another.
-NODE_KEYS = ("help", "env_first", "groups", "commands")
+NODE_KEYS = ("help", "env_first", "transparent", "groups", "commands")
 
 
 def _check_node_keys(node: dict, path: tuple[str, ...]) -> None:
@@ -34,7 +34,7 @@ def _check_node_keys(node: dict, path: tuple[str, ...]) -> None:
         if key not in NODE_KEYS:
             raise ValueError(
                 f"group '{'.'.join(path)}' declares unknown key '{key}'. A group node's keys are "
-                f"help, env_first, groups and commands - rename it, or if this is meant to be a "
+                f"help, env_first, transparent, groups and commands - rename it, or if this is meant to be a "
                 f"command, move it under `commands:`")
 
 
@@ -56,8 +56,8 @@ def lower(tree: dict, _path: tuple[str, ...] = ()) -> tuple[dict, dict]:
         if node is not None and not isinstance(node, dict):
             raise ValueError(
                 f"group '{'.'.join(path)}' is not a mapping: found {type(node).__name__} instead. A "
-                f"group node's value must be a mapping with its own keys (help, env_first, groups, "
-                f"commands) - check the indentation under this entry")
+                f"group node's value must be a mapping with its own keys (help, env_first, transparent, "
+                f"groups, commands) - check the indentation under this entry")
         node = node or {}
         _check_node_keys(node, path)
         shape = {key: node[key] for key in NODE_KEYS if key in node and key not in ("groups", "commands")}
@@ -69,6 +69,71 @@ def lower(tree: dict, _path: tuple[str, ...] = ()) -> tuple[dict, dict]:
                                 for command, spec in (node.get("commands") or {}).items()}
         flat.update(child_flat)
     return taxonomy, flat
+
+
+# --- the transparent level (si#344): real in the tree, absent from the command line ---------------------
+
+
+def elide_transparent(tree: dict) -> tuple[dict, dict[str, str]]:
+    """The tree with every TRANSPARENT node replaced by its children, plus where each child came from.
+
+    `ci` and `cd` are nodes of the platform's tree (si#344): the group lock sees them, so `ci: deploy:`
+    is refused by the same rule that refuses any undeclared path, and the area of every phase is a
+    statement the catalogue makes once. They are NOT part of a command's path: `./simplon.sh build image`
+    stays exactly that (decision 1). Folding them away here, after `merge` and before `lower`, is what
+    lets everything downstream - `Manifest.groups`, the CLI, taskgen, completion, the workflow generator
+    - receive the paths it has always received.
+
+    `env_first:` on a transparent node is handed to each child, because the child is what survives: `cd`
+    is env-first so that whatever stands under it takes an environment (decision 5).
+
+    Only the TOP level is walked. The catalogue declares transparent nodes nowhere else, and a product
+    cannot declare one at all (`load` refuses it), so a deeper one would be a catalogue defect rather
+    than a shape to support.
+
+    A name hoisted twice - from two transparent siblings, or beside a visible sibling of the same name -
+    would be two groups with one command-line path. That is refused here, naming both internal paths.
+    """
+    elided: dict = {}
+    origin: dict[str, str] = {}
+    areas: dict[str, str] = {}
+    for name, node in (tree or {}).items():
+        name = str(name)
+        node = node or {}
+        if node.get("transparent"):
+            for child, child_node in (node.get("groups") or {}).items():
+                child = str(child)
+                _refuse_a_second_path(child, f"{name}.{child}", origin)
+                hoisted = dict(child_node or {})
+                if node.get("env_first"):
+                    hoisted["env_first"] = True
+                elided[child] = hoisted
+                origin[child] = f"{name}.{child}"
+                areas[child] = name
+        else:
+            _refuse_a_second_path(name, name, origin)
+            elided[name] = node
+            origin[name] = name
+    return elided, areas
+
+
+def _refuse_a_second_path(name: str, path: str, origin: dict[str, str]) -> None:
+    if name in origin:
+        raise ValueError(
+            f"group '{name}' is reached through two transparent nodes, '{origin[name]}' and '{path}', "
+            f"and both would be '{name}' on the command line. A transparent node is skipped when the CLI "
+            f"path is built, so its children's names must be unique across all of them - rename one in "
+            f"the platform's `groups:`")
+
+
+def platform_groups(tree: dict) -> frozenset[str]:
+    """The platform's group names as a coordinate can name them: the first VISIBLE level of its tree.
+
+    si#34's placement rule is stated over these. Before si#344 they were simply the top-level keys; with
+    `ci` and `cd` transparent, the top-level keys are `ci`, `cd` and `support`, and reading those would
+    make `build:image` a family overnight - the exact failure si#344 measured.
+    """
+    return frozenset(elide_transparent(tree)[0])
 
 
 def _is_empty(node: dict) -> bool:
