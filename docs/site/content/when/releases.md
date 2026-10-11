@@ -23,6 +23,69 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.28.0
+
+**What a product has to do:** two things, once, and the order matters. This release refuses a manifest
+written with `groups:`, so a product that upgrades without doing them does not start.
+
+1. **Rewrite the manifest** with `simplon manifest migrate <product>.yaml`. It ships with this kernel and
+   loads no manifest, so it works on one the kernel refuses:
+   - venv route: `deploy/orchestrator/.venv/bin/simplon manifest migrate <product>.yaml`
+   - container route: `docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/src" -w /src
+     ghcr.io/marcozwyssig/simplon:v0.28.0 simplon manifest migrate <product>.yaml`
+
+   Read the diff before committing it. Comments, flow style and key order survive. The command writes
+   nothing unless the result parses to the same data and every original line is accounted for. A second
+   run answers `already in the ci/cd form - nothing to migrate`.
+2. **Re-render the launcher** (`simplon init --force`). It now exports `LAUNCH_ORCH_DIR` and
+   `LAUNCH_IMAGE_PIN`, so the refusal a not-yet-migrated manifest gets prints a command that can be
+   copied as it stands, with the real paths instead of `<orch-dir>` and `<kernel image>`.
+
+The command line does not change: `./<product>.sh build image` is still `build image`.
+
+### Commands stand under `ci:`, `cd:` and `support:` (si#344)
+
+The manifest's `groups:` is replaced by three top-level areas: `ci:` (build, test, release), `cd:`
+(deploy, monitor, and the environment matrix: `default:` and `environments:` move under it) and
+`support:`. `ci` and `cd` are levels in the tree that the command line does not show, so every command
+keeps its name. The documentation site's top-level `site:` is now `website:`, and its location is
+`cd: site:`.
+
+`env_groups:` is deleted (si#43's rule with it). Everything under `cd:` takes an environment and nothing
+under `ci:` does, so the structure says what the key used to.
+
+The old form is refused by name: `groups:`, `env_groups:`, a top-level `default:` or `environments:`, and
+a top-level `site:`. Each refusal names both migration routes above.
+
+The migration refuses rather than guess: a target key that already exists (a `ci:` beside `groups:`),
+flow style, indentation it cannot follow, or a comment it could not carry. It was measured on the eight
+reachable manifests, frozen in the old form before any change. Migrated, each one assembles the same
+command line as before; the only new command is `support manifest migrate`.
+
+Fixed on the way: shell completion offered no environments to a migrated product, and the toolchain
+scaffold only knew `groups:`.
+
+Known and left, for the products that meet them:
+
+- A misspelt area key such as `ic:` is an unknown top-level key, which is product data, so the commands
+  under it vanish without a word. A misspelt `cd:` loses the environment matrix the same way.
+- cleon declares `release:` and `support:` twice under `groups:`. The migration keeps both copies, as
+  YAML does, so the second still wins; cleon should drop one.
+- A file with CRLF line endings comes back with LF.
+
+The next part of si#344 folds `images:` into `artifacts:`. Every product will run the same command a
+second time then.
+
+### The phase-placement rule now reads past `ci:` and `cd:` (si#34)
+
+The rule that a phase name in a coordinate is the placement now looks at the first level the command
+line shows, under the two hidden ones. It rules on the kernel's own placements as before: 17 before, 18
+now, because `support:migrate` is new.
+
+### The pin moved to the 0.27.0 image (#370)
+
+The pull request the 0.27.0 release opened was merged, with its dispatched CI run green.
+
 ## 0.27.0
 
 **What a product has to do:** nothing. A product whose workflow step carried `params:` and silently ran
