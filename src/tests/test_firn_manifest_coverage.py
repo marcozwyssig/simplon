@@ -36,3 +36,13 @@ def test_the_manifest_package_models_exactly_what_the_kernel_reads():
     # assert
     assert read - modelled == set(), f"read by the kernel, not modelled: {sorted(read - modelled)}"
     assert modelled - read == set(), f"modelled, read by nothing: {sorted(modelled - read)}"
+
+
+def test_the_bridges_typed_section_list_is_the_census_and_the_model():
+    # arrange: KERNEL_SECTIONS is typed (the wheel ships no src/firn/), so it is the third copy, and
+    # it is held by both of the other two - the census that derives the set, and the Product it models
+    typed = manifestmodel.KERNEL_SECTIONS
+
+    # act / assert
+    assert list(typed) == sorted(sections_read())
+    assert {manifestmodel.mangle(section) for section in typed} == _product_properties()
