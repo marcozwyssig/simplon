@@ -53,7 +53,7 @@ def test_a_clean_model_checks_clean(tree):
 @needs_docker
 def test_a_broken_model_comes_back_as_1(tree):
     # arrange
-    model = tree / "src" / "firn" / "model" / "simplon" / "simplon.firn"
+    model = tree / "src" / "firn" / "model" / "product" / "simplon" / "simplon.firn"
     model.write_text(model.read_text() + "\nbroken {{{\n")
 
     # act

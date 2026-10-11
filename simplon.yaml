@@ -443,6 +443,12 @@ generated:
   ci-workflow:
     path: .github/workflows/ci.yml
     by: support workflows
+  # simplon's own manifest as a firn model (si#346). `test generated` regenerates it and fails on drift;
+  # `test model` runs `firn check` over it with the M2 beside it, so a manifest change the model cannot
+  # carry is red in CI rather than discovered when parts B and C generate from it.
+  firn-model:
+    path: src/firn/model/product/simplon/simplon.firn
+    by: support manifest model src/firn/model/product/simplon/simplon.firn
 
 images:
   kernel:

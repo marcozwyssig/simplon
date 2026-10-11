@@ -62,8 +62,8 @@ def test_the_vocabulary_is_eleven_kinds_rooted_in_artifact_and_refining_only_wit
     # assert: both queries exited clean, so an empty answer cannot be a failed query passing as green
     assert rc == 0
     assert rc_refines == 0
-    # the vocabulary is the simplon.vocabulary.* set; simplon.kernel.Wheel (si#346's hand-written M1) is
-    # also an ArtifactKind and is left out of the count on purpose
+    # the vocabulary is the simplon.vocabulary.* set; the product models beside it (product.simplon, the
+    # exported manifest) are left out of the count by the prefix filter on purpose
     names = {n for n in kinds.split() if n.startswith("simplon.vocabulary.")}
     assert len(names) == 11
     assert "simplon.vocabulary.artifact" in names
