@@ -312,6 +312,7 @@ simplon typeOf simplon.manifest.Product {
     key = "simplon.tasks.manifestmodel:model"
     body = "simplon.tasks.manifestmodel:model"
   }
+  default = "dev"
   images i_kernel typeOf simplon.pipeline.Artifact {
     key = "kernel"
     kind = simplon.vocabulary.image

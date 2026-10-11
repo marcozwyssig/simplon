@@ -6,6 +6,7 @@ catalogue allows under build. It loads with no cd group: the matrix alone is eno
 
 AAA throughout.
 """
+import copy
 import re
 from pathlib import Path
 
@@ -239,6 +240,52 @@ def test_the_guard_refuses_one_original_named_twice_in_one_owner():
         names("build")
 
 
+def test_cd_default_is_exported_as_the_name_it_writes():
+    # act
+    out = _export()
+
+    # assert: one line on the Product
+    assert re.findall(r"^  default = .*$", out, re.MULTILINE) == ['  default = "dev"']
+
+
+def test_a_cd_default_naming_no_environment_is_exported_not_refused():
+    # arrange: `load` accepts a default with no matrix (measured), and simplon's own manifest is one -
+    # a bridge that refused it would refuse the kernel's own model
+    text = DEMO.replace("  environments:\n    dev: {}\n    prod: {}\n", "")
+    assert matrix_section(yaml.safe_load(text)) == {"default": "dev", "environments": None}
+
+    # act
+    out = manifestmodel.export(_load(text), yaml.safe_load(text), "demo", manifestmodel.KERNEL_SECTIONS)
+
+    # assert
+    assert re.findall(r"^  default = .*$", out, re.MULTILINE) == ['  default = "dev"']
+    assert "typeOf simplon.pipeline.Environment" not in out
+
+
+def test_a_platform_group_named_like_a_prefixed_child_is_refused():
+    # arrange: a product cannot name a top-level group (the platform's tree locks them), so only a
+    # platform that declares `e_dev` reaches this - and it collides with the environment `dev`
+    real = catalogue.load()
+    groups = copy.deepcopy(real.groups)
+    groups["ci"]["groups"]["e_dev"] = {"help": "a platform group named like an environment"}
+    text = ("product: demo\nci:\n  e_dev:\n    commands:\n      site: { task: \"docs:site\" }\n"
+            "cd:\n  default: dev\n  environments:\n    dev: {}\n")
+    loaded = manifest_mod.load(text, catalogue=real._replace(groups=groups))
+    assert "e_dev" in loaded.groups
+
+    # act / assert
+    with pytest.raises(manifestmodel.ModelExportError, match="'e_dev' and 'dev' are both 'e_dev'"):
+        manifestmodel.export(loaded, yaml.safe_load(text), "demo", manifestmodel.KERNEL_SECTIONS)
+
+
+def test_a_product_cannot_name_a_top_level_group_at_all():
+    # the other half of the docstring's claim: what makes the refusal above platform-only
+    text = "product: demo\nci:\n  e_dev:\n    commands:\n      site: { task: \"docs:site\" }\n"
+
+    with pytest.raises(ValueError, match="names a group the platform's tree does not declare"):
+        _load(text)
+
+
 def _source(name: str) -> tuple[manifest_mod.Manifest, str]:
     """DEMO, or a reachable manifest migrated and loaded exactly as test_migrate's golden test does."""
     if name == "demo":
@@ -257,8 +304,15 @@ def test_the_export_drops_nothing(name):
     # is well-formed too, so every count is held against the number the manifest itself gives
     mf, text = _source(name)
     document = yaml.safe_load(text)
-    envs = matrix_section(document)["environments"] or {}
+    matrix = matrix_section(document)
+    envs = matrix["environments"] or {}
     structure = {"product", "ci", "cd", "support", "tasks", "images", "artifacts"}
+    # Not exported, by decision and stated in manifestmodel's docstring - so "drops nothing" is true of
+    # everything else: `cd: site:` (nothing in the M2 holds a Site until a deploy reads one) and a
+    # `tasks:` entry no command places (one Task per impl a command USES, R9). Both are left out of
+    # every count below on purpose, and nothing here counts them.
+    impls = {mf.spec_for(group, command).impl for group, members in mf.groups.items() for command in members
+             if not mf.spec_for(group, command).depends_on}
 
     # act
     out = manifestmodel.export(mf, document, name, manifestmodel.KERNEL_SECTIONS)
@@ -268,6 +322,8 @@ def test_the_export_drops_nothing(name):
     assert _count(out, r"command \w+") == sum(len(members) for members in mf.groups.values())
     assert len(re.findall(r"typeOf simplon\.pipeline\.Group \{$", out, re.MULTILINE)) == len(mf.groups)
     assert _count(out, r"environments \w+") == len(envs)
+    assert len(re.findall(r"^  default = ", out, re.MULTILINE)) == (matrix["default"] is not None)
+    assert impls and _count(out, r"tasks \w+") == len(impls)
     assert _count(out, r"(images|artifacts) \w+") == (
         len(document.get("images") or {}) + len(document.get("artifacts") or {}))
     assert len(re.findall(r"typeOf simplon\.manifest\.(KernelSection|ProductData) \{$", out, re.MULTILINE)) == len(

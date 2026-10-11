@@ -19,13 +19,32 @@ already did (`t_`), so no two sections can meet by construction:
     i_  an `images:` entry                a_  an `artifacts:` entry
     s_  a kernel section                  d_  a section only the product reads
 
-The price: a product group literally named like a prefixed child (`e_dev`, `d_jdk`, `t_...`) is
-refused by ModelExportError - a manifest `load` accepts, but one the model cannot hold without merging
-two resources.
+The price: a top-level group literally named like a prefixed child (`e_dev`, `d_jdk`, `t_...`) is
+refused by ModelExportError. A PRODUCT cannot write one - `load` locks the top-level groups to the
+platform's tree (`ci: e_dev:` is refused as "a group the platform's tree does not declare") - so it is
+reachable only through a platform tree that declares such a group. The kernel's own six do not;
+`test_a_platform_group_named_like_a_prefixed_child_is_refused` pins the refusal with one that does.
 
 What is left to meet is two originals in one owner that mangle alike (`nuget-config` and
 `nuget_config`), and that is refused by name: firn would merge them into one resource, and a model that
 silently holds one command where the manifest has two is the defect this kernel hunts.
+
+What is NOT exported, said so that "drops nothing" stays true of the rest:
+  - `cd: site:` - the M2 has a Site class, but nothing holds one until a deploy reads a site (spec,
+    "What this is NOT"); a manifest's `cd: site:` is not in the model.
+  - a `tasks:` entry no command places - one Task per distinct impl a command USES (plan rule 2), so a
+    task the product offers and never places (si#53) is invisible until parts B/C need it.
+`cd: default:` IS exported, as `Product.default` - the name as written, not a reference to one of
+`Product.environments`, because a loadable manifest may name none (simplon's own: `default: dev`, no
+matrix); whether it names a real one stays `environments.parse_data`'s verdict at run time.
+
+Every ModelExportError is a DIAGNOSIS (CLAUDE.md's first kind): the manifest loaded, and the model would
+otherwise hold less than it does or something it does not. Each one names what it cannot hold - two
+names that mangle alike, a group named like a prefixed child, a member that resolves to no one command,
+a group in no area, a matrix or an `images:`/`artifacts:` that is not a mapping. Today they fire at RUN
+time of an opt-in command (`support manifest model`) and are outside the refusal census, which counts
+what refuses on the way from a manifest to a decision. Once parts B/C generate from this model they sit
+on that load path, and each needs a census entry then.
 """
 from __future__ import annotations
 
@@ -176,17 +195,23 @@ class _Export:
                                    [f"key = {_q(impl)}", f"body = {_q(impl)}"])]
 
     def environments(self, document: Mapping[str, object]) -> list[str]:
-        envs = matrix_section(document)["environments"]
-        if envs is None:
-            return []
+        matrix = matrix_section(document)
+        envs = {} if matrix["environments"] is None else matrix["environments"]
+        default = matrix["default"]
         if not isinstance(envs, Mapping):
             raise ModelExportError(f"cd: environments is a {type(envs).__name__}, not a mapping")
-        names = [(str(env), self.names(str(env), "e_")) for env in envs]
-        lines: list[str] = []
-        for index, (env, name) in enumerate(names):
+        names = {str(env): self.names(str(env), "e_") for env in envs}
+        # `cd: default:` as the manifest WRITES it, a name and not a reference to an Environment: `load`
+        # does not hold it to the matrix (`environments.parse_data` does, when a run first resolves an
+        # environment), and simplon's own manifest says `default: dev` with no matrix at all - so a
+        # reference would refuse the kernel's own model, and dropping the line would be a model quietly
+        # smaller than its manifest
+        lines = [] if default is None else [f"default = {_q(str(default))}"]
+        order = list(names.items())
+        for index, (env, name) in enumerate(order):
             body = [f"key = {_q(env)}"]
-            if index + 1 < len(names):
-                body.append(f"next = {self.root}.{names[index + 1][1]}")
+            if index + 1 < len(order):
+                body.append(f"next = {self.root}.{order[index + 1][1]}")
             lines += _block(f"environments {name} typeOf simplon.pipeline.Environment", body)
         return lines
 

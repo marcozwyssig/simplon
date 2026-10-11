@@ -16,7 +16,8 @@ M2 = Path(__file__).resolve().parents[1] / "firn" / "model" / "simplon" / "manif
 # si#344 the environment matrix lives under `cd:`, so the kernel reads no top-level `environments`, but
 # the bridge exports the matrix as Product.environments (simplon.pipeline.Environment). `product:` is not
 # in sections_read() either (the kernel never reads it), so there is nothing to remove from `read`.
-_STRUCTURE = {"key", "data", "environments"}
+# `default` is `cd: default:` beside the matrix, for the same reason - a top-level `default:` is refused.
+_STRUCTURE = {"key", "data", "environments", "default"}
 
 
 def _product_properties() -> set[str]:

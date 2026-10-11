@@ -40,6 +40,14 @@ Product typeOf firn.core.Class extends firn.core.NamedResource {
     subjectCardinality = 0..N
     objectCardinality = 0..1
   }
+  // `cd: default:`, the environment the CLI selects when nothing else does. A NAME, not an Association to
+  // an Environment: the loader does not hold it to the matrix, and simplon's own manifest writes
+  // `default: dev` with no `environments:` - a reference would refuse the kernel's own model. Structure
+  // too, excluded beside `environments` by the coverage test.
+  property default typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..1
+  }
   property artifacts typeOf firn.core.Composition {
     range = simplon.pipeline.Artifact
     subjectCardinality = 0..N
