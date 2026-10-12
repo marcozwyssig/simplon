@@ -47,6 +47,9 @@ class Catalogue(NamedTuple):
     # MEMBERS to those groups and never redeclares their shape; it may still declare a group of its own,
     # which is the exception and visible as one.
     groups: dict[str, dict] = {}
+    # The artifact kinds (spec B.2): each kind mapped to the one kind it refines, "" for the root. The
+    # section is GENERATED from simplon's firn model (si#344 B1); a product cannot declare kinds.
+    kinds: dict[str, str] = {}
 
     def resolve(self, coordinate: str) -> dict:
         """The declaration a coordinate names, or a ValueError listing what the namespace does offer."""
@@ -75,6 +78,41 @@ class Catalogue(NamedTuple):
         return any(key.startswith(f"{name}:") for key in self.tasks)
 
 
+def _kinds(data: dict) -> dict[str, str]:
+    """The `kinds:` section as {kind: parent}. Absent is a catalogue without kinds (every stub the suite
+    builds); present-but-empty is what firn writes when its selector answers nothing, so it is refused."""
+    if "kinds" not in data:
+        return {}
+    raw = data["kinds"]
+    if raw is None or raw == {}:
+        raise ValueError("catalogue 'kinds' is declared but empty")
+    if not isinstance(raw, dict):
+        raise ValueError("catalogue 'kinds' must be a mapping of kind name to its declaration")
+    out: dict[str, str] = {}
+    for kind, spec in raw.items():
+        if spec is not None and not isinstance(spec, dict):
+            raise ValueError(f"catalogue kind '{kind}' must be a mapping, got {spec!r}")
+        parent = (spec or {}).get("refines", "")
+        if not isinstance(parent, str):
+            raise ValueError(f"catalogue kind '{kind}' must refine exactly one kind, got {parent!r}")
+        out[str(kind)] = parent
+    for kind, parent in out.items():
+        if parent and parent not in out:
+            raise ValueError(f"catalogue kind '{kind}' refines '{parent}', which the catalogue does not declare")
+    # The circle first: a circle has no root either, and "no root" would send the reader to the wrong line.
+    for kind in out:
+        seen, at = set(), kind
+        while out[at]:
+            if at in seen:
+                raise ValueError(f"catalogue kinds refines in a circle through '{kind}'")
+            seen.add(at)
+            at = out[at]
+    roots = [kind for kind, parent in out.items() if not parent]
+    if len(roots) != 1:
+        raise ValueError(f"catalogue kinds need exactly one root kind, found {roots}")
+    return out
+
+
 def loads(text: str) -> Catalogue:
     """Parse a catalogue from YAML, rejecting a declaration a manifest could not have made either."""
     data = yaml.safe_load(text) or {}
@@ -87,6 +125,7 @@ def loads(text: str) -> Catalogue:
     groups = data.get("groups") or {}
     if not isinstance(groups, dict):
         raise ValueError("catalogue 'groups' must be a mapping of group name to its declaration")
+    kinds = _kinds(data)
     out: dict[str, dict] = {}
     for coordinate, spec in tasks.items():
         # A bare `commit:` has no coordinate space, so two namespaces could not both offer one and a
@@ -102,9 +141,15 @@ def loads(text: str) -> Catalogue:
             # importing it would resolve a coordinate to no code at all.
             raise ValueError(f"catalogue task '{coordinate}' declares no impl")
         out[str(coordinate)] = dict(spec or {})
-    return Catalogue(tasks=out, taxonomy=taxonomy, groups=groups)
+    return Catalogue(tasks=out, taxonomy=taxonomy, groups=groups, kinds=kinds)
 
 
 def load(path: Path | str = DEFAULT_PATH) -> Catalogue:
     """Read the catalogue from disk."""
-    return loads(Path(path).read_text(encoding="utf-8"))
+    cat = loads(Path(path).read_text(encoding="utf-8"))
+    # Here and not in loads(): the hazard is the shipped file (firn leaves it task-less with rc 0 when a
+    # region marker goes missing); group-only stubs built through loads() are legitimate test catalogues.
+    if not cat.tasks:
+        raise ValueError(f"catalogue {path} declares no tasks - a catalogue that offers nothing is a broken "
+                         "file, not an empty platform")
+    return cat

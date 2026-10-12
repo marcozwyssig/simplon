@@ -739,7 +739,7 @@ def document(output: str, source: str = "", title: str = "") -> int:
     relative = validate_relative_dir(
         output, "the acceptance document's output path",
         "give a plain relative path under the product root, e.g. "
-        "'docs/site/content/with-what/acceptance.md'",
+        "'src/site/content/with-what/acceptance.md'",
         inside="the product root")
     found = features(ctx.root, source)
     page = render(found, product=ctx.name, title=title or f"{ctx.name} acceptance scenarios",

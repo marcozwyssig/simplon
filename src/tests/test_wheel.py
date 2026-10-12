@@ -123,6 +123,22 @@ def test_the_wheel_installs_nothing_beside_simplon(wheel):
     assert {t for t in tops if not t.endswith(".dist-info")} == {"simplon"}, sorted(tops)
 
 
+def test_the_catalogue_in_the_wheel_is_readable_by_everyone(wheel):
+    """firn writes its output 0600 (measured on v0.1.0), and a wheel that carries 0600 installs a
+    catalogue only its installer can read. `build model` sets 0644 after `firn gen`; this holds it."""
+    # arrange
+    info = zipfile.ZipFile(wheel).getinfo("simplon/catalogue.yaml")
+
+    # act
+    mode = (info.external_attr >> 16) & 0o777
+
+    # assert
+    assert mode & 0o044 == 0o044, (
+        f"simplon/catalogue.yaml is {oct(mode)} in the wheel. Run `./simplon.sh build model` (it sets 0644). "
+        f"If src/simplon/catalogue.yaml is already 0644 on disk, delete build/lib: setuptools reuses a "
+        f"stale copy there whose mtime has not changed, and a chmod does not change the mtime.")
+
+
 def test_the_wheel_carries_its_catalogue(installed):
     # arrange
     py = installed / ("python.exe" if sys.platform == "win32" else "python")

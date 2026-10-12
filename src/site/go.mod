@@ -10,7 +10,7 @@
 // WRITE into the working tree, and `hugo mod get` also refreshes go.sum. A CI job that builds the site
 // and then asserts a clean working tree will see a diff the first time the manifest pin moves ahead of
 // this file. That is the mechanism working, not a fault; the publishing job must not gate on it.
-module github.com/marcozwyssig/simplon/docs/site
+module github.com/marcozwyssig/simplon/src/site
 
 go 1.24
 

@@ -308,6 +308,35 @@ kinds:
 - **A product cannot declare kinds.** The catalogue owns the vocabulary, which is the point of
   prescribing it (memory: "the terms have to be PRESCRIBED across products").
 - **`kind:` naming an unknown kind** gets a diagnosis that lists the catalogue's kinds.
+- **Built in B1 (si#344): the section is generated.** firn writes `kinds:` into `src/simplon/catalogue.yaml`
+  from the model (`src/firn/templates/catalogue.firnt`, target `simplon`), and the hand-written 800-odd lines
+  are one protected region (`# Begin Protected Region [handwritten]` ... `# End Protected Region  [handwritten]`,
+  two spaces after `End`). The same model also writes the website's kinds reference page,
+  `src/site/content/with-what/kinds.md` (target `site`). The kernel spelling is `test-result` and
+  `release-notes`; the model spells them with `_` (firn names have no `-`, firn#962) and the templates convert.
+  `catalogue.load(path)` reads the section and refuses a `kinds:` that is declared and empty.
+- **firn v0.1.0 hazards, each measured, each with its guard.** None of them is a refusal firn gives; every
+  one is rc 0.
+
+  | Hazard (measured) | Guard |
+  |---|---|
+  | `gen` over a file without region markers overwrites it, every line lost | the markers were committed first (add64c4), before any `gen` touched the file |
+  | a deleted or reworded marker wipes the region (819 to 17 lines) | `test_the_hand_written_region_is_marked_exactly_once_and_in_order`, `test_the_region_carries_the_task_tree`, and `catalogue.load` refuses a file with no tasks |
+  | a selector that answers nothing writes an empty `kinds:` | `test_every_kind_in_the_model_is_in_the_generated_section`, and `catalogue.loads` refuses a `kinds:` that is declared and empty |
+  | a hand-written line outside the region (a task added after the id line loads, and the next `gen` deletes it; `test generated` is green over the deletion while unstaged) | a comment inside the region says where new tasks go; `test_own_region_guard.py` pins the outside on the committed file through `orchestrator.cli:outside_region`, and the same function is `build model-guard`, the first step of `build model`, whose `stop_on_failure: true` keeps `model-gen` from running after it refuses |
+  | generated files are written mode 0600, and setuptools carries the mode into the wheel | `build model` is an aggregate: `model-gen` (firn gen), then `model-mode` (simplon's own product task `make-readable`, `orchestrator.cli:make_readable`, sets 0644 on the generated files); `test_the_catalogue_in_the_wheel_is_readable_by_everyone` in `test_wheel.py` holds the wheel |
+
+  The zero-tasks refusal sits in `catalogue.load(path)` (the shipped file), not in `loads(text)`: a
+  group-only stub catalogue with `tasks: {}` is legitimate and `loads` must keep accepting it (measured:
+  eight tests use one). A stale `build/lib` can keep a 0600 copy in a local wheel, because setuptools copies by
+  mtime and a chmod does not change it. The cache: with two targets neither `gen` nor `check` writes
+  `src/.firn-cache`, and a one-target control run does (measured 2026-10-12 by the final review, and again
+  by its fix wave). The spike was right; Task 5's "still written" came from a leftover of the one-target era
+  in the real tree. The ignore line stays, for a one-target run and for a test's copy.
+- **firn tickets behind these:** firn#966 (an empty result or a partial file is still rc 0), firn#967
+  (a symlink escapes E104), firn#849 (`check` does not evaluate templates). The two protected-region findings
+  (no markers overwrites; a lost marker wipes) were reported to firn on 2026-10-12; we have no ticket number
+  for them.
 
 ### B.3 `kind: image`
 
@@ -613,8 +642,13 @@ Decision 10 puts the **whole manifest** into firn, not only the pipeline.
 
 ### D.3 Checking it
 
-- **The M2 packages live in this repository** under `src/firn/` (si#371, Marco: firn under src), started
-  there through `toolchain:run`'s `cwd:`. The check is `test model`, written by `support toolchain firn
+- **The M2 packages live in this repository** under `src/firn/` (si#371, Marco: firn under src). Since
+  si#344 B1 the firn **project root is `src/`** (`src/firn.toml`), so `toolchain:run` starts with `cwd: src`.
+  The model folder stays `src/firn/model`, the templates `src/firn/templates`. There are **two targets**:
+  `simplon` writes `src/simplon/catalogue.yaml`, and `site` writes `src/site/content/with-what/kinds.md`.
+  (A target with `path = "."` is refused, E105, because it overlaps the model folder; that is why the
+  root moved up.) simplon's own website is at `src/site/` since B1 and the manifest names it with
+  `website: source: src/site`; the kernel default stays `docs/site`. The check is `test model`, written by `support toolchain firn
   0.1.0` in its expanded form (profiles are scaffolded, si#95).
 - **`firn check` does not compile a SelectorRelation's selector** (measured on v0.1.0, reported to firn):
   every SelectorRelation has a test asserting its non-empty answer over a fixture.
@@ -634,7 +668,8 @@ Decision 10 puts the **whole manifest** into firn, not only the pipeline.
 | A | shape, transparent level, si#34, readers, migration (A.5), diagnoses (A.6), env_groups deleted | alone, as **cut 1**; the release waits for nothing | — |
 | si#371 | firn as toolchain | — | firn back from pause |
 | the model | the firn M2 model (part D's packages), carrying B's and C's content: artifacts, kinds, ports, test results | — | si#371 |
-| B | `artifacts:` + `kinds:`, `images:` folded, kind checks, migration extended; generated from the model | **cut 2**, small: the `images:` fold, by rerunning the same migrate command | the model; the four products' named costs (B.4) |
+| B1 | the catalogue's `kinds:` section and the website's kinds page, **generated** from the model (B.2); the website moves to `src/site/`, the firn root to `src/`; `catalogue.load` reads and checks `kinds:` | additive, ships in the next release | the model |
+| B2 | `artifacts:`, `images:` folded, kind checks, migration extended | **cut 2**, small: the `images:` fold, by rerunning the same migrate command | B1; the four products' named costs (B.4) |
 | C | ports, produces/consumes, test results, the release aggregate and `release:notes`, load rules, workflowgen hand-off; generated from the model | the release after B; additive except for the release rule | B; agile-cockpit's cost for its test |
 
 What is generated from the model, and so no longer written by hand in B and C: the manifest schema and

@@ -274,7 +274,7 @@ under the product root, for a blunter reason: `output` is handed to a recursive 
 `docs/` REFUSED would turn away a product that has done nothing wrong. Measured over the same population
 si#159 and si#172 used - every manifest this kernel can reach: its own, the five in
 `simplon.surface.CONSUMERS`, and secure-windows-images - three of those seven declare a `site:` section
-and the three do not agree: cleon at `site`, biz-cockpit at `docs/website`, simplon at `docs/site`. Two of those three would
+and the three do not agree: cleon at `site`, biz-cockpit at `docs/website`, simplon at `docs/site` (until si#344 B1; it names `src/site` now, and the argument below was made at `docs/site`). Two of those three would
 fail on their first run with a kernel that insisted - an expression rule with no measured cause, which
 this platform declines to write ([the rules chapter](../../with-what/rules/) says why).
 

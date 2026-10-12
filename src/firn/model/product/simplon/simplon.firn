@@ -32,9 +32,23 @@ simplon typeOf simplon.manifest.Product {
       member = product.simplon.simplon.build.acceptance
       member = product.simplon.simplon.build.site
     }
-    command model typeOf simplon.pipeline.TaskCommand {
+    command model typeOf simplon.pipeline.AggregateCommand {
       key = "model"
+      member = product.simplon.simplon.build.model_guard
+      member = product.simplon.simplon.build.model_gen
+      member = product.simplon.simplon.build.model_mode
+    }
+    command model_guard typeOf simplon.pipeline.TaskCommand {
+      key = "model-guard"
+      task = product.simplon.simplon.t_orchestrator_cli_region_guard
+    }
+    command model_gen typeOf simplon.pipeline.TaskCommand {
+      key = "model-gen"
       task = product.simplon.simplon.t_simplon_tasks_toolchain_run_toolchain
+    }
+    command model_mode typeOf simplon.pipeline.TaskCommand {
+      key = "model-mode"
+      task = product.simplon.simplon.t_orchestrator_cli_make_readable
     }
   }
   ci test typeOf simplon.pipeline.Group {
@@ -200,9 +214,17 @@ simplon typeOf simplon.manifest.Product {
     key = "simplon.tasks.image:build"
     body = "simplon.tasks.image:build"
   }
+  tasks t_orchestrator_cli_region_guard typeOf simplon.pipeline.Task {
+    key = "orchestrator.cli:region_guard"
+    body = "orchestrator.cli:region_guard"
+  }
   tasks t_simplon_tasks_toolchain_run_toolchain typeOf simplon.pipeline.Task {
     key = "simplon.tasks.toolchain:run_toolchain"
     body = "simplon.tasks.toolchain:run_toolchain"
+  }
+  tasks t_orchestrator_cli_make_readable typeOf simplon.pipeline.Task {
+    key = "orchestrator.cli:make_readable"
+    body = "orchestrator.cli:make_readable"
   }
   tasks t_orchestrator_cli_test_suite typeOf simplon.pipeline.Task {
     key = "orchestrator.cli:test_suite"

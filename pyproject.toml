@@ -117,7 +117,8 @@ where = ["src"]
 # with no `__init__.py`, shipped as a top-level `firn/` directory by namespace discovery. Excluding by
 # name only guards a directory once it has leaked, so `test_wheel.py` now pins the property: the wheel
 # installs `simplon` and nothing beside it.
-exclude = ["tests*", "firn*"]
+# The website moved under src/ in si#344 B1; test_wheel.py holds the property that it does not ship.
+exclude = ["tests*", "firn*", "site*"]
 
 [tool.setuptools.package-data]
 simplon = ["catalogue.yaml", "py.typed", "templates/*.j2"]

@@ -13,14 +13,14 @@ Feature: The generated documents cannot go stale
   @reference
   Scenario: The command reference names every command the assembled CLI offers
     When I run "./simplon.sh build reference"
-    Then "docs/site/content/with-what/commands.md" exists
+    Then "src/site/content/with-what/commands.md" exists
     And every command "./simplon.sh --help" lists has a section on that page
     And the page's own lead sentence states the number of commands it documents
 
   @acceptance
   Scenario: The acceptance document names every scenario the feature files carry
     When I run "./simplon.sh build acceptance"
-    Then "docs/site/content/with-what/acceptance.md" exists
+    Then "src/site/content/with-what/acceptance.md" exists
     And every scenario title in "tests/acceptance" appears on that page
     And each one is addressed by its feature file and its title, separated by a colon
 
@@ -31,7 +31,7 @@ Feature: The generated documents cannot go stale
     And I run "./simplon.sh build acceptance" again
     Then the page carries the new scenario
     And the count in its lead sentence has grown by one
-    And no file under "docs/site/content" was edited by hand
+    And no file under "src/site/content" was edited by hand
 
   @site
   Scenario: Both pages reach the published website

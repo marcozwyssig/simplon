@@ -18,6 +18,7 @@ from simplon.tasks.migrate import migrate_text
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "manifests"
 SRC_FIRN = Path(__file__).resolve().parents[1] / "firn"
+SRC_FIRN_TOML = SRC_FIRN.parent / "firn.toml"
 NAMES = sorted(p.stem for p in FIXTURES.glob("*.yaml"))
 
 needs_docker = pytest.mark.skipif(not docker_is_usable(), reason="no docker daemon here to run firn in")
@@ -36,13 +37,14 @@ def test_a_reachable_manifest_exports_to_a_model_firn_accepts(tmp_path, name):
     assert migrated.status == "migrated", migrated.reason
     mf = manifest_mod.load(migrated.text, catalogue=catalogue.load(), manifest_path=f"{name}.yaml")
     out = manifestmodel.export(mf, yaml.safe_load(migrated.text), name, manifestmodel.KERNEL_SECTIONS)
+    shutil.copy(SRC_FIRN_TOML, tmp_path / "firn.toml")
     shutil.copytree(SRC_FIRN, tmp_path / "firn")
     target = tmp_path / "firn" / "model" / "product" / manifestmodel.mangle(name)
     target.mkdir(parents=True, exist_ok=True)
     (target / f"{name}.firn").write_text(out, encoding="utf-8")
 
     # act
-    rc, text_out = firn_rc(tmp_path, "check", cwd="firn")
+    rc, text_out = firn_rc(tmp_path, "check")
 
     # assert
     assert rc == 0, text_out
