@@ -215,6 +215,17 @@ def test_names_that_mangle_alike_are_refused_naming_both():
     assert "'nuget-config'" in str(e.value) and "'nuget_config'" in str(e.value)
 
 
+def test_an_artifacts_entry_without_a_kind_is_refused_naming_the_entry():
+    # arrange: `load` refuses a kindless entry, so the document is edited AFTER the load - the bridge is the
+    # second wall, and nothing else calls it with such a document
+    document = yaml.safe_load(DEMO)
+    document["artifacts"] = {"app": {"registry": "ghcr.io/x", "repository": "demo"}}
+
+    # act / assert
+    with pytest.raises(manifestmodel.ModelExportError, match="artifacts: app declares no kind the model can name"):
+        manifestmodel.export(_load(DEMO), document, "demo", manifestmodel.KERNEL_SECTIONS)
+
+
 def test_the_guard_holds_the_owner_not_the_property():
     # arrange: two different properties of one Product, one mangled name
     text = DEMO + "x-y: 1\nx_y: 2\n"

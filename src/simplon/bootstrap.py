@@ -450,11 +450,15 @@ product: @@PRODUCT@@
 #   build_root: ""        # "" is the product root
 #   tests: tests
 
+# --- artifacts: what this product builds and hands over (si#344) ---
+# Every entry names its `kind:` (image, directory, nuget, maven, conan, ...); the kernel's tasks read one by
+# name (`with: { name: app }`). An image only a script of yours builds is `local:`.
+# artifacts:
+#   app: { kind: image, local: @@PRODUCT@@:local }
+
 # --- product build data (read RAW by your paths adapter, IGNORED by the CLI engine) ---
 # The CLI engine reads only tasks/ci/cd/support and ignores any other top-level section, so your product's
 # own build data lives here. Uncomment + extend as the pipeline grows.
-# images:
-#   app: @@PRODUCT@@:local
 # volumes:
 #   build_cache: @@PRODUCT@@-build-cache
 
@@ -501,7 +505,7 @@ ci:
       # WHAT YOU HAND OVER. `tag` is the catalogue's own `release:tag`: the BODY lives in the kernel,
       # this line only confirms the placement in your tree. A command with a colon in its `task:` names
       # a catalogue coordinate; one without names a task from the `tasks:` block above. Its neighbours
-      # `release:artifact` and `release:image` need an `artifacts:`/`images:` section, so declare those
+      # `release:artifact` and `release:image` need an `artifacts:` entry of the kind they read, so declare those
       # the day you have one.
       tag: { task: "release:tag" }
 cd:

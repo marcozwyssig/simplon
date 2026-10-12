@@ -41,8 +41,8 @@ matrix); whether it names a real one stays `environments.parse_data`'s verdict a
 Every ModelExportError is a DIAGNOSIS (CLAUDE.md's first kind): the manifest loaded, and the model would
 otherwise hold less than it does or something it does not. Each one names what it cannot hold - two
 names that mangle alike, a group named like a prefixed child, a member that resolves to no one command,
-a group in no area, a matrix or an `artifacts:` that is not a mapping, or an entry without a kind. Today they fire at RUN
-time of an opt-in command (`support manifest model`) and are outside the refusal census, which counts
+a group in no area, a matrix or an `artifacts:` that is not a mapping, or an entry without a kind. Today they
+fire at RUN time of an opt-in command (`support manifest model`) and are outside the refusal census, which counts
 what refuses on the way from a manifest to a decision. Once parts B/C generate from this model they sit
 on that load path, and each needs a census entry then.
 """

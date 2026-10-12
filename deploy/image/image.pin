@@ -11,7 +11,7 @@
 # moving tag would run a different kernel tomorrow against the same checkout, and `docker.pinned_image`
 # refuses the shape for that reason everywhere else in this repository. tests/test_own_image.py holds
 # both halves - that the line is pinned, and that its registry and repository are the ones simplon.yaml
-# declares under `images: kernel:` - so the pin cannot drift from the image the release actually builds.
+# declares under `artifacts: kernel:` - so the pin cannot drift from the image the release actually builds.
 #
 # WHEN IT MOVES. After every release, in a pull request (since 2026-10-10). release.yml's `image` job
 # publishes the image for the tag, reads it back, then runs `deploy/image/repin.sh` on a branch and opens

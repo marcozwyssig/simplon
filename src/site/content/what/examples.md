@@ -285,7 +285,7 @@ $ ./myctl.sh build image           # docker build, with VERSION and REVISION der
 $ ./myctl.sh release image         # docker login, docker push, and then ASK THE REGISTRY
 ```
 
-Both read one entry of the manifest's [`images:` section](../../how/manifest/#images---the-container-image).
+Both read one `kind: image` entry of the manifest's [`artifacts:` section](../../how/manifest/#kind-image---the-container-image).
 A product that builds an image only to run a smoke test against it is then never one typo away from
 publishing it; a product that wants both in one step declares an aggregate over them, which is where an
 ordering belongs.

@@ -93,7 +93,7 @@ Every such row carries the ticket where the decision is still open.
 | 12 | Analyse where the compile ran | `./dotnetdemo.sh build analyse` | run | 2026-09-09 06:38:38, rc 0; and 06:40:00, rc 2 on two stray spaces |
 | 13 | Cut the release tag | `./dotnetdemo.sh release tag v0.1.0` | run | 2026-09-09 06:40:21, rc 1; refused, nothing cut |
 | 14 | Publish the build output to a registry | `release:artifact`, `release:asset` | derived | they read an `artifacts:` and an `assets:` section, and dotnetdemo declares neither |
-| 15 | Build and push a container image | `build:image`, `release:image` | derived | both read an `images:` section, and dotnetdemo declares none |
+| 15 | Build and push a container image | `build:image`, `release:image` | derived | both read an `artifacts:` entry of `kind: image`, and dotnetdemo declares none |
 | 16 | Deploy to the local host | `./dotnetdemo.sh dev deploy up` | run | 2026-09-09 06:40:06, rc 0; output below |
 | 17 | Deploy past the local host - Proxmox, Portainer, a cloud | - | does not exist yet | [simplon#5](https://github.com/marcozwyssig/simplon/issues/5) |
 | 18 | Render the architecture documentation to HTML and PDF | `docs:render` | derived | it reads a pinned docToolchain tag, and dotnetdemo declares none |

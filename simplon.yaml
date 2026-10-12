@@ -97,7 +97,7 @@ ci:
       #
       # NO `--tag` ANYWHERE, and that is si#200's tag decision made visible: the task derives VERSION
       # from `git describe` and stamps it into the image, and since si#200 the tag defaults to that same
-      # number. A `tag:` under `images:` below would be a second place to keep one version, which is the
+      # number. A `tag:` under `artifacts:` below would be a second place to keep one version, which is the
       # arrangement #3 deleted from pyproject.toml.
       #
       # IT CANNOT BE RUN FROM A LINKED GIT WORKTREE, and that is worth knowing before it is discovered:
