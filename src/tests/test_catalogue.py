@@ -8,6 +8,7 @@ typo that offers nothing, an override matching no import, a coordinate with no n
 
 AAA throughout, including the negative cases.
 """
+import re
 import textwrap
 from pathlib import Path
 
@@ -860,3 +861,64 @@ def test_exactly_one_catalogue_task_needs_a_person_and_it_is_the_acceptance_walk
     attended = sorted(name for name, spec in cat.tasks.items() if spec.get("unattended") is False)
 
     assert attended == ["test:walk"]
+
+
+def test_the_kernels_catalogue_offers_the_model_kinds_each_reaching_artifact():
+    # arrange / act
+    kinds = catalogue.load().kinds
+
+    # assert: one root, and every refines chain ends there (spec B.2)
+    assert [k for k, parent in kinds.items() if not parent] == ["artifact"]
+    for kind in kinds:
+        seen, at = set(), kind
+        while kinds[at]:
+            assert at not in seen
+            seen.add(at)
+            at = kinds[at]
+        assert at == "artifact"
+    assert kinds["site"] == "directory" and kinds["test-result"] == "artifact"
+
+
+def test_a_catalogue_without_kinds_still_loads_with_none():
+    # arrange: every stub catalogue the suite builds through loads() carries no kinds
+    text = "tasks:\n  a:b: { impl: m:f }\n"
+
+    # act / assert
+    assert catalogue.loads(text).kinds == {}
+
+
+@pytest.mark.parametrize("text, fragment", [
+    ("kinds:\ntasks:\n  a:b: { impl: m:f }\n", "'kinds' is declared but empty"),
+    ("kinds: [image]\ntasks:\n  a:b: { impl: m:f }\n", "'kinds' must be a mapping"),
+    ("kinds:\n  artifact: {}\n  image: { refines: nope }\ntasks:\n  a:b: { impl: m:f }\n",
+     "kind 'image' refines 'nope', which the catalogue does not declare"),
+    ("kinds:\n  artifact: {}\n  image: { refines: [artifact, artifact] }\ntasks:\n  a:b: { impl: m:f }\n",
+     "kind 'image' must refine exactly one kind"),
+    ("kinds:\n  a: { refines: b }\n  b: { refines: a }\ntasks:\n  a:b: { impl: m:f }\n",
+     "refines in a circle"),
+    ("kinds:\n  artifact: {}\n  other: {}\ntasks:\n  a:b: { impl: m:f }\n",
+     "exactly one root kind"),
+])
+def test_a_broken_kinds_section_is_refused_with_the_place(text, fragment):
+    # act / assert
+    with pytest.raises(ValueError, match=re.escape(fragment)):
+        catalogue.loads(text)
+
+
+def test_a_catalogue_file_that_lost_its_tasks_is_refused(tmp_path):
+    # arrange: what firn v0.1.0 leaves when a region marker goes missing (measured 2026-10-12)
+    path = tmp_path / "catalogue.yaml"
+    path.write_text("kinds:\n  artifact: {}\n", encoding="utf-8")
+
+    # act / assert: before, this loaded as a catalogue offering nothing
+    with pytest.raises(ValueError, match="declares no tasks") as err:
+        catalogue.load(path)
+    assert str(path) in str(err.value)
+
+
+def test_a_group_only_text_through_loads_still_loads_with_no_tasks():
+    # arrange: the refusal guards the shipped FILE; group-only stubs built through loads() are legitimate
+    text = "kinds:\n  artifact: {}\n"
+
+    # act / assert
+    assert catalogue.loads(text).tasks == {}
