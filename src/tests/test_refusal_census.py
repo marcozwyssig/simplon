@@ -1050,7 +1050,7 @@ def _inline_readers() -> tuple[str, ...]:
 #
 # So the walk is a data flow, and every step of it is a rule stated here:
 #   - The document is born at a seam: a `.manifest_data()` call, or - inside `manifest.load` - the local
-#     parsed from the text the loader was handed (`data = yaml.safe_load(text) or {}`).
+#     parsed from the text the loader was handed (`data = cast(Any, yamlkeys.load(text)) or {}`).
 #   - It travels by assignment (`data = ctx.manifest_data()`, `x = data or {}`, `{**data, ...}`) and by
 #     being handed to a kernel function, whose parameter at that position then IS the document.
 #   - It is READ by `X.get(k)`, `X[k]`, `k in X`, the first path step of `context.section(X, k, ...)`, and

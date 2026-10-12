@@ -29,11 +29,12 @@ import re
 
 import importlib
 from collections.abc import Iterable, Mapping
-from typing import Callable, NamedTuple
+from typing import Any, Callable, NamedTuple, cast
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from simplon import yamlkeys
 from simplon.clitaxonomy import CommandTaxonomy, TaxonomyNode, merge_trees
 from simplon.orchestrator.model import treeform
 
@@ -806,7 +807,9 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     spec tree (group -> command -> spec).
     """
     try:
-        data = yaml.safe_load(text) or {}
+        # `Any`, as `yaml.safe_load` typed it before si#344 B2: the checks below read the shape. A cast and
+        # not an annotation: the refusal census finds this seam as a plain `data = ...(text)` assignment.
+        data = cast(Any, yamlkeys.load(text)) or {}
     except yaml.YAMLError as exc:
         # The ONE failure here that is certain to be a human's typo in a file they were editing seconds
         # ago, and the most disabling one: a section that is wrong takes out one command, a document that
@@ -824,6 +827,8 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
         # has `position`/`reason` instead, and its `str()` would put "<unicode string>" straight back
         # into the message this exists to keep it out of: the file would then be named twice, once
         # rightly and once by yaml's placeholder for the string it was handed.
+        # A key written twice is one of these since si#344 B2 (simplon.yamlkeys):
+        # the problem names the key and the first line, the mark the second.
         mark = getattr(exc, "problem_mark", None)
         position = getattr(exc, "position", None)
         problem = getattr(exc, "problem", None) or getattr(exc, "reason", None) or str(exc)

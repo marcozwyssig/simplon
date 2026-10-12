@@ -10,12 +10,13 @@ AND NOTHING IS TRUSTED THAT WAS NOT PARSED BACK. The spliced text is loaded agai
 the original says the new form must contain. If they differ, nothing is written and the difference is
 named. A splice that is wrong in a way nobody reads is worse than no splice.
 
-TWO PASSES, ONE COMMAND (si#344 B2). `_shape` is cut 1 (`groups:` into `ci:` / `cd:` / `support:`); `_fold`
-is cut 2 (`images:` into `artifacts:` with `kind: image`, a `kind:` on every artifacts entry, `source:` into
-`path:`, `deploy: source: { images: }` into `{ artifacts: }`). A product still on the `groups:` form arrives
-in the current form in one run, and one that already ran cut 1 reruns the same command for cut 2. Each pass
-is spliced, parsed back against its own oracle and line-accounted on its own; a refusal in any pass writes
-nothing, so no pass is ever half-applied.
+THREE PASSES, ONE COMMAND (si#344 B2). `_dedupe` runs first: a key written twice is dropped when the second
+copy is the first line for line, and refused when they differ (si#344 B2, decision 4). `_shape` is cut 1
+(`groups:` into `ci:` / `cd:` / `support:`); `_fold` is cut 2 (`images:` into `artifacts:` with `kind: image`,
+a `kind:` on every artifacts entry, `source:` into `path:`, `deploy: source: { images: }` into
+`{ artifacts: }`). A product still on the `groups:` form arrives in the current form in one run, and one that
+already ran cut 1 reruns the same command for cut 2. Each pass is spliced, parsed back against its own oracle and
+line-accounted on its own; a refusal in any pass writes nothing, so no pass is ever half-applied.
 
 THREE OUTCOMES, AND THEY STAY THREE: migrated, already current, refused. "Nothing to migrate" is rc 0
 with its own sentence - it is not the same green as "migrated", and it is not a failure either.
@@ -32,6 +33,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
+from collections.abc import Hashable
 from pathlib import Path
 from typing import NamedTuple
 
@@ -40,6 +42,7 @@ import yaml
 from simplon import log
 from simplon.artifactschema import READERS, REFINES
 from simplon.orchestrator.model.treeform import DOCS_SITE_KEYS
+from simplon.yamlkeys import MERGE_TAG, UniqueKeyLoader, key_of
 
 #: The phase groups each area holds. A second statement of the catalogue's `ci` / `cd` groups, kept here
 #: because this module reads a manifest the catalogue-backed loader refuses;
@@ -198,12 +201,109 @@ def _parse(text: str) -> tuple[object, str]:
     traceback: this command is the way out of a manifest the kernel no longer loads, so it is run on files
     somebody is in the middle of editing."""
     try:
-        return yaml.safe_load(text), ""
+        return yaml.load(text, Loader=UniqueKeyLoader), ""
     except yaml.YAMLError as exc:
         mark = getattr(exc, "problem_mark", None)
         where = f"line {mark.line + 1}, column {mark.column + 1}: " if mark is not None else ""
         problem = getattr(exc, "problem", None) or str(exc)
         return None, f"it is not valid YAML, so nothing can be moved: {where}{problem}"
+
+
+def _duplicates(text: str) -> list[tuple[str, int, int, int]]:
+    """Every scalar key one mapping writes twice, as (dotted path, the key's column, the first copy's key
+    line, the second's), 0-based lines, in document order. Composed, not constructed: construction is where
+    YAML would drop the first copy."""
+    found: list[tuple[str, int, int, int]] = []
+
+    def walk(node: object, path: str) -> None:
+        if isinstance(node, yaml.MappingNode):
+            seen: dict[Hashable, int] = {}
+            for key, value in node.value:
+                if isinstance(key, yaml.ScalarNode) and key.tag != MERGE_TAG:
+                    where = f"{path}.{key.value}" if path else str(key.value)
+                    constructed = key_of(key)  # `yes` and `true` collide, as they do for the loader
+                    if constructed in seen:
+                        found.append((where, key.start_mark.column, seen[constructed], key.start_mark.line))
+                    else:
+                        seen[constructed] = key.start_mark.line
+                    walk(value, where)
+                else:
+                    walk(value, path)
+        elif isinstance(node, yaml.SequenceNode):
+            for item in node.value:
+                walk(item, path)
+
+    walk(yaml.compose(text, Loader=yaml.SafeLoader), "")
+    return found
+
+
+def _span(lines: list[str], at: int, indent: int) -> tuple[int, int]:
+    """The half-open line range of the block whose key line is `at`: the comment and blank lines directly
+    above it (`_blocks`' rule - a comment at the key's indent or less), the key line, and every line under
+    it up to the next content line indented no deeper than the key. Trailing comments and blank lines
+    belong to whatever comes next, as they do in `_blocks`. Read by indentation: a block value's end mark
+    sits on the NEXT key's line (measured on cleon), so it cannot say where this one ends."""
+    def is_comment_or_blank(line: str) -> bool:
+        return not line.strip() or line.lstrip().startswith("#")
+
+    end = at + 1
+    while end < len(lines) and (is_comment_or_blank(lines[end])
+                                or len(lines[end]) - len(lines[end].lstrip()) > indent):
+        end += 1
+    while end > at + 1 and is_comment_or_blank(lines[end - 1]):
+        end -= 1
+    top = at
+    while top > 0 and (not lines[top - 1].strip()
+                       or (lines[top - 1].lstrip().startswith("#")
+                           and len(lines[top - 1]) - len(lines[top - 1].lstrip()) <= indent)):
+        top -= 1
+    return top, end
+
+
+def _dedupe(text: str) -> Migration:
+    """Pass 0 (si#344 B2): a key written twice in one mapping. YAML keeps the second copy and loses the
+    first, so the loader refuses it; here an IDENTICAL second copy - the same lines, comments included - is
+    dropped, and copies that differ are refused, because only a person can say which one was meant."""
+    def refused(why: str) -> Migration:
+        return Migration("refused", text, (), why)
+
+    try:
+        _duplicates(text)
+    except yaml.YAMLError:
+        return refused(_parse(text)[1])
+    lines = text.splitlines()
+    removed: list[str] = []
+    moved: list[str] = []
+    while True:
+        found = _duplicates("\n".join(lines) + "\n")
+        if not found:
+            break
+        path, indent, first, second = found[-1]  # the last first: dropping it moves no line above it
+        if first == second or lines[first][:indent].strip() or lines[second][:indent].strip():
+            return refused(f"{path} is written twice where the splice cannot cut a copy out - inside a flow "
+                           f"mapping or a sequence item (line {second + 1}) - merge the two by hand, and run again")
+        a0, a1 = _span(lines, first, indent)
+        b0, b1 = _span(lines, second, indent)
+        if [line.strip() for line in lines[a0:a1] if line.strip()] != \
+                [line.strip() for line in lines[b0:b1] if line.strip()]:
+            return refused(f"{path} is written twice, on lines {first + 1} and {second + 1}, and the two copies "
+                           "differ - YAML keeps only the second, so merge them into one by hand, and run again")
+        removed += lines[b0:b1]
+        del lines[b0:b1]
+        moved.insert(0, f"{path}: written twice, identically (lines {first + 1} and {second + 1}) - the "
+                        "second copy dropped")
+    if not moved:
+        return Migration("current", text)
+    new = "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+    parsed, reason = _parse(new)
+    if reason:
+        return refused(f"the text without its second copies does not parse back: {reason}")
+    if parsed != yaml.safe_load(text):
+        return refused("the text without its second copies does not parse back to the same manifest")
+    lost, extra = _accounting(text.splitlines(), new.splitlines(), removed, [])
+    if lost or extra:
+        return refused(f"dropping a second copy changed a line it should not have: {lost or extra}")
+    return Migration("migrated", new, tuple(moved))
 
 
 def _kinds_read(old: dict) -> dict[str, dict[str, str]]:
@@ -273,7 +373,9 @@ def _rewrite_entry(child: list[str], kind: str | None,
         lines[at] = f"  {key}: {{ {inner} }}{comment}"
         return lines, [child[at]], [lines[at]]
     if value:
-        return f"{key} holds {value!r}, which is neither a mapping nor an image reference"
+        return (f"{key} holds {value!r}, which is neither a mapping nor an image reference - write a mapping "
+                f"with its `kind:` (`{key}: {{ kind: image, local: \"<reference>\" }}`), or the image reference "
+                f"as a quoted string (`{key}: \"<reference>\"`)")
     body = [i for i in range(at + 1, len(child))
             if child[i].strip() and not child[i].lstrip().startswith("#")]
     if not body:
@@ -476,7 +578,11 @@ def _fold(text: str) -> Migration:
             folded = body
             removed.append(block[at])
             out.append(block[:at])
+            if not images:  # Task 3 review T3a: an empty section moves no entry, so it says its own move
+                moved.append("images: deleted - it holds no entry, and artifacts: already stands")
         else:
+            if not images:
+                moved.append("images: -> artifacts: (it holds no entry)")
             renamed_line = "artifacts:" + rest
             removed.append(block[at])
             added.append(renamed_line)
@@ -522,16 +628,12 @@ def _shape(text: str, *, unknown_groups_into: str | None = None) -> Migration:
     # Rule 2 (and 1): the groups block, split into its children and sorted into areas.
     ci: list[list[str]] = []
     cd: list[list[str]] = []
-    support: list[str] = []  # a list of lines, not one block: a duplicate key keeps both copies
+    support: list[str] = []  # a list of lines, not one block
     groups_head: list[str] = []
     groups_preamble: list[str] = []
     groups_comment = ""  # a trailing comment on the `groups:` key line, carried onto the first area
     removed: list[str] = []  # lines the splice deletes on purpose - the line accounting's allowance
     added: list[str] = []    # lines the splice writes that the original did not have
-    if keys.count("groups") > 1:
-        numbers = [n for n, line in enumerate(lines, 1) if _TOP.match(line) and line.startswith("groups:")]
-        return refused(f"groups: is declared twice at the top level, on lines {numbers[0]} and "
-                       f"{numbers[1]} - merge them by hand first")
     if "groups" in keys:
         index = keys.index("groups")
         block = blocks[index][1]
@@ -680,7 +782,7 @@ def _shape(text: str, *, unknown_groups_into: str | None = None) -> Migration:
 
     # The verification: the splice is trusted only as far as it parses back to the oracle.
     try:
-        parsed = yaml.safe_load(new)
+        parsed = yaml.load(new, Loader=UniqueKeyLoader)
     except yaml.YAMLError as error:
         return refused(f"the spliced text does not parse back to the same manifest: {error}")
     try:
@@ -699,12 +801,12 @@ def _shape(text: str, *, unknown_groups_into: str | None = None) -> Migration:
 
 
 def migrate_text(text: str, *, unknown_groups_into: str | None = None) -> Migration:
-    """Rewrite `text` into the current form: `_shape`, then `_fold` - see the module head. "current" only
-    when no pass changed a byte; a refusal in any pass hands back the input untouched."""
+    """Rewrite `text` into the current form: `_dedupe`, then `_shape`, then `_fold` - see the module head.
+    "current" only when no pass changed a byte; a refusal in any pass hands back the input untouched."""
     if unknown_groups_into not in (None, "ci", "cd"):
         raise ValueError(f"unknown_groups_into must be 'ci' or 'cd', not {unknown_groups_into!r}")
     current, moved = text, list[str]()
-    for step in (lambda t: _shape(t, unknown_groups_into=unknown_groups_into), _fold):
+    for step in (_dedupe, lambda t: _shape(t, unknown_groups_into=unknown_groups_into), _fold):
         result = step(current)
         if result.status == "refused":
             return Migration("refused", text, (), result.reason)
