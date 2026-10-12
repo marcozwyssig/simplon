@@ -48,17 +48,40 @@ def test_a_merge_key_and_the_key_that_overrides_it_are_not_a_duplicate():
     assert data == {"base": {"a": 1, "b": 2}, "x": {"a": 3, "b": 2}}
 
 
-def test_the_loader_refuses_cleons_doubled_group_with_its_yaml_diagnosis():
+def test_the_loader_refuses_cleons_doubled_group_in_a_sentence_of_its_own():
     # act
     with pytest.raises(ValueError) as caught:
         manifest.load((realmanifests.FIXTURES / "cleon.yaml").read_text(), catalogue=catalogue.load(),
                       manifest_path="cleon.yaml")
 
-    # assert: the existing YAML refusal, now carrying the key and both lines
+    # assert: a refusal of its own (ruling T4a) - the document parses, and the sentence says what it lost
     assert str(caught.value) == (
-        "cleon.yaml is not valid YAML:\n  line 233, column 3: while constructing a mapping, found "
-        "`release:` a second time (first on line 215); YAML would keep only this copy, so the first one "
-        "is lost")
+        "cleon.yaml writes a key twice:\n  line 233, column 3: found `release:` a second time (first on "
+        "line 215); YAML would keep only this copy, so the first one is lost\n"
+        "simplon manifest migrate cleon.yaml drops a second copy that is the first line for line; copies "
+        "that differ are merged by hand")
+
+
+#: Review finding I1: `common` merged into an anchored mapping that overrides it, and that mapping merged
+#: elsewhere. `yaml.safe_load` accepts it; PyYAML's `flatten_mapping` rewrites the anchored node in place,
+#: so a check made during construction saw the merged-in `retries` and the override as two copies.
+MERGED_OVERRIDE = ("product: demo\n"
+                   "common: &common {retries: 1}\n"
+                   "ci:\n"
+                   "  build:\n"
+                   "    defaults: &builddefaults\n"
+                   "      <<: *common\n"
+                   "      retries: 2\n"
+                   "extra:\n"
+                   "  <<: *builddefaults\n")
+
+
+def test_an_override_beside_a_merge_in_a_mapping_merged_elsewhere_is_not_a_duplicate():
+    # act
+    data = yamlkeys.load(MERGED_OVERRIDE)
+
+    # assert
+    assert data == yaml.safe_load(MERGED_OVERRIDE)
 
 
 def test_the_product_context_refuses_it_too_and_names_the_file(tmp_path, monkeypatch):

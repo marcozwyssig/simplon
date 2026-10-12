@@ -536,6 +536,13 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # product it would have produced - and it is the only refusal that takes out every command at
     # once, which is why it is worth a sentence of its own rather than the parser's traceback.
     ("manifest", "load", "is not valid YAML"): DIAGNOSIS,
+    # si#344 B2, ruling T4a. NOT the entry above: the document parses, and cleon's manifest with two
+    # identical copies produced a working product, so "could not have meant anything" would be false here.
+    # A diagnosis for another reason: YAML drops the first copy of a key written twice WITHOUT A WORD, and
+    # the kernel cannot tell a stale edit from a deliberate repeat - the silent loss is the defect, and
+    # only the person who wrote both copies can say which was meant. What it costs when the copies are
+    # identical is one `manifest migrate` run (cleon, measured), not a line of what the product says.
+    ("manifest", "load", "writes a key twice"): DIAGNOSIS,
     ("manifest", "load", "`tasks:` is not a mapping"): DIAGNOSIS,
     ("manifest", "load", "generate names group(s)"): DIAGNOSIS,
     ("manifest", "load", "names a nested group the `taxonomy:` block"): DIAGNOSIS,

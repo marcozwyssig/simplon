@@ -448,6 +448,55 @@ def test_a_duplicate_in_a_sequence_item_is_refused_in_a_sentence_that_says_so():
     assert "inside a flow mapping or a sequence item (line 4)" in result.reason
 
 
+def test_a_merge_override_in_a_mapping_merged_elsewhere_is_not_a_duplicate_to_the_migration():
+    # arrange: review finding I1, the loader's reproducer
+    from test_yamlkeys import MERGED_OVERRIDE
+
+    # act
+    result = migrate_text(MERGED_OVERRIDE)
+
+    # assert
+    assert (result.status, result.reason) == ("current", "")
+
+
+def test_two_spellings_of_one_boolean_key_are_a_duplicate_to_the_migration_too():
+    # arrange: review minor 3 - `yes:` and `true:` are one key to YAML, and the lines differ
+    text = "product: demo\nflags:\n  yes: 1\n  true: 1\n"
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "refused"
+    assert result.reason == ("flags.true is written twice, on lines 3 and 4, and the two copies differ - YAML "
+                             "keeps only the second, so merge them into one by hand, and run again")
+
+
+def test_a_list_written_at_its_keys_own_indent_twice_identically_keeps_one_copy():
+    # arrange: review minor 1 - PyYAML's own dump style puts `- ` at the key's column
+    text = "product: demo\nl:\n- x\n- y\nl:\n- x\n- y\n"
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "migrated", result.reason
+    assert result.text == "product: demo\nl:\n- x\n- y\n"
+
+
+def test_copies_that_differ_only_in_indentation_are_said_to_differ():
+    # arrange: review minor 2 - `c` is a sibling of `b` in one copy and its child in the other
+    text = "product: demo\na:\n  b:\n  c: 1\na:\n  b:\n    c: 1\n"
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "refused"
+    assert result.reason == ("a is written twice, on lines 2 and 5, and the two copies differ - YAML keeps "
+                             "only the second, so merge them into one by hand, and run again")
+
+
 def test_a_merge_key_override_is_not_a_duplicate_to_the_migration():
     # arrange
     text = "product: demo\nbase: &b {a: 1}\nx:\n  <<: *b\n  a: 2\n"

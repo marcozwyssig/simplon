@@ -810,6 +810,17 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
         # `Any`, as `yaml.safe_load` typed it before si#344 B2: the checks below read the shape. A cast and
         # not an annotation: the refusal census finds this seam as a plain `data = ...(text)` assignment.
         data = cast(Any, yamlkeys.load(text)) or {}
+    except yamlkeys.DuplicateKeyError as exc:
+        # A key written twice (si#344 B2, ruling T4a): the document PARSES - YAML keeps the second copy and
+        # loses the first without a word - so it is not "not valid YAML", and it is said in its own sentence.
+        # The way out names the migration, which drops a second copy that is the first line for line.
+        mark = exc.problem_mark
+        where = f"line {mark.line + 1}, column {mark.column + 1}: " if mark is not None else ""
+        name = manifest_path or "the manifest"
+        raise ValueError(
+            f"{name} writes a key twice:\n  {where}{exc.problem}\n"
+            f"{treeform.MIGRATE_COMMAND} {name} drops a second copy that is the first line for line; copies "
+            "that differ are merged by hand") from exc
     except yaml.YAMLError as exc:
         # The ONE failure here that is certain to be a human's typo in a file they were editing seconds
         # ago, and the most disabling one: a section that is wrong takes out one command, a document that
@@ -827,8 +838,6 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
         # has `position`/`reason` instead, and its `str()` would put "<unicode string>" straight back
         # into the message this exists to keep it out of: the file would then be named twice, once
         # rightly and once by yaml's placeholder for the string it was handed.
-        # A key written twice is one of these since si#344 B2 (simplon.yamlkeys):
-        # the problem names the key and the first line, the mark the second.
         mark = getattr(exc, "problem_mark", None)
         position = getattr(exc, "position", None)
         problem = getattr(exc, "problem", None) or getattr(exc, "reason", None) or str(exc)

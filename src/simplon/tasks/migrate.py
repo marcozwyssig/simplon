@@ -33,7 +33,6 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
-from collections.abc import Hashable
 from pathlib import Path
 from typing import NamedTuple
 
@@ -42,7 +41,7 @@ import yaml
 from simplon import log
 from simplon.artifactschema import READERS, REFINES
 from simplon.orchestrator.model.treeform import DOCS_SITE_KEYS
-from simplon.yamlkeys import MERGE_TAG, UniqueKeyLoader, key_of
+from simplon.yamlkeys import UniqueKeyLoader, duplicates
 
 #: The phase groups each area holds. A second statement of the catalogue's `ci` / `cd` groups, kept here
 #: because this module reads a manifest the catalogue-backed loader refuses;
@@ -211,43 +210,28 @@ def _parse(text: str) -> tuple[object, str]:
 
 def _duplicates(text: str) -> list[tuple[str, int, int, int]]:
     """Every scalar key one mapping writes twice, as (dotted path, the key's column, the first copy's key
-    line, the second's), 0-based lines, in document order. Composed, not constructed: construction is where
-    YAML would drop the first copy."""
-    found: list[tuple[str, int, int, int]] = []
-
-    def walk(node: object, path: str) -> None:
-        if isinstance(node, yaml.MappingNode):
-            seen: dict[Hashable, int] = {}
-            for key, value in node.value:
-                if isinstance(key, yaml.ScalarNode) and key.tag != MERGE_TAG:
-                    where = f"{path}.{key.value}" if path else str(key.value)
-                    constructed = key_of(key)  # `yes` and `true` collide, as they do for the loader
-                    if constructed in seen:
-                        found.append((where, key.start_mark.column, seen[constructed], key.start_mark.line))
-                    else:
-                        seen[constructed] = key.start_mark.line
-                    walk(value, where)
-                else:
-                    walk(value, path)
-        elif isinstance(node, yaml.SequenceNode):
-            for item in node.value:
-                walk(item, path)
-
-    walk(yaml.compose(text, Loader=yaml.SafeLoader), "")
-    return found
+    line, the second's), 0-based lines, in document order - `yamlkeys.duplicates`, the loader's own check,
+    so the migration and the loader cannot disagree on what a duplicate is (review finding I1)."""
+    return [(found.path, found.second.start_mark.column, found.first.start_mark.line,
+             found.second.start_mark.line)
+            for found in duplicates(yaml.compose(text, Loader=yaml.SafeLoader))]
 
 
 def _span(lines: list[str], at: int, indent: int) -> tuple[int, int]:
     """The half-open line range of the block whose key line is `at`: the comment and blank lines directly
     above it (`_blocks`' rule - a comment at the key's indent or less), the key line, and every line under
-    it up to the next content line indented no deeper than the key. Trailing comments and blank lines
+    it up to the next content line indented no deeper than the key - except a `- ` item at the key's own
+    column, which YAML reads as the key's value (PyYAML's own dump style). Trailing comments and blank lines
     belong to whatever comes next, as they do in `_blocks`. Read by indentation: a block value's end mark
     sits on the NEXT key's line (measured on cleon), so it cannot say where this one ends."""
     def is_comment_or_blank(line: str) -> bool:
         return not line.strip() or line.lstrip().startswith("#")
 
+    def is_own_item(line: str) -> bool:
+        return len(line) - len(line.lstrip()) == indent and (line.lstrip() == "-" or line.lstrip().startswith("- "))
+
     end = at + 1
-    while end < len(lines) and (is_comment_or_blank(lines[end])
+    while end < len(lines) and (is_comment_or_blank(lines[end]) or is_own_item(lines[end])
                                 or len(lines[end]) - len(lines[end].lstrip()) > indent):
         end += 1
     while end > at + 1 and is_comment_or_blank(lines[end - 1]):
@@ -258,6 +242,13 @@ def _span(lines: list[str], at: int, indent: int) -> tuple[int, int]:
                            and len(lines[top - 1]) - len(lines[top - 1].lstrip()) <= indent)):
         top -= 1
     return top, end
+
+
+def _as_written(block: list[str], indent: int) -> list[str]:
+    """A copy's non-blank lines with the key's column taken off - so two copies at the same place compare
+    with their structure (review minor 2: `c:` beside `b:` and `c:` under it are different copies), and a
+    comment above the key, which may stand left of it, compares by its text."""
+    return [line[min(indent, len(line) - len(line.lstrip())):].rstrip() for line in block if line.strip()]
 
 
 def _dedupe(text: str) -> Migration:
@@ -284,8 +275,7 @@ def _dedupe(text: str) -> Migration:
                            f"mapping or a sequence item (line {second + 1}) - merge the two by hand, and run again")
         a0, a1 = _span(lines, first, indent)
         b0, b1 = _span(lines, second, indent)
-        if [line.strip() for line in lines[a0:a1] if line.strip()] != \
-                [line.strip() for line in lines[b0:b1] if line.strip()]:
+        if _as_written(lines[a0:a1], indent) != _as_written(lines[b0:b1], indent):
             return refused(f"{path} is written twice, on lines {first + 1} and {second + 1}, and the two copies "
                            "differ - YAML keeps only the second, so merge them into one by hand, and run again")
         removed += lines[b0:b1]
