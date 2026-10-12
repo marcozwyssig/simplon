@@ -185,16 +185,20 @@ def test_the_derived_pipeline_over_this_manifest_is_a_pipeline_that_would_run():
     committed catalogue: both exit 0 and leave the tree clean. B1's final review put `model-guard` before
     them, which refuses hand-written lines outside the catalogue's region; run the same day over the
     committed catalogue, it exits 0 and writes nothing.
+
+    si#344 B2 put `model-whole` between `model-gen` and `model-mode`; it refuses a generated file firn
+    deleted or left with only its id line. Run on 2026-10-12 over the committed files: it exits 0 and
+    writes nothing.
     """
     derived = workflowgen.derive(_loaded(), ["build", "test"], where="measurement")
 
     assert [step.command for step in derived.steps] == [
         "build wheel", "build reference", "build acceptance", "build site", "build image", "build model-guard",
-        "build model-gen", "build model-mode", "test suite", "test typecheck-python", "test release-notes", "test report", "test generated",
+        "build model-gen", "build model-whole", "build model-mode", "test suite", "test typecheck-python", "test release-notes", "test report", "test generated",
         "test model"]
 
 
-def test_this_repository_runs_eight_of_those_fourteen_and_the_difference_is_a_choice_not_a_defect():
+def test_this_repository_runs_eight_of_those_fifteen_and_the_difference_is_a_choice_not_a_defect():
     """THE FINDING si#267 ends on, kept as a measurement instead of a sentence in a document.
 
     A derived pipeline here would be correct and would cost more: `build site` pulls Hugo and
@@ -205,8 +209,8 @@ def test_this_repository_runs_eight_of_those_fourteen_and_the_difference_is_a_ch
     si#371 added `test model`, which the CI runs, and `build model`, which it does not: `firn gen` had no
     template to render yet, so a step for it would have reported on nothing. Since si#344 B1 it has one,
     and the CI still runs no step for it because `test generated` runs it already - the catalogue is a
-    `generated:` entry, regenerated and diffed there. Its three leaves (`model-guard` since B1's final
-    review) are the fourth to sixth difference, and as cheap as the two above.
+    `generated:` entry, regenerated and diffed there. Its four leaves (`model-guard` since B1's final
+    review, `model-whole` since si#344 B2) are the fourth to seventh difference, and as cheap as the two above.
 
     simplon's own CI stays hand-written all the same, for a reason a derivation cannot carry: its order
     is argued in the manifest, chiefly that the prose gate goes LAST so a release section still to be
@@ -223,7 +227,8 @@ def test_this_repository_runs_eight_of_those_fourteen_and_the_difference_is_a_ch
 
     assert run_here < derived
     assert sorted(derived - run_here) == ["build acceptance", "build model-gen", "build model-guard",
-                                          "build model-mode", "build reference", "build site"]
+                                          "build model-mode", "build model-whole", "build reference",
+                                          "build site"]
 
 
 def test_the_command_this_repository_never_puts_in_ci_is_the_one_the_catalogue_marks_attended():

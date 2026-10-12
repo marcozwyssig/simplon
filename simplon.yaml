@@ -37,6 +37,12 @@ tasks:
     impl: "orchestrator.cli:region_guard"
     help: "Refuse a file with hand-written lines outside its protected region, naming them."
     unattended: true
+  # firn deletes a file its templates no longer produce, with rc 0 (firn#966), and a template error leaves
+  # one holding only its id line (si#344 B2); `build model-whole` runs this after `firn gen`.
+  whole-files:
+    impl: "orchestrator.cli:whole_files"
+    help: "Refuse a generated file that is missing or holds nothing but firn's id line."
+    unattended: true
 
 # The command tree. `ci:`, `cd:` and `support:` hang off the tree the catalogue declares
 # (src/simplon/catalogue.yaml: build/test/release under ci, deploy/monitor under cd, and support) rather
@@ -150,8 +156,8 @@ ci:
       # guard and delete the lines anyway, merely reporting rc 1 afterwards. It also skips `model-mode`
       # after a failed `gen`, which loses nothing - the aggregate is red either way.
       model:
-        help: "Guard the catalogue's hand-written lines, generate its kinds and the kinds page from simplon's firn model, then make the output world-readable."
-        depends_on: [model-guard, model-gen, model-mode]
+        help: "Guard the catalogue's hand-written lines, generate its kinds and the kinds page from simplon's firn model, refuse an empty or missing output, then make the output world-readable."
+        depends_on: [model-guard, model-gen, model-whole, model-mode]
         stop_on_failure: true
       # The catalogue only: kinds.md has no protected region, so nothing in it is hand-written to lose.
       model-guard:
@@ -168,7 +174,15 @@ ci:
           cwd: src
           argv:
           - gen
-      # firn writes 0600; see `model` above.
+      # firn#966: an empty selector deletes a generated file with rc 0, a template error leaves the id line
+      # alone. `artifactschema.py` has no protected region to survive either, so this refuses both before
+      # `model-mode` can report the files done. The list is `model-mode`'s, and a test holds the two equal.
+      model-whole:
+        task: whole-files
+        with:
+          files: [src/simplon/catalogue.yaml, src/site/content/with-what/kinds.md, src/simplon/artifactschema.py]
+      # firn writes 0600; see `model` above. The generated .py is listed for existence (make-readable refuses
+      # a missing file); its mode matters for the wheel's yaml, not for the module.
       model-mode:
         task: make-readable
         with:
@@ -480,7 +494,7 @@ suites:
   report:
     merge: [tests/allure-results]
 
-# WHICH GENERATED FILES THIS REPOSITORY COMMITS (si#240). Two, and both carry "GENERATED ... do not
+# WHICH GENERATED FILES THIS REPOSITORY COMMITS (si#240). Each carries "GENERATED ... do not
 # edit" at the top - which is a promise to a reader and, until this section existed, a promise nothing
 # checked. `src/site/content/with-what/commands.md` is generated too and is deliberately NOT here: it is
 # gitignored and produced on every build, so there is no committed copy to go stale.
