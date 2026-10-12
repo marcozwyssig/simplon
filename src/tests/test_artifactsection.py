@@ -76,7 +76,7 @@ def test_the_load_time_check_ruled_on_every_entry_the_fixtures_carry():
     ("{ app: { kind: image, platforms: linux/amd64 } }",
      "demo.yaml: 'artifacts.app': 'platforms' must be a list of non-empty strings, e.g. [a, b]"),
     ("{ app: { kind: conan, mediatype: x } }",
-     "demo.yaml: 'artifacts.app': 'mediatype' is not a key of a `conan` artifact - did you mean "
+     "demo.yaml: 'artifacts.app': 'mediatype' is not a key of the `conan` artifact - did you mean "
      "'media_type'?; it takes kind, media_type, path, registry, repository, tag"),
 ])
 def test_the_load_time_check_names_the_entry_and_the_key(section, sentence):

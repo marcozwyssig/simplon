@@ -307,7 +307,8 @@ A top-level key the kernel does not read is **the product's own**, and nothing h
 the design rather than a gap: the section is where a catalogue task's mechanism meets a product's values,
 and a product that could not invent one would have to ask the kernel for permission to have data.
 Measured over every manifest this kernel can reach, its own and those in other repositories, some top-level
-keys are exactly that, and every one of them is read by a body in the product's own repository. Adding a key nobody here has heard of is a supported thing to do.
+keys are exactly that, and every one of them is read by a body in the product's own repository. Adding a key
+nobody here has heard of is a supported thing to do.
 
 What was missing is the other half: **which names are already taken**. The product si#159 was reported
 from builds three Windows Server *releases*, and it learned that `releases:` already means
@@ -450,9 +451,9 @@ Each kind's keys and their shapes are checked when the manifest loads - a list w
 string or a number where a string does (`tag: 25` is the tag `25`) - and a key the kind does not take is
 refused by name, with the nearest key it does take, because otherwise it would be ignored without a word.
 What a task NEEDS it is told when it runs, all at once: `release:nuget` needs `registry`, `image` and
-`project`, `build:nuget-config` only `registry`, so one entry can serve both. The kinds page lists each kind's
-keys; your own code asks `simplon.artifactsection.is_a(kind, "image")` rather than comparing `kind` to a
-string, so a kind that refines `image` is one too. Before si#344 B2 `path:` was called `source:`,
+`project`, `build:nuget-config` only `registry`, so one entry can serve both. The refusal of an unknown key
+lists the keys the kind does take; your own code asks `simplon.artifactsection.is_a(kind, "image")` rather
+than comparing `kind` to a string, so a kind that refines `image` is one too. Before si#344 B2 `path:` was called `source:`,
 `images:` was a section of its own, and an entry needed no `kind:`; the loader refuses each of those by
 name, and `simplon manifest migrate` rewrites all three (it derives a missing kind from the catalogue task
 that reads the entry, and refuses by name when nothing does).

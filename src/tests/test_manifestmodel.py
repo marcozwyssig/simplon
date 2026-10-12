@@ -156,6 +156,19 @@ def test_an_artifacts_entry_carries_its_declared_kind_and_its_path():
     assert 'path = "build/site"' in block
 
 
+def test_a_numeric_path_is_carried_as_text_like_the_readers_take_it():
+    # arrange: the schema accepts a number as text (`path: 5` is the path "5"), so the bridge may not drop it
+    text = DEMO.replace("artifacts:\n", "artifacts:\n  updatesite: { kind: directory, path: 5 }\n", 1)
+
+    # act
+    block = _block(manifestmodel.export(_load(text), yaml.safe_load(text), "demo",
+                                        manifestmodel.KERNEL_SECTIONS),
+                   "artifacts a_updatesite typeOf simplon.pipeline.Artifact {")
+
+    # assert
+    assert 'path = "5"' in block
+
+
 def test_a_kind_with_a_dash_is_exported_by_its_firn_name():
     # arrange: firn names have no `-` (firn#962)
     text = DEMO.replace("artifacts:\n", "artifacts:\n  junit: { kind: test-result, path: build/junit }\n", 1)

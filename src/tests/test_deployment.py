@@ -15,7 +15,8 @@ One value that silently meant two of those - `latest` quietly becoming a build w
 prescribes for it, so the tests below pin the SEPARATION as hard as they pin each answer.
 
 THE SECTION POINTS, IT DOES NOT RESTATE. `artifacts:` already carries a registry and a repository (and
-since si#344 B2 an image is an entry of it, of `kind: image`), so a `deploy:` section naming those again would be a second source for one fact. It names an
+since si#344 B2 an image is an entry of it, of `kind: image`), so a `deploy:` section naming those again
+would be a second source for one fact. It names an
 entry in a section that exists, and everything about WHERE comes from there.
 
 AND THE ENTRY IT POINTS AT MAY NOT CARRY IT, which is measured rather than imagined. Over the five

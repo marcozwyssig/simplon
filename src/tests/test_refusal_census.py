@@ -775,7 +775,7 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # One site for all ten readers; it replaces `image._str`'s "is required" and the hand-written presence
     # loops of the four package readers (those were inline, outside the census, and are gone).
     ("artifactsection", "entry", ":`, which "): DIAGNOSIS,
-    ("artifactschema", "_known", "is not a key of a"): DIAGNOSIS,
+    ("artifactschema", "_known", "is not a key of the"): DIAGNOSIS,
     ("artifactschema", "_typed", "is written with no value"): DIAGNOSIS,
     ("artifactschema", "_typed", "must be a non-empty string or a number"): DIAGNOSIS,
     ("artifactschema", "_typed", "must be a list of non-empty strings"): DIAGNOSIS,
@@ -1640,8 +1640,9 @@ def test_a_key_the_kernel_reads_only_to_refuse_is_not_a_section():
     """si#344 refuses the old form BY NAME, so the kernel reads those keys - and models none of them.
 
     The rule that drops them is a shape (a check returns no value), not a list of these keys; this is the
-    list, held from the other side (and since si#344 B2 `images:`). Each one is a refusal in `treeform.check_no_pre_si344_form` or
-    `check_no_old_form`, and the derivation must still SEE them read - otherwise the rule is dropping
+    list, held from the other side (and since si#344 B2 `images:`). Each one is a refusal in
+    `treeform.check_no_pre_si344_form`
+    or `check_no_old_form`, and the derivation must still SEE them read - otherwise the rule is dropping
     nothing and the emptiness below proves nothing.
     """
     cut = {"groups", "env_groups", "default", "environments", "site", "import", "images"}

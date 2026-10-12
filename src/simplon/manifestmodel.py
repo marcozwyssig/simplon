@@ -233,8 +233,8 @@ class _Export:
                 raise ModelExportError(f"artifacts: {entry} declares no kind the model can name")
             fields = [f"key = {_q(str(entry))}", f"kind = simplon.vocabulary.{mangle(kind)}"]
             path = body.get("path")
-            if isinstance(path, str):
-                fields.append(f"path = {_q(path)}")
+            if isinstance(path, (str, int, float)) and not isinstance(path, bool):
+                fields.append(f"path = {_q(str(path))}")  # a number is the text of its digits, as the readers take it
             lines += _block(f"artifacts {self.names(str(entry), 'a_')} typeOf simplon.pipeline.Artifact",
                             fields)
         return lines

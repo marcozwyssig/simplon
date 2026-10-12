@@ -22,8 +22,8 @@ a different hat.
 
 THE SECTION POINTS, IT DOES NOT RESTATE. `artifacts:` already carries the registry and the repository -
 four of the seven reachable manifests declared `images:`, which si#344 B2 folded into it as entries of
-`kind: image`, and cleon declares `artifacts:` - so a `deploy:` section carrying a registry of its own would be a second source for one fact, which is what
-this repository removes everywhere else. It names an entry in a section that already exists:
+`kind: image`, and cleon declares `artifacts:` - so a `deploy:` section carrying a registry of its own would
+be a second source for one fact, which is what this repository removes everywhere else. It names an entry in a section that already exists:
 
     deploy:
       source: { artifacts: app }

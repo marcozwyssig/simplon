@@ -194,7 +194,8 @@ def test_the_derived_pipeline_over_this_manifest_is_a_pipeline_that_would_run():
 
     assert [step.command for step in derived.steps] == [
         "build wheel", "build reference", "build acceptance", "build site", "build image", "build model-guard",
-        "build model-gen", "build model-whole", "build model-mode", "test suite", "test typecheck-python", "test release-notes", "test report", "test generated",
+        "build model-gen", "build model-whole", "build model-mode", "test suite", "test typecheck-python", "test release-notes",
+        "test report", "test generated",
         "test model"]
 
 

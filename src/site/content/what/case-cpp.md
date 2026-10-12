@@ -549,8 +549,8 @@ refused: with no `origin/main` in the checkout the question "main carries this c
 and what it deliberately does not, is in [Cutting a release](../../how/releasing/).
 
 What gets published is the part that differs, and cppdemo declares none of it: `release:artifact` reads
-an `artifacts:` entry of `kind: directory` and `release:image` one of `kind: image`. Row 14 says *derived* for that reason and
-not because anything is missing - a stripped ELF binary and a jar are the same kind of thing to the
+an `artifacts:` entry of `kind: directory` and `release:image` one of `kind: image`. Row 14 says *derived*
+for that reason and not because anything is missing - a stripped ELF binary and a jar are the same kind of thing to the
 kernel, which is the point.
 
 ## deploy

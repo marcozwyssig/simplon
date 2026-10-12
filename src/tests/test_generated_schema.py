@@ -123,11 +123,11 @@ def test_a_reader_needs_what_its_body_checked_before_si344_b2():
     ({"build_args": ["A=1"]}, "'build_args' must be a mapping of name to value"),
     ({"build_args": {"A": [1]}}, "'build_args': 'A' must be a scalar, not list"),
     ({"platfroms": ["linux/amd64"]},
-     "'platfroms' is not a key of a `image` artifact - did you mean 'platforms'?; it takes build_args, "
+     "'platfroms' is not a key of the `image` artifact - did you mean 'platforms'?; it takes build_args, "
      "build_contexts, context, contexts, dockerfile, kind, local, name, path, platforms, registry, "
      "repository, tag"),
     ({"zzz": 1},
-     "'zzz' is not a key of a `image` artifact; it takes build_args, build_contexts, context, contexts, "
+     "'zzz' is not a key of the `image` artifact; it takes build_args, build_contexts, context, contexts, "
      "dockerfile, kind, local, name, path, platforms, registry, repository, tag"),
 ])
 def test_a_key_of_the_wrong_shape_or_name_is_refused_in_its_own_sentence(body, sentence):

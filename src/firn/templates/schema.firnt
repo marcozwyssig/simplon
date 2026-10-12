@@ -88,7 +88,7 @@ template ArtifactSchema {
         |                if str(key) not in cls.SHAPES:
         |                    near = difflib.get_close_matches(str(key), list(cls.SHAPES), n=1)
         |                    hint = f" - did you mean '{near[0]}'?" if near else ""
-        |                    raise ValueError(f"'{key}' is not a key of a `{cls.KIND}` artifact{hint}; it takes "
+        |                    raise ValueError(f"'{key}' is not a key of the `{cls.KIND}` artifact{hint}; it takes "
         |                                     f"{', '.join(sorted(cls.SHAPES))}")
         |        return data
         |
