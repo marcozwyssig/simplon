@@ -90,6 +90,8 @@ def _kinds(data: dict) -> dict[str, str]:
         raise ValueError("catalogue 'kinds' must be a mapping of kind name to its declaration")
     out: dict[str, str] = {}
     for kind, spec in raw.items():
+        if spec is not None and not isinstance(spec, dict):
+            raise ValueError(f"catalogue kind '{kind}' must be a mapping, got {spec!r}")
         parent = (spec or {}).get("refines", "")
         if not isinstance(parent, str):
             raise ValueError(f"catalogue kind '{kind}' must refine exactly one kind, got {parent!r}")

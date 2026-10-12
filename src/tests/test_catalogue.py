@@ -898,6 +898,11 @@ def test_a_catalogue_without_kinds_still_loads_with_none():
      "refines in a circle"),
     ("kinds:\n  artifact: {}\n  other: {}\ntasks:\n  a:b: { impl: m:f }\n",
      "exactly one root kind"),
+    # A kind's declaration is a mapping; a scalar or a list crashed with AttributeError (B1 final review).
+    ("kinds:\n  artifact: foo\ntasks:\n  a:b: { impl: m:f }\n",
+     "catalogue kind 'artifact' must be a mapping, got 'foo'"),
+    ("kinds:\n  artifact: [refines, x]\ntasks:\n  a:b: { impl: m:f }\n",
+     "catalogue kind 'artifact' must be a mapping, got ['refines', 'x']"),
 ])
 def test_a_broken_kinds_section_is_refused_with_the_place(text, fragment):
     # act / assert
