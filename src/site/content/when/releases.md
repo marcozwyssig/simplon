@@ -23,6 +23,52 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.29.0
+
+**What a product has to do:** nothing. Everything in this release is additive: a manifest that loaded
+under 0.28.0 loads unchanged, and assembles the same command line.
+
+### firn is a toolchain (si#371, #375)
+
+`./<product>.sh support toolchain firn <version>` writes two commands into the manifest, both running in
+`ghcr.io/marcozwyssig/firn:v<version>` with no network and the caller's uid: `test model` runs
+`firn check`, and `build model` runs `firn gen`. Like every profile, the expanded form is placed in the
+manifest and the product owns it, so a kernel release cannot change a product's build (si#95).
+
+`toolchain:run` takes a new key, `cwd:`. The container starts in that directory below the mount, and the
+whole tree stays mounted. An absolute path or one that climbs out with `..` is refused by name, the same
+gate `build_root:` uses. Without `cwd:` the command line is byte for byte what it was. If a product's
+firn project is not at its root, it adds `cwd: <dir>` to both commands.
+
+`test model` is allowed to be a bare rc in `test` (the exception to si#111): `firn check` reads the
+model as it stands, so its rc is a verdict about the tree, not about last week's output.
+
+### The manifest as a firn model (si#346, #377)
+
+`support manifest model <file>` exports a validated manifest as a firn M1 model. It writes only after
+the manifest has loaded: a refused or unreadable manifest, or a failed write, gives rc 1 and no file,
+and the write is atomic. All eight reachable manifests export and pass `firn check`. simplon models
+itself this way, and `test generated` holds the model against its manifest.
+
+### The artifact kinds are generated (si#344, #381)
+
+The catalogue now carries the artifact-kind vocabulary as `kinds:`, generated from simplon's firn
+model, with a reference page under *with what*. Products read it; nothing in it asks anything of them
+yet. The rules that will use it (a required `kind:`, and `images:` folded into `artifacts:`) are the
+next part of si#344, and every product will run `simplon manifest migrate` a second time then.
+
+simplon's own website moved from `docs/site` to `src/site`. The kernel's default for a product's
+`website: source:` is still `docs/site`.
+
+### Smaller changes
+
+- The wheel installs `simplon` and nothing beside it (si#378, #379). 0.28.0's wheel also put a
+  top-level `firn/` directory into site-packages.
+- simplon's own manifest drops `cd: default: dev`, which named no environment (#380).
+- The 0.28.0 notes named `deploy/orchestrator/.venv` for the migration; that is only the default
+  location, and the route now reads `<orch-dir>/.venv` (#376).
+- `deploy/image/image.pin` points at the published v0.28.0 image (#374).
+
 ## 0.28.0
 
 **What a product has to do:** two things, once, and the order matters. This release refuses a manifest
