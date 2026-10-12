@@ -123,6 +123,19 @@ def test_the_wheel_installs_nothing_beside_simplon(wheel):
     assert {t for t in tops if not t.endswith(".dist-info")} == {"simplon"}, sorted(tops)
 
 
+def test_the_catalogue_in_the_wheel_is_readable_by_everyone(wheel):
+    """firn writes its output 0600 (measured on v0.1.0). A wheel that carries that mode installs a
+    catalogue only its installer can read, and every other user's first command fails to load it."""
+    # arrange
+    info = zipfile.ZipFile(wheel).getinfo("simplon/catalogue.yaml")
+
+    # act
+    mode = (info.external_attr >> 16) & 0o777
+
+    # assert
+    assert mode & 0o044 == 0o044, oct(mode)
+
+
 def test_the_wheel_carries_its_catalogue(installed):
     # arrange
     py = installed / ("python.exe" if sys.platform == "win32" else "python")

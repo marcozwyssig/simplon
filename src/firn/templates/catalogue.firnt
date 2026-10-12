@@ -1,0 +1,24 @@
+template Catalogue {
+
+  // The kernel's catalogue (src/simplon/catalogue.yaml). The `kinds:` section is generated from
+  // simplon.vocabulary (spec B.2); everything else is hand-written and lives in the protected region.
+  // The `file` block stands outside every `for`, so a selector that answers nothing can empty `kinds:`
+  // but never drop the file or its region.
+  file "catalogue.yaml" language yaml {
+    |# GENERATED from src/firn/model/simplon/vocabulary/kinds.firn by `./simplon.sh build model`.
+    |# Edit only inside the protected region below: firn rewrites everything outside it on every run.
+    |kinds:
+    for k : `simplon.pipeline.ArtifactKind` {
+      if k.refines {
+        |  ${k.name.replace("_", "-")}: { refines: <<for r : k.refines sep ", ">>${r.name.replace("_", "-")}<<end>> }
+      }
+      if not k.refines {
+        |  ${k.name.replace("_", "-")}: {}
+      }
+    }
+    |
+    protected "handwritten" {
+    |# (the hand-written catalogue: groups and tasks)
+    }
+  }
+}

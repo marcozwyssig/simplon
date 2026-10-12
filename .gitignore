@@ -42,7 +42,6 @@ src/site/.hugo_build.lock
 tests/allure-results/
 tests/reports/
 
-# firn's own working files in simplon's firn project (si#371): its build cache, and the directory
-# `firn gen` writes into, which firn will not let leave src/ (where firn.toml is).
+# firn's build cache in simplon's firn project (si#371). firn keeps one only while the project has a
+# single target (measured on v0.1.0); what `firn gen` writes is committed (`generated:` in simplon.yaml).
 src/.firn-cache/
-src/firn/gen/

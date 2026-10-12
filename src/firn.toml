@@ -6,6 +6,7 @@ name = "simplon"
 model = ["firn/model"]
 templates = ["firn/templates"]
 
-# Until a template exists: a target that cannot touch anything simplon commits.
-[target.gen]
-path = "firn/gen"
+# The kernel's catalogue. Its hand-written part is one protected region, which firn keeps.
+[target.simplon]
+path = "simplon"
+templates = ["Catalogue"]
