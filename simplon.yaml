@@ -26,6 +26,11 @@ tasks:
     impl: "orchestrator.cli:doctor"
     help: "Check the tools and the environment."
     unattended: true
+  # firn v0.1.0 writes its output 0600 (si#344 B1); `build model-mode` sets 0644 on what it names.
+  make-readable:
+    impl: "orchestrator.cli:make_readable"
+    help: "Make the named files readable by everyone (mode 0644)."
+    unattended: true
 
 # The command tree. `ci:`, `cd:` and `support:` hang off the tree the catalogue declares
 # (src/simplon/catalogue.yaml: build/test/release under ci, deploy/monitor under cd, and support) rather
@@ -126,8 +131,8 @@ ci:
       # so every other user's first command fails to load it. CI runs `test generated` (which runs this
       # command) before `build wheel` in the same checkout, so the mode would reach a released wheel.
       # firn has no option for it, and its image is distroless (entrypoint /firn, no shell), so the
-      # chmod runs in the one image this manifest already pins that has one, the website's Hugo image -
-      # by the same `toolchain:run`, as the calling user, who owns what firn just wrote.
+      # mode is set on the host by this product's own `make-readable` task, as the calling user, who
+      # owns what firn just wrote. It names each file, and a file that is not there is rc 1.
       # test_wheel.py's `test_the_catalogue_in_the_wheel_is_readable_by_everyone` is the guard.
       model:
         help: "Generate the catalogue's kinds from simplon's firn model, then make the output world-readable."
@@ -144,13 +149,9 @@ ci:
           - gen
       # firn writes 0600; see `model` above.
       model-mode:
-        task: toolchain:run
+        task: make-readable
         with:
-          image: "hugomods/hugo:exts-0.148.2"
-          workdir: /workspace
-          network: none
-          cwd: src
-          argv: [chmod, "0644", simplon/catalogue.yaml]
+          files: [src/simplon/catalogue.yaml]
   test:
     commands:
       # The pytest suite (si#156). It answered to `all` until that ticket; what took the name is the

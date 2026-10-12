@@ -8,7 +8,7 @@ resolve to, and hands the app + product context + environments + aliases to Simp
 the CI/CD panels) and the env-first dispatch live in the kernel, driven entirely by the manifest - so a
 fresh product adds groups/commands in simplon.yaml and impl callables HERE, and nowhere else.
 
-build.wheel, test.suite and support.doctor below are simplon.yaml's three BODIES; keep them as
+build.wheel, test.suite, support.doctor and build.model-mode below are simplon.yaml's four BODIES; keep them as
 module-level callables so the manifest's impl refs resolve (simplon.orchestrator.manifest.resolve_impl
 imports THIS module and getattrs the function named after the `:`). Each shells out to the working tree at
 ROOT (a subprocess, not an in-process call) so `./simplon.sh build wheel` / `test suite` / `support doctor`
@@ -98,6 +98,31 @@ def doctor() -> int:
             ok = False
     print(f"python {sys.version.split()[0]}")
     return 0 if ok else 1
+
+
+def make_readable(files: list[str] | None = None) -> int:
+    """Set mode 0644 on each of `files` (paths relative to the repository root): `build model-mode`.
+
+    firn v0.1.0 writes every file it generates 0600 (measured 2026-10-12), and setuptools carries that
+    mode into the wheel - a catalogue only its installer can read. firn has no option for it and its image
+    has no shell, so the mode is set here, after `build model-gen`, on the host.
+
+    A path that is not there is rc 1 naming it, never a silent 0: the list in simplon.yaml is a second
+    spelling of what the template writes, and a stale entry has to say so rather than report done. An
+    empty list is rc 1 too - a step that was given nothing to make readable has not made anything so.
+    """
+    if not files:
+        print("make-readable: no files given (pin them with `with: { files: [...] }`)", file=sys.stderr)
+        return 1
+    rc = 0
+    for name in files:
+        path = ROOT / name
+        if not path.is_file():
+            print(f"make-readable: no such file: {name}", file=sys.stderr)
+            rc = 1
+            continue
+        path.chmod(0o644)
+    return rc
 
 
 # The parsed manifest, read ONCE: the CLI is assembled from it below, and the step factory resolves each
