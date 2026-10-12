@@ -38,10 +38,10 @@ from __future__ import annotations
 
 import urllib.error
 import urllib.request
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from simplon import context, docker, githubpackages, hostpath, log, outputs
+from simplon import artifactsection, artifactschema, context, docker, githubpackages, hostpath, log, outputs
 from simplon.run import stream
 # The CREDENTIAL helper is imported and not copied, deliberately, and it is the one thing here that is.
 # `_env_file` writes a 0600 file and removes it in a `finally`; two copies of that is how one of them loses
@@ -53,6 +53,10 @@ from simplon.tasks.nuget import _env_file
 #: `tasks/conan` read. si#127's reasoning, applied a fourth time: a registry, a package and a scope are the
 #: same three facts whatever the ecosystem, and a section is cheap to add and expensive to remove.
 SECTION = "artifacts"
+
+#: The kind this module reads, by `release:maven` (si#344 B2). Its keys, their shapes and what the coordinate
+#: needs are the generated schema's.
+ENTRY = artifactschema.MavenEntry
 
 #: The container's view of the product tree - `/work`, the mount point `toolchain:run` and
 #: `release:nuget` both use, so a path printed by one command means the same thing in another.
@@ -95,7 +99,7 @@ TASK = "publish"
 WITHDRAWN = ("task",)
 
 
-def _declared(name: str) -> dict:
+def _declared(name: str) -> artifactschema.MavenEntry:
     """The `artifacts:` entry `name` names, or a refusal listing the ones that exist.
 
     COPIED FROM `tasks/nuget` RATHER THAN IMPORTED, and the asymmetry with `_env_file` above is the point.
@@ -111,6 +115,11 @@ def _declared(name: str) -> dict:
     the sum cannot grow quietly. Reading the section here puts them back in the population. The general
     hole - a refusal decided on manifest values obtained through another module's reader - is wider than
     this module and is reported separately.
+
+    Since si#344 B2 it hands the SECTION, never the document, to `artifactsection.entry`, which checks the
+    kind, the keys and what `release:maven` needs - the census still reads that as an inline read, so the
+    reasoning above holds. It asks `refuse_withdrawn` FIRST, on the raw entry: the schema would refuse `task:`
+    too, as a key a maven artifact does not take, but only this sentence says what replaced it.
     """
     if not name:
         raise ValueError(f"which artifact? pin one with `with: {{ name: ... }}` from the `{SECTION}:` "
@@ -121,23 +130,10 @@ def _declared(name: str) -> dict:
         raise ValueError(
             f"no artifact '{name}' in {ctx.manifest_path.name}'s `{SECTION}:` section; declared are: "
             f"{', '.join(sorted(section)) or '(none)'}")
-    return dict(section[name])
-
-
-def _required(spec: dict, name: str, *keys: str) -> list[str]:
-    """The values of `keys`, refusing by KEY as soon as one is missing - `tasks/nuget`'s shape and wording.
-
-    One at a time rather than a list of all of them: a reader fixes the first, runs again, and is told the
-    next, which is a shorter loop than being handed three keys and guessing which shape they want.
-    """
-    values = []
-    for key in keys:
-        value = str(spec.get(key, "") or "")
-        if not value:
-            raise ValueError(f"artifact '{name}' declares no `{key}:`; a jar publish needs "
-                             f"{', '.join(keys)}")
-        values.append(value)
-    return values
+    body = section[name]
+    if isinstance(body, Mapping):
+        refuse_withdrawn(body, name)
+    return artifactsection.entry(section, name, ENTRY, ctx.manifest_path.name, "release:maven")
 
 
 def repository_url(registry: str, *, checked: bool = False) -> str:
@@ -183,7 +179,7 @@ def is_snapshot(version: str) -> bool:
     return version.endswith(SNAPSHOT_SUFFIX)
 
 
-def refuse_withdrawn(spec: "dict", name: str) -> None:
+def refuse_withdrawn(spec: Mapping[str, object], name: str) -> None:
     """Refuse a key 0.24.0 accepted and si#337 withdrew, naming what to do instead."""
     for key in WITHDRAWN:
         if key in spec:
@@ -312,7 +308,7 @@ def verify(registry: str, group: str, modules: Sequence[str], version: str,
     return (ABSENT, missing) if missing else (PRESENT, [])
 
 
-def _modules(spec: dict, name: str) -> list[str]:
+def _modules(spec: artifactschema.MavenEntry, name: str) -> list[str]:
     """The modules `name` publishes, refusing an empty declaration by name.
 
     REQUIRED, and it would have been easy to make optional. Gradle knows which publications exist and
@@ -320,7 +316,7 @@ def _modules(spec: dict, name: str) -> list[str]:
     verifies nothing is the defect the read-back was added for. A product with one artifact writes a list
     of one.
     """
-    declared = spec.get("modules")
+    declared = spec.modules
     if isinstance(declared, str):
         declared = [declared]
     if not isinstance(declared, (list, tuple)) or not declared:
@@ -342,14 +338,13 @@ def publish(name: str = "", tag: str = "") -> int:
     then docker. Everything that can be decided without starting a container is decided first.
     """
     spec = _declared(name)
-    (registry, image, group) = _required(spec, name, "registry", "image", "group")
+    (registry, image, group) = (spec.registry or "", spec.image or "", spec.group or "")
     repository_url(registry, checked=True)
     modules = _modules(spec, name)
-    refuse_withdrawn(spec, name)
     pinned = docker.pinned_image(image, f"artifact '{name}'",
                                  hint="a published jar names the JDK and Gradle it was built with")
 
-    resolved = tag or str(spec.get("tag", "") or "")
+    resolved = tag or spec.tag or ""
     if not resolved:
         raise ValueError(
             f"artifact '{name}' has no tag: declare `tag:` in the `{SECTION}:` section for a constant "

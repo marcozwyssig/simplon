@@ -45,15 +45,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from simplon import context, githubpackages, log
+from simplon import artifactsection, artifactschema, context, githubpackages, log
 
 #: The manifest section this module reads, shared with `release:artifact` and si#127's NuGet tasks. No
 #: new top-level section (design section 2): a registry, a package and a scope are the same three facts
 #: whatever the ecosystem, and a section is cheap to add and expensive to remove.
 SECTION = "artifacts"
 
+#: The kind this module reads, read by `build:conan-cache` and `release:conan` (si#344 B2). Its keys, their
+#: shapes and what each coordinate needs are the generated schema's.
+ENTRY = artifactschema.ConanEntry
 
-def _declared(name: str) -> dict:
+
+def _declared(name: str, coordinate: str) -> artifactschema.ConanEntry:
     """The `artifacts:` entry `name` names, in `simplon.tasks.artifact`'s wording deliberately."""
     if not name:
         raise ValueError(f"which artifact? pin one with `with: {{ name: ... }}` from the `{SECTION}:` "
@@ -64,34 +68,25 @@ def _declared(name: str) -> dict:
         raise ValueError(
             f"no artifact '{name}' in {ctx.manifest_path.name}'s `{SECTION}:` section; declared are: "
             f"{', '.join(sorted(section)) or '(none)'}")
-    return dict(section[name])
+    return artifactsection.entry(section, name, ENTRY, ctx.manifest_path.name, coordinate)
 
 
-def _reference(name: str, tag: str) -> tuple[str, str, Path]:
-    """The registry, the full reference and the archive path - everything both verbs need.
+def _reference(name: str, tag: str, coordinate: str) -> tuple[str, str, Path, str]:
+    """The registry, the full reference, the archive path and the media type - everything both verbs need.
 
-    One reader for both, because a publish and a fetch that disagreed about where the file lives would
-    be a transport whose two ends do not meet, and that failure shows up only on the consumer's machine.
+    One reader for both, because a publish and a fetch that disagreed about where the file lives would be a
+    transport whose two ends do not meet, and that failure shows up only on the consumer's machine. What
+    each verb NEEDS is the model's (si#344 B2): both need registry, repository, media_type and path.
     """
-    spec = _declared(name)
-    registry = str(spec.get("registry", "") or "")
-    repository = str(spec.get("repository", "") or "")
-    media_type = str(spec.get("media_type", "") or "")
-    source = str(spec.get("source", "") or "")
-    for key, value in (("registry", registry), ("repository", repository),
-                       ("media_type", media_type), ("source", source)):
-        if not value:
-            raise ValueError(f"artifact '{name}' declares no `{key}:`; moving a conan cache archive "
-                             f"needs all four of registry, repository, source and media_type")
-
-    resolved = tag or str(spec.get("tag", "") or "")
+    spec = _declared(name, coordinate)
+    resolved = tag or spec.tag or ""
     if not resolved:
         raise ValueError(
             f"artifact '{name}' has no tag: declare `tag:` in the `{SECTION}:` section for a constant "
             f"one, or pass --tag for a version that is only known after a build")
-
-    return registry, githubpackages.reference(registry, repository, resolved), \
-        context.current().root / source
+    registry = spec.registry or ""
+    return (registry, githubpackages.reference(registry, spec.repository or "", resolved),
+            context.current().root / (spec.path or ""), spec.media_type or "")
 
 
 def _login_if_githubs(registry: str) -> None:
@@ -115,15 +110,14 @@ def publish(name: str = "", tag: str = "") -> int:
     The archive is the PRODUCT's: it is written by its own `conan cache save`, in its own container,
     against its own cache. This moves it.
     """
-    registry, ref, archive = _reference(name, tag)
+    registry, ref, archive, media_type = _reference(name, tag, "release:conan")
     if not archive.is_file():
         raise ValueError(
             f"nothing to publish: {archive} does not exist. The archive is written by the product's own "
             f"`conan cache save --file <path> '<pattern>'`, not by this task - this only moves it")
 
     _login_if_githubs(registry)
-    spec = _declared(name)
-    githubpackages.push(ref, str(archive), str(spec["media_type"]))
+    githubpackages.push(ref, str(archive), media_type)
     log.ok(f"published {ref}\n"
            "    this is a TRANSPORT, not a remote: a consumer names this exact tag, pulls it and runs "
            "`conan cache restore`. There is no remote resolution and no version range.")
@@ -138,7 +132,7 @@ def fetch(name: str = "", tag: str = "") -> int:
     nothing behind is a defect this repository has shipped twice, and a pull is not different in kind
     from a render.
     """
-    registry, ref, archive = _reference(name, tag)
+    registry, ref, archive, _ = _reference(name, tag, "build:conan-cache")
     _login_if_githubs(registry)
 
     archive.parent.mkdir(parents=True, exist_ok=True)
@@ -147,7 +141,7 @@ def fetch(name: str = "", tag: str = "") -> int:
         raise RuntimeError(
             f"the pull of {ref} reported success and left no {archive.name} in {archive.parent}. Either "
             f"the artifact holds a differently named file or nothing was written; the manifest's "
-            f"`source:` is what names the file this expects")
+            f"`path:` is what names the file this expects")
 
     root = context.current().root
     shown = archive.relative_to(root) if archive.is_relative_to(root) else archive

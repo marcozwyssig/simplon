@@ -193,8 +193,8 @@ no product manifest, command or import is affected either way.
 
 Short enough to state, and the half you most need, because everything else at the top level is yours:
 
-`bootstrap` · `catalogue` · `clitaxonomy` · `diskguard` · `manifestmodel` · `oras` · `runners` · `signatures` ·
-`steplog` · `test_impls` · `tools`
+`artifactschema` · `bootstrap` · `catalogue` · `clitaxonomy` · `diskguard` · `manifestmodel` · `oras` · `runners` ·
+`signatures` · `steplog` · `test_impls` · `tools` · `yamlkeys`
 
 `runners` needs a word too, because `workflowgen` beside it is a library module and this is not. It is a
 **table** of facts about kinds of CI machine — what a self-hosted Debian runner provides, why

@@ -139,6 +139,27 @@ def test_the_catalogue_in_the_wheel_is_readable_by_everyone(wheel):
         f"stale copy there whose mtime has not changed, and a chmod does not change the mtime.")
 
 
+def test_every_file_in_the_wheel_is_readable_by_everyone(wheel):
+    """A wheel member only its builder can read is a package only the builder can import.
+
+    Measured 2026-10-12 (si#344 B2 Task 1): the two kinds of member take their mode from different places.
+    Package data such as catalogue.yaml keeps its mode on disk (so firn's 0600 would ship; `build model`
+    sets 0644, and the check above names it), but setuptools gives a .py module the BUILDER's umask: a
+    0600 artifactschema.py came out 0o644 under umask 022, and under `umask 077` every module, generated
+    or not, came out 0o600. So this holds the general property and goes red on a builder's umask."""
+    # arrange
+    members = [i for i in zipfile.ZipFile(wheel).infolist() if not i.is_dir()]
+
+    # act
+    unreadable = {i.filename: oct((i.external_attr >> 16) & 0o777) for i in members
+                  if (i.external_attr >> 16) & 0o044 != 0o044}
+
+    # assert
+    assert members and not unreadable, (
+        f"not world-readable in the wheel: {unreadable}. A .py module takes the builder's umask, not its "
+        f"mode on disk: build with umask 022, and delete build/lib (a stale copy keeps its mode).")
+
+
 def test_the_wheel_carries_its_catalogue(installed):
     # arrange
     py = installed / ("python.exe" if sys.platform == "win32" else "python")

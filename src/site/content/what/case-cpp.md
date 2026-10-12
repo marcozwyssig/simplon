@@ -107,7 +107,7 @@ Every such row carries the ticket where the decision is still open.
 | 11 | A verdict and an Allure archive for the ctest run | `test:accept` | derived | a gate names a command since [simplon#106](https://github.com/marcozwyssig/simplon/issues/106) and really reaches a `toolchain:run` one since [simplon#136](https://github.com/marcozwyssig/simplon/issues/136), which drove a `ctest` through one green and red; cppdemo declares no `suites:` section, so nothing was run on this product |
 | 12 | Refuse a toolchain reference that is not pinned | `./cppdemo.sh build configure` | run | 2026-09-09 06:45:25, rc 1; message below |
 | 13 | Cut the release tag | `./cppdemo.sh release tag v0.1.0` | run | 2026-09-09 06:41:28, rc 1; refused, nothing cut |
-| 14 | Publish the binary or a container image | `release:artifact`, `release:image` | derived | they read an `artifacts:` and an `images:` section, and cppdemo declares neither |
+| 14 | Publish the binary or a container image | `release:artifact`, `release:image` | derived | they read an `artifacts:` entry of `kind: directory` and one of `kind: image`, and cppdemo declares neither |
 | 15 | Deploy to the local host | `./cppdemo.sh dev deploy up` | run | 2026-09-09 06:41:18, rc 0; output below |
 | 16 | Deploy past the local host - Proxmox, Portainer, a cloud | - | does not exist yet | [simplon#5](https://github.com/marcozwyssig/simplon/issues/5) |
 | 17 | Render the documentation | `docs:render`, `docs:site` | derived | neither reads anything C++; the Java chapter drove `docs:render` and cppdemo declares no `site:` section |
@@ -549,8 +549,8 @@ refused: with no `origin/main` in the checkout the question "main carries this c
 and what it deliberately does not, is in [Cutting a release](../../how/releasing/).
 
 What gets published is the part that differs, and cppdemo declares none of it: `release:artifact` reads
-an `artifacts:` section and `release:image` an `images:` one. Row 14 says *derived* for that reason and
-not because anything is missing - a stripped ELF binary and a jar are the same kind of thing to the
+an `artifacts:` entry of `kind: directory` and `release:image` one of `kind: image`. Row 14 says *derived*
+for that reason and not because anything is missing - a stripped ELF binary and a jar are the same kind of thing to the
 kernel, which is the point.
 
 ## deploy

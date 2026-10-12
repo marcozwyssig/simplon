@@ -17,26 +17,30 @@ _MANIFEST = """
 product: demo
 artifacts:
   cpplib:
+    kind: conan
     registry: ghcr.io/marcozwyssig
     repository: demo-conan
-    source: build/conan/demo.tgz
+    path: build/conan/demo.tgz
     media_type: application/vnd.conan.cache.v1+tgz
     tag: 1.0.0
   untagged:
+    kind: conan
     registry: ghcr.io/marcozwyssig
     repository: demo-conan
-    source: build/conan/demo.tgz
+    path: build/conan/demo.tgz
     media_type: application/vnd.conan.cache.v1+tgz
   elsewhere:
+    kind: conan
     registry: registry.example.com/team
     repository: demo-conan
-    source: build/conan/demo.tgz
+    path: build/conan/demo.tgz
     media_type: application/vnd.conan.cache.v1+tgz
     tag: 1.0.0
   nomedia:
+    kind: conan
     registry: ghcr.io/marcozwyssig
     repository: demo-conan
-    source: build/conan/demo.tgz
+    path: build/conan/demo.tgz
     tag: 1.0.0
 """
 

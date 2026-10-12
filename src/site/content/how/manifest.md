@@ -306,32 +306,31 @@ and `.gitignore` already carry, and a CI job that wants offline builds is the on
 A top-level key the kernel does not read is **the product's own**, and nothing here rules on it. That is
 the design rather than a gap: the section is where a catalogue task's mechanism meets a product's values,
 and a product that could not invent one would have to ask the kernel for permission to have data.
-Measured over every manifest this kernel can reach, its own and the six in other repositories, eleven of
-the seventy top-level keys are exactly that, and every one of them is read by a body in the product's own
-repository. Adding a key nobody here has heard of is a supported thing to do.
+Measured over every manifest this kernel can reach, its own and those in other repositories, some top-level
+keys are exactly that, and every one of them is read by a body in the product's own repository. Adding a key
+nobody here has heard of is a supported thing to do.
 
 What was missing is the other half: **which names are already taken**. The product si#159 was reported
 from builds three Windows Server *releases*, and it learned that `releases:` already means
 `{page, from, complete_from}` to `test:release-notes` by reading `src/simplon/tasks/releasenotes.py`. A
-reserved name that can only be found in the source is a trap with a delay on it, so all twenty-three are
-published here: the twenty-one sections a kernel reader reads, and `ci:` and `support:`, which only the
+reserved name that can only be found in the source is a trap with a delay on it, so every one is
+published here: the sections a kernel reader reads, and `ci:` and `support:`, which only the
 loader reads. `cd:` is both - the loader reads its commands, and the environment readers the matrix beside
 them. `tests/test_manifest_top_level.py` holds this table to the kernel in both directions.
 
 | key | read by | what it carries |
 | --- | --- | --- |
-| `artifacts:` | `release:artifact`, `release:nuget-*`, `release:conan-*`, `release:maven` | one entry per published artefact: registry, repository, source directory, media type - and for a jar `group:`, `modules:` and an optional `task:` |
+| `artifacts:` | `release:artifact`, `release:nuget-*`, `release:conan-*`, `release:maven`, `build:image`, `release:image`, `test:image` | one entry per artifact, each with its `kind:` (`image`, `directory`, `nuget`, `maven`, `conan`, ...) and that kind's keys - see [the kinds](../../with-what/kinds/) |
 | `assets:` | `release:asset` | one entry per file attached to a GitHub release |
 | `build:` | `build:cmake-files`, `build:dotnet-solution` | `targets:`, the dependency edges between build targets that a directory layout cannot show |
 | `carriers:` | the environment selector | one entry per thing an environment is realised ON: its `proxmox:` node and kind, and the `portainer:` on it |
 | `cd:` | the loader, the environment selector | the `deploy:` and `monitor:` commands, and the environment matrix beside them: `environments:` (name, backend, description) and `default:` (the environment a command targets when no env token is given) |
 | `ci:` | the loader | the `build:`, `test:` and `release:` commands |
 | `claude:` | `support:claude-plugins` | the marketplaces and plugin ids an agent host installs |
-| `deploy:` | the deploy commands | `source:`, naming the `images:` or `artifacts:` entry a deployment's versions are looked up in |
+| `deploy:` | the deploy commands | `source:`, naming the `artifacts:` entry a deployment's versions are looked up in |
 | `doctoolchain_version:` | `docs:render` | the pinned docToolchain image tag |
 | `env_var:` | `support:environments` | the variable a product's env-first CLI publishes the active environment into |
 | `generated:` | `test:generated` | one entry per committed generated file: its `path:` and the `by:` command that produces it |
-| `images:` | `build:image`, `release:image`, `test:image` | one entry per container image: registry, repository, Dockerfile, context, and optionally its platforms and the images it is built from |
 | `instance:` | the multi-tenant lab | the env var naming the lab instance, and the product's id-length budget |
 | `lab_egress:` | the lab egress helper | the host interface a lab reaches the outside through |
 | `layout:` | `build:toolchain`, `test:*`, `docs:acceptance` | where inside your tree a containerised command runs, and which directory holds the tests above the acceptance line |
@@ -344,10 +343,10 @@ them. `tests/test_manifest_top_level.py` holds this table to the kernel in both 
 | `website:` | `docs:site` | the pinned Hugo image, where the sources live, where the site is built to |
 | `workflows:` | `release:workflows` | one entry per generated CI file |
 
-A key that is **mistyped** is therefore not the silent no-op it looks like. Seventeen of the twenty-one a
+A key that is **mistyped** is therefore not the silent no-op it looks like. Most of the sections a
 reader reads are named by the reader that wanted them, the moment that reader runs: `websiet:` instead
 of `website:` answers `the 'website' section is missing or is not a mapping`, and every other reader
-refuses the same way, naming the key it looked for. The four that say nothing say nothing on purpose:
+refuses the same way, naming the key it looked for. The ones that say nothing say nothing on purpose:
 
 - **`build:`** - an absent section is the normal case. `build cmake-files` and `build dotnet-solution`
   render the build files from the SOURCES, and `build: targets:` only adds the edges the directories
@@ -364,12 +363,12 @@ refuses the same way, naming the key it looked for. The four that say nothing sa
   it wrote yesterday. Same cost as `layout:`, stated for the same reason: `otuput: build-out` is silent
   too, and the build lands in `build/`.
 
-All four are driven in the test module above, so the silence is measured rather than assumed.
+Each is driven in the test module above, so the silence is measured rather than assumed.
 
 ### Reading a section, yours or the kernel's
 
 A product's own task body reads its own section through `simplon.context.section`, the same walk the
-kernel's ten readers use:
+kernel's own readers use:
 
 ```python
 from simplon import context
@@ -387,8 +386,8 @@ to nest (the section above). It stops at the first step that is not a mapping an
 reader tells "the product said nothing" from "the product said the wrong thing". A section declared and
 empty is found, not blamed.
 
-**It never raises, and that is deliberate.** Each of the twenty-one readers above says something specific
-when its section is missing, and si#159 measured that fourteen of the sixteen it measured already refuse
+**It never raises, and that is deliberate.** Each reader above says something specific
+when its section is missing, and si#159 measured that nearly all the sections it measured already refuse
 by name and quote the key. An accessor that raised would replace those sentences with one. So it answers the
 question and the reader keeps its own refusal - which is also what keeps every refusal countable where
 it is written, in [the rules chapter](../../with-what/rules/)'s census.
@@ -409,7 +408,7 @@ own authors explaining the collision and telling them not to add a `targets:` ke
 **The rule, so nobody has to read the source for it again:**
 
 - `build:` is **yours**. Declare it, put what you like in it, and nothing here refuses it. Refusing it
-  is what si#159's measurement rules out - eleven of the seventy top-level keys across those manifests
+  is what si#159's measurement rules out - top-level keys across those manifests
   are read by product task bodies in repositories this kernel cannot see, so a rule over the top-level
   namespace refuses live products on its first run.
 - The kernel reads exactly **one key** out of it, `targets:`, and rules on nothing else in there.
@@ -423,14 +422,51 @@ own authors explaining the collision and telling them not to add a `targets:` ke
   `package_targets:` - call yours something else. A `targets:` of the wrong shape is refused by name and
   tells you to rename; it is not silent.
 
-### `images:` - the container image
+### `artifacts:` - what this product builds and hands over
 
-`build:image` and `release:image` read one entry of this section, pinned per command with
-`with: { name: ... }`, because a product may build more than one:
+Every entry is one artifact, named, with its **`kind:`** - one of the kinds the catalogue declares, listed
+on [the kinds page](../../with-what/kinds/): `image`, `directory` (and `site`, which refines it), `nuget`,
+`maven`, `conan`, ... A product cannot add a kind. A task reads one entry by name (`with: { name: ... }`),
+and it accepts an entry of its kind or of a kind that refines it - `release:artifact` reads a `directory`,
+so a `site` too; an entry of any other kind is refused with both kinds named.
 
 ```yaml
-images:
+artifacts:
   app:
+    kind: image
+    registry: ghcr.io/example
+    repository: myctl
+    dockerfile: Dockerfile
+    context: .
+  updatesite:
+    kind: directory
+    registry: ghcr.io/example
+    repository: myctl-updatesite
+    path: build-out/site        # where it lies once built
+    media_type: application/vnd.example.updatesite.v1+zip
+  web: { kind: image, local: "myctl-web:local" }   # built by your own script; no kernel task builds it
+```
+
+Each kind's keys and their shapes are checked when the manifest loads - a list where a list belongs, a
+string or a number where a string does (`tag: 25` is the tag `25`) - and a key the kind does not take is
+refused by name, with the nearest key it does take, because otherwise it would be ignored without a word.
+What a task NEEDS it is told when it runs, all at once: `release:nuget` needs `registry`, `image` and
+`project`, `build:nuget-config` only `registry`, so one entry can serve both. The refusal of an unknown key
+lists the keys the kind does take; your own code asks `simplon.artifactsection.is_a(kind, "image")` rather
+than comparing `kind` to a string, so a kind that refines `image` is one too. Before si#344 B2 `path:` was called `source:`,
+`images:` was a section of its own, and an entry needed no `kind:`; the loader refuses each of those by
+name, and `simplon manifest migrate` rewrites all three (it derives a missing kind from the catalogue task
+that reads the entry, and refuses by name when nothing does).
+
+### `kind: image` - the container image
+
+`build:image`, `test:image` and `release:image` read one `artifacts:` entry of
+`kind: image`, pinned per command with `with: { name: ... }`, because a product may build more than one:
+
+```yaml
+artifacts:
+  app:
+    kind: image
     registry: ghcr.io/example
     repository: myctl
     dockerfile: Dockerfile
@@ -443,7 +479,8 @@ images:
 The first four are required, `registry` included even if you only ever build locally: the reference the
 build tags is the reference the release pushes, and an unqualified name is one docker resolves against
 Docker Hub. `dockerfile` and `context` must stay under the product root - `context: /` would stream your
-whole filesystem to the daemon as a build context.
+whole filesystem to the daemon as a build context. A `local:` image -
+one only your own code builds - needs none of them, and no kernel task builds or publishes it.
 
 **`VERSION` and `REVISION` are passed on every build, and you do not declare them.** The kernel derives
 them from *your* checkout - `git describe --tags --always --dirty` and `git rev-parse HEAD` - so the
@@ -472,14 +509,16 @@ credential your own `docker login <host>` stored, and a rejection says so instea
 Two optional keys turn one entry into a multi-platform image (si#347):
 
 ```yaml
-images:
+artifacts:
   toolchain:                      # never published; only ever an input
+    kind: image
     registry: ghcr.io
     repository: example/toolchain
     dockerfile: deploy/builder/Dockerfile
     context: .
     tag: "25"
   app:
+    kind: image
     registry: ghcr.io
     repository: example/app
     dockerfile: Dockerfile        # starts `FROM ghcr.io/example/toolchain:25 AS build`
@@ -503,7 +542,7 @@ and if the cache was pruned in between it is a second build, which this check tu
 publishing images nothing ran. An entry without `platforms:` builds and pushes with exactly the argv it
 always had.
 
-**`contexts:`** names other entries of this section that the Dockerfile starts `FROM`. The name the
+**`contexts:`** names other `kind: image` entries of `artifacts:` that the Dockerfile starts `FROM`. The name the
 `FROM` line uses is not typed again: it is the named image's own `registry/repository:tag` (its `tag:`,
 or the derived `VERSION` when it declares none), so the two cannot drift apart. With `platforms:`, the
 named image is built in the same bake, for the same platforms, with no tag and no output, so it is
@@ -1195,11 +1234,11 @@ made it silently would be exactly the accident this section exists to remove.
 **The section points at an entry you already have**, rather than naming a registry a second time:
 
 ```yaml
-images:
-  app: { registry: ghcr.io/acme, repository: demo-app, dockerfile: Dockerfile }
+artifacts:
+  app: { kind: image, registry: ghcr.io/acme, repository: demo-app, dockerfile: Dockerfile }
 
 deploy:
-  source: { images: app }        # or { artifacts: <name> }
+  source: { artifacts: app }
 ```
 
 Everything about *where* comes from that entry, so there is one place a registry is written down. An

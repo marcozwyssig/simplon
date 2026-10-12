@@ -25,6 +25,7 @@ from typing import NamedTuple
 
 import yaml
 
+from simplon import yamlkeys
 from simplon.orchestrator.manifest import Manifest
 from simplon.orchestrator.manifest import load as _load_manifest
 from simplon.orchestrator.model import treeform as _treeform
@@ -106,7 +107,7 @@ def section(document: Mapping[str, object], *path: str) -> Section:
     `tasks/image.py`, `tasks/testrun.py` and `tasks/claudeplugins.py` already asked `isinstance(...,
     Mapping)`; `labegress`, `labinstance` and `tasks/releasenotes.py` asked `isinstance(..., dict)`, and
     a `MappingProxyType` or an `OrderedDict` at their section key is now accepted where it used to be
-    refused. On the production path nothing changes at all - `manifest_data()` is `yaml.safe_load`, which
+    refused. On the production path nothing changes at all - `manifest_data()` is a `yaml.SafeLoader`, which
     yields plain dicts and nothing else - so the only way to reach the difference is the seam the unit
     tests use, where `manifest_data` is monkeypatched to hand back a literal. Recorded rather than
     repaired: eight readers asking one question is the point of this function, and three of them keeping
@@ -146,11 +147,14 @@ class ProductContext:
     manifest_path: Path
 
     def manifest_data(self) -> dict:
-        """The RAW manifest mapping (``yaml.safe_load``), for the product's OWN build-data sections that
-        the CLI engine ignores (image names, cache volumes, ...). Fails loudly with a clear RuntimeError so
-        a missing/corrupt manifest never surfaces as a bare traceback deep in a build/lab command."""
+        """The RAW manifest mapping, for the product's OWN build-data sections that the CLI engine ignores
+        (image names, cache volumes, ...). Fails loudly with a clear RuntimeError so a missing/corrupt
+        manifest never surfaces as a bare traceback deep in a build/lab command. A key written twice is
+        corrupt too (si#344 B2, `simplon.yamlkeys`): YAML would hand back the second copy and lose the first.
+        Read from the FILE, so the parser's marks name it rather than "<unicode string>"."""
         try:
-            return yaml.safe_load(self.manifest_path.read_text(encoding="utf-8")) or {}
+            with self.manifest_path.open(encoding="utf-8") as stream:
+                return yaml.load(stream, Loader=yamlkeys.UniqueKeyLoader) or {}
         except (OSError, yaml.YAMLError) as exc:
             raise RuntimeError(f"simplon: cannot read manifest {self.manifest_path}: {exc}") from exc
 

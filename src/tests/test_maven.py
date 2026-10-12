@@ -14,6 +14,8 @@ AAA; the name states the behaviour under test.
 """
 import pytest
 
+from simplon import context
+from simplon.context import ProductContext
 from simplon.tasks import maven
 
 
@@ -237,18 +239,20 @@ def test_an_entry_without_the_withdrawn_key_passes():
 
 
 
-def test_publish_refuses_a_declared_task_before_docker_is_touched(monkeypatch):
-    # arrange: a complete entry that still carries the 0.24.0 key. The refusal has to come from `publish`
-    # itself and before a container could start - a helper nobody calls refuses nothing.
-    spec = {"registry": "maven.pkg.github.com/o/r", "image": "gradle:9.7.1-jdk21", "group": "g.h",
-            "modules": ["core"], "tag": "1.0", "task": "publishToMavenLocal"}
-    monkeypatch.setattr(maven, "_declared", lambda name: dict(spec))
+def test_publish_refuses_a_declared_task_before_docker_is_touched(monkeypatch, tmp_path):
+    # arrange: a complete entry that still carries the 0.24.0 key, read the way `publish` reads it. The
+    # refusal has to come before a container could start - a helper nobody calls refuses nothing.
+    path = tmp_path / "firn.yaml"
+    path.write_text("artifacts:\n  firn:\n    kind: maven\n    registry: maven.pkg.github.com/o/r\n"
+                    "    image: gradle:9.7.1-jdk21\n    group: g.h\n    modules: [core]\n    tag: '1.0'\n"
+                    "    task: publishToMavenLocal\n", encoding="utf-8")
+    monkeypatch.setattr(context, "_current", ProductContext("firn", tmp_path, path))
 
     def no_docker():
         raise AssertionError("docker was reached before the withdrawn key was refused")
     monkeypatch.setattr(maven.docker, "ensure_docker", no_docker)
 
-    # act / assert
+    # act / assert: 0.25.0's sentence, not the schema's generic "not a key" - the reader asks first
     with pytest.raises(ValueError, match="`task:` was withdrawn"):
         maven.publish("firn")
 

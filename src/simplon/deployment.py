@@ -20,18 +20,19 @@ AN EMPTY SELECTOR IS REFUSED RATHER THAN DEFAULTED, for the same reason. "Whatev
 somebody makes; a deployment that made it silently would be the side effect this module removes, wearing
 a different hat.
 
-THE SECTION POINTS, IT DOES NOT RESTATE. `images:` and `artifacts:` already carry the registry and the
-repository - four of the seven reachable manifests declare `images:`, cleon declares `artifacts:` - so a
-`deploy:` section carrying a registry of its own would be a second source for one fact, which is what
-this repository removes everywhere else. It names an entry in a section that already exists:
+THE SECTION POINTS, IT DOES NOT RESTATE. `artifacts:` already carries the registry and the repository -
+four of the seven reachable manifests declared `images:`, which si#344 B2 folded into it as entries of
+`kind: image`, and cleon declares `artifacts:` - so a `deploy:` section carrying a registry of its own would
+be a second source for one fact, which is what this repository removes everywhere else. It names an entry in a section that already exists:
 
     deploy:
-      source: { images: app }
+      source: { artifacts: app }
 
 AND THE ENTRY MAY NOT CARRY WHAT IS NEEDED, measured rather than assumed. Across those manifests the
-entries are not one shape: `registry` and `repository` are in three, biz-cockpit's images carry `name`
-instead and no registry at all, and netctl's are bare strings rather than mappings. Each of those is
-refused by name here, with the keys the entry does have in the message - because the reader's next
+entries are not one shape: `registry` and `repository` are in three, biz-cockpit's images carry both and
+`name` besides, and netctl's are bare strings rather than mappings. Each shape that lacks what is needed
+(a bare string, an entry with no registry or no repository) is refused by name here, with the keys the
+entry does have in the message - because the reader's next
 question is "what do I add", and a KeyError two frames down answers neither.
 
 WHY THE LOOKUP IS NOT PER ENVIRONMENT. `dev|test|uat|prod` choose where a deployment GOES, not where the
@@ -47,8 +48,9 @@ from simplon import context, githubpackages
 #: The manifest section this module reads.
 SECTION = "deploy"
 
-#: The sections a `source:` may point into - the two that already carry a registry and a repository.
-SOURCE_SECTIONS = ("images", "artifacts")
+#: The section a `source:` points into. One since si#344 B2 folded `images:` into it: an image is an
+#: `artifacts:` entry of `kind: image`, and any entry with a registry can be what a deployment looks up.
+SOURCE_SECTION = "artifacts"
 
 #: The newest published version.
 LATEST = "latest"
@@ -83,7 +85,9 @@ class Source(NamedTuple):
     for a server, whose target is its backend's business rather than a path on this machine.
     """
 
-    kind: str
+    #: the section the entry stands in - always SOURCE_SECTION; named `section` because "kind" is an
+    #: artifact's kind (si#344 B2) and, in this module, client-or-server
+    section: str
     name: str
     registry: str
     repository: str
@@ -112,21 +116,20 @@ class Version(NamedTuple):
     builds: bool
 
 
-def _entry(document: dict, kind: str, name: str, where: str) -> dict:
-    section = document.get(kind)
+def _entry(document: dict, name: str, where: str) -> dict:
+    section = document.get(SOURCE_SECTION)
     if not isinstance(section, dict):
-        declared = ", ".join(sorted(k for k in SOURCE_SECTIONS if isinstance(document.get(k), dict)))
         raise ValueError(
-            f"{where}'s `{SECTION}: source:` names `{kind}:`, which this manifest does not declare as a "
-            f"section. Declared here: {declared or '(neither images: nor artifacts:)'}")
+            f"{where}'s `{SECTION}: source:` names `{SOURCE_SECTION}:`, which this manifest does not declare "
+            f"as a section")
     if name not in section:
         raise ValueError(
-            f"{where}'s `{SECTION}: source:` names '{name}' in `{kind}:`, which carries: "
+            f"{where}'s `{SECTION}: source:` names '{name}' in `{SOURCE_SECTION}:`, which carries: "
             f"{', '.join(sorted(section)) or '(nothing)'}")
     entry = section[name]
     if not isinstance(entry, dict):
         raise ValueError(
-            f"{where}'s `{kind}: {name}:` is not a mapping ({entry!r}), so it carries no registry to "
+            f"{where}'s `{SOURCE_SECTION}: {name}:` is not a mapping ({entry!r}), so it carries no registry to "
             f"deploy from. A deployable entry needs `registry:` and `repository:`")
     return entry
 
@@ -157,28 +160,26 @@ def source_of(document: dict, where: str) -> Source:
         raise ValueError(
             f"{where} declares no `{SECTION}:` section, so a deployment cannot say which version it is "
             f"deploying. It needs `source:` naming an entry of an existing section, for example "
-            f"`{SECTION}: {{ source: {{ images: app }} }}`")
+            f"`{SECTION}: {{ source: {{ artifacts: app }} }}`")
     source = section.get("source")
     if not isinstance(source, dict) or not source:
         raise ValueError(
             f"{where}'s `{SECTION}:` section declares no `source:`, so there is nowhere to look a "
             f"version up. It names one entry of an existing section: "
-            f"`source: {{ images: <name> }}` or `source: {{ artifacts: <name> }}`")
-    named = [k for k in SOURCE_SECTIONS if k in source]
-    if len(named) != 1:
+            f"`source: {{ {SOURCE_SECTION}: <name> }}`")
+    if list(source) != [SOURCE_SECTION]:
         raise ValueError(
-            f"{where}'s `{SECTION}: source:` names {', '.join(sorted(source)) or 'nothing'}; it takes "
-            f"exactly one of {' or '.join(SOURCE_SECTIONS)}")
-    kind = named[0]
-    name = str(source[kind] or "").strip()
+            f"{where}'s `{SECTION}: source:` names {', '.join(sorted(str(k) for k in source))}; it takes "
+            f"exactly one key, `{SOURCE_SECTION}: <name>`")
+    name = str(source[SOURCE_SECTION] or "").strip()
     if not name:
-        raise ValueError(f"{where}'s `{SECTION}: source: {kind}:` names no entry")
-    entry = _entry(document, kind, name, where)
+        raise ValueError(f"{where}'s `{SECTION}: source: {SOURCE_SECTION}:` names no entry")
+    entry = _entry(document, name, where)
     registry = str(entry.get("registry", "") or "").strip()
     repository = str(entry.get("repository", "") or "").strip()
     if not registry or not repository:
         raise ValueError(
-            f"{where}'s `{kind}: {name}:` carries no registry to deploy from: a deployable entry needs "
+            f"{where}'s `{SOURCE_SECTION}: {name}:` carries no registry to deploy from: a deployable entry needs "
             f"`registry:` and `repository:`, and this one has {', '.join(sorted(entry)) or 'no keys'}")
     application = str(section.get("kind", "") or "").strip()
     if application not in KINDS:
@@ -195,7 +196,7 @@ def source_of(document: dict, where: str) -> Source:
         raise ValueError(
             f"{where} declares `{SECTION}: kind: {SERVER}` and an `into:`, which would do nothing where "
             f"it is written: a server's target is its backend's business, not a path on this machine")
-    return Source(kind=kind, name=name, registry=registry, repository=repository,
+    return Source(section=SOURCE_SECTION, name=name, registry=registry, repository=repository,
                   application=application, into=into)
 
 

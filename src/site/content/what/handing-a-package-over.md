@@ -28,6 +28,7 @@ GitHub Packages serves NuGet natively, so both directions are ordinary commands 
 ```yaml
 artifacts:
   corelib:
+    kind: nuget
     registry: nuget.pkg.github.com/marcozwyssig
     image: mcr.microsoft.com/dotnet/sdk:9.0
     project: src/Core/Core.csproj
@@ -108,9 +109,10 @@ its own cache.
 ```yaml
 artifacts:
   cpplib:
+    kind: conan
     registry: ghcr.io/marcozwyssig
     repository: demo-conan
-    source: build/conan/demo.tgz
+    path: build/conan/demo.tgz
     media_type: application/vnd.conan.cache.v1+tgz
 ```
 

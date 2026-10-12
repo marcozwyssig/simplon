@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+import realmanifests
 from simplon import catalogue, manifestmodel
 from simplon.environments import matrix_section
 from simplon.orchestrator import manifest as manifest_mod
@@ -33,8 +34,8 @@ cd:
   environments:
     dev: {}
     prod: {}
-images:
-  kernel: { registry: ghcr.io/x, repository: demo, dockerfile: Dockerfile, context: . }
+artifacts:
+  kernel: { kind: image, registry: ghcr.io/x, repository: demo, dockerfile: Dockerfile, context: . }
 jdk:
   version: 21
 """
@@ -133,15 +134,17 @@ def test_environments_follow_the_matrix_and_promote_in_order():
 
 def test_an_image_is_an_artifact_of_the_image_kind():
     # act
-    block = _block(_export(), "images i_kernel typeOf simplon.pipeline.Artifact {")
+    block = _block(_export(), "artifacts a_kernel typeOf simplon.pipeline.Artifact {")
 
     # assert
     assert 'key = "kernel"' in block and "kind = simplon.vocabulary.image" in block
 
 
-def test_an_artifacts_entry_is_an_artifact_of_the_artifact_kind():
+def test_an_artifacts_entry_carries_its_declared_kind_and_its_path():
     # arrange
-    text = DEMO + "artifacts:\n  updatesite: { path: build/site }\n"
+    # (DEMO declares `artifacts:` already since si#344 B2, so the entry joins it: a second `artifacts:` key
+    # would be a key written twice, which YAML resolves by dropping the first)
+    text = DEMO.replace("artifacts:\n", "artifacts:\n  updatesite: { kind: directory, path: build/site }\n", 1)
 
     # act
     block = _block(manifestmodel.export(_load(DEMO), yaml.safe_load(text), "demo",
@@ -149,7 +152,34 @@ def test_an_artifacts_entry_is_an_artifact_of_the_artifact_kind():
                    "artifacts a_updatesite typeOf simplon.pipeline.Artifact {")
 
     # assert
-    assert 'key = "updatesite"' in block and "kind = simplon.vocabulary.artifact" in block
+    assert 'key = "updatesite"' in block and "kind = simplon.vocabulary.directory" in block
+    assert 'path = "build/site"' in block
+
+
+def test_a_numeric_path_is_carried_as_text_like_the_readers_take_it():
+    # arrange: the schema accepts a number as text (`path: 5` is the path "5"), so the bridge may not drop it
+    text = DEMO.replace("artifacts:\n", "artifacts:\n  updatesite: { kind: directory, path: 5 }\n", 1)
+
+    # act
+    block = _block(manifestmodel.export(_load(text), yaml.safe_load(text), "demo",
+                                        manifestmodel.KERNEL_SECTIONS),
+                   "artifacts a_updatesite typeOf simplon.pipeline.Artifact {")
+
+    # assert
+    assert 'path = "5"' in block
+
+
+def test_a_kind_with_a_dash_is_exported_by_its_firn_name():
+    # arrange: firn names have no `-` (firn#962)
+    text = DEMO.replace("artifacts:\n", "artifacts:\n  junit: { kind: test-result, path: build/junit }\n", 1)
+
+    # act
+    block = _block(manifestmodel.export(_load(DEMO), yaml.safe_load(text), "demo",
+                                        manifestmodel.KERNEL_SECTIONS),
+                   "artifacts a_junit typeOf simplon.pipeline.Artifact {")
+
+    # assert
+    assert "kind = simplon.vocabulary.test_result" in block
 
 
 def test_a_product_section_is_opaque_product_data():
@@ -196,6 +226,17 @@ def test_names_that_mangle_alike_are_refused_naming_both():
     with pytest.raises(manifestmodel.ModelExportError) as e:
         _export(text)
     assert "'nuget-config'" in str(e.value) and "'nuget_config'" in str(e.value)
+
+
+def test_an_artifacts_entry_without_a_kind_is_refused_naming_the_entry():
+    # arrange: `load` refuses a kindless entry, so the document is edited AFTER the load - the bridge is the
+    # second wall, and nothing else calls it with such a document
+    document = yaml.safe_load(DEMO)
+    document["artifacts"] = {"app": {"registry": "ghcr.io/x", "repository": "demo"}}
+
+    # act / assert
+    with pytest.raises(manifestmodel.ModelExportError, match="artifacts: app declares no kind the model can name"):
+        manifestmodel.export(_load(DEMO), document, "demo", manifestmodel.KERNEL_SECTIONS)
 
 
 def test_the_guard_holds_the_owner_not_the_property():
@@ -290,7 +331,7 @@ def _source(name: str) -> tuple[manifest_mod.Manifest, str]:
     """DEMO, or a reachable manifest migrated and loaded exactly as test_migrate's golden test does."""
     if name == "demo":
         return _load(DEMO), DEMO
-    text = migrate_text((FIXTURES / f"{name}.yaml").read_text(encoding="utf-8")).text
+    text = migrate_text(realmanifests.text(name)).text
     return manifest_mod.load(text, catalogue=catalogue.load(), manifest_path=f"{name}.yaml"), text
 
 
@@ -306,7 +347,7 @@ def test_the_export_drops_nothing(name):
     document = yaml.safe_load(text)
     matrix = matrix_section(document)
     envs = matrix["environments"] or {}
-    structure = {"product", "ci", "cd", "support", "tasks", "images", "artifacts"}
+    structure = {"product", "ci", "cd", "support", "tasks", "artifacts"}
     # Not exported, by decision and stated in manifestmodel's docstring - so "drops nothing" is true of
     # everything else: `cd: site:` (nothing in the M2 holds a Site until a deploy reads one) and a
     # `tasks:` entry no command places (one Task per impl a command USES, R9). Both are left out of
@@ -324,7 +365,6 @@ def test_the_export_drops_nothing(name):
     assert _count(out, r"environments \w+") == len(envs)
     assert len(re.findall(r"^  default = ", out, re.MULTILINE)) == (matrix["default"] is not None)
     assert impls and _count(out, r"tasks \w+") == len(impls)
-    assert _count(out, r"(images|artifacts) \w+") == (
-        len(document.get("images") or {}) + len(document.get("artifacts") or {}))
+    assert _count(out, r"artifacts \w+") == len(document.get("artifacts") or {})
     assert len(re.findall(r"typeOf simplon\.manifest\.(KernelSection|ProductData) \{$", out, re.MULTILINE)) == len(
         [key for key in document if key not in structure])

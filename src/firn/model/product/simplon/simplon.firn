@@ -36,6 +36,7 @@ simplon typeOf simplon.manifest.Product {
       key = "model"
       member = product.simplon.simplon.build.model_guard
       member = product.simplon.simplon.build.model_gen
+      member = product.simplon.simplon.build.model_whole
       member = product.simplon.simplon.build.model_mode
     }
     command model_guard typeOf simplon.pipeline.TaskCommand {
@@ -45,6 +46,10 @@ simplon typeOf simplon.manifest.Product {
     command model_gen typeOf simplon.pipeline.TaskCommand {
       key = "model-gen"
       task = product.simplon.simplon.t_simplon_tasks_toolchain_run_toolchain
+    }
+    command model_whole typeOf simplon.pipeline.TaskCommand {
+      key = "model-whole"
+      task = product.simplon.simplon.t_orchestrator_cli_whole_files
     }
     command model_mode typeOf simplon.pipeline.TaskCommand {
       key = "model-mode"
@@ -222,6 +227,10 @@ simplon typeOf simplon.manifest.Product {
     key = "simplon.tasks.toolchain:run_toolchain"
     body = "simplon.tasks.toolchain:run_toolchain"
   }
+  tasks t_orchestrator_cli_whole_files typeOf simplon.pipeline.Task {
+    key = "orchestrator.cli:whole_files"
+    body = "orchestrator.cli:whole_files"
+  }
   tasks t_orchestrator_cli_make_readable typeOf simplon.pipeline.Task {
     key = "orchestrator.cli:make_readable"
     body = "orchestrator.cli:make_readable"
@@ -334,7 +343,7 @@ simplon typeOf simplon.manifest.Product {
     key = "simplon.tasks.manifestmodel:model"
     body = "simplon.tasks.manifestmodel:model"
   }
-  images i_kernel typeOf simplon.pipeline.Artifact {
+  artifacts a_kernel typeOf simplon.pipeline.Artifact {
     key = "kernel"
     kind = simplon.vocabulary.image
   }

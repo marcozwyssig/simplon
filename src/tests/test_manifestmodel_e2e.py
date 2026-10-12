@@ -12,6 +12,7 @@ import yaml
 
 from conftest import docker_is_usable
 from firnrun import firn_rc
+import realmanifests
 from simplon import catalogue, manifestmodel
 from simplon.orchestrator import manifest as manifest_mod
 from simplon.tasks.migrate import migrate_text
@@ -33,7 +34,7 @@ def test_there_are_eight_reachable_manifests():
 @pytest.mark.parametrize("name", NAMES)
 def test_a_reachable_manifest_exports_to_a_model_firn_accepts(tmp_path, name):
     # arrange
-    migrated = migrate_text((FIXTURES / f"{name}.yaml").read_text(encoding="utf-8"))
+    migrated = migrate_text(realmanifests.text(name))
     assert migrated.status == "migrated", migrated.reason
     mf = manifest_mod.load(migrated.text, catalogue=catalogue.load(), manifest_path=f"{name}.yaml")
     out = manifestmodel.export(mf, yaml.safe_load(migrated.text), name, manifestmodel.KERNEL_SECTIONS)

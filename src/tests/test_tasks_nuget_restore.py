@@ -15,10 +15,12 @@ _MANIFEST = """
 product: demo
 artifacts:
   corelib:
+    kind: nuget
     registry: nuget.pkg.github.com/marcozwyssig
     image: mcr.microsoft.com/dotnet/sdk:9.0
     project: src/App/App.csproj
   elsewhere:
+    kind: nuget
     registry: nuget.example.com/team
     image: mcr.microsoft.com/dotnet/sdk:9.0
     project: src/App/App.csproj

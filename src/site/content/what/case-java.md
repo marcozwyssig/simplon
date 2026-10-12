@@ -80,7 +80,7 @@ Every such row carries the ticket where the decision is still open.
 | 6 | A build that never reached the tests arrives as `setup-failed` | `./javademo.sh test accept` | run | 2026-09-08 06:27:34, rc 1; archive below |
 | 7 | Cut the release tag | `./javademo.sh release tag v0.1.0` | run | 2026-09-08, rc 1; refused, nothing cut |
 | 8 | Publish the jar itself to a registry | `release:artifact` | derived | the coordinate is in the catalogue; it reads an `artifacts:` section, and javademo declares none |
-| 9 | Build and push a container image | `build:image`, `release:image` | derived | both read an `images:` section, and javademo declares none |
+| 9 | Build and push a container image | `build:image`, `release:image` | derived | both read an `artifacts:` entry of `kind: image`, and javademo declares none |
 | 10 | Deploy to the local host | `./javademo.sh dev deploy up` | run | 2026-09-08 06:25:34, rc 0; output below |
 | 11 | Deploy past the local host - Proxmox, Portainer, a cloud | - | does not exist yet | [simplon#5](https://github.com/marcozwyssig/simplon/issues/5) |
 | 12 | Render the architecture documentation to HTML and PDF | `./javademo.sh build docs` | run | 2026-09-08 06:26:21, rc 0; transcript below |

@@ -217,8 +217,8 @@ identical. If they are not, nothing is written, and the difference is named.
 
 | Outcome | rc | Message |
 |---|---|---|
-| migrated | 0 | names each section it moved |
-| already in the new form | 0 | "already in the ci/cd form - nothing to migrate", which is a different line, not the same green |
+| migrated | 0 | names each section it moved, then "migrated to the current form (<n> change(s))" |
+| already in the current form | 0 | "already in the current form (ci / cd / support, every artifact with its kind) - nothing to migrate", which is a different line, not the same green |
 | cannot migrate | 1 | names the construct, and nothing is written |
 
 ### A.6 The diagnoses in the cut (decision 11)
@@ -325,6 +325,11 @@ kinds:
   | a selector that answers nothing writes an empty `kinds:` | `test_every_kind_in_the_model_is_in_the_generated_section`, and `catalogue.loads` refuses a `kinds:` that is declared and empty |
   | a hand-written line outside the region (a task added after the id line loads, and the next `gen` deletes it; `test generated` is green over the deletion while unstaged) | a comment inside the region says where new tasks go; `test_own_region_guard.py` pins the outside on the committed file through `orchestrator.cli:outside_region`, and the same function is `build model-guard`, the first step of `build model`, whose `stop_on_failure: true` keeps `model-gen` from running after it refuses |
   | generated files are written mode 0600, and setuptools carries the mode into the wheel | `build model` is an aggregate: `model-gen` (firn gen), then `model-mode` (simplon's own product task `make-readable`, `orchestrator.cli:make_readable`, sets 0644 on the generated files); `test_the_catalogue_in_the_wheel_is_readable_by_everyone` in `test_wheel.py` holds the wheel |
+  | (B2) an empty selector DELETES a generated file with rc 0 (firn#966) - `artifactschema.py` is a whole module with no protected region, so it has nothing to keep it | `build model-whole` (`orchestrator.cli:whole_files`) after `model-gen` refuses a missing file; `make-readable` lists it too; `test_generated_schema.py` imports the committed module |
+  | (B2) a template error leaves a file holding only the id line, rc 1 - and an empty selector inside the `file` block leaves a module with no classes, rc 0 | `build model-whole` refuses an id-line-only file; `test_every_kind_in_the_model_has_a_model_class_of_that_kind` and `test_the_schema_and_the_catalogue_hold_the_same_kinds` refuse a module missing a kind |
+  | (B2) a hand edit to `artifactschema.py` is lost on the next `gen`, rc 0 | its header says so; `test generated` regenerates and diffs it (`generated: artifact-schema`) |
+  | (B2) the generated `.py` is written 0600, and a wheel member only its builder can read breaks `import simplon` (measured: setuptools takes a `.py` member's mode from the builder's umask, not from the file) | `model-mode` lists it, which guards its existence; `test_every_file_in_the_wheel_is_readable_by_everyone` |
+  | (B2) from Task 5 on, the loader imports the schema, so a deleted or id-line-only `artifactschema.py` stops EVERY `./simplon.sh` command at import - `build model`, which would regenerate it, included | the one importer (`simplon.artifactsection`) turns that import failure into an ImportError whose sentence is the recovery: `git checkout -- src/simplon/artifactschema.py`, then `./simplon.sh build model`; `test_a_broken_schema_names_its_recovery` pins it |
 
   The zero-tasks refusal sits in `catalogue.load(path)` (the shipped file), not in `loads(text)`: a
   group-only stub catalogue with `tasks: {}` is legitimate and `loads` must keep accepting it (measured:

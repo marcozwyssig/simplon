@@ -173,7 +173,9 @@ READS_INLINE = {
                     "which then builds backends - the reading and the wiring are one function",
     "labinstance": "`spec()` reads the topology section and goes on to talk to docker in the same body",
     "labegress": "`spec()`, same shape as labinstance",
-    "tasks.artifact": "`_declared(name)` reads its section inline and is the front half of a task body",
+    "tasks.artifact": "`_declared(name)` reads its section inline and is the front half of a task body - "
+                      "and since si#344 B2 it hands `artifactsection.entry` the SECTION, never the "
+                      "document, so it stays an inline reader",
     "tasks.asset": "`_declared(name)`, same shape as tasks.artifact",
     "tasks.env": "`environments()` reads the document inline to answer a listing",
     "tasks.carrier": "reads `environments:` and `carriers:` through `environments.parse_data` and "
@@ -446,18 +448,18 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("environments", "parse_data", "so nothing says what the compose document"): DIAGNOSIS,
 
     # --- deployment.py (si#235) ------------------------------------------------------------------
-    # Eight, and every one of them DIAGNOSIS: each refuses a manifest that could not have produced a
+    # Every one of them DIAGNOSIS: each refuses a manifest that could not have produced a
     # working deployment at all. A `source:` naming a section the document does not declare, or an entry
     # that is a bare string rather than a mapping, or one carrying no registry, does not describe a
     # different deployment - it describes none. Two of the shapes are measured rather than imagined:
-    # netctl's `images:` entries are bare strings and biz-cockpit's carry `name` and no registry, so both
-    # are refused by name with the keys the entry does have.
+    # netctl's local images are bare strings and carry no registry; an entry with no registry (or no
+    # repository) is refused by name with the keys the entry does have.
     #
     # None of them is an expression rule, so none needs a REACH entry: there is no manifest a product
     # might legitimately want that any of these forbids.
     ("deployment", "source_of", "cannot say which version it is deploying"): DIAGNOSIS,
     ("deployment", "source_of", "there is nowhere to look a version up"): DIAGNOSIS,
-    ("deployment", "source_of", "it takes exactly one of"): DIAGNOSIS,
+    ("deployment", "source_of", "it takes exactly one key"): DIAGNOSIS,
     ("deployment", "source_of", "names no entry"): DIAGNOSIS,
     ("deployment", "source_of", "carries no registry to deploy from: a deployable entry needs"): DIAGNOSIS,
     ("deployment", "_entry", "does not declare as a section"): DIAGNOSIS,
@@ -536,6 +538,13 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # product it would have produced - and it is the only refusal that takes out every command at
     # once, which is why it is worth a sentence of its own rather than the parser's traceback.
     ("manifest", "load", "is not valid YAML"): DIAGNOSIS,
+    # si#344 B2, ruling T4a. NOT the entry above: the document parses, and cleon's manifest with two
+    # identical copies produced a working product, so "could not have meant anything" would be false here.
+    # A diagnosis for another reason: YAML drops the first copy of a key written twice WITHOUT A WORD, and
+    # the kernel cannot tell a stale edit from a deliberate repeat - the silent loss is the defect, and
+    # only the person who wrote both copies can say which was meant. What it costs when the copies are
+    # identical is one `manifest migrate` run (cleon, measured), not a line of what the product says.
+    ("manifest", "load", "writes a key twice"): DIAGNOSIS,
     ("manifest", "load", "`tasks:` is not a mapping"): DIAGNOSIS,
     ("manifest", "load", "generate names group(s)"): DIAGNOSIS,
     ("manifest", "load", "names a nested group the `taxonomy:` block"): DIAGNOSIS,
@@ -568,9 +577,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("treeform", "_resolve_one", "names no task"): DIAGNOSIS,
     ("treeform", "_resolve_one", "with `with:` and also declares `params:`"): DIAGNOSIS,
     ("treeform", "check_no_old_form", "is written in the flat command form"): EXPRESSION,
-    # si#344, the cut. DIAGNOSIS, all five: `_ManifestModel` ignores an unknown top-level key, so each of
+    # si#344, the cut. DIAGNOSIS, all of them: `_ManifestModel` ignores an unknown top-level key, so each of
     # these would otherwise load as a product with no commands, a deploy with no matrix or a site that is
-    # not built - green at load and wrong at the first command. The form they name does not load at all
+    # not built - or, since cut 2, a product whose images no task can find - green at load and wrong at the
+    # first command. The form they name does not load at all
     # any more, so nothing expressible is forbidden: the refusal is what replaces the silence.
     ("treeform", "check_no_pre_si344_form", "A manifest maps its top-level keys"): DIAGNOSIS,
     ("treeform", "check_no_pre_si344_form", "declares `groups:`, which si#344 replaced"): DIAGNOSIS,
@@ -578,6 +588,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("treeform", "check_no_pre_si344_form", "at the top level; since si#344"): DIAGNOSIS,
     ("treeform", "check_no_pre_si344_form", "with the documentation site's keys"): DIAGNOSIS,
     ("treeform", "check_no_pre_si344_form", "The deployment location stands under"): DIAGNOSIS,
+    ("treeform", "check_no_pre_si344_form", "declares `images:`, which si#344 folded"): DIAGNOSIS,
+    ("treeform", "check_no_pre_si344_form", "which si#344 renamed `path:`"): DIAGNOSIS,
+    ("treeform", "check_no_pre_si344_form", "declares no `kind:`; since si#344"): DIAGNOSIS,
+    ("treeform", "check_no_pre_si344_form", "`deploy: source:` names `images:`"): DIAGNOSIS,
     # si#81, and it is DIAGNOSIS by the sorting question rather than by preference. What is refused is a
     # `tasks:` declaration that is accepted and INERT: a command of the same name already runs a
     # different body, so the one written here is dead in the tree and nothing said so. That is the same
@@ -719,14 +733,9 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # --- tasks/docs.py: the docToolchain image tag ----------------------------------------------------
     ("docs", "_version", "pin the docToolchain image tag"): DIAGNOSIS,
 
-    # --- tasks/image.py: the `images:` section (agile-cockpit declares one) ----------------------------
+    # --- tasks/image.py: `artifacts:` entries of `kind: image` (agile-cockpit declares one) ---
     ("image", "declared", "section is missing or is not a mapping - declare the registry"): DIAGNOSIS,
     ("image", "declared", "no image '{name}' in the"): DIAGNOSIS,
-    ("image", "declared_image", "image '{name}' is not a mapping"): DIAGNOSIS,
-    ("image", "_str", "is required"): DIAGNOSIS,
-    ("image", "_str", "must be a non-empty string"): DIAGNOSIS,
-    ("image", "_build_args", "'build_args' must be a mapping of name to value"): DIAGNOSIS,
-    ("image", "_build_args", "must be a scalar, not"): DIAGNOSIS,
     # si#347, firn's two-platform image. Every one of these is a declaration buildx could not carry out:
     # a platform string it refuses, a name it cannot use for a bake target, a context nothing declares or
     # that leads back to itself. Three more were written and DELETED instead of entered here, by the
@@ -734,12 +743,44 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # context listed twice build a working image, so they are read (as absent, and once) rather than
     # refused; and "a context needs a constant `tag:`" became a derivation - the context is named under
     # the tag its own build would use, so a Dockerfile with `ARG VERSION` before FROM is not forbidden.
-    ("image", "_platforms", "'platforms' must be a list of platforms"): DIAGNOSIS,
     ("image", "_platforms", "is not '<os>/<arch>[/<variant>]'"): DIAGNOSIS,
     ("image", "_bake_name", "cannot name a buildx bake target"): DIAGNOSIS,
-    ("image", "_contexts", "'contexts' must be a list of image names"): DIAGNOSIS,
     ("image", "_contexts", "contexts form a cycle"): DIAGNOSIS,
     ("image", "_contexts", "is not an image in the '{SECTION}:' section"): DIAGNOSIS,
+
+    # --- artifactsection.py and the generated artifactschema.py (si#344 B2) --------------------------------
+    # DIAGNOSIS, all of them. An `artifacts:` that is not a mapping, an entry that is not one, a kind the
+    # catalogue does not declare, a key the kind does not take (it would be ignored: a typo'd `platfroms:`
+    # builds one platform with no word said), a key written with no value, and a value no reader can use (a
+    # bool or a list where a string or number belongs, a string where a list belongs, a mapping of lists
+    # where build arguments belong) - each describes no artifact a reader could have used as written.
+    # Marco ruled the unknown key and the bool/null cases diagnosis (2026-10-12), and measured on the same day
+    # over the 8 reachable manifests (live, through the GitHub API) and the 8 frozen fixtures: no entry carries
+    # one of them. A number is NOT refused (decision A): the readers always read it with `str(...)`.
+    # The shape refusals are raised in the GENERATED module; their wording is the template's
+    # (src/firn/templates/schema.firnt), so these fragments are second sources of it.
+    ("artifactsection", "check", "must be a mapping of artifact name to its entry"): DIAGNOSIS,
+    ("artifactsection", "check", "is not a mapping - an artifact declares"): DIAGNOSIS,
+    ("artifactsection", "check", "which the catalogue does not declare; the kinds are"): DIAGNOSIS,
+    # An entry with no `kind:` at all: its own sentence, so the reader is not told "`kind: None`".
+    ("artifactsection", "check", "declares no `kind:`; every entry names one"): DIAGNOSIS,
+    # `entry` is the use-time half, reached from `tasks.image.declared`: the entry is a mapping, of a kind the
+    # kernel knows, and of the kind the task reads or one that refines it. A wrong kind is a manifest whose
+    # task would read keys the entry does not have - nothing built, nothing published.
+    ("artifactsection", "entry", "is not a mapping - an artifact declares"): DIAGNOSIS,
+    ("artifactsection", "entry", "names no kind this kernel knows"): DIAGNOSIS,
+    ("artifactsection", "entry", "declares no `kind:`; the kinds are"): DIAGNOSIS,
+    ("artifactsection", "entry", "and this task reads a"): DIAGNOSIS,
+    # What a reader NEEDS, from the model (`NEEDS`): a missing one is a command that cannot run as declared.
+    # One site for all ten readers; it replaces `image._str`'s "is required" and the hand-written presence
+    # loops of the four package readers (those were inline, outside the census, and are gone).
+    ("artifactsection", "entry", ":`, which "): DIAGNOSIS,
+    ("artifactschema", "_known", "is not a key of the"): DIAGNOSIS,
+    ("artifactschema", "_typed", "is written with no value"): DIAGNOSIS,
+    ("artifactschema", "_typed", "must be a non-empty string or a number"): DIAGNOSIS,
+    ("artifactschema", "_typed", "must be a list of non-empty strings"): DIAGNOSIS,
+    ("artifactschema", "_typed", "must be a mapping of name to value"): DIAGNOSIS,
+    ("artifactschema", "_typed", "must be a scalar, not"): DIAGNOSIS,
 
     # --- tasks/site.py: the `site:` section (three products declare one) ------------------------------
     ("site", "declared", "section is missing or is not a mapping - declare the pinned hugo image"):
@@ -937,8 +978,23 @@ class _Module:
         return out
 
     def is_model(self, name: str) -> bool:
-        klass = self.classes.get(name)
-        return klass is not None and any(getattr(base, "id", "") == "BaseModel" for base in klass.bases)
+        """A pydantic model: a class of this module whose bases reach `BaseModel`, directly or through other
+        classes of this module. Transitive since si#344 B2: the generated `artifactschema` writes one model
+        per artifact kind as a subclass of the kind it refines, and only the root names `BaseModel`."""
+        seen: set[str] = set()
+        stack = [name]
+        while stack:
+            current = stack.pop()
+            klass = self.classes.get(current)
+            if klass is None or current in seen:
+                continue
+            seen.add(current)
+            for base in klass.bases:
+                if getattr(base, "id", "") == "BaseModel":
+                    return True
+                if isinstance(base, ast.Name):
+                    stack.append(base.id)
+        return False
 
 
 def _module_file(dotted: str):
@@ -1050,14 +1106,14 @@ def _inline_readers() -> tuple[str, ...]:
 #
 # So the walk is a data flow, and every step of it is a rule stated here:
 #   - The document is born at a seam: a `.manifest_data()` call, or - inside `manifest.load` - the local
-#     parsed from the text the loader was handed (`data = yaml.safe_load(text) or {}`).
+#     parsed from the text the loader was handed (`data = cast(Any, yamlkeys.load(text)) or {}`).
 #   - It travels by assignment (`data = ctx.manifest_data()`, `x = data or {}`, `{**data, ...}`) and by
 #     being handed to a kernel function, whose parameter at that position then IS the document.
 #   - It is READ by `X.get(k)`, `X[k]`, `k in X`, the first path step of `context.section(X, k, ...)`, and
 #     `Model.model_validate(X)`, which reads the model's fields - except a key the kernel itself wrote into
 #     the spread it validates (`load` validates `{**data, "groups": ..., "tasks": {}}`, so `groups` there
 #     is the kernel's own output, not the manifest's).
-#   - `k` is a string, a module constant bound to strings (`SECTION`, `SOURCE_SECTIONS`), or a loop
+#   - `k` is a string, a module constant bound to strings (`SECTION`, `SOURCE_SECTION`), or a loop
 #     variable over them (`for area in ("ci", "cd")`).
 #
 # AND ONE RULE SEPARATES A KEY THE KERNEL MODELS FROM ONE IT READS ONLY TO REFUSE. si#344 refuses
@@ -1101,7 +1157,7 @@ def _inline_readers() -> tuple[str, ...]:
 
 
 def _string_constants(module: _Module) -> dict[str, tuple[str, ...]]:
-    """name -> the strings a module-level constant binds (`SECTION = "x"`, `SOURCE_SECTIONS = ("a", "b")`)."""
+    """name -> the strings a module-level constant binds (`SECTION = "x"`, `SECTIONS = ("a", "b")`)."""
     out: dict[str, tuple[str, ...]] = {}
     for node in module.tree.body:
         if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
@@ -1346,6 +1402,11 @@ def _validators(module: _Module, name: str, seen: set) -> list[tuple[str, ast.AS
             continue
         seen.add((module.dotted, "#" + current))
         klass = module.classes[current]
+        # A validator a subclass INHERITS runs for it too (measured on pydantic 2.13: the base's `"*"` field
+        # validator and its `mode="before"` model validator rule on the subclass with `cls` the subclass) -
+        # so the base's validators are this model's.
+        stack.extend(base.id for base in klass.bases
+                      if isinstance(base, ast.Name) and module.is_model(base.id))
         for node in ast.walk(klass):
             if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                     and any("validator" in ast.unparse(deco) for deco in node.decorator_list)):
@@ -1579,11 +1640,12 @@ def test_a_key_the_kernel_reads_only_to_refuse_is_not_a_section():
     """si#344 refuses the old form BY NAME, so the kernel reads those keys - and models none of them.
 
     The rule that drops them is a shape (a check returns no value), not a list of these keys; this is the
-    list, held from the other side. Each one is a refusal in `treeform.check_no_pre_si344_form` or
-    `check_no_old_form`, and the derivation must still SEE them read - otherwise the rule is dropping
+    list, held from the other side (and since si#344 B2 `images:`). Each one is a refusal in
+    `treeform.check_no_pre_si344_form`
+    or `check_no_old_form`, and the derivation must still SEE them read - otherwise the rule is dropping
     nothing and the emptiness below proves nothing.
     """
-    cut = {"groups", "env_groups", "default", "environments", "site", "import"}
+    cut = {"groups", "env_groups", "default", "environments", "site", "import", "images"}
     dropped = {read.key for read in _document_reads()} - sections_read()
 
     # EXACTLY, not "at least": a rule that also dropped a real section would pass a subset check
@@ -1605,14 +1667,9 @@ def test_every_hand_off_of_the_document_is_followed():
         f"reads is missing from sections_read(): {list(unresolved)}")
 
 
-KEY_READS_COVERED = {
-    # `_entry(document, kind, ...)` reads the section a `cd: source:` names, so `kind` is a parameter.
-    # Both sections it can be are counted anyway: `SOURCE_SECTIONS = ("images", "artifacts")` is a
-    # SECTION constant, and test_the_sections_the_kernel_reads_include_every_declared_section_constant
-    # holds every such constant inside sections_read().
-    "deployment._entry: document.get(kind)": "SOURCE_SECTIONS, via the SECTION-constant cross-check",
-    "deployment._entry: document.get(k)": "SOURCE_SECTIONS, via the SECTION-constant cross-check",
-}
+#: Empty since si#344 B2: `deployment._entry` reads `document.get(SOURCE_SECTION)`, a constant the walk
+#: resolves, where it read `document.get(kind)` with `kind` a parameter.
+KEY_READS_COVERED: dict[str, str] = {}
 
 
 def test_every_unresolved_key_read_is_named():
@@ -1633,9 +1690,10 @@ def test_every_unresolved_key_read_is_named():
 def test_the_only_excluded_raise_is_the_funnel_that_re_raises_the_model():
     """The population's edge, seen rather than asserted.
 
-    One raise inside the walk's reach is dropped: `raise ValueError(_validation_message(exc))`, which
-    re-raises what `_ManifestModel` already raised. Every rule it carries is counted at its own site, so
-    counting it again would double one refusal and only one.
+    Two raises inside the walk's reach are dropped, one per model funnel:
+    `raise ValueError(_validation_message(exc))`, which re-raises what `_ManifestModel` already raised,
+    and `artifactsection._validated`, which re-raises what a generated artifact model raised (si#344 B2).
+    Every rule they carry is counted at its own site, so counting a funnel again would double a refusal.
 
     The `NOT_LOAD_TIME` class list that used to sit beside it is GONE and that is the point of the new
     walk: `Manifest`, `PlanNode` and `Suites` have methods that raise, and they are simply not reachable
@@ -1647,9 +1705,10 @@ def test_the_only_excluded_raise_is_the_funnel_that_re_raises_the_model():
     # act
     dropped = [site for site in everything if site not in _all_refusals()]
 
-    # assert: exactly one, and it is the funnel
-    assert len(dropped) == 1, f"the walk drops {len(dropped)} raises, not the one funnel: {dropped}"
-    assert FUNNEL in dropped[0][2]
+    # assert: exactly the two funnels - the loader's, and the artifact section's (si#344 B2) - each
+    # re-raising what a model raised, which the census counts at its own site
+    assert sorted(site[0] for site in dropped) == ["artifactsection", "manifest"], dropped
+    assert all(FUNNEL in site[2] for site in dropped)
 
     # assert: and the classes that used to need a list really are out of reach on their own
     reachable = {(module, function) for module, function, _ in _all_refusals()}

@@ -14,14 +14,16 @@ One value that silently meant two of those - `latest` quietly becoming a build w
 - would be this repository's recurring defect. Three values for three meanings is the widening CLAUDE.md
 prescribes for it, so the tests below pin the SEPARATION as hard as they pin each answer.
 
-THE SECTION POINTS, IT DOES NOT RESTATE. `images:` and `artifacts:` already carry a registry and a
-repository, so a `deploy:` section naming those again would be a second source for one fact. It names an
+THE SECTION POINTS, IT DOES NOT RESTATE. `artifacts:` already carries a registry and a repository (and
+since si#344 B2 an image is an entry of it, of `kind: image`), so a `deploy:` section naming those again
+would be a second source for one fact. It names an
 entry in a section that exists, and everything about WHERE comes from there.
 
 AND THE ENTRY IT POINTS AT MAY NOT CARRY IT, which is measured rather than imagined. Over the five
 reachable manifests that declare such a section: `registry` and `repository` are in three of them,
-biz-cockpit's images carry `name` instead, and netctl's are bare strings rather than mappings at all. So
-the reader refuses by name in each of those shapes instead of raising a KeyError two frames down.
+biz-cockpit's images carry both beside a `name`, and netctl's are bare strings rather than mappings at
+all. So the reader refuses by name in each shape that lacks them (a bare string, an entry with no registry
+or no repository) instead of raising a KeyError two frames down.
 
 AAA throughout.
 """
@@ -41,14 +43,15 @@ def _product(tmp_path, monkeypatch, manifest: str) -> None:
 
 
 _GOOD = """
-images:
+artifacts:
   app:
+    kind: image
     registry: ghcr.io/acme
     repository: demo-app
     dockerfile: Dockerfile
 deploy:
   kind: server
-  source: { images: app }
+  source: { artifacts: app }
 """
 
 
@@ -61,13 +64,13 @@ def test_the_source_is_read_off_the_section_it_points_at(tmp_path, monkeypatch):
     # Act
     source = deployment.declared()
     # Assert: nothing about WHERE was restated in the deploy section
-    assert source.kind == "images" and source.name == "app"
+    assert source.section == "artifacts" and source.name == "app"
     assert source.registry == "ghcr.io/acme" and source.repository == "demo-app"
 
 
 def test_a_manifest_with_no_deploy_section_says_what_it_needs(tmp_path, monkeypatch):
     # Arrange
-    _product(tmp_path, monkeypatch, "images:\n  app: { registry: r, repository: d }\n")
+    _product(tmp_path, monkeypatch, "artifacts:\n  app: { kind: image, registry: r, repository: d }\n")
     # Act / Assert
     with pytest.raises(ValueError, match=r"`deploy:`"):
         deployment.declared()
@@ -81,44 +84,56 @@ def test_a_deploy_section_with_no_source_says_so(tmp_path, monkeypatch):
         deployment.declared()
 
 
-def test_a_source_naming_a_section_the_manifest_does_not_declare_lists_the_ones_it_does(tmp_path,
-                                                                                       monkeypatch):
+def test_a_source_naming_artifacts_where_the_manifest_declares_none_says_so(tmp_path, monkeypatch):
     # Arrange
-    _product(tmp_path, monkeypatch,
-             "images:\n  app: { registry: r, repository: d }\ndeploy:\n  source: { artifacts: app }\n")
-    # Act / Assert: the reader names what IS declared rather than only what is missing
-    with pytest.raises(ValueError, match=r"artifacts.*images"):
+    _product(tmp_path, monkeypatch, "deploy:\n  kind: server\n  source: { artifacts: app }\n")
+    # Act / Assert
+    with pytest.raises(ValueError, match=r"names `artifacts:`, which this manifest does not declare as a section"):
         deployment.declared()
+
+
+def test_a_source_naming_the_folded_images_section_is_told_the_one_key_it_takes(tmp_path, monkeypatch):
+    # Arrange: the old spelling, read raw (the loader's cut refuses it by name earlier - Task 7)
+    _product(tmp_path, monkeypatch,
+             "artifacts:\n  app: { kind: image, registry: r, repository: d }\n"
+             "deploy:\n  kind: server\n  source: { images: app }\n")
+    # Act / Assert
+    with pytest.raises(ValueError) as caught:
+        deployment.declared()
+    assert str(caught.value) == ("demo.yaml's `deploy: source:` names images; it takes exactly one key, "
+                                 "`artifacts: <name>`")
 
 
 def test_a_source_naming_an_entry_the_section_does_not_carry_lists_the_entries(tmp_path, monkeypatch):
     # Arrange
     _product(tmp_path, monkeypatch,
-             "images:\n  app: { registry: r, repository: d }\n  sidecar: {}\n"
-             "deploy:\n  kind: server\n  source: { images: web }\n")
+             "artifacts:\n  app: { kind: image, registry: r, repository: d }\n  sidecar: { kind: image }\n"
+             "deploy:\n  kind: server\n  source: { artifacts: web }\n")
     # Act / Assert
     with pytest.raises(ValueError, match=r"web.*app, sidecar"):
         deployment.declared()
 
 
 def test_an_entry_that_is_not_a_mapping_is_refused_by_name(tmp_path, monkeypatch):
-    """netctl's shape, measured: its `images:` entries are bare strings like `netctl:local`."""
+    """netctl's shape before si#344 B2, measured: its `images:` entries were bare strings like
+    `netctl:local`. The loader refuses that shape now; read raw, this reader still says why."""
     # Arrange
     _product(tmp_path, monkeypatch,
-             "images:\n  web: netctl:local\ndeploy:\n  kind: server\n  source: { images: web }\n")
+             "artifacts:\n  web: netctl:local\ndeploy:\n  kind: server\n  source: { artifacts: web }\n")
     # Act / Assert
-    with pytest.raises(ValueError, match=r"images: web"):
+    with pytest.raises(ValueError, match=r"artifacts: web"):
         deployment.declared()
 
 
 def test_an_entry_without_a_registry_names_what_it_does_carry(tmp_path, monkeypatch):
-    """biz-cockpit's shape, measured: `context`, `dockerfile` and `name` - and no registry anywhere."""
+    """An entry shaped like biz-cockpit's but WITHOUT its `registry:` and `repository:` (which the real ones do
+    carry, measured): `context`, `dockerfile` and `name` - and no registry."""
     # Arrange
     _product(tmp_path, monkeypatch,
-             "images:\n  backend: { context: ., dockerfile: Dockerfile, name: bc-backend }\n"
-             "deploy:\n  kind: server\n  source: { images: backend }\n")
+             "artifacts:\n  backend: { kind: image, context: ., dockerfile: Dockerfile, name: bc-backend }\n"
+             "deploy:\n  kind: server\n  source: { artifacts: backend }\n")
     # Act / Assert: the keys it has are in the message, so the reader can see what to add
-    with pytest.raises(ValueError, match=r"registry.*context, dockerfile, name"):
+    with pytest.raises(ValueError, match=r"registry.*context, dockerfile, kind, name"):
         deployment.declared()
 
 

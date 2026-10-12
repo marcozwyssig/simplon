@@ -62,13 +62,17 @@ from contextlib import contextmanager
 from pathlib import Path
 from xml.sax.saxutils import quoteattr
 
-from simplon import context, docker, githubpackages, hostpath, log, outputs
+from simplon import artifactsection, artifactschema, context, docker, githubpackages, hostpath, log, outputs
 from simplon.run import stream
 
 #: The manifest section this module reads. `artifacts:` rather than a new top-level key, per design
 #: section 2: a registry, a package and a scope are the same three facts whatever the ecosystem, and a
 #: section is cheap to add and expensive to remove.
 SECTION = "artifacts"
+
+#: The kind this module reads, by three readers: `build:nuget-config`, `build:nuget-restore` and
+#: `release:nuget` (si#344 B2). Its keys, their shapes and what each reader needs are the generated schema's.
+ENTRY = artifactschema.NugetEntry
 
 #: The file NuGet reads, at the product root. NuGet walks up from the project directory, so one file at
 #: the root serves every project in the tree - which is what makes a single generated file honest.
@@ -94,7 +98,7 @@ DEFAULT_SOURCE = "github"
 SOURCE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")
 
 
-def _declared(name: str) -> dict:
+def _declared(name: str, coordinate: str) -> artifactschema.NugetEntry:
     """The `artifacts:` entry `name` names, or a refusal listing the ones that exist.
 
     The wording and the shape are `simplon.tasks.artifact`'s, deliberately: a product reading two
@@ -109,23 +113,7 @@ def _declared(name: str) -> dict:
         raise ValueError(
             f"no artifact '{name}' in {ctx.manifest_path.name}'s `{SECTION}:` section; declared are: "
             f"{', '.join(sorted(section)) or '(none)'}")
-    return dict(section[name])
-
-
-def _required(spec: dict, name: str, *keys: str) -> list[str]:
-    """The values of `keys`, refusing by KEY as soon as one is missing.
-
-    One at a time rather than a list of all of them: a reader fixes the first, runs again, and is told
-    the next - which is a shorter loop than being handed four keys and guessing which shape they want.
-    """
-    values = []
-    for key in keys:
-        value = str(spec.get(key, "") or "")
-        if not value:
-            raise ValueError(f"artifact '{name}' declares no `{key}:`; a NuGet package needs "
-                             f"{', '.join(keys)}")
-        values.append(value)
-    return values
+    return artifactsection.entry(section, name, ENTRY, ctx.manifest_path.name, coordinate)
 
 
 def _without_a_scheme(registry: str) -> str:
@@ -208,14 +196,14 @@ def config_text(source_name: str, url: str, user: str) -> str:
         "</configuration>\n")
 
 
-def _source_name(spec: dict, name: str) -> str:
+def _source_name(spec: artifactschema.NugetEntry, name: str) -> str:
     """The name the config gives the feed, refused unless it can be an XML element.
 
     Read here rather than in three task bodies, because a name the publish accepted and the config
     rejected would be a transport whose two ends do not meet - `--source github` against a file that
     never declared one.
     """
-    chosen = str(spec.get("source_name", "") or DEFAULT_SOURCE)
+    chosen = spec.source_name or DEFAULT_SOURCE
     if not SOURCE_NAME.fullmatch(chosen):
         raise ValueError(
             f"artifact '{name}' declares `source_name: {chosen!r}`, which cannot be an XML element "
@@ -224,7 +212,7 @@ def _source_name(spec: dict, name: str) -> str:
     return chosen
 
 
-def _github_registry(spec: dict, name: str) -> str:
+def _github_registry(spec: artifactschema.NugetEntry, name: str) -> str:
     """The registry, refused unless it is GitHub's own.
 
     The generated block writes `%GITHUB_TOKEN%`, so a config for somebody else's host would instruct
@@ -232,7 +220,7 @@ def _github_registry(spec: dict, name: str) -> str:
     to prevent, one level removed from the login it usually guards. A product publishing elsewhere writes
     its own config; the kernel does not generate one it cannot vouch for.
     """
-    (registry,) = _required(spec, name, "registry")
+    registry = spec.registry or ""  # every nuget reader NEEDS it
     _without_a_scheme(registry)
     if not githubpackages.is_github_packages(registry):
         raise ValueError(
@@ -249,7 +237,7 @@ def config(name: str = "") -> int:
     The file is COMMITTED, which is the whole point of the variable reference: the source a build resolves
     against is reviewable in the repository, and the credential is not in it.
     """
-    spec = _declared(name)
+    spec = _declared(name, "build:nuget-config")
     registry = _github_registry(spec, name)
     source_name = _source_name(spec, name)
 
@@ -349,11 +337,11 @@ def publish(name: str = "", tag: str = "") -> int:
     Two container runs rather than one shell line, because a shell line is a third quoting layer between
     the manifest and the tool, and the rc of a pipeline is not the rc of the command that failed.
     """
-    registry, pinned, project = _for_container(name)
-    spec = _declared(name)
+    registry, pinned, project = _for_container(name, "release:nuget")
+    spec = _declared(name, "release:nuget")
     source_name = _source_name(spec, name)
 
-    resolved = tag or str(spec.get("tag", "") or "")
+    resolved = tag or spec.tag or ""
     if not resolved:
         raise ValueError(
             f"artifact '{name}' has no tag: declare `tag:` in the `{SECTION}:` section for a constant "
@@ -402,15 +390,16 @@ def publish(name: str = "", tag: str = "") -> int:
 
 # --- consuming ----------------------------------------------------------------------------------------
 
-def _for_container(name: str) -> tuple[str, str, str]:
-    """The three things both container commands need: registry, pinned image, project. Refuses by key.
+def _for_container(name: str, coordinate: str) -> tuple[str, str, str]:
+    """The three things both container commands need: registry, pinned image, project. A missing one is
+    refused by `_declared`, from what the coordinate NEEDS (si#344 B2).
 
     Shared by `publish` and `restore` because the refusals are the ones a product hits FIRST, and two
     copies of them are two wordings a reader would have to learn.
     """
-    spec = _declared(name)
+    spec = _declared(name, coordinate)
     registry = _github_registry(spec, name)
-    (image, project) = _required(spec, name, "image", "project")
+    image, project = spec.image or "", spec.project or ""
     pinned = docker.pinned_image(image, f"artifact '{name}'",
                                  hint="a published package names the SDK it was built with")
     return registry, pinned, project
@@ -437,8 +426,8 @@ def restore(name: str = "") -> int:
     else, and a token is exactly what a manifest may not name. So the consuming half of si#127 needs a
     runner that can put a secret into a container, and a product cannot declare one.
     """
-    registry, pinned, project = _for_container(name)
-    spec = _declared(name)
+    registry, pinned, project = _for_container(name, "build:nuget-restore")
+    spec = _declared(name, "build:nuget-restore")
     source_name = _source_name(spec, name)
 
     root = context.current().root

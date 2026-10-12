@@ -508,10 +508,10 @@ tasks:
 
   # --- build: what a product produces ------------------------------------------------------------------
   # The container image, and a TASK rather than a placed command for the same reason `release:artifact`
-  # is one: it needs an `images:` section naming the registry, the repository, the Dockerfile and the
-  # build context, so a command declared under `build:` above would die on its first line in a product
-  # that ships no image. A product declares the command the day it has a Dockerfile, and pins WHICH
-  # image with `with: { name: ... }`.
+  # is one: it needs an `artifacts:` entry of `kind: image` naming the registry, the repository, the
+  # Dockerfile and the build context, so a command declared under `build:` above would die on its first
+  # line in a product that ships no image. A product declares the command the day it has a Dockerfile,
+  # and pins WHICH image with `with: { name: ... }`.
   #
   # `build:image` and `release:image` are TWO tasks along the five verbs, not one with a flag: build
   # produces, release publishes, and a product that builds an image only to run a smoke test against it

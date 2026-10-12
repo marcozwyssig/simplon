@@ -16,7 +16,7 @@ every other child of the Product carries a prefix saying which section it came f
 already did (`t_`), so no two sections can meet by construction:
 
     t_  a task (one per distinct impl)    e_  an environment of the cd matrix
-    i_  an `images:` entry                a_  an `artifacts:` entry
+    a_  an `artifacts:` entry (since si#344 B2 an image is one, of `kind: image`)
     s_  a kernel section                  d_  a section only the product reads
 
 The price: a top-level group literally named like a prefixed child (`e_dev`, `d_jdk`, `t_...`) is
@@ -41,8 +41,8 @@ matrix); whether it names a real one stays `environments.parse_data`'s verdict a
 Every ModelExportError is a DIAGNOSIS (CLAUDE.md's first kind): the manifest loaded, and the model would
 otherwise hold less than it does or something it does not. Each one names what it cannot hold - two
 names that mangle alike, a group named like a prefixed child, a member that resolves to no one command,
-a group in no area, a matrix or an `images:`/`artifacts:` that is not a mapping. Today they fire at RUN
-time of an opt-in command (`support manifest model`) and are outside the refusal census, which counts
+a group in no area, a matrix or an `artifacts:` that is not a mapping, or an entry without a kind. Today they
+fire at RUN time of an opt-in command (`support manifest model`) and are outside the refusal census, which counts
 what refuses on the way from a manifest to a decision. Once parts B/C generate from this model they sit
 on that load path, and each needs a census entry then.
 """
@@ -65,12 +65,12 @@ _NOT_NAME = re.compile(r"[^A-Za-z0-9_]")
 #: is the Product resource's own key, and no reader of the kernel's reads it as a section.
 KERNEL_SECTIONS: tuple[str, ...] = (
     "artifacts", "assets", "build", "carriers", "cd", "ci", "claude", "deploy", "doctoolchain_version",
-    "env_var", "generate", "generated", "images", "instance", "lab_egress", "layout", "nexus", "output",
+    "env_var", "generate", "generated", "instance", "lab_egress", "layout", "nexus", "output",
     "releases", "suites", "support", "tasks", "taxonomy", "tracker", "website", "workflows",
 )
 
 #: Sections the bridge models as structure rather than as an opaque KernelSection.
-_STRUCTURE = frozenset({"ci", "cd", "support", "tasks", "images", "artifacts"})
+_STRUCTURE = frozenset({"ci", "cd", "support", "tasks", "artifacts"})
 _AREAS = ("ci", "cd", "support")
 
 
@@ -218,17 +218,25 @@ class _Export:
         return lines
 
     def artifacts(self, document: Mapping[str, object]) -> list[str]:
-        # kinds are coarse on purpose: part B refines them (spec B.2)
+        # Each entry with the kind it DECLARES (si#344 B2) - `load` has held every kind to the catalogue
+        # before the bridge runs, so the kind is a resource of simplon.vocabulary - and its `path:` when it has
+        # one. `registry:` stays out: the model's Registry is a resource of its own, and no reader needs one yet.
         lines: list[str] = []
-        for section, prefix, kind in (("images", "i_", "image"), ("artifacts", "a_", "artifact")):
-            entries = document.get(section)
-            if entries is None:
-                continue
-            if not isinstance(entries, Mapping):
-                raise ModelExportError(f"{section}: is a {type(entries).__name__}, not a mapping")
-            for entry in entries:
-                lines += _block(f"{section} {self.names(str(entry), prefix)} typeOf simplon.pipeline.Artifact",
-                                [f"key = {_q(str(entry))}", f"kind = simplon.vocabulary.{kind}"])
+        entries = document.get("artifacts")
+        if entries is None:
+            return lines
+        if not isinstance(entries, Mapping):
+            raise ModelExportError(f"artifacts: is a {type(entries).__name__}, not a mapping")
+        for entry, body in entries.items():
+            kind = body.get("kind") if isinstance(body, Mapping) else None
+            if not isinstance(kind, str):
+                raise ModelExportError(f"artifacts: {entry} declares no kind the model can name")
+            fields = [f"key = {_q(str(entry))}", f"kind = simplon.vocabulary.{mangle(kind)}"]
+            path = body.get("path")
+            if isinstance(path, (str, int, float)) and not isinstance(path, bool):
+                fields.append(f"path = {_q(str(path))}")  # a number is the text of its digits, as the readers take it
+            lines += _block(f"artifacts {self.names(str(entry), 'a_')} typeOf simplon.pipeline.Artifact",
+                            fields)
         return lines
 
     def sections(self, document: Mapping[str, object], kernel_sections: frozenset[str]) -> list[str]:

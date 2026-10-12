@@ -193,8 +193,8 @@ three things the kernel knows how to build for you: a container image, the build
 product hands to its compiler, and - since si#127 and si#128 - the half of a package handover that
 happens on the CONSUMING side. Everything past that is a body in the product's own `tasks:`, because
 "build" means something different in every language. Each of the six reads something the product
-brings - `build:image` an `images:` section, the two generators a tree of sources, the other three an
-`artifacts:` entry - which is why all
+brings - `build:image` an `artifacts:` entry of `kind: image`, the two generators a tree of sources, the other three an
+`artifacts:` entry of their own kind - which is why all
 six are offered rather than placed: declared for everybody, `build:image` would die on its first
 line in a product with no Dockerfile, and a generator would write a CMake project for a product with
 no C++ in it.
@@ -274,7 +274,7 @@ pushed image is somebody else's dependency by the time you notice.
 - `release:nuget`
 - `release:tag`
 
-**What a product brings itself.** An `artifacts:`, `assets:` or `images:` section, and - for
+**What a product brings itself.** An `artifacts:` entry of the kind the task reads, or an `assets:` section, and - for
 `release:tag` - a workflow that a tag actually triggers. All seven are **offered** rather than placed, and `release:tag`
 is the case that fixed that bar: it is the one `release:` task that reads no product data at all, so it
 came closest to being handed to everybody, and it is still not - because it **publishes**, and a
@@ -357,7 +357,7 @@ environment through a variable, and a seventh group. None was needed.
 the kernel ships, because the whole chain under it is the kernel's own. What `up` and `down` add is the
 half no product had: *which* version is going out, whether it exists, and - for a server - handing it to
 the backend, the product's own where it registered one. A `deploy:` section says whether this is a client application installed into a directory here
-or a server brought up on a target, and which `images:` or `artifacts:` entry the versions are looked up
+or a server brought up on a target, and which `artifacts:` entry the versions are looked up
 in. See [`deploy:` in the manifest](../../how/manifest/#deploy---which-version-a-deployment-is-deploying).
 
 Distributing a client application to a *fleet* of machines - an SCCM, an MDM - is out of scope and is not

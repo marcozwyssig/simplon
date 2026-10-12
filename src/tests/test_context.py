@@ -8,8 +8,8 @@ from simplon import context
 from simplon.context import ProductContext
 
 _SAMPLE_MANIFEST = """product: sample
-images:
-  web: sample:local
+artifacts:
+  web: { kind: image, local: "sample:local" }
 tasks:
   lint: { impl: "sample.cli:lint", help: "Lint the thing." }
 
@@ -60,7 +60,7 @@ def test_manifest_data_reads_the_raw_product_sections(tmp_path):
 
     # assert: the raw sections are available for the product's own paths adapter
     assert data["product"] == "sample"
-    assert data["images"]["web"] == "sample:local"
+    assert data["artifacts"]["web"]["local"] == "sample:local"
 
 
 def test_manifest_parses_and_validates_the_command_taxonomy(tmp_path):

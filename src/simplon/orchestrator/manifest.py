@@ -29,11 +29,12 @@ import re
 
 import importlib
 from collections.abc import Iterable, Mapping
-from typing import Callable, NamedTuple
+from typing import Any, Callable, NamedTuple, cast
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from simplon import artifactsection, yamlkeys
 from simplon.clitaxonomy import CommandTaxonomy, TaxonomyNode, merge_trees
 from simplon.orchestrator.model import treeform
 
@@ -462,8 +463,8 @@ class _CommandSpecModel(BaseModel):
 
 
 class _ManifestModel(BaseModel):
-    """Parse/validate view of the whole manifest. Unknown TOP-LEVEL sections (product, environments,
-    default, images, ... - a product's own build data) are IGNORED, exactly as the former loader read only
+    """Parse/validate view of the whole manifest. Unknown TOP-LEVEL sections (product, a product's own
+    build data, ...) are IGNORED, exactly as the former loader read only
     the taxonomy sections. The ONE exception is the REMOVED `composites` section (netctl#898): a leftover
     `composites:` key is rejected LOUDLY (never silently dropped by the extra-ignore tolerance), pointing
     the manifest author at `depends_on`. `groups` is the ONE command tree (group -> command -> spec, #729);
@@ -760,7 +761,8 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     caught here and not deep in the CLI:
       - the form si#344 replaced - `groups:`, `env_groups:`, a top-level `default:` / `environments:` /
         `site:` - is refused by name, with the migration that rewrites it
-        (`treeform.check_no_pre_si344_form`);
+        (`treeform.check_no_pre_si344_form`), and cut 2's (si#344 B2): `images:`, `source:` and a kindless
+        entry in `artifacts:`, `deploy: source: { images: }`;
       - `ci:` / `cd:` / `support:` place at least one command (the loader's member map, group -> command
         -> spec, is the ONE membership + spec source);
       - every command spec declares a non-empty `help`, plus either a well-formed "module:function" `impl`
@@ -806,7 +808,21 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     spec tree (group -> command -> spec).
     """
     try:
-        data = yaml.safe_load(text) or {}
+        # `Any`, as `yaml.safe_load` typed it before si#344 B2: the checks below read the shape. A cast and
+        # not an annotation: the refusal census finds this seam as a plain `data = ...(text)` assignment.
+        data = cast(Any, yamlkeys.load(text)) or {}
+    except yamlkeys.DuplicateKeyError as exc:
+        # A key written twice (si#344 B2, ruling T4a): the document PARSES - YAML keeps the second copy and
+        # loses the first without a word - so it is not "not valid YAML", and it is said in its own sentence.
+        # The way out is the migration, which drops a second copy that is the first line for line - named
+        # by both routes, as the cut names it (`treeform._MIGRATE`): a bare `simplon` is not on PATH, and
+        # `ProductContext.manifest` fills the two placeholders from the launcher's exports.
+        mark = exc.problem_mark
+        where = f"line {mark.line + 1}, column {mark.column + 1}: " if mark is not None else ""
+        raise ValueError(
+            f"{manifest_path or 'the manifest'} writes a key twice:\n  {where}{exc.problem}\n"
+            "A second copy that is the first line for line is dropped by the migration; copies that differ "
+            f"are merged by hand. {treeform._MIGRATE.format(name=manifest_path or '<manifest>.yaml')}") from exc
     except yaml.YAMLError as exc:
         # The ONE failure here that is certain to be a human's typo in a file they were editing seconds
         # ago, and the most disabling one: a section that is wrong takes out one command, a document that
@@ -844,6 +860,10 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     # would otherwise surface as `treeform.resolve`'s "declare the body once under `tasks:`" one command
     # at a time, which is true and useless: it names the rule, not the file's way out of it.
     treeform.check_no_old_form(data)
+    # si#344 B2: every `artifacts:` entry names a kind the catalogue declares and carries only that kind's
+    # keys, in the shapes the generated schema checks. A catalogue-less load checks against the same model.
+    artifactsection.check(data, getattr(catalogue, "kinds", {}) or artifactsection.REFINES,
+                          manifest_path or "the manifest")
     # The catalogue's own tree. `taxonomy:` is `groups:`'s predecessor (netctl#1444, superseded by
     # netctl#1469) and a catalogue carries one or the other, never both. The two spell a node the same
     # way - help, env_first, nested groups - so the older one is simply a tree with no commands placed in

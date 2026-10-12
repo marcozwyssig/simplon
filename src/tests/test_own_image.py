@@ -452,7 +452,7 @@ def test_the_pin_branch_gets_a_ci_run_because_nothing_a_github_token_pushes_star
 def test_the_kernel_image_is_published_for_arm64_too_and_ci_builds_amd64_only():
     """si#368: an amd64-only index left a Mac with Apple silicon unable to start the container route."""
     # arrange
-    kernel = _manifest()["images"]["kernel"]
+    kernel = _manifest()["artifacts"]["kernel"]
     ci_steps = [s for j in _manifest()["workflows"]["ci"]["jobs"].values() for s in j["steps"]]
     steps = _release_jobs()["image"]["steps"]
     runs = [step.get("run", "") for step in steps]
