@@ -173,7 +173,9 @@ READS_INLINE = {
                     "which then builds backends - the reading and the wiring are one function",
     "labinstance": "`spec()` reads the topology section and goes on to talk to docker in the same body",
     "labegress": "`spec()`, same shape as labinstance",
-    "tasks.artifact": "`_declared(name)` reads its section inline and is the front half of a task body",
+    "tasks.artifact": "`_declared(name)` reads its section inline and is the front half of a task body - "
+                      "and since si#344 B2 it hands `artifactsection.entry` the SECTION, never the "
+                      "document, so it stays an inline reader",
     "tasks.asset": "`_declared(name)`, same shape as tasks.artifact",
     "tasks.env": "`environments()` reads the document inline to answer a listing",
     "tasks.carrier": "reads `environments:` and `carriers:` through `environments.parse_data` and "
@@ -748,6 +750,27 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("image", "_contexts", "contexts form a cycle"): DIAGNOSIS,
     ("image", "_contexts", "is not an image in the '{SECTION}:' section"): DIAGNOSIS,
 
+    # --- artifactsection.py and the generated artifactschema.py (si#344 B2) --------------------------------
+    # DIAGNOSIS, all of them. An `artifacts:` that is not a mapping, an entry that is not one, a kind the
+    # catalogue does not declare, a key the kind does not take (it would be ignored: a typo'd `platfroms:`
+    # builds one platform with no word said), a key written with no value, and a value no reader can use (a
+    # bool or a list where a string or number belongs, a string where a list belongs, a mapping of lists
+    # where build arguments belong) - each describes no artifact a reader could have used as written.
+    # Marco ruled the unknown key and the bool/null cases diagnosis (2026-10-12), and measured on the same day
+    # over the 8 reachable manifests (live, through the GitHub API) and the 8 frozen fixtures: no entry carries
+    # one of them. A number is NOT refused (decision A): the readers always read it with `str(...)`.
+    # The shape refusals are raised in the GENERATED module; their wording is the template's
+    # (src/firn/templates/schema.firnt), so these fragments are second sources of it.
+    ("artifactsection", "check", "must be a mapping of artifact name to its entry"): DIAGNOSIS,
+    ("artifactsection", "check", "is not a mapping - an artifact declares"): DIAGNOSIS,
+    ("artifactsection", "check", "which the catalogue does not declare; the kinds are"): DIAGNOSIS,
+    ("artifactschema", "_known", "is not a key of a"): DIAGNOSIS,
+    ("artifactschema", "_typed", "is written with no value"): DIAGNOSIS,
+    ("artifactschema", "_typed", "must be a non-empty string or a number"): DIAGNOSIS,
+    ("artifactschema", "_typed", "must be a list of non-empty strings"): DIAGNOSIS,
+    ("artifactschema", "_typed", "must be a mapping of name to value"): DIAGNOSIS,
+    ("artifactschema", "_typed", "must be a scalar, not"): DIAGNOSIS,
+
     # --- tasks/site.py: the `site:` section (three products declare one) ------------------------------
     ("site", "declared", "section is missing or is not a mapping - declare the pinned hugo image"):
         DIAGNOSIS,
@@ -944,8 +967,23 @@ class _Module:
         return out
 
     def is_model(self, name: str) -> bool:
-        klass = self.classes.get(name)
-        return klass is not None and any(getattr(base, "id", "") == "BaseModel" for base in klass.bases)
+        """A pydantic model: a class of this module whose bases reach `BaseModel`, directly or through other
+        classes of this module. Transitive since si#344 B2: the generated `artifactschema` writes one model
+        per artifact kind as a subclass of the kind it refines, and only the root names `BaseModel`."""
+        seen: set[str] = set()
+        stack = [name]
+        while stack:
+            current = stack.pop()
+            klass = self.classes.get(current)
+            if klass is None or current in seen:
+                continue
+            seen.add(current)
+            for base in klass.bases:
+                if getattr(base, "id", "") == "BaseModel":
+                    return True
+                if isinstance(base, ast.Name):
+                    stack.append(base.id)
+        return False
 
 
 def _module_file(dotted: str):
@@ -1353,6 +1391,11 @@ def _validators(module: _Module, name: str, seen: set) -> list[tuple[str, ast.AS
             continue
         seen.add((module.dotted, "#" + current))
         klass = module.classes[current]
+        # A validator a subclass INHERITS runs for it too (measured on pydantic 2.13: the base's `"*"` field
+        # validator and its `mode="before"` model validator rule on the subclass with `cls` the subclass) -
+        # so the base's validators are this model's.
+        stack.extend(base.id for base in klass.bases
+                      if isinstance(base, ast.Name) and module.is_model(base.id))
         for node in ast.walk(klass):
             if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                     and any("validator" in ast.unparse(deco) for deco in node.decorator_list)):
@@ -1640,9 +1683,10 @@ def test_every_unresolved_key_read_is_named():
 def test_the_only_excluded_raise_is_the_funnel_that_re_raises_the_model():
     """The population's edge, seen rather than asserted.
 
-    One raise inside the walk's reach is dropped: `raise ValueError(_validation_message(exc))`, which
-    re-raises what `_ManifestModel` already raised. Every rule it carries is counted at its own site, so
-    counting it again would double one refusal and only one.
+    Two raises inside the walk's reach are dropped, one per model funnel:
+    `raise ValueError(_validation_message(exc))`, which re-raises what `_ManifestModel` already raised,
+    and `artifactsection._validated`, which re-raises what a generated artifact model raised (si#344 B2).
+    Every rule they carry is counted at its own site, so counting a funnel again would double a refusal.
 
     The `NOT_LOAD_TIME` class list that used to sit beside it is GONE and that is the point of the new
     walk: `Manifest`, `PlanNode` and `Suites` have methods that raise, and they are simply not reachable
@@ -1654,9 +1698,10 @@ def test_the_only_excluded_raise_is_the_funnel_that_re_raises_the_model():
     # act
     dropped = [site for site in everything if site not in _all_refusals()]
 
-    # assert: exactly one, and it is the funnel
-    assert len(dropped) == 1, f"the walk drops {len(dropped)} raises, not the one funnel: {dropped}"
-    assert FUNNEL in dropped[0][2]
+    # assert: exactly the two funnels - the loader's, and the artifact section's (si#344 B2) - each
+    # re-raising what a model raised, which the census counts at its own site
+    assert sorted(site[0] for site in dropped) == ["artifactsection", "manifest"], dropped
+    assert all(FUNNEL in site[2] for site in dropped)
 
     # assert: and the classes that used to need a list really are out of reach on their own
     reachable = {(module, function) for module, function, _ in _all_refusals()}

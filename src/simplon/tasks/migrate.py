@@ -39,7 +39,7 @@ from typing import NamedTuple
 import yaml
 
 from simplon import log
-from simplon.artifactschema import READERS, REFINES
+from simplon.artifactsection import READERS, REFINES
 from simplon.orchestrator.model.treeform import DOCS_SITE_KEYS
 from simplon.yamlkeys import UniqueKeyLoader, duplicates
 

@@ -19,21 +19,25 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from simplon import context, githubpackages, log
+from simplon import artifactsection, artifactschema, context, githubpackages, log
 
 #: The manifest section this task reads: a mapping of NAME -> the four things publishing a directory
 #: needs. A section rather than flat keys, because a product may publish several.
 SECTION = "artifacts"
 
+#: The kind this task reads, or one that refines it (`site`); si#344 B2. Its keys, their shapes and what
+#: `release:artifact` needs are the generated schema's.
+ENTRY = artifactschema.DirectoryEntry
 
-def _declared(name: str) -> dict:
+
+def _declared(name: str) -> artifactschema.DirectoryEntry:
     ctx = context.current()
     section = (ctx.manifest_data().get(SECTION) or {})
     if name not in section:
         raise ValueError(
             f"no artifact '{name}' in {ctx.manifest_path.name}'s `{SECTION}:` section; declared are: "
             f"{', '.join(sorted(section)) or '(none)'}")
-    return dict(section[name])
+    return artifactsection.entry(section, name, ENTRY, ctx.manifest_path.name, "release:artifact")
 
 
 def publish(name: str = "", tag: str = "") -> int:
@@ -47,31 +51,23 @@ def publish(name: str = "", tag: str = "") -> int:
                          f"section, or pass --name")
     spec = _declared(name)
     root = context.current().root
-
-    registry, repository = spec.get("registry", ""), spec.get("repository", "")
-    media_type, source = spec.get("media_type", ""), spec.get("source", "")
-    for key, value in (("registry", registry), ("repository", repository),
-                       ("media_type", media_type), ("source", source)):
-        if not value:
-            raise ValueError(f"artifact '{name}' declares no `{key}:`; publishing needs all four of "
-                             f"registry, repository, source and media_type")
-
-    resolved = tag or spec.get("tag", "")
+    # `registry`, `repository`, `media_type` and `path` are there: `release:artifact` NEEDS them, and
+    # `artifactsection.entry` refused the entry otherwise (si#344 B2). `or ""` is for the type checker.
+    registry, repository = spec.registry or "", spec.repository or ""
+    media_type, path = spec.media_type or "", spec.path or ""
+    resolved = tag or spec.tag or ""
     if not resolved:
         raise ValueError(
             f"artifact '{name}' has no tag: declare `tag:` in the `{SECTION}:` section for a constant "
             f"one, or pass --tag for a version that is only known after a build")
-
-    directory = root / source
+    directory = root / path
     if not directory.is_dir():
-        raise ValueError(f"nothing to publish: {source} does not exist under the product root. "
+        raise ValueError(f"nothing to publish: {path} does not exist under the product root. "
                          f"the artifact is built by the product, not by this task")
-
     githubpackages.login(registry)
     reference = githubpackages.reference(registry, repository, resolved)
     # `archive:` is optional: without it the archive is named after the directory, which is right when
     # that name says what it holds and misleading when it says where it was built.
-    githubpackages.push_directory(reference, directory, media_type,
-                                  archive_name=spec.get("archive", ""))
+    githubpackages.push_directory(reference, directory, media_type, archive_name=spec.archive or "")
     log.ok(f"published {reference}")
     return 0

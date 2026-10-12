@@ -19,25 +19,30 @@ _MANIFEST = """
 product: demo
 artifacts:
   corelib:
+    kind: nuget
     registry: nuget.pkg.github.com/marcozwyssig
     image: mcr.microsoft.com/dotnet/sdk:9.0
     project: src/Core/Core.csproj
     tag: 1.4.0
   named:
+    kind: nuget
     registry: nuget.pkg.github.com/marcozwyssig
     image: mcr.microsoft.com/dotnet/sdk:9.0
     project: src/Core/Core.csproj
     source_name: house
   badname:
+    kind: nuget
     registry: nuget.pkg.github.com/marcozwyssig
     image: mcr.microsoft.com/dotnet/sdk:9.0
     project: src/Core/Core.csproj
     source_name: "my feed <oops>"
   elsewhere:
+    kind: nuget
     registry: nuget.example.com/team
     image: mcr.microsoft.com/dotnet/sdk:9.0
     project: src/Core/Core.csproj
   nohost:
+    kind: nuget
     image: mcr.microsoft.com/dotnet/sdk:9.0
     project: src/Core/Core.csproj
 """

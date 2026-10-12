@@ -329,6 +329,7 @@ kinds:
   | (B2) a template error leaves a file holding only the id line, rc 1 - and an empty selector inside the `file` block leaves a module with no classes, rc 0 | `build model-whole` refuses an id-line-only file; `test_every_kind_in_the_model_has_a_model_class_of_that_kind` and `test_the_schema_and_the_catalogue_hold_the_same_kinds` refuse a module missing a kind |
   | (B2) a hand edit to `artifactschema.py` is lost on the next `gen`, rc 0 | its header says so; `test generated` regenerates and diffs it (`generated: artifact-schema`) |
   | (B2) the generated `.py` is written 0600, and a wheel member only its builder can read breaks `import simplon` (measured: setuptools takes a `.py` member's mode from the builder's umask, not from the file) | `model-mode` lists it, which guards its existence; `test_the_generated_schema_in_the_wheel_is_readable_by_everyone` |
+  | (B2) from Task 5 on, the loader imports the schema, so a deleted or id-line-only `artifactschema.py` stops EVERY `./simplon.sh` command at import - `build model`, which would regenerate it, included | the one importer (`simplon.artifactsection`) turns that import failure into an ImportError whose sentence is the recovery: `git checkout -- src/simplon/artifactschema.py`, then `./simplon.sh build model`; `test_a_broken_schema_names_its_recovery` pins it |
 
   The zero-tasks refusal sits in `catalogue.load(path)` (the shipped file), not in `loads(text)`: a
   group-only stub catalogue with `tasks: {}` is legitimate and `loads` must keep accepting it (measured:

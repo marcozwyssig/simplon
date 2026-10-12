@@ -34,7 +34,7 @@ from typing import Any, Callable, NamedTuple, cast
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from simplon import yamlkeys
+from simplon import artifactsection, yamlkeys
 from simplon.clitaxonomy import CommandTaxonomy, TaxonomyNode, merge_trees
 from simplon.orchestrator.model import treeform
 
@@ -859,6 +859,10 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     # would otherwise surface as `treeform.resolve`'s "declare the body once under `tasks:`" one command
     # at a time, which is true and useless: it names the rule, not the file's way out of it.
     treeform.check_no_old_form(data)
+    # si#344 B2: every `artifacts:` entry names a kind the catalogue declares and carries only that kind's
+    # keys, in the shapes the generated schema checks. A catalogue-less load checks against the same model.
+    artifactsection.check(data, getattr(catalogue, "kinds", {}) or artifactsection.REFINES,
+                          manifest_path or "the manifest")
     # The catalogue's own tree. `taxonomy:` is `groups:`'s predecessor (netctl#1444, superseded by
     # netctl#1469) and a catalogue carries one or the other, never both. The two spell a node the same
     # way - help, env_first, nested groups - so the older one is simply a tree with no commands placed in

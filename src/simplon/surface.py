@@ -138,10 +138,15 @@ NOT_CONSUMERS = {
 #: gets a tombstone in `MOVED` plus a release note. Who the consumers are is `CONSUMERS` above, measured
 #: rather than recited here; the modules with no consumer yet are library by INTENT - each says so in its
 #: own head and names no product.
+#:
+#: `artifactsection` (si#344 B2) is promised for one question, `is_a(kind, wanted)`: a product that reads an
+#: `artifacts:` entry itself asks it rather than restating which kinds refine which. Its name is not
+#: `artifacts` on purpose - `test_no_module_is_promised_under_a_task_body_s_name` refuses a library module
+#: named like the task body `simplon.tasks.artifact`.
 LIBRARY = frozenset({
     "awake", "backend", "carrierspec", "checksum", "clablifecycle", "clabrender", "cli", "completiongen",
     "layout",
-    "compose", "context", "deployment",
+    "artifactsection", "compose", "context", "deployment",
     "credentials", "degraded", "devcontainer", "disk", "docker", "environments", "fetch", "filelock",
     "githubpackages", "healthgate", "host", "hostpath",
     "imagenames", "interact", "labegress", "labhost", "labinstance", "labnet", "linux", "log",
