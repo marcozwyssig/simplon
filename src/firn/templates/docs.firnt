@@ -1,0 +1,27 @@
+template Docs {
+
+  // The kinds reference page of the website (spec B.2). `language html`: firn has no markdown language
+  // (E200 on v0.1.0), and html gives the id line as an html comment. A line starting with `|` in the
+  // output needs `||`, because the first `|` is the template's output marker.
+  file "kinds.md" language html {
+    |---
+    |title: "Artifact kinds"
+    |weight: 6
+    |---
+    |
+    |GENERATED from `src/firn/model/simplon/vocabulary/kinds.firn` by `./simplon.sh build model`.
+    |
+    |An artifact names its kind; a port accepts a kind and every kind that refines it.
+    |
+    || Kind | Refines |
+    ||---|---|
+    for k : `simplon.pipeline.ArtifactKind` {
+      if k.refines {
+        || `${k.name.replace("_", "-")}` | <<for r : k.refines sep ", ">>`${r.name.replace("_", "-")}`<<end>> |
+      }
+      if not k.refines {
+        || `${k.name.replace("_", "-")}` |  |
+      }
+    }
+  }
+}

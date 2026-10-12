@@ -10,3 +10,8 @@ templates = ["firn/templates"]
 [target.simplon]
 path = "simplon"
 templates = ["Catalogue"]
+
+# The kinds reference page of the website.
+[target.site]
+path = "site/content/with-what"
+templates = ["Docs"]

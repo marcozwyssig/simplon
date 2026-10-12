@@ -69,3 +69,19 @@ def test_the_generated_section_says_where_to_edit():
 
     # assert: an edit outside the region is overwritten by the next gen without warning (firn#921)
     assert "kinds.firn" in head and "protected region" in head.lower()
+
+
+PAGE = Path(__file__).resolve().parents[1] / "site" / "content" / "with-what" / "kinds.md"
+
+
+def test_the_reference_page_lists_every_kind_the_catalogue_offers_and_what_it_refines():
+    # arrange
+    kinds = catalogue.load().kinds
+    text = PAGE.read_text(encoding="utf-8")
+
+    # act
+    rows = dict(re.findall(r"^\| `([\w-]+)` \| `?([\w-]*)`? \|", text, re.M))
+
+    # assert: the page and the loader read the same model, so they agree or one of them is stale
+    assert text.startswith("---\n"), "Hugo needs the front matter as the first bytes"
+    assert rows == {k: v for k, v in kinds.items()}
