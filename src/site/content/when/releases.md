@@ -23,6 +23,57 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.30.0
+
+**What a product has to do:** run the migration once. This release refuses a manifest that declares
+`images:`, writes `source:` in an artifact, names `deploy: source: { images: x }`, leaves an artifact
+without a `kind:`, or writes a key twice in one mapping, so a product that upgrades without migrating
+does not start.
+
+1. **cleon only, first:** add `kind: directory` to `artifacts: updatesite`. No catalogue task reads that
+   entry, so the migration cannot tell its kind and refuses it by name (rc 1, nothing written).
+2. **Rewrite the manifest** with `simplon manifest migrate <product>.yaml`, by either route:
+   - venv route: `<orch-dir>/.venv/bin/simplon manifest migrate <product>.yaml`
+   - container route: `docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/src" -w /src
+     ghcr.io/marcozwyssig/simplon:v0.30.0 simplon manifest migrate <product>.yaml`
+
+   A product still on the `groups:` form arrives in the current form in this one run; it does not need
+   0.28.0's migration first. Read the diff before committing it. A second run answers `already in the
+   current form (ci / cd / support, every artifact with its kind) - nothing to migrate`.
+3. **Product code that reads the section raw follows it:** `manifest_data()["images"][k]` becomes
+   `manifest_data()["artifacts"][k]["local"]`. Code that picks the images out of `artifacts:` asks
+   `simplon.artifactsection.is_a(body["kind"], "image")`, not `kind == "image"`, which would miss a kind
+   that refines `image`.
+
+The command line does not change.
+
+### `images:` folds into `artifacts:`, every artifact has a kind (si#344, #385)
+
+An image is an `artifacts:` entry of `kind: image`; a bare `web: netctl:local` becomes
+`web: { kind: image, local: "netctl:local" }`. Every entry names a `kind:` the catalogue declares (see
+the kinds page under *with what*). `source:` is `path:` (`release:artifact`, `release:conan`,
+`build:conan-cache`), and `deploy: source: { images: x }` is `{ artifacts: x }`.
+
+The migration gives a kindless entry the kind of the coordinate that reads it. An entry no coordinate
+reads is refused by name, because a guessed kind reads exactly like a declared one. A key written twice
+in one mapping is refused at load, since YAML silently keeps only the second copy; the migration drops a
+second copy that is identical and refuses copies that differ.
+
+An entry may carry only its kind's keys; any other key is refused by name with the nearest one it may
+carry. A number or an unquoted date is a value (`tag: 25`); a bool or an empty value where text belongs
+is refused. What a command needs, such as `release:nuget`'s registry, image and project, it says when it
+runs, not at load.
+
+firn generates the per-kind schemas into `src/simplon/artifactschema.py` from simplon's model, and every
+reader of the section (image, artifact, conan, nuget, maven) goes through `simplon.artifactsection`. The
+model export carries each artifact's declared kind and path. `build model` refuses a generated file that
+is missing or holds nothing but its header (firn#966).
+
+### Smaller changes
+
+- `deploy/image/image.pin` points at the published v0.29.0 image (#384).
+- These notes.
+
 ## 0.29.0
 
 **What a product has to do:** nothing. Everything in this release is additive: a manifest that loaded
