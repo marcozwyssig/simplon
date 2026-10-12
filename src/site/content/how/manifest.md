@@ -306,9 +306,8 @@ and `.gitignore` already carry, and a CI job that wants offline builds is the on
 A top-level key the kernel does not read is **the product's own**, and nothing here rules on it. That is
 the design rather than a gap: the section is where a catalogue task's mechanism meets a product's values,
 and a product that could not invent one would have to ask the kernel for permission to have data.
-Measured over every manifest this kernel can reach, its own and the six in other repositories, eleven of
-the seventy top-level keys are exactly that, and every one of them is read by a body in the product's own
-repository. Adding a key nobody here has heard of is a supported thing to do.
+Measured over every manifest this kernel can reach, its own and those in other repositories, some top-level
+keys are exactly that, and every one of them is read by a body in the product's own repository. Adding a key nobody here has heard of is a supported thing to do.
 
 What was missing is the other half: **which names are already taken**. The product si#159 was reported
 from builds three Windows Server *releases*, and it learned that `releases:` already means
@@ -368,7 +367,7 @@ Each is driven in the test module above, so the silence is measured rather than 
 ### Reading a section, yours or the kernel's
 
 A product's own task body reads its own section through `simplon.context.section`, the same walk the
-kernel's ten readers use:
+kernel's own readers use:
 
 ```python
 from simplon import context
@@ -387,7 +386,7 @@ reader tells "the product said nothing" from "the product said the wrong thing".
 empty is found, not blamed.
 
 **It never raises, and that is deliberate.** Each reader above says something specific
-when its section is missing, and si#159 measured that fourteen of the sixteen it measured already refuse
+when its section is missing, and si#159 measured that nearly all the sections it measured already refuse
 by name and quote the key. An accessor that raised would replace those sentences with one. So it answers the
 question and the reader keeps its own refusal - which is also what keeps every refusal countable where
 it is written, in [the rules chapter](../../with-what/rules/)'s census.
@@ -408,7 +407,7 @@ own authors explaining the collision and telling them not to add a `targets:` ke
 **The rule, so nobody has to read the source for it again:**
 
 - `build:` is **yours**. Declare it, put what you like in it, and nothing here refuses it. Refusing it
-  is what si#159's measurement rules out - eleven of the seventy top-level keys across those manifests
+  is what si#159's measurement rules out - top-level keys across those manifests
   are read by product task bodies in repositories this kernel cannot see, so a rule over the top-level
   namespace refuses live products on its first run.
 - The kernel reads exactly **one key** out of it, `targets:`, and rules on nothing else in there.
@@ -453,10 +452,10 @@ refused by name, with the nearest key it does take, because otherwise it would b
 What a task NEEDS it is told when it runs, all at once: `release:nuget` needs `registry`, `image` and
 `project`, `build:nuget-config` only `registry`, so one entry can serve both. The kinds page lists each kind's
 keys; your own code asks `simplon.artifactsection.is_a(kind, "image")` rather than comparing `kind` to a
-string, so a kind that refines `image` is one too. `path:` was called
-`source:` before si#344 B2, `images:` was a section of its own, and an entry needed no `kind:`; the loader
-refuses each of those by name, and `simplon manifest migrate` rewrites all three (it derives a missing kind
-from the catalogue task that reads the entry, and refuses by name when nothing does).
+string, so a kind that refines `image` is one too. Before si#344 B2 `path:` was called `source:`,
+`images:` was a section of its own, and an entry needed no `kind:`; the loader refuses each of those by
+name, and `simplon manifest migrate` rewrites all three (it derives a missing kind from the catalogue task
+that reads the entry, and refuses by name when nothing does).
 
 ### `kind: image` - the container image
 
