@@ -63,7 +63,8 @@ SECTION = "website"
 
 #: Where a product's Hugo sources are, when its manifest does not say (si#183). `docs/` is the
 #: documentation root - architecture, specs, plans and the site all belong in it, so one repository stops
-#: answering "where is the documentation" in two places - and this is the leaf simplon itself uses.
+#: answering "where is the documentation" in two places. simplon itself used this leaf until si#344 B1
+#: moved its site to `src/site`; its manifest names that path now.
 #:
 #: A DEFAULT AND NOT A RULE, and the difference was measured rather than preferred. si#155 gave this key
 #: no default at all, on the reasoning that one product's layout must not be imposed on the next. That
