@@ -46,26 +46,26 @@ ci:
       # an open question a caller answers on the command line. Pinned with `with:`, the parameter leaves
       # the command line entirely -- `./simplon.sh build reference` takes no arguments -- which is what
       # makes the aggregate below possible at all, since a planned step is spawned without arguments. The
-      # path points INTO docs/site/content/, because Hugo only renders what is under its content directory;
+      # path points INTO src/site/content/, because Hugo only renders what is under its content directory;
       # generated page is gitignored there, since only the sources belong in the repo.
       reference:
         task: "docs:reference"
         with:
-          output: docs/site/content/with-what/commands.md
+          output: src/site/content/with-what/commands.md
           title: "Command reference"
       # The Hugo run itself. Its values live in the `site:` section below rather than here, because they
       # are the product's data and `docs:site` reads them through the manifest -- see
-      # src/simplon/tasks/site.py, which is also where the one value that is NOT in that section lives:
-      # `source:` defaults to docs/site and this manifest leaves it out.
+      # src/simplon/tasks/site.py, which is also where the kernel's `source:` default (docs/site) lives;
+      # this manifest names its own `source:` (src/site) in that section since si#344 B1.
       # The acceptance document (si#204), generated exactly the way the reference above is and pinned for
       # the same reason: the Hugo project exists, so where the page belongs is not an open question a
       # caller answers on the command line. `source` is left OUT, so this manifest is the first consumer
-      # of the `tests/acceptance` default rather than a product that happens to agree with it - the same
-      # thing it does for `site: source:` below.
+      # of the `tests/acceptance` default rather than a product that happens to agree with it. (It did the
+      # same for `site: source:` until si#344 B1, when the site moved and the manifest named its path.)
       acceptance:
         task: "docs:acceptance"
         with:
-          output: docs/site/content/with-what/acceptance.md
+          output: src/site/content/with-what/acceptance.md
           title: "Acceptance scenarios"
       site: { task: "docs:site" }
       # The kernel's own container image (si#200). simplon has carried `build:image` and `release:image`
@@ -91,13 +91,13 @@ ci:
         with:
           name: kernel
       # The documentation website, as ONE command, and an impl-less AGGREGATE rather than a leaf (#2, task
-      # 3). `reference` writes docs/site/content/with-what/commands.md by reading the assembled CLI; `site`
-      # runs Hugo over docs/site/ and publishes into build/site/ (si#314: `<output>/site`). The first WRITES a page the second READS, so
+      # 3). `reference` writes src/site/content/with-what/commands.md by reading the assembled CLI; `site`
+      # runs Hugo over src/site/ and publishes into build/site/ (si#314: `<output>/site`). The first WRITES a page the second READS, so
       # the order is not a preference - run them the other way round and the published site carries the
       # previous run's reference, or, the very first time, none at all.
       #
       # si#204 added a THIRD step in the same relation: `acceptance` writes
-      # docs/site/content/with-what/acceptance.md by reading tests/acceptance/*.feature, and it is the
+      # src/site/content/with-what/acceptance.md by reading tests/acceptance/*.feature, and it is the
       # second page `site` reads. Both writers run before the reader; they do not depend on each other.
       #
       # `depends_on` is where that ordering is stated, because the manifest is the only place it can be
@@ -334,10 +334,11 @@ support:
     ci-disk-preflight: { task: "support:ci-disk-preflight" }
     ci-disk-cleanup: { task: "support:ci-disk-cleanup" }
 
-# The documentation website's data (#2). Four values here and a fifth taken from the kernel: `source:` is
-# ABSENT on purpose since si#183, so this manifest is the first consumer of the `docs/site` default rather
-# than a product that happens to agree with it. If the default ever stopped working, `build docs` in this
-# repository would be the thing that said so.
+# The documentation website's data (#2). Five values since si#344 B1. `source:` was ABSENT from si#183 on,
+# so this manifest was the first consumer of the kernel's `docs/site` default; it names `src/site` now,
+# because firn writes into the site (the kinds reference page is generated) and may only write below its
+# project root, which is `src/`. The DEFAULT stays `docs/site` for every other product, and this repository
+# is therefore no longer the one that exercises it - `test_tasks_site.py` pins the default instead.
 #
 # The other four are required to BE declared. si#155's reasoning holds for them and no longer holds for
 # `source`: the kernel cannot name a generator on a product's behalf, and it must not guess an `output` it
@@ -354,9 +355,9 @@ support:
 # no default while `source` gained one.
 #
 # THE KNOWN POINT, and the publishing job (task 4) has to know it: `theme` here is the single place the
-# theme version is declared, and the task makes docs/site/go.mod agree with it by running
-# `hugo mod get <module>@<version>` before every build. That WRITES docs/site/go.mod and refreshes
-# docs/site/go.sum in this working tree. It is idempotent while the pin and go.mod already agree - the normal
+# theme version is declared, and the task makes src/site/go.mod agree with it by running
+# `hugo mod get <module>@<version>` before every build. That WRITES src/site/go.mod and refreshes
+# src/site/go.sum in this working tree. It is idempotent while the pin and go.mod already agree - the normal
 # state, and both files are committed - but the first build after the pin moves leaves a real diff. A CI
 # gate asserting "working tree clean" after a site build would go red on the mechanism working correctly.
 website:
@@ -366,6 +367,7 @@ website:
   # and takes the convention. The kernel runs its own default rather than declaring around it; a step
   # never run in its own house rots unseen, and this is the one that moved.
   base_url: "https://marcozwyssig.github.io/simplon/"
+  source: "src/site"
   theme: "github.com/imfing/hextra@v0.12.3"
 
 # The container image simplon builds of itself (si#200), read by `build:image` / `release:image`.
@@ -432,7 +434,7 @@ suites:
 
 # WHICH GENERATED FILES THIS REPOSITORY COMMITS (si#240). Two, and both carry "GENERATED ... do not
 # edit" at the top - which is a promise to a reader and, until this section existed, a promise nothing
-# checked. `docs/site/content/with-what/commands.md` is generated too and is deliberately NOT here: it is
+# checked. `src/site/content/with-what/commands.md` is generated too and is deliberately NOT here: it is
 # gitignored and produced on every build, so there is no committed copy to go stale.
 generated:
   completion:
@@ -482,7 +484,7 @@ images:
 # simplon's own house rules about simplon's own page, which is exactly why they did not move into the
 # kernel with the mechanism.
 releases:
-  page: "docs/site/content/when/releases.md"
+  page: "src/site/content/when/releases.md"
   from: "0.4.0"
   complete_from: "0.5.0"
 

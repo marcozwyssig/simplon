@@ -59,16 +59,10 @@ def test_the_site_section_is_declared_and_valid(product):
 
     # Assert: the four values Hugo actually needs, plus the theme the page's whole look hangs on.
     #
-    # `source` is asserted TWICE over, because since si#183 it is the kernel's answer rather than this
-    # manifest's: the section must not carry the key at all, and the value must still be `docs/site`.
-    # That makes this repository the first consumer of the default rather than a product that happens to
-    # agree with it - so if the default ever stopped working, simplon's own `build docs` would say so.
-    assert "source" not in data["website"], (
-        "simplon declares `site: source:` again; si#183 leaves it out on purpose, so that the kernel's "
-        "own default is exercised by the one product this suite can actually build")
-    assert declared.source == "docs/site"
-    assert declared.source == site_task.DEFAULT_SOURCE
-    # `output` is asserted the same way and for the same reason, since si#314: a built site is a KIND of
+    # `source` is declared by the manifest since si#344 B1 (it was the kernel's default before);
+    # `test_simplon_names_its_own_site_source_and_the_default_is_unchanged` pins the declaration itself.
+    assert declared.source == "src/site"
+    # `output` is left out of the manifest on purpose, since si#314: a built site is a KIND of
     # build output, so the section must not carry the key at all and the value must still resolve - here
     # to `build/site`, because this manifest declares no `output:` either and takes the convention. The
     # kernel is the first consumer of both defaults rather than a product that happens to agree.
@@ -78,6 +72,22 @@ def test_the_site_section_is_declared_and_valid(product):
     assert declared.output == f"{outputs.DEFAULT}/{site_task.OUTPUT_KIND}" == "build/site"
     assert declared.image and declared.theme
     assert declared.base_url.startswith("https://")
+
+
+def test_simplon_names_its_own_site_source_and_the_default_is_unchanged():
+    # arrange: simplon's site moved under src/ (si#344 B1) so firn can write into it. The DEFAULT stays
+    # `docs/site`, because it is every product's (si#183); simplon now names its path instead.
+    from simplon.tasks import site
+    import yaml
+    data = yaml.safe_load((ROOT / "simplon.yaml").read_text(encoding="utf-8"))
+
+    # act
+    declared = data["website"].get("source")
+
+    # assert
+    assert declared == "src/site"
+    assert site.DEFAULT_SOURCE == "docs/site"
+    assert (ROOT / declared / "hugo.yaml").is_file()
 
 
 def test_the_image_and_the_theme_are_pinned(product):

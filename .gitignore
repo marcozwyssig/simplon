@@ -22,17 +22,17 @@ src/simplon/_version.py
 # The command reference is generated INTO the content tree by `docs:site`'s sibling `docs:reference`,
 # because Hugo only renders what lives under content/. It is an output that happens to sit among
 # sources, so it is named here explicitly rather than left to a directory rule.
-docs/site/content/with-what/commands.md
+src/site/content/with-what/commands.md
 # The acceptance document, written the same way by `docs:acceptance` (si#204) and gitignored for the
 # same reason: the .feature files are the source, this page is the output.
-docs/site/content/with-what/acceptance.md
+src/site/content/with-what/acceptance.md
 
 # Hugo's own working files inside the site directory. `resources/` is its asset cache and `public/` the
-# destination it uses when nothing passes --destination (a bare `hugo` run in docs/site/, which is what
+# destination it uses when nothing passes --destination (a bare `hugo` run in src/site/, which is what
 # somebody debugging the theme will type first).
-docs/site/resources/
-docs/site/public/
-docs/site/.hugo_build.lock
+src/site/resources/
+src/site/public/
+src/site/.hugo_build.lock
 
 # The test report and the raw results behind it (si#248). Both are OUTPUTS of a run: `test suite` writes
 # the raw allure results and `test report` merges them into a timestamped single-file archive. They sit

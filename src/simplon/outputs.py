@@ -13,7 +13,7 @@ A VALUE, NOT AN EXPRESSION RULE, and that is measured rather than preferred. Ove
 manifests, seven producing coordinates name a destination and TWO of them are outside `build/`: cleon
 publishes out of `build-out/` (it keeps `build/` for what it FETCHES), and this repository's own two
 documentation pages are written INTO the source tree, because hugo reads its content from
-`docs/site/content/`. A rule over "every producing coordinate" would therefore have refused the kernel's
+`src/site/content/`. A rule over "every producing coordinate" would therefore have refused the kernel's
 own manifest first - and a rule that exempts the kernel from what it asks of a product is the kind si#53
 struck. So a coordinate that names its destination gets exactly what it named, and this module answers
 for the ones that do not. Nothing here refuses a manifest that could have worked; the refusals below are

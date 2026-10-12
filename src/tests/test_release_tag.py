@@ -528,12 +528,12 @@ def test_a_repository_with_no_remote_branch_to_judge_against_is_refused_rather_t
 
 # --- what the site says about it (#32 acceptance 4) ---------------------------------------------------
 
-_SITE = ROOT / "docs" / "site" / "content"
+_SITE = ROOT / "src" / "site" / "content"
 _README = ROOT / "README.md"
 
 
 def _pages() -> dict[str, str]:
-    """Every page under `docs/site/content/`, plus the README.
+    """Every page under `src/site/content/`, plus the README.
 
     `with-what/commands.md` is generated and gitignored, so it is present here and absent in a fresh
     checkout; the glob simply takes what is there, which is why nothing below asserts a page COUNT.
