@@ -4,7 +4,9 @@ import pathlib
 import textwrap
 
 import pytest
+import yaml
 
+import realmanifests
 from simplon import catalogue
 from simplon.orchestrator import manifest
 from simplon.tasks.migrate import migrate_text
@@ -415,15 +417,263 @@ def test_a_column_0_comment_above_a_group_travels_with_that_group():
 @pytest.mark.parametrize("product", PRODUCTS)
 def test_every_real_manifest_migrates_and_parses_back_to_the_same_content(product):
     # arrange
-    text = (FIXTURES / f"{product}.yaml").read_text()
+    text = realmanifests.text(product)
+
+    # act
+    result = migrate_text(text)
+
+    # assert: one run from the frozen `groups:` form to the current form, both cuts
+    assert result.status == "migrated", result.reason
+    top = [line.split("#")[0].strip() for line in result.text.splitlines() if not line.startswith(" ")]
+    assert "groups:" not in top and "images:" not in top
+    artifacts = yaml.safe_load(result.text).get("artifacts") or {}
+    assert all(isinstance(body, dict) and "kind" in body and "source" not in body
+               for body in artifacts.values()), artifacts
+
+
+@pytest.mark.parametrize("product", PRODUCTS)
+def test_a_migrated_real_manifest_is_current_on_the_second_run(product):
+    # arrange
+    once = migrate_text(realmanifests.text(product))
+
+    # act
+    twice = migrate_text(once.text)
+
+    # assert: the second run says so in its own outcome, and touches nothing
+    assert (twice.status, twice.text) == ("current", once.text)
+
+
+def test_cleon_without_its_hand_edit_is_refused_by_name_with_the_kinds():
+    # arrange: no command of cleon's reads `updatesite` through a catalogue task - its own code publishes it
+    text = (realmanifests.FIXTURES / "cleon.yaml").read_text()
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "refused"
+    # assert: the lists pinned as literals - built from READERS/REFINES on both sides, this could not see
+    # an order change
+    assert result.reason == (
+        "artifacts: updatesite declares no `kind:`, and no command reads it through a catalogue task that "
+        "names its kind (build:conan-cache, build:image, build:nuget-config, build:nuget-restore, release:artifact, release:conan, release:image, release:maven, release:nuget, test:image) - add `kind:` to it by hand, one of artifact, image, directory, site, nuget, maven, conan, test-result, release-notes, tag, release, and run again")
+
+
+def test_netctls_bare_image_references_keep_their_value_and_their_comment():
+    # act
+    lines = migrate_text(realmanifests.text("netctl")).text.splitlines()
+
+    # assert: a reference that is not `:local` is kept as written, and so is the comment after it
+    assert '  web: { kind: image, local: "netctl:local" }' in lines
+    assert ('  iol: { kind: image, local: "netctl-iol:17.18.02" }            '
+            '# #1475: built from the CML release asset, no longer pulled') in lines
+
+
+def test_a_bare_image_reference_becomes_a_local_image_and_keeps_its_comment():
+    # arrange
+    text = ("product: demo\n"
+            "images:\n"
+            "  web: demo:local\n"
+            "  iol: demo-iol:17.18.02            # built from a release asset\n")
 
     # act
     result = migrate_text(text)
 
     # assert
     assert result.status == "migrated", result.reason
-    assert "groups:" not in [line.split("#")[0].strip() for line in result.text.splitlines()
-                             if not line.startswith(" ")]
+    assert result.text == ("product: demo\n"
+                           "artifacts:\n"
+                           '  web: { kind: image, local: "demo:local" }\n'
+                           '  iol: { kind: image, local: "demo-iol:17.18.02" }            # built from a release asset\n')
+    assert result.moved == ("images: web -> artifacts: web (kind: image)",
+                            "images: iol -> artifacts: iol (kind: image)")
+
+
+def test_a_ci_cd_form_manifest_folds_its_image_and_its_deploy_source():
+    # arrange: a manifest that already ran cut 1 and reruns the command for cut 2 - of the live manifests
+    # only simplon.yaml is in this form today; the seven product manifests are still byte-identical to their
+    # frozen `groups:` fixtures. Comments inside an entry stay put
+    text = ("product: demo\n"
+            "images:\n"
+            "  app:\n"
+            "    registry: ghcr.io/acme\n"
+            "    # the product root\n"
+            "    context: .\n"
+            "deploy:\n"
+            "  kind: server\n"
+            "  source: { images: app }\n")
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "migrated", result.reason
+    assert result.text == ("product: demo\n"
+                           "artifacts:\n"
+                           "  app:\n"
+                           "    kind: image\n"
+                           "    registry: ghcr.io/acme\n"
+                           "    # the product root\n"
+                           "    context: .\n"
+                           "deploy:\n"
+                           "  kind: server\n"
+                           "  source: { artifacts: app }\n")
+    assert result.moved[-1] == "deploy: source: images -> artifacts"
+
+
+def test_a_block_deploy_source_is_renamed_too():
+    # arrange
+    text = ("product: demo\n"
+            "images:\n  app: { registry: r, repository: d }\n"
+            "deploy:\n  kind: server\n  source:\n    images: app\n")
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "migrated", result.reason
+    assert result.text == ("product: demo\n"
+                           "artifacts:\n  app: { kind: image, registry: r, repository: d }\n"
+                           "deploy:\n  kind: server\n  source:\n    artifacts: app\n")
+
+
+def test_a_kindless_entry_takes_the_kind_of_the_coordinate_that_reads_it_and_source_becomes_path():
+    # arrange
+    text = ("product: demo\n"
+            "ci:\n"
+            "  release:\n"
+            "    commands:\n"
+            "      site: { task: \"release:artifact\", with: { name: updatesite } }\n"
+            "artifacts:\n"
+            "  updatesite:\n"
+            "    registry: ghcr.io/acme\n"
+            "    source: build/site\n")
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "migrated", result.reason
+    assert result.text.endswith("  updatesite:\n"
+                                "    kind: directory\n"
+                                "    registry: ghcr.io/acme\n"
+                                "    path: build/site\n")
+    assert result.moved == ("artifacts: updatesite gains kind: directory (read by release:artifact)",
+                            "artifacts: updatesite: source -> path")
+
+
+def test_an_entry_two_coordinates_read_as_different_kinds_is_refused():
+    # arrange
+    text = ("product: demo\n"
+            "ci:\n  release:\n    commands:\n"
+            "      a: { task: \"release:artifact\", with: { name: x } }\n"
+            "      b: { task: \"release:conan\", with: { name: x } }\n"
+            "artifacts:\n  x:\n    registry: r\n")
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "refused"
+    assert result.reason == ("artifacts: x declares no `kind:`, and the commands that read it disagree "
+                             "(release:artifact reads a directory, release:conan reads a conan) - add `kind:` "
+                             "by hand, and run again")
+
+
+def test_images_beside_artifacts_are_appended_to_artifacts():
+    # arrange
+    text = ("product: demo\n"
+            "artifacts:\n  site:\n    kind: directory\n    path: build/site\n"
+            "images:\n  app: demo:local\n")
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "migrated", result.reason
+    assert result.text == ("product: demo\n"
+                           "artifacts:\n  site:\n    kind: directory\n    path: build/site\n"
+                           '  app: { kind: image, local: "demo:local" }\n')
+
+
+def test_images_beside_a_bare_empty_artifacts_key_fill_it_and_leave_one_key():
+    # arrange: preflight P8 - `artifacts:` with nothing under it parses to null, and appending the images
+    # anywhere but under it writes a second `artifacts:` key, which YAML resolves to the last one silently
+    text = "product: demo\nartifacts:   # filled below\nimages:\n  app: demo:local\n"
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "migrated", result.reason
+    assert result.text == ("product: demo\nartifacts:   # filled below\n"
+                           '  app: { kind: image, local: "demo:local" }\n')
+
+
+@pytest.mark.parametrize("written", ["{}", "null", "~"])
+def test_images_beside_an_artifacts_key_written_empty_on_its_line_are_refused_by_name(written):
+    # arrange: preflight P8 - the fold appends entries under a block-style key; `artifacts: {}` cannot take them
+    text = f"product: demo\nartifacts: {written}\nimages:\n  app: demo:local\n"
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "refused"
+    assert result.reason == (f"artifacts: is written `{written}` on its key line beside `images:`, and the fold "
+                             "appends the images under a block-style `artifacts:` - write it as a bare "
+                             "`artifacts:` or delete it, and run again")
+
+
+def test_a_name_in_both_images_and_artifacts_is_refused_and_nothing_is_written(tmp_path):
+    # arrange
+    path = tmp_path / "demo.yaml"
+    text = ("product: demo\n"
+            "artifacts:\n  app:\n    kind: directory\n    path: build/site\n"
+            "images:\n  app: demo:local\n")
+    path.write_text(text)
+
+    # act
+    rc = migrate_mod.migrate(str(path))
+
+    # assert
+    assert rc == 1
+    assert path.read_text() == text
+    assert migrate_text(text).reason == ("'app' is both an `images:` and an `artifacts:` entry, and one "
+                                         "section cannot hold the name twice - rename one by hand, and run again")
+
+
+def test_an_entry_with_both_source_and_path_is_refused():
+    # act
+    result = migrate_text("product: demo\nartifacts:\n  x:\n    kind: directory\n    source: a\n    path: b\n")
+
+    # assert
+    assert result.status == "refused"
+    assert result.reason == ("artifacts: x declares both `source:` and `path:`; `source:` is the old name of "
+                             "`path:`, so one of the two is stale - delete it by hand, and run again")
+
+
+@pytest.mark.parametrize("text,reason", [
+    ("product: demo\nartifacts:\n  web: x:local\n",
+     "artifacts: web is 'x:local', not a mapping - an entry names its `kind:` and its keys; an image reference "
+     "is written `web: { kind: image, local: \"x:local\" }` - fix it by hand, and run again"),
+    ("product: demo\nartifacts:\n  web:\n",
+     "artifacts: web holds nothing - an entry names its `kind:` and its keys; write them by hand, and run again"),
+    ("product: demo\nartifacts: [a]\n",
+     "artifacts: is a list, not a mapping of artifact name to entry - fix it by hand, and run again"),
+])
+def test_an_artifacts_section_the_loader_would_refuse_is_cannot_migrate_not_current(text, reason, tmp_path):
+    # arrange: review finding B6 - each of these came back "current", rc 0, and the loader then refused it:
+    # "nothing to do" standing in for "cannot do"
+    path = tmp_path / "demo.yaml"
+    path.write_text(text)
+
+    # act
+    rc = migrate_mod.migrate(str(path))
+
+    # assert
+    assert (migrate_text(text).status, migrate_text(text).reason) == ("refused", reason)
+    assert rc == 1 and path.read_text() == text
 
 
 #: What the migrated surface may differ by, and nothing else: si#344 places one new command for every
@@ -436,7 +686,7 @@ NEW_IN_EVERY_PRODUCT = {"support.manifest": ["migrate", "model"]}
 def test_a_migrated_real_manifest_assembles_the_cli_it_always_did(product):
     # arrange
     golden = json.loads((FIXTURES / "golden" / f"{product}.json").read_text())
-    migrated = migrate_text((FIXTURES / f"{product}.yaml").read_text())
+    migrated = migrate_text(realmanifests.text(product))
 
     # act
     surface = cli_surface(manifest.load(migrated.text, catalogue=catalogue.load(),
@@ -471,7 +721,9 @@ def test_migrate_writes_the_file_and_says_what_moved(tmp_path, capsys):
     # assert
     assert rc == 0
     assert path.read_text() == NEW
-    assert "groups: build -> ci: build" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "groups: build -> ci: build" in out
+    assert f"demo.yaml: migrated to the current form ({len(migrate_text(OLD).moved)} change(s))" in out
 
 
 def test_migrate_on_a_current_manifest_is_rc_0_with_its_own_sentence(tmp_path, capsys):
@@ -485,7 +737,8 @@ def test_migrate_on_a_current_manifest_is_rc_0_with_its_own_sentence(tmp_path, c
     # assert
     assert rc == 0
     assert path.read_text() == NEW
-    assert "already in the ci/cd form - nothing to migrate" in capsys.readouterr().out
+    assert ("demo.yaml: already in the current form (ci / cd / support, every artifact with its kind) "
+            "- nothing to migrate") in capsys.readouterr().out
 
 
 def test_migrate_refused_is_rc_1_and_writes_nothing(tmp_path, capsys):

@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+import realmanifests
 from simplon import catalogue, manifestmodel
 from simplon.environments import matrix_section
 from simplon.orchestrator import manifest as manifest_mod
@@ -290,7 +291,7 @@ def _source(name: str) -> tuple[manifest_mod.Manifest, str]:
     """DEMO, or a reachable manifest migrated and loaded exactly as test_migrate's golden test does."""
     if name == "demo":
         return _load(DEMO), DEMO
-    text = migrate_text((FIXTURES / f"{name}.yaml").read_text(encoding="utf-8")).text
+    text = migrate_text(realmanifests.text(name)).text
     return manifest_mod.load(text, catalogue=catalogue.load(), manifest_path=f"{name}.yaml"), text
 
 

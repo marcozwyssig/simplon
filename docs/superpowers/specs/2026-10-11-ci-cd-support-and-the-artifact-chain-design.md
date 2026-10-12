@@ -217,8 +217,8 @@ identical. If they are not, nothing is written, and the difference is named.
 
 | Outcome | rc | Message |
 |---|---|---|
-| migrated | 0 | names each section it moved |
-| already in the new form | 0 | "already in the ci/cd form - nothing to migrate", which is a different line, not the same green |
+| migrated | 0 | names each section it moved, then "migrated to the current form (<n> change(s))" |
+| already in the current form | 0 | "already in the current form (ci / cd / support, every artifact with its kind) - nothing to migrate", which is a different line, not the same green |
 | cannot migrate | 1 | names the construct, and nothing is written |
 
 ### A.6 The diagnoses in the cut (decision 11)

@@ -1,4 +1,5 @@
-"""`support manifest migrate` - rewrite a manifest from `groups:` to `ci:` / `cd:` / `support:` (si#344).
+"""`support manifest migrate` - rewrite a manifest into the current form: `groups:` to `ci:` / `cd:` /
+`support:`, and `images:` into `artifacts:` with a kind on every entry (si#344).
 
 A TEXT SPLICE, the way `toolchain scaffold` writes (si#110): every byte the move does not have to touch
 is the byte that was there - comments first among them, then flow style and key order. A manifest is a
@@ -8,6 +9,13 @@ data and throw away the reasons.
 AND NOTHING IS TRUSTED THAT WAS NOT PARSED BACK. The spliced text is loaded again and compared with what
 the original says the new form must contain. If they differ, nothing is written and the difference is
 named. A splice that is wrong in a way nobody reads is worse than no splice.
+
+TWO PASSES, ONE COMMAND (si#344 B2). `_shape` is cut 1 (`groups:` into `ci:` / `cd:` / `support:`); `_fold`
+is cut 2 (`images:` into `artifacts:` with `kind: image`, a `kind:` on every artifacts entry, `source:` into
+`path:`, `deploy: source: { images: }` into `{ artifacts: }`). A product still on the `groups:` form arrives
+in the current form in one run, and one that already ran cut 1 reruns the same command for cut 2. Each pass
+is spliced, parsed back against its own oracle and line-accounted on its own; a refusal in any pass writes
+nothing, so no pass is ever half-applied.
 
 THREE OUTCOMES, AND THEY STAY THREE: migrated, already current, refused. "Nothing to migrate" is rc 0
 with its own sentence - it is not the same green as "migrated", and it is not a failure either.
@@ -21,6 +29,7 @@ along: they explained a key the ci/cd form no longer has.
 """
 from __future__ import annotations
 
+import json
 import re
 from collections import Counter
 from pathlib import Path
@@ -29,6 +38,7 @@ from typing import NamedTuple
 import yaml
 
 from simplon import log
+from simplon.artifactschema import READERS, REFINES
 from simplon.orchestrator.model.treeform import DOCS_SITE_KEYS
 
 #: The phase groups each area holds. A second statement of the catalogue's `ci` / `cd` groups, kept here
@@ -182,21 +192,319 @@ def _accounting(old: list[str], new: list[str], removed: list[str], added: list[
     return first_lost, first_extra
 
 
-def migrate_text(text: str, *, unknown_groups_into: str | None = None) -> Migration:
-    """Splice `text` from the `groups:` form into the ci/cd form; see the module head for the rules."""
-    if unknown_groups_into not in (None, "ci", "cd"):
-        raise ValueError(f"unknown_groups_into must be 'ci' or 'cd', not {unknown_groups_into!r}")
+def _parse(text: str) -> tuple[object, str]:
+    """(the document, ''), or (None, the refusal) when it is not valid YAML - reprinted from the parser's mark,
+    because it was handed a STRING and its `str()` would name "<unicode string>". A refusal and not a
+    traceback: this command is the way out of a manifest the kernel no longer loads, so it is run on files
+    somebody is in the middle of editing."""
     try:
-        old = yaml.safe_load(text)
+        return yaml.safe_load(text), ""
     except yaml.YAMLError as exc:
-        # A refusal and not a traceback: this command is the way out of a manifest the kernel no longer
-        # loads, so it is run on files somebody is in the middle of editing. The parser's own mark is
-        # reprinted because it was handed a STRING and its `str()` would name "<unicode string>".
         mark = getattr(exc, "problem_mark", None)
         where = f"line {mark.line + 1}, column {mark.column + 1}: " if mark is not None else ""
         problem = getattr(exc, "problem", None) or str(exc)
-        return Migration("refused", text, (), f"it is not valid YAML, so nothing can be moved: "
-                                              f"{where}{problem}")
+        return None, f"it is not valid YAML, so nothing can be moved: {where}{problem}"
+
+
+def _kinds_read(old: dict) -> dict[str, dict[str, str]]:
+    """entry name -> {coordinate: the kind it reads}, for every command whose `task:` is a coordinate that
+    reads ONE `artifacts:` entry (`READERS`, generated from the model) and whose `with:` names that entry."""
+    found: dict[str, dict[str, str]] = {}
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            task, bound = node.get("task"), node.get("with")
+            if isinstance(task, str) and task in READERS and isinstance(bound, dict) \
+                    and isinstance(bound.get("name"), str):
+                found.setdefault(bound["name"], {})[task] = READERS[task]
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    for area in ("ci", "cd", "support"):
+        walk(old.get(area))
+    return found
+
+
+def _derived_kind(name: str, read: dict[str, dict[str, str]]) -> tuple[str, str]:
+    """(the kind, '') for a kindless entry exactly one kind of reader reads, else ('', the refusal)."""
+    readers = read.get(name, {})
+    kinds = sorted(set(readers.values()))
+    if len(kinds) == 1:
+        return kinds[0], ""
+    if not kinds:
+        return "", (f"artifacts: {name} declares no `kind:`, and no command reads it through a catalogue "
+                    f"task that names its kind ({', '.join(sorted(READERS))}) - add `kind:` to it by hand, "
+                    f"one of {', '.join(REFINES)}, and run again")
+    said = ", ".join(f"{coordinate} reads a {kind}" for coordinate, kind in sorted(readers.items()))
+    return "", (f"artifacts: {name} declares no `kind:`, and the commands that read it disagree ({said}) - "
+                "add `kind:` by hand, and run again")
+
+
+#: A key line's rest, split into its value and a trailing comment (`  iol: x:1   # why`).
+_VALUE = re.compile(r"^(?P<value>.*?)(?P<comment>\s+#.*)?$")
+
+
+def _rewrite_entry(child: list[str], kind: str | None,
+                   scalar: str | None) -> tuple[list[str], list[str], list[str]] | str:
+    """One `  <name>:` block of `images:` or `artifacts:`, rewritten in place: `kind: <kind>` written as its
+    first key when `kind` is given, a `source:` key renamed `path:`, and a bare image reference (`scalar`)
+    written as `{ kind: image, local: "<reference>" }` with its comment kept on the line. Returns
+    (the lines, the lines it removed, the lines it added), or the reason it cannot."""
+    at = next(i for i, line in enumerate(child) if _CHILD.match(line))
+    head = _CHILD.match(child[at])
+    assert head is not None  # `at` is the first line `_CHILD` matches
+    key, parts = head.group("key"), _VALUE.match(head.group("rest"))
+    assert parts is not None  # a lazy value and an optional comment match every string
+    value, comment = parts.group("value").strip(), parts.group("comment") or ""
+    lines = list(child)
+    if scalar is not None:
+        lines[at] = f"  {key}: {{ kind: image, local: {json.dumps(scalar)} }}{comment}"
+        return lines, [child[at]], [lines[at]]
+    if value.startswith("{"):
+        if not value.endswith("}"):
+            return f"{key} is a flow mapping written across lines - write it on one line or in block style"
+        inner = value[1:-1].strip()
+        if kind:
+            inner = f"kind: {kind}, {inner}" if inner else f"kind: {kind}"
+        inner = re.sub(r"(^|,\s*)source(\s*:)", r"\1path\2", inner)
+        lines[at] = f"  {key}: {{ {inner} }}{comment}"
+        return lines, [child[at]], [lines[at]]
+    if value:
+        return f"{key} holds {value!r}, which is neither a mapping nor an image reference"
+    body = [i for i in range(at + 1, len(child))
+            if child[i].strip() and not child[i].lstrip().startswith("#")]
+    if not body:
+        return f"{key} holds nothing - an entry needs at least its `kind:`"
+    indent = len(child[body[0]]) - len(child[body[0]].lstrip())
+    removed: list[str] = []
+    added: list[str] = []
+    for i in body:
+        if child[i].startswith(" " * indent + "source:"):
+            lines[i] = " " * indent + "path:" + child[i][indent + len("source:"):]
+            removed.append(child[i])
+            added.append(lines[i])
+    if kind:
+        written = " " * indent + f"kind: {kind}"
+        lines.insert(at + 1, written)
+        added.append(written)
+    return lines, removed, added
+
+
+def _deploy_source(block: list[str]) -> tuple[list[str], list[str], list[str]] | str:
+    """The `deploy:` block with `source:`'s `images` renamed `artifacts`, flow (`source: { images: x }`) or
+    block (`source:` / `    images: x`)."""
+    lines = list(block)
+    for i, line in enumerate(block):
+        match = _CHILD.match(line)
+        if not match or match.group("key") != "source":
+            continue
+        if "{" in match.group("rest"):
+            lines[i] = re.sub(r"([{,]\s*)images(\s*:)", r"\1artifacts\2", line, count=1)
+            return lines, [line], [lines[i]]
+        for j in range(i + 1, len(block)):
+            inner = block[j]
+            if inner.strip() and not inner.lstrip().startswith("#") and len(inner) - len(inner.lstrip()) <= 2:
+                break
+            if re.match(r"^\s{4,}images\s*:", inner):
+                lines[j] = inner.replace("images", "artifacts", 1)
+                return lines, [inner], [lines[j]]
+    return ("deploy: source: names `images:` in a shape the fold does not rewrite - write "
+            "`source: { artifacts: <name> }` by hand, and run again")
+
+
+def _fold_expected(old: dict, kinds: dict[str, str]) -> dict:
+    """What the folded text must parse to, built from the DATA - `_expected`'s role for the second pass."""
+    out = {k: v for k, v in old.items() if k != "images"}
+    folded: dict = {}
+    for name, body in (old.get("artifacts") or {}).items():
+        if isinstance(body, dict):
+            body = dict(body)
+            if "source" in body:
+                body["path"] = body.pop("source")
+            if name in kinds:
+                body["kind"] = kinds[name]
+        folded[name] = body
+    for name, body in (old.get("images") or {}).items():
+        folded[name] = ({"kind": "image", "local": body} if isinstance(body, str)
+                        else {"kind": "image", **(body or {})})
+    if "images" in old or "artifacts" in old:
+        out["artifacts"] = folded or old.get("artifacts", old.get("images"))
+    deploy = old.get("deploy")
+    if isinstance(deploy, dict) and isinstance(deploy.get("source"), dict) and "images" in deploy["source"]:
+        source = dict(deploy["source"])
+        source["artifacts"] = source.pop("images")
+        out["deploy"] = {**deploy, "source": source}
+    return out
+
+
+def _fold(text: str) -> Migration:
+    """Pass 2 (si#344 B2): `images:` into `artifacts:` with `kind: image`, a `kind:` on every artifacts
+    entry (derived from the coordinate that reads it), `source:` into `path:`, and `deploy: source:
+    { images: x }` into `{ artifacts: x }`. `images:` beside an existing `artifacts:` is appended to it; the
+    comments above `images:` stay where they stood."""
+    old, reason = _parse(text)
+    if reason:
+        return Migration("refused", text, (), reason)
+    if not isinstance(old, dict):
+        return Migration("current", text)
+    images, artifacts, deploy = old.get("images"), old.get("artifacts"), old.get("deploy")
+    source = deploy.get("source") if isinstance(deploy, dict) else None
+    entries = artifacts if isinstance(artifacts, dict) else {}
+    kindless = [str(n) for n, body in entries.items() if isinstance(body, dict) and "kind" not in body]
+    renamed = [str(n) for n, body in entries.items() if isinstance(body, dict) and "source" in body]
+    shapeless = [str(n) for n, body in entries.items() if not isinstance(body, dict)]
+    deploy_images = isinstance(source, dict) and "images" in source
+    unreadable = artifacts is not None and not isinstance(artifacts, dict)
+    # "current" only for a manifest this pass would leave as the loader wants it: an `artifacts:` that is
+    # not a mapping, or an entry that is not one, is NOT current - it is cannot-migrate, named below.
+    if ("images" not in old and not kindless and not renamed and not shapeless and not deploy_images
+            and not unreadable):
+        return Migration("current", text)
+
+    def refused(why: str) -> Migration:
+        return Migration("refused", text, (), why)
+
+    if images is not None and not isinstance(images, dict):
+        return refused(f"images: is a {type(images).__name__}, not a mapping of image name to entry - fix it "
+                       "by hand, and run again")
+    if unreadable:
+        return refused(f"artifacts: is a {type(artifacts).__name__}, not a mapping of artifact name to entry "
+                       "- fix it by hand, and run again")
+    for name in shapeless:
+        value = entries[name]
+        if value is None:
+            return refused(f"artifacts: {name} holds nothing - an entry names its `kind:` and its keys; write "
+                           "them by hand, and run again")
+        return refused(f"artifacts: {name} is {value!r}, not a mapping - an entry names its `kind:` and its "
+                       f"keys; an image reference is written `{name}: {{ kind: image, local: \"{value}\" }}` - "
+                       "fix it by hand, and run again")
+    images = images or {}
+    both = sorted(str(name) for name in set(images) & set(entries))
+    if both:
+        return refused(f"'{both[0]}' is both an `images:` and an `artifacts:` entry, and one section cannot "
+                       "hold the name twice - rename one by hand, and run again")
+    for name in renamed:
+        if "path" in entries[name]:
+            return refused(f"artifacts: {name} declares both `source:` and `path:`; `source:` is the old name "
+                           "of `path:`, so one of the two is stale - delete it by hand, and run again")
+    for name, body in images.items():
+        if isinstance(body, dict) and body.get("kind", "image") != "image":
+            return refused(f"images: {name} declares `kind: {body['kind']}`; an `images:` entry is an image - "
+                           "delete the key, or move the entry to `artifacts:` by hand, and run again")
+    read = _kinds_read(old)
+    kinds: dict[str, str] = {}
+    for name in kindless:
+        derived, why = _derived_kind(name, read)
+        if why:
+            return refused(why)
+        kinds[name] = derived
+
+    lines = text.splitlines()
+    removed: list[str] = []
+    added: list[str] = []
+    moved: list[str] = []
+    out: list[list[str]] = []
+    folded: list[str] = []  # image entries bound for an `artifacts:` block that stands elsewhere
+    artifacts_at = -1       # where in `out` the `artifacts:` block stands
+    for key, block in _blocks(lines, _TOP, 0):
+        if key not in ("images", "artifacts", "deploy"):
+            out.append(block)
+            continue
+        if key == "deploy":
+            if deploy_images:
+                rewritten = _deploy_source(block)
+                if isinstance(rewritten, str):
+                    return refused(rewritten)
+                block, gone, came = rewritten
+                removed += gone
+                added += came
+                moved.append("deploy: source: images -> artifacts")
+            out.append(block)
+            continue
+        at = next(i for i, line in enumerate(block) if _TOP.match(line))
+        head = _TOP.match(block[at])
+        assert head is not None  # `at` is the first line `_TOP` matches
+        rest = head.group("rest")
+        section = images if key == "images" else entries
+        written_as = _VALUE.match(rest)
+        assert written_as is not None
+        written = written_as.group("value").strip()
+        if written and section:
+            return refused(f"{key}: is written in flow style on its key line; the fold rewrites block-style "
+                           "sections only - rewrite it in block style, and run again")
+        # preflight P8: an empty `artifacts:` beside `images:` - the images go under it, so it must be a bare
+        # key line; `artifacts: {}` or `artifacts: null` cannot take them, and writing a second `artifacts:`
+        # key instead would parse back to the right data (YAML keeps the last of two) and be wrong
+        if written and key == "artifacts" and images:
+            return refused(f"artifacts: is written `{written}` on its key line beside `images:`, and the fold "
+                           "appends the images under a block-style `artifacts:` - write it as a bare "
+                           "`artifacts:` or delete it, and run again")
+        children = _blocks(block[at + 1:], _CHILD, 2)
+        body = list(children[0][1])
+        for found, child in children[1:]:
+            name = str(found)  # a child block always has its key; only the preamble (index 0) is None
+            value = section.get(name)
+            if key == "images":
+                kind = None if isinstance(value, dict) and "kind" in value else "image"
+                scalar = value if isinstance(value, str) else None
+            else:
+                kind, scalar = kinds.get(str(name)), None
+                if not kind and not (isinstance(value, dict) and "source" in value):
+                    body += child
+                    continue
+            rewritten = _rewrite_entry(child, kind, scalar)
+            if isinstance(rewritten, str):
+                return refused(f"{key}: {rewritten}, and run again")
+            entry, gone, came = rewritten
+            body += entry
+            removed += gone
+            added += came
+            if key == "images":
+                moved.append(f"images: {name} -> artifacts: {name} (kind: image)")
+                continue
+            if kind:
+                moved.append(f"artifacts: {name} gains kind: {kind} (read by {', '.join(sorted(read[str(name)]))})")
+            if isinstance(value, dict) and "source" in value:
+                moved.append(f"artifacts: {name}: source -> path")
+        if key == "artifacts":
+            artifacts_at = len(out)
+            out.append(block[:at + 1] + body)
+        elif "artifacts" in old:
+            folded = body
+            removed.append(block[at])
+            out.append(block[:at])
+        else:
+            renamed_line = "artifacts:" + rest
+            removed.append(block[at])
+            added.append(renamed_line)
+            out.append(block[:at] + [renamed_line] + body)
+    if folded:
+        out[artifacts_at] = out[artifacts_at] + folded
+    new = "\n".join(line for chunk in out for line in chunk) + ("\n" if text.endswith("\n") else "")
+
+    parsed, reason = _parse(new)
+    if reason:
+        return refused(f"the folded text does not parse back: {reason}")
+    expected = _fold_expected(old, kinds)
+    if parsed != expected:
+        return refused("the folded text does not parse back to the same manifest: "
+                       f"{_first_difference(expected, parsed)}")
+    lost, extra = _accounting(lines, new.splitlines(), removed, added)
+    if lost:
+        return refused(f"the folded text loses a line the original had: {lost}")
+    if extra:
+        return refused(f"the folded text has a line the original did not: {extra}")
+    return Migration("migrated", new, tuple(moved))
+
+
+def _shape(text: str, *, unknown_groups_into: str | None = None) -> Migration:
+    """Pass 1 (si#344 A): splice `text` from the `groups:` form into the ci/cd form; see the module head."""
+    old, reason = _parse(text)
+    if reason:
+        return Migration("refused", text, (), reason)
     if not isinstance(old, dict):
         return Migration("current", text)
     docs_site = _is_docs_site(old.get("site"))
@@ -390,8 +698,26 @@ def migrate_text(text: str, *, unknown_groups_into: str | None = None) -> Migrat
     return Migration("migrated", new, tuple(moved))
 
 
+def migrate_text(text: str, *, unknown_groups_into: str | None = None) -> Migration:
+    """Rewrite `text` into the current form: `_shape`, then `_fold` - see the module head. "current" only
+    when no pass changed a byte; a refusal in any pass hands back the input untouched."""
+    if unknown_groups_into not in (None, "ci", "cd"):
+        raise ValueError(f"unknown_groups_into must be 'ci' or 'cd', not {unknown_groups_into!r}")
+    current, moved = text, list[str]()
+    for step in (lambda t: _shape(t, unknown_groups_into=unknown_groups_into), _fold):
+        result = step(current)
+        if result.status == "refused":
+            return Migration("refused", text, (), result.reason)
+        if result.status == "migrated":
+            current, moved = result.text, [*moved, *result.moved]
+    if current == text:
+        return Migration("current", text)
+    return Migration("migrated", current, tuple(moved))
+
+
 def migrate(manifest: str = "") -> int:
-    """Rewrite THIS product's manifest (or the one named) from `groups:` to `ci:` / `cd:` / `support:`.
+    """Rewrite THIS product's manifest (or the one named) into the current form: ci / cd / support, and
+    every artifact with its kind.
 
     rc 0 when it migrated and when there was nothing to migrate - with a different sentence each, because
     those are two answers. rc 1 when it could not, with nothing written.
@@ -410,7 +736,8 @@ def migrate(manifest: str = "") -> int:
         return 1
     result = migrate_text(text)
     if result.status == "current":
-        log.ok(f"{path.name}: already in the ci/cd form - nothing to migrate")
+        log.ok(f"{path.name}: already in the current form (ci / cd / support, every artifact with its kind) "
+               "- nothing to migrate")
         return 0
     if result.status == "refused":
         log.error(f"{path.name}: not migrated, nothing written - {result.reason}")
@@ -424,5 +751,5 @@ def migrate(manifest: str = "") -> int:
         return 1
     for line in result.moved:
         log.info(line)
-    log.ok(f"{path.name}: migrated to ci / cd / support ({len(result.moved)} section(s) moved)")
+    log.ok(f"{path.name}: migrated to the current form ({len(result.moved)} change(s))")
     return 0
