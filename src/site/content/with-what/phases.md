@@ -561,7 +561,7 @@ codes are 0 clean, 1 model wrong, 2 usage, 3 no project and 70 internal, and `to
 one back unchanged, so "no project" can never read as "clean".
 
 **`cwd:` starts a command below the mount** (si#371). firn reads `firn.toml` from the directory it starts
-in and takes no project option, so a firn project under `src/firn/` needs `cwd: src/firn` on both
+in and takes no project option, so a firn project whose `firn.toml` is in `src/` needs `cwd: src` on both
 commands. The tree stays mounted whole; only the working directory moves. A value that is absolute or
 climbs out with `..` is refused by the same gate `layout: build_root:` uses.
 

@@ -57,7 +57,7 @@ from simplon.orchestrator.manifest import Manifest
 _NOT_NAME = re.compile(r"[^A-Za-z0-9_]")
 
 #: The top-level sections the kernel reads - exactly `test_refusal_census.sections_read()`, typed once
-#: (`src/firn/` is no part of the `simplon` package, so `manifest.firn` is not something it can read at
+#: (`src/firn/` and `src/firn.toml` are no part of the `simplon` package, so `manifest.firn` is not something it can read at
 #: run time. The wheel does not carry it either: si#378 excluded it after namespace discovery had shipped
 #: it as a top-level `firn/`, and `test_wheel.py` holds the wheel to `simplon` alone).
 #: Typed, so held twice: `test_firn_manifest_coverage` checks it against the census and against the

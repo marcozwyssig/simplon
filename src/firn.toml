@@ -1,0 +1,11 @@
+# simplon's own firn project (si#371): the delivery pipeline as a model firn can check and generate from
+# (si#344, si#346). Its root is src/ rather than src/firn/ since si#344 B1, because firn writes only
+# below its root and the generated kinds land in src/simplon/ and src/site/. `./simplon.sh test model`
+# runs `firn check` here and `./simplon.sh build model` runs `firn gen`, both in the pinned firn image.
+name = "simplon"
+model = ["firn/model"]
+templates = ["firn/templates"]
+
+# Until a template exists: a target that cannot touch anything simplon commits.
+[target.gen]
+path = "firn/gen"

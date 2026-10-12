@@ -32,7 +32,7 @@ def demo(tmp_path):
 @needs_docker
 def test_simplons_own_firn_project_checks_clean():
     # arrange / act
-    rc, _ = firn_rc(SRC_FIRN.parents[1], "check", cwd="src/firn")
+    rc, _ = firn_rc(SRC_FIRN.parents[1], "check", cwd="src")
 
     # assert
     assert rc == 0
@@ -58,8 +58,8 @@ def test_the_vocabulary_is_eleven_kinds_each_reaching_artifact_and_refining_only
     # arrange / act: spec B.2 - one root, and every other kind reaches it. `ArtifactKind.refines` answers
     # the targets as one flat set, which says nothing about WHICH kind reaches the root; so each kind is
     # asked for its own parent and the chain is walked here (si#346's final review)
-    rc, kinds = firn_rc(SRC_FIRN.parents[1], "query", "ArtifactKind", cwd="src/firn")
-    rc_refines, refines = firn_rc(SRC_FIRN.parents[1], "query", "ArtifactKind.refines", cwd="src/firn")
+    rc, kinds = firn_rc(SRC_FIRN.parents[1], "query", "ArtifactKind", cwd="src")
+    rc_refines, refines = firn_rc(SRC_FIRN.parents[1], "query", "ArtifactKind.refines", cwd="src")
 
     # assert: both queries exited clean, so an empty answer cannot be a failed query passing as green
     assert rc == 0
@@ -78,7 +78,7 @@ def test_the_vocabulary_is_eleven_kinds_each_reaching_artifact_and_refining_only
     parent: dict[str, set[str]] = {}
     for name in sorted(names):
         rc_one, answer = firn_rc(SRC_FIRN.parents[1], "query",
-                                 f'ArtifactKind[name=="{name.rsplit(".", 1)[1]}"].refines', cwd="src/firn")
+                                 f'ArtifactKind[name=="{name.rsplit(".", 1)[1]}"].refines', cwd="src")
         assert rc_one == 0, answer
         parent[name] = set(answer.split())
     assert parent[root] == set(), "the root refines nothing"

@@ -43,6 +43,6 @@ tests/allure-results/
 tests/reports/
 
 # firn's own working files in simplon's firn project (si#371): its build cache, and the directory
-# `firn gen` writes into, which firn will not let leave src/firn/.
-src/firn/.firn-cache/
+# `firn gen` writes into, which firn will not let leave src/ (where firn.toml is).
+src/.firn-cache/
 src/firn/gen/

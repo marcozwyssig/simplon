@@ -115,14 +115,14 @@ ci:
         help: "Write the command reference, then build the website from it."
         depends_on: [reference, acceptance, site]
       # `firn gen` over simplon's own model (si#371). No template yet, so it writes nothing; it is placed so the
-      # pair exists before the first template does. Started in src/firn/, where firn.toml is.
+      # pair exists before the first template does. Started in src/, where firn.toml is.
       model:
         task: toolchain:run
         with:
           image: ghcr.io/marcozwyssig/firn:v0.1.0
           workdir: /workspace
           network: none
-          cwd: src/firn
+          cwd: src
           argv:
           - gen
   test:
@@ -246,14 +246,14 @@ ci:
         help: "Run every test: the pytest suite, the type gate, the staleness gate, then the release-notes guard."
         depends_on: [suite, typecheck-python, generated, release-notes]
       # `firn check` over simplon's own pipeline model (si#371): rc passes through unchanged - 0 clean,
-      # 1 model wrong, 2 usage, 3 no project, 70 firn's own fault. Started in src/firn/, where firn.toml is.
+      # 1 model wrong, 2 usage, 3 no project, 70 firn's own fault. Started in src/, where firn.toml is.
       model:
         task: toolchain:run
         with:
           image: ghcr.io/marcozwyssig/firn:v0.1.0
           workdir: /workspace
           network: none
-          cwd: src/firn
+          cwd: src
           argv:
           - check
   release:

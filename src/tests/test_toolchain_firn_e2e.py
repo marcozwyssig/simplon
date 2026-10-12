@@ -6,7 +6,7 @@ own body, `cwd:` included - starts firn where its `firn.toml` is and hands every
 a "no project" that came back as 1 would read as "the model is wrong", and one that came back as 0 would
 be the recurring defect this repository hunts, a run that cannot tell "nothing to check" from "clean".
 
-The model is simplon's own (`src/firn/`), copied, so a model that stops checking takes this file with it.
+The project is simplon's own (`src/firn.toml`, `src/firn/`), copied, so a model that stops checking takes this file with it.
 
 AAA throughout.
 """
@@ -26,7 +26,7 @@ needs_docker = pytest.mark.skipif(not docker_is_usable(), reason="no docker daem
 
 
 def _rc(root: Path, command: str, extra: list[str] | None = None) -> int:
-    cfg = toolchain.declared({"image": FIRN.image, **FIRN.commands[command], "cwd": "src/firn"},
+    cfg = toolchain.declared({"image": FIRN.image, **FIRN.commands[command], "cwd": "src"},
                              where=f"firn.{command}")
     line = toolchain.docker_argv(cfg, root=root, product="firn-e2e", instance="", extra=extra or [],
                                  network=str(FIRN.commands[command]["network"]))
@@ -35,9 +35,9 @@ def _rc(root: Path, command: str, extra: list[str] | None = None) -> int:
 
 @pytest.fixture
 def tree(tmp_path):
-    """A product tree with simplon's own firn project under src/firn/."""
-    shutil.copytree(OWN_MODEL, tmp_path / "src" / "firn",
-                    ignore=shutil.ignore_patterns(".firn-cache", "gen"))
+    """A product tree with simplon's own firn project: src/firn.toml and the model under src/firn/."""
+    shutil.copytree(OWN_MODEL, tmp_path / "src" / "firn", ignore=shutil.ignore_patterns(".firn-cache", "gen"))
+    shutil.copy(OWN_MODEL.parent / "firn.toml", tmp_path / "src" / "firn.toml")
     return tmp_path
 
 
@@ -66,7 +66,7 @@ def test_a_broken_model_comes_back_as_1(tree):
 @needs_docker
 def test_no_project_comes_back_as_3_and_not_as_a_wrong_model(tree):
     # arrange: the directory is there, the firn.toml is not
-    (tree / "src" / "firn" / "firn.toml").unlink()
+    (tree / "src" / "firn.toml").unlink()
 
     # act
     rc = _rc(tree, "check")
