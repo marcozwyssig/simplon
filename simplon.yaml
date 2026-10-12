@@ -31,6 +31,12 @@ tasks:
     impl: "orchestrator.cli:make_readable"
     help: "Make the named files readable by everyone (mode 0644)."
     unattended: true
+  # firn rewrites everything outside a protected region with rc 0, so a hand-written line there is lost
+  # without a word (si#344 B1 final review); `build model-guard` runs this before `firn gen` can.
+  region-guard:
+    impl: "orchestrator.cli:region_guard"
+    help: "Refuse a file with hand-written lines outside its protected region, naming them."
+    unattended: true
 
 # The command tree. `ci:`, `cd:` and `support:` hang off the tree the catalogue declares
 # (src/simplon/catalogue.yaml: build/test/release under ci, deploy/monitor under cd, and support) rather
@@ -134,9 +140,24 @@ ci:
       # mode is set on the host by this product's own `make-readable` task, as the calling user, who
       # owns what firn just wrote. It names each file, and a file that is not there is rc 1.
       # test_wheel.py's `test_the_catalogue_in_the_wheel_is_readable_by_everyone` is the guard.
+      #
+      # THE FIRST STEP GUARDS WHAT `gen` WOULD DELETE (si#344 B1 final review). firn rewrites everything
+      # outside the catalogue's protected region on every run with rc 0, and the end of the file - below
+      # firn's id line - is the natural place to add a task: it loads, and the next `gen` deletes it, while
+      # `test generated` is green over the deletion (unstaged) or asks for it to be committed (staged).
+      # `model-guard` refuses such lines by number BEFORE firn runs, and `stop_on_failure: true` is what
+      # makes "before" true: with the default (false) the aggregate would run `model-gen` after a red
+      # guard and delete the lines anyway, merely reporting rc 1 afterwards. It also skips `model-mode`
+      # after a failed `gen`, which loses nothing - the aggregate is red either way.
       model:
-        help: "Generate the catalogue's kinds and the kinds page from simplon's firn model, then make the output world-readable."
-        depends_on: [model-gen, model-mode]
+        help: "Guard the catalogue's hand-written lines, generate its kinds and the kinds page from simplon's firn model, then make the output world-readable."
+        depends_on: [model-guard, model-gen, model-mode]
+        stop_on_failure: true
+      # The catalogue only: kinds.md has no protected region, so nothing in it is hand-written to lose.
+      model-guard:
+        task: region-guard
+        with:
+          file: src/simplon/catalogue.yaml
       # `firn gen`, started in src/, where firn.toml is.
       model-gen:
         task: toolchain:run
