@@ -2,8 +2,6 @@
 # assembles this CLI from this manifest -- if a commit breaks the assembly,
 # it fails in the same round instead of after a release.
 product: simplon
-cd:
-  default: dev
 
 # Simplon's own three bodies. A task is the TEMPLATE for a body, declared once here; a command under
 # `ci:` or `support:` is an instance of one. These three are one-off callables rather than reusable
