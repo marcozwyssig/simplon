@@ -139,6 +139,25 @@ def test_the_catalogue_in_the_wheel_is_readable_by_everyone(wheel):
         f"stale copy there whose mtime has not changed, and a chmod does not change the mtime.")
 
 
+def test_the_generated_schema_in_the_wheel_is_readable_by_everyone(wheel):
+    """firn writes 0600, and a wheel member only root can read is an `import simplon` only root completes.
+
+    Measured 2026-10-12 (si#344 B2 Task 1): unlike package data such as catalogue.yaml, setuptools does NOT
+    carry a .py module's mode into the wheel - a 0600 artifactschema.py came out 0o644 - but the BUILDER's
+    umask: under `umask 077` every module, generated or not, came out 0o600. So this goes red on a
+    builder's umask, not on firn's mode; `build model-mode` setting 0644 is harmless and not what it holds."""
+    # arrange
+    info = zipfile.ZipFile(wheel).getinfo("simplon/artifactschema.py")
+
+    # act
+    mode = (info.external_attr >> 16) & 0o777
+
+    # assert
+    assert mode & 0o044 == 0o044, (
+        f"simplon/artifactschema.py is {oct(mode)} in the wheel. A .py module takes the builder's umask, not "
+        f"its mode on disk: build with umask 022, and delete build/lib (a stale copy keeps its mode).")
+
+
 def test_the_wheel_carries_its_catalogue(installed):
     # arrange
     py = installed / ("python.exe" if sys.platform == "win32" else "python")

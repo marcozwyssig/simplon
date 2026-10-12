@@ -22,6 +22,50 @@ ArtifactKind typeOf firn.core.Class extends firn.core.NamedResource {
     subjectCardinality = 0..N
     objectCardinality = 0..N
   }
+  // The keys an artifact of this kind may carry beyond the ones it inherits (si#344 B2). The generated
+  // schema (src/firn/templates/schema.firnt) gives each one a field of its shape and refuses any other key.
+  property field typeOf firn.core.Composition {
+    range = simplon.pipeline.ArtifactField
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+}
+
+// One key of an artifact kind and the SHAPE of its value (si#344 B2): text (a string or a number, read as
+// a string), texts (a list of non-empty strings), table (a mapping of scalars) or untyped (kept as written
+// - a key only a product reads). `key` is the manifest's spelling; the resource's own name carries an `f_`
+// prefix, so no key can collide with a word firn reserves.
+ArtifactField typeOf firn.core.Class extends firn.core.NamedResource {
+  property key typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property shape typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+}
+
+// A catalogue coordinate that reads ONE `artifacts:` entry by name (`with: { name: ... }`), the kind it
+// reads, and the keys it NEEDS (si#344 B2). Requiredness belongs to the reader, not to the kind:
+// `build:nuget-config` needs a registry only, `release:nuget` an image and a project too.
+// `simplon manifest migrate` derives a kindless entry's kind from `reads`. Part C's ports replace it.
+KindReader typeOf firn.core.Class extends firn.core.NamedResource {
+  allowRoot = true
+  property coordinate typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property reads typeOf firn.core.Association {
+    range = simplon.pipeline.ArtifactKind
+    subjectCardinality = 1..1
+    objectCardinality = 0..N
+  }
+  property needs typeOf firn.core.Association {
+    range = simplon.pipeline.ArtifactField
+    subjectCardinality = 0..N
+    objectCardinality = 0..N
+  }
 }
 
 Registry typeOf firn.core.Class extends firn.core.NamedResource {

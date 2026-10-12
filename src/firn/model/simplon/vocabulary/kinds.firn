@@ -2,27 +2,139 @@
 // owns this vocabulary and a product cannot add to it. `test_result` and `release_notes` are spelled with
 // `_`, because a firn name has no `-`; the kernel's spelling (`test-result`) is what Task 5's mangling
 // maps to these.
+//
+// Each kind lists the keys it adds to the ones it inherits (si#344 B2), with the shape of each value. Any
+// other key is refused by name. `untyped` is a key the kernel does not read (biz-cockpit's code reads
+// `name` and `build_contexts`) or reads with its own rule (maven's `modules`, which may be one string).
 package simplon.vocabulary
 
 artifact typeOf simplon.pipeline.ArtifactKind {
+  field f_path typeOf simplon.pipeline.ArtifactField {
+    key = "path"
+    shape = "text"
+  }
+  field f_registry typeOf simplon.pipeline.ArtifactField {
+    key = "registry"
+    shape = "text"
+  }
 }
 image typeOf simplon.pipeline.ArtifactKind {
   refines = simplon.vocabulary.artifact
+  field f_repository typeOf simplon.pipeline.ArtifactField {
+    key = "repository"
+    shape = "text"
+  }
+  field f_dockerfile typeOf simplon.pipeline.ArtifactField {
+    key = "dockerfile"
+    shape = "text"
+  }
+  field f_context typeOf simplon.pipeline.ArtifactField {
+    key = "context"
+    shape = "text"
+  }
+  field f_tag typeOf simplon.pipeline.ArtifactField {
+    key = "tag"
+    shape = "text"
+  }
+  field f_platforms typeOf simplon.pipeline.ArtifactField {
+    key = "platforms"
+    shape = "texts"
+  }
+  field f_contexts typeOf simplon.pipeline.ArtifactField {
+    key = "contexts"
+    shape = "texts"
+  }
+  field f_build_args typeOf simplon.pipeline.ArtifactField {
+    key = "build_args"
+    shape = "table"
+  }
+  field f_local typeOf simplon.pipeline.ArtifactField {
+    key = "local"
+    shape = "text"
+  }
+  field f_name typeOf simplon.pipeline.ArtifactField {
+    key = "name"
+    shape = "untyped"
+  }
+  field f_build_contexts typeOf simplon.pipeline.ArtifactField {
+    key = "build_contexts"
+    shape = "untyped"
+  }
 }
 directory typeOf simplon.pipeline.ArtifactKind {
   refines = simplon.vocabulary.artifact
+  field f_repository typeOf simplon.pipeline.ArtifactField {
+    key = "repository"
+    shape = "text"
+  }
+  field f_media_type typeOf simplon.pipeline.ArtifactField {
+    key = "media_type"
+    shape = "text"
+  }
+  field f_tag typeOf simplon.pipeline.ArtifactField {
+    key = "tag"
+    shape = "text"
+  }
+  field f_archive typeOf simplon.pipeline.ArtifactField {
+    key = "archive"
+    shape = "text"
+  }
 }
 site typeOf simplon.pipeline.ArtifactKind {
   refines = simplon.vocabulary.directory
 }
 nuget typeOf simplon.pipeline.ArtifactKind {
   refines = simplon.vocabulary.artifact
+  field f_image typeOf simplon.pipeline.ArtifactField {
+    key = "image"
+    shape = "text"
+  }
+  field f_project typeOf simplon.pipeline.ArtifactField {
+    key = "project"
+    shape = "text"
+  }
+  field f_source_name typeOf simplon.pipeline.ArtifactField {
+    key = "source_name"
+    shape = "text"
+  }
+  field f_tag typeOf simplon.pipeline.ArtifactField {
+    key = "tag"
+    shape = "text"
+  }
 }
 maven typeOf simplon.pipeline.ArtifactKind {
   refines = simplon.vocabulary.artifact
+  field f_image typeOf simplon.pipeline.ArtifactField {
+    key = "image"
+    shape = "text"
+  }
+  field f_group typeOf simplon.pipeline.ArtifactField {
+    key = "group"
+    shape = "text"
+  }
+  field f_modules typeOf simplon.pipeline.ArtifactField {
+    key = "modules"
+    shape = "untyped"
+  }
+  field f_tag typeOf simplon.pipeline.ArtifactField {
+    key = "tag"
+    shape = "text"
+  }
 }
 conan typeOf simplon.pipeline.ArtifactKind {
   refines = simplon.vocabulary.artifact
+  field f_repository typeOf simplon.pipeline.ArtifactField {
+    key = "repository"
+    shape = "text"
+  }
+  field f_media_type typeOf simplon.pipeline.ArtifactField {
+    key = "media_type"
+    shape = "text"
+  }
+  field f_tag typeOf simplon.pipeline.ArtifactField {
+    key = "tag"
+    shape = "text"
+  }
 }
 test_result typeOf simplon.pipeline.ArtifactKind {
   refines = simplon.vocabulary.artifact
@@ -35,4 +147,83 @@ tag typeOf simplon.pipeline.ArtifactKind {
 }
 release typeOf simplon.pipeline.ArtifactKind {
   refines = simplon.vocabulary.artifact
+}
+
+// The catalogue coordinates that read ONE `artifacts:` entry by name, the kind each reads and the keys it
+// needs, in the order a reader is told about them (si#344 B2). `test_generated_schema.py` and
+// `test_artifactsection.py` hold this list to the catalogue and to each body's module, both ways.
+test_image typeOf simplon.pipeline.KindReader {
+  coordinate = "test:image"
+  reads = simplon.vocabulary.image
+  needs = simplon.vocabulary.artifact.f_registry
+  needs = simplon.vocabulary.image.f_repository
+  needs = simplon.vocabulary.image.f_dockerfile
+  needs = simplon.vocabulary.image.f_context
+}
+build_image typeOf simplon.pipeline.KindReader {
+  coordinate = "build:image"
+  reads = simplon.vocabulary.image
+  needs = simplon.vocabulary.artifact.f_registry
+  needs = simplon.vocabulary.image.f_repository
+  needs = simplon.vocabulary.image.f_dockerfile
+  needs = simplon.vocabulary.image.f_context
+}
+release_image typeOf simplon.pipeline.KindReader {
+  coordinate = "release:image"
+  reads = simplon.vocabulary.image
+  needs = simplon.vocabulary.artifact.f_registry
+  needs = simplon.vocabulary.image.f_repository
+  needs = simplon.vocabulary.image.f_dockerfile
+  needs = simplon.vocabulary.image.f_context
+}
+release_artifact typeOf simplon.pipeline.KindReader {
+  coordinate = "release:artifact"
+  reads = simplon.vocabulary.directory
+  needs = simplon.vocabulary.artifact.f_registry
+  needs = simplon.vocabulary.directory.f_repository
+  needs = simplon.vocabulary.directory.f_media_type
+  needs = simplon.vocabulary.artifact.f_path
+}
+build_conan_cache typeOf simplon.pipeline.KindReader {
+  coordinate = "build:conan-cache"
+  reads = simplon.vocabulary.conan
+  needs = simplon.vocabulary.artifact.f_registry
+  needs = simplon.vocabulary.conan.f_repository
+  needs = simplon.vocabulary.conan.f_media_type
+  needs = simplon.vocabulary.artifact.f_path
+}
+release_conan typeOf simplon.pipeline.KindReader {
+  coordinate = "release:conan"
+  reads = simplon.vocabulary.conan
+  needs = simplon.vocabulary.artifact.f_registry
+  needs = simplon.vocabulary.conan.f_repository
+  needs = simplon.vocabulary.conan.f_media_type
+  needs = simplon.vocabulary.artifact.f_path
+}
+build_nuget_config typeOf simplon.pipeline.KindReader {
+  coordinate = "build:nuget-config"
+  reads = simplon.vocabulary.nuget
+  needs = simplon.vocabulary.artifact.f_registry
+}
+build_nuget_restore typeOf simplon.pipeline.KindReader {
+  coordinate = "build:nuget-restore"
+  reads = simplon.vocabulary.nuget
+  needs = simplon.vocabulary.artifact.f_registry
+  needs = simplon.vocabulary.nuget.f_image
+  needs = simplon.vocabulary.nuget.f_project
+}
+release_nuget typeOf simplon.pipeline.KindReader {
+  coordinate = "release:nuget"
+  reads = simplon.vocabulary.nuget
+  needs = simplon.vocabulary.artifact.f_registry
+  needs = simplon.vocabulary.nuget.f_image
+  needs = simplon.vocabulary.nuget.f_project
+}
+release_maven typeOf simplon.pipeline.KindReader {
+  coordinate = "release:maven"
+  reads = simplon.vocabulary.maven
+  needs = simplon.vocabulary.artifact.f_registry
+  needs = simplon.vocabulary.maven.f_image
+  needs = simplon.vocabulary.maven.f_group
+  needs = simplon.vocabulary.maven.f_modules
 }

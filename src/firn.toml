@@ -6,10 +6,11 @@ name = "simplon"
 model = ["firn/model"]
 templates = ["firn/templates"]
 
-# The kernel's catalogue. Its hand-written part is one protected region, which firn keeps.
+# The kernel's catalogue, whose hand-written part is one protected region firn keeps, and the artifact
+# schema (si#344 B2), a whole generated module.
 [target.simplon]
 path = "simplon"
-templates = ["Catalogue"]
+templates = ["Catalogue", "ArtifactSchema"]
 
 # The kinds reference page of the website.
 [target.site]
