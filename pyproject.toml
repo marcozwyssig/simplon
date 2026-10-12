@@ -112,7 +112,12 @@ where = ["src"]
 #
 # This is the price of the placement rule for any Python product laid out this way, so it is written down
 # rather than fixed quietly: tests live under `src/` and ship from nowhere.
-exclude = ["tests*"]
+#
+# si#378: the same thing again, with si#371's `src/firn/` - simplon's own firn project, which is data
+# with no `__init__.py`, shipped as a top-level `firn/` directory by namespace discovery. Excluding by
+# name only guards a directory once it has leaked, so `test_wheel.py` now pins the property: the wheel
+# installs `simplon` and nothing beside it.
+exclude = ["tests*", "firn*"]
 
 [tool.setuptools.package-data]
 simplon = ["catalogue.yaml", "py.typed", "templates/*.j2"]

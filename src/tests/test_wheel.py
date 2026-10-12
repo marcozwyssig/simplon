@@ -22,6 +22,7 @@ import re
 import subprocess
 import sys
 import venv
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -80,22 +81,46 @@ def _venv_with_wheel(wheel: Path, tmp_path_factory, *, extra: str = "") -> Path:
 
 
 @pytest.fixture(scope="module")
-def installed(tmp_path_factory):
+def wheel(tmp_path_factory) -> Path:
+    """The built wheel itself, for the checks that read what it carries rather than run it."""
+    return _build_wheel(tmp_path_factory)
+
+
+@pytest.fixture(scope="module")
+def installed(wheel, tmp_path_factory):
     """Build the wheel and install it into one throwaway venv, shared by the checks below.
 
     Module-scoped because building a wheel and creating a venv costs seconds, and every check here
     wants the same installed package rather than a fresh one."""
-    return _venv_with_wheel(_build_wheel(tmp_path_factory), tmp_path_factory)
+    return _venv_with_wheel(wheel, tmp_path_factory)
 
 
 @pytest.fixture(scope="module")
-def installed_typecheck(tmp_path_factory):
+def installed_typecheck(wheel, tmp_path_factory):
     """The same wheel, installed with the `typecheck` extra into its OWN venv.
 
     A separate fixture rather than adding the extra to `installed`: mypy plus its stub is real install
     weight (and the point of the extra being optional), and the two checks that scaffold-and-drive the
     console script above have no reason to pay for it."""
-    return _venv_with_wheel(_build_wheel(tmp_path_factory), tmp_path_factory, extra="typecheck")
+    return _venv_with_wheel(wheel, tmp_path_factory, extra="typecheck")
+
+
+def test_the_wheel_installs_nothing_beside_simplon(wheel):
+    """Every top-level name in the wheel lands in a consumer's site-packages, where it can shadow theirs.
+
+    In a src-layout project `src/` is the package root, so ANY directory placed there ships. It happened
+    twice: si#283 shipped `tests` as a top-level package, and si#378 shipped simplon's own firn project
+    as `firn/`. Excluding each by name guards the directory that leaked, not the property - this pins
+    the property, so the next directory under `src/` turns red here instead of reaching PyPI.
+    """
+    # arrange
+    names = zipfile.ZipFile(wheel).namelist()
+
+    # act
+    tops = {name.split("/", 1)[0] for name in names}
+
+    # assert
+    assert {t for t in tops if not t.endswith(".dist-info")} == {"simplon"}, sorted(tops)
 
 
 def test_the_wheel_carries_its_catalogue(installed):
