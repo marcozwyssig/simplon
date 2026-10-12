@@ -813,14 +813,15 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     except yamlkeys.DuplicateKeyError as exc:
         # A key written twice (si#344 B2, ruling T4a): the document PARSES - YAML keeps the second copy and
         # loses the first without a word - so it is not "not valid YAML", and it is said in its own sentence.
-        # The way out names the migration, which drops a second copy that is the first line for line.
+        # The way out is the migration, which drops a second copy that is the first line for line - named
+        # by both routes, as the cut names it (`treeform._MIGRATE`): a bare `simplon` is not on PATH, and
+        # `ProductContext.manifest` fills the two placeholders from the launcher's exports.
         mark = exc.problem_mark
         where = f"line {mark.line + 1}, column {mark.column + 1}: " if mark is not None else ""
-        name = manifest_path or "the manifest"
         raise ValueError(
-            f"{name} writes a key twice:\n  {where}{exc.problem}\n"
-            f"{treeform.MIGRATE_COMMAND} {name} drops a second copy that is the first line for line; copies "
-            "that differ are merged by hand") from exc
+            f"{manifest_path or 'the manifest'} writes a key twice:\n  {where}{exc.problem}\n"
+            "A second copy that is the first line for line is dropped by the migration; copies that differ "
+            f"are merged by hand. {treeform._MIGRATE.format(name=manifest_path or '<manifest>.yaml')}") from exc
     except yaml.YAMLError as exc:
         # The ONE failure here that is certain to be a human's typo in a file they were editing seconds
         # ago, and the most disabling one: a section that is wrong takes out one command, a document that

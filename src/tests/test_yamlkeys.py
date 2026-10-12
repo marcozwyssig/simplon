@@ -58,8 +58,30 @@ def test_the_loader_refuses_cleons_doubled_group_in_a_sentence_of_its_own():
     assert str(caught.value) == (
         "cleon.yaml writes a key twice:\n  line 233, column 3: found `release:` a second time (first on "
         "line 215); YAML would keep only this copy, so the first one is lost\n"
-        "simplon manifest migrate cleon.yaml drops a second copy that is the first line for line; copies "
-        "that differ are merged by hand")
+        "A second copy that is the first line for line is dropped by the migration; copies that differ are "
+        "merged by hand. Rewrite it with the migration, which loads no manifest and so works on this one:\n"
+        "  venv:      <orch-dir>/.venv/bin/simplon manifest migrate cleon.yaml\n"
+        "  container: docker run --rm --user \"$(id -u):$(id -g)\" -v \"$PWD:/src\" -w /src <kernel image> "
+        "simplon manifest migrate cleon.yaml")
+
+
+def test_the_products_load_fills_the_way_out_with_the_launchers_paths(tmp_path, monkeypatch):
+    # arrange: re-review - a bare `simplon` is not on PATH; both routes, filled the way the cut's are
+    (tmp_path / "image.pin").write_text("# pin\nghcr.io/marcozwyssig/simplon:v0.28.0\n", encoding="utf-8")
+    monkeypatch.setenv("LAUNCH_ORCH_DIR", str(tmp_path / "deploy" / "orchestrator"))
+    monkeypatch.setenv("LAUNCH_IMAGE_PIN", str(tmp_path / "image.pin"))
+    path = tmp_path / "demo.yaml"
+    path.write_text("product: demo\nproduct: demo\n", encoding="utf-8")
+
+    # act
+    with pytest.raises(ValueError) as caught:
+        ProductContext("demo", tmp_path, path).manifest()
+
+    # assert
+    message = str(caught.value)
+    assert message.startswith(f"{path} writes a key twice:\n  line 2, column 1: found `product:` a second time")
+    assert "  venv:      deploy/orchestrator/.venv/bin/simplon manifest migrate demo.yaml\n" in message
+    assert message.endswith("-w /src ghcr.io/marcozwyssig/simplon:v0.28.0 simplon manifest migrate demo.yaml")
 
 
 #: Review finding I1: `common` merged into an anchored mapping that overrides it, and that mapping merged
