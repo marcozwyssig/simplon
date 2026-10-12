@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 195 | nothing - the declaration had no working meaning |
+| diagnosis | 200 | nothing - the declaration had no working meaning |
 | expression rule | 29 | something it could otherwise have said |
-| **all load-time refusals** | **224** | |
+| **all load-time refusals** | **229** | |
 
 si#344 deleted the `env_groups:` key and took its rule (si#43) with it - everything under `cd:` takes an
 environment and nothing under `ci:` does, so there is no second spelling left to contradict. It added two:

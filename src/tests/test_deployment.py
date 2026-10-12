@@ -20,8 +20,9 @@ entry in a section that exists, and everything about WHERE comes from there.
 
 AND THE ENTRY IT POINTS AT MAY NOT CARRY IT, which is measured rather than imagined. Over the five
 reachable manifests that declare such a section: `registry` and `repository` are in three of them,
-biz-cockpit's images carry `name` instead, and netctl's are bare strings rather than mappings at all. So
-the reader refuses by name in each of those shapes instead of raising a KeyError two frames down.
+biz-cockpit's images carry both beside a `name`, and netctl's are bare strings rather than mappings at
+all. So the reader refuses by name in each shape that lacks them (a bare string, an entry with no registry
+or no repository) instead of raising a KeyError two frames down.
 
 AAA throughout.
 """
@@ -124,7 +125,8 @@ def test_an_entry_that_is_not_a_mapping_is_refused_by_name(tmp_path, monkeypatch
 
 
 def test_an_entry_without_a_registry_names_what_it_does_carry(tmp_path, monkeypatch):
-    """biz-cockpit's shape, measured: `context`, `dockerfile` and `name` - and no registry anywhere."""
+    """An entry shaped like biz-cockpit's but WITHOUT its `registry:` and `repository:` (which the real ones do
+    carry, measured): `context`, `dockerfile` and `name` - and no registry."""
     # Arrange
     _product(tmp_path, monkeypatch,
              "artifacts:\n  backend: { kind: image, context: ., dockerfile: Dockerfile, name: bc-backend }\n"

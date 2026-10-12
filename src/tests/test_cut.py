@@ -101,3 +101,62 @@ def test_a_document_that_is_not_a_mapping_is_refused_by_name(document, found):
     assert str(caught.value) == (
         f"demo.yaml is not a mapping: found {found} instead. A manifest maps its top-level keys "
         f"(product, tasks, ci, cd, support, ...) to their values")
+
+
+def test_images_is_refused_toward_artifacts_with_both_routes():
+    # act / assert
+    with pytest.raises(ValueError) as caught:
+        _load("""\
+            product: demo
+            images:
+              web: demo:local
+        """)
+    assert str(caught.value) == (
+        "demo.yaml declares `images:`, which si#344 folded into `artifacts:`: each image is an entry of "
+        "`kind: image`, and a bare reference such as `web: web:local` is "
+        "`web: { kind: image, local: \"web:local\" }`:\n"
+        "  artifacts:\n    app:\n      kind: image\n      registry: ...\n" + MIGRATE)
+
+
+def test_an_artifact_with_source_is_refused_toward_path():
+    # act / assert
+    with pytest.raises(ValueError) as caught:
+        _load("""\
+            product: demo
+            artifacts:
+              site: { kind: directory, source: build/site }
+        """)
+    assert str(caught.value) == (
+        "demo.yaml: `artifacts: site:` declares `source:`, which si#344 renamed `path:` - where the artifact "
+        "lies once it is built.\n" + MIGRATE)
+
+
+def test_an_artifact_with_no_kind_is_refused_listing_the_kinds():
+    # act / assert: the list pinned as a literal - built from REFINES on both sides it could not see an order
+    # change (review M11)
+    with pytest.raises(ValueError) as caught:
+        _load("""\
+            product: demo
+            artifacts:
+              site: { path: build/site }
+        """)
+    assert str(caught.value) == (
+        "demo.yaml: `artifacts: site:` declares no `kind:`; since si#344 every entry names one of artifact, "
+        "image, directory, site, nuget, maven, conan, test-result, release-notes, tag, release, and the "
+        "migration derives it from the command that reads the entry.\n" + MIGRATE)
+
+
+def test_a_deploy_source_naming_images_is_refused_toward_artifacts():
+    # act / assert
+    with pytest.raises(ValueError) as caught:
+        _load("""\
+            product: demo
+            artifacts:
+              app: { kind: image, registry: r, repository: d }
+            deploy:
+              kind: server
+              source: { images: app }
+        """)
+    assert str(caught.value) == (
+        "demo.yaml's `deploy: source:` names `images:`, which si#344 folded into `artifacts:` - write "
+        "`source: { artifacts: app }`.\n" + MIGRATE)

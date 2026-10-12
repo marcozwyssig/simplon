@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from simplon import artifactsection
+
 # A group node's own keys. Everything else under a node would be ambiguous, which is why members live
 # under `commands:` rather than directly on the node: otherwise `help:` would be a group attribute in one
 # place and a command name in another.
@@ -841,6 +843,9 @@ def check_no_pre_si344_form(data: dict, manifest_path: str | None) -> None:
     could report a symptom instead - `check_no_old_form` included: a manifest still on the flat form is
     on `groups:` too, and its first way out is this migration, after which the flat groups stand in the
     areas and that check names them there.
+
+    Since si#344 B2 it refuses cut 2's spellings too - `images:`, an `artifacts:` entry with `source:` or
+    with no `kind:`, and `deploy: source: { images: }` - which the same command rewrites.
     """
     name = manifest_path or "the manifest"
     if not isinstance(data, dict):
@@ -864,6 +869,33 @@ def check_no_pre_si344_form(data: dict, manifest_path: str | None) -> None:
             raise ValueError(
                 f"{name} declares `{key}:` at the top level; since si#344 it stands under `cd:`, beside "
                 f"the commands that take an environment.\n{how}")
+    # si#344 B2 (cut 2): `images:` folded into `artifacts:`, `source:` renamed `path:`, a `kind:` on every
+    # entry. Each would otherwise reach `artifactsection.check` as "an unknown kind" or be ignored outright,
+    # which names a symptom; this names the form and the command that rewrites it.
+    if "images" in data:
+        raise ValueError(
+            f"{name} declares `images:`, which si#344 folded into `artifacts:`: each image is an entry of "
+            f"`kind: image`, and a bare reference such as `web: web:local` is "
+            f"`web: {{ kind: image, local: \"web:local\" }}`:\n"
+            f"  artifacts:\n    app:\n      kind: image\n      registry: ...\n{how}")
+    artifacts = data.get("artifacts")
+    if isinstance(artifacts, dict):
+        for entry, body in artifacts.items():
+            if isinstance(body, dict) and "source" in body:
+                raise ValueError(
+                    f"{name}: `artifacts: {entry}:` declares `source:`, which si#344 renamed `path:` - where "
+                    f"the artifact lies once it is built.\n{how}")
+            if isinstance(body, dict) and "kind" not in body:
+                raise ValueError(
+                    f"{name}: `artifacts: {entry}:` declares no `kind:`; since si#344 every entry names one "
+                    f"of {', '.join(artifactsection.REFINES)}, and the migration derives it from the command "
+                    f"that reads the entry.\n{how}")
+    deploy = data.get("deploy")
+    source = deploy.get("source") if isinstance(deploy, dict) else None
+    if isinstance(source, dict) and "images" in source:
+        raise ValueError(
+            f"{name}'s `deploy: source:` names `images:`, which si#344 folded into `artifacts:` - write "
+            f"`source: {{ artifacts: {source['images']} }}`.\n{how}")
     if "site" in data:
         # `in`, not `is not None`: a bare `site:` is a key of the old form too, and ignoring it is the
         # silence this function exists to break.

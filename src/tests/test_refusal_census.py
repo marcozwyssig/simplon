@@ -448,12 +448,12 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("environments", "parse_data", "so nothing says what the compose document"): DIAGNOSIS,
 
     # --- deployment.py (si#235) ------------------------------------------------------------------
-    # Eight, and every one of them DIAGNOSIS: each refuses a manifest that could not have produced a
+    # Every one of them DIAGNOSIS: each refuses a manifest that could not have produced a
     # working deployment at all. A `source:` naming a section the document does not declare, or an entry
     # that is a bare string rather than a mapping, or one carrying no registry, does not describe a
     # different deployment - it describes none. Two of the shapes are measured rather than imagined:
-    # netctl's local images carry no registry and biz-cockpit's carry `name` beside one, so both
-    # are refused by name with the keys the entry does have.
+    # netctl's local images are bare strings and carry no registry; an entry with no registry (or no
+    # repository) is refused by name with the keys the entry does have.
     #
     # None of them is an expression rule, so none needs a REACH entry: there is no manifest a product
     # might legitimately want that any of these forbids.
@@ -577,9 +577,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("treeform", "_resolve_one", "names no task"): DIAGNOSIS,
     ("treeform", "_resolve_one", "with `with:` and also declares `params:`"): DIAGNOSIS,
     ("treeform", "check_no_old_form", "is written in the flat command form"): EXPRESSION,
-    # si#344, the cut. DIAGNOSIS, all five: `_ManifestModel` ignores an unknown top-level key, so each of
+    # si#344, the cut. DIAGNOSIS, all of them: `_ManifestModel` ignores an unknown top-level key, so each of
     # these would otherwise load as a product with no commands, a deploy with no matrix or a site that is
-    # not built - green at load and wrong at the first command. The form they name does not load at all
+    # not built - or, since cut 2, a product whose images no task can find - green at load and wrong at the
+    # first command. The form they name does not load at all
     # any more, so nothing expressible is forbidden: the refusal is what replaces the silence.
     ("treeform", "check_no_pre_si344_form", "A manifest maps its top-level keys"): DIAGNOSIS,
     ("treeform", "check_no_pre_si344_form", "declares `groups:`, which si#344 replaced"): DIAGNOSIS,
@@ -587,6 +588,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("treeform", "check_no_pre_si344_form", "at the top level; since si#344"): DIAGNOSIS,
     ("treeform", "check_no_pre_si344_form", "with the documentation site's keys"): DIAGNOSIS,
     ("treeform", "check_no_pre_si344_form", "The deployment location stands under"): DIAGNOSIS,
+    ("treeform", "check_no_pre_si344_form", "declares `images:`, which si#344 folded"): DIAGNOSIS,
+    ("treeform", "check_no_pre_si344_form", "which si#344 renamed `path:`"): DIAGNOSIS,
+    ("treeform", "check_no_pre_si344_form", "declares no `kind:`; since si#344"): DIAGNOSIS,
+    ("treeform", "check_no_pre_si344_form", "`deploy: source:` names `images:`"): DIAGNOSIS,
     # si#81, and it is DIAGNOSIS by the sorting question rather than by preference. What is refused is a
     # `tasks:` declaration that is accepted and INERT: a command of the same name already runs a
     # different body, so the one written here is dead in the tree and nothing said so. That is the same
@@ -764,11 +769,12 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # task would read keys the entry does not have - nothing built, nothing published.
     ("artifactsection", "entry", "is not a mapping - an artifact declares"): DIAGNOSIS,
     ("artifactsection", "entry", "names no kind this kernel knows"): DIAGNOSIS,
+    ("artifactsection", "entry", "declares no `kind:`; the kinds are"): DIAGNOSIS,
     ("artifactsection", "entry", "and this task reads a"): DIAGNOSIS,
     # What a reader NEEDS, from the model (`NEEDS`): a missing one is a command that cannot run as declared.
     # One site for all ten readers; it replaces `image._str`'s "is required" and the hand-written presence
     # loops of the four package readers (those were inline, outside the census, and are gone).
-    ("artifactsection", "entry", "declares no `"): DIAGNOSIS,
+    ("artifactsection", "entry", ":`, which "): DIAGNOSIS,
     ("artifactschema", "_known", "is not a key of a"): DIAGNOSIS,
     ("artifactschema", "_typed", "is written with no value"): DIAGNOSIS,
     ("artifactschema", "_typed", "must be a non-empty string or a number"): DIAGNOSIS,
@@ -1634,11 +1640,11 @@ def test_a_key_the_kernel_reads_only_to_refuse_is_not_a_section():
     """si#344 refuses the old form BY NAME, so the kernel reads those keys - and models none of them.
 
     The rule that drops them is a shape (a check returns no value), not a list of these keys; this is the
-    list, held from the other side. Each one is a refusal in `treeform.check_no_pre_si344_form` or
+    list, held from the other side (and since si#344 B2 `images:`). Each one is a refusal in `treeform.check_no_pre_si344_form` or
     `check_no_old_form`, and the derivation must still SEE them read - otherwise the rule is dropping
     nothing and the emptiness below proves nothing.
     """
-    cut = {"groups", "env_groups", "default", "environments", "site", "import"}
+    cut = {"groups", "env_groups", "default", "environments", "site", "import", "images"}
     dropped = {read.key for read in _document_reads()} - sections_read()
 
     # EXACTLY, not "at least": a rule that also dropped a real section would pass a subset check

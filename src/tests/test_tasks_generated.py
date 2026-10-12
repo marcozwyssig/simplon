@@ -67,7 +67,7 @@ generated:
 def test_a_manifest_with_no_section_says_what_it_needs(tmp_path, monkeypatch):
     # Arrange
     root = _repo(tmp_path)
-    _product(root, monkeypatch, "images: {}\n")
+    _product(root, monkeypatch, "artifacts: {}\n")
     # Act / Assert
     with pytest.raises(ValueError, match=r"`generated:`"):
         generated.declared()

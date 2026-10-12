@@ -277,8 +277,9 @@ def test_load_rejects_a_leftover_composites_key_loudly():
 
 
 def test_load_ignores_other_unknown_top_level_keys():
-    # arrange: product build data in extra top-level sections (the backward-compatible tolerance)
-    text = _OK + "images:\n  app: demo:local\nvolumes:\n  build_cache: demo-cache\n"
+    # arrange: product build data in extra top-level sections - `images:` was the example until si#344 B2
+    # folded it into `artifacts:` (the backward-compatible tolerance)
+    text = _OK + "volumes:\n  build_cache: demo-cache\nlab:\n  sites: 2\n"
 
     # act
     mf = manifest.load(text)

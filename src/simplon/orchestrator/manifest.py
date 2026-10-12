@@ -463,8 +463,8 @@ class _CommandSpecModel(BaseModel):
 
 
 class _ManifestModel(BaseModel):
-    """Parse/validate view of the whole manifest. Unknown TOP-LEVEL sections (product, environments,
-    default, images, ... - a product's own build data) are IGNORED, exactly as the former loader read only
+    """Parse/validate view of the whole manifest. Unknown TOP-LEVEL sections (product, a product's own
+    build data, ...) are IGNORED, exactly as the former loader read only
     the taxonomy sections. The ONE exception is the REMOVED `composites` section (netctl#898): a leftover
     `composites:` key is rejected LOUDLY (never silently dropped by the extra-ignore tolerance), pointing
     the manifest author at `depends_on`. `groups` is the ONE command tree (group -> command -> spec, #729);
@@ -761,7 +761,8 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     caught here and not deep in the CLI:
       - the form si#344 replaced - `groups:`, `env_groups:`, a top-level `default:` / `environments:` /
         `site:` - is refused by name, with the migration that rewrites it
-        (`treeform.check_no_pre_si344_form`);
+        (`treeform.check_no_pre_si344_form`), and cut 2's (si#344 B2): `images:`, `source:` and a kindless
+        entry in `artifacts:`, `deploy: source: { images: }`;
       - `ci:` / `cd:` / `support:` place at least one command (the loader's member map, group -> command
         -> spec, is the ONE membership + spec source);
       - every command spec declares a non-empty `help`, plus either a well-formed "module:function" `impl`

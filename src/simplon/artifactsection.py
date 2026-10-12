@@ -129,6 +129,8 @@ def entry(section: Mapping[str, object], name: str, wanted: type[Entry], source:
     if not isinstance(body, Mapping):
         raise ValueError(f"{where} is not a mapping - an artifact declares its `kind:` and its keys")
     kind = body.get("kind")
+    if kind is None:
+        raise ValueError(f"{where} declares no `kind:`; the kinds are: {', '.join(REFINES)}")
     if not isinstance(kind, str) or kind not in REFINES:
         raise ValueError(f"{where} names no kind this kernel knows ({kind!r}); the kinds are: "
                          f"{', '.join(REFINES)}")

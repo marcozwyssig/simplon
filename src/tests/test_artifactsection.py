@@ -151,7 +151,7 @@ def test_a_use_of_an_entry_that_is_not_a_mapping_is_refused_before_the_schema_se
                                  "`kind:` and its keys")
 
 
-@pytest.mark.parametrize("body,said", [({"kind": "widget"}, "'widget'"), ({"registry": "r"}, "None")])
+@pytest.mark.parametrize("body,said", [({"kind": "widget"}, "'widget'"), ({"kind": 3}, "3")])
 def test_a_use_of_an_entry_of_no_known_kind_is_refused_before_the_schema_sees_it(body, said):
     # act: the generated `validate` takes the kind it is HANDED and never asks the body's
     # (`validate("image", {"kind": "nuget"})` is an ImageEntry), so `entry` rules on the body's kind itself
@@ -162,6 +162,16 @@ def test_a_use_of_an_entry_of_no_known_kind_is_refused_before_the_schema_sees_it
     # assert
     assert str(caught.value) == (f"demo.yaml: 'artifacts.app' names no kind this kernel knows ({said}); "
                                  f"the kinds are: {KINDS}")
+
+
+def test_a_use_of_an_entry_with_no_kind_says_it_declares_none():
+    # act
+    with pytest.raises(ValueError) as caught:
+        artifactsection.entry({"app": {"registry": "r"}}, "app", artifactschema.DirectoryEntry, "demo.yaml",
+                              "release:artifact")
+
+    # assert: the wording `check` uses, not "names no kind ... (None)"
+    assert str(caught.value) == (f"demo.yaml: 'artifacts.app' declares no `kind:`; the kinds are: {KINDS}")
 
 
 def test_a_use_names_the_first_key_its_coordinate_needs_and_all_of_them():

@@ -29,9 +29,10 @@ this repository removes everywhere else. It names an entry in a section that alr
       source: { artifacts: app }
 
 AND THE ENTRY MAY NOT CARRY WHAT IS NEEDED, measured rather than assumed. Across those manifests the
-entries are not one shape: `registry` and `repository` are in three, biz-cockpit's images carry `name`
-instead and no registry at all, and netctl's are bare strings rather than mappings. Each of those is
-refused by name here, with the keys the entry does have in the message - because the reader's next
+entries are not one shape: `registry` and `repository` are in three, biz-cockpit's images carry both and
+`name` besides, and netctl's are bare strings rather than mappings. Each shape that lacks what is needed
+(a bare string, an entry with no registry or no repository) is refused by name here, with the keys the
+entry does have in the message - because the reader's next
 question is "what do I add", and a KeyError two frames down answers neither.
 
 WHY THE LOOKUP IS NOT PER ENVIRONMENT. `dev|test|uat|prod` choose where a deployment GOES, not where the
