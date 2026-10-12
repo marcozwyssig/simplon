@@ -68,6 +68,7 @@ simplon's own website moved from `docs/site` to `src/site`. The kernel's default
 - The 0.28.0 notes named `deploy/orchestrator/.venv` for the migration; that is only the default
   location, and the route now reads `<orch-dir>/.venv` (#376).
 - `deploy/image/image.pin` points at the published v0.28.0 image (#374).
+- These notes (#382).
 
 ## 0.28.0
 
