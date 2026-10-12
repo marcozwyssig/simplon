@@ -81,7 +81,7 @@ from simplon import (carrierspec, context, deployment, environments, labegress, 
                      nexusproxy, outputs,
                      tracker,
                      workflowgen)
-from simplon.tasks import (artifact, asset, buildfiles, claudeplugins, docs, env, generated, image,
+from simplon.tasks import (artifact, asset, buildfiles, claudeplugins, docs, env, generated,
                            releasenotes,
                            site, testrun)
 
@@ -112,10 +112,9 @@ PUBLISHED_UNDER = "### The names the kernel has claimed"
 #: document on too, to `workflowgen.parse`, but `workflows:` is read for that command and nobody else's,
 #: so it is declared here rather than left to a module that does not appear in the walk at all.)
 MODULES: dict[str, tuple[str, ...]] = {
-    # `deploy:` is its own; `images:`/`artifacts:` are READ BUT NOT OWNED - si#235's section POINTS at an
-    # entry of one of them rather than restating the registry a second time, so this module reads three
-    # keys and declares one.
-    "deployment": ("deploy", "images", "artifacts"),
+    # `deploy:` is its own; `artifacts:` is READ BUT NOT OWNED - si#235's section POINTS at an entry of it
+    # rather than restating the registry, and since si#344 B2 images are entries of it too
+    "deployment": ("deploy", "artifacts"),
     # reads the document and hands it to `environments.parse_data`, the same shape as tasks.completion
     "tasks.deploy": (),
     # hands the document to `environments.parse_data` and `carrierspec.declared`, the same shape as
@@ -158,7 +157,7 @@ MODULES: dict[str, tuple[str, ...]] = {
     "tasks.conan": ("artifacts",),   # the same `artifacts:` section as tasks.artifact (si#127)
     "tasks.docs": ("doctoolchain_version",),
     "tasks.env": ("cd", "env_var"),
-    "tasks.image": ("images",),
+    "tasks.image": ("artifacts",),  # its `kind: image` entries (si#344 B2)
     "tasks.nuget": ("artifacts",),   # likewise
     "tasks.maven": ("artifacts",),   # likewise, a fourth time (si#329)
     "tasks.releasenotes": ("releases",),
@@ -211,8 +210,6 @@ SILENT_ON_ABSENCE = {
 #: whose function takes the document as an argument. A uniform front door is what makes the two halves
 #: comparable: the loud fifteen and the silent two are driven by the same harness.
 DRIVERS: dict[str, tuple[dict, object]] = {
-    "images": ({"images": {"web": {}}},
-               lambda: image.declared(context.current().manifest_data(), "web")),
     "website": ({"website": {"image": "x"}},
                 lambda: site.declared(context.current().manifest_data())),
     "suites": ({"suites": {"gates": []}},
@@ -236,14 +233,14 @@ DRIVERS: dict[str, tuple[dict, object]] = {
                  lambda: environments.parse_data(context.current().manifest_data(), ("local",))),
     "releases": ({"releases": {"page": "releases.md"}}, releasenotes.declared),
     "assets": ({"assets": {"bundle": {}}}, lambda: asset._declared("bundle")),
-    "artifacts": ({"artifacts": {"site": {}}}, lambda: artifact._declared("site")),
+    "artifacts": ({"artifacts": {"site": {"kind": "directory"}}}, lambda: artifact._declared("site")),
     # si#235. The document carries BOTH halves because the section points rather than restates: a
     # `deploy:` that named a section the document does not declare is one of this reader's own refusals,
     # so driving it with a complete pair is what makes a MISTYPED `deploy:` the thing under test here.
     "generated": ({"generated": {"completion": {"path": "out/c.sh", "by": "support completion"}}},
                   generated.declared),
-    "deploy": ({"images": {"app": {"registry": "r", "repository": "d"}},
-                "deploy": {"source": {"images": "app"}}},
+    "deploy": ({"artifacts": {"app": {"kind": "image", "registry": "r", "repository": "d"}},
+                "deploy": {"source": {"artifacts": "app"}}},
                deployment.declared),
     "instance": ({"instance": {"env_var": "X", "max_id_len": 2}}, labinstance.spec),
     "lab_egress": ({"lab_egress": {"interface": "eth0"}}, labegress.spec),

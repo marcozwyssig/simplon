@@ -33,13 +33,15 @@ _REAL_ENSURE_DOCKER = docker.ensure_docker
 
 _MANIFEST = """
 product: demo
-images:
+artifacts:
   app:
+    kind: image
     registry: ghcr.io/owner
     repository: demo-app
     dockerfile: Dockerfile
     context: .
   worker:
+    kind: image
     registry: ghcr.io/owner
     repository: demo-worker
     dockerfile: docker/worker.Dockerfile
@@ -140,8 +142,8 @@ def _no_provenance(monkeypatch):
 
 def test_a_declared_image_carries_its_registry_repository_dockerfile_and_context():
     # arrange
-    data = {"images": {"app": {"registry": "ghcr.io/owner", "repository": "demo-app",
-                               "dockerfile": "Dockerfile", "context": "."}}}
+    data = _images(app={"registry": "ghcr.io/owner", "repository": "demo-app",
+                   "dockerfile": "Dockerfile", "context": "."})
 
     # act
     cfg = image.declared(data, "app")
@@ -153,7 +155,7 @@ def test_a_declared_image_carries_its_registry_repository_dockerfile_and_context
 
 def test_an_undeclared_image_lists_the_ones_that_are():
     # arrange
-    data = {"images": {"app": {}, "worker": {}}}
+    data = _images(app={}, worker={})
 
     # act / assert
     with pytest.raises(ValueError, match="app, worker"):
@@ -178,8 +180,8 @@ def test_each_required_key_is_named_when_it_is_the_one_that_is_missing(missing):
     del body[missing]
 
     # act / assert
-    with pytest.raises(ValueError, match=f"'{missing}' is required"):
-        image.declared({"images": {"app": body}}, "app")
+    with pytest.raises(ValueError, match=f"declares no `{missing}:`, which build:image needs"):
+        image.declared(_images(app=body), "app")
 
 
 def test_a_registry_is_required_even_for_a_purely_local_build():
@@ -190,8 +192,8 @@ def test_a_registry_is_required_even_for_a_purely_local_build():
     body = {"repository": "demo-app", "dockerfile": "Dockerfile", "context": "."}
 
     # act / assert
-    with pytest.raises(ValueError, match="'registry' is required"):
-        image.declared({"images": {"app": body}}, "app")
+    with pytest.raises(ValueError, match="declares no `registry:`, which build:image needs"):
+        image.declared(_images(app=body), "app")
 
 
 @pytest.mark.parametrize("key,value", [("context", "/srv"), ("context", "../elsewhere"),
@@ -204,7 +206,7 @@ def test_a_path_that_leaves_the_product_root_is_refused_before_docker_sees_it(ke
 
     # act / assert
     with pytest.raises(ValueError, match="relative"):
-        image.declared({"images": {"app": body}}, "app")
+        image.declared(_images(app=body), "app")
 
 
 def test_a_context_of_dot_is_accepted_and_means_the_product_root():
@@ -215,7 +217,7 @@ def test_a_context_of_dot_is_accepted_and_means_the_product_root():
             "dockerfile": "Dockerfile", "context": "./"}
 
     # act
-    cfg = image.declared({"images": {"app": body}}, "app")
+    cfg = image.declared(_images(app=body), "app")
 
     # assert
     assert cfg.context == "."
@@ -223,9 +225,9 @@ def test_a_context_of_dot_is_accepted_and_means_the_product_root():
 
 def test_declared_build_arguments_are_carried_as_strings():
     # arrange: a manifest is YAML, so `SLIM: true` arrives as a bool and docker only speaks text
-    data = {"images": {"app": {"registry": "ghcr.io/o", "repository": "r", "dockerfile": "Dockerfile",
-                               "context": ".", "build_args": {"PYTHON_VERSION": "3.12", "SLIM": True,
-                                                              "RETRIES": 3}}}}
+    data = _images(app={"registry": "ghcr.io/o", "repository": "r", "dockerfile": "Dockerfile",
+                   "context": ".", "build_args": {"PYTHON_VERSION": "3.12", "SLIM": True,
+                                                  "RETRIES": 3}})
 
     # act
     cfg = image.declared(data, "app")
@@ -236,8 +238,8 @@ def test_declared_build_arguments_are_carried_as_strings():
 
 def test_a_build_argument_that_is_not_a_scalar_is_refused():
     # arrange: a list would reach docker as its repr, which is a value nobody wrote
-    data = {"images": {"app": {"registry": "ghcr.io/o", "repository": "r", "dockerfile": "Dockerfile",
-                               "context": ".", "build_args": {"PORTS": [80, 443]}}}}
+    data = _images(app={"registry": "ghcr.io/o", "repository": "r", "dockerfile": "Dockerfile",
+                   "context": ".", "build_args": {"PORTS": [80, 443]}})
 
     # act / assert
     with pytest.raises(ValueError, match="scalar"):
@@ -305,9 +307,9 @@ def test_a_declared_version_build_argument_carries_the_tag_with_it(monkeypatch, 
     # arrange: `build_args: { VERSION: ... }` is a product saying where its version really comes from, and
     # the image tag follows the version WHEREVER it was decided - one number, one place, still
     monkeypatch.setattr(image, "provenance", lambda root: {"VERSION": "v0.13.0"})
-    data = image.declared({"images": {"app": {"registry": "ghcr.io/owner", "repository": "demo-app",
-                                              "dockerfile": "Dockerfile", "context": ".",
-                                              "build_args": {"VERSION": "4.2.0"}}}}, "app")
+    data = image.declared(_images(app={"registry": "ghcr.io/owner", "repository": "demo-app",
+                                  "dockerfile": "Dockerfile", "context": ".",
+                                  "build_args": {"VERSION": "4.2.0"}}), "app")
 
     # act
     tag = image.resolve_tag(data, "", image.build_arguments(data, Path("/nowhere")).get("VERSION", ""))
@@ -1224,12 +1226,14 @@ def test_a_record_that_cannot_be_written_does_not_turn_a_real_image_red(cli, _no
 
 _MULTI = """
   base:
+    kind: image
     registry: ghcr.io/owner
     repository: demo-base
     dockerfile: docker/base.Dockerfile
     context: .
     tag: "25"
   multi:
+    kind: image
     registry: ghcr.io/owner
     repository: demo-multi
     dockerfile: Dockerfile
@@ -1237,6 +1241,7 @@ _MULTI = """
     platforms: [linux/amd64, linux/arm64]
     contexts: [base]
   single-on-base:
+    kind: image
     registry: ghcr.io/owner
     repository: demo-single
     dockerfile: Dockerfile
@@ -1315,6 +1320,11 @@ def _recorded(_multi):
     return record
 
 
+def _images(**entries: dict) -> dict:
+    """A manifest document whose `artifacts:` holds `entries`, each of `kind: image` (si#344 B2)."""
+    return {"artifacts": {name: {"kind": "image", **body} for name, body in entries.items()}}
+
+
 def _body(**extra) -> dict:
     return {"registry": "ghcr.io/owner", "repository": "demo-app", "dockerfile": "Dockerfile",
             "context": ".", **extra}
@@ -1324,7 +1334,7 @@ def _body(**extra) -> dict:
 
 def test_a_declared_platform_list_is_carried_in_order():
     # arrange
-    data = {"images": {"app": _body(platforms=["linux/amd64", "linux/arm64"])}}
+    data = _images(app=_body(platforms=["linux/amd64", "linux/arm64"]))
 
     # act
     cfg = image.declared(data, "app")
@@ -1335,7 +1345,7 @@ def test_a_declared_platform_list_is_carried_in_order():
 
 def test_an_image_without_platforms_declares_none():
     # arrange
-    data = {"images": {"app": _body()}}
+    data = _images(app=_body())
 
     # act
     cfg = image.declared(data, "app")
@@ -1345,14 +1355,14 @@ def test_an_image_without_platforms_declares_none():
 
 
 @pytest.mark.parametrize("platforms,fragment", [
-    ("linux/amd64", "'platforms' must be a list of platforms"),
+    ("linux/amd64", "'platforms' must be a list of non-empty strings"),
     (["amd64"], "is not '<os>/<arch>[/<variant>]'"),
     (["linux/arm/v7/extra"], "is not '<os>/<arch>[/<variant>]'"),
-    ([7], "is not '<os>/<arch>[/<variant>]'"),
+    ([7], "'platforms' must be a list of non-empty strings"),
 ])
 def test_a_platform_list_that_buildx_would_refuse_is_refused_at_the_declaration(platforms, fragment):
     # arrange
-    data = {"images": {"app": _body(platforms=platforms)}}
+    data = _images(app=_body(platforms=platforms))
 
     # act
     raised = pytest.raises(ValueError, match=re.escape(fragment))
@@ -1370,7 +1380,7 @@ def test_a_restated_or_empty_platform_list_builds_rather_than_being_refused(plat
     """Neither is broken: an empty list says what no key says, a repeated platform says it twice. Refusing
     either would forbid a manifest that builds, which is an expression rule nothing measured asks for."""
     # arrange
-    data = {"images": {"app": _body(platforms=platforms)}}
+    data = _images(app=_body(platforms=platforms))
 
     # act
     cfg = image.declared(data, "app")
@@ -1381,7 +1391,7 @@ def test_a_restated_or_empty_platform_list_builds_rather_than_being_refused(plat
 
 def test_a_context_listed_twice_is_one_context():
     # arrange
-    data = {"images": {"app": _body(contexts=["base", "base"]), "base": _body(tag="1")}}
+    data = _images(app=_body(contexts=["base", "base"]), base=_body(tag="1"))
 
     # act
     cfg = image.declared(data, "app")
@@ -1394,7 +1404,7 @@ def test_a_context_without_a_constant_tag_is_named_by_the_version_it_would_be_bu
     """A Dockerfile can name such a dependency with a global `ARG VERSION` before its FROM, and the kernel
     passes VERSION to both - so the context is named the way the dependency's own build would tag it."""
     # arrange
-    data = {"images": {"app": _body(contexts=["base"]), "base": _body(repository="demo-base")}}
+    data = _images(app=_body(contexts=["base"]), base=_body(repository="demo-base"))
     cfg = image.declared(data, "app")
 
     # act
@@ -1406,8 +1416,8 @@ def test_a_context_without_a_constant_tag_is_named_by_the_version_it_would_be_bu
 
 def test_a_context_names_a_declared_image_and_carries_it_whole():
     # arrange
-    data = {"images": {"app": _body(platforms=["linux/amd64"], contexts=["base"]),
-                       "base": _body(repository="demo-base", dockerfile="base.Dockerfile", tag="25")}}
+    data = _images(app=_body(platforms=["linux/amd64"], contexts=["base"]),
+                   base=_body(repository="demo-base", dockerfile="base.Dockerfile", tag="25"))
 
     # act
     cfg = image.declared(data, "app")
@@ -1418,7 +1428,7 @@ def test_a_context_names_a_declared_image_and_carries_it_whole():
 
 
 @pytest.mark.parametrize("images,fragment", [
-    ({"app": _body(contexts="base"), "base": _body(tag="1")}, "'contexts' must be a list of image names"),
+    ({"app": _body(contexts="base"), "base": _body(tag="1")}, "'contexts' must be a list of non-empty strings"),
     ({"app": _body(contexts=["nope"]), "base": _body(tag="1")}, "context 'nope' is not an image in the"),
     ({"app": _body(contexts=["app"], tag="1")}, "contexts form a cycle: app -> app"),
     ({"app": _body(contexts=["base"]), "base": _body(contexts=["app"], tag="1")},
@@ -1428,7 +1438,7 @@ def test_a_context_names_a_declared_image_and_carries_it_whole():
 ])
 def test_a_context_that_cannot_be_supplied_is_refused_by_name(images, fragment):
     # arrange
-    data = {"images": images}
+    data = _images(**images)
     name = next(iter(images))
 
     # act
@@ -1441,11 +1451,11 @@ def test_a_context_that_cannot_be_supplied_is_refused_by_name(images, fragment):
 
 def test_a_broken_dependency_is_refused_as_itself_and_not_as_its_dependent():
     # arrange: the dependency is missing a required key
-    data = {"images": {"app": _body(contexts=["base"]),
-                       "base": {"registry": "ghcr.io/owner", "dockerfile": "D", "context": ".", "tag": "1"}}}
+    data = _images(app=_body(contexts=["base"]),
+                   base={"registry": "ghcr.io/owner", "dockerfile": "D", "context": ".", "tag": "1"})
 
     # act
-    raised = pytest.raises(ValueError, match=r"'images\.base': 'repository' is required")
+    raised = pytest.raises(ValueError, match=r"'artifacts\.base' declares no `repository:`")
 
     # assert
     with raised:
@@ -2184,3 +2194,55 @@ def test_a_builder_created_meanwhile_by_another_run_is_used_rather_than_failing(
     assert rc == 0
     assert len(fake.argv_starting("docker", "buildx", "inspect")) == 2
     assert fake.argv_starting("docker", "buildx", "bake")
+
+
+# --- an image is an `artifacts:` entry of `kind: image` (si#344 B2) -----------------------------------
+
+def test_an_entry_of_another_kind_is_not_an_image(tmp_path):
+    # arrange
+    data = {"artifacts": {"site": {"kind": "directory", "path": "build/site"}}}
+
+    # act
+    with pytest.raises(ValueError) as caught:
+        image.declared(data, "site")
+
+    # assert
+    assert str(caught.value) == (
+        "manifest: 'artifacts.site' is of kind 'directory', and this task reads a 'image' or a kind that "
+        "refines it - name an entry of that kind, or change the entry's `kind:`")
+
+
+def test_a_missing_image_lists_only_the_images():
+    # arrange
+    data = {"artifacts": {"site": {"kind": "directory"}, **_images(app=_body())["artifacts"]}}
+
+    # act
+    with pytest.raises(ValueError) as caught:
+        image.declared(data, "nope")
+
+    # assert
+    assert str(caught.value) == "manifest: no image 'nope' in the 'artifacts:' section; declared are: app"
+
+
+def test_a_local_image_declares_nothing_a_build_needs_and_says_which_key_first():
+    # arrange: netctl's shape - a reference no kernel task builds
+    data = _images(web={"local": "netctl:local"})
+
+    # act
+    with pytest.raises(ValueError) as caught:
+        image.declared(data, "web")
+
+    # assert
+    assert str(caught.value) == ("manifest: 'artifacts.web' declares no `registry:`, which build:image needs - "
+                                 "it reads registry, repository, dockerfile, context")
+
+
+def test_a_number_tag_builds_under_its_string(tmp_path):
+    # arrange: decision A - `tag: 25` loads and is the tag (image._str refused it before si#344 B2)
+    data = _images(app={**_body(), "tag": 25})
+
+    # act
+    cfg = image.declared(data, "app")
+
+    # assert
+    assert cfg.tag == "25"

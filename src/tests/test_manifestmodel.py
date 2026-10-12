@@ -34,8 +34,8 @@ cd:
   environments:
     dev: {}
     prod: {}
-images:
-  kernel: { registry: ghcr.io/x, repository: demo, dockerfile: Dockerfile, context: . }
+artifacts:
+  kernel: { kind: image, registry: ghcr.io/x, repository: demo, dockerfile: Dockerfile, context: . }
 jdk:
   version: 21
 """
@@ -134,15 +134,17 @@ def test_environments_follow_the_matrix_and_promote_in_order():
 
 def test_an_image_is_an_artifact_of_the_image_kind():
     # act
-    block = _block(_export(), "images i_kernel typeOf simplon.pipeline.Artifact {")
+    block = _block(_export(), "artifacts a_kernel typeOf simplon.pipeline.Artifact {")
 
-    # assert
-    assert 'key = "kernel"' in block and "kind = simplon.vocabulary.image" in block
+    # assert: the entry is there; its declared kind reaches the model with Task 8 of si#344 B2
+    assert 'key = "kernel"' in block
 
 
 def test_an_artifacts_entry_is_an_artifact_of_the_artifact_kind():
     # arrange
-    text = DEMO + "artifacts:\n  updatesite: { path: build/site }\n"
+    # (DEMO declares `artifacts:` already since si#344 B2, so the entry joins it: a second `artifacts:` key
+    # would be a key written twice, which YAML resolves by dropping the first)
+    text = DEMO.replace("artifacts:\n", "artifacts:\n  updatesite: { kind: directory, path: build/site }\n", 1)
 
     # act
     block = _block(manifestmodel.export(_load(DEMO), yaml.safe_load(text), "demo",
@@ -307,7 +309,7 @@ def test_the_export_drops_nothing(name):
     document = yaml.safe_load(text)
     matrix = matrix_section(document)
     envs = matrix["environments"] or {}
-    structure = {"product", "ci", "cd", "support", "tasks", "images", "artifacts"}
+    structure = {"product", "ci", "cd", "support", "tasks", "artifacts"}
     # Not exported, by decision and stated in manifestmodel's docstring - so "drops nothing" is true of
     # everything else: `cd: site:` (nothing in the M2 holds a Site until a deploy reads one) and a
     # `tasks:` entry no command places (one Task per impl a command USES, R9). Both are left out of
@@ -325,7 +327,6 @@ def test_the_export_drops_nothing(name):
     assert _count(out, r"environments \w+") == len(envs)
     assert len(re.findall(r"^  default = ", out, re.MULTILINE)) == (matrix["default"] is not None)
     assert impls and _count(out, r"tasks \w+") == len(impls)
-    assert _count(out, r"(images|artifacts) \w+") == (
-        len(document.get("images") or {}) + len(document.get("artifacts") or {}))
+    assert _count(out, r"artifacts \w+") == len(document.get("artifacts") or {})
     assert len(re.findall(r"typeOf simplon\.manifest\.(KernelSection|ProductData) \{$", out, re.MULTILINE)) == len(
         [key for key in document if key not in structure])

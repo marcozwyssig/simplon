@@ -108,11 +108,6 @@ Product typeOf firn.core.Class extends firn.core.NamedResource {
     subjectCardinality = 0..1
     objectCardinality = 0..1
   }
-  property images typeOf firn.core.Composition {
-    range = simplon.pipeline.Artifact
-    subjectCardinality = 0..N
-    objectCardinality = 0..1
-  }
   property instance typeOf firn.core.Composition {
     range = simplon.manifest.KernelSection
     subjectCardinality = 0..1

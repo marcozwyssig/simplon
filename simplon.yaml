@@ -526,8 +526,9 @@ generated:
     path: src/simplon/artifactschema.py
     by: build model
 
-images:
+artifacts:
   kernel:
+    kind: image
     registry: ghcr.io/marcozwyssig
     repository: simplon
     dockerfile: deploy/image/Dockerfile

@@ -313,25 +313,24 @@ repository. Adding a key nobody here has heard of is a supported thing to do.
 What was missing is the other half: **which names are already taken**. The product si#159 was reported
 from builds three Windows Server *releases*, and it learned that `releases:` already means
 `{page, from, complete_from}` to `test:release-notes` by reading `src/simplon/tasks/releasenotes.py`. A
-reserved name that can only be found in the source is a trap with a delay on it, so all twenty-three are
-published here: the twenty-one sections a kernel reader reads, and `ci:` and `support:`, which only the
+reserved name that can only be found in the source is a trap with a delay on it, so all twenty-two are
+published here: the twenty sections a kernel reader reads, and `ci:` and `support:`, which only the
 loader reads. `cd:` is both - the loader reads its commands, and the environment readers the matrix beside
 them. `tests/test_manifest_top_level.py` holds this table to the kernel in both directions.
 
 | key | read by | what it carries |
 | --- | --- | --- |
-| `artifacts:` | `release:artifact`, `release:nuget-*`, `release:conan-*`, `release:maven` | one entry per published artefact: registry, repository, source directory, media type - and for a jar `group:`, `modules:` and an optional `task:` |
+| `artifacts:` | `release:artifact`, `release:nuget-*`, `release:conan-*`, `release:maven`, `build:image`, `release:image`, `test:image` | one entry per artifact, each with its `kind:` (`image`, `directory`, `nuget`, `maven`, `conan`, ...) and that kind's keys - see [the kinds](../../with-what/kinds/) |
 | `assets:` | `release:asset` | one entry per file attached to a GitHub release |
 | `build:` | `build:cmake-files`, `build:dotnet-solution` | `targets:`, the dependency edges between build targets that a directory layout cannot show |
 | `carriers:` | the environment selector | one entry per thing an environment is realised ON: its `proxmox:` node and kind, and the `portainer:` on it |
 | `cd:` | the loader, the environment selector | the `deploy:` and `monitor:` commands, and the environment matrix beside them: `environments:` (name, backend, description) and `default:` (the environment a command targets when no env token is given) |
 | `ci:` | the loader | the `build:`, `test:` and `release:` commands |
 | `claude:` | `support:claude-plugins` | the marketplaces and plugin ids an agent host installs |
-| `deploy:` | the deploy commands | `source:`, naming the `images:` or `artifacts:` entry a deployment's versions are looked up in |
+| `deploy:` | the deploy commands | `source:`, naming the `artifacts:` entry a deployment's versions are looked up in |
 | `doctoolchain_version:` | `docs:render` | the pinned docToolchain image tag |
 | `env_var:` | `support:environments` | the variable a product's env-first CLI publishes the active environment into |
 | `generated:` | `test:generated` | one entry per committed generated file: its `path:` and the `by:` command that produces it |
-| `images:` | `build:image`, `release:image`, `test:image` | one entry per container image: registry, repository, Dockerfile, context, and optionally its platforms and the images it is built from |
 | `instance:` | the multi-tenant lab | the env var naming the lab instance, and the product's id-length budget |
 | `lab_egress:` | the lab egress helper | the host interface a lab reaches the outside through |
 | `layout:` | `build:toolchain`, `test:*`, `docs:acceptance` | where inside your tree a containerised command runs, and which directory holds the tests above the acceptance line |
@@ -344,7 +343,7 @@ them. `tests/test_manifest_top_level.py` holds this table to the kernel in both 
 | `website:` | `docs:site` | the pinned Hugo image, where the sources live, where the site is built to |
 | `workflows:` | `release:workflows` | one entry per generated CI file |
 
-A key that is **mistyped** is therefore not the silent no-op it looks like. Seventeen of the twenty-one a
+A key that is **mistyped** is therefore not the silent no-op it looks like. Sixteen of the twenty a
 reader reads are named by the reader that wanted them, the moment that reader runs: `websiet:` instead
 of `website:` answers `the 'website' section is missing or is not a mapping`, and every other reader
 refuses the same way, naming the key it looked for. The four that say nothing say nothing on purpose:
@@ -387,7 +386,7 @@ to nest (the section above). It stops at the first step that is not a mapping an
 reader tells "the product said nothing" from "the product said the wrong thing". A section declared and
 empty is found, not blamed.
 
-**It never raises, and that is deliberate.** Each of the twenty-one readers above says something specific
+**It never raises, and that is deliberate.** Each of the twenty readers above says something specific
 when its section is missing, and si#159 measured that fourteen of the sixteen it measured already refuse
 by name and quote the key. An accessor that raised would replace those sentences with one. So it answers the
 question and the reader keeps its own refusal - which is also what keeps every refusal countable where

@@ -7,8 +7,8 @@ What made it the kernel's is the same argument as everywhere else here: `docker 
 `-f`/`-t`/`--build-arg`/context line, `docker login`, `docker push` and a check that the push landed are
 the same six commands in every product, and every product that wrote them itself got the last one wrong.
 What stays the product's is DATA - which registry, which package, which Dockerfile, which context
-directory, which extra build arguments, which tag - and all of it arrives through the manifest's
-`images:` section. A kernel default for any of them would be simplon's own directory layout imposed on
+directory, which extra build arguments, which tag - and all of it arrives through an `artifacts:` entry of
+`kind: image`. A kernel default for any of them would be simplon's own directory layout imposed on
 every other product.
 
 A MISSING DOCKER IS A FAILURE HERE, AND THAT IS THE OPPOSITE OF `tasks/site.py`. The site build
@@ -108,14 +108,18 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from simplon import context, docker, githubpackages, hostpath, log, outputs
+from simplon import artifactsection, artifactschema, context, docker, githubpackages, hostpath, log, outputs
 from simplon.labhost import BINFMT_IMAGE
 from simplon.bootstrap import validate_relative_dir
 from simplon.run import Result, run, stream
 
-#: The manifest section this module owns, in the shape `artifacts:` established: a mapping of NAME -> the
-#: image's own data, because a product may build more than one.
-SECTION = "images"
+#: The manifest section this module reads (si#344 B2: `images:` folded into it). An entry is an image when
+#: its `kind:` is `image` or a kind that refines it; a product may build more than one.
+SECTION = "artifacts"
+
+#: The generated model of the kind this module reads. `test_generated_schema.py` holds it to the model's
+#: `build:image`, `test:image` and `release:image` readers.
+ENTRY = artifactschema.ImageEntry
 
 #: The two build arguments the kernel derives and passes itself. Spelled as the OCI label pair a
 #: Dockerfile writes them into (`org.opencontainers.image.version` / `.revision`), which is the naming
@@ -143,15 +147,11 @@ class Image:
     contexts: tuple[tuple[str, "Image"], ...] = ()
 
 
-def _str(body: Mapping, key: str, where: str, *, required: bool = False) -> str:
-    value = body.get(key)
-    if value is None:
-        if required:
-            raise ValueError(f"{where}: '{key}' is required")
-        return ""
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{where}: '{key}' must be a non-empty string")
-    return value.strip()
+def _image_names(section: Mapping) -> list[str]:
+    """The entries of `section` this module reads: `kind: image`, or a kind that refines it."""
+    return sorted(str(name) for name, body in section.items()
+                  if isinstance(body, Mapping)
+                  and artifactsection.accepts(artifactschema.REFINES, ENTRY.KIND, str(body.get("kind", ""))))
 
 
 def _inside_the_product(value: str, key: str, where: str) -> str:
@@ -174,22 +174,6 @@ def _inside_the_product(value: str, key: str, where: str) -> str:
         inside="the product root")
 
 
-def _build_args(body: Mapping, where: str) -> dict[str, str]:
-    """The product's own `build_args:`, as strings. A mapping rather than a list of `K=V` strings: the
-    manifest is YAML, and a list would make the caller quote a syntax the format already has."""
-    declared = body.get("build_args")
-    if declared is None:
-        return {}
-    if not isinstance(declared, Mapping):
-        raise ValueError(f"{where}: 'build_args' must be a mapping of name to value")
-    out: dict[str, str] = {}
-    for key, value in declared.items():
-        if value is None or isinstance(value, (list, dict, tuple)):
-            raise ValueError(f"{where}: build argument '{key}' must be a scalar, not {type(value).__name__}")
-        out[str(key)] = "true" if value is True else "false" if value is False else str(value)
-    return out
-
-
 #: `<os>/<arch>[/<variant>]`, lower case - the spelling buildx accepts and an OCI index records. Checked at
 #: the declaration because buildx's own answer to `linux-arm64` arrives after the context has been sent.
 _PLATFORM = re.compile(r"[a-z0-9]+/[a-z0-9_]+(?:/[a-z0-9]+)?\Z")
@@ -199,29 +183,20 @@ _PLATFORM = re.compile(r"[a-z0-9]+/[a-z0-9_]+(?:/[a-z0-9]+)?\Z")
 _BAKE_TARGET = re.compile(r"[A-Za-z0-9_-]+\Z")
 
 
-def _platforms(body: Mapping, where: str) -> tuple[str, ...]:
-    """The declared `platforms:`, in order, or () when the key is absent.
+def _platforms(declared: tuple[str, ...], where: str) -> tuple[str, ...]:
+    """The declared `platforms:`, in order, each one buildx's `<os>/<arch>[/<variant>]`.
 
-    A LIST AND NEVER A STRING. `platforms: linux/amd64,linux/arm64` is buildx's own CLI spelling, and
-    accepting it here would make a YAML list and a comma-joined string two ways to say one thing.
-
-    WHAT IS NOT REFUSED, on purpose. An empty list is the same statement as no key - one platform, the
-    host's - and a platform listed twice is a restatement; both build a working image, so refusing them
-    would be expression rules with nothing measured behind them. The duplicate is dropped, the empty
-    list read as absent.
+    THE SHAPE IS THE SCHEMA'S since si#344 B2: a LIST and never a string (`linux/amd64,linux/arm64` is
+    buildx's CLI spelling, and accepting it would make two ways to say one thing), stripped and
+    deduplicated - a platform listed twice is a restatement, and an empty list reads as no key. What is
+    left here is what only buildx knows: whether each string names a platform. Checked at the declaration
+    because buildx's own answer arrives after the context has been sent.
     """
-    declared = body.get("platforms")
-    if declared is None:
-        return ()
-    if not isinstance(declared, list):
-        raise ValueError(f"{where}: 'platforms' must be a list of platforms such as "
-                         f"[linux/amd64, linux/arm64]; leave the key out for an image built for the "
-                         f"host's own platform only")
     for entry in declared:
-        if not isinstance(entry, str) or not _PLATFORM.match(entry.strip()):
+        if not _PLATFORM.match(entry):
             raise ValueError(f"{where}: platform {entry!r} is not '<os>/<arch>[/<variant>]', "
                              f"e.g. linux/arm64 or linux/arm/v7")
-    return tuple(dict.fromkeys(entry.strip() for entry in declared))
+    return declared
 
 
 def _bake_name(name: str, where: str) -> str:
@@ -234,8 +209,8 @@ def _bake_name(name: str, where: str) -> str:
     return name
 
 
-def _contexts(section: Mapping, body: Mapping, chain: tuple[str, ...], where: str,
-              source: str) -> tuple[tuple[str, Image], ...]:
+def _contexts(section: Mapping, declared: tuple[str, ...], chain: tuple[str, ...], where: str,
+              source: str, coordinate: str) -> tuple[tuple[str, Image], ...]:
     """The declared images `body` is built FROM, each validated as an image in its own right.
 
     A LIST OF NAMES, NOT A MAP OF REFERENCES (si#347), and that is the design decision of this key. A
@@ -248,28 +223,23 @@ def _contexts(section: Mapping, body: Mapping, chain: tuple[str, ...], where: st
     constant `tag:`, which is firn's case, or else the derived VERSION, which a Dockerfile can name with
     a global `ARG VERSION` before its FROM.
 
-    A name listed twice is a restatement and is dropped rather than refused, for `_platforms`' reason.
+    Its SHAPE - a list of names, stripped and deduplicated - is the schema's (si#344 B2).
     """
-    declared = body.get("contexts")
-    if declared is None:
-        return ()
-    if not isinstance(declared, list):
-        raise ValueError(f"{where}: 'contexts' must be a list of image names from the '{SECTION}:' "
-                         f"section, e.g. [toolchain]")
     out: list[tuple[str, Image]] = []
-    for dep in dict.fromkeys(str(entry) for entry in declared):
+    for dep in declared:
         if dep in chain:
             raise ValueError(f"{where}: contexts form a cycle: {' -> '.join((*chain, dep))} - an image "
                              f"cannot be built from itself")
         if dep not in section:
             raise ValueError(f"{where}: context '{dep}' is not an image in the '{SECTION}:' section; "
-                             f"declared are: {', '.join(sorted(str(key) for key in section))}")
+                             f"declared are: {', '.join(_image_names(section)) or '(none)'}")
         _bake_name(dep, where)
-        out.append((dep, declared_image(section, dep, source, chain)))
+        out.append((dep, declared_image(section, dep, source, chain, coordinate)))
     return tuple(out)
 
 
-def declared(data: Mapping[str, object], name: str, source: str = "manifest") -> Image:
+def declared(data: Mapping[str, object], name: str, source: str = "manifest",
+             coordinate: str = "build:image") -> Image:
     """The image `name` declares, validated LOUDLY.
 
     The four required keys are required to BE declared rather than defaulted, for the reason every
@@ -279,48 +249,54 @@ def declared(data: Mapping[str, object], name: str, source: str = "manifest") ->
     build tags is the reference a release pushes, and an unqualified one is what docker resolves against
     Docker Hub (`simplon.imagenames.require_registry` records that failure in full). Building under one name
     and publishing under another is how an image gets pushed somewhere nobody meant.
+
+    `coordinate` is the catalogue task asking - its NEEDS apply; a product's own call keeps `build:image`'s,
+    the four keys it was always held to.
     """
     section, blame, _ = context.section(data, SECTION)
     if blame:
         raise ValueError(f"{source}: the '{SECTION}' section is missing or is not a mapping - declare "
                          f"the registry, the repository, the Dockerfile and the build context of every "
-                         f"image this product builds")
+                         f"image this product builds, as an entry of `kind: image`")
     if name not in section:
         raise ValueError(f"{source}: no image '{name}' in the '{SECTION}:' section; declared are: "
-                         f"{', '.join(sorted(str(key) for key in section)) or '(none)'}")
-    return declared_image(section, name, source, ())
+                         f"{', '.join(_image_names(section)) or '(none)'}")
+    return declared_image(section, name, source, (), coordinate)
 
 
-def declared_image(section: Mapping, name: str, source: str, chain: tuple[str, ...]) -> Image:
+def declared_image(section: Mapping, name: str, source: str, chain: tuple[str, ...],
+                   coordinate: str = "build:image") -> Image:
     """One entry of the section, validated - `declared`'s body, split out so a context is validated by the
-    very same reading as the image that names it (si#347). `chain` is the path of names that led here."""
-    body = section[name]
-    if not isinstance(body, Mapping):
-        raise ValueError(f"{source}: image '{name}' is not a mapping")
+    very same reading as the image that names it (si#347). `chain` is the path of names that led here.
+
+    The entry's kind, every key's shape and the four keys `coordinate` NEEDS are `artifactsection.entry`'s
+    (si#344 B2); what is left here is what only a BUILD can judge: two paths that stay under the product root,
+    platforms buildx can name, contexts that form no cycle. `or ""` is for the type checker - the needs are
+    there."""
+    entry = artifactsection.entry(section, name, ENTRY, source, coordinate)
     where = f"{source}: '{SECTION}.{name}'"
-    platforms = _platforms(body, where)
+    platforms = _platforms(entry.platforms or (), where)
     if platforms:
         _bake_name(name, where)
     return Image(
-        registry=_str(body, "registry", where, required=True),
-        repository=_str(body, "repository", where, required=True),
-        dockerfile=_inside_the_product(_str(body, "dockerfile", where, required=True),
-                                       "dockerfile", where),
-        context=_inside_the_product(_str(body, "context", where, required=True), "context", where),
-        build_args=_build_args(body, where),
-        tag=_str(body, "tag", where),
+        registry=entry.registry or "",
+        repository=entry.repository or "",
+        dockerfile=_inside_the_product(entry.dockerfile or "", "dockerfile", where),
+        context=_inside_the_product(entry.context or "", "context", where),
+        build_args=dict(entry.build_args or {}),
+        tag=entry.tag or "",
         platforms=platforms,
-        contexts=_contexts(section, body, (*chain, name), where, source),
+        contexts=_contexts(section, entry.contexts or (), (*chain, name), where, source, coordinate),
     )
 
 
-def _declared_for(name: str) -> tuple[Image, Path]:
+def _declared_for(name: str, coordinate: str) -> tuple[Image, Path]:
     """The declared image and the product root, or a ValueError that says which pin is missing."""
     if not name:
         raise ValueError(f"which image? pin one with `with: {{ name: ... }}` from the `{SECTION}:` "
                          f"section, or pass --name")
     ctx = context.current()
-    return declared(ctx.manifest_data(), name, source=str(ctx.manifest_path)), ctx.root
+    return declared(ctx.manifest_data(), name, source=str(ctx.manifest_path), coordinate=coordinate), ctx.root
 
 
 def missing_declared_paths(cfg: Image, root: Path) -> list[str]:
@@ -589,7 +565,7 @@ def build(name: str = "", tag: str = "", platform: str = "") -> int:
     "build the image I can run here" stays one native build on a host with no emulator, and a product
     pins it per command - firn's CI and devcontainer with `platform: linux/amd64`.
     """
-    cfg, root = _declared_for(name)
+    cfg, root = _declared_for(name, "build:image")
     if not _platform_declared(cfg, name, platform):
         return 1
     # si#74, and the order is the point: the manifest's own paths are checked BEFORE the tool is demanded,
@@ -669,7 +645,7 @@ def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect
     Every platform runs even after one has failed, because which of them failed is the whole content of
     the answer; `platform:` narrows the run to one.
     """
-    cfg, root = _declared_for(name)
+    cfg, root = _declared_for(name, "test:image")
     docker.ensure_docker()
     resolved = resolve_tag(cfg, tag, build_arguments(cfg, root).get(VERSION_ARG, ""))
     ref = reference(cfg, resolved)
@@ -757,7 +733,7 @@ def release(name: str = "", tag: str = "") -> int:
     one step declares an aggregate over them, which is where an ordering belongs.
     """
     docker.ensure_docker()
-    cfg, root = _declared_for(name)
+    cfg, root = _declared_for(name, "release:image")
     # The same derivation the build used, so the two commands name one reference without the number being
     # typed twice - and a checkout that has moved since the build says so, by naming a tag that is not on
     # this machine, rather than by publishing the wrong one.

@@ -108,6 +108,9 @@ def check(document: Mapping[str, object], kinds: Mapping[str, str], source: str)
         if not isinstance(body, Mapping):
             raise ValueError(f"{where} is not a mapping - an artifact declares its `kind:` and its keys")
         kind = body.get("kind")
+        if kind is None:
+            raise ValueError(f"{where} declares no `kind:`; every entry names one of the catalogue's kinds: "
+                             f"{', '.join(kinds)}")
         if not isinstance(kind, str) or kind not in kinds:
             raise ValueError(f"{where} declares `kind: {kind}`, which the catalogue does not declare; the "
                              f"kinds are: {', '.join(kinds)}")

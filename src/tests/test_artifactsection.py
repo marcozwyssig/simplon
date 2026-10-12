@@ -70,6 +70,9 @@ def test_the_load_time_check_ruled_on_every_entry_the_fixtures_carry():
     ("{ app: { kind: widget } }",
      "demo.yaml: 'artifacts.app' declares `kind: widget`, which the catalogue does not declare; the kinds "
      f"are: {KINDS}"),
+    ("{ app: { registry: r } }",
+     "demo.yaml: 'artifacts.app' declares no `kind:`; every entry names one of the catalogue's kinds: "
+     f"{KINDS}"),
     ("{ app: { kind: image, platforms: linux/amd64 } }",
      "demo.yaml: 'artifacts.app': 'platforms' must be a list of non-empty strings, e.g. [a, b]"),
     ("{ app: { kind: conan, mediatype: x } }",
@@ -198,3 +201,20 @@ def test_a_broken_schema_names_its_recovery(monkeypatch):
     # assert: the sentence IS the way out, because no `./simplon.sh` command runs until it is taken
     assert "git checkout -- src/simplon/artifactschema.py" in str(caught.value)
     assert "./simplon.sh build model" in str(caught.value)
+
+
+def test_every_reader_module_names_exactly_the_coordinates_the_catalogue_routes_to_it():
+    # arrange: a coordinate passed to `entry` is how a body learns its needs; a wrong one would apply
+    # another reader's needs, so each module's literals are held to the catalogue
+    tasks = catalogue.load().tasks
+    routed: dict[str, set[str]] = {}
+    for coordinate in artifactschema.READERS:
+        routed.setdefault(tasks[coordinate]["impl"].split(":")[0], set()).add(coordinate)
+
+    # act
+    named = {module: set(re.findall(r'"([a-z]+:[a-z-]+)"', importlib.import_module(module).__loader__
+                                    .get_source(module))) & set(artifactschema.READERS)
+             for module in routed}
+
+    # assert
+    assert named == routed

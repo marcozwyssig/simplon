@@ -179,3 +179,17 @@ def test_a_present_value_is_read_into_its_shape_and_an_untyped_key_is_kept_as_wr
     assert entry.build_args == {"A": "1", "B": "true"}
     assert entry.name == {"product": "reads this"}
     assert entry.tag == "1.0"
+
+
+def test_every_reader_in_the_model_is_a_coordinate_whose_body_reads_that_kind():
+    # arrange: the catalogue maps a coordinate to its body; the body's module states the class it reads
+    import importlib
+    tasks = catalogue.load().tasks
+    readers = {}
+    for coordinate, spec in tasks.items():
+        module = importlib.import_module(spec["impl"].split(":")[0])
+        if getattr(module, "SECTION", None) == "artifacts" and hasattr(module, "ENTRY"):
+            readers[coordinate] = module.ENTRY.KIND
+
+    # act / assert: both directions - a reader the model lacks, and a model reader no body has
+    assert readers == artifactschema.READERS

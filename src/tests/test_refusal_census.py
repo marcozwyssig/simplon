@@ -452,14 +452,14 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # working deployment at all. A `source:` naming a section the document does not declare, or an entry
     # that is a bare string rather than a mapping, or one carrying no registry, does not describe a
     # different deployment - it describes none. Two of the shapes are measured rather than imagined:
-    # netctl's `images:` entries are bare strings and biz-cockpit's carry `name` and no registry, so both
+    # netctl's local images carry no registry and biz-cockpit's carry `name` beside one, so both
     # are refused by name with the keys the entry does have.
     #
     # None of them is an expression rule, so none needs a REACH entry: there is no manifest a product
     # might legitimately want that any of these forbids.
     ("deployment", "source_of", "cannot say which version it is deploying"): DIAGNOSIS,
     ("deployment", "source_of", "there is nowhere to look a version up"): DIAGNOSIS,
-    ("deployment", "source_of", "it takes exactly one of"): DIAGNOSIS,
+    ("deployment", "source_of", "it takes exactly one key"): DIAGNOSIS,
     ("deployment", "source_of", "names no entry"): DIAGNOSIS,
     ("deployment", "source_of", "carries no registry to deploy from: a deployable entry needs"): DIAGNOSIS,
     ("deployment", "_entry", "does not declare as a section"): DIAGNOSIS,
@@ -728,14 +728,9 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # --- tasks/docs.py: the docToolchain image tag ----------------------------------------------------
     ("docs", "_version", "pin the docToolchain image tag"): DIAGNOSIS,
 
-    # --- tasks/image.py: the `images:` section (agile-cockpit declares one) ----------------------------
+    # --- tasks/image.py: `artifacts:` entries of `kind: image` (agile-cockpit declares one) ---
     ("image", "declared", "section is missing or is not a mapping - declare the registry"): DIAGNOSIS,
     ("image", "declared", "no image '{name}' in the"): DIAGNOSIS,
-    ("image", "declared_image", "image '{name}' is not a mapping"): DIAGNOSIS,
-    ("image", "_str", "is required"): DIAGNOSIS,
-    ("image", "_str", "must be a non-empty string"): DIAGNOSIS,
-    ("image", "_build_args", "'build_args' must be a mapping of name to value"): DIAGNOSIS,
-    ("image", "_build_args", "must be a scalar, not"): DIAGNOSIS,
     # si#347, firn's two-platform image. Every one of these is a declaration buildx could not carry out:
     # a platform string it refuses, a name it cannot use for a bake target, a context nothing declares or
     # that leads back to itself. Three more were written and DELETED instead of entered here, by the
@@ -743,10 +738,8 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # context listed twice build a working image, so they are read (as absent, and once) rather than
     # refused; and "a context needs a constant `tag:`" became a derivation - the context is named under
     # the tag its own build would use, so a Dockerfile with `ARG VERSION` before FROM is not forbidden.
-    ("image", "_platforms", "'platforms' must be a list of platforms"): DIAGNOSIS,
     ("image", "_platforms", "is not '<os>/<arch>[/<variant>]'"): DIAGNOSIS,
     ("image", "_bake_name", "cannot name a buildx bake target"): DIAGNOSIS,
-    ("image", "_contexts", "'contexts' must be a list of image names"): DIAGNOSIS,
     ("image", "_contexts", "contexts form a cycle"): DIAGNOSIS,
     ("image", "_contexts", "is not an image in the '{SECTION}:' section"): DIAGNOSIS,
 
@@ -764,6 +757,18 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("artifactsection", "check", "must be a mapping of artifact name to its entry"): DIAGNOSIS,
     ("artifactsection", "check", "is not a mapping - an artifact declares"): DIAGNOSIS,
     ("artifactsection", "check", "which the catalogue does not declare; the kinds are"): DIAGNOSIS,
+    # An entry with no `kind:` at all: its own sentence, so the reader is not told "`kind: None`".
+    ("artifactsection", "check", "declares no `kind:`; every entry names one"): DIAGNOSIS,
+    # `entry` is the use-time half, reached from `tasks.image.declared`: the entry is a mapping, of a kind the
+    # kernel knows, and of the kind the task reads or one that refines it. A wrong kind is a manifest whose
+    # task would read keys the entry does not have - nothing built, nothing published.
+    ("artifactsection", "entry", "is not a mapping - an artifact declares"): DIAGNOSIS,
+    ("artifactsection", "entry", "names no kind this kernel knows"): DIAGNOSIS,
+    ("artifactsection", "entry", "and this task reads a"): DIAGNOSIS,
+    # What a reader NEEDS, from the model (`NEEDS`): a missing one is a command that cannot run as declared.
+    # One site for all ten readers; it replaces `image._str`'s "is required" and the hand-written presence
+    # loops of the four package readers (those were inline, outside the census, and are gone).
+    ("artifactsection", "entry", "declares no `"): DIAGNOSIS,
     ("artifactschema", "_known", "is not a key of a"): DIAGNOSIS,
     ("artifactschema", "_typed", "is written with no value"): DIAGNOSIS,
     ("artifactschema", "_typed", "must be a non-empty string or a number"): DIAGNOSIS,
@@ -1102,7 +1107,7 @@ def _inline_readers() -> tuple[str, ...]:
 #     `Model.model_validate(X)`, which reads the model's fields - except a key the kernel itself wrote into
 #     the spread it validates (`load` validates `{**data, "groups": ..., "tasks": {}}`, so `groups` there
 #     is the kernel's own output, not the manifest's).
-#   - `k` is a string, a module constant bound to strings (`SECTION`, `SOURCE_SECTIONS`), or a loop
+#   - `k` is a string, a module constant bound to strings (`SECTION`, `SOURCE_SECTION`), or a loop
 #     variable over them (`for area in ("ci", "cd")`).
 #
 # AND ONE RULE SEPARATES A KEY THE KERNEL MODELS FROM ONE IT READS ONLY TO REFUSE. si#344 refuses
@@ -1146,7 +1151,7 @@ def _inline_readers() -> tuple[str, ...]:
 
 
 def _string_constants(module: _Module) -> dict[str, tuple[str, ...]]:
-    """name -> the strings a module-level constant binds (`SECTION = "x"`, `SOURCE_SECTIONS = ("a", "b")`)."""
+    """name -> the strings a module-level constant binds (`SECTION = "x"`, `SECTIONS = ("a", "b")`)."""
     out: dict[str, tuple[str, ...]] = {}
     for node in module.tree.body:
         if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
@@ -1655,14 +1660,9 @@ def test_every_hand_off_of_the_document_is_followed():
         f"reads is missing from sections_read(): {list(unresolved)}")
 
 
-KEY_READS_COVERED = {
-    # `_entry(document, kind, ...)` reads the section a `cd: source:` names, so `kind` is a parameter.
-    # Both sections it can be are counted anyway: `SOURCE_SECTIONS = ("images", "artifacts")` is a
-    # SECTION constant, and test_the_sections_the_kernel_reads_include_every_declared_section_constant
-    # holds every such constant inside sections_read().
-    "deployment._entry: document.get(kind)": "SOURCE_SECTIONS, via the SECTION-constant cross-check",
-    "deployment._entry: document.get(k)": "SOURCE_SECTIONS, via the SECTION-constant cross-check",
-}
+#: Empty since si#344 B2: `deployment._entry` reads `document.get(SOURCE_SECTION)`, a constant the walk
+#: resolves, where it read `document.get(kind)` with `kind` a parameter.
+KEY_READS_COVERED: dict[str, str] = {}
 
 
 def test_every_unresolved_key_read_is_named():
