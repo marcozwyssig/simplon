@@ -10,12 +10,15 @@ The project is simplon's own (`src/firn.toml`, `src/firn/`), copied, so a model 
 
 AAA throughout.
 """
+import re
 import shutil
 from pathlib import Path
 
 import pytest
+import yaml
 
 from conftest import docker_is_usable
+from simplon import catalogue
 from simplon.run import run
 from simplon.tasks import profiles, toolchain
 
@@ -85,10 +88,22 @@ def test_a_usage_error_comes_back_as_2(tree):
 
 
 @needs_docker
-def test_gen_over_a_model_with_no_template_writes_nothing_and_succeeds(tree):
-    # arrange / act
+def test_gen_writes_both_targets_and_the_fresh_catalogue_is_refused_for_having_no_tasks(tree):
+    # arrange: the kinds the model declares, in the kernel's spelling (firn#962: a firn name has no `-`)
+    kinds_model = tree / "src" / "firn" / "model" / "simplon" / "vocabulary" / "kinds.firn"
+    model = re.findall(r"^(\w+) typeOf simplon\.pipeline\.ArtifactKind", kinds_model.read_text(), re.M)
+    expected = {name.replace("_", "-") for name in model}
+    catalogue_file = tree / "src" / "simplon" / "catalogue.yaml"
+    page = tree / "src" / "site" / "content" / "with-what" / "kinds.md"
+
+    # act: the copy carries no catalogue, so gen writes one from nothing - an empty region
     rc = _rc(tree, "gen")
 
-    # assert
+    # assert: both targets written, every kind present
     assert rc == 0
-    assert not any((tree / "src" / "firn" / "gen").glob("**/*.*"))
+    assert catalogue_file.is_file() and page.is_file()
+    assert len(model) > 0, "the model regex found no kinds - this test would pass over nothing"
+    assert set(yaml.safe_load(catalogue_file.read_text(encoding="utf-8"))["kinds"]) == expected
+    # ...and a catalogue gen wrote over a missing file loads as nothing: the loader must refuse it
+    with pytest.raises(ValueError, match="declares no tasks"):
+        catalogue.load(catalogue_file)
