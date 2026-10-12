@@ -136,11 +136,11 @@ def test_an_image_is_an_artifact_of_the_image_kind():
     # act
     block = _block(_export(), "artifacts a_kernel typeOf simplon.pipeline.Artifact {")
 
-    # assert: the entry is there; its declared kind reaches the model with Task 8 of si#344 B2
-    assert 'key = "kernel"' in block
+    # assert
+    assert 'key = "kernel"' in block and "kind = simplon.vocabulary.image" in block
 
 
-def test_an_artifacts_entry_is_an_artifact_of_the_artifact_kind():
+def test_an_artifacts_entry_carries_its_declared_kind_and_its_path():
     # arrange
     # (DEMO declares `artifacts:` already since si#344 B2, so the entry joins it: a second `artifacts:` key
     # would be a key written twice, which YAML resolves by dropping the first)
@@ -152,7 +152,21 @@ def test_an_artifacts_entry_is_an_artifact_of_the_artifact_kind():
                    "artifacts a_updatesite typeOf simplon.pipeline.Artifact {")
 
     # assert
-    assert 'key = "updatesite"' in block and "kind = simplon.vocabulary.artifact" in block
+    assert 'key = "updatesite"' in block and "kind = simplon.vocabulary.directory" in block
+    assert 'path = "build/site"' in block
+
+
+def test_a_kind_with_a_dash_is_exported_by_its_firn_name():
+    # arrange: firn names have no `-` (firn#962)
+    text = DEMO.replace("artifacts:\n", "artifacts:\n  junit: { kind: test-result, path: build/junit }\n", 1)
+
+    # act
+    block = _block(manifestmodel.export(_load(DEMO), yaml.safe_load(text), "demo",
+                                        manifestmodel.KERNEL_SECTIONS),
+                   "artifacts a_junit typeOf simplon.pipeline.Artifact {")
+
+    # assert
+    assert "kind = simplon.vocabulary.test_result" in block
 
 
 def test_a_product_section_is_opaque_product_data():

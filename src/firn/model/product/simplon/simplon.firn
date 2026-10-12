@@ -345,7 +345,7 @@ simplon typeOf simplon.manifest.Product {
   }
   artifacts a_kernel typeOf simplon.pipeline.Artifact {
     key = "kernel"
-    kind = simplon.vocabulary.artifact
+    kind = simplon.vocabulary.image
   }
   website s_website typeOf simplon.manifest.KernelSection {
     key = "website"

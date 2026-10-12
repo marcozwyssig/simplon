@@ -41,7 +41,7 @@ matrix); whether it names a real one stays `environments.parse_data`'s verdict a
 Every ModelExportError is a DIAGNOSIS (CLAUDE.md's first kind): the manifest loaded, and the model would
 otherwise hold less than it does or something it does not. Each one names what it cannot hold - two
 names that mangle alike, a group named like a prefixed child, a member that resolves to no one command,
-a group in no area, a matrix or an `artifacts:` that is not a mapping. Today they fire at RUN
+a group in no area, a matrix or an `artifacts:` that is not a mapping, or an entry without a kind. Today they fire at RUN
 time of an opt-in command (`support manifest model`) and are outside the refusal census, which counts
 what refuses on the way from a manifest to a decision. Once parts B/C generate from this model they sit
 on that load path, and each needs a census entry then.
@@ -218,17 +218,25 @@ class _Export:
         return lines
 
     def artifacts(self, document: Mapping[str, object]) -> list[str]:
-        # kinds are coarse on purpose: part B refines them (spec B.2)
+        # Each entry with the kind it DECLARES (si#344 B2) - `load` has held every kind to the catalogue
+        # before the bridge runs, so the kind is a resource of simplon.vocabulary - and its `path:` when it has
+        # one. `registry:` stays out: the model's Registry is a resource of its own, and no reader needs one yet.
         lines: list[str] = []
-        for section, prefix, kind in (("artifacts", "a_", "artifact"),):
-            entries = document.get(section)
-            if entries is None:
-                continue
-            if not isinstance(entries, Mapping):
-                raise ModelExportError(f"{section}: is a {type(entries).__name__}, not a mapping")
-            for entry in entries:
-                lines += _block(f"{section} {self.names(str(entry), prefix)} typeOf simplon.pipeline.Artifact",
-                                [f"key = {_q(str(entry))}", f"kind = simplon.vocabulary.{kind}"])
+        entries = document.get("artifacts")
+        if entries is None:
+            return lines
+        if not isinstance(entries, Mapping):
+            raise ModelExportError(f"artifacts: is a {type(entries).__name__}, not a mapping")
+        for entry, body in entries.items():
+            kind = body.get("kind") if isinstance(body, Mapping) else None
+            if not isinstance(kind, str):
+                raise ModelExportError(f"artifacts: {entry} declares no kind the model can name")
+            fields = [f"key = {_q(str(entry))}", f"kind = simplon.vocabulary.{mangle(kind)}"]
+            path = body.get("path")
+            if isinstance(path, str):
+                fields.append(f"path = {_q(path)}")
+            lines += _block(f"artifacts {self.names(str(entry), 'a_')} typeOf simplon.pipeline.Artifact",
+                            fields)
         return lines
 
     def sections(self, document: Mapping[str, object], kernel_sections: frozenset[str]) -> list[str]:
