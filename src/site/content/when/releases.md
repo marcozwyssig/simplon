@@ -72,7 +72,7 @@ is missing or holds nothing but its header (firn#966).
 ### Smaller changes
 
 - `deploy/image/image.pin` points at the published v0.29.0 image (#384).
-- These notes.
+- These notes (#386).
 
 ## 0.29.0
 
