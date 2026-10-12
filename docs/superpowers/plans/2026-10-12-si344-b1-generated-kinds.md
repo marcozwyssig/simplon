@@ -42,6 +42,8 @@ netctl, biz-cockpit and agile-cockpit have named their B.4 costs.
   the `file` block is outside any `for`.
 - The wiped file still loads: `catalogue.loads` returns 0 tasks and raises nothing.
 - Two targets in one project → no `.firn-cache` at all; one target → `.firn-cache/` beside `firn.toml`.
+  **Correction (Task 5, measured): refuted.** With two targets `src/.firn-cache` is still written (`build.bin`,
+  `inputs.hash`); the ignore line stays.
 - A target with `path = "."` is refused (E105: it overlaps the model folder). Two targets are the way.
 - `firn check` does not evaluate templates (rc 0 over a template that fails at `gen`).
 - Generated files are written with mode 0600.

@@ -416,8 +416,8 @@ model in CI: `simplon.yaml` lists it under `generated:`, so `test generated` fai
 is not what the command writes, and `test model` runs `firn check` over it with the M2 packages beside it.
 A product's exported model names `simplon.manifest.*` and `simplon.pipeline.*`, and those packages live in
 this repository's `src/firn/`, not in the kernel's interface: checking a product's model needs simplon's
-M2 beside it, and shipping the M2 for that is not done yet. (The wheel happens to carry `src/firn/` today
-as a top-level `firn/` directory - a packaging accident, not a place to read it from.)
+M2 beside it, and shipping the M2 for that is not done yet. (The wheel carries `simplon` only: `firn*` and
+`site*` are excluded, si#378, and `test_wheel` holds it.)
 
 `support:ci-privileges` is the one that is offered for a different reason (si#92). It reads no section at
 all, so by the test above it could be placed - and it deliberately is not, because it grants
