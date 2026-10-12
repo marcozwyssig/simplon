@@ -21,6 +21,7 @@ template ArtifactSchema {
     |"""
     |from __future__ import annotations
     |
+    |import datetime
     |import difflib
     |from collections.abc import Mapping
     |from typing import ClassVar, TypeAlias
@@ -103,8 +104,9 @@ template ArtifactSchema {
         |        if shape == "untyped":
         |            return value
         |        if shape == "text":
-        |            # A number is a value here, read as the readers always read it (`str(...)`); a bool is not.
-        |            if isinstance(value, bool) or not isinstance(value, (str, int, float)) or not str(value).strip():
+        |            # A number or an unquoted YAML date is a value here, read as the readers always read it (`str(...)`);
+        |            # a bool is not.
+        |            if isinstance(value, bool) or not isinstance(value, (str, int, float, datetime.date)) or not str(value).strip():
         |                raise ValueError(f"'{key}' must be a non-empty string or a number")
         |            return str(value).strip()
         |        if shape == "texts":

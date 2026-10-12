@@ -148,6 +148,25 @@ def test_a_number_is_a_value_read_as_a_string(kind):
     assert entry.tag == "25"
 
 
+def test_an_unquoted_yaml_date_is_a_value_read_as_its_iso_text():
+    # arrange: what `yaml.safe_load` gives for `tag: 2026-10-12` - a date, which `str(...)` always read as ISO text
+    import yaml
+    body = yaml.safe_load("kind: image\nregistry: ghcr.io/o\ntag: 2026-10-12\n")
+
+    # act
+    entry = artifactschema.validate("image", body)
+
+    # assert
+    assert entry.tag == "2026-10-12"
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_a_bool_is_still_not_a_text(value):
+    # act / assert: the date opening is not a general scalar opening
+    with pytest.raises(ValueError, match="'tag' must be a non-empty string or a number"):
+        artifactschema.validate("image", {"kind": "image", "tag": value})
+
+
 def test_a_present_value_is_read_into_its_shape_and_an_untyped_key_is_kept_as_written():
     # act
     entry = artifactschema.validate("image", {
