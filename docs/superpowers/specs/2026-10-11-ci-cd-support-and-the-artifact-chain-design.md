@@ -323,13 +323,16 @@ kinds:
   | `gen` over a file without region markers overwrites it, every line lost | the markers were committed first (add64c4), before any `gen` touched the file |
   | a deleted or reworded marker wipes the region (819 to 17 lines) | `test_the_hand_written_region_is_marked_exactly_once_and_in_order`, `test_the_region_carries_the_task_tree`, and `catalogue.load` refuses a file with no tasks |
   | a selector that answers nothing writes an empty `kinds:` | `test_every_kind_in_the_model_is_in_the_generated_section`, and `catalogue.loads` refuses a `kinds:` that is declared and empty |
+  | a hand-written line outside the region (a task added after the id line loads, and the next `gen` deletes it; `test generated` is green over the deletion while unstaged) | a comment inside the region says where new tasks go; `test_own_region_guard.py` pins the outside on the committed file through `orchestrator.cli:outside_region`, and the same function is `build model-guard`, the first step of `build model`, whose `stop_on_failure: true` keeps `model-gen` from running after it refuses |
   | generated files are written mode 0600, and setuptools carries the mode into the wheel | `build model` is an aggregate: `model-gen` (firn gen), then `model-mode` (simplon's own product task `make-readable`, `orchestrator.cli:make_readable`, sets 0644 on the generated files); `test_the_catalogue_in_the_wheel_is_readable_by_everyone` in `test_wheel.py` holds the wheel |
 
   The zero-tasks refusal sits in `catalogue.load(path)` (the shipped file), not in `loads(text)`: a
   group-only stub catalogue with `tasks: {}` is legitimate and `loads` must keep accepting it (measured:
   eight tests use one). A stale `build/lib` can keep a 0600 copy in a local wheel, because setuptools copies by
-  mtime and a chmod does not change it. Also measured: `src/.firn-cache` is still written with two targets
-  (the spike's "no cache" claim was refuted), so it stays ignored.
+  mtime and a chmod does not change it. The cache: with two targets neither `gen` nor `check` writes
+  `src/.firn-cache`, and a one-target control run does (measured 2026-10-12 by the final review, and again
+  by its fix wave). The spike was right; Task 5's "still written" came from a leftover of the one-target era
+  in the real tree. The ignore line stays, for a one-target run and for a test's copy.
 - **firn tickets behind these:** firn#966 (an empty result or a partial file is still rc 0), firn#967
   (a symlink escapes E104), firn#849 (`check` does not evaluate templates). The two protected-region findings
   (no markers overwrites; a lost marker wipes) were reported to firn on 2026-10-12; we have no ticket number

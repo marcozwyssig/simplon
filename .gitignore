@@ -42,6 +42,8 @@ src/site/.hugo_build.lock
 tests/allure-results/
 tests/reports/
 
-# firn's build cache in simplon's firn project (si#371). firn keeps one (build.bin, inputs.hash) with one
-# target and still with two (re-measured si#344 B1 task 5, v0.1.0); what `firn gen` writes is committed (`generated:` in simplon.yaml).
+# firn's build cache in simplon's firn project (si#371). firn v0.1.0 writes one (build.bin, inputs.hash) with
+# one target and none with two (measured 2026-10-12 by si#344 B1's final review; Task 5's "still written"
+# was a leftover). The line stays for a one-target run and a test's copy; what `firn gen` writes is committed
+# (`generated:` in simplon.yaml).
 src/.firn-cache/
