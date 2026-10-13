@@ -29,8 +29,11 @@ the artifact schema from them. Part 1 puts the architecture itself into the mode
 2. **Package layout:** modules move into one package per component; the old paths stay importable
    through `surface.MOVED` until a stated release, and each product gets an issue.
 3. **Resolve the exceptions** one ticket at a time.
-4. **Generate the model classes** (Task, Command, Group, Area, ... from `pipeline.firn`) so the
-   hand-written `CommandSpec`, `Manifest` and `_ManifestModel` go; touches si#344 part C and si#346.
+4. **Base classes, and tasks modelled and generated.** The kernel defines `Task` and `Command` as the
+   base classes of every task and command. The tasks are modelled in firn (`simplon.pipeline.Task`, with
+   its ports and parameters) and their classes generated, the body by hand; the hand-written
+   `CommandSpec`, `Manifest` and `_ManifestModel` go. Touches si#344 part C and si#346. See "Part 4,
+   decided now" below.
 
 ## Decisions (Marco, 2026-10-13)
 
@@ -48,12 +51,16 @@ the artifact schema from them. Part 1 puts the architecture itself into the mode
 7. The generated data file is **test code**: `src/tests/architecture.py`, not in the wheel and not on the
    surface.
 8. The exceptions name tickets; four, grouped by cause, opened in the plan before the model names them.
+9. The kernel **defines the base classes for tasks and commands**; every task derives from them (part 4).
+10. **Every task must derive from the base class, the products' too** - a function body named by `impl:`
+    will be refused. This is an **expression rule** and is costed before it ships (below).
+11. The base classes stay **part 4**; part 1 changes only the kernel's sentence.
 
 ## The components
 
 | layer | component | what it is for | modules |
 |---|---|---|---|
-| 0 | kernel | running a plan: steps, outcomes, the subprocess seam, the log | `orchestrator.steps`, `orchestrator.product`, `run`, `log`, `verdict`, `steplog`, `waits`, `degraded`, `filelock` |
+| 0 | kernel | the base classes of tasks and commands (from part 4), and running a plan: steps, outcomes, the subprocess seam, the log | `orchestrator.steps`, `orchestrator.product`, `run`, `log`, `verdict`, `steplog`, `waits`, `degraded`, `filelock` |
 | 1 | domain | reading the configuration, validating it, building the plan | `orchestrator.manifest`, `orchestrator.model.treeform`, `yamlkeys`, `artifactsection`, `artifactschema`, `environments`, `carrierspec`, `layout`, `outputs`, `deployment`, `signatures`, `context`, `catalogue`, `runners`, `manifestmodel`, `clitaxonomy` |
 | 2 | adapters | the tools and platforms a task drives | `awake`, `backend`, `checksum`, `clablifecycle`, `clabrender`, `compose`, `credentials`, `devcontainer`, `disk`, `diskguard`, `docker`, `fetch`, `githubpackages`, `healthgate`, `host`, `hostpath`, `imagenames`, `interact`, `labegress`, `labhost`, `labinstance`, `labnet`, `linux`, `nexusproxy`, `oras`, `portainer`, `ports`, `pyvenv`, `tools`, `topology`, `tracker` |
 | 3 | tasks | the catalogue's task bodies, and the generators they call | every module of `tasks/`, plus `taskgen`, `completiongen`, `workflowgen` |
@@ -149,6 +156,24 @@ resolved at run time, and no layer applies to it. Whether that is a gap is for p
 - No exception is resolved (part 3).
 - No class is generated from `pipeline.firn` (part 4).
 - No census change: nothing here is a refusal of a manifest.
+
+## Part 4, decided now
+
+Recorded here because Marco decided it during this design; part 4 gets its own spec.
+
+- **Today there is no base class.** Every one of the catalogue's task bodies is a plain top-level
+  function, named by text (`impl: "simplon.tasks.vcs:commit"`); `signatures.py` reads its parameters
+  with `inspect` at run time to bind `with:` and to render the Typer commands (`taskgen`). Measured
+  2026-10-13: 50 catalogue bodies, all `def`, most with 0-2 parameters, the largest with 8 and 9.
+- **The products write their bodies the same way.** Measured 2026-10-13 through the GitHub API, the
+  `impl:` entries under each live manifest's own `tasks:`: netctl 52 (in `orchestrator.cli` and
+  `orchestrator.tooling`), biz-cockpit 22, asbundle 15, cleon 12, swi 11 (`packer.commands`), simplon 6,
+  firn 4, agile-cockpit 3. Whether each target is a function was not measured; `impl:` names a callable.
+- **The rule "every task derives from the base class" is an expression rule**: a function body produces
+  a working product today. Before part 4 ships, each product's peer session measures what rewriting its
+  bodies costs - not the count above, the surface: bodies, their tests, their callers (CLAUDE.md, #34).
+  The migration path (a generated wrapper, a `migrate` step, or a deprecation window that still accepts a
+  function and says so) is part 4's design.
 
 ## Gates
 
