@@ -137,6 +137,11 @@ def test_an_entry_without_a_registry_names_what_it_does_carry(tmp_path, monkeypa
         deployment.declared()
 
 
+def _never(*_):
+    """A registry question this test's selector must not ask."""
+    pytest.fail("the registry was asked")
+
+
 # --- the three values ---------------------------------------------------------------------------------
 
 
@@ -145,10 +150,10 @@ def test_local_touches_no_registry_at_all(tmp_path, monkeypatch):
     up and nothing that can fail because a registry is unreachable."""
     # Arrange
     _product(tmp_path, monkeypatch, _GOOD)
-    monkeypatch.setattr(deployment, "_newest", lambda source: pytest.fail("latest was resolved"))
-    monkeypatch.setattr(deployment, "_serves", lambda source, tag: pytest.fail("the registry was asked"))
     # Act
-    version = deployment.resolve("local", deployment.declared())
+    version = deployment.resolve("local", deployment.declared(),
+                                 newest=lambda source: pytest.fail("latest was resolved"),
+                                 serves=lambda source, tag: pytest.fail("the registry was asked"))
     # Assert
     assert version.builds is True and version.tag == "" and version.selector == "local"
 
@@ -156,9 +161,8 @@ def test_local_touches_no_registry_at_all(tmp_path, monkeypatch):
 def test_latest_is_the_newest_published_tag(tmp_path, monkeypatch):
     # Arrange
     _product(tmp_path, monkeypatch, _GOOD)
-    monkeypatch.setattr(deployment, "_newest", lambda source: "1.4.0")
     # Act
-    version = deployment.resolve("latest", deployment.declared())
+    version = deployment.resolve("latest", deployment.declared(), newest=lambda source: "1.4.0", serves=_never)
     # Assert: resolved to a concrete tag, and it is NOT a build
     assert version.tag == "1.4.0" and version.builds is False
     assert version.selector == "latest"
@@ -167,9 +171,9 @@ def test_latest_is_the_newest_published_tag(tmp_path, monkeypatch):
 def test_a_named_version_the_registry_serves_resolves_to_itself(tmp_path, monkeypatch):
     # Arrange
     _product(tmp_path, monkeypatch, _GOOD)
-    monkeypatch.setattr(deployment, "_serves", lambda source, tag: True)
     # Act
-    version = deployment.resolve("1.4.0", deployment.declared())
+    version = deployment.resolve("1.4.0", deployment.declared(), newest=_never,
+                                 serves=lambda source, tag: True)
     # Assert
     assert version.tag == "1.4.0" and version.builds is False
 
@@ -180,12 +184,12 @@ def test_a_named_version_the_registry_does_not_serve_is_refused_before_anything_
     tool's error, which names neither the version nor the registry it was looked for in."""
     # Arrange
     _product(tmp_path, monkeypatch, _GOOD)
-    monkeypatch.setattr(deployment, "_serves", lambda source, tag: False)
     # Act / Assert: the message carries both halves a reader needs to act - which version, and which
     # registry it was looked for in. Asserted independently, because the order they read best in is the
     # message's business and not this test's.
     with pytest.raises(ValueError) as refusal:
-        deployment.resolve("9.9.9", deployment.declared())
+        deployment.resolve("9.9.9", deployment.declared(), newest=_never,
+                           serves=lambda source, tag: False)
     assert "9.9.9" in str(refusal.value)
     assert "ghcr.io/acme/demo-app" in str(refusal.value)
 
@@ -197,7 +201,7 @@ def test_asking_for_nothing_is_refused_rather_than_defaulted(tmp_path, monkeypat
     _product(tmp_path, monkeypatch, _GOOD)
     # Act / Assert
     with pytest.raises(ValueError, match=r"latest.*local"):
-        deployment.resolve("", deployment.declared())
+        deployment.resolve("", deployment.declared(), newest=_never, serves=_never)
 
 
 # --- the client-or-server axis (si#235) ---------------------------------------------------------------
