@@ -1,0 +1,43 @@
+template ArchitectureData {
+
+  // src/tests/generated/architecture.py (si#390 part 1): the components, every module's component, the exclusions
+  // and the exceptions, as Python data for src/tests/test_architecture.py. A WHOLE file with no protected
+  // region. The `file` block stands outside every `for`, so a selector that answers nothing leaves a file
+  // with empty collections rather than no file - and `build model-whole` refuses a missing one.
+  file "architecture.py" language python {
+    |# GENERATED from src/firn/model/simplon/components/components.firn by `./simplon.sh build model`. Do not
+    |# edit: firn rewrites the whole file on every run. Read by src/tests/test_architecture.py (si#390).
+    |"""simplon's components, the module each one holds, and the named exceptions to the layers (si#390)."""
+    |from __future__ import annotations
+    |
+    |#: Each component's layer and what it is for. An import stays in its component or goes to a lower layer.
+    |COMPONENTS: dict[str, tuple[int, str]] = {
+    for c : `simplon.architecture.Component` {
+      |    "${c.key}": (${c.layer}, "${c.summary}"),
+    }
+    |}
+    |
+    |#: Every module below src/simplon/ that belongs to a component, by its dotted path.
+    |MODULES: dict[str, str] = {
+    for c : `simplon.architecture.Component` {
+      for m : c.module {
+        |    "${m.path}": "${c.key}",
+      }
+    }
+    |}
+    |
+    |#: The modules that belong to no component, and why.
+    |EXCLUDED: dict[str, str] = {
+    for e : `simplon.architecture.Excluded` {
+      |    "${e.path}": "${e.reason}",
+    }
+    |}
+    |
+    |#: (importer, imported, reason, ticket): each import against the layers, until its ticket resolves it.
+    |EXCEPTIONS: tuple[tuple[str, str, str, str], ...] = (
+    for x : `simplon.architecture.Exception` {
+      |    ("<<for m : x.importer>>${m.path}<<end>>", "<<for m : x.imported>>${m.path}<<end>>", "${x.reason}", "${x.ticket}"),
+    }
+    |)
+  }
+}

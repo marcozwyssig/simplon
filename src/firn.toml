@@ -12,6 +12,14 @@ templates = ["firn/templates"]
 path = "simplon"
 templates = ["Catalogue", "ArtifactSchema"]
 
+# The architecture's data (si#390 part 1): test code, read by src/tests/test_architecture.py, never shipped.
+# Its own directory, which firn owns whole: firn v0.1.0 deletes, with rc 0, any file in a target that holds a
+# line shaped like its id line - with `path = "tests"` that was src/tests/test_own_whole_files.py, whose test
+# cases spell id lines (measured twice, 2026-10-13).
+[target.tests]
+path = "tests/generated"
+templates = ["ArchitectureData"]
+
 # The kinds reference page of the website.
 [target.site]
 path = "site/content/with-what"

@@ -180,13 +180,15 @@ ci:
       model-whole:
         task: whole-files
         with:
-          files: [src/simplon/catalogue.yaml, src/site/content/with-what/kinds.md, src/simplon/artifactschema.py]
+          files: [src/simplon/catalogue.yaml, src/site/content/with-what/kinds.md, src/simplon/artifactschema.py,
+                 src/tests/generated/architecture.py]
       # firn writes 0600; see `model` above. The generated .py is listed for existence (make-readable refuses
       # a missing file); its mode matters for the wheel's yaml, not for the module.
       model-mode:
         task: make-readable
         with:
-          files: [src/simplon/catalogue.yaml, src/site/content/with-what/kinds.md, src/simplon/artifactschema.py]
+          files: [src/simplon/catalogue.yaml, src/site/content/with-what/kinds.md, src/simplon/artifactschema.py,
+                 src/tests/generated/architecture.py]
   test:
     commands:
       # The pytest suite (si#156). It answered to `all` until that ticket; what took the name is the
@@ -524,6 +526,11 @@ generated:
   # protected region, so a hand edit is lost on the next `build model` and is red here first.
   artifact-schema:
     path: src/simplon/artifactschema.py
+    by: build model
+  # The architecture's data (si#390 part 1), generated WHOLE by firn into the tests: it has no protected
+  # region, so a hand edit is lost on the next `build model` and is red here first.
+  architecture-data:
+    path: src/tests/generated/architecture.py
     by: build model
 
 artifacts:
