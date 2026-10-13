@@ -35,7 +35,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
-from simplon import context
+from simplon import context, log
 from simplon.layout import validate_relative_dir
 
 #: The manifest key. A top-level SCALAR rather than a section: it carries one value, and a section would
@@ -154,3 +154,53 @@ def home_in_container(mount_point: str) -> str:
     ctx = context.current()
     relative = root().relative_to(ctx.root).as_posix()
     return f"{mount_point.rstrip('/')}/{relative}/{HOME}"
+
+
+#: Said once per process rather than once per step: a run has as many steps as it likes, and the same
+#: sentence forty times is a way of not being read.
+_SAID: set[str] = set()
+
+
+def _warn_once(message: str) -> None:
+    if message not in _SAID:
+        _SAID.add(message)
+        log.warn(message)
+
+
+def log_directory() -> Path | None:
+    """`<output>/logs`, or None when there is nowhere to put one. The step logs' and the run transcript's
+    directory: the kernel's `steplog` asks for it through the run host `cli.main` registers (si#391),
+    because the answer is read off the product's manifest and the kernel reads no manifest.
+
+    NO PRODUCT REGISTERED IS NONE, and it is silent on purpose: the kernel is imported in places that
+    never register one - a unit test, a scaffolder run - and writing a log there is a courtesy nobody
+    asked for.
+
+    A MANIFEST THAT IS NOT THERE takes the convention without a word - there is no declaration to
+    honour, so there is nothing to report.
+
+    A PRODUCT WHOSE MANIFEST IS BROKEN, or whose `output:` cannot be acted on, STILL GETS ITS LOGS, in the default root, and hears about
+    it once. That direction is deliberate and it was found by breaking it: reading the manifest here is
+    new (si#314), and the first version let an unreadable or impossible `output:` cost the run its whole
+    record - the step logs AND the transcript, which is the one artefact somebody attaches to a ticket
+    when a run goes wrong. Losing the account of a failure BECAUSE something else was already wrong is
+    exactly backwards. The default needs no manifest to be known, so it is what a broken declaration
+    falls back to, and the fallback says so rather than quietly writing somewhere the product did not
+    name.
+    """
+    try:
+        ctx = context.current()
+    except RuntimeError:
+        return None
+    if not ctx.manifest_path.is_file():
+        # NO MANIFEST AT ALL IS NOT A BROKEN DECLARATION, and it is silent for the same reason the
+        # unregistered case is: there is nothing to honour, so the convention applies and nobody needs
+        # telling. The kernel is registered against trees that carry no manifest - a scaffolder run
+        # mid-write, a unit test - and a line of narration there would be noise on every step.
+        return ctx.root / DEFAULT / "logs"
+    try:
+        return for_kind("logs")
+    except (RuntimeError, ValueError) as broken:
+        _warn_once(f"step logs and the run transcript go to '{DEFAULT}/logs' rather than where "
+                   f"'{KEY}:' points: {broken}")
+        return ctx.root / DEFAULT / "logs"

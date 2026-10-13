@@ -5,7 +5,7 @@
 package simplon.architecture
 
 // One component on one layer. An import may stay inside its component or go to a strictly lower layer.
-// `layer` is an integer written as text (0-4); `summary` is one sentence, with no double quote in it,
+// `layer` is an integer written as text (0-5); `summary` is one sentence, with no double quote in it,
 // because the generated data file carries it in a Python string.
 Component typeOf firn.core.Class extends firn.core.NamedResource {
   allowRoot = true

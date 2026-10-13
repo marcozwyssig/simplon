@@ -183,9 +183,12 @@ PACKAGES = frozenset({"orchestrator", "tasks"})
 #: regeneration can never break a product's import.
 #: `yamlkeys` (si#344 B2) is the loader both manifest seams parse with; a product reads its manifest
 #: through `context.manifest_data`, which uses it, and has no reason to import it.
+#: `provenance` and `runhost` (si#391) are the kernel's side of two seams the cli used to be reached for
+#: across: which simplon is answering, and what the layers above tell a run. `cli.main` registers the host;
+#: a product has no reason to import either.
 INTERNAL = frozenset({
-    "artifactschema", "bootstrap", "catalogue", "clitaxonomy", "diskguard", "manifestmodel", "oras", "runners",
-    "signatures", "steplog", "test_impls", "tools", "yamlkeys",
+    "artifactschema", "bootstrap", "catalogue", "clitaxonomy", "diskguard", "manifestmodel", "oras",
+    "provenance", "runhost", "runners", "signatures", "steplog", "test_impls", "tools", "yamlkeys",
 })
 
 #: Old import path -> where it lives now. EMPTY SINCE 0.5.0, and empty is the finished state rather

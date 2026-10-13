@@ -54,6 +54,17 @@ MANIFEST_ENV = "DELIVERY_MANIFEST"
 ENVIRONMENT_ENV = "DELIVERY_ENVIRONMENT"
 
 
+def environment_name() -> str:
+    """The environment this run targeted, or `not set`, for the run transcript's header (si#148 item 4).
+
+    Read from `ENVIRONMENT_ENV`, the kernel's own mirror of what `cli.main` selected - see that constant
+    for why the product's own variable cannot be read here. Unset is an ANSWER: a pipeline built outside
+    `main` targeted no environment, and printing the manifest's default would state a fact the run did not
+    produce.
+    """
+    return os.environ.get(ENVIRONMENT_ENV, "").strip() or "not set"
+
+
 class Section(NamedTuple):
     """What a manifest document holds at ONE path, and - when it holds no mapping there - which step is
     to blame and what that step held instead.

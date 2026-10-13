@@ -28,7 +28,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from simplon import context, log, outputs
+from simplon import log, provenance, runhost
 
 # Everything a filesystem would rather not see in a name. A step's identity is usually a dotted command
 # (`build.compile`), but it FALLS BACK to the shlex-joined argv, which carries slashes and spaces -
@@ -42,52 +42,16 @@ def log_name(command: str) -> str:
     return f"{safe or 'step'}.log"
 
 
-#: Said once per process rather than once per step: a run has as many steps as it likes, and the same
-#: sentence forty times is a way of not being read.
-_SAID: set[str] = set()
-
-
-def _warn_once(message: str) -> None:
-    if message not in _SAID:
-        _SAID.add(message)
-        log.warn(message)
-
-
 def log_directory() -> Path | None:
     """`<output>/logs`, or None when there is nowhere to put one.
 
-    NO PRODUCT REGISTERED IS NONE, and it is silent on purpose: the kernel is imported in places that
-    never register one - a unit test, a scaffolder run - and writing a log there is a courtesy nobody
-    asked for.
-
-    A MANIFEST THAT IS NOT THERE takes the convention without a word - there is no declaration to
-    honour, so there is nothing to report.
-
-    A PRODUCT WHOSE MANIFEST IS BROKEN, or whose `output:` cannot be acted on, STILL GETS ITS LOGS, in the default root, and hears about
-    it once. That direction is deliberate and it was found by breaking it: reading the manifest here is
-    new (si#314), and the first version let an unreadable or impossible `output:` cost the run its whole
-    record - the step logs AND the transcript, which is the one artefact somebody attaches to a ticket
-    when a run goes wrong. Losing the account of a failure BECAUSE something else was already wrong is
-    exactly backwards. The default needs no manifest to be known, so it is what a broken declaration
-    falls back to, and the fallback says so rather than quietly writing somewhere the product did not
-    name.
+    The answer is the run host's (si#391): the directory comes from the product's manifest, which the
+    kernel does not read, so `outputs.log_directory` decides it and `cli.main` registers it. NOTHING
+    REGISTERED IS NONE, and it is silent on purpose: the kernel is imported in places that never register
+    one - a unit test, a scaffolder run - and writing a log there is a courtesy nobody asked for.
     """
-    try:
-        ctx = context.current()
-    except RuntimeError:
-        return None
-    if not ctx.manifest_path.is_file():
-        # NO MANIFEST AT ALL IS NOT A BROKEN DECLARATION, and it is silent for the same reason the
-        # unregistered case is: there is nothing to honour, so the convention applies and nobody needs
-        # telling. The kernel is registered against trees that carry no manifest - a scaffolder run
-        # mid-write, a unit test - and a line of narration there would be noise on every step.
-        return ctx.root / outputs.DEFAULT / "logs"
-    try:
-        return outputs.for_kind("logs")
-    except (RuntimeError, ValueError) as broken:
-        _warn_once(f"step logs and the run transcript go to '{outputs.DEFAULT}/logs' rather than where "
-                   f"'{outputs.KEY}:' points: {broken}")
-        return ctx.root / outputs.DEFAULT / "logs"
+    host = runhost.current()
+    return None if host is None else host.log_directory()
 
 
 def existing_log(command: str) -> Path | None:
@@ -142,44 +106,34 @@ _LABEL = 14
 
 
 def _environment_name() -> str:
-    """The environment this run targeted, or `not set`.
-
-    Read from `context.ENVIRONMENT_ENV`, the kernel's own mirror of what `cli.main` selected - see that
-    constant for why the product's own variable cannot be read here. Unset is an ANSWER: a pipeline built
-    outside `main` targeted no environment, and printing the manifest's default would state a fact the
-    run did not produce.
-    """
-    return os.environ.get(context.ENVIRONMENT_ENV, "").strip() or "not set"
+    """The environment this run targeted, or `not set`: the run host's answer (si#391), and `not set`
+    when nothing registered one. See `context.environment_name` for why unset is an answer."""
+    host = runhost.current()
+    return "not set" if host is None else host.environment()
 
 
 def _instance_id() -> str:
-    """The lab instance this run acted on, or `not declared`.
-
-    `labinstance.resolve` fails loudly on a manifest with no `instance:` section, which is right for a lab
-    command - a typo there silently targets the wrong tenant - and wrong here. simplon's own manifest
-    declares none, and a transcript that refuses to be written because the run had no lab would be a
-    courtesy that raises. Every other failure degrades the same way and for the same reason.
-    """
-    from simplon import labinstance      # local: labinstance reads the manifest, this module is a leaf
-
+    """The lab instance this run acted on, or `not declared`: the run host's answer (si#391), see
+    `labinstance.declared_id`. A transcript header is a courtesy, so a host that fails degrades too."""
+    host = runhost.current()
+    if host is None:
+        return "not declared"
     try:
-        return labinstance.resolve()
-    except Exception:  # noqa: BLE001 - a missing/invalid section, an unreadable manifest, no product
+        return host.instance()
+    except Exception:  # noqa: BLE001 - a header that raises would cost the transcript
         return "not declared"
 
 
 def _provenance() -> str:
     """si#125's line: which simplon assembled this CLI, and from where.
 
-    The import is function-local and that is not a style preference: `simplon.cli` imports
-    `orchestrator.product`, which imports `orchestrator.steps`, which imports THIS module, so a
-    module-level import would close a cycle. Calling it rather than restating it is the point of item 4 -
-    the help screen and the transcript have to answer this question identically or one of them is wrong.
+    Calling it rather than restating it is the point of item 4 - the help screen and the transcript have
+    to answer this question identically or one of them is wrong. It lives in `simplon.provenance`, below
+    both of them (si#391).
     """
     try:
-        from simplon.cli import provenance_line
-        return provenance_line()
-    except Exception:  # noqa: BLE001 - a header is a courtesy; typer missing must not cost the file
+        return provenance.provenance_line()
+    except Exception:  # noqa: BLE001 - a header is a courtesy; a broken dist-info must not cost the file
         return "unknown"
 
 

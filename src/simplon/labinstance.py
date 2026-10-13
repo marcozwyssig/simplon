@@ -143,3 +143,17 @@ def resolve(flag: str | None = None, *, worktree: object = _PROBE) -> str:
     if isinstance(basename, str) and basename:
         return from_worktree(basename, product.max_id_len)
     return product.default
+
+
+def declared_id() -> str:
+    """The lab instance a run acted on, or `not declared`, for the run transcript's header.
+
+    `resolve` fails loudly on a manifest with no `instance:` section, which is right for a lab command - a
+    typo there silently targets the wrong tenant - and wrong here. simplon's own manifest declares none,
+    and a transcript that refuses to be written because the run had no lab would be a courtesy that
+    raises. Every other failure degrades the same way and for the same reason.
+    """
+    try:
+        return resolve()
+    except Exception:  # noqa: BLE001 - a missing/invalid section, an unreadable manifest, no product
+        return "not declared"

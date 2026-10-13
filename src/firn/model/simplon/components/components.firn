@@ -14,8 +14,20 @@ kernel typeOf simplon.architecture.Component {
   module m_orchestrator_product typeOf simplon.architecture.Module {
     path = "orchestrator.product"
   }
+  module m_orchestrator_plan typeOf simplon.architecture.Module {
+    path = "orchestrator.plan"
+  }
   module m_run typeOf simplon.architecture.Module {
     path = "run"
+  }
+  module m_awake typeOf simplon.architecture.Module {
+    path = "awake"
+  }
+  module m_provenance typeOf simplon.architecture.Module {
+    path = "provenance"
+  }
+  module m_runhost typeOf simplon.architecture.Module {
+    path = "runhost"
   }
   module m_log typeOf simplon.architecture.Module {
     path = "log"
@@ -93,9 +105,6 @@ adapters typeOf simplon.architecture.Component {
   key = "adapters"
   layer = "2"
   summary = "The tools and platforms a task drives: docker, oras, a registry, a lab, a proxy."
-  module m_awake typeOf simplon.architecture.Module {
-    path = "awake"
-  }
   module m_backend typeOf simplon.architecture.Module {
     path = "backend"
   }
@@ -314,7 +323,7 @@ tasks typeOf simplon.architecture.Component {
 }
 cli typeOf simplon.architecture.Component {
   key = "cli"
-  layer = "4"
+  layer = "5"
   summary = "The command line: simplon and simplon init, and what a product may import."
   module m_cli typeOf simplon.architecture.Module {
     path = "cli"
@@ -357,54 +366,6 @@ e_tasks___init typeOf simplon.architecture.Excluded {
 e_test_impls typeOf simplon.architecture.Excluded {
   path = "test_impls"
   reason = "Bodies for the generator tests, not part of any component; it imports `tasks.testrun`, and no module imports it."
-}
-x_orchestrator_product__orchestrator_manifest typeOf simplon.architecture.Exception {
-  importer = simplon.components.kernel.m_orchestrator_product
-  imported = simplon.components.domain.m_orchestrator_manifest
-  reason = "Imports `Manifest`."
-  ticket = "si#391"
-}
-x_orchestrator_steps__orchestrator_manifest typeOf simplon.architecture.Exception {
-  importer = simplon.components.kernel.m_orchestrator_steps
-  imported = simplon.components.domain.m_orchestrator_manifest
-  reason = "Imports `PlanNode`."
-  ticket = "si#391"
-}
-x_steplog__context typeOf simplon.architecture.Exception {
-  importer = simplon.components.kernel.m_steplog
-  imported = simplon.components.domain.m_context
-  reason = "Imports the module `context`."
-  ticket = "si#391"
-}
-x_orchestrator_product__awake typeOf simplon.architecture.Exception {
-  importer = simplon.components.kernel.m_orchestrator_product
-  imported = simplon.components.adapters.m_awake
-  reason = "Imports `keep_awake`."
-  ticket = "si#391"
-}
-x_steplog__labinstance typeOf simplon.architecture.Exception {
-  importer = simplon.components.kernel.m_steplog
-  imported = simplon.components.adapters.m_labinstance
-  reason = "Imports the module `labinstance`."
-  ticket = "si#391"
-}
-x_orchestrator_steps__orchestrator_tui typeOf simplon.architecture.Exception {
-  importer = simplon.components.kernel.m_orchestrator_steps
-  imported = simplon.components.ui.m_orchestrator_tui
-  reason = "Imports `run_pipeline`."
-  ticket = "si#391"
-}
-x_steplog__cli typeOf simplon.architecture.Exception {
-  importer = simplon.components.kernel.m_steplog
-  imported = simplon.components.cli.m_cli
-  reason = "Imports `provenance_line`."
-  ticket = "si#391"
-}
-x_steplog__outputs typeOf simplon.architecture.Exception {
-  importer = simplon.components.kernel.m_steplog
-  imported = simplon.components.domain.m_outputs
-  reason = "Imports the module `outputs`."
-  ticket = "si#391"
 }
 x_deployment__tasks_image typeOf simplon.architecture.Exception {
   importer = simplon.components.domain.m_deployment

@@ -41,6 +41,8 @@ the artifact schema from them. Part 1 puts the architecture itself into the mode
 1. Aim: preparation for firn - including the architecture itself as a firn model.
 2. Decomposition into the four parts above; part 1 first.
 3. Layers, bottom to top: **kernel (0) < domain (1) < adapters (2) < tasks (3) < cli, ui (4)**.
+   *Amended by si#391 (Marco, 2026-10-13): **ui (4) < cli (5)**. Every run starts in `cli.main`, which
+   registers the UI with the kernel, and ui imports nothing of the cli.*
    Adapters sit above the domain: an adapter may know the read configuration. (The alternative, adapters
    below the domain, measured 30 exceptions against 14 for this order - by the first throwaway script, which
    undercounted both; the real test finds 16 for this order.)
@@ -66,7 +68,7 @@ the artifact schema from them. Part 1 puts the architecture itself into the mode
 | 1 | domain | reading the configuration, validating it, building the plan | `orchestrator.manifest`, `orchestrator.model.treeform`, `yamlkeys`, `artifactsection`, `artifactschema`, `environments`, `carrierspec`, `layout`, `outputs`, `deployment`, `signatures`, `context`, `catalogue`, `runners`, `manifestmodel`, `clitaxonomy` |
 | 2 | adapters | the tools and platforms a task drives | `awake`, `backend`, `checksum`, `clablifecycle`, `clabrender`, `compose`, `credentials`, `devcontainer`, `disk`, `diskguard`, `docker`, `fetch`, `githubpackages`, `healthgate`, `host`, `hostpath`, `imagenames`, `interact`, `labegress`, `labhost`, `labinstance`, `labnet`, `linux`, `nexusproxy`, `oras`, `portainer`, `ports`, `pyvenv`, `tools`, `topology`, `tracker` |
 | 3 | tasks | the catalogue's task bodies, and the generators they call | every module of `tasks/`, plus `taskgen`, `completiongen`, `workflowgen` |
-| 4 | cli | the command line: `simplon` and `simplon init`, and what a product may import | `cli`, `bootstrap`, `surface` |
+| 5 | cli | the command line: `simplon` and `simplon init`, and what a product may import | `cli`, `bootstrap`, `surface` |
 | 4 | ui | running a plan in front of a person | `orchestrator.tui` |
 
 **Excluded, with the reason in the model:** the four `__init__` modules and `_version` (the package's
@@ -90,7 +92,8 @@ An import from module `a` to module `b` (both in `src/simplon/`) is allowed when
 - `a` and `b` are in the same component, or
 - `a`'s component has a **higher** layer than `b`'s.
 
-Two components on the same layer may not import each other (cli and ui). Anything else is a violation,
+Two components on the same layer may not import each other (cli and ui, until si#391 put cli on layer 5).
+Anything else is a violation,
 allowed only as a named exception.
 
 **The exceptions at the start**, measured 2026-10-13 over every import in every module (function-level
@@ -111,7 +114,7 @@ first name of each `from simplon import a, b` statement and missed `steplog -> o
 
 A new M2 package **`simplon.architecture`** (`src/firn/model/simplon/architecture/architecture.firn`):
 
-- **`Component`** (allowRoot): `key` (1..1), `layer` (an integer as text, `0`-`4`, 1..1), `summary` (1..1),
+- **`Component`** (allowRoot): `key` (1..1), `layer` (an integer as text, `0`-`5` since si#391, 1..1), `summary` (1..1),
   and `module` (Composition of `Module`, 0..N): a module is written inside its component.
 - **`Module`**: `path` (the dotted path below `simplon`, e.g. `"orchestrator.steps"`, 1..1 - a firn name
   has no `.`, as `ArtifactField.key` carries a spelling the name cannot). An exception references it by

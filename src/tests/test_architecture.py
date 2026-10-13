@@ -15,9 +15,10 @@ from generated import architecture
 
 
 def test_the_components_and_their_layers_are_the_ones_decided():
-    # The design (spec decision 3), not a count.
+    # The design (spec decision 3), not a count. cli sits above ui since si#391: every run starts in
+    # `cli.main`, which registers the UI with the kernel, and ui imports nothing of the cli (Marco, 2026-10-13).
     assert {key: layer for key, (layer, _) in architecture.COMPONENTS.items()} == {
-        "kernel": 0, "domain": 1, "adapters": 2, "tasks": 3, "cli": 4, "ui": 4}
+        "kernel": 0, "domain": 1, "adapters": 2, "tasks": 3, "ui": 4, "cli": 5}
     assert all(summary.strip() for _, summary in architecture.COMPONENTS.values())
 
 SRC = Path(__file__).resolve().parents[1] / "simplon"

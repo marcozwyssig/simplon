@@ -26,7 +26,7 @@ from simplon.awake import keep_awake
 import sys
 
 from simplon import log, steplog
-from simplon.orchestrator.manifest import Manifest
+from simplon.orchestrator.plan import Plan
 from simplon.orchestrator.steps import Pipeline, Step, argv_step, dispatch
 
 
@@ -44,7 +44,7 @@ class StepFactoryContext:
     step_factory: Callable[[str], Step]
 
     @classmethod
-    def for_shim(cls, product: str, script: str | Path, manifest: Manifest) -> "StepFactoryContext":
+    def for_shim(cls, product: str, script: str | Path, manifest: Plan) -> "StepFactoryContext":
         """The context for the shape every shim-backed product has: a command NAME becomes a live-streamed
         `<script> <name>` step, STAMPED with that command's exact-command identity - the dotted
         `group.command` path the manifest gives it, or the bare name when several groups own it (#519) and
@@ -75,7 +75,7 @@ class StepFactoryContext:
 
 
     @classmethod
-    def for_module(cls, product: str, module: str, manifest: Manifest) -> "StepFactoryContext":
+    def for_module(cls, product: str, module: str, manifest: Plan) -> "StepFactoryContext":
         """The same shape as `for_shim`, spawned as THIS interpreter running `-m <module>`.
 
         WHY A SECOND FACTORY. A shim exists to BOOTSTRAP: make the venv, install requirements.txt, exec
@@ -114,7 +114,7 @@ class StepFactoryContext:
 ProductContext = StepFactoryContext
 
 
-def run_command(name: str, manifest: Manifest, ctx: StepFactoryContext, *, group: str | None = None) -> int:
+def run_command(name: str, manifest: Plan, ctx: StepFactoryContext, *, group: str | None = None) -> int:
     """Run the command `name` as its dependency-resolved plan (#895/#896) and return the pipeline's exit
     code (0 iff every planned step passed). `manifest.plan_tree_for` is the whole of transitive + dedup +
     once + order; each planned leaf is mapped through `ctx.step_factory` into a Step (typically a streaming

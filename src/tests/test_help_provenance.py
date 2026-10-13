@@ -21,7 +21,7 @@ import typer
 from typer.testing import CliRunner
 
 import simplon
-from simplon import cli
+from simplon import cli, provenance
 from simplon.orchestrator import manifest
 
 _MANIFEST = """
@@ -87,7 +87,7 @@ def _install(monkeypatch, *, version="0.9.0", file=_WHEEL_FILE, path=(), dist=No
             raise answer
         return answer
 
-    monkeypatch.setattr(cli, "_distribution", _lookup)
+    monkeypatch.setattr(provenance, "_distribution", _lookup)
 
 
 def _assemble(**kwargs):
@@ -167,7 +167,7 @@ def test_a_source_tree_with_no_installed_distribution_says_so(monkeypatch):
     `simplon.__init__` reports as `0.0.0.dev0+unknown`, and the two halves of the line agree here."""
     # arrange
     _install(monkeypatch, version="0.0.0.dev0+unknown", file=_CHECKOUT_FILE,
-             dist=cli.PackageNotFoundError("simplon"))
+             dist=provenance.PackageNotFoundError("simplon"))
 
     # act
     line = cli.provenance_line()
@@ -245,7 +245,7 @@ def test_a_package_with_no_file_falls_back_to_its_search_path(monkeypatch):
 def test_a_package_with_no_location_at_all_still_renders(monkeypatch):
     """Both halves gone. This is the assertion that says the help screen outranks the introspection."""
     # arrange
-    _install(monkeypatch, file=None, path=[], dist=cli.PackageNotFoundError("simplon"))
+    _install(monkeypatch, file=None, path=[], dist=provenance.PackageNotFoundError("simplon"))
 
     # act
     line = cli.provenance_line()
