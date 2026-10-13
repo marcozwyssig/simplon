@@ -37,6 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from simplon import artifactsection, yamlkeys
 from simplon.clitaxonomy import CommandTaxonomy, TaxonomyNode, merge_trees
 from simplon.orchestrator.model import treeform
+from simplon.orchestrator.plan import PlanNode
 
 
 class CommandSpec(NamedTuple):
@@ -302,38 +303,6 @@ class Manifest(NamedTuple):
         # An aggregate always bottoms out at leaves in a validated manifest, so `visit` returning None for
         # the ROOT cannot happen; return the bare node rather than None so the caller's type never widens.
         return root if root is not None else PlanNode(name=name, path=root_path, spec=root_spec)
-
-
-class PlanNode(NamedTuple):
-    """One node of a command's execution plan, kept as a TREE (#1275) instead of the flat leaf tuple
-    `plan_for` returns. `name` is the bare command name, `path` its dotted `group.command` CLI identity
-    (what the TUI renders as the row), `spec` its declaration, and `children` the nodes it expands into:
-    empty for a leaf, one entry per CONTRIBUTING dependency for an aggregate.
-
-    The tree is a DFS SPANNING TREE of the dependency DAG, not the DAG: `plan_tree_for` dedups by name
-    exactly as `plan_for` does, so a diamond appears ONCE, at its first occurrence. That is what keeps the
-    names `leaves()` returns identical to `plan_for`'s, and that equality is the whole point - display and
-    execution cannot disagree when they come from one traversal.
-    """
-    name: str
-    path: str
-    spec: CommandSpec
-    children: tuple["PlanNode", ...] = ()
-
-    @property
-    def is_leaf(self) -> bool:
-        """True for an impl-bearing command (a step that really runs), False for an aggregate (a display
-        node whose state a renderer derives from its children)."""
-        return bool(self.spec.impl)
-
-    def leaves(self) -> tuple["PlanNode", ...]:
-        """This node's executable leaves in POST-ORDER (every child's leaves before this node's own, so a
-        dependency always precedes its dependant) - the execution plan itself. The order is STRUCTURAL: it
-        walks `children`, which is populated for every node regardless of `is_leaf`, rather than resting on
-        the v1 impl-XOR-depends_on lock that happens to keep a leaf childless today. `run_command` maps
-        these to Steps; the parity test pins their names against `plan_for`."""
-        return (tuple(leaf for child in self.children for leaf in child.leaves())
-                + ((self,) if self.is_leaf else ()))
 
 
 def _split_impl(impl: str, context: str) -> tuple[str, str]:

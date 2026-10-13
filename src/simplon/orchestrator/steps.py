@@ -23,11 +23,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterator, Mapping, Sequence, TextIO
 
 from simplon import log
-from simplon import steplog
+from simplon import runhost, steplog
 from simplon.run import LINE_BREAK, run_stream
 
-if TYPE_CHECKING:   # type-only: the step model is the LOWEST layer and must not import the manifest
-    from simplon.orchestrator.manifest import PlanNode
+if TYPE_CHECKING:   # type-only; the tree is the kernel's own type, the manifest builds it (si#391)
+    from simplon.orchestrator.plan import PlanNode
 
 # A sink for a step's live output lines (the TUI appends to a RichLog; headless prints them).
 Emit = Callable[[str], None]
@@ -2275,9 +2275,16 @@ def dispatch(pipeline: Pipeline) -> int:
     an import that came first would be the one thing it could not rescue."""
     if tui_disabled():
         return run_headless(pipeline)
+    host = runhost.current()
+    if host is None or host.render is None:
+        # The UI is above the kernel and registers itself (si#391); `cli.main` always does. A run that
+        # reaches here without one was started some other way, and drawing it headless without a word
+        # would be the silent degradation this repository hunts.
+        log.warn(f"nothing registered a UI for this run, so it runs headless; a run started through the "
+                 f"product's CLI registers one, and {NO_TUI_ENV}=1 asks for headless explicitly")
+        return run_headless(pipeline)
     try:
-        from simplon.orchestrator.tui import run_pipeline
-        return run_pipeline(pipeline)
+        return host.render(pipeline)
     except ImportError:
         return run_headless(pipeline)
 

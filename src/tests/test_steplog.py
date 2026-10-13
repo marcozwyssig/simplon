@@ -111,7 +111,7 @@ def test_an_impossible_output_root_keeps_the_log_in_the_default_place_and_says_s
     to be known - catches it, and the fallback is stated rather than silent."""
     # arrange: a root that would be cleaned somewhere else entirely, and a fresh process's memory of
     # what it has already said
-    monkeypatch.setattr(steplog, "_SAID", set())
+    monkeypatch.setattr(outputs, "_SAID", set())
     (tmp_path / "cleon.yaml").write_text("output: /var/tmp/x\n", encoding="utf-8")
 
     # act
@@ -125,7 +125,7 @@ def test_an_impossible_output_root_keeps_the_log_in_the_default_place_and_says_s
 
 def test_the_fallback_is_said_once_and_not_once_per_step(tmp_path, capsys, monkeypatch):
     # arrange
-    monkeypatch.setattr(steplog, "_SAID", set())
+    monkeypatch.setattr(outputs, "_SAID", set())
     (tmp_path / "cleon.yaml").write_text("output: /var/tmp/x\n", encoding="utf-8")
 
     # act: three steps of one run
@@ -141,7 +141,7 @@ def test_a_tree_with_no_manifest_takes_the_convention_without_a_word(tmp_path, c
     """A missing manifest is not a broken declaration. The kernel is registered against trees that carry
     none - a scaffolder mid-write, a unit test - and narrating that on every step is noise, not news."""
     # arrange
-    monkeypatch.setattr(steplog, "_SAID", set())
+    monkeypatch.setattr(outputs, "_SAID", set())
     (tmp_path / "cleon.yaml").unlink()
 
     # act

@@ -48,6 +48,17 @@ def _this_suite_runs_as_if_on_a_host(monkeypatch):
     monkeypatch.setattr(hostpath, "in_a_container", lambda: False)
 
 
+@pytest.fixture(autouse=True)
+def _a_run_has_the_host_the_cli_registers():
+    """Every real run starts in `cli.main`, which registers the run host the kernel reads (si#391). The
+    suite registers the same one, built by the same function, so a test sees what a run sees. A test that
+    is ABOUT the unregistered case clears it with `runhost.register(None)`."""
+    from simplon import cli, runhost
+    runhost.register(cli.run_host())
+    yield
+    runhost.register(None)
+
+
 class Recorder:
     """A Portainer that records the calls and answers by path.
 
