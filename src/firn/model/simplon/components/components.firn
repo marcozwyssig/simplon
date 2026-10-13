@@ -336,7 +336,7 @@ ui typeOf simplon.architecture.Component {
 }
 e_init typeOf simplon.architecture.Excluded {
   path = "__init__"
-  reason = "The package itself; it imports no simplon module."
+  reason = "The package itself; it imports only `_version`, which is excluded too."
 }
 e_version typeOf simplon.architecture.Excluded {
   path = "_version"
@@ -356,7 +356,7 @@ e_tasks___init typeOf simplon.architecture.Excluded {
 }
 e_test_impls typeOf simplon.architecture.Excluded {
   path = "test_impls"
-  reason = "Bodies for the generator tests, not part of any component."
+  reason = "Bodies for the generator tests, not part of any component; it imports `tasks.testrun`, and no module imports it."
 }
 x_orchestrator_product__orchestrator_manifest typeOf simplon.architecture.Exception {
   importer = simplon.components.kernel.m_orchestrator_product

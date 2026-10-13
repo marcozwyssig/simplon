@@ -22,6 +22,11 @@ def test_the_components_and_their_layers_are_the_ones_decided():
 
 SRC = Path(__file__).resolve().parents[1] / "simplon"
 
+# The generated data carries the modules and the exclusions as (path, ...) PAIRS, in model order, so a module
+# the model names twice reaches the test as two pairs instead of one dict key that silently keeps the last.
+MODULES = dict(architecture.MODULES)
+EXCLUDED = dict(architecture.EXCLUDED)
+
 
 def modules_below(root: Path) -> set[str]:
     """Every `.py` file below `root`, as its dotted path: `orchestrator/steps.py` -> `orchestrator.steps`."""
@@ -73,7 +78,7 @@ def edges(root: Path) -> set[tuple[str, str]]:
 
 def violates(importer: str, imported: str) -> bool:
     """True when the import goes against the layers: another component on the same or a higher layer."""
-    a, b = architecture.MODULES[importer], architecture.MODULES[imported]
+    a, b = MODULES[importer], MODULES[imported]
     return a != b and architecture.COMPONENTS[a][0] <= architecture.COMPONENTS[b][0]
 
 
@@ -108,16 +113,30 @@ def test_the_walk_finds_the_imports_of_the_real_tree():
     assert ("cli", "context") in edges(SRC)
 def test_every_module_is_in_one_component_or_excluded():
     files = modules_below(SRC)
-    assigned, excluded = set(architecture.MODULES), set(architecture.EXCLUDED)
+    assigned, excluded = set(MODULES), set(EXCLUDED)
     assert not assigned & excluded, f"both assigned and excluded: {sorted(assigned & excluded)}"
     assert not files - assigned - excluded, (
         f"no component in src/firn/model/simplon/components/components.firn: {sorted(files - assigned - excluded)}")
     assert not (assigned | excluded) - files, f"in the model but not a file: {sorted((assigned | excluded) - files)}"
 
 
+def test_no_module_is_named_twice():
+    paths = [path for path, _ in architecture.MODULES] + [path for path, _ in architecture.EXCLUDED]
+    twice = sorted({path for path in paths if paths.count(path) > 1})
+    assert not twice, f"named twice in components.firn (a component and another, or excluded too): {twice}"
+
+
+def test_no_component_imports_an_excluded_module():
+    # An excluded module stands outside the layers. Importing a component from it is a leaf at the top
+    # (`test_impls` -> `tasks.testrun`) and harmless; a component importing IT would pass an edge through a
+    # module no layer holds, so that is what is refused.
+    through = sorted((a, b) for a, b in edges(SRC) if a in MODULES and b in EXCLUDED)
+    assert not through, f"a component imports an excluded module: {through}"
+
+
 def _violations() -> set[tuple[str, str]]:
     return {(a, b) for a, b in edges(SRC)
-            if a in architecture.MODULES and b in architecture.MODULES and violates(a, b)}
+            if a in MODULES and b in MODULES and violates(a, b)}
 
 
 def test_every_import_goes_down_the_layers_or_is_a_named_exception():
@@ -125,7 +144,7 @@ def test_every_import_goes_down_the_layers_or_is_a_named_exception():
     unlisted = _violations() - listed
     assert not unlisted, (
         "imports against the layers (si#390); move the import, or name it as an exception with a ticket: "
-        + ", ".join(f"{a} -> {b} ({architecture.MODULES[a]} -> {architecture.MODULES[b]})" for a, b in sorted(unlisted)))
+        + ", ".join(f"{a} -> {b} ({MODULES[a]} -> {MODULES[b]})" for a, b in sorted(unlisted)))
 
 
 def test_no_exception_outlives_its_import():

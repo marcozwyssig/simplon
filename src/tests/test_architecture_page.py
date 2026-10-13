@@ -20,7 +20,7 @@ def test_the_page_names_every_module_under_its_component():
         section = re.search(rf"^## {key}\n\n(.*)$", text, re.M)
         assert section, f"no section for {key}"
         listed = set(re.findall(r"`([\w.]+)`", section.group(1)))
-        assert listed == {m for m, c in architecture.MODULES.items() if c == key}
+        assert listed == {m for m, c in architecture.MODULES if c == key}
 
 
 def test_the_page_lists_every_exception_with_its_ticket():

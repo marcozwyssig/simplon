@@ -17,21 +17,22 @@ template ArchitectureData {
     }
     |}
     |
-    |#: Every module below src/simplon/ that belongs to a component, by its dotted path.
-    |MODULES: dict[str, str] = {
+    |#: (path, component) for every module below src/simplon/ that belongs to a component, in model order. Pairs,
+    |#: not a dict: a module the model names twice must reach the test twice, not as one key keeping the last.
+    |MODULES: tuple[tuple[str, str], ...] = (
     for c : `simplon.architecture.Component` {
       for m : c.module {
-        |    "${m.path}": "${c.key}",
+        |    ("${m.path}", "${c.key}"),
       }
     }
-    |}
+    |)
     |
-    |#: The modules that belong to no component, and why.
-    |EXCLUDED: dict[str, str] = {
+    |#: (path, reason) for each module that belongs to no component, in model order.
+    |EXCLUDED: tuple[tuple[str, str], ...] = (
     for e : `simplon.architecture.Excluded` {
-      |    "${e.path}": "${e.reason}",
+      |    ("${e.path}", "${e.reason}"),
     }
-    |}
+    |)
     |
     |#: (importer, imported, reason, ticket): each import against the layers, until its ticket resolves it.
     |EXCEPTIONS: tuple[tuple[str, str, str, str], ...] = (

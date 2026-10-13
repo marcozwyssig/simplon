@@ -42,14 +42,15 @@ the artifact schema from them. Part 1 puts the architecture itself into the mode
 2. Decomposition into the four parts above; part 1 first.
 3. Layers, bottom to top: **kernel (0) < domain (1) < adapters (2) < tasks (3) < cli, ui (4)**.
    Adapters sit above the domain: an adapter may know the read configuration. (The alternative, adapters
-   below the domain, measured 30 exceptions instead of 14.)
+   below the domain, measured 30 exceptions against 14 for this order - by the first throwaway script, which
+   undercounted both; the real test finds 16 for this order.)
 4. **No generators component.** `taskgen`, `completiongen` and `workflowgen` belong to the tasks that call
    them.
 5. An exception is **one module edge**, never a whole component edge, so a new wrong import cannot pass
    behind an old one.
 6. Approach: everything in the model, the test by hand (not generated - a check in a Jinja template is
    hard to read and to see red).
-7. The generated data file is **test code**: `src/tests/architecture.py`, not in the wheel and not on the
+7. The generated data file is **test code**: `src/tests/generated/architecture.py`, not in the wheel and not on the
    surface.
 8. The exceptions name tickets; four, grouped by cause, opened in the plan before the model names them.
 9. The kernel **defines the base classes for tasks and commands**; every task derives from them (part 4).
@@ -68,9 +69,11 @@ the artifact schema from them. Part 1 puts the architecture itself into the mode
 | 4 | cli | the command line: `simplon` and `simplon init`, and what a product may import | `cli`, `bootstrap`, `surface` |
 | 4 | ui | running a plan in front of a person | `orchestrator.tui` |
 
-**Excluded, with the reason in the model:** the four `__init__` modules and `_version` (no imports
-between components; measured: none imports a simplon module), and `test_impls` (bodies for the
-generator tests, not part of any component).
+**Excluded, with the reason in the model:** the four `__init__` modules and `_version` (the package's
+`__init__` imports only `_version`; the other three import nothing), and `test_impls` (bodies for the
+generator tests; it imports `tasks.testrun`, and nothing imports it). An excluded module stands outside
+the layers, so the test refuses a component that imports one - the edge would pass through a module no
+layer holds - while an excluded module importing a component is a leaf at the top and allowed.
 
 Borderline assignments, decided here: `context`, `catalogue`, `clitaxonomy` and `manifestmodel` are
 domain (they read or interpret the configuration); `log`, `run`, `verdict` and `steplog` are kernel (run
@@ -108,10 +111,11 @@ first name of each `from simplon import a, b` statement and missed `steplog -> o
 
 A new M2 package **`simplon.architecture`** (`src/firn/model/simplon/architecture/architecture.firn`):
 
-- **`Component`** (allowRoot): `layer` (an integer as text, `0`-`4`, 1..1), `summary` (1..1).
-- **`Module`** (allowRoot): `path` (the dotted path below `simplon`, e.g. `"orchestrator.steps"`, 1..1 -
-  a firn name has no `.`, as `ArtifactField.key` carries a spelling the name cannot), `component`
-  (Association to `Component`, 1..1).
+- **`Component`** (allowRoot): `key` (1..1), `layer` (an integer as text, `0`-`4`, 1..1), `summary` (1..1),
+  and `module` (Composition of `Module`, 0..N): a module is written inside its component.
+- **`Module`**: `path` (the dotted path below `simplon`, e.g. `"orchestrator.steps"`, 1..1 - a firn name
+  has no `.`, as `ArtifactField.key` carries a spelling the name cannot). An exception references it by
+  its nested name, `simplon.components.kernel.m_orchestrator_steps`; firn v0.1.0 accepts that (measured).
 - **`Excluded`** (allowRoot): `path` (1..1), `reason` (1..1).
 - **`Exception`** (allowRoot): `importer` and `imported` (Associations to `Module`, 1..1 each), `reason`
   (1..1), `ticket` (`si#<n>`, 1..1). (`from` is a Python keyword and a likely firn one; the plan uses
@@ -126,9 +130,12 @@ around it silently.
 
 A new template file `src/firn/templates/architecture.firnt` with two templates:
 
-- **`ArchitectureData`** -> `src/tests/architecture.py`, a whole file with no protected region, data only:
-  `COMPONENTS` (name -> (layer, summary)), `MODULES` (path -> component), `EXCLUDED` (path -> reason),
-  `EXCEPTIONS` (tuples of from, to, reason, ticket). A new firn target `tests` with `path = "tests"`.
+- **`ArchitectureData`** -> `src/tests/generated/architecture.py`, a whole file with no protected region,
+  data only: `COMPONENTS` (key -> (layer, summary)), `MODULES` ((path, component) pairs - pairs, so a
+  module named twice reaches the test twice), `EXCLUDED` ((path, reason) pairs), `EXCEPTIONS` ((importer,
+  imported, reason, ticket) tuples). A new firn target `tests` with `path = "tests/generated"`, a directory
+  firn owns whole: with `path = "tests"` firn v0.1.0 deleted `src/tests/test_own_whole_files.py` with rc 0,
+  twice (it spells id lines in its test cases) - a finding for firn.
 - **`ArchitecturePage`** -> `src/site/content/with-what/architecture.md`, in the existing `site` target:
   each component with its sentence and its modules, the rule, and the exceptions with their tickets.
 
@@ -194,4 +201,4 @@ generated`, the suite, `typecheck-python`, `build docs`.
 
 - The exception table is re-measured by the real test before the model is written.
 - Each of the four assertions is broken on purpose and seen red.
-- `build model-whole` is seen red on an emptied `src/tests/architecture.py`.
+- `build model-whole` is seen red on an emptied `src/tests/generated/architecture.py`.
