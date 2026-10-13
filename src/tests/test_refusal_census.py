@@ -583,6 +583,13 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # first command. The form they name does not load at all
     # any more, so nothing expressible is forbidden: the refusal is what replaces the silence.
     ("treeform", "check_no_pre_si344_form", "A manifest maps its top-level keys"): DIAGNOSIS,
+    # si#388. An empty document used to load as `{}` - a product with no name and only the catalogue's
+    # commands, rc 0 for a file that says nothing.
+    ("treeform", "check_no_pre_si344_form", "is empty: it declares no `product:`"): DIAGNOSIS,
+    # si#388. A misspelt area (`ic:` for `ci:`) loaded as a product data section and lost its commands
+    # without a word; only an area carries `commands:` or `environments:`, and no data section of the eight
+    # reachable manifests carries either (measured 2026-10-13), so it refuses nothing a product meant.
+    ("treeform", "check_no_misspelt_area", "which is not an area, yet it carries"): DIAGNOSIS,
     ("treeform", "check_no_pre_si344_form", "declares `groups:`, which si#344 replaced"): DIAGNOSIS,
     ("treeform", "check_no_pre_si344_form", "which si#344 deleted"): DIAGNOSIS,
     ("treeform", "check_no_pre_si344_form", "at the top level; since si#344"): DIAGNOSIS,

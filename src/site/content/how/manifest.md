@@ -308,7 +308,9 @@ the design rather than a gap: the section is where a catalogue task's mechanism 
 and a product that could not invent one would have to ask the kernel for permission to have data.
 Measured over every manifest this kernel can reach, its own and those in other repositories, some top-level
 keys are exactly that, and every one of them is read by a body in the product's own repository. Adding a key
-nobody here has heard of is a supported thing to do.
+nobody here has heard of is a supported thing to do. The one shape it may not have is an area's: a section
+that carries `commands:` or `environments:` at any depth is refused as a misspelt `ci:`, `cd:` or `support:`
+(si#388), because its commands would otherwise vanish without a word.
 
 What was missing is the other half: **which names are already taken**. The product si#159 was reported
 from builds three Windows Server *releases*, and it learned that `releases:` already means

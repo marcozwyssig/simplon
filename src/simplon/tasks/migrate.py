@@ -795,6 +795,12 @@ def migrate_text(text: str, *, unknown_groups_into: str | None = None) -> Migrat
     "current" only when no pass changed a byte; a refusal in any pass hands back the input untouched."""
     if unknown_groups_into not in (None, "ci", "cd"):
         raise ValueError(f"unknown_groups_into must be 'ci' or 'cd', not {unknown_groups_into!r}")
+    document, invalid = _parse(text)
+    if not invalid and not isinstance(document, dict):
+        # si#388: "current" would tell the person there is nothing to do with a file the loader refuses.
+        found = "nothing" if document is None else f"a {type(document).__name__}"
+        return Migration("refused", text, (), f"it is not a manifest: the document holds {found}, not a "
+                         "mapping of top-level keys (product, tasks, ci, cd, support, ...)")
     current, moved = text, list[str]()
     for step in (_dedupe, lambda t: _shape(t, unknown_groups_into=unknown_groups_into), _fold):
         result = step(current)

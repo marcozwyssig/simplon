@@ -834,6 +834,68 @@ _MIGRATE = (
 DOCS_SITE_KEYS = ("image", "base_url", "theme", "source", "output")
 
 
+AREAS = ("ci", "cd", "support")
+
+
+def _distance(a: str, b: str) -> int:
+    """Edits from `a` to `b` - insert, delete, substitute, or swap two neighbours - so `ic` is one from `ci`."""
+    d = [[i + j if i * j == 0 else 0 for j in range(len(b) + 1)] for i in range(len(a) + 1)]
+    for i in range(1, len(a) + 1):
+        for j in range(1, len(b) + 1):
+            d[i][j] = min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] != b[j - 1]))
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                d[i][j] = min(d[i][j], d[i - 2][j - 2] + 1)
+    return d[len(a)][len(b)]
+
+
+_AREA_KEYS = ("commands", "environments")
+
+
+def _area_key_at(value: object, path: str) -> str | None:
+    """The first path below `value` that holds a key only an area carries (`_AREA_KEYS`), or None."""
+    if isinstance(value, dict):
+        for key in _AREA_KEYS:
+            if key in value:
+                return f"{path}.{key}"
+        items: Iterable[tuple[str, object]] = ((f"{path}.{k}", v) for k, v in value.items())
+    elif isinstance(value, list):
+        items = ((f"{path}[{i}]", v) for i, v in enumerate(value))
+    else:
+        return None
+    for where, inner in items:
+        found = _area_key_at(inner, where)
+        if found:
+            return found
+    return None
+
+
+def check_no_misspelt_area(data: dict, manifest_path: str | None) -> None:
+    """Refuse a top-level section that carries what only an area carries, but is not one (si#388).
+
+    DIAGNOSIS. A top-level key the kernel does not read is a product data section (#159), so `ic:` for `ci:`
+    used to load with rc 0 and lose every command under it - 21 of simplon's own 40, measured - while the
+    catalogue's commands kept `help` looking whole; a misspelt `cd:` lost the environment matrix the same
+    way. The shape tells the two apart: only an area places commands (`commands:`) or declares the matrix
+    (`environments:`), so a data section that carries either at any depth is a misspelt area. Measured over
+    the eight reachable manifests on 2026-10-13: no data section carries either key (`impl:` is carried -
+    `suites:` gates in netctl and swi - and `default:` is, netctl's `instance:`, which is why neither is a
+    test), and every area that places a command carries `commands:`. `tasks:` holds the bodies, not
+    placements, and `groups:` is refused before this runs.
+    """
+    name = manifest_path or "the manifest"
+    for key, value in data.items():
+        if key in AREAS or key in ("tasks", "groups"):
+            continue
+        where = _area_key_at(value, str(key))
+        if where is None:
+            continue
+        nearest = min(AREAS, key=lambda area: _distance(str(key), area))
+        raise ValueError(
+            f"{name} declares `{key}:`, which is not an area, yet it carries `{where}`: only `ci:`, `cd:` "
+            f"and `support:` place commands or declare environments, and a top-level section the kernel "
+            f"does not read is product data, so nothing in it would take effect. Did you mean `{nearest}:`?")
+
+
 def check_no_pre_si344_form(data: dict, manifest_path: str | None) -> None:
     """Refuse every key of the form si#344 replaced, by name, with the way out.
 
@@ -848,6 +910,13 @@ def check_no_pre_si344_form(data: dict, manifest_path: str | None) -> None:
     with no `kind:`, and `deploy: source: { images: }` - which the same command rewrites.
     """
     name = manifest_path or "the manifest"
+    if data is None:
+        # si#388: an empty document (nothing, `---`, only comments) parses to None. It used to be read as
+        # `{}` and load as a product with no `product:` and only the catalogue's commands - rc 0 for a
+        # file that says nothing at all.
+        raise ValueError(
+            f"{name} is empty: it declares no `product:` and no commands - write at least `product: <name>` "
+            f"and the areas (ci, cd, support) that place its commands")
     if not isinstance(data, dict):
         # Before any `in`: on a STRING that is a substring test, and the first `.get` after it an
         # AttributeError naming nothing. A document that parsed to a scalar or a list is said as one.

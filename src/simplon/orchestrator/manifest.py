@@ -810,7 +810,9 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     try:
         # `Any`, as `yaml.safe_load` typed it before si#344 B2: the checks below read the shape. A cast and
         # not an annotation: the refusal census finds this seam as a plain `data = ...(text)` assignment.
-        data = cast(Any, yamlkeys.load(text)) or {}
+        # si#388: no `or {}`. An empty document used to load as a product with no name and only the
+        # catalogue's commands; `check_no_pre_si344_form` now names it as empty.
+        data = cast(Any, yamlkeys.load(text))
     except yamlkeys.DuplicateKeyError as exc:
         # A key written twice (si#344 B2, ruling T4a): the document PARSES - YAML keeps the second copy and
         # loses the first without a word - so it is not "not valid YAML", and it is said in its own sentence.
@@ -860,6 +862,9 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     # would otherwise surface as `treeform.resolve`'s "declare the body once under `tasks:`" one command
     # at a time, which is true and useless: it names the rule, not the file's way out of it.
     treeform.check_no_old_form(data)
+    # si#388: a misspelt area (`ic:` for `ci:`) is a top-level key the kernel does not read, so it would
+    # load as a product data section and its commands would vanish without a word.
+    treeform.check_no_misspelt_area(data, manifest_path)
     # si#344 B2: every `artifacts:` entry names a kind the catalogue declares and carries only that kind's
     # keys, in the shapes the generated schema checks. A catalogue-less load checks against the same model.
     artifactsection.check(data, getattr(catalogue, "kinds", {}) or artifactsection.REFINES,
