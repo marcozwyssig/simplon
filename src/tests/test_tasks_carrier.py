@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import pytest
 
-from simplon import carrierspec, environments
+from simplon.domain import carrierspec, environments
 from simplon.tasks import carrier, proxmoxapi
 
 def _code(text: str) -> str:
@@ -299,7 +299,7 @@ MACHINE = carrierspec.Carrier(
 
 def _stub(monkeypatch, tmp_path, carrier_, seen: list) -> None:
     """Everything `up` reaches outside itself, replaced. Nothing here runs Pulumi, Ansible or Proxmox."""
-    from simplon import context
+    from simplon.domain import context
 
     # si#280: `_carrier_of` hands the MACHINE back beside the carrier, so its refusal of a carrier with
     # no `proxmox:` is a narrowing the type gate can see rather than an assertion further down.
@@ -370,7 +370,7 @@ def test_deploy_carrier_refuses_a_portainer_that_was_built_by_somebody_else(monk
     fault, because a reader who lands here is here by accident and not by mistake - they pointed at a
     Portainer that already exists and typed the command that creates one.
     """
-    from simplon import context
+    from simplon.domain import context
 
     monkeypatch.setattr(carrier.carrierspec, "declared", lambda *a, **k: {
         "theirs": carrier.carrierspec.Carrier(

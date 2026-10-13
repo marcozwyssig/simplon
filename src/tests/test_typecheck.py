@@ -26,10 +26,10 @@ from simplon.tasks import typecheck
 
 
 class _Result:
-    """The three fields of simplon.run.Result this module reads, so the probe needs no subprocess.
+    """The three fields of simplon.kernel.run.Result this module reads, so the probe needs no subprocess.
 
     `out`/`err` arrived with si#203: the mypy run is CAPTURED now, because the caller classifies what it
-    printed, which is the side of `simplon.run`'s own capture rule that inspection puts it on.
+    printed, which is the side of `simplon.kernel.run`'s own capture rule that inspection puts it on.
     """
 
     def __init__(self, rc: int, out: str = "", err: str = "") -> None:
@@ -151,9 +151,9 @@ def test_a_present_checker_passes_the_probe_silently(monkeypatch) -> None:
 #: `typecheck.py`'s module head rather than invented, including the `note:` line - the parser has to
 #: ignore it, or every missing import is counted twice.
 _UNRESOLVED = (
-    'src/simplon/topology.py:41: error: Cannot find implementation or library stub for module named '
+    'src/simplon/adapters/topology.py:41: error: Cannot find implementation or library stub for module named '
     '"pydantic"  [import-not-found]\n'
-    'src/simplon/topology.py:41: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html'
+    'src/simplon/adapters/topology.py:41: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html'
     '#missing-imports\n'
     'src/simplon/cli.py:29: error: Cannot find implementation or library stub for module named "typer"  '
     '[import-not-found]\n'
@@ -161,7 +161,7 @@ _UNRESOLVED = (
     'Found 3 errors in 3 files (checked 87 source files)\n'
 )
 #: The same transcript's other half: an error about the product's own code.
-_FINDING = ('src/simplon/verdict.py:426: error: Incompatible return value type (got "int", expected '
+_FINDING = ('src/simplon/kernel/verdict.py:426: error: Incompatible return value type (got "int", expected '
             '"str")  [return-value]\n')
 
 

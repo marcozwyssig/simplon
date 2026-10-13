@@ -28,7 +28,7 @@ Component typeOf firn.core.Class extends firn.core.NamedResource {
   }
 }
 
-// One module below src/simplon/, by its dotted path ("orchestrator.steps", "tasks.image", "__init__").
+// One module below src/simplon/, by its dotted path ("kernel.steps", "tasks.image", "__init__").
 Module typeOf firn.core.Class extends firn.core.NamedResource {
   property path typeOf firn.core.Attribute {
     range = firn.core.StringLiteral

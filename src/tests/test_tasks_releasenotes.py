@@ -21,9 +21,9 @@ from pathlib import Path
 
 import pytest
 
-from simplon import context
+from simplon.domain import context
 from simplon.tasks import releasenotes
-from simplon.run import Result
+from simplon.kernel.run import Result
 
 from conftest import ROOT  # noqa: F401  (keeps the src tree on sys.path)
 

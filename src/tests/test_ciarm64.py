@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from simplon.run import Result
+from simplon.kernel.run import Result
 from simplon.tasks import ciarm64, image
 
 

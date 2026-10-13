@@ -6,9 +6,9 @@ PyYAML keeps the last of two equal keys and drops the first without a word; cleo
 import pytest
 import yaml
 
-from simplon import catalogue, context, yamlkeys
-from simplon.context import ProductContext
-from simplon.orchestrator import manifest
+from simplon.domain import catalogue, context, yamlkeys
+from simplon.domain.context import ProductContext
+from simplon.domain import manifest
 
 import realmanifests
 

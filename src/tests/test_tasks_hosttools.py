@@ -4,8 +4,9 @@ monkeypatched, so the suite proves what the command DECIDES and reports. AAA thr
 """
 import pytest
 
-from simplon import context, oras
-from simplon.context import ProductContext
+from simplon.domain import context
+from simplon.adapters import oras
+from simplon.domain.context import ProductContext
 from simplon.tasks import hosttools
 
 

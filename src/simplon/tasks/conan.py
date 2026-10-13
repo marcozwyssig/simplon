@@ -45,7 +45,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from simplon import artifactsection, artifactschema, context, githubpackages, log
+from simplon.domain import artifactsection, artifactschema, context
+from simplon.adapters import githubpackages
+from simplon.kernel import log
 
 #: The manifest section this module reads, shared with `release:artifact` and si#127's NuGet tasks. No
 #: new top-level section (design section 2): a registry, a package and a scope are the same three facts

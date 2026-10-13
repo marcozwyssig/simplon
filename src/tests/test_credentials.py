@@ -12,7 +12,7 @@ learn to wave through.
 """
 import pytest
 
-from simplon import credentials
+from simplon.adapters import credentials
 
 PREFIX = "ACTIFSOURCE"
 USER_VAR, PASSWORD_VAR = credentials.variables(PREFIX)

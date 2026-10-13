@@ -1,4 +1,4 @@
-"""Runner tests for simplon.orchestrator.product: run_command (#896), the product-agnostic runner that
+"""Runner tests for simplon.kernel.product: run_command (#896), the product-agnostic runner that
 expands a command NAME through the #895 dependency plan (`Manifest.plan_tree_for`), maps each planned leaf
 through the product's step factory (`StepFactoryContext`) and dispatches the resulting Pipeline. Fake
 step_factory (no real subprocess, no Textual) so the mapping, the stop_on_failure carry-through and the
@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import pytest
 
-from simplon.orchestrator import product
-from simplon.orchestrator.manifest import load as manifest_load
-from simplon.orchestrator.steps import Outcome, Step, run_headless
+from simplon.kernel import product
+from simplon.domain.manifest import load as manifest_load
+from simplon.kernel.steps import Outcome, Step, run_headless
 
 
 def _factory(rc_by_cmd: dict[str, int] | None = None):
@@ -208,7 +208,7 @@ def test_run_command_raises_a_clear_error_for_an_unknown_command():
 
 def test_product_context_is_a_back_compat_alias_of_step_factory_context():
     # The class was renamed ProductContext -> StepFactoryContext (netctl#737) to stop colliding with
-    # simplon.context.ProductContext; the old name stays as an alias so a not-yet-bumped consumer keeps
+    # simplon.domain.context.ProductContext; the old name stays as an alias so a not-yet-bumped consumer keeps
     # importing it until it migrates.
     # act / assert: same class, so `product.ProductContext(...)` still builds a usable step-factory context
     assert product.ProductContext is product.StepFactoryContext
@@ -348,7 +348,7 @@ def test_for_shim_falls_back_to_the_bare_name_when_several_groups_own_the_comman
 def test_for_shim_runs_the_products_shim_with_the_command_as_its_argument(monkeypatch):
     # arrange: capture the argv the step really streams, so the stamp is not mistaken for the command run
     argvs: list[list[str]] = []
-    monkeypatch.setattr("simplon.orchestrator.steps.run_stream",
+    monkeypatch.setattr("simplon.kernel.steps.run_stream",
                         lambda argv, on_line: (argvs.append(list(argv)), on_line("building"), 7)[2])
     ctx = product.StepFactoryContext.for_shim("demo", "/repo/demo.sh", manifest_load(_DEPS_MANIFEST))
 
@@ -407,7 +407,7 @@ def test_for_module_runs_the_products_module_with_this_interpreter(monkeypatch):
     `<product>.sh` and `<product>.cmd` this host can execute. cleon's Windows cell died on exactly that
     (`WinError 193: %1 is not a valid Win32 application`) on the first run that ever reached it."""
     argvs: list[list[str]] = []
-    monkeypatch.setattr("simplon.orchestrator.steps.run_stream",
+    monkeypatch.setattr("simplon.kernel.steps.run_stream",
                         lambda argv, on_line: (argvs.append(list(argv)), on_line("building"), 3)[2])
     monkeypatch.setattr(product.sys, "executable", "/venv/bin/python")
     ctx = product.StepFactoryContext.for_module("demo", "orchestrator", manifest_load(_DEPS_MANIFEST))

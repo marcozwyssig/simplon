@@ -17,8 +17,8 @@ pytest.importorskip("textual")
 
 from datetime import datetime  # noqa: E402
 
-from simplon.orchestrator.steps import StepState, build_rows, summarise, transcript  # noqa: E402
-from simplon.orchestrator.tui import _StepApp, _WalkApp, settle  # noqa: E402
+from simplon.kernel.steps import StepState, build_rows, summarise, transcript  # noqa: E402
+from simplon.ui.tui import _StepApp, _WalkApp, settle  # noqa: E402
 from simplon.tasks import walk as walk_mod  # noqa: E402
 from simplon.tasks.acceptance import read  # noqa: E402
 

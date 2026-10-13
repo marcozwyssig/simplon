@@ -1,4 +1,4 @@
-"""Unit tests for the Host execution router (simplon.host): on macOS the lab commands are wrapped in
+"""Unit tests for the Host execution router (simplon.adapters.host): on macOS the lab commands are wrapped in
 `colima ssh --`, on Linux they run directly. The OS is injected via os_name so the routing is testable on
 any host, with no real subprocess. AAA throughout.
 
@@ -14,8 +14,8 @@ import threading
 
 import pytest
 
-from simplon import host
-from simplon.run import Result
+from simplon.adapters import host
+from simplon.kernel.run import Result
 
 
 def test_host_wraps_docker_in_colima_ssh_on_darwin(monkeypatch):

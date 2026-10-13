@@ -17,10 +17,10 @@ join quietly, whether or not it renders anything.
 
 THE FOUR SURFACES, and the fourth is a limit rather than a defect:
 
-  - `simplon.cli.assemble`      the running `--help`                   carries the description
-  - `simplon.taskgen.render`    the generated command module           carries the description
-  - `simplon.tasks.cliref`      the generated command reference page   carries it since si#77
-  - `simplon.completiongen`     the committed shell completion         NAMES ONLY, measured below
+  - `simplon.cli.assemble`          the running `--help`                   carries the description
+  - `simplon.tasks.taskgen.render`  the generated command module           carries the description
+  - `simplon.tasks.cliref`          the generated command reference page   carries it since si#77
+  - `simplon.tasks.completiongen`   the committed shell completion         NAMES ONLY, measured below
 
 The completion is bash, and its answer is a word list handed to `compgen -W`. There is no slot in that
 mechanism for a description - not a truncated one, not an aligned one - so `test_the_completion_offers_
@@ -38,9 +38,10 @@ import typer
 from click.testing import CliRunner
 from typer.main import get_command
 
-from simplon import catalogue as catalogue_mod
-from simplon import cli, completiongen, taskgen
-from simplon.orchestrator import manifest as manifest_mod
+from simplon.domain import catalogue as catalogue_mod
+from simplon import cli
+from simplon.tasks import completiongen, taskgen
+from simplon.domain import manifest as manifest_mod
 from simplon.tasks import cliref
 
 from conftest import ROOT
@@ -59,18 +60,18 @@ NAMES_ONLY = "offers the group's name and no text at all"
 
 SURFACES = {
     "cli": CARRIES,
-    "taskgen": CARRIES,
+    "tasks.taskgen": CARRIES,
     "tasks.cliref": CARRIES,
     # bash hands `compgen -W` a list of WORDS. A description is not a word, and there is no second column
     # in that mechanism to put one in - see this module's head.
-    "completiongen": NAMES_ONLY,
+    "tasks.completiongen": NAMES_ONLY,
 }
 
 #: A module that consults the taxonomy and renders nothing, with the reason. `environments` asks whether a
 #: token names a group in order to decide whether it is an environment name; nothing it answers reaches a
 #: screen, so a group description would have nowhere to arrive.
 NOT_A_SURFACE = {
-    "environments": "asks whether a token names a group, to tell an environment name from a group token - "
+    "domain.environments": "asks whether a token names a group, to tell an environment name from a group token - "
                     "it renders nothing",
 }
 
@@ -202,9 +203,9 @@ def _completion_text(mf) -> str:
 #: One renderer per surface, producing the text that surface puts in front of a human.
 RENDER = {
     "cli": _cli_text,
-    "taskgen": _taskgen_text,
+    "tasks.taskgen": _taskgen_text,
     "tasks.cliref": _cliref_text,
-    "completiongen": _completion_text,
+    "tasks.completiongen": _completion_text,
 }
 
 
@@ -220,7 +221,7 @@ def _taxonomy_consumers() -> set[str]:
         if any(isinstance(node, ast.Call) and getattr(node.func, "attr", "") == TAXONOMY_ACCESSOR
                for node in ast.walk(tree)):
             parts = list(path.relative_to(SRC).with_suffix("").parts)
-            found.add(".".join(parts))
+            found.add(".".join(parts[:-1] if parts[-1] == "__init__" else parts))  # `cli` is a package
     if not found:
         raise ValueError(
             f"no kernel module calls `.{TAXONOMY_ACCESSOR}()` - the walk is broken, not the kernel")
@@ -323,7 +324,7 @@ def test_the_completion_offers_names_and_no_descriptions(impls):
     mf = _loaded()
 
     # act
-    text = RENDER["completiongen"](mf)
+    text = RENDER["tasks.completiongen"](mf)
 
     # assert: the names are all there
     for group in (*DECLARING, SILENT):

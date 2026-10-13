@@ -58,10 +58,11 @@ from enum import Enum
 
 import click
 
-from simplon import catalogue as catalogue_mod
-from simplon import context, log
-from simplon.layout import validate_relative_dir
-from simplon.orchestrator.manifest import Manifest
+from simplon.domain import catalogue as catalogue_mod
+from simplon.domain import context
+from simplon.kernel import log
+from simplon.domain.layout import validate_relative_dir
+from simplon.domain.manifest import Manifest
 
 #: The closing section's heading. A constant because it is the seam between what this product HAS and what
 #: the platform merely offers, and a test asserts nothing from the first half leaks into the second.
@@ -490,7 +491,7 @@ def reference(output: str, title: str = "") -> int:
     """Write the product's command reference to `output`, as Markdown for Hugo.
 
     `output` is a plain relative path under the product root, checked by the rule `--orch-dir` and the
-    site build's own paths already use (`simplon.layout.validate_relative_dir`): the value comes from a
+    site build's own paths already use (`simplon.domain.layout.validate_relative_dir`): the value comes from a
     manifest and is then written to, so an absolute one would land outside the product entirely. It is a
     FILE here rather than a directory, which is all that rule's wording gets wrong - the escape it refuses
     is the same one.

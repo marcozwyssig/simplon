@@ -36,8 +36,8 @@ import textwrap
 import pytest
 import yaml
 
-from simplon import context
-from simplon.context import ProductContext
+from simplon.domain import context
+from simplon.domain.context import ProductContext
 from simplon.tasks import testrun, toolchain
 
 import sitepages

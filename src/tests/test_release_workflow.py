@@ -28,8 +28,8 @@ import yaml
 
 from simplon.tasks import site as site_task
 
-from simplon import catalogue as catalogue_mod
-from simplon.orchestrator import manifest as manifest_mod
+from simplon.domain import catalogue as catalogue_mod
+from simplon.domain import manifest as manifest_mod
 
 from conftest import ROOT
 

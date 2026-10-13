@@ -6,8 +6,9 @@ products. AAA throughout; nothing pushes anything.
 """
 import pytest
 
-from simplon import context, githubpackages
-from simplon.context import ProductContext
+from simplon.domain import context
+from simplon.adapters import githubpackages
+from simplon.domain.context import ProductContext
 from simplon.tasks import artifact
 
 _MANIFEST = """

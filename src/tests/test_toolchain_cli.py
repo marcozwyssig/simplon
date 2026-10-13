@@ -14,8 +14,9 @@ import typer
 import yaml
 from typer.testing import CliRunner
 
-from simplon import cli, context
-from simplon.run import Result
+from simplon import cli
+from simplon.domain import context
+from simplon.kernel.run import Result
 from simplon.tasks import toolchain
 
 

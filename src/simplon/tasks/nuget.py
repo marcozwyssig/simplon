@@ -62,8 +62,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from xml.sax.saxutils import quoteattr
 
-from simplon import artifactsection, artifactschema, context, docker, githubpackages, hostpath, log, outputs
-from simplon.run import stream
+from simplon.domain import artifactsection, artifactschema, context, outputs
+from simplon.adapters import docker, githubpackages, hostpath
+from simplon.kernel import log
+from simplon.kernel.run import stream
 
 #: The manifest section this module reads. `artifacts:` rather than a new top-level key, per design
 #: section 2: a registry, a package and a scope are the same three facts whatever the ecosystem, and a

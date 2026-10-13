@@ -109,7 +109,7 @@ tells you - at the call site, not in the body that looks fine on its own.
 Every external call goes through one seam:
 
 ```python
-from simplon.run import run
+from simplon.kernel.run import run
 
 result = run(["docker", "run", "--rm", image, *argv], capture=False)
 if not result.ok:

@@ -8,203 +8,206 @@ kernel typeOf simplon.architecture.Component {
   key = "kernel"
   layer = "0"
   summary = "Running a plan: steps, outcomes, the subprocess seam, the log - and, with si#390 part 4, the base classes of tasks and commands."
-  module m_orchestrator_steps typeOf simplon.architecture.Module {
-    path = "orchestrator.steps"
+  module m_kernel_steps typeOf simplon.architecture.Module {
+    path = "kernel.steps"
   }
-  module m_orchestrator_product typeOf simplon.architecture.Module {
-    path = "orchestrator.product"
+  module m_kernel_product typeOf simplon.architecture.Module {
+    path = "kernel.product"
   }
-  module m_orchestrator_plan typeOf simplon.architecture.Module {
-    path = "orchestrator.plan"
+  module m_kernel_plan typeOf simplon.architecture.Module {
+    path = "kernel.plan"
   }
-  module m_run typeOf simplon.architecture.Module {
-    path = "run"
+  module m_kernel_run typeOf simplon.architecture.Module {
+    path = "kernel.run"
   }
-  module m_awake typeOf simplon.architecture.Module {
-    path = "awake"
+  module m_kernel_awake typeOf simplon.architecture.Module {
+    path = "kernel.awake"
   }
-  module m_provenance typeOf simplon.architecture.Module {
-    path = "provenance"
+  module m_kernel_provenance typeOf simplon.architecture.Module {
+    path = "kernel.provenance"
   }
-  module m_runhost typeOf simplon.architecture.Module {
-    path = "runhost"
+  module m_kernel_runhost typeOf simplon.architecture.Module {
+    path = "kernel.runhost"
   }
-  module m_log typeOf simplon.architecture.Module {
-    path = "log"
+  module m_kernel_log typeOf simplon.architecture.Module {
+    path = "kernel.log"
   }
-  module m_verdict typeOf simplon.architecture.Module {
-    path = "verdict"
+  module m_kernel_verdict typeOf simplon.architecture.Module {
+    path = "kernel.verdict"
   }
-  module m_steplog typeOf simplon.architecture.Module {
-    path = "steplog"
+  module m_kernel_steplog typeOf simplon.architecture.Module {
+    path = "kernel.steplog"
   }
-  module m_waits typeOf simplon.architecture.Module {
-    path = "waits"
+  module m_kernel_waits typeOf simplon.architecture.Module {
+    path = "kernel.waits"
   }
-  module m_degraded typeOf simplon.architecture.Module {
-    path = "degraded"
+  module m_kernel_degraded typeOf simplon.architecture.Module {
+    path = "kernel.degraded"
   }
-  module m_filelock typeOf simplon.architecture.Module {
-    path = "filelock"
+  module m_kernel_filelock typeOf simplon.architecture.Module {
+    path = "kernel.filelock"
+  }
+  module m_kernel_moved typeOf simplon.architecture.Module {
+    path = "kernel.moved"
   }
 }
 domain typeOf simplon.architecture.Component {
   key = "domain"
   layer = "1"
   summary = "Reading the configuration, validating it, and building the plan from it."
-  module m_orchestrator_manifest typeOf simplon.architecture.Module {
-    path = "orchestrator.manifest"
+  module m_domain_manifest typeOf simplon.architecture.Module {
+    path = "domain.manifest"
   }
-  module m_orchestrator_model_treeform typeOf simplon.architecture.Module {
-    path = "orchestrator.model.treeform"
+  module m_domain_treeform typeOf simplon.architecture.Module {
+    path = "domain.treeform"
   }
-  module m_yamlkeys typeOf simplon.architecture.Module {
-    path = "yamlkeys"
+  module m_domain_yamlkeys typeOf simplon.architecture.Module {
+    path = "domain.yamlkeys"
   }
-  module m_artifactsection typeOf simplon.architecture.Module {
-    path = "artifactsection"
+  module m_domain_artifactsection typeOf simplon.architecture.Module {
+    path = "domain.artifactsection"
   }
-  module m_artifactschema typeOf simplon.architecture.Module {
-    path = "artifactschema"
+  module m_domain_artifactschema typeOf simplon.architecture.Module {
+    path = "domain.artifactschema"
   }
-  module m_environments typeOf simplon.architecture.Module {
-    path = "environments"
+  module m_domain_environments typeOf simplon.architecture.Module {
+    path = "domain.environments"
   }
-  module m_carrierspec typeOf simplon.architecture.Module {
-    path = "carrierspec"
+  module m_domain_carrierspec typeOf simplon.architecture.Module {
+    path = "domain.carrierspec"
   }
-  module m_layout typeOf simplon.architecture.Module {
-    path = "layout"
+  module m_domain_layout typeOf simplon.architecture.Module {
+    path = "domain.layout"
   }
-  module m_outputs typeOf simplon.architecture.Module {
-    path = "outputs"
+  module m_domain_outputs typeOf simplon.architecture.Module {
+    path = "domain.outputs"
   }
-  module m_deployment typeOf simplon.architecture.Module {
-    path = "deployment"
+  module m_domain_deployment typeOf simplon.architecture.Module {
+    path = "domain.deployment"
   }
-  module m_signatures typeOf simplon.architecture.Module {
-    path = "signatures"
+  module m_domain_signatures typeOf simplon.architecture.Module {
+    path = "domain.signatures"
   }
-  module m_context typeOf simplon.architecture.Module {
-    path = "context"
+  module m_domain_context typeOf simplon.architecture.Module {
+    path = "domain.context"
   }
-  module m_catalogue typeOf simplon.architecture.Module {
-    path = "catalogue"
+  module m_domain_catalogue typeOf simplon.architecture.Module {
+    path = "domain.catalogue"
   }
-  module m_runners typeOf simplon.architecture.Module {
-    path = "runners"
+  module m_domain_runners typeOf simplon.architecture.Module {
+    path = "domain.runners"
   }
-  module m_manifestmodel typeOf simplon.architecture.Module {
-    path = "manifestmodel"
+  module m_domain_manifestmodel typeOf simplon.architecture.Module {
+    path = "domain.manifestmodel"
   }
-  module m_clitaxonomy typeOf simplon.architecture.Module {
-    path = "clitaxonomy"
+  module m_domain_clitaxonomy typeOf simplon.architecture.Module {
+    path = "domain.clitaxonomy"
   }
 }
 adapters typeOf simplon.architecture.Component {
   key = "adapters"
   layer = "2"
   summary = "The tools and platforms a task drives: docker, oras, a registry, a lab, a proxy."
-  module m_backend typeOf simplon.architecture.Module {
-    path = "backend"
+  module m_adapters_backend typeOf simplon.architecture.Module {
+    path = "adapters.backend"
   }
-  module m_checksum typeOf simplon.architecture.Module {
-    path = "checksum"
+  module m_adapters_checksum typeOf simplon.architecture.Module {
+    path = "adapters.checksum"
   }
-  module m_clablifecycle typeOf simplon.architecture.Module {
-    path = "clablifecycle"
+  module m_adapters_clablifecycle typeOf simplon.architecture.Module {
+    path = "adapters.clablifecycle"
   }
-  module m_clabrender typeOf simplon.architecture.Module {
-    path = "clabrender"
+  module m_adapters_clabrender typeOf simplon.architecture.Module {
+    path = "adapters.clabrender"
   }
-  module m_compose typeOf simplon.architecture.Module {
-    path = "compose"
+  module m_adapters_compose typeOf simplon.architecture.Module {
+    path = "adapters.compose"
   }
-  module m_credentials typeOf simplon.architecture.Module {
-    path = "credentials"
+  module m_adapters_credentials typeOf simplon.architecture.Module {
+    path = "adapters.credentials"
   }
-  module m_devcontainer typeOf simplon.architecture.Module {
-    path = "devcontainer"
+  module m_adapters_devcontainer typeOf simplon.architecture.Module {
+    path = "adapters.devcontainer"
   }
-  module m_disk typeOf simplon.architecture.Module {
-    path = "disk"
+  module m_adapters_disk typeOf simplon.architecture.Module {
+    path = "adapters.disk"
   }
-  module m_diskguard typeOf simplon.architecture.Module {
-    path = "diskguard"
+  module m_adapters_diskguard typeOf simplon.architecture.Module {
+    path = "adapters.diskguard"
   }
-  module m_docker typeOf simplon.architecture.Module {
-    path = "docker"
+  module m_adapters_docker typeOf simplon.architecture.Module {
+    path = "adapters.docker"
   }
-  module m_fetch typeOf simplon.architecture.Module {
-    path = "fetch"
+  module m_adapters_fetch typeOf simplon.architecture.Module {
+    path = "adapters.fetch"
   }
-  module m_githubpackages typeOf simplon.architecture.Module {
-    path = "githubpackages"
+  module m_adapters_githubpackages typeOf simplon.architecture.Module {
+    path = "adapters.githubpackages"
   }
-  module m_healthgate typeOf simplon.architecture.Module {
-    path = "healthgate"
+  module m_adapters_healthgate typeOf simplon.architecture.Module {
+    path = "adapters.healthgate"
   }
-  module m_host typeOf simplon.architecture.Module {
-    path = "host"
+  module m_adapters_host typeOf simplon.architecture.Module {
+    path = "adapters.host"
   }
-  module m_hostpath typeOf simplon.architecture.Module {
-    path = "hostpath"
+  module m_adapters_hostpath typeOf simplon.architecture.Module {
+    path = "adapters.hostpath"
   }
-  module m_imagenames typeOf simplon.architecture.Module {
-    path = "imagenames"
+  module m_adapters_imagenames typeOf simplon.architecture.Module {
+    path = "adapters.imagenames"
   }
-  module m_interact typeOf simplon.architecture.Module {
-    path = "interact"
+  module m_adapters_interact typeOf simplon.architecture.Module {
+    path = "adapters.interact"
   }
-  module m_labegress typeOf simplon.architecture.Module {
-    path = "labegress"
+  module m_adapters_labegress typeOf simplon.architecture.Module {
+    path = "adapters.labegress"
   }
-  module m_labhost typeOf simplon.architecture.Module {
-    path = "labhost"
+  module m_adapters_labhost typeOf simplon.architecture.Module {
+    path = "adapters.labhost"
   }
-  module m_labinstance typeOf simplon.architecture.Module {
-    path = "labinstance"
+  module m_adapters_labinstance typeOf simplon.architecture.Module {
+    path = "adapters.labinstance"
   }
-  module m_labnet typeOf simplon.architecture.Module {
-    path = "labnet"
+  module m_adapters_labnet typeOf simplon.architecture.Module {
+    path = "adapters.labnet"
   }
-  module m_linux typeOf simplon.architecture.Module {
-    path = "linux"
+  module m_adapters_linux typeOf simplon.architecture.Module {
+    path = "adapters.linux"
   }
-  module m_nexusproxy typeOf simplon.architecture.Module {
-    path = "nexusproxy"
+  module m_adapters_nexusproxy typeOf simplon.architecture.Module {
+    path = "adapters.nexusproxy"
   }
-  module m_oras typeOf simplon.architecture.Module {
-    path = "oras"
+  module m_adapters_oras typeOf simplon.architecture.Module {
+    path = "adapters.oras"
   }
-  module m_portainer typeOf simplon.architecture.Module {
-    path = "portainer"
+  module m_adapters_portainer typeOf simplon.architecture.Module {
+    path = "adapters.portainer"
   }
-  module m_ports typeOf simplon.architecture.Module {
-    path = "ports"
+  module m_adapters_ports typeOf simplon.architecture.Module {
+    path = "adapters.ports"
   }
-  module m_pyvenv typeOf simplon.architecture.Module {
-    path = "pyvenv"
+  module m_adapters_pyvenv typeOf simplon.architecture.Module {
+    path = "adapters.pyvenv"
   }
-  module m_tools typeOf simplon.architecture.Module {
-    path = "tools"
+  module m_adapters_tools typeOf simplon.architecture.Module {
+    path = "adapters.tools"
   }
-  module m_topology typeOf simplon.architecture.Module {
-    path = "topology"
+  module m_adapters_topology typeOf simplon.architecture.Module {
+    path = "adapters.topology"
   }
-  module m_tracker typeOf simplon.architecture.Module {
-    path = "tracker"
+  module m_adapters_tracker typeOf simplon.architecture.Module {
+    path = "adapters.tracker"
   }
 }
 tasks typeOf simplon.architecture.Component {
   key = "tasks"
   layer = "3"
   summary = "The catalogue's task bodies, and the generators they call."
-  module m_completiongen typeOf simplon.architecture.Module {
-    path = "completiongen"
+  module m_tasks_completiongen typeOf simplon.architecture.Module {
+    path = "tasks.completiongen"
   }
-  module m_taskgen typeOf simplon.architecture.Module {
-    path = "taskgen"
+  module m_tasks_taskgen typeOf simplon.architecture.Module {
+    path = "tasks.taskgen"
   }
   module m_tasks_acceptance typeOf simplon.architecture.Module {
     path = "tasks.acceptance"
@@ -317,46 +320,54 @@ tasks typeOf simplon.architecture.Component {
   module m_tasks_workflows typeOf simplon.architecture.Module {
     path = "tasks.workflows"
   }
-  module m_workflowgen typeOf simplon.architecture.Module {
-    path = "workflowgen"
+  module m_tasks_workflowgen typeOf simplon.architecture.Module {
+    path = "tasks.workflowgen"
   }
 }
 cli typeOf simplon.architecture.Component {
   key = "cli"
   layer = "5"
   summary = "The command line: simplon and simplon init, and what a product may import."
-  module m_cli typeOf simplon.architecture.Module {
-    path = "cli"
+  module m_cli___init__ typeOf simplon.architecture.Module {
+    path = "cli.__init__"
   }
-  module m_bootstrap typeOf simplon.architecture.Module {
-    path = "bootstrap"
+  module m_cli_bootstrap typeOf simplon.architecture.Module {
+    path = "cli.bootstrap"
   }
-  module m_surface typeOf simplon.architecture.Module {
-    path = "surface"
+  module m_cli_surface typeOf simplon.architecture.Module {
+    path = "cli.surface"
   }
 }
 ui typeOf simplon.architecture.Component {
   key = "ui"
   layer = "4"
   summary = "Running a plan in front of a person."
-  module m_orchestrator_tui typeOf simplon.architecture.Module {
-    path = "orchestrator.tui"
+  module m_ui_tui typeOf simplon.architecture.Module {
+    path = "ui.tui"
   }
 }
 e_init typeOf simplon.architecture.Excluded {
   path = "__init__"
-  reason = "The package itself; it imports only `_version`, which is excluded too."
+  reason = "The package itself; it imports `_version`, which is excluded too, and `kernel.moved`, whose alias it installs (si#399)."
 }
 e_version typeOf simplon.architecture.Excluded {
   path = "_version"
   reason = "Written by setuptools-scm; it imports nothing."
 }
-e_orchestrator___init typeOf simplon.architecture.Excluded {
-  path = "orchestrator.__init__"
+e_adapters___init typeOf simplon.architecture.Excluded {
+  path = "adapters.__init__"
   reason = "A package marker; it imports no simplon module."
 }
-e_orchestrator_model___init typeOf simplon.architecture.Excluded {
-  path = "orchestrator.model.__init__"
+e_domain___init typeOf simplon.architecture.Excluded {
+  path = "domain.__init__"
+  reason = "A package marker; it imports no simplon module."
+}
+e_kernel___init typeOf simplon.architecture.Excluded {
+  path = "kernel.__init__"
+  reason = "A package marker; it imports no simplon module."
+}
+e_ui___init typeOf simplon.architecture.Excluded {
+  path = "ui.__init__"
   reason = "A package marker; it imports no simplon module."
 }
 e_tasks___init typeOf simplon.architecture.Excluded {

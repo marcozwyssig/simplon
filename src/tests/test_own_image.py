@@ -22,7 +22,7 @@ import subprocess
 import pytest
 import yaml
 
-from simplon import docker, githubpackages
+from simplon.adapters import docker, githubpackages
 from simplon.tasks import image
 
 from conftest import ROOT
@@ -116,7 +116,7 @@ def test_the_kernels_own_registry_is_one_the_run_token_can_reach():
     # assert
     assert githubpackages.is_github_packages(cfg.registry), (
         f"the kernel publishes to '{cfg.registry}', which the per-run GitHub token may not be sent to "
-        f"(simplon.githubpackages.is_github_packages). Publishing there needs a stored credential, "
+        f"(simplon.adapters.githubpackages.is_github_packages). Publishing there needs a stored credential, "
         f"which is the reason si#200 deferred publishing at all.")
 
 
@@ -253,7 +253,7 @@ def test_the_docker_client_in_the_image_is_the_version_the_kernel_already_pins()
     bumps. si#201 measured that leaving it out costs 84 MB and 15.0 s on first use, needs egress from a
     container whose premise is "bash and docker", and changes four verdicts in simplon's own gate - so
     the client went in. This is the half that answers the original objection: the Dockerfile installs
-    `simplon.docker.DOCKER_CLI_VERSION` and nothing else, so bumping the kernel's pin bumps the layer or
+    `simplon.adapters.docker.DOCKER_CLI_VERSION` and nothing else, so bumping the kernel's pin bumps the layer or
     this goes red.
     """
     # arrange
@@ -278,7 +278,7 @@ def test_gh_is_in_the_image_because_without_it_a_container_walk_files_nothing():
     si#206 shipped a walk that turns a customer's refusal into a ticket, and measured that on the
     container route it asked its questions, recorded its refusals and filed none of them, because the
     image carried `docker` and not `gh`. That is a difference between two routes si#200 requires to be
-    indistinguishable, and it survived every gate: `simplon.tracker` is unreachable from `test suite` by
+    indistinguishable, and it survived every gate: `simplon.adapters.tracker` is unreachable from `test suite` by
     design, so no `test all` run through either route could move a verdict over it. This is the guard
     that would not have needed a human to notice it twice.
     """
@@ -299,7 +299,7 @@ def test_gh_is_in_the_image_because_without_it_a_container_walk_files_nothing():
 def test_the_gh_version_in_the_image_is_pinned_to_one_exact_release():
     """The "version nobody bumps" objection, answered the only way it can be here.
 
-    docker's pin has two consumers - `simplon.docker.DOCKER_CLI_VERSION` and the layer - so the test
+    docker's pin has two consumers - `simplon.adapters.docker.DOCKER_CLI_VERSION` and the layer - so the test
     above holds them against each other. `gh` has ONE: there is no bootstrap and no version expectation
     anywhere in the kernel, all four call sites reach it through a bare `shutil.which("gh")`, and a
     Python constant mirroring this ARG would be a second source with nothing reading it. So what can
@@ -324,7 +324,7 @@ def test_the_gh_version_in_the_image_is_pinned_to_one_exact_release():
 def test_oras_is_still_out_of_the_image_because_nothing_measured_asked_for_it():
     # arrange: the other half of si#201's split, asserted because an absence is what a reviewer cannot
     # see. oras is reached only by `release:artifact` and the read-back in `release:image`, it has a
-    # provisioning gate that works (`simplon.oras.ensure_oras`), and it changed no verdict in the
+    # provisioning gate that works (`simplon.adapters.oras.ensure_oras`), and it changed no verdict in the
     # both-routes gate run - so the argument si#200 made against baking a tool in still holds for it
     dockerfile = (ROOT / "deploy" / "image" / "Dockerfile").read_text(encoding="utf-8")
 

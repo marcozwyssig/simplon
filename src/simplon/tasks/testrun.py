@@ -3,7 +3,7 @@ orchestrator.testrun).
 
 Creating a per-suite venv, running pytest into a shared allure results dir, merging the already-written
 per-module results and rendering the single-file archive is MECHANISM: it needs to know nothing about the
-product whose suites it runs. The kernel already owned the two primitives it is built on (`simplon.pyvenv`,
+product whose suites it runs. The kernel already owned the two primitives it is built on (`simplon.adapters.pyvenv`,
 `simplon.tasks.allure`), so this finishes a seam that was half-built.
 
 WHAT THE PRODUCT CONTRIBUTES IS DATA, in its manifest's `suites` section, read RAW through
@@ -19,7 +19,7 @@ resolves a command's `impl:`:
   - `preamble`     - the idempotent lab preparation a gate needs (converged inventory, provisioned
     services, a settled forwarding plane).
 Both are SETUP, and a setup that falls over is not a red suite: the suite never ran, so the run has learned
-nothing about the product. `simplon.verdict` holds that vocabulary and the reasoning for keeping it out of
+nothing about the product. `simplon.kernel.verdict` holds that vocabulary and the reasoning for keeping it out of
 the rc; `assess_gate` below produces it and writes it where a later reader actually looks - the stamp beside
 the report dir and the archive's own Environment widget (#30). A suite that prepares its own lab inside a
 session fixture, out of the kernel's sight, says so through the marker file at `SETUP_MARKER_ENV`.
@@ -96,12 +96,14 @@ from typing import Callable
 
 import typer
 
-from simplon import context, layout, log, pyvenv, signatures, verdict
+from simplon.domain import context, layout, signatures
+from simplon.kernel import log, verdict
+from simplon.adapters import pyvenv
 from simplon.tasks import allure
-from simplon.awake import keep_awake
-from simplon.orchestrator.manifest import resolve_ref
-from simplon.run import run
-from simplon.verdict import GateVerdict, RunVerdict, Verdict
+from simplon.kernel.awake import keep_awake
+from simplon.domain.manifest import resolve_ref
+from simplon.kernel.run import run
+from simplon.kernel.verdict import GateVerdict, RunVerdict, Verdict
 
 # The manifest section this module owns.
 SECTION = "suites"
@@ -716,7 +718,7 @@ def _setup_marker(reports: str) -> Iterator[str]:
     The marker is REMOVED on the way in, so a file left by an earlier run can never be read as this run's
     verdict - a stale "setup failed" is the same defect as a stale "passed", pointing the other way. The
     path is exported for the child pytest through `os.environ` and restored afterwards, because
-    `simplon.run.run` takes no environment of its own and widening it for one caller would be a bigger
+    `simplon.kernel.run.run` takes no environment of its own and widening it for one caller would be a bigger
     change than the seam is worth; the value is a path this process just computed, not user input.
     """
     path = os.path.join(reports, SETUP_MARKER)

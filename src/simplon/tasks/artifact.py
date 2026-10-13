@@ -19,7 +19,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from simplon import artifactsection, artifactschema, context, githubpackages, log
+from simplon.domain import artifactsection, artifactschema, context
+from simplon.adapters import githubpackages
+from simplon.kernel import log
 
 #: The manifest section this task reads: a mapping of NAME -> the four things publishing a directory
 #: needs. A section rather than flat keys, because a product may publish several.

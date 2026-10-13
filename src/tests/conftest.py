@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 sys.path.insert(0, str(ROOT / "src"))
 
-from simplon import hostpath   # noqa: E402  (needs the sys.path line above)
+from simplon.adapters import hostpath   # noqa: E402  (needs the sys.path line above)
 
 #: The environment variables that change what a PURE kernel function returns, cleared for every test.
 AMBIENT = ("DELIVERY_HOST_ROOT", "DELIVERY_MOUNT_ROOT")
@@ -33,7 +33,7 @@ def _this_suite_runs_as_if_on_a_host(monkeypatch):
 
     WHY IT EXISTS, measured rather than reasoned. `simplon test all` can now be run through the kernel's
     container image, and inside it both facts are true: `DELIVERY_HOST_ROOT` is exported by the launcher,
-    and `/.dockerenv` is on the filesystem. `simplon.hostpath.translate` consults both, so every unit
+    and `/.dockerenv` is on the filesystem. `simplon.adapters.hostpath.translate` consults both, so every unit
     test of an argv builder that passes a `tmp_path` - which is not under the mount - met a refusal it
     was never written for. The container route came back 74 failed against 4 on the venv route, and
     every one of the 74 was that.
@@ -53,7 +53,8 @@ def _a_run_has_the_host_the_cli_registers():
     """Every real run starts in `cli.main`, which registers the run host the kernel reads (si#391). The
     suite registers the same one, built by the same function, so a test sees what a run sees. A test that
     is ABOUT the unregistered case clears it with `runhost.register(None)`."""
-    from simplon import cli, runhost
+    from simplon import cli
+    from simplon.kernel import runhost
     runhost.register(cli.run_host())
     yield
     runhost.register(None)
@@ -100,7 +101,7 @@ def docker_is_usable() -> bool:
     """
     import shutil
 
-    from simplon.run import run
+    from simplon.kernel.run import run
 
     if shutil.which("docker") is None:
         return False

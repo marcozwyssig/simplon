@@ -101,7 +101,7 @@ rem si#201 was built on, so what follows is the shell half of the same route tra
 rem against the .sh by tests/test_launch_container.py for the things that CAN be checked without a
 rem Windows - the same parameters, the same mount destinations, the same environment names - and
 rem inherited for the rest. That is the evidence split this repository already keeps for the CRLF policy
-rem in `simplon.bootstrap.newline_for`.
+rem in `simplon.cli.bootstrap.newline_for`.
 if not defined KERNEL_IMAGE (
     >&2 echo {{ product }}: the container route needs a published kernel image, and
     >&2 echo {{ product }}:   %LAUNCH_IMAGE_PIN%
@@ -122,7 +122,7 @@ set "ORCH_IN_SRC=/src/{{ orch_dir }}"
 
 rem THE HOST ROOT IS A DRIVE PATH HERE, AND THE KERNEL CANNOT USE IT YET. `%LAUNCH_ROOT%` is `C:\...`,
 rem and the kernel reading it back is running in a LINUX container, where nothing joins a drive-letter
-rem path onto a POSIX one - so `simplon.hostpath` refuses it BY NAME and says to use DELIVERY_ROUTE=venv.
+rem path onto a POSIX one - so `simplon.adapters.hostpath` refuses it BY NAME and says to use DELIVERY_ROUTE=venv.
 rem That is the third and largest of this file's undriven gaps, and it is stated rather than papered
 rem over: what Docker Desktop's daemon accepts as a `-v` source from inside a Linux container is a
 rem measurement, and there was no Windows to take it on. Until somebody does, the Windows container route
@@ -136,7 +136,7 @@ if defined DELIVERY_CONTAINER_TTY set "DOCKER_ARGS=%DOCKER_ARGS% -t"
 set "DOCKER_ARGS=%DOCKER_ARGS% -v /var/run/docker.sock:/var/run/docker.sock"
 set "DOCKER_ARGS=%DOCKER_ARGS% -v "%LAUNCH_ROOT%:/src" -w /src"
 
-rem NO --user, and that is the same decision `simplon.docker.user_args` already takes for every toolchain
+rem NO --user, and that is the same decision `simplon.adapters.docker.user_args` already takes for every toolchain
 rem container: a Windows bind mount carries no ownership to get wrong, and there is no host uid to map.
 rem NO -t BY DEFAULT either, and this is the one place the two launchers really differ. cmd.exe cannot
 rem answer whether it has a terminal, and `docker run -t` without one fails outright with "the input

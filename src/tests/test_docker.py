@@ -5,8 +5,8 @@ import os
 
 import pytest
 
-from simplon import context
-from simplon import docker
+from simplon.domain import context
+from simplon.adapters import docker
 
 
 def _boom(msg):
@@ -212,7 +212,7 @@ def test_sudo_prefix_maps_root_sudo_and_unprivileged(monkeypatch):
     assert docker._sudo_prefix() == []
 
     # non-root with working passwordless sudo
-    from simplon.run import Result as R
+    from simplon.kernel.run import Result as R
     monkeypatch.setattr(docker.os, "getuid", lambda: 1000)
     monkeypatch.setattr(docker, "run", lambda argv, **kw: R(rc=0, out="", err=""))
     assert docker._sudo_prefix() == ["sudo", "-n"]
@@ -253,7 +253,7 @@ def test_the_engine_install_puts_the_invoking_user_in_the_docker_group(monkeypat
     # arrange (si#87): a non-root caller with sudo. get.docker.com creates the `docker` group but puts
     # nobody in it, and a long-lived service - a CI runner agent - inherits its groups at START, so the
     # membership has to exist as part of the install rather than on ensure_docker's failure path.
-    from simplon.run import Result as R
+    from simplon.kernel.run import Result as R
     calls = []
     monkeypatch.setattr(docker, "run", lambda argv, **kw: calls.append(argv) or R(rc=0, out="", err=""))
     monkeypatch.setattr(docker, "_invoking_user", lambda: "runner")
@@ -269,7 +269,7 @@ def test_the_engine_install_puts_the_invoking_user_in_the_docker_group(monkeypat
 def test_the_engine_install_does_not_put_root_in_the_docker_group(monkeypatch):
     # arrange: already root - an empty prefix is what _sudo_prefix returns there. root reaches the socket
     # by being root, so a membership would be noise in a group whose whole purpose is non-root access.
-    from simplon.run import Result as R
+    from simplon.kernel.run import Result as R
     calls = []
     monkeypatch.setattr(docker, "run", lambda argv, **kw: calls.append(argv) or R(rc=0, out="", err=""))
     monkeypatch.setattr(docker, "_invoking_user", lambda: "root")
@@ -283,7 +283,7 @@ def test_the_engine_install_does_not_put_root_in_the_docker_group(monkeypatch):
 
 def test_bootstrap_selffixes_socket_access_when_daemon_unreachable_with_privileges(monkeypatch, tmp_path):
     # arrange: CLI present, daemon dead until the socket grant; socket exists but is unwritable
-    from simplon.run import Result as R
+    from simplon.kernel.run import Result as R
     sock = tmp_path / "docker.sock"
     sock.touch()
     monkeypatch.setenv(docker.DOCKER_BOOTSTRAP_ENV, "1")
@@ -467,7 +467,7 @@ def test_a_host_with_no_uid_concept_has_nothing_to_flag(tmp_path, monkeypatch):
 
 def _recording_run(raises=None):
     """A stand-in for `docker.run` that records every argv and raises `raises` on the `docker run` line."""
-    from simplon.run import Result
+    from simplon.kernel.run import Result
     seen: list[list[str]] = []
 
     def fake(argv, **kw):

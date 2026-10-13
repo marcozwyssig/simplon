@@ -1,4 +1,4 @@
-"""Unit tests for simplon.clablifecycle - the dev-lab lifecycle substrate (netctl#731 Strand 3, extracted
+"""Unit tests for simplon.adapters.clablifecycle - the dev-lab lifecycle substrate (netctl#731 Strand 3, extracted
 from netctl's orchestrator.lab). Covers the load-bearing deploy sequence + retry + verdict, the OOB-bridge
 apply over an INJECTED bridge list, teardown + name-prefix sweep, and the cross-process degraded channel
 the product's finish phase reads. No real VM/docker: a fake Host records every call. AAA throughout."""
@@ -6,9 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from simplon import clablifecycle, degraded
-from simplon.clablifecycle import BringUpSpec
-from simplon.run import Result
+from simplon.adapters import clablifecycle
+from simplon.kernel import degraded
+from simplon.adapters.clablifecycle import BringUpSpec
+from simplon.kernel.run import Result
 
 
 class _FakeHost:

@@ -9,8 +9,8 @@ import os
 
 import pytest
 
-from simplon import context
-from simplon import oras
+from simplon.domain import context
+from simplon.adapters import oras
 
 
 @pytest.fixture(autouse=True)

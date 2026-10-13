@@ -55,10 +55,11 @@ import pytest
 import typer
 import yaml
 
-from simplon import bootstrap, cli as cli_mod
-from simplon import docker
-from simplon import catalogue as catalogue_mod
-from simplon.orchestrator import manifest as manifest_mod
+from simplon.cli import bootstrap
+from simplon import cli as cli_mod
+from simplon.adapters import docker
+from simplon.domain import catalogue as catalogue_mod
+from simplon.domain import manifest as manifest_mod
 from simplon.tasks import profiles, toolchain
 from simplon.tasks.testrun import Gate
 

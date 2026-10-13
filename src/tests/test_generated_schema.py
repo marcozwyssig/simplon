@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from simplon import artifactschema, catalogue
+from simplon.domain import artifactschema, catalogue
 
 MODULE = Path(artifactschema.__file__)
 KINDS_MODEL = Path(__file__).resolve().parents[1] / "firn" / "model" / "simplon" / "vocabulary" / "kinds.firn"

@@ -1,6 +1,6 @@
 """The host path of a bind mount, asked from inside a container that runs containers (si#201).
 
-WHAT THESE TESTS STAND ON, measured on 2026-09-12 before a line of `simplon.hostpath` was written, with
+WHAT THESE TESTS STAND ON, measured on 2026-09-12 before a line of `simplon.adapters.hostpath` was written, with
 a kernel container holding the docker socket and the tree at /src:
 
   * `docker run -v /src:/x busybox ls -la /x` inside that container printed an EMPTY directory, rc 0,
@@ -14,8 +14,8 @@ So the translation is not a nicety, and the case that has no answer must refuse 
 
 import pytest
 
-from simplon import context
-from simplon import hostpath
+from simplon.domain import context
+from simplon.adapters import hostpath
 
 
 def _boom(msg="boom", *a, **k):

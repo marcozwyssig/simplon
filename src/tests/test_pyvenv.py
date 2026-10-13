@@ -5,8 +5,8 @@ import os
 
 import pytest
 
-from simplon import pyvenv
-from simplon.run import Result
+from simplon.adapters import pyvenv
+from simplon.kernel.run import Result
 
 
 def _boom(msg):

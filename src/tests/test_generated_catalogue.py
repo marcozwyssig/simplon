@@ -12,9 +12,9 @@ from pathlib import Path
 
 import yaml
 
-from simplon import catalogue
+from simplon.domain import catalogue
 
-CATALOGUE = Path(catalogue.__file__).resolve().parent / "catalogue.yaml"
+CATALOGUE = catalogue.DEFAULT_PATH
 KINDS_MODEL = Path(__file__).resolve().parents[1] / "firn" / "model" / "simplon" / "vocabulary" / "kinds.firn"
 BEGIN = "# Begin Protected Region [handwritten]"
 END = "# End Protected Region  [handwritten]"

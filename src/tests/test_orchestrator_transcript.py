@@ -17,11 +17,12 @@ from datetime import datetime
 
 import pytest
 
-from simplon import context, steplog
-from simplon.context import ProductContext
-from simplon.orchestrator import steps as steps_mod
-from simplon.orchestrator.manifest import load as manifest_load
-from simplon.orchestrator.steps import (
+from simplon.domain import context
+from simplon.kernel import steplog
+from simplon.domain.context import ProductContext
+from simplon.kernel import steps as steps_mod
+from simplon.domain.manifest import load as manifest_load
+from simplon.kernel.steps import (
     STATE_ICON,
     Outcome,
     Pipeline,

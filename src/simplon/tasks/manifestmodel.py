@@ -4,7 +4,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from simplon import context, log, manifestmodel, outputs
+from simplon.domain import context, manifestmodel, outputs
+from simplon.kernel import log
 
 
 def _load():

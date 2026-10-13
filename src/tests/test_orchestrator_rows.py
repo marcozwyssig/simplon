@@ -1,4 +1,4 @@
-"""Tests for the DISPLAY tree both runners render (simplon.orchestrator.steps: Row, build_rows,
+"""Tests for the DISPLAY tree both runners render (simplon.kernel.steps: Row, build_rows,
 omitted_note, render_tree) and for the headless print of it - netctl#1276.
 
 No Textual here: the tree is plain data plus a text renderer, so its structure, its derived aggregate
@@ -8,13 +8,13 @@ absent. AAA throughout.
 """
 from __future__ import annotations
 
-from simplon.orchestrator.manifest import load as manifest_load
+from simplon.domain.manifest import load as manifest_load
 import io
 import sys
 import time
 from types import SimpleNamespace
 
-from simplon.orchestrator.steps import (
+from simplon.kernel.steps import (
     STATE_ICON,
     STATE_ICON_ASCII,
     Outcome,

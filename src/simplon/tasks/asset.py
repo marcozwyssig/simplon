@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import shutil
 
-from simplon import context, log, run
+from simplon.domain import context
+from simplon.kernel import log, run
 
 SECTION = "assets"
 
@@ -38,7 +39,7 @@ def _declared(name: str) -> dict:
 def _said(result: run.Result) -> str:
     """What `gh` reported, from whichever stream carried it.
 
-    Used by the CREATE and not by the upload, which is the rule in `simplon.run`'s head made concrete:
+    Used by the CREATE and not by the upload, which is the rule in `simplon.kernel.run`'s head made concrete:
     the create's text is a verdict this module reads (`_already_there`), so it is captured and can be
     quoted; the upload's text is a progress report the user is watching, so it is never captured and
     there is nothing here to quote.
@@ -87,7 +88,7 @@ def publish(name: str = "", tag: str = "") -> int:
     if not created.ok and not _already_there(created):
         raise RuntimeError(f"could not create release {resolved}: {_said(created)}")
 
-    # NOT captured, and the create four lines up IS - the two halves of the rule in `simplon/run.py`,
+    # NOT captured, and the create four lines up IS - the two halves of the rule in `simplon/kernel/run.py`,
     # a few lines apart. Nobody reads the upload's text and everybody waits for its bytes, so `gh`'s own
     # reporting is the only thing saying the process is alive; capturing it left an asset upload as
     # exactly the long silent wait si#142 and si#143 exist to remove.

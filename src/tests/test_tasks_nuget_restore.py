@@ -7,8 +7,9 @@ consuming half of si#127 needs a runner that can put a secret into a container, 
 """
 import pytest
 
-from simplon import context, githubpackages
-from simplon.context import ProductContext
+from simplon.domain import context
+from simplon.adapters import githubpackages
+from simplon.domain.context import ProductContext
 from simplon.tasks import nuget
 
 _MANIFEST = """

@@ -29,7 +29,7 @@ import pytest
 import sys
 import types
 
-from simplon.orchestrator.steps import NO_TUI_ENV, Outcome, Pipeline, Step, dispatch, tui_disabled
+from simplon.kernel.steps import NO_TUI_ENV, Outcome, Pipeline, Step, dispatch, tui_disabled
 from simplon import cli
 
 
@@ -50,7 +50,7 @@ def test_the_variable_sends_a_run_headless_even_with_a_terminal_attached(monkeyp
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
     monkeypatch.setenv(NO_TUI_ENV, "1")
     taken: list[str] = []
-    monkeypatch.setattr("simplon.orchestrator.steps.run_headless",
+    monkeypatch.setattr("simplon.kernel.steps.run_headless",
                         lambda pipeline: (taken.append("headless"), 0)[1])
     # Act
     rc = dispatch(_pipeline())
@@ -74,9 +74,9 @@ def test_the_variable_is_read_before_the_tui_is_reached(monkeypatch):
     def _reached(_pipeline):
         raise AssertionError("the TUI was reached although headless was asked for")
 
-    monkeypatch.setitem(sys.modules, "simplon.orchestrator.tui",
+    monkeypatch.setitem(sys.modules, "simplon.ui.tui",
                         types.SimpleNamespace(run_pipeline=_reached))
-    monkeypatch.setattr("simplon.orchestrator.steps.run_headless", lambda pipeline: 0)
+    monkeypatch.setattr("simplon.kernel.steps.run_headless", lambda pipeline: 0)
     # Act / Assert
     assert dispatch(_pipeline()) == 0
 
@@ -146,7 +146,7 @@ def test_a_textual_fault_that_is_not_a_missing_install_is_not_a_headless_run(mon
     Textual, an incompatible version and a construction fault indistinguishable from deliberate CI
     redirection - all four arrived as a green headless run."""
     pytest.importorskip("textual")
-    from simplon.orchestrator import tui
+    from simplon.ui import tui
     # Arrange: a terminal is attached and constructing the app falls over for a reason that is not absence
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
 
@@ -167,7 +167,7 @@ def test_textual_being_absent_is_still_a_headless_run(monkeypatch):
     """The supported configuration, and the reason the narrowing is to `ImportError` rather than to
     nothing: `tui.py`'s module head says the headless path must not hard-require Textual."""
     pytest.importorskip("textual")
-    from simplon.orchestrator import tui
+    from simplon.ui import tui
     # Arrange
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
 

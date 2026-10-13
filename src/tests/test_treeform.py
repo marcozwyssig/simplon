@@ -9,9 +9,9 @@ import pytest
 
 import sitepages
 from conftest import ROOT
-from simplon import catalogue as catalogue_mod
-from simplon.orchestrator import manifest
-from simplon.orchestrator.model import treeform
+from simplon.domain import catalogue as catalogue_mod
+from simplon.domain import manifest
+from simplon.domain import treeform
 from simplon.tasks import migrate
 
 
@@ -562,7 +562,7 @@ def test_a_product_adding_to_a_group_the_platform_already_placed_a_command_in_ke
 # --- one command name, one or two bodies (netctl's silent oras-vs-Colima `support install`) ---------------
 
 def _support_install_catalogue():
-    """A minimal catalogue that PLACES `support install`, the way `simplon.catalogue.yaml` has since
+    """A minimal catalogue that PLACES `support install`, the way `simplon.domain.catalogue.yaml` has since
     0.1.4 - just enough tree for the collision/refinement/override tests below."""
     return catalogue_mod.loads(textwrap.dedent("""
         tasks:
@@ -739,7 +739,7 @@ def test_a_declared_task_no_command_places_is_accepted():
     because a test that names the helper would pass by import error rather than by behaviour.
     """
     # arrange: a manifest declaring two tasks and placing exactly one of them
-    from simplon.orchestrator import manifest as manifest_mod
+    from simplon.domain import manifest as manifest_mod
     text = """
 product: demo
 tasks:

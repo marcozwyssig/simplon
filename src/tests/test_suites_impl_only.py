@@ -34,10 +34,10 @@ import os
 
 import pytest
 
-from simplon import context
-from simplon.context import ProductContext
+from simplon.domain import context
+from simplon.domain.context import ProductContext
 from simplon.tasks import testrun
-from simplon.verdict import GateVerdict, RunVerdict, Verdict
+from simplon.kernel.verdict import GateVerdict, RunVerdict, Verdict
 
 #: The results dir every canonical gate writes into, relative to the product's report dir. Read off the
 #: module rather than retyped, so a rename of the convention cannot leave this file measuring a path

@@ -188,7 +188,7 @@ three. They are one ticket, [simplon#105](https://github.com/marcozwyssig/simplo
 they are one story.
 
 **The version cannot be asked for.** Every profile's image is a template, and the catalogue declares
-exactly one parameter for the scaffolder - the language. `simplon.signatures.bindable` drops `**kwargs`,
+exactly one parameter for the scaffolder - the language. `simplon.domain.signatures.bindable` drops `**kwargs`,
 so there is no second value to pass and no manifest key that carries one:
 
 ```text
@@ -288,7 +288,7 @@ docker run --rm --init --name simplon-cppdemo-<id> --label simplon.run=cppdemo -
 a client: killing it - a CI cancel, a Ctrl-C - detaches it and stops nothing, and the container used to
 run on to its own exit while the next job checked out into the same tree. The kernel names every
 container itself, `simplon-<product>-` and twelve hex digits fresh per run, and removes it by that name
-when the run is interrupted. SIGKILL is the one interruption nothing sees; the `simplon.run` label is
+when the run is interrupted. SIGKILL is the one interruption nothing sees; the `simplon.kernel.run` label is
 how `docker ps --filter label=simplon.run=cppdemo` still finds what it left.
 
 `--user` is there from the first line, and that is not tidiness. netctl's hand-written gradle invocation

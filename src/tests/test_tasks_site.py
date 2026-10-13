@@ -1,5 +1,5 @@
 """Unit tests for simplon.tasks.site (#2): the containerised Hugo site build, driven purely by the
-manifest's `site` section and the product root, read through simplon.context - no product import and no
+manifest's `site` section and the product root, read through simplon.domain.context - no product import and no
 simplon path.
 
 docker is stubbed, so these assert the DECISIONS (which data is read, what is refused, that the container
@@ -11,9 +11,9 @@ import os
 
 import pytest
 
-from simplon import context
-from simplon.context import ProductContext
-from simplon.run import Result
+from simplon.domain import context
+from simplon.domain.context import ProductContext
+from simplon.kernel.run import Result
 from simplon.tasks import site as site_task
 
 _IMAGE = "hugomods/hugo:exts-0.148.2"

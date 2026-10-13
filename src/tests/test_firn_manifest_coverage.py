@@ -7,7 +7,7 @@ the census's derived population, not against a list.
 import re
 from pathlib import Path
 
-from simplon import manifestmodel
+from simplon.domain import manifestmodel
 from test_refusal_census import sections_read
 
 M2 = Path(__file__).resolve().parents[1] / "firn" / "model" / "simplon" / "manifest" / "manifest.firn"

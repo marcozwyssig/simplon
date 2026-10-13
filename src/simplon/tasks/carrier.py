@@ -39,7 +39,9 @@ import os
 import shutil
 from pathlib import Path
 
-from simplon import carrierspec, context, docker, environments, hostpath, log, run
+from simplon.domain import carrierspec, context, environments
+from simplon.adapters import docker, hostpath
+from simplon.kernel import log, run
 from simplon.tasks import proxmoxapi
 
 #: The two toolchains, pinned. Bump them deliberately, the way `DOCKER_CLI_VERSION` is bumped.

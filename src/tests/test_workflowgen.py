@@ -1,4 +1,4 @@
-"""Unit tests for simplon.workflowgen (si#40): the manifest's SECOND output.
+"""Unit tests for simplon.tasks.workflowgen (si#40): the manifest's SECOND output.
 
 WHAT IS ACTUALLY WORTH ASSERTING HERE, because "the generator wrote a file" is not it. si#40 names two
 traps and both are measured in this module rather than described:
@@ -26,8 +26,9 @@ import textwrap
 import pytest
 import yaml
 
-from simplon import catalogue as catalogue_mod, workflowgen
-from simplon.orchestrator import manifest as manifest_mod
+from simplon.domain import catalogue as catalogue_mod
+from simplon.tasks import workflowgen
+from simplon.domain import manifest as manifest_mod
 
 from conftest import ROOT
 
@@ -618,7 +619,7 @@ def test_the_generator_carries_no_list_of_workflow_kinds():
     fourth case works by accident today and breaks the first time somebody adds a branch for the three.
     """
     # Arrange
-    source = (ROOT / "src" / "simplon" / "workflowgen.py").read_text(encoding="utf-8")
+    source = (ROOT / "src" / "simplon" / "tasks" / "workflowgen.py").read_text(encoding="utf-8")
 
     # Act: the code, without the prose that legitimately discusses those words
     code = "\n".join(line for line in source.splitlines()
@@ -885,7 +886,7 @@ def test_a_hand_edited_workflow_makes_check_red_and_shows_the_difference(manifes
 
 def test_a_workflow_that_was_never_generated_is_drift_and_not_an_error(manifest, tree):
     """A fresh checkout has to be TOLD what to run. Raising there would read as a broken gate rather
-    than as the ordinary thing it is - the same call `simplon.taskgen.check` makes."""
+    than as the ordinary thing it is - the same call `simplon.tasks.taskgen.check` makes."""
     # Arrange
     workflows = _parse_minimal()
 
@@ -1870,7 +1871,7 @@ def test_a_parameter_the_command_does_not_declare_is_refused(rollout_manifest):
 # of images and build cache in a 64 GB refquota, reported to the pipeline as
 # `E: You don't have enough free space in /var/cache/apt/archives/` inside a docker build.
 #
-# So the steps are a consequence of the KIND of machine, which is what `simplon.runners` carries once for
+# So the steps are a consequence of the KIND of machine, which is what `simplon.domain.runners` carries once for
 # everybody - the same seam `setup_python` and the docker bootstrap already sit on. A product declaring a
 # self-hosted kind gets them without asking; a product that writes `runs-on:` itself gets nothing, because
 # that spelling says "the machine is mine" and the kernel has no table entry to reason from.

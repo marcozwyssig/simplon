@@ -18,8 +18,8 @@ import pytest
 import yaml
 
 from conftest import docker_is_usable
-from simplon import catalogue
-from simplon.run import run
+from simplon.domain import catalogue
+from simplon.kernel.run import run
 from simplon.tasks import profiles, toolchain
 
 FIRN = profiles.profile("firn", version="0.1.0")

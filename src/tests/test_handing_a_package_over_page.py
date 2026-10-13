@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pathlib
 
-from simplon import catalogue as catalogue_mod
+from simplon.domain import catalogue as catalogue_mod
 
 import sitepages
 
@@ -116,7 +116,7 @@ def test_the_page_quotes_the_command_that_grants_the_package_scopes():
     """The advice is one string in the kernel (`githubpackages.scope_advice`), and a page that
     paraphrased it would be the second source si#46 spent a ticket removing."""
     # arrange
-    from simplon import githubpackages
+    from simplon.adapters import githubpackages
 
     # act
     body = _text()

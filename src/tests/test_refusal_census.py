@@ -93,7 +93,7 @@ from typing import NamedTuple
 import pytest
 import yaml
 
-from simplon import catalogue as catalogue_mod
+from simplon.domain import catalogue as catalogue_mod
 
 import sitepages
 from conftest import ROOT
@@ -128,9 +128,9 @@ from conftest import ROOT
 #: this block used to open with ("everything else in the kernel refuses at RUN time - a task that cannot
 #: reach its tool, an image without a pin") named one of them as the counter-example. The image pin is
 #: decided on a manifest string with no docker running. It was never run time.
-LOADER_ENTRY = ("orchestrator.manifest", "load")
+LOADER_ENTRY = ("domain.manifest", "load")
 
-#: The accessor a product's manifest DOCUMENT leaves `simplon.context` through. Read off the call sites
+#: The accessor a product's manifest DOCUMENT leaves `simplon.domain.context` through. Read off the call sites
 #: rather than assumed: a rename here changes the entry points and `test_the_walk_finds_refusals_at_both
 #: _seams` goes red rather than quietly finding none.
 DOCUMENT_ACCESSOR = "manifest_data"
@@ -149,7 +149,7 @@ DOCUMENT_ACCESSOR = "manifest_data"
 #: So the accessor is neither. A module that reads a section through it is still an INLINE reader, its
 #: refusals are still its own, and `test_the_section_walk_is_an_accessor_and_not_a_reader` holds both
 #: halves rather than leaving them to be noticed.
-SECTION_ACCESSOR = ("context", "section")
+SECTION_ACCESSOR = ("domain.context", "section")
 
 SRC = ROOT / "src" / "simplon"
 
@@ -169,10 +169,10 @@ CHAPTER = sitepages.chapter("rules.md")
 #: red the day a new one appears. That is the property si#61 asked for: a manifest reader cannot join the
 #: kernel quietly, whether or not the walk can follow it.
 READS_INLINE = {
-    "environments": "reads `environments:`/`default:` into a local `data` inside `Provider.registry`, "
+    "domain.environments": "reads `environments:`/`default:` into a local `data` inside `Provider.registry`, "
                     "which then builds backends - the reading and the wiring are one function",
-    "labinstance": "`spec()` reads the topology section and goes on to talk to docker in the same body",
-    "labegress": "`spec()`, same shape as labinstance",
+    "adapters.labinstance": "`spec()` reads the topology section and goes on to talk to docker in the same body",
+    "adapters.labegress": "`spec()`, same shape as labinstance",
     "tasks.artifact": "`_declared(name)` reads its section inline and is the front half of a task body - "
                       "and since si#344 B2 it hands `artifactsection.entry` the SECTION, never the "
                       "document, so it stays an inline reader",
@@ -201,7 +201,7 @@ READS_INLINE = {
                    "decided on manifest values obtained through ANOTHER module's reader, which this "
                    "derivation cannot see at all - is reported as its own ticket rather than left in a "
                    "comment",
-    "tracker": "`declared()` reads the `tracker:` section inline at the front of the one function that "
+    "adapters.tracker": "`declared()` reads the `tracker:` section inline at the front of the one function that "
                "reaches a tracker, the same shape as tasks.releasenotes - and it refuses the same way, "
                "with `log.error` and a None, because it is called after a person has answered a walk "
                "and a raise there would cost the sitting the record it exists for (si#206). The walk "
@@ -1803,7 +1803,7 @@ def test_no_expression_rule_exempts_the_kernel_from_itself():
 
     There was exactly one self-exemption, `check_every_task_is_used`, and si#53 struck it: it was the only
     expression rule with no measured cause in ticket, commit or docstring, and over every reachable
-    manifest - this kernel's own and the five in `surface.CONSUMERS` - it had never refused anything.
+    manifest - this kernel's own and the five then in `surface.CONSUMERS` - it had never refused anything.
 
     This suite used to measure its SIZE as well, "14 of the kernel's own 22 catalogue tasks", and si#83
     took that half of the argument away: the rule read `product_tasks` and was never handed a catalogue
@@ -1956,8 +1956,8 @@ def _populations(monkeypatch) -> dict[str, list[str]]:
     it is given, so a reference kept and read afterwards shows an empty-handed rule that was in fact handed
     the coordinate. That was measured here, and reading it late is what turned it into a false exemption.
     """
-    from simplon.orchestrator import manifest as manifest_mod
-    from simplon.orchestrator.model import treeform
+    from simplon.domain import manifest as manifest_mod
+    from simplon.domain import treeform
 
     seen: dict[str, list[str]] = {}
 
@@ -2010,7 +2010,7 @@ def test_the_rules_pydantic_runs_are_reached_through_the_model():
     value while staying green.
     """
     # arrange
-    source = (SRC / "orchestrator" / "manifest.py").read_text(encoding="utf-8")
+    source = (SRC / "domain" / "manifest.py").read_text(encoding="utf-8")
 
     # act / assert
     for name in THROUGH_THE_MODEL:
@@ -2131,7 +2131,7 @@ def test_the_kernels_own_manifest_violates_none_of_its_own_expression_rules():
     be measured against something real. It loads, which is the whole assertion: a manifest that loads
     has violated no refusal in the census, expression rule or otherwise."""
     # arrange
-    from simplon.orchestrator import manifest as manifest_mod
+    from simplon.domain import manifest as manifest_mod
 
     # act
     loaded = manifest_mod.load((ROOT / "simplon.yaml").read_text(encoding="utf-8"),

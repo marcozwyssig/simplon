@@ -1,4 +1,4 @@
-"""Unit tests for simplon.verdict (#30): the four outcomes a gate can have, and the record a later reader
+"""Unit tests for simplon.kernel.verdict (#30): the four outcomes a gate can have, and the record a later reader
 gets.
 
 The thing under test is not a formatter. It is the claim that "red" is two different statements - the suite
@@ -16,9 +16,9 @@ import sys
 
 import pytest
 
-from simplon import run as run_module
-from simplon import verdict as verdict_module
-from simplon.verdict import GateVerdict, RunVerdict, Verdict
+from simplon.kernel import run as run_module
+from simplon.kernel import verdict as verdict_module
+from simplon.kernel.verdict import GateVerdict, RunVerdict, Verdict
 
 
 # --- the vocabulary ---------------------------------------------------------------------------------------
@@ -407,7 +407,7 @@ def test_exit_code_ofAKilledGateIsThe128PlusNAShellWouldReport():
 
 
 def test_exit_code_leavesAProductRunnersNegativeReturnValueAlone():
-    # arrange: `simplon.waits.device_count` answers -1 for "could not read" in this very repository, and a
+    # arrange: `simplon.kernel.waits.device_count` answers -1 for "could not read" in this very repository, and a
     # product body may do the same. A gate whose runner is the product's own reports FAILED with that rc
     gv = GateVerdict("acceptance", Verdict.FAILED, -1, detail="the product's own runner returned this rc")
 

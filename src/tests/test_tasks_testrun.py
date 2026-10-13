@@ -15,12 +15,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from simplon import context
+from simplon.domain import context
 from simplon.tasks import allure
 from simplon.tasks import testrun
-from simplon.context import ProductContext
-from simplon import verdict as verdict_module
-from simplon.verdict import GateVerdict, RunVerdict, Verdict
+from simplon.domain.context import ProductContext
+from simplon.kernel import verdict as verdict_module
+from simplon.kernel.verdict import GateVerdict, RunVerdict, Verdict
 
 
 def _gv(name, rc):
@@ -1730,7 +1730,7 @@ def test_aGateThatMerelyExitsNonZeroIsStillARedSuite_soTheSignalReadingDidNotSwa
 def test_gate_handsOnAnImplRunnersNegativeReturnValueWithoutCallingItASignal(monkeypatch, tmp_path,
                                                                             runner):
     # arrange: an `impl:` gate whose body answers -1 - "could not read", which is what
-    # `simplon.waits.device_count` means by it in this repository - not a child killed by SIGHUP
+    # `simplon.kernel.waits.device_count` means by it in this repository - not a child killed by SIGHUP
     data = _data()
     data["suites"]["gates"] = [data["suites"]["gates"][0],
                                {"name": "acceptance", "impl": "product.tooling:ui"}]

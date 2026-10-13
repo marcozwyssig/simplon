@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from simplon import nexusproxy
+from simplon.adapters import nexusproxy
 
 # The product DATA a manifest supplies, as one fixture value the pure decisions are asked with. `democtl`
 # rather than `netctl` on purpose (see the module docstring), and the two maven2 repositories are kept

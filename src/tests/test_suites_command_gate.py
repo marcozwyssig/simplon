@@ -43,10 +43,11 @@ import textwrap
 import pytest
 import typer
 
-from simplon import context, test_impls
-from simplon.context import ProductContext
+from simplon.domain import context
+from simplon import test_impls
+from simplon.domain.context import ProductContext
 from simplon.tasks import testrun
-from simplon.verdict import Verdict
+from simplon.kernel.verdict import Verdict
 
 RESULTS = testrun.RESULTS
 

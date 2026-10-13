@@ -4,9 +4,9 @@ import textwrap
 
 import pytest
 
-from simplon import catalogue as catalogue_mod
-from simplon.orchestrator import manifest as manifest_mod
-from simplon.orchestrator.model import treeform
+from simplon.domain import catalogue as catalogue_mod
+from simplon.domain import manifest as manifest_mod
+from simplon.domain import treeform
 
 TREE = {
     "ci": {"transparent": True, "help": "CI", "groups": {

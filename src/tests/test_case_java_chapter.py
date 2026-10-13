@@ -3,7 +3,7 @@
 WHY A TEST AND NOT PROOFREADING. `src/site/content/what/case-java.md` walks one delivery loop with a
 toolchain the kernel has never met, and the walk is made of second sources: command names its product's
 manifest already assembles, coordinates `catalogue.yaml` already declares, an image reference
-`simplon.docker.pinned_image` already rules on, refusal and verdict sentences the kernel already builds
+`simplon.adapters.docker.pinned_image` already rules on, refusal and verdict sentences the kernel already builds
 word for word, and a table of its own rows. Every one of those is a fact stated twice, and this
 repository has now measured five times what an unwatched copy does.
 
@@ -54,12 +54,13 @@ import re
 import pytest
 import yaml
 
-from simplon import bootstrap, docker
-from simplon import catalogue as catalogue_mod
-from simplon.orchestrator import manifest as manifest_mod
+from simplon.cli import bootstrap
+from simplon.adapters import docker
+from simplon.domain import catalogue as catalogue_mod
+from simplon.domain import manifest as manifest_mod
 from simplon.tasks import docs as docs_task
 from simplon.tasks.testrun import IMPL_DETAIL
-from simplon.verdict import GateVerdict, Verdict
+from simplon.kernel.verdict import GateVerdict, Verdict
 
 import sitepages
 from conftest import FIXTURES, ROOT
@@ -489,7 +490,7 @@ def test_the_two_gate_sentences_the_chapter_quotes_are_the_kernels_own():
 def test_every_outcome_word_the_chapter_prints_is_one_the_kernel_has():
     """The chapter defers the five-outcome table to its sibling and prints only the three verdicts its
     own runs produced. Those three still have to be the kernel's words: a page saying `error` or
-    `broken` would be inventing a vocabulary beside the one `simplon.verdict` owns."""
+    `broken` would be inventing a vocabulary beside the one `simplon.kernel.verdict` owns."""
     # arrange
     known = {member.value for member in Verdict}
     rows = _runs()

@@ -26,8 +26,9 @@ existed and by somebody who was not trying to make it pass.
 """
 import yaml
 
-from simplon import catalogue as catalogue_mod, workflowgen
-from simplon.orchestrator import manifest as manifest_mod
+from simplon.domain import catalogue as catalogue_mod
+from simplon.tasks import workflowgen
+from simplon.domain import manifest as manifest_mod
 
 from conftest import ROOT
 

@@ -27,7 +27,7 @@ import subprocess
 
 import pytest
 
-from simplon import bootstrap
+from simplon.cli import bootstrap
 
 PRODUCT = "democtl"
 ORCH_DIR = "deploy/orchestrator"

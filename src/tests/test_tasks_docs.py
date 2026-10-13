@@ -1,5 +1,5 @@
 """Unit tests for simplon.tasks.docs (netctl#1280): the docToolchain render, driven purely by the
-manifest's pinned image tag and the product root, read through simplon.context - no product import.
+manifest's pinned image tag and the product root, read through simplon.domain.context - no product import.
 
 The docker invocation is stubbed, so these assert the DECISIONS (which tag is pinned, what is refused)
 rather than that docker works. AAA throughout.
@@ -8,9 +8,11 @@ import os
 
 import pytest
 
-from simplon import context, docker, log
-from simplon.context import ProductContext
-from simplon.run import Result
+from simplon.domain import context
+from simplon.adapters import docker
+from simplon.kernel import log
+from simplon.domain.context import ProductContext
+from simplon.kernel.run import Result
 from simplon.tasks import docs as docs_cmd
 
 
@@ -339,7 +341,7 @@ def test_render_refuses_a_tag_that_is_declared_but_moves(monkeypatch, tmp_path, 
 
 
 def test_render_refuses_the_moving_tag_by_the_same_gate_the_site_build_uses(monkeypatch, tmp_path):
-    # arrange: not "a check that behaves the same" but the same function - `simplon.docker.pinned_image`,
+    # arrange: not "a check that behaves the same" but the same function - `simplon.adapters.docker.pinned_image`,
     # which is also what `docs:site` calls and what the kernel's own two images are validated by. The
     # message names the manifest key, so the reader is told which line to change
     _register(monkeypatch, tmp_path, {"doctoolchain_version": "latest"})

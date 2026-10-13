@@ -4,8 +4,8 @@ kernel reads it back without ever naming a product. AAA throughout; goal-stating
 """
 import pytest
 
-from simplon import context
-from simplon.context import ProductContext
+from simplon.domain import context
+from simplon.domain.context import ProductContext
 
 _SAMPLE_MANIFEST = """product: sample
 artifacts:

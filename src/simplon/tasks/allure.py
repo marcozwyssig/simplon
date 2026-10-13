@@ -11,10 +11,10 @@ runner.
 IT MOVED HERE FROM THE TOP LEVEL (#37), and the reason is the head above. It used to sit beside `cli.py`
 and `context.py` on the strength of the claim that two named products reused it - and neither did, and one
 of the two does not install this kernel at all. Measured across every repository that DOES
-(`simplon.surface.CONSUMERS` plus this one's own orchestrator), the sole importer is
+(`simplon.cli.surface.CONSUMERS` plus this one's own orchestrator), the sole importer is
 `simplon.tasks.testrun`, in this same directory. Product-agnostic is not the same as imported by a product: the first is a property of the
 code, the second is a promise about a path, and only the second decides where a module belongs. `simplon`
-keeps a tombstone at the old path that says where this went; see `simplon.surface`.
+keeps a tombstone at the old path that says where this went; see `simplon.cli.surface`.
 
 Everything here is pure + filesystem-only EXCEPT `render_report`, which shells out to the allure CLI (else
 docker). It sits beside the runner rather than inside it because it is allure mechanism through and
@@ -30,8 +30,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from xml.etree import ElementTree
 
-from simplon import docker, hostpath, log
-from simplon.run import run
+from simplon.adapters import docker, hostpath
+from simplon.kernel import log
+from simplon.kernel.run import run
 
 
 #: The image the DOCKER fallback renders in, PINNED and validated by the same gate a product's manifest
@@ -554,7 +555,7 @@ class Render:
     ``tool`` is the renderer that was actually available (``"allure"``, ``"docker"``, or None when the host
     has neither); ``report`` is the archive path when one was written. Hence ``failed``: a tool was there
     and did not produce the archive - the case that must be visible - as against a host with no renderer at
-    all, which stays a hint. Same ``ok`` idiom as `simplon.run.Result`, and for the same reason: the caller
+    all, which stays a hint. Same ``ok`` idiom as `simplon.kernel.run.Result`, and for the same reason: the caller
     inspects the outcome rather than guessing it from an exception that never comes.
     """
 
@@ -573,7 +574,7 @@ class Render:
 
 
 def _docker_user() -> list[str]:
-    """``--user uid:gid`` for the render container - `simplon.docker.user_args`, which is where this body
+    """``--user uid:gid`` for the render container - `simplon.adapters.docker.user_args`, which is where this body
     moved when a SECOND containerised step needed the same argument for the same reason (#2's hugo site
     build). The rule and both measured failures are documented there; the case that put it in this module
     was `frankescobar/allure-docker-service` running as uid 1000 against a host uid that is not 1000, where

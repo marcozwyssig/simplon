@@ -28,7 +28,7 @@ import re
 import pytest
 
 from simplon.tasks import testrun
-from simplon.verdict import Verdict
+from simplon.kernel.verdict import Verdict
 
 import sitepages
 from conftest import ROOT

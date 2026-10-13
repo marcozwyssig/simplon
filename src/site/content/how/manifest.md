@@ -273,7 +273,7 @@ under the product root, for a blunter reason: `output` is handed to a recursive 
 **It is a default and not a rule, and that was measured rather than preferred.** A `source:` outside
 `docs/` REFUSED would turn away a product that has done nothing wrong. Measured over the same population
 si#159 and si#172 used - every manifest this kernel can reach: its own, the five in
-`simplon.surface.CONSUMERS`, and secure-windows-images - three of those seven declare a `site:` section
+`simplon.cli.surface.CONSUMERS`, and secure-windows-images - three of those seven declare a `site:` section
 and the three do not agree: cleon at `site`, biz-cockpit at `docs/website`, simplon at `docs/site` (until si#344 B1; it names `src/site` now, and the argument below was made at `docs/site`). Two of those three would
 fail on their first run with a kernel that insisted - an expression rule with no measured cause, which
 this platform declines to write ([the rules chapter](../../with-what/rules/) says why).
@@ -369,7 +369,7 @@ Each is driven in the test module above, so the silence is measured rather than 
 
 ### Reading a section, yours or the kernel's
 
-A product's own task body reads its own section through `simplon.context.section`, the same walk the
+A product's own task body reads its own section through `simplon.domain.context.section`, the same walk the
 kernel's own readers use:
 
 ```python
@@ -454,7 +454,7 @@ string or a number where a string does (`tag: 25` is the tag `25`) - and a key t
 refused by name, with the nearest key it does take, because otherwise it would be ignored without a word.
 What a task NEEDS it is told when it runs, all at once: `release:nuget` needs `registry`, `image` and
 `project`, `build:nuget-config` only `registry`, so one entry can serve both. The refusal of an unknown key
-lists the keys the kind does take; your own code asks `simplon.artifactsection.is_a(kind, "image")` rather
+lists the keys the kind does take; your own code asks `simplon.domain.artifactsection.is_a(kind, "image")` rather
 than comparing `kind` to a string, so a kind that refines `image` is one too. Before si#344 B2 `path:` was called `source:`,
 `images:` was a section of its own, and an entry needed no `kind:`; the loader refuses each of those by
 name, and `simplon manifest migrate` rewrites all three (it derives a missing kind from the catalogue task

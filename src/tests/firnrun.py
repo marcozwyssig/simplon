@@ -1,7 +1,7 @@
 """Run the pinned firn image over a firn project, the way `toolchain:run` would (si#371)."""
 from pathlib import Path
 
-from simplon.run import run
+from simplon.kernel.run import run
 from simplon.tasks import profiles, toolchain
 
 FIRN = profiles.profile("firn", version="0.1.0")

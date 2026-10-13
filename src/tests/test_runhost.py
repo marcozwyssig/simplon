@@ -11,8 +11,9 @@ import dataclasses
 
 import pytest
 
-from simplon import cli, runhost, steplog
-from simplon.orchestrator.steps import NO_TUI_ENV, Outcome, Pipeline, Step, dispatch
+from simplon import cli
+from simplon.kernel import runhost, steplog
+from simplon.kernel.steps import NO_TUI_ENV, Outcome, Pipeline, Step, dispatch
 
 
 def _pipeline() -> Pipeline:
@@ -24,7 +25,7 @@ def test_an_unregistered_run_says_it_runs_headless_rather_than_doing_it_quietly(
     runhost.register(None)
     monkeypatch.delenv(NO_TUI_ENV, raising=False)
     taken: list[str] = []
-    monkeypatch.setattr("simplon.orchestrator.steps.run_headless",
+    monkeypatch.setattr("simplon.kernel.steps.run_headless",
                         lambda pipeline: (taken.append("headless"), 0)[1])
 
     # act
@@ -59,7 +60,7 @@ def test_a_ui_whose_toolkit_is_not_installed_falls_back_to_headless(monkeypatch,
         raise ImportError("No module named 'textual'")
 
     runhost.register(dataclasses.replace(cli.run_host(), render=_absent))
-    monkeypatch.setattr("simplon.orchestrator.steps.run_headless", lambda pipeline: 0)
+    monkeypatch.setattr("simplon.kernel.steps.run_headless", lambda pipeline: 0)
 
     # act / assert
     assert dispatch(_pipeline()) == 0

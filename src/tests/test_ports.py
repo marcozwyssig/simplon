@@ -9,8 +9,8 @@ import signal
 
 import pytest
 
-from simplon import ports
-from simplon.run import Result
+from simplon.adapters import ports
+from simplon.kernel.run import Result
 
 
 @pytest.fixture

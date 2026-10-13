@@ -25,7 +25,7 @@ WHAT IS REAL HERE AND WHAT IS NOT, stated rather than left to be discovered:
     (a coordinate that cannot be bound to a manifest) caught in the place it happened.
 
 WHY THE SKIP IS ON DOCKER AND NOTHING ELSE. `shutil.which` plus one `docker version` probe is the
-shape `simplon.docker._daemon_reachable` uses and the shape `tests/test_completiongen.py` uses for
+shape `simplon.adapters.docker._daemon_reachable` uses and the shape `tests/test_completiongen.py` uses for
 bash: the tool is the thing being measured, so its absence is a skip and everything else is a
 failure. A missing image is NOT a skip - `docker run` pulls it, and a pull that fails is a red suite
 saying so, because "the image could not be fetched" and "the generated project does not compile"
@@ -41,13 +41,14 @@ import typer
 import yaml
 from typer.testing import CliRunner
 
-from simplon import catalogue as catalogue_mod
+from simplon.domain import catalogue as catalogue_mod
 
 from conftest import docker_is_usable
-from simplon import cli, context
-from simplon.context import ProductContext
-from simplon.orchestrator import manifest as manifest_mod
-from simplon.run import run
+from simplon import cli
+from simplon.domain import context
+from simplon.domain.context import ProductContext
+from simplon.domain import manifest as manifest_mod
+from simplon.kernel.run import run
 from simplon.tasks import buildfiles, profiles, toolchain
 
 #: The two profiles this file drives, resolved from the kernel's own table. The versions are the ones

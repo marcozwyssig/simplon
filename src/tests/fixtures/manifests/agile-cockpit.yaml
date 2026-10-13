@@ -310,7 +310,7 @@ groups:
           dry_run: { help: "print what is missing, change nothing", short: "-n" }
     groups:
       # Die vier Versionskontroll-Befehle kommen bereits fertig aus dem Katalog
-      # (support.groups.git, siehe simplon.catalogue.yaml) -- diese Eintraege
+      # (support.groups.git, siehe simplon.domain.catalogue.yaml) -- diese Eintraege
       # bestaetigen die Platzierung explizit, statt sie nur stillschweigend zu
       # erben. Leerer Rumpf ist die tersteste Form: der Befehlsname IST schon die
       # Koordinate, `task:`/`params:` kommen unveraendert vom Katalog mit.

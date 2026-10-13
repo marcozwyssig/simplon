@@ -18,7 +18,8 @@ AAA throughout.
 import pytest
 import yaml
 
-from simplon import runners, workflowgen
+from simplon.domain import runners
+from simplon.tasks import workflowgen
 
 from conftest import ROOT  # noqa: F401  (keeps the src tree on sys.path)
 
@@ -285,7 +286,7 @@ def test_the_disk_coordinates_resolve_to_the_impls_the_table_names():
     # product placed WITHOUT assuming what that product called it. That string is a second source for what
     # `catalogue.yaml` declares, and a second source nobody compares is this repository's oldest defect -
     # so it is compared here, against the real catalogue.
-    from simplon import catalogue as catalogue_mod
+    from simplon.domain import catalogue as catalogue_mod
     tasks = catalogue_mod.load().tasks
 
     # act / assert

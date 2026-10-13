@@ -1,6 +1,6 @@
 """Unit tests for labnet - the pure helpers behind a containerlab lab lifecycle (OOB-bridge snippets and
 the post-deploy verdict). Moved here from netctl (netctl#730); no VM, no subprocess; AAA throughout."""
-from simplon import labnet
+from simplon.adapters import labnet
 
 
 def test_oob_up_snippet_is_idempotent_create_and_up():

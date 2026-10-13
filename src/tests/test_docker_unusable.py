@@ -21,7 +21,7 @@ from __future__ import annotations
 import pytest
 
 import conftest
-from simplon import docker
+from simplon.adapters import docker
 
 
 class _Unexecutable:
@@ -57,7 +57,7 @@ def test_the_suites_guard_answers_no_instead_of_crashing_the_module(monkeypatch)
     # arrange
     broken = _Unexecutable()
     monkeypatch.setattr("shutil.which", broken.which)
-    monkeypatch.setattr("simplon.run.run", broken.run)
+    monkeypatch.setattr("simplon.kernel.run.run", broken.run)
 
     # act / assert
     assert conftest.docker_is_usable() is False
@@ -80,7 +80,7 @@ def test_a_working_docker_is_still_yes(monkeypatch) -> None:
         ok = True
 
     monkeypatch.setattr("shutil.which", lambda _n: "/usr/bin/docker")
-    monkeypatch.setattr("simplon.run.run", lambda *_a, **_k: _Ok())
+    monkeypatch.setattr("simplon.kernel.run.run", lambda *_a, **_k: _Ok())
 
     # act / assert
     assert conftest.docker_is_usable() is True

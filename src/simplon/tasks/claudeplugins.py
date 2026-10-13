@@ -27,8 +27,9 @@ import shutil
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
-from simplon import context, log
-from simplon.run import run
+from simplon.domain import context
+from simplon.kernel import log
+from simplon.kernel.run import run
 
 # The manifest section this module owns.
 SECTION = "claude"

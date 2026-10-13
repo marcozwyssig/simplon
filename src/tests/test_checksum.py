@@ -28,7 +28,8 @@ from pathlib import Path
 
 import pytest
 
-from simplon import bootstrap, checksum
+from simplon.cli import bootstrap
+from simplon.adapters import checksum
 
 #: Two payloads of the SAME length. Equal size is what makes the mtime rules load-bearing: a cheap size
 #: check would otherwise catch every case below and nothing else would be under test.

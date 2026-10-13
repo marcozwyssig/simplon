@@ -13,8 +13,8 @@ import yaml
 from conftest import docker_is_usable
 from firnrun import firn_rc
 import realmanifests
-from simplon import catalogue, manifestmodel
-from simplon.orchestrator import manifest as manifest_mod
+from simplon.domain import catalogue, manifestmodel
+from simplon.domain import manifest as manifest_mod
 from simplon.tasks.migrate import migrate_text
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "manifests"

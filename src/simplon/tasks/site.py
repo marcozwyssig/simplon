@@ -22,7 +22,7 @@ there?". The image is the product's to choose and must carry all three; what the
 that the choice is PINNED.
 
 `--user uid:gid` IS NOT CAUTION, IT IS A MEASUREMENT. The container writes into the bind-mounted product
-root, so the uid the image runs as is the uid that ends up owning the output. `simplon.docker.user_args`
+root, so the uid the image runs as is the uid that ends up owning the output. `simplon.adapters.docker.user_args`
 holds the rule and both measured failures; the one that applies here is the root direction: measured with
 `hugomods/hugo` (default user uid 0), a run without `--user` wrote `index.html` as `0:0`, the caller's
 `rm -rf` of its own build directory came back `Permission denied`, and the SOURCE tree kept a root-owned
@@ -49,9 +49,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from simplon import context, docker, hostpath, log, outputs
-from simplon.layout import validate_relative_dir
-from simplon.run import run
+from simplon.domain import context, outputs
+from simplon.adapters import docker, hostpath
+from simplon.kernel import log
+from simplon.domain.layout import validate_relative_dir
+from simplon.kernel.run import run
 
 #: The manifest section this module owns. A section rather than flat keys: it is five related values, and
 #: a product that declares no website declares no section at all.
@@ -70,7 +72,7 @@ SECTION = "website"
 #: no default at all, on the reasoning that one product's layout must not be imposed on the next. That
 #: reasoning still holds for a REFUSAL and the census says so. Measured over the same population si#159
 #: and si#172 used - every manifest this kernel can reach: its own, the five in
-#: `simplon.surface.CONSUMERS`, and secure-windows-images - three of those seven declare a `site:` (now `website:`)
+#: `simplon.cli.surface.CONSUMERS`, and secure-windows-images - three of those seven declare a `site:` (now `website:`)
 #: section, and the three disagree: cleon at `site`, biz-cockpit at `docs/website`, simplon at
 #: `docs/site` (until si#344 B1; it names `src/site` now, and this was measured at `docs/site`). A `source:` outside `docs/` refused would turn away two products that have done nothing
 #: wrong, which is the expression rule si#53, si#85 and si#159 each declined to write.
@@ -95,7 +97,7 @@ DEFAULT_SOURCE = "docs/site"
 MOUNT = PurePosixPath("/project")
 
 #: Hugo's cache, kept on the HOST between runs (si#27) - the kernel's convention, like docs.py's
-#: `build/docToolchain/` and `simplon.tools`' `build/tools/bin`, and covered by the same `build/` rule a
+#: `build/docToolchain/` and `simplon.adapters.tools`' `build/tools/bin`, and covered by the same `build/` rule a
 #: product's `clean` and `.gitignore` already carry.
 #:
 #: WHY IT EXISTS AT ALL. Every run is `docker run --rm` with nothing but the product root mounted, so
@@ -311,7 +313,7 @@ def declared(data: Mapping[str, object], source: str = "manifest") -> Site:
     # null, which `theme:` and `base_url:` have always read as "not declared") both default.
     src = _str(section, "source", where) or DEFAULT_SOURCE
     theme = _str(section, "theme", where)
-    # The image pin is `simplon.docker.pinned_image` rather than a rule of this module's own (si#47):
+    # The image pin is `simplon.adapters.docker.pinned_image` rather than a rule of this module's own (si#47):
     # `docs:render` holds its docToolchain tag to the SAME gate, and so do the images the kernel names
     # itself - which is what makes this refusal something the kernel keeps rather than only demands.
     return Site(image=docker.pinned_image(image, where),

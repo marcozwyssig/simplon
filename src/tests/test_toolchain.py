@@ -150,8 +150,8 @@ def test_the_executor_runs_the_assembled_line_and_returns_its_rc(monkeypatch, tm
     # arrange: the product context is the one value the executor READS, so it is stood in for here the
     # way every other task test does it (tests/test_docker.py's fixture). The manifest keys arrive as
     # PARAMETERS since si#105 - that is what makes the design's `with:` block bindable at all.
-    from simplon import context
-    from simplon.run import Result
+    from simplon.domain import context
+    from simplon.kernel.run import Result
     # The manifest is WRITTEN and not just named, because si#250 made the executor read it: the layout
     # says where inside the tree a containerised command runs, and a context pointing at a file that is
     # not there is not a product this command could ever have been reached through.
@@ -180,8 +180,8 @@ def test_the_executor_runs_the_assembled_line_and_returns_its_rc(monkeypatch, tm
 def test_a_command_with_no_cache_never_asks_for_the_instance_section(monkeypatch, tmp_path):
     # arrange: `simplon init` writes no `instance:` section, so resolving one up front killed every
     # toolchain command in every fresh product (si#105 defect 4)
-    from simplon import context
-    from simplon.run import Result
+    from simplon.domain import context
+    from simplon.kernel.run import Result
     # The manifest is WRITTEN and not just named, because si#250 made the executor read it: the layout
     # says where inside the tree a containerised command runs, and a context pointing at a file that is
     # not there is not a product this command could ever have been reached through.
@@ -198,8 +198,8 @@ def test_a_command_with_no_cache_never_asks_for_the_instance_section(monkeypatch
 
 def test_a_command_WITH_a_cache_still_resolves_the_instance(monkeypatch, tmp_path):
     # arrange: moving the resolve behind the caches must not quietly drop the netctl#453 property
-    from simplon import context
-    from simplon.run import Result
+    from simplon.domain import context
+    from simplon.kernel.run import Result
     # The manifest is WRITTEN and not just named, because si#250 made the executor read it: the layout
     # says where inside the tree a containerised command runs, and a context pointing at a file that is
     # not there is not a product this command could ever have been reached through.
@@ -223,7 +223,7 @@ def test_a_command_WITH_a_cache_still_resolves_the_instance(monkeypatch, tmp_pat
 def test_the_refusal_names_the_command_the_block_was_read_from(monkeypatch, tmp_path):
     # arrange: `ctx` is in the signature for exactly this - the values cannot say which command they came
     # from, and "somewhere a toolchain command has no image" is not a diagnosis
-    from simplon import context
+    from simplon.domain import context
     # The manifest is WRITTEN and not just named, because si#250 made the executor read it: the layout
     # says where inside the tree a containerised command runs, and a context pointing at a file that is
     # not there is not a product this command could ever have been reached through.

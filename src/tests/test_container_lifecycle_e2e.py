@@ -34,7 +34,7 @@ import pytest
 
 import simplon
 from conftest import docker_is_usable
-from simplon.run import run
+from simplon.kernel.run import run
 
 needs_docker = pytest.mark.skipif(not docker_is_usable(), reason="no docker daemon here to cancel a run in")
 

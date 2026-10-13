@@ -1,12 +1,12 @@
 """Unit tests for simplon.tasks.env (netctl#1280, epic #1274 slice S6): the environments listing,
 driven purely by the `environments:` / `default:` / `env_var:` keys of the manifest, read straight
-through simplon.context - no backend registry, no product import. AAA throughout.
+through simplon.domain.context - no backend registry, no product import. AAA throughout.
 """
 import pytest
 
-from simplon import context
+from simplon.domain import context
 from simplon.tasks import env as env_cmd
-from simplon.context import ProductContext
+from simplon.domain.context import ProductContext
 
 _ENVS = {
     "dev": {"backend": "local", "description": "Local development lab."},

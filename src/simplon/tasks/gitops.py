@@ -12,7 +12,7 @@ across every repository that installs simplon, the importers are `simplon.tasks.
 `simplon.tasks.release`, both neighbours - so it was the shared innards of two task bodies sitting where
 the kernel lives. It also carried the name `simplon.vcs`, one character of path away from
 `simplon.tasks.vcs`, the command body that calls it; `gitops` says which of the two is the mechanism
-without anybody having to open both. A tombstone at the old path says where it went (`simplon.surface`).
+without anybody having to open both. A tombstone at the old path says where it went (`simplon.cli.surface`).
 
 WHY THE TAG PRIMITIVES ARE HERE AND THE COMMAND IS NOT. This module is the kernel's single `git -C
 <ROOT>` seam, and a second one would be the drift every rule in this repository refuses; the pure
@@ -35,8 +35,8 @@ import shutil
 from pathlib import Path
 from typing import Sequence
 
-from simplon import log
-from simplon.run import Result, run
+from simplon.kernel import log
+from simplon.kernel.run import Result, run
 
 ROOT = Path.cwd()
 

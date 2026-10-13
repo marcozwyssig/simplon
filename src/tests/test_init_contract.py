@@ -6,7 +6,7 @@ operating system, and it only shows up on the one nobody develops on.
 import re
 from pathlib import Path
 
-from simplon import bootstrap
+from simplon.cli import bootstrap
 
 VARS = ("LAUNCH_PRODUCT", "LAUNCH_ROOT", "LAUNCH_ORCH_DIR", "LAUNCH_MODULE")
 

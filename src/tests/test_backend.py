@@ -1,11 +1,11 @@
-"""Unit tests for simplon.backend - the Backend Protocol + the env -> Backend INSTANCE resolution that
+"""Unit tests for simplon.adapters.backend - the Backend Protocol + the env -> Backend INSTANCE resolution that
 replaces `if env.backend == ...` string dispatch (netctl#735). No I/O; AAA throughout, incl. negatives.
 The product supplies the concrete backends; here we register tiny fakes to exercise the kernel seam.
 """
 import pytest
 
-from simplon.backend import Backend, resolve
-from simplon.environments import Environment
+from simplon.adapters.backend import Backend, resolve
+from simplon.domain.environments import Environment
 
 
 class _FakeBackend:

@@ -21,9 +21,9 @@ import subprocess
 
 import pytest
 
-from simplon import catalogue as catalogue_mod
-from simplon.orchestrator import manifest as manifest_mod
-from simplon import outputs
+from simplon.domain import catalogue as catalogue_mod
+from simplon.domain import manifest as manifest_mod
+from simplon.domain import outputs
 from simplon.tasks import site as site_task
 
 from conftest import ROOT
@@ -50,7 +50,7 @@ def product():
 
 def test_the_site_section_is_declared_and_valid(product):
     """The `site:` section parses through the very validator `docs:site` runs it through."""
-    # Arrange: the raw manifest data, as simplon.context.manifest_data would hand it to the task.
+    # Arrange: the raw manifest data, as simplon.domain.context.manifest_data would hand it to the task.
     import yaml
     data = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
 

@@ -21,8 +21,9 @@ import typer
 from typer.testing import CliRunner
 
 import simplon
-from simplon import cli, provenance
-from simplon.orchestrator import manifest
+from simplon import cli
+from simplon.kernel import provenance
+from simplon.domain import manifest
 
 _MANIFEST = """
 product: demo

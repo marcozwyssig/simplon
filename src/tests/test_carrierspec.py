@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import pytest
 
-from simplon import carrierspec, environments
+from simplon.domain import carrierspec, environments
 
 HAUS = {
     "proxmox": {"node": "pve1", "kind": "lxc"},
@@ -289,7 +289,7 @@ def test_the_portainer_backend_refuses_a_carrier_that_carries_no_portainer():
     no Portainer on it has nowhere to put the stack, and is told so by name rather than failing on an
     attribute."""
     # arrange
-    from simplon import portainer
+    from simplon.adapters import portainer
 
     machine = carrierspec.Carrier(name="lab",
                                   proxmox=carrierspec.Proxmox(node="pve-2", kind="vm"))
@@ -357,7 +357,7 @@ def test_the_deploy_path_never_reads_the_machine_half():
     with no machine at all and it still resolves - which is what makes `proxmox:` optional a removal
     rather than a new shape to support.
     """
-    from simplon import portainer
+    from simplon.adapters import portainer
 
     carrier = carrierspec.declared(
         {"carriers": {"theirs": {"portainer": {"url_from": "PORTAINER"}}}})["theirs"]

@@ -1,10 +1,10 @@
-"""Unit tests for simplon.environments.parse - the pure manifest-matrix (`cd: environments:` /
+"""Unit tests for simplon.domain.environments.parse - the pure manifest-matrix (`cd: environments:` /
 `cd: default:`) -> Registry parsing and validation with product-supplied valid backends. No I/O; AAA
 throughout."""
 import pytest
 
-from simplon import environments as envs_mod
-from simplon.environments import parse, parse_data
+from simplon.domain import environments as envs_mod
+from simplon.domain.environments import parse, parse_data
 
 _BACKENDS = ("local", "cloud")
 _OK = """
@@ -124,7 +124,7 @@ def test_the_optional_names_reach_the_far_side_of_the_seam():
 
     The generalisation this repository states: *what meaning does a value carry on the far side of a seam
     that it did not carry on this side?* Here it carried none, because it never crossed."""
-    from simplon import portainer
+    from simplon.adapters import portainer
 
     env = parse_data(_WITH_BOTH_LISTS, ("portainer",)).environments["prod"]
 
@@ -151,7 +151,7 @@ def test_an_optional_name_with_no_value_is_simply_absent():
     """The other half of what `optional:` MEANS, now that it arrives: a name in it travels when it has a
     value and is left out when it does not - no empty string, which a compose document cannot tell from
     a deliberate blank."""
-    from simplon import portainer
+    from simplon.adapters import portainer
 
     env = parse_data(_WITH_BOTH_LISTS, ("portainer",)).environments["prod"]
 
@@ -233,7 +233,7 @@ def test_the_missing_instance_names_the_registration_and_not_the_matrix():
 
     `backend.resolve` always had the sentence that fits. It could not be reached, because the re-parse
     refused first."""
-    from simplon import backend as backend_mod
+    from simplon.adapters import backend as backend_mod
 
     env = envs_mod.Environment("dev", "local", "")
 

@@ -1,4 +1,4 @@
-"""`simplon.fetch` - the kernel's one download, driven rather than described.
+"""`simplon.adapters.fetch` - the kernel's one download, driven rather than described.
 
 WHY THIS FILE LOOKS LIKE WORK. A progress bar is display, so the cheap test is an assertion over a
 format string, and si#142 says in as many words that such a test proves nothing about the case that
@@ -50,7 +50,7 @@ from pathlib import Path
 
 import pytest
 
-from simplon import fetch
+from simplon.adapters import fetch
 
 #: Big enough that a bar has something to repaint over, small enough that the suite does not notice.
 #: The handler spends it in eight slices with a pause between them, so a transfer takes ~0.4s and the

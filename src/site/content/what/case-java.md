@@ -126,7 +126,7 @@ first constant:
 IMAGE = docker.pinned_image("gradle:8.14.3-jdk21", "orchestrator.gradle")
 ```
 
-`simplon.docker.pinned_image` is the gate the kernel puts its **own** images through - the Hugo image a
+`simplon.adapters.docker.pinned_image` is the gate the kernel puts its **own** images through - the Hugo image a
 `site:` section declares, the docToolchain tag `docs:render` reads, the mermaid renderer the diagram
 check runs. Nothing forces a product's own reference through it: the rule reaches the manifest keys the
 kernel reads, and this string is javademo's. Calling it anyway is the seam working in the direction

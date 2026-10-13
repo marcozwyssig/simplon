@@ -1,6 +1,6 @@
 """`support install` - the host tooling the kernel itself cannot work without.
 
-WHY A COMMAND WHEN THE GATES SELF-PROVISION. simplon.oras installs oras the moment a package operation
+WHY A COMMAND WHEN THE GATES SELF-PROVISION. simplon.adapters.oras installs oras the moment a package operation
 needs one, so a build never stops for it. That is the right behaviour mid-run and the wrong thing to
 rely on when someone is SETTING UP a machine: an install that happens as a side effect of a build is an
 install nobody chose, at the least convenient moment, over a network that may be the reason they are
@@ -12,7 +12,8 @@ them touches a machine and the other opens a browser and asks a human to authori
 """
 from __future__ import annotations
 
-from simplon import log, oras
+from simplon.kernel import log
+from simplon.adapters import oras
 
 # Every gate this command drives, in the order a fresh machine wants them. One entry today; the point
 # of the list is that the next tool is a row rather than a rewrite. The gate is wrapped in a lambda

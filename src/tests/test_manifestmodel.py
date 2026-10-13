@@ -14,9 +14,9 @@ import pytest
 import yaml
 
 import realmanifests
-from simplon import catalogue, manifestmodel
-from simplon.environments import matrix_section
-from simplon.orchestrator import manifest as manifest_mod
+from simplon.domain import catalogue, manifestmodel
+from simplon.domain.environments import matrix_section
+from simplon.domain import manifest as manifest_mod
 from simplon.tasks.migrate import migrate_text
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "manifests"

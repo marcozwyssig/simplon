@@ -1,4 +1,4 @@
-"""Unit tests for the product scaffolder (simplon.bootstrap, netctl#651 strand 4): the PURE render (the
+"""Unit tests for the product scaffolder (simplon.cli.bootstrap, netctl#651 strand 4): the PURE render (the
 generated starter manifest validates through the real delivery loader, the file set + placeholder
 substitution are exact) and the file-writing (every file lands, the shim is executable, an existing tree is
 not clobbered). No Typer, no product deps; AAA throughout, incl. negative cases.
@@ -12,10 +12,10 @@ from pathlib import Path
 import pytest
 
 import simplon
-from simplon import bootstrap
-from simplon import catalogue as catalogue_mod
-from simplon import environments as env_mod
-from simplon.orchestrator import manifest
+from simplon.cli import bootstrap
+from simplon.domain import catalogue as catalogue_mod
+from simplon.domain import environments as env_mod
+from simplon.domain import manifest
 
 
 def _load_scaffold(name: str = "fooctl"):
@@ -23,7 +23,7 @@ def _load_scaffold(name: str = "fooctl"):
 
     WITH the catalogue, always: the scaffold hangs its commands off the platform's CI/CD loop and places
     two of the catalogue's own (`release tag`, `support install`), so a load without one is not a
-    stricter test - it is a different product. `simplon.context.manifest()` passes the catalogue on every
+    stricter test - it is a different product. `simplon.domain.context.manifest()` passes the catalogue on every
     real call, and this mirrors it.
     """
     return manifest.load(bootstrap.manifest_yaml(name), catalogue=catalogue_mod.load())
@@ -401,7 +401,7 @@ def test_scaffolded_aggregate_actually_runs_through_the_shared_runner(tmp_path):
     # so we observe the aggregate really being planned + dispatched (behavioural, not just declared)
     bootstrap.write("fooctl", tmp_path)
     probe = (
-        "from simplon.orchestrator import product\n"
+        "from simplon.kernel import product\n"
         "seen = {}\n"
         "def _record(pipeline):\n"
         "    seen['name'] = pipeline.name\n"
@@ -437,7 +437,7 @@ def test_scaffolded_aggregate_keeps_the_plan_tree_and_with_it_every_stop_scope(t
     # the verdict is read off the Pipeline the kernel really built
     bootstrap.write("fooctl", tmp_path)
     probe = (
-        "from simplon.orchestrator import product\n"
+        "from simplon.kernel import product\n"
         "seen = {}\n"
         "def _record(pipeline):\n"
         "    seen['commands'] = [s.command for s in pipeline.steps]\n"

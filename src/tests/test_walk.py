@@ -11,8 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from simplon import context, tracker
-from simplon.orchestrator.steps import StepState, build_rows, summarise
+from simplon.domain import context
+from simplon.adapters import tracker
+from simplon.kernel.steps import StepState, build_rows, summarise
 from simplon.tasks import walk as walk_mod
 from simplon.tasks.acceptance import features, read
 
@@ -674,7 +675,7 @@ def test_the_record_names_every_sitting_so_one_afternoon_reads_differently_from_
 def test_the_header_is_one_column_with_the_transcripts_own(product):
     """si#125's provenance line and si#148's header already exist; this is appended to them, in their
     label width, so the file carries one header and not two that nearly line up."""
-    from simplon import steplog
+    from simplon.kernel import steplog
 
     # act
     theirs = steplog.run_header("test.walk", datetime(2026, 9, 12, 10, 0, 0))
@@ -1098,7 +1099,8 @@ def test_the_walk_is_drawn_by_the_ui_the_run_host_carries(product, monkeypatch):
     # arrange: a UI that records what it was handed and stops the walk there
     import dataclasses
 
-    from simplon import cli, runhost
+    from simplon import cli
+    from simplon.kernel import runhost
 
     _walkable(product, monkeypatch)
     handed: list[tuple[object, object]] = []
@@ -1128,7 +1130,8 @@ def test_a_walk_with_no_ui_registered_refuses_before_anybody_is_asked(product, m
     # arrange
     import dataclasses
 
-    from simplon import cli, runhost
+    from simplon import cli
+    from simplon.kernel import runhost
 
     _walkable(product, monkeypatch)
     runhost.register(dataclasses.replace(cli.run_host(), walk=None))

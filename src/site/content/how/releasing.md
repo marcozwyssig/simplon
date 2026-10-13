@@ -249,7 +249,7 @@ next minor*. The date is the only part nothing checks, and a transition period t
 of does not end by decision. It ends by being forgotten — one release at a time, each of which looks
 like the cheap choice on its own.
 
-So before you type a version whose **minor** changes, read `simplon.surface`:
+So before you type a version whose **minor** changes, read `simplon.cli.surface`:
 
 * `MOVED` — the old paths that are still standing, and where each one now lives.
 * `MOVED_CONSUMERS` — who still imports them, measured down to the repository, file and line, so the

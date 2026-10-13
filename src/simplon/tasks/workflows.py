@@ -13,14 +13,16 @@ hypothetical - agile-cockpit kept three assertions pointed at a `.gitlab-ci.yml`
 months, and the assertions passed the whole time.
 
 A KERNEL MECHANISM under netctl#1280's rule: nothing here knows a product. The repo root, the manifest
-and its filename arrive through `simplon.context.current()`, and everything that is genuinely the
+and its filename arrive through `simplon.domain.context.current()`, and everything that is genuinely the
 product's - runner images, triggers, permissions, schedules, secrets - is data in its own manifest
 section. What the kernel contributes is the step SEQUENCE, which was already in the manifest, and the
 invariants a product should not have to remember.
 """
 from __future__ import annotations
 
-from simplon import context, log, workflowgen
+from simplon.domain import context
+from simplon.kernel import log
+from simplon.tasks import workflowgen
 
 
 def generate(check: bool = False) -> int:

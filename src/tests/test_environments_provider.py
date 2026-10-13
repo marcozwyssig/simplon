@@ -1,11 +1,11 @@
-"""Unit tests for simplon.environments.Provider - the stateful environments seam every adopting product
+"""Unit tests for simplon.domain.environments.Provider - the stateful environments seam every adopting product
 used to carry as a scaffolded copy. The precedence and the group/environment collision are what these
 pin down, because that is where the copies had already drifted apart. AAA throughout.
 """
 import pytest
 
-from simplon import context, environments
-from simplon.environments import Provider
+from simplon.domain import context, environments
+from simplon.domain.environments import Provider
 
 _MANIFEST = """product: sample
 tasks:
