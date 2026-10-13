@@ -41,9 +41,9 @@ provable at all if the number that went to test is the number that goes to prod.
 """
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
-from simplon import context, githubpackages
+from simplon import context
 
 #: The manifest section this module reads.
 SECTION = "deploy"
@@ -200,30 +200,19 @@ def source_of(document: dict, where: str) -> Source:
                   application=application, into=into)
 
 
-def _newest(source: Source) -> str:
-    """The newest published tag. Its own module records the fact this rests on - `oras repo tags` lists
-    oldest first - so that fact stays in one place."""
-    return githubpackages.newest_tag(source.registry, source.repository)
-
-
-def _serves(source: Source, tag: str) -> bool:
-    """Whether the registry really serves this reference.
-
-    The same read-back `release:image` makes a push a publish with, asked before a deployment instead of
-    after one: a version that is not there is a fact available in one call, and finding it out in the
-    middle of a rollout costs an environment.
-    """
-    from simplon.tasks import image
-    return image.published(f"{source.reference}:{tag}")
-
-
-def resolve(selector: str, source: Source) -> Version:
+def resolve(selector: str, source: Source, *, newest: Callable[[Source], str],
+            serves: Callable[[Source, str], bool]) -> Version:
     """`selector` as a concrete version, refusing one the registry does not serve.
 
     `local` returns FIRST, before any registry is touched. That ordering is load-bearing rather than an
     optimisation: the whole point of deploying the current code base is that it does not depend on
     anything having been published, so a registry that is unreachable, unauthenticated or empty must not
     be able to fail it.
+
+    THE REGISTRY IS HANDED IN (si#393). `newest` names the newest published tag, and `serves` says whether
+    the registry really serves a tag. Asking either one is I/O through an adapter (`githubpackages`, oras),
+    and this module is the domain, which imports nothing above itself. The task that deploys,
+    `tasks.deploy`, passes the two in.
     """
     selector = (selector or "").strip()
     if not selector:
@@ -233,8 +222,8 @@ def resolve(selector: str, source: Source) -> Version:
     if selector == LOCAL:
         return Version(selector=LOCAL, tag="", builds=True)
     if selector == LATEST:
-        return Version(selector=LATEST, tag=_newest(source), builds=False)
-    if not _serves(source, selector):
+        return Version(selector=LATEST, tag=newest(source), builds=False)
+    if not serves(source, selector):
         raise ValueError(
             f"{source.reference} does not serve '{selector}', so nothing was deployed. Published "
             f"versions are what `{LATEST}` resolves against; `{LOCAL}` deploys the current code base "

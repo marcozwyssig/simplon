@@ -34,6 +34,7 @@ from pathlib import Path
 
 from simplon import (backend, context, deployment, devcontainer, environments, githubpackages,
                      log, portainer)
+from simplon.tasks import image
 
 
 def drivable_backends() -> dict[str, backend.Backend]:
@@ -103,10 +104,26 @@ def _refuse_a_local_client(version: deployment.Version) -> None:
             f"that version, or install it yourself")
 
 
+def _newest(source: deployment.Source) -> str:
+    """The newest published tag. Its own module records the fact this rests on - `oras repo tags` lists
+    oldest first - so that fact stays in one place."""
+    return githubpackages.newest_tag(source.registry, source.repository)
+
+
+def _serves(source: deployment.Source, tag: str) -> bool:
+    """Whether the registry really serves this reference.
+
+    The same read-back `release:image` makes a push a publish with, asked before a deployment instead of
+    after one: a version that is not there is a fact available in one call, and finding it out in the
+    middle of a rollout costs an environment.
+    """
+    return image.published(f"{source.reference}:{tag}")
+
+
 def up(version: str = "") -> int:
     """Deploy `version` - `1.4.0`, `latest`, or `local` for the current code base."""
     source = deployment.declared()
-    resolved = deployment.resolve(version, source)
+    resolved = deployment.resolve(version, source, newest=_newest, serves=_serves)
     if source.application == deployment.CLIENT:
         _refuse_a_local_client(resolved)
         target = _install_root(source, resolved)
@@ -127,7 +144,7 @@ def down(version: str = "") -> int:
     """
     source = deployment.declared()
     if source.application == deployment.CLIENT:
-        resolved = deployment.resolve(version, source)
+        resolved = deployment.resolve(version, source, newest=_newest, serves=_serves)
         _refuse_a_local_client(resolved)
         target = _install_root(source, resolved)
         if not target.is_dir():
