@@ -110,7 +110,7 @@ from pathlib import Path
 
 from simplon import artifactsection, artifactschema, context, docker, githubpackages, hostpath, log, outputs
 from simplon.labhost import BINFMT_IMAGE
-from simplon.bootstrap import validate_relative_dir
+from simplon.layout import validate_relative_dir
 from simplon.run import Result, run, stream
 
 #: The manifest section this module reads (si#344 B2: `images:` folded into it). An entry is an image when
@@ -158,7 +158,7 @@ def _inside_the_product(value: str, key: str, where: str) -> str:
     """A manifest path that must stay UNDER the product root, normalised - with '.' allowed, because the
     build context normally IS the product root.
 
-    The rule and its reasoning are `bootstrap.validate_relative_dir`'s, shared rather than restated: an
+    The rule and its reasoning are `layout.validate_relative_dir`'s, shared rather than restated: an
     absolute or climbing value would land outside the tree the manifest is talking about, and here that
     means handing docker a build context somewhere else on the disk - `context: /` would stream the whole
     filesystem to the daemon. The one relaxation is the bare '.', which that validator refuses because

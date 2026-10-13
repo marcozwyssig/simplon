@@ -406,36 +406,6 @@ x_steplog__outputs typeOf simplon.architecture.Exception {
   reason = "Imports the module `outputs`."
   ticket = "si#391"
 }
-x_tasks_acceptance__bootstrap typeOf simplon.architecture.Exception {
-  importer = simplon.components.tasks.m_tasks_acceptance
-  imported = simplon.components.cli.m_bootstrap
-  reason = "Imports `validate_relative_dir`."
-  ticket = "si#392"
-}
-x_tasks_cliref__bootstrap typeOf simplon.architecture.Exception {
-  importer = simplon.components.tasks.m_tasks_cliref
-  imported = simplon.components.cli.m_bootstrap
-  reason = "Imports `validate_relative_dir`."
-  ticket = "si#392"
-}
-x_tasks_image__bootstrap typeOf simplon.architecture.Exception {
-  importer = simplon.components.tasks.m_tasks_image
-  imported = simplon.components.cli.m_bootstrap
-  reason = "Imports `validate_relative_dir`."
-  ticket = "si#392"
-}
-x_tasks_site__bootstrap typeOf simplon.architecture.Exception {
-  importer = simplon.components.tasks.m_tasks_site
-  imported = simplon.components.cli.m_bootstrap
-  reason = "Imports `validate_relative_dir`."
-  ticket = "si#392"
-}
-x_outputs__bootstrap typeOf simplon.architecture.Exception {
-  importer = simplon.components.domain.m_outputs
-  imported = simplon.components.cli.m_bootstrap
-  reason = "Imports `validate_relative_dir`."
-  ticket = "si#392"
-}
 x_deployment__tasks_image typeOf simplon.architecture.Exception {
   importer = simplon.components.domain.m_deployment
   imported = simplon.components.tasks.m_tasks_image

@@ -50,7 +50,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from simplon import context, docker, hostpath, log, outputs
-from simplon.bootstrap import validate_relative_dir
+from simplon.layout import validate_relative_dir
 from simplon.run import run
 
 #: The manifest section this module owns. A section rather than flat keys: it is five related values, and
@@ -263,7 +263,7 @@ def _inside_the_product(value: str, key: str, where: str) -> str:
     Not pedantry about tidy manifests: `root / value` collapses onto `value` the moment it is absolute, and
     `output` is then handed to `shutil.rmtree`. `output: /var/tmp/x` would delete `/var/tmp/x`, and `..`
     escapes just as far; an absolute `source` would simply point outside the mount. The rule is
-    `bootstrap.validate_relative_dir`, the one `--orch-dir` already uses (#4) - the same escape, so the
+    `layout.validate_relative_dir`, the one `--orch-dir` already uses (#4) - the same escape, so the
     same check, in one place.
     """
     return validate_relative_dir(

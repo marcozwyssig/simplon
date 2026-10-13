@@ -79,6 +79,7 @@ from pathlib import Path
 
 import simplon
 from simplon import layout
+from simplon.layout import validate_relative_dir
 from simplon.run import run
 
 # A product name is a lowercase slug: it becomes the shim/manifest filename, the manifest `product:` label,
@@ -105,46 +106,9 @@ _PRODUCT_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 # wants, and this changes what a NEW scaffold does.
 DEFAULT_ORCH_DIR = "deploy/provision/orchestrator"
 
-# The Windows drive prefix (`C:`, `c:/...`): absolute, and neither the leading-slash nor the `..` check
-# would catch it on its own.
-_DRIVE_RE = re.compile(r"^[A-Za-z]:")
-
-
 def pkg_dir_for(orch_dir: str) -> str:
     """The generated package's directory, relative to the scaffold target, for a given block dir."""
     return f"{orch_dir}/src/python/orchestrator"
-
-
-def validate_relative_dir(value: str, what: str, hint: str, *, inside: str = "the target directory") -> str:
-    """Return the normalised directory if `value` is a plain relative path, else raise ValueError naming
-    `what` (the caller's word for the value) and `hint` (what a good one looks like).
-
-    Checked before anything acts on the path, so a bad value costs nothing: an absolute path or one with a
-    `..` in it would land OUTSIDE the directory the caller named - silently, and over whatever happens to
-    live there. Refuse it loudly instead. `\\` is refused rather than translated, because a value carrying
-    both separators is a guess about which one was meant.
-
-    Shared rather than restated: `--orch-dir` scaffolds INTO the path (#4) and the site build's `source`
-    and `output` are read from a manifest and then handed to `shutil.rmtree` (#2), so the second one turns
-    a leading slash into a deleted directory somewhere else entirely. Same rule, same escape, one place.
-    """
-    trimmed = (value or "").strip()
-    if not trimmed:
-        raise ValueError(f"{what} {value!r} is empty; {hint}")
-    if "\\" in trimmed:
-        raise ValueError(f"{what} {value!r} is invalid: '/' is the separator here, not '\\'; {hint}")
-    if trimmed.startswith("/") or _DRIVE_RE.match(trimmed):
-        raise ValueError(
-            f"{what} {value!r} is invalid: it must be relative, so that it lands under "
-            f"{inside} and nowhere else; {hint}")
-
-    segments = trimmed.rstrip("/").split("/")
-    for segment in segments:
-        if segment in ("", ".", ".."):
-            raise ValueError(
-                f"{what} {value!r} is invalid: {segment!r} is not a directory name, and a "
-                f"path that climbs or doubles back does not stay relative to {inside}; {hint}")
-    return "/".join(segments)
 
 
 def validate_orch_dir(value: str) -> str:
