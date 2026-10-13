@@ -1,0 +1,74 @@
+// simplon.architecture (si#390 part 1): simplon's own components, the module each holds, and the named
+// exceptions to the layers. The M1 is simplon.components; src/tests/test_architecture.py holds the code to
+// it. Every spelling a firn name cannot carry (a dotted path, a component key) is an attribute, as
+// simplon.pipeline.ArtifactField carries `key`.
+package simplon.architecture
+
+// One component on one layer. An import may stay inside its component or go to a strictly lower layer.
+// `layer` is an integer written as text (0-4); `summary` is one sentence, with no double quote in it,
+// because the generated data file carries it in a Python string.
+Component typeOf firn.core.Class extends firn.core.NamedResource {
+  allowRoot = true
+  property key typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property layer typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property summary typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property module typeOf firn.core.Composition {
+    range = simplon.architecture.Module
+    subjectCardinality = 0..N
+    objectCardinality = 0..1
+  }
+}
+
+// One module below src/simplon/, by its dotted path ("orchestrator.steps", "tasks.image", "__init__").
+Module typeOf firn.core.Class extends firn.core.NamedResource {
+  property path typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+}
+
+// A module that belongs to no component, and why.
+Excluded typeOf firn.core.Class extends firn.core.NamedResource {
+  allowRoot = true
+  property path typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property reason typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+}
+
+// One import against the layers, allowed until its ticket resolves it. One module edge, never a
+// component edge, so a new wrong import cannot pass behind an old one.
+Exception typeOf firn.core.Class extends firn.core.NamedResource {
+  allowRoot = true
+  property importer typeOf firn.core.Association {
+    range = simplon.architecture.Module
+    subjectCardinality = 1..1
+    objectCardinality = 0..N
+  }
+  property imported typeOf firn.core.Association {
+    range = simplon.architecture.Module
+    subjectCardinality = 1..1
+    objectCardinality = 0..N
+  }
+  property reason typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+  property ticket typeOf firn.core.Attribute {
+    range = firn.core.StringLiteral
+    subjectCardinality = 1..1
+  }
+}

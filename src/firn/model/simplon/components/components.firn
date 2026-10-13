@@ -1,0 +1,456 @@
+// simplon's components (si#390 part 1), as M1 instances of simplon.architecture. Every module below
+// src/simplon/ is in exactly one component or excluded with a reason; src/tests/test_architecture.py holds
+// the model to the files and to every import. A module's firn name is `m_` and its path with `_` for `.`,
+// because a firn name has no `.`; its spelling is `path`.
+package simplon.components
+
+kernel typeOf simplon.architecture.Component {
+  key = "kernel"
+  layer = "0"
+  summary = "Running a plan: steps, outcomes, the subprocess seam, the log - and, with si#390 part 4, the base classes of tasks and commands."
+  module m_orchestrator_steps typeOf simplon.architecture.Module {
+    path = "orchestrator.steps"
+  }
+  module m_orchestrator_product typeOf simplon.architecture.Module {
+    path = "orchestrator.product"
+  }
+  module m_run typeOf simplon.architecture.Module {
+    path = "run"
+  }
+  module m_log typeOf simplon.architecture.Module {
+    path = "log"
+  }
+  module m_verdict typeOf simplon.architecture.Module {
+    path = "verdict"
+  }
+  module m_steplog typeOf simplon.architecture.Module {
+    path = "steplog"
+  }
+  module m_waits typeOf simplon.architecture.Module {
+    path = "waits"
+  }
+  module m_degraded typeOf simplon.architecture.Module {
+    path = "degraded"
+  }
+  module m_filelock typeOf simplon.architecture.Module {
+    path = "filelock"
+  }
+}
+domain typeOf simplon.architecture.Component {
+  key = "domain"
+  layer = "1"
+  summary = "Reading the configuration, validating it, and building the plan from it."
+  module m_orchestrator_manifest typeOf simplon.architecture.Module {
+    path = "orchestrator.manifest"
+  }
+  module m_orchestrator_model_treeform typeOf simplon.architecture.Module {
+    path = "orchestrator.model.treeform"
+  }
+  module m_yamlkeys typeOf simplon.architecture.Module {
+    path = "yamlkeys"
+  }
+  module m_artifactsection typeOf simplon.architecture.Module {
+    path = "artifactsection"
+  }
+  module m_artifactschema typeOf simplon.architecture.Module {
+    path = "artifactschema"
+  }
+  module m_environments typeOf simplon.architecture.Module {
+    path = "environments"
+  }
+  module m_carrierspec typeOf simplon.architecture.Module {
+    path = "carrierspec"
+  }
+  module m_layout typeOf simplon.architecture.Module {
+    path = "layout"
+  }
+  module m_outputs typeOf simplon.architecture.Module {
+    path = "outputs"
+  }
+  module m_deployment typeOf simplon.architecture.Module {
+    path = "deployment"
+  }
+  module m_signatures typeOf simplon.architecture.Module {
+    path = "signatures"
+  }
+  module m_context typeOf simplon.architecture.Module {
+    path = "context"
+  }
+  module m_catalogue typeOf simplon.architecture.Module {
+    path = "catalogue"
+  }
+  module m_runners typeOf simplon.architecture.Module {
+    path = "runners"
+  }
+  module m_manifestmodel typeOf simplon.architecture.Module {
+    path = "manifestmodel"
+  }
+  module m_clitaxonomy typeOf simplon.architecture.Module {
+    path = "clitaxonomy"
+  }
+}
+adapters typeOf simplon.architecture.Component {
+  key = "adapters"
+  layer = "2"
+  summary = "The tools and platforms a task drives: docker, oras, a registry, a lab, a proxy."
+  module m_awake typeOf simplon.architecture.Module {
+    path = "awake"
+  }
+  module m_backend typeOf simplon.architecture.Module {
+    path = "backend"
+  }
+  module m_checksum typeOf simplon.architecture.Module {
+    path = "checksum"
+  }
+  module m_clablifecycle typeOf simplon.architecture.Module {
+    path = "clablifecycle"
+  }
+  module m_clabrender typeOf simplon.architecture.Module {
+    path = "clabrender"
+  }
+  module m_compose typeOf simplon.architecture.Module {
+    path = "compose"
+  }
+  module m_credentials typeOf simplon.architecture.Module {
+    path = "credentials"
+  }
+  module m_devcontainer typeOf simplon.architecture.Module {
+    path = "devcontainer"
+  }
+  module m_disk typeOf simplon.architecture.Module {
+    path = "disk"
+  }
+  module m_diskguard typeOf simplon.architecture.Module {
+    path = "diskguard"
+  }
+  module m_docker typeOf simplon.architecture.Module {
+    path = "docker"
+  }
+  module m_fetch typeOf simplon.architecture.Module {
+    path = "fetch"
+  }
+  module m_githubpackages typeOf simplon.architecture.Module {
+    path = "githubpackages"
+  }
+  module m_healthgate typeOf simplon.architecture.Module {
+    path = "healthgate"
+  }
+  module m_host typeOf simplon.architecture.Module {
+    path = "host"
+  }
+  module m_hostpath typeOf simplon.architecture.Module {
+    path = "hostpath"
+  }
+  module m_imagenames typeOf simplon.architecture.Module {
+    path = "imagenames"
+  }
+  module m_interact typeOf simplon.architecture.Module {
+    path = "interact"
+  }
+  module m_labegress typeOf simplon.architecture.Module {
+    path = "labegress"
+  }
+  module m_labhost typeOf simplon.architecture.Module {
+    path = "labhost"
+  }
+  module m_labinstance typeOf simplon.architecture.Module {
+    path = "labinstance"
+  }
+  module m_labnet typeOf simplon.architecture.Module {
+    path = "labnet"
+  }
+  module m_linux typeOf simplon.architecture.Module {
+    path = "linux"
+  }
+  module m_nexusproxy typeOf simplon.architecture.Module {
+    path = "nexusproxy"
+  }
+  module m_oras typeOf simplon.architecture.Module {
+    path = "oras"
+  }
+  module m_portainer typeOf simplon.architecture.Module {
+    path = "portainer"
+  }
+  module m_ports typeOf simplon.architecture.Module {
+    path = "ports"
+  }
+  module m_pyvenv typeOf simplon.architecture.Module {
+    path = "pyvenv"
+  }
+  module m_tools typeOf simplon.architecture.Module {
+    path = "tools"
+  }
+  module m_topology typeOf simplon.architecture.Module {
+    path = "topology"
+  }
+  module m_tracker typeOf simplon.architecture.Module {
+    path = "tracker"
+  }
+}
+tasks typeOf simplon.architecture.Component {
+  key = "tasks"
+  layer = "3"
+  summary = "The catalogue's task bodies, and the generators they call."
+  module m_completiongen typeOf simplon.architecture.Module {
+    path = "completiongen"
+  }
+  module m_taskgen typeOf simplon.architecture.Module {
+    path = "taskgen"
+  }
+  module m_tasks_acceptance typeOf simplon.architecture.Module {
+    path = "tasks.acceptance"
+  }
+  module m_tasks_allure typeOf simplon.architecture.Module {
+    path = "tasks.allure"
+  }
+  module m_tasks_artifact typeOf simplon.architecture.Module {
+    path = "tasks.artifact"
+  }
+  module m_tasks_asset typeOf simplon.architecture.Module {
+    path = "tasks.asset"
+  }
+  module m_tasks_buildfiles typeOf simplon.architecture.Module {
+    path = "tasks.buildfiles"
+  }
+  module m_tasks_carrier typeOf simplon.architecture.Module {
+    path = "tasks.carrier"
+  }
+  module m_tasks_ciarm64 typeOf simplon.architecture.Module {
+    path = "tasks.ciarm64"
+  }
+  module m_tasks_cidisk typeOf simplon.architecture.Module {
+    path = "tasks.cidisk"
+  }
+  module m_tasks_ciprivileges typeOf simplon.architecture.Module {
+    path = "tasks.ciprivileges"
+  }
+  module m_tasks_claudeplugins typeOf simplon.architecture.Module {
+    path = "tasks.claudeplugins"
+  }
+  module m_tasks_cliref typeOf simplon.architecture.Module {
+    path = "tasks.cliref"
+  }
+  module m_tasks_completion typeOf simplon.architecture.Module {
+    path = "tasks.completion"
+  }
+  module m_tasks_conan typeOf simplon.architecture.Module {
+    path = "tasks.conan"
+  }
+  module m_tasks_deploy typeOf simplon.architecture.Module {
+    path = "tasks.deploy"
+  }
+  module m_tasks_docs typeOf simplon.architecture.Module {
+    path = "tasks.docs"
+  }
+  module m_tasks_env typeOf simplon.architecture.Module {
+    path = "tasks.env"
+  }
+  module m_tasks_generated typeOf simplon.architecture.Module {
+    path = "tasks.generated"
+  }
+  module m_tasks_gitops typeOf simplon.architecture.Module {
+    path = "tasks.gitops"
+  }
+  module m_tasks_hosttools typeOf simplon.architecture.Module {
+    path = "tasks.hosttools"
+  }
+  module m_tasks_image typeOf simplon.architecture.Module {
+    path = "tasks.image"
+  }
+  module m_tasks_manifestmodel typeOf simplon.architecture.Module {
+    path = "tasks.manifestmodel"
+  }
+  module m_tasks_maven typeOf simplon.architecture.Module {
+    path = "tasks.maven"
+  }
+  module m_tasks_migrate typeOf simplon.architecture.Module {
+    path = "tasks.migrate"
+  }
+  module m_tasks_nexus typeOf simplon.architecture.Module {
+    path = "tasks.nexus"
+  }
+  module m_tasks_nuget typeOf simplon.architecture.Module {
+    path = "tasks.nuget"
+  }
+  module m_tasks_profiles typeOf simplon.architecture.Module {
+    path = "tasks.profiles"
+  }
+  module m_tasks_proxmoxapi typeOf simplon.architecture.Module {
+    path = "tasks.proxmoxapi"
+  }
+  module m_tasks_release typeOf simplon.architecture.Module {
+    path = "tasks.release"
+  }
+  module m_tasks_releasenotes typeOf simplon.architecture.Module {
+    path = "tasks.releasenotes"
+  }
+  module m_tasks_site typeOf simplon.architecture.Module {
+    path = "tasks.site"
+  }
+  module m_tasks_tasks typeOf simplon.architecture.Module {
+    path = "tasks.tasks"
+  }
+  module m_tasks_testrun typeOf simplon.architecture.Module {
+    path = "tasks.testrun"
+  }
+  module m_tasks_toolchain typeOf simplon.architecture.Module {
+    path = "tasks.toolchain"
+  }
+  module m_tasks_typecheck typeOf simplon.architecture.Module {
+    path = "tasks.typecheck"
+  }
+  module m_tasks_vcs typeOf simplon.architecture.Module {
+    path = "tasks.vcs"
+  }
+  module m_tasks_walk typeOf simplon.architecture.Module {
+    path = "tasks.walk"
+  }
+  module m_tasks_workflows typeOf simplon.architecture.Module {
+    path = "tasks.workflows"
+  }
+  module m_workflowgen typeOf simplon.architecture.Module {
+    path = "workflowgen"
+  }
+}
+cli typeOf simplon.architecture.Component {
+  key = "cli"
+  layer = "4"
+  summary = "The command line: simplon and simplon init, and what a product may import."
+  module m_cli typeOf simplon.architecture.Module {
+    path = "cli"
+  }
+  module m_bootstrap typeOf simplon.architecture.Module {
+    path = "bootstrap"
+  }
+  module m_surface typeOf simplon.architecture.Module {
+    path = "surface"
+  }
+}
+ui typeOf simplon.architecture.Component {
+  key = "ui"
+  layer = "4"
+  summary = "Running a plan in front of a person."
+  module m_orchestrator_tui typeOf simplon.architecture.Module {
+    path = "orchestrator.tui"
+  }
+}
+e_init typeOf simplon.architecture.Excluded {
+  path = "__init__"
+  reason = "The package itself; it imports only `_version`, which is excluded too."
+}
+e_version typeOf simplon.architecture.Excluded {
+  path = "_version"
+  reason = "Written by setuptools-scm; it imports nothing."
+}
+e_orchestrator___init typeOf simplon.architecture.Excluded {
+  path = "orchestrator.__init__"
+  reason = "A package marker; it imports no simplon module."
+}
+e_orchestrator_model___init typeOf simplon.architecture.Excluded {
+  path = "orchestrator.model.__init__"
+  reason = "A package marker; it imports no simplon module."
+}
+e_tasks___init typeOf simplon.architecture.Excluded {
+  path = "tasks.__init__"
+  reason = "A package marker; it imports no simplon module."
+}
+e_test_impls typeOf simplon.architecture.Excluded {
+  path = "test_impls"
+  reason = "Bodies for the generator tests, not part of any component; it imports `tasks.testrun`, and no module imports it."
+}
+x_orchestrator_product__orchestrator_manifest typeOf simplon.architecture.Exception {
+  importer = simplon.components.kernel.m_orchestrator_product
+  imported = simplon.components.domain.m_orchestrator_manifest
+  reason = "Imports `Manifest`."
+  ticket = "si#391"
+}
+x_orchestrator_steps__orchestrator_manifest typeOf simplon.architecture.Exception {
+  importer = simplon.components.kernel.m_orchestrator_steps
+  imported = simplon.components.domain.m_orchestrator_manifest
+  reason = "Imports `PlanNode`."
+  ticket = "si#391"
+}
+x_steplog__context typeOf simplon.architecture.Exception {
+  importer = simplon.components.kernel.m_steplog
+  imported = simplon.components.domain.m_context
+  reason = "Imports the module `context`."
+  ticket = "si#391"
+}
+x_orchestrator_product__awake typeOf simplon.architecture.Exception {
+  importer = simplon.components.kernel.m_orchestrator_product
+  imported = simplon.components.adapters.m_awake
+  reason = "Imports `keep_awake`."
+  ticket = "si#391"
+}
+x_steplog__labinstance typeOf simplon.architecture.Exception {
+  importer = simplon.components.kernel.m_steplog
+  imported = simplon.components.adapters.m_labinstance
+  reason = "Imports the module `labinstance`."
+  ticket = "si#391"
+}
+x_orchestrator_steps__orchestrator_tui typeOf simplon.architecture.Exception {
+  importer = simplon.components.kernel.m_orchestrator_steps
+  imported = simplon.components.ui.m_orchestrator_tui
+  reason = "Imports `run_pipeline`."
+  ticket = "si#391"
+}
+x_steplog__cli typeOf simplon.architecture.Exception {
+  importer = simplon.components.kernel.m_steplog
+  imported = simplon.components.cli.m_cli
+  reason = "Imports `provenance_line`."
+  ticket = "si#391"
+}
+x_steplog__outputs typeOf simplon.architecture.Exception {
+  importer = simplon.components.kernel.m_steplog
+  imported = simplon.components.domain.m_outputs
+  reason = "Imports the module `outputs`."
+  ticket = "si#391"
+}
+x_tasks_acceptance__bootstrap typeOf simplon.architecture.Exception {
+  importer = simplon.components.tasks.m_tasks_acceptance
+  imported = simplon.components.cli.m_bootstrap
+  reason = "Imports `validate_relative_dir`."
+  ticket = "si#392"
+}
+x_tasks_cliref__bootstrap typeOf simplon.architecture.Exception {
+  importer = simplon.components.tasks.m_tasks_cliref
+  imported = simplon.components.cli.m_bootstrap
+  reason = "Imports `validate_relative_dir`."
+  ticket = "si#392"
+}
+x_tasks_image__bootstrap typeOf simplon.architecture.Exception {
+  importer = simplon.components.tasks.m_tasks_image
+  imported = simplon.components.cli.m_bootstrap
+  reason = "Imports `validate_relative_dir`."
+  ticket = "si#392"
+}
+x_tasks_site__bootstrap typeOf simplon.architecture.Exception {
+  importer = simplon.components.tasks.m_tasks_site
+  imported = simplon.components.cli.m_bootstrap
+  reason = "Imports `validate_relative_dir`."
+  ticket = "si#392"
+}
+x_outputs__bootstrap typeOf simplon.architecture.Exception {
+  importer = simplon.components.domain.m_outputs
+  imported = simplon.components.cli.m_bootstrap
+  reason = "Imports `validate_relative_dir`."
+  ticket = "si#392"
+}
+x_deployment__tasks_image typeOf simplon.architecture.Exception {
+  importer = simplon.components.domain.m_deployment
+  imported = simplon.components.tasks.m_tasks_image
+  reason = "Imports the module `tasks.image`."
+  ticket = "si#393"
+}
+x_deployment__githubpackages typeOf simplon.architecture.Exception {
+  importer = simplon.components.domain.m_deployment
+  imported = simplon.components.adapters.m_githubpackages
+  reason = "Imports the module `githubpackages`."
+  ticket = "si#393"
+}
+x_tasks_walk__orchestrator_tui typeOf simplon.architecture.Exception {
+  importer = simplon.components.tasks.m_tasks_walk
+  imported = simplon.components.ui.m_orchestrator_tui
+  reason = "Imports `run_walk`."
+  ticket = "si#394"
+}
