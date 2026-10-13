@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 import shutil
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
 from simplon import context, log
@@ -150,6 +150,36 @@ def declared(data: Mapping[str, object],
     return tuple(markets), tuple(plugins)
 
 
+def required(data: Mapping[str, object], source: str = "manifest") -> tuple[str, ...]:
+    """The executables the manifest says its plugins run, validated LOUDLY; none when it says nothing.
+
+    WHY THE PRODUCT SAYS IT (si#396). A plugin set can be complete on a machine that cannot run it:
+    token-optimizer's status line is `node …/statusline.js`, and with no `node` on PATH Claude Code shows
+    a blank status line and surfaces no error. This command then said "nothing to do". The kernel knows
+    executables and not which plugin needs which, so the list is the product's, and the check is generic.
+
+    A `requires: node` would iterate as `n`, `o`, `d`, `e`, so anything but a list is refused, and so is
+    an entry that names nothing.
+    """
+    section, _, _ = context.section(data, SECTION)
+    raw = section.get("requires")
+    if raw is None:
+        return ()
+    if not isinstance(raw, (list, tuple)):
+        raise ValueError(f"{source}: '{SECTION}.requires' must be a list of executable names, got {raw!r}")
+    names: list[str] = []
+    for entry in raw:
+        if not isinstance(entry, str) or not entry.strip():
+            raise ValueError(f"{source}: '{SECTION}.requires': {entry!r} is not an executable name")
+        names.append(entry.strip())
+    return tuple(names)
+
+
+def missing(names: Iterable[str], which: Callable[[str], object] = shutil.which) -> tuple[str, ...]:
+    """The required executables `which` cannot find, in DECLARATION order."""
+    return tuple(name for name in names if not which(name))
+
+
 def _json_list(payload: str, what: str) -> list:
     """Parse one `claude ... --json` answer, failing loudly. An unreadable answer must NOT degrade to an
     empty list: empty means "this machine has nothing", which would turn a broken CLI into a full reinstall."""
@@ -217,18 +247,40 @@ def install(dry_run: bool = False) -> int:
     Installs at USER scope, because the point is an agent that behaves the same in every checkout of the
     product's repo, including linked worktrees. A plugin whose marketplace could not be registered is
     SKIPPED rather than attempted: it would fail anyway, and one clear cause reads better than a cascade of
-    consequences.
+    consequences. An executable `claude.requires` names and PATH lacks is reported and makes the result 1,
+    dry run or not: the plugin set can be complete on a machine that cannot run it (si#396).
     """
     if shutil.which("claude") is None:
         log.die("the `claude` CLI is not on PATH; install Claude Code first")
 
     ctx = context.current()
     markets, plugins = declared(ctx.manifest_data(), source=str(ctx.manifest_path))
+    needs = required(ctx.manifest_data(), source=str(ctx.manifest_path))
     todo = plan(markets, plugins, *_installed())
+    return _plugins(todo, plugins, dry_run, ready=_report_missing(missing(needs, shutil.which)))
 
+
+def _report_missing(absent: tuple[str, ...]) -> bool:
+    """Name every required executable that is not on PATH; True when none is missing (si#396)."""
+    for name in absent:
+        log.warn(f"`{name}` is not on PATH, and '{SECTION}.requires' says a plugin runs it; "
+                 f"that plugin will not work on this machine")
+    return not absent
+
+
+def _plugins(todo: Plan, plugins: tuple[str, ...], dry_run: bool, *, ready: bool) -> int:
+    """Carry out (or, dry, describe) `todo`; 1 when a step failed or the machine is not `ready`.
+
+    `ready` is folded into every exit, because a complete plugin set on a machine missing a required
+    executable is exactly the "nothing to do" that is not (si#396).
+    """
     for plugin_id in todo.present_plugins:
         log.info(f"{plugin_id} already installed")
     if todo.is_complete:
+        if not ready:
+            log.warn(f"all {len(plugins)} declared Claude Code plugins are installed, and this machine "
+                     f"cannot run all of them")
+            return 1
         log.ok(f"all {len(plugins)} declared Claude Code plugins are installed; nothing to do")
         return 0
     if dry_run:
@@ -238,7 +290,7 @@ def install(dry_run: bool = False) -> int:
             log.info(f"would install {plugin_id}")
         log.ok(f"dry run: {len(todo.add_marketplaces)} marketplace(s) and "
                f"{len(todo.install_plugins)} plugin(s) missing")
-        return 0
+        return 0 if ready else 1
 
     failures = 0
     unusable: set[str] = set()
@@ -265,6 +317,9 @@ def install(dry_run: bool = False) -> int:
 
     if failures:
         log.warn(f"{failures} step(s) failed; the plugin set is INCOMPLETE")
+        return 1
+    if not ready:
+        log.warn("the declared Claude Code plugin set is installed, and this machine cannot run all of it")
         return 1
     log.ok("the declared Claude Code plugin set is installed; restart Claude Code to load it")
     return 0

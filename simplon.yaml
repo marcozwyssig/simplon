@@ -783,3 +783,5 @@ claude:
     - github@claude-plugins-official
     - pyright-lsp@claude-plugins-official
     - token-optimizer@alexgreensh-token-optimizer
+  # token-optimizer's status line is `node …/statusline.js`; without node it is blank and silent (si#396).
+  requires: [node]

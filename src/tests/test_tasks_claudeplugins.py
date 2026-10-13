@@ -248,3 +248,89 @@ def test_a_ref_that_carries_the_cli_separator_is_refused():
         claudeplugins.declared(_one_market(ref="#v1.2.3"))
 
     assert "ref" in str(exc.value) and "#" in str(exc.value)
+
+
+# --- si#396: a plugin set can be complete on a machine that cannot run it -------------------------------
+
+
+def _with_requires(value):
+    return {"claude": {**_SECTION["claude"], "requires": value}}
+
+
+def test_required_reads_the_executables_the_manifest_names():
+    """si#396. token-optimizer's status line is `node …/statusline.js`; with no `node` on PATH, Claude
+    Code shows a blank status line and says nothing. The product names what its plugins run."""
+    assert claudeplugins.required(_with_requires(["node", "jq"])) == ("node", "jq")
+
+
+def test_required_is_optional_and_a_section_without_it_requires_nothing():
+    """Every manifest written before si#396 keeps its meaning."""
+    assert claudeplugins.required(_SECTION) == ()
+
+
+@pytest.mark.parametrize("value", ["node", {"node": True}, 3])
+def test_required_that_is_not_a_list_is_refused(value):
+    """`requires: node` is the likely slip, and iterating it would check `n`, `o`, `d`, `e`."""
+    with pytest.raises(ValueError, match=r"m.yaml: 'claude.requires' must be a list of executable names"):
+        claudeplugins.required(_with_requires(value), source="m.yaml")
+
+
+@pytest.mark.parametrize("entry", ["", "  ", None, 7, ["node"]])
+def test_a_required_entry_that_is_not_a_name_is_refused(entry):
+    with pytest.raises(ValueError, match=r"'claude.requires': .* is not an executable name"):
+        claudeplugins.required(_with_requires(["node", entry]))
+
+
+def test_missing_names_the_executables_not_on_path_in_declaration_order():
+    on_path = {"jq": "/usr/bin/jq"}
+
+    assert claudeplugins.missing(("node", "jq", "rg"), which=on_path.get) == ("node", "rg")
+
+
+def _machine(monkeypatch, tmp_path, *, requires, on_path):
+    """`install` against a stubbed machine: every declared plugin is installed, and `which` answers only
+    for `claude` and the names in `on_path`. Returns the log lines, by level."""
+    import types
+
+    from simplon.run import Result as RunResult
+
+    data = _with_requires(requires)
+    ctx = types.SimpleNamespace(manifest_data=lambda: data, manifest_path=tmp_path / "m.yaml")
+    monkeypatch.setattr(claudeplugins.context, "current", lambda: ctx)
+    monkeypatch.setattr(claudeplugins.shutil, "which",
+                        lambda name: f"/bin/{name}" if name in ("claude", *on_path) else None)
+    answers = {
+        ("claude", "plugin", "marketplace", "list", "--json"): _MARKETPLACES_JSON,
+        ("claude", "plugin", "list", "--json"): json.dumps(
+            [{"id": p, "scope": "user"} for p in _SECTION["claude"]["plugins"]]),
+    }
+    monkeypatch.setattr(claudeplugins, "run",
+                        lambda argv, **_: RunResult(rc=0, out=answers[tuple(argv)], err=""))
+    lines: list[tuple[str, str]] = []
+    for level in ("info", "ok", "warn"):
+        monkeypatch.setattr(claudeplugins.log, level, lambda msg, _l=level: lines.append((_l, msg)))
+    return lines
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_a_complete_plugin_set_on_a_machine_missing_a_required_tool_is_not_nothing_to_do(
+        monkeypatch, tmp_path, dry_run):
+    """The defect si#396 was filed for: "all 9 declared plugins are installed; nothing to do" while a
+    plugin could not run. The dry run answers the same, because it is the question "is this machine
+    ready"."""
+    lines = _machine(monkeypatch, tmp_path, requires=["node", "jq"], on_path=["jq"])
+
+    rc = claudeplugins.install(dry_run=dry_run)
+
+    assert rc == 1
+    assert not any("nothing to do" in msg for _, msg in lines)
+    assert any(level == "warn" and "`node`" in msg and "not on PATH" in msg for level, msg in lines)
+    assert not any("`jq`" in msg for _, msg in lines)
+
+
+def test_a_complete_plugin_set_with_every_required_tool_present_is_still_nothing_to_do(
+        monkeypatch, tmp_path):
+    lines = _machine(monkeypatch, tmp_path, requires=["node"], on_path=["node"])
+
+    assert claudeplugins.install() == 0
+    assert any(level == "ok" and "nothing to do" in msg for level, msg in lines)
