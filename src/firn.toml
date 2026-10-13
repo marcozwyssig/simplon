@@ -20,7 +20,7 @@ templates = ["Catalogue", "ArtifactSchema"]
 path = "tests/generated"
 templates = ["ArchitectureData"]
 
-# The kinds reference page of the website.
+# The kinds reference page and the architecture page (si#390) of the website.
 [target.site]
 path = "site/content/with-what"
-templates = ["Docs"]
+templates = ["Docs", "ArchitecturePage"]

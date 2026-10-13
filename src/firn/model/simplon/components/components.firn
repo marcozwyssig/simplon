@@ -7,7 +7,7 @@ package simplon.components
 kernel typeOf simplon.architecture.Component {
   key = "kernel"
   layer = "0"
-  summary = "The base classes of tasks and commands (from part 4), and running a plan: steps, outcomes, the subprocess seam, the log."
+  summary = "Running a plan: steps, outcomes, the subprocess seam, the log - and, with si#390 part 4, the base classes of tasks and commands."
   module m_orchestrator_steps typeOf simplon.architecture.Module {
     path = "orchestrator.steps"
   }

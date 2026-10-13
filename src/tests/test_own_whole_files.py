@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT / "deploy" / "orchestrator" / "src" / "python"))
 from orchestrator import cli  # noqa: E402 - the product's own module, only reachable from here
 
 GENERATED = ["src/simplon/catalogue.yaml", "src/site/content/with-what/kinds.md", "src/simplon/artifactschema.py",
-             "src/tests/generated/architecture.py"]
+             "src/tests/generated/architecture.py", "src/site/content/with-what/architecture.md"]
 
 
 def test_the_committed_generated_files_are_whole():
