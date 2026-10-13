@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:   # type-only: steps imports steplog, which imports this module
     from simplon.orchestrator.steps import Pipeline
@@ -27,12 +27,15 @@ if TYPE_CHECKING:   # type-only: steps imports steplog, which imports this modul
 @dataclass(frozen=True)
 class RunHost:
     """The facts a run's layers above the kernel supply. `render` draws a pipeline interactively and
-    returns its rc; None means this host draws nothing, so the run is headless and says why."""
+    returns its rc; None means this host draws nothing, so the run is headless and says why. `walk` draws
+    an acceptance walk (`test walk`, si#394) with the prompt its steps answer through; a walk has no
+    headless fallback, so None there is a refusal, not a headless run."""
 
     log_directory: Callable[[], Path | None]
     environment: Callable[[], str]
     instance: Callable[[], str]
     render: Callable[["Pipeline"], int] | None = None
+    walk: Callable[["Pipeline", Any], int] | None = None
 
 
 _current: RunHost | None = None
