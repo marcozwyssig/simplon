@@ -281,8 +281,15 @@ What stands behind both is one assembled argv, and it is worth reading once beca
 kernel gets the same one:
 
 ```text
-docker run --rm --user 0:0 -v /tmp/cppdemo:/src -w /src silkeh/clang:19 cmake --build build -j
+docker run --rm --init --name simplon-cppdemo-<id> --label simplon.run=cppdemo --user 0:0 -v /tmp/cppdemo:/src -w /src silkeh/clang:19 cmake --build build -j
 ```
+
+`--init`, `--name` and the label are what make a cancelled run stop (si#409). The docker client is only
+a client: killing it - a CI cancel, a Ctrl-C - detaches it and stops nothing, and the container used to
+run on to its own exit while the next job checked out into the same tree. The kernel names every
+container itself, `simplon-<product>-` and twelve hex digits fresh per run, and removes it by that name
+when the run is interrupted. SIGKILL is the one interruption nothing sees; the `simplon.run` label is
+how `docker ps --filter label=simplon.run=cppdemo` still finds what it left.
 
 `--user` is there from the first line, and that is not tidiness. netctl's hand-written gradle invocation
 does not carry it, and on 2026-09-08 that left a repo-root `build/` owned by root, after which every CI

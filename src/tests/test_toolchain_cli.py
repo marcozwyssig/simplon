@@ -92,11 +92,15 @@ def _app(path) -> typer.Typer:
 
 @pytest.fixture
 def docker_lines(monkeypatch):
-    """Capture the docker argv instead of running it, and pin the uid flags so the line is comparable."""
+    """Capture the docker argv instead of running it, and pin the uid flags so the line is comparable.
+
+    The container name is pinned for the same reason: it is unique per invocation by construction
+    (si#409), and two lines that differ only in it are not what a comparison here is asking about."""
     seen: list[list[str]] = []
     monkeypatch.setattr(toolchain.docker, "user_args", lambda: ["--user", "1000:1000"])
-    monkeypatch.setattr(toolchain, "run",
-                        lambda a, **kw: seen.append(list(a)) or Result(rc=0, out="", err=""))
+    monkeypatch.setattr(toolchain.docker, "container_name", lambda product: f"simplon-{product}-pinned")
+    monkeypatch.setattr(toolchain.docker, "run_container",
+                        lambda a, name, **kw: seen.append(list(a)) or Result(rc=0, out="", err=""))
     return seen
 
 

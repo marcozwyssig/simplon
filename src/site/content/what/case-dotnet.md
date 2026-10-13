@@ -151,7 +151,8 @@ points at, plus that function's own `docker run`, plus the test surface all of i
 and the argv are data, and what turns them into a process is `simplon.tasks.toolchain`, which every
 product shares. What comes out is one line:
 
-    docker run --rm --user <uid>:<gid> -v <product root>:/src -w /src \
+    docker run --rm --init --name simplon-dotnetdemo-<id> --label simplon.run=dotnetdemo \
+        --user <uid>:<gid> -v <product root>:/src -w /src \
         mcr.microsoft.com/dotnet/sdk:9.0 dotnet build
 
 The argv at the end is the only part of that line the product had a say in, and the three decisions in

@@ -22,7 +22,10 @@ import os
 import platform
 import re
 import shutil
+import signal
 import tarfile
+import threading
+import uuid
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -30,7 +33,7 @@ from simplon import context
 from simplon import fetch
 from simplon import log
 from simplon import tools
-from simplon.run import run
+from simplon.run import Result, run
 
 # Pinned static-CLI release (download.docker.com/linux/static/stable); bump deliberately.
 DOCKER_CLI_VERSION = "29.6.1"
@@ -463,3 +466,115 @@ def _socket_state() -> str:
                 f"service, because a group is inherited at process start; on a container runner, missing "
                 f"--group-add with the socket's gid")
     return f"{path} mounted and writable, but the daemon did not answer"
+
+
+#: The label every container the kernel starts through `run_container` carries, valued with the product.
+#: A NAME finds one container; this finds every one a product left behind (si#409).
+RUN_LABEL = "simplon.run"
+
+#: The label carrying the instance id, set only when the caller resolved one - see `lifecycle_args`.
+INSTANCE_LABEL = "simplon.instance"
+
+#: How long removing an abandoned container may take before the unwind gives up on it. `docker rm -f`
+#: is a SIGKILL and a removal, so this is generous; it only ever runs on the exception path.
+_REMOVE_GRACE = 30.0
+
+
+def container_name(product: str) -> str:
+    """A container name unique to ONE invocation: `simplon-<product>-<12 hex>` (si#409).
+
+    Chosen by the kernel and not by docker, because the whole point is that the kernel can name the
+    container it has to stop without asking the daemon which one it was - by the time it needs to, the
+    client that knew may already be dead. The product is folded to the characters docker accepts in a
+    name, so a product name never turns a run into `invalid container name`.
+    """
+    safe = re.sub(r"[^a-zA-Z0-9_.-]", "-", product) or "run"
+    return f"simplon-{safe}-{uuid.uuid4().hex[:12]}"
+
+
+def lifecycle_args(name: str, product: str, instance: str = "") -> list[str]:
+    """The `docker run` flags that make a kernel-started container STOPPABLE and FINDABLE (si#409).
+
+    `--init` puts docker's init as PID 1, so a SIGINT or SIGTERM that does reach the container (the
+    docker client forwards both when it receives them itself, as on a Ctrl-C at a terminal) reaches the
+    tool. Without it PID 1 is the tool, and Linux drops a signal PID 1 installed no handler for.
+
+    `--name` is what `run_container` stops on the way out. An empty `name` adds none: a caller that only
+    READS the line (every `docker_argv` test) has no container to stop, and a name invented here would
+    make two otherwise identical lines differ.
+
+    The label is for the case no handler sees. SIGKILL cannot be caught, so a client killed that way
+    leaves its container running however careful the unwind is; `docker ps --filter
+    label=simplon.run=<product>` is what still finds it. The instance joins as a second label only when
+    the caller resolved one - `toolchain:run` resolves it only for a cache volume (si#105), and inventing
+    it here would refuse every fresh product on an `instance:` section it does not have.
+    """
+    return ["--init",
+            *(["--name", name] if name else []),
+            "--label", f"{RUN_LABEL}={product}",
+            *(["--label", f"{INSTANCE_LABEL}={instance}"] if instance else [])]
+
+
+class _Terminated(BaseException):
+    """SIGTERM, turned into an exception for the length of one `run_container` so the unwind runs."""
+
+
+def run_container(argv: list[str], name: str, *, capture: bool = False) -> Result:
+    """Run a `docker run` line whose container is called `name`, and STOP that container if this
+    process is interrupted while the client runs (si#409). Returns the real Result otherwise.
+
+    WHY THE CLIENT DYING IS NOT ENOUGH. The docker CLI is a client: killing it detaches it from the
+    container and stops nothing. firn measured it on simplon 0.30.0 (firn#965) - SIGINT, SIGTERM and
+    SIGKILL each sent to bash, python and the client, and a `gradle check` container ran on to its own
+    exit 22 s after it started. Re-measured here on 2026-10-13, with `alpine:3.20 sleep 30` started
+    through `run(..., capture=False)` and the PYTHON process signalled 2.5 s in: the container was alive
+    2 s after SIGINT, after SIGTERM and after SIGKILL. `--init` alone changed none of the three, because
+    on SIGINT `subprocess.run` SIGKILLs the client 0.25 s later, and on SIGTERM python dies leaving the
+    client behind - the container is never sent anything at all.
+
+    So the kernel stops it by the name it chose: on KeyboardInterrupt, on SIGTERM, on ANY exception
+    while the client runs, `docker rm -f <name>` (which kills and removes in one call; `--rm` would have
+    removed it anyway), and then the interruption carries on. THE REAL RC IS KEPT: a KeyboardInterrupt
+    is re-raised, and SIGTERM is handed back to the default action after the cleanup, so the process
+    still dies BY SIGTERM (rc -15 / 143) rather than reporting some exit code of this module's choosing.
+    A run that is cancelled must look cancelled - stopping the work is the fix, not hiding the cancel.
+
+    SIGTERM is caught only when the process had the DEFAULT disposition and this is the main thread,
+    the only place `signal.signal` may be called. A process that installed its own handler (or ignores
+    the signal) keeps it: whatever exception that handler raises still unwinds through here.
+
+    WHAT THIS CANNOT DO: SIGKILL. No process sees its own SIGKILL, so the container outlives a client
+    killed that way, exactly as before. What changed for that case is that it is FINDABLE - the labels
+    `lifecycle_args` sets (`simplon.run=<product>`) are how a product or the next run finds and removes
+    it. There is also a narrow race the name cannot close: a client interrupted before the daemon has
+    created the container gets `No such container` from the removal, and the daemon may create it a
+    moment later. The label is the answer there too.
+    """
+    def _terminate(signum: int, frame: object) -> None:
+        raise _Terminated()
+
+    catch_term = (threading.current_thread() is threading.main_thread()
+                  and hasattr(signal, "SIGTERM")
+                  and signal.getsignal(signal.SIGTERM) == signal.SIG_DFL)
+    if catch_term:
+        signal.signal(signal.SIGTERM, _terminate)
+    try:
+        return run(argv, capture=capture)
+    except BaseException as abandoned:
+        _remove(name)
+        if isinstance(abandoned, _Terminated):
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            catch_term = False
+            os.kill(os.getpid(), signal.SIGTERM)
+        raise
+    finally:
+        if catch_term:
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+
+def _remove(name: str) -> None:
+    """Kill and remove the container called `name`, ignoring "no such container" - the unwind's half."""
+    try:
+        run(["docker", "rm", "-f", name], timeout=_REMOVE_GRACE)
+    except Exception as error:          # the unwind must not replace the interruption it is unwinding
+        log.warn(f"could not remove container {name}: {error}")

@@ -49,7 +49,6 @@ import yaml
 
 from simplon import context, docker, hostpath, labinstance, layout, log, outputs
 from simplon.tasks import profiles
-from simplon.run import run
 
 
 @dataclass(frozen=True)
@@ -101,7 +100,7 @@ def declared(body: Mapping[str, object], where: str) -> Toolchain:
 
 def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
                 extra: list[str], network: str | None = None,
-                build_root: str = "", home: str = "") -> list[str]:
+                build_root: str = "", home: str = "", name: str = "") -> list[str]:
     """The full docker argv for one toolchain invocation. PURE: it assembles, it runs nothing.
 
     NAMED `docker_argv` SINCE si#105, and the rename is the loader's doing rather than taste: `argv:` is
@@ -118,6 +117,13 @@ def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
     A cache volume carries the PRODUCT and the INSTANCE (`<product>-<volume>-<instance>`), which is
     netctl#453's property made the kernel's: two agents in two worktrees stop contending by construction
     instead of by a convention each product writes out by hand.
+
+    `--init`, `--name` and the `simplon.run=<product>` label are si#409's, and `docker.lifecycle_args`
+    says why each is there: a cancelled run left its container running to the end (firn#965). The NAME
+    is a parameter rather than chosen here, because choosing one is not pure - it is unique per
+    invocation by construction - and `run_toolchain`, which runs the line, is the one that has to stop
+    that container again. An empty `name` adds no `--name`, so a test that only reads the line reads
+    the same line twice. They sit AFTER `--network`, so `docker run --rm --network <n>` keeps its shape.
     """
     volumes: list[str] = []
     for cache in cfg.caches:
@@ -131,6 +137,7 @@ def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
     # product's output directory may name one, and a body invoked without one must not invent a path.
     return ["docker", "run", "--rm",
             *(["--network", network] if network else []),
+            *docker.lifecycle_args(name, product, instance),
             *docker.user_args(),
             "-v", f"{hostpath.translate(root)}:{cfg.workdir}",
             "-w", _start_in(cfg, build_root),
@@ -233,11 +240,13 @@ def run_toolchain(ctx: typer.Context, image: str = "", argv: list[str] | None = 
     if fault:
         log.error(fault)
         return 1
+    # si#409: the kernel names the container, so a cancelled run can stop it - see `docker.run_container`.
+    name = docker.container_name(product.name)
     line = docker_argv(cfg, root=product.root, product=product.name, instance=instance,
                        home=outputs.home_in_container(cfg.workdir),
                        build_root=layout.declared(context.current().manifest_data()).build_root,
-                       extra=list(extra or []), network=network)
-    return run(line, capture=False).rc
+                       extra=list(extra or []), network=network, name=name)
+    return docker.run_container(line, name).rc
 
 
 def _pinned(image: str, where: str) -> str:

@@ -1,4 +1,5 @@
 """si#95: the toolchain declaration a product writes, and what the kernel refuses."""
+import re
 from pathlib import Path
 
 import pytest
@@ -158,9 +159,13 @@ def test_the_executor_runs_the_assembled_line_and_returns_its_rc(monkeypatch, tm
     monkeypatch.setattr(context, "_current",
                         context.ProductContext("netctl", tmp_path, tmp_path / "netctl.yaml"))
     seen = []
-    monkeypatch.setattr(toolchain, "run",
-                        lambda a, **kw: seen.append(list(a)) or Result(rc=3, out="", err=""))
-    monkeypatch.setattr(toolchain, "docker_argv", lambda *a, **k: ["docker", "run", "--rm", "img", "cmd"])
+    stopped_by = []
+    named = []
+    monkeypatch.setattr(toolchain.docker, "run_container",
+                        lambda a, name, **kw: seen.append(list(a)) or stopped_by.append(name)
+                        or Result(rc=3, out="", err=""))
+    monkeypatch.setattr(toolchain, "docker_argv",
+                        lambda *a, **k: named.append(k["name"]) or ["docker", "run", "--rm", "img", "cmd"])
 
     # act
     rc = toolchain.run_toolchain(_Ctx("netctl build compile"), image="img:1", argv=["cmd"])
@@ -168,6 +173,8 @@ def test_the_executor_runs_the_assembled_line_and_returns_its_rc(monkeypatch, tm
     # assert: thin - it executes what docker_argv decided, and hands the real rc back
     assert seen == [["docker", "run", "--rm", "img", "cmd"]]
     assert rc == 3
+    # si#409: the container it would stop on a cancel is the one the line names, and it HAS a name
+    assert stopped_by == named and named[0].startswith("simplon-netctl-")
 
 
 def test_a_command_with_no_cache_never_asks_for_the_instance_section(monkeypatch, tmp_path):
@@ -182,7 +189,7 @@ def test_a_command_with_no_cache_never_asks_for_the_instance_section(monkeypatch
     monkeypatch.setattr(context, "_current",
                         context.ProductContext("netctl", tmp_path, tmp_path / "netctl.yaml"))
     monkeypatch.setattr(toolchain.docker, "user_args", lambda: [])
-    monkeypatch.setattr(toolchain, "run", lambda a, **kw: Result(rc=0, out="", err=""))
+    monkeypatch.setattr(toolchain.docker, "run_container", lambda a, name, **kw: Result(rc=0, out="", err=""))
     monkeypatch.setattr(toolchain.labinstance, "resolve", _boom)
 
     # act / assert: the resolve is not reached at all, which is the only proof that it is not required
@@ -202,8 +209,8 @@ def test_a_command_WITH_a_cache_still_resolves_the_instance(monkeypatch, tmp_pat
     monkeypatch.setattr(toolchain.docker, "user_args", lambda: [])
     monkeypatch.setattr(toolchain.labinstance, "resolve", lambda *a, **k: "a1")
     seen = []
-    monkeypatch.setattr(toolchain, "run",
-                        lambda a, **kw: seen.append(list(a)) or Result(rc=0, out="", err=""))
+    monkeypatch.setattr(toolchain.docker, "run_container",
+                        lambda a, name, **kw: seen.append(list(a)) or Result(rc=0, out="", err=""))
 
     # act
     toolchain.run_toolchain(_Ctx("netctl build compile"), image="img:1", argv=["cmd"],
@@ -322,3 +329,43 @@ def test_a_cwd_that_is_not_a_plain_path_under_the_tree_is_refused_by_name(monkey
     with pytest.raises(RuntimeError) as e:
         _cfg(cwd=cwd)
     assert "cwd" in str(e.value) and "build.compile" in str(e.value)
+
+
+def test_the_line_names_its_container_and_labels_it_with_the_product(monkeypatch):
+    # arrange: si#409 - a cancelled run left its container running, because the kernel had no name to
+    # stop it by and no label to find it by afterwards
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: [])
+
+    # act
+    line = toolchain.docker_argv(_cfg(), root=Path("/repo"), product="netctl", instance="dev", extra=[],
+                                 name="simplon-netctl-0123456789ab")
+
+    # assert: an init as PID 1, the name the unwind removes, and the labels SIGKILL leaves behind
+    assert "--init" in line
+    assert line[line.index("--name") + 1] == "simplon-netctl-0123456789ab"
+    assert "simplon.run=netctl" in line and "simplon.instance=dev" in line
+    # and all of it is a docker option, in front of the image - not an argument handed to gradle
+    assert line.index("simplon.run=netctl") < line.index("gradle:jdk25")
+
+
+def test_a_line_with_no_name_has_no_name_and_no_instance_label_without_an_instance(monkeypatch):
+    # arrange: a caller that only reads the line has no container to stop; a cache-free command
+    # resolves no instance (si#105), and a label must not invent one
+    monkeypatch.setattr(toolchain.docker, "user_args", lambda: [])
+
+    # act
+    line = toolchain.docker_argv(_cfg(), root=Path("/repo"), product="netctl", instance="", extra=[])
+
+    # assert
+    assert "--name" not in line
+    assert "--init" in line and "simplon.run=netctl" in line
+    assert not [a for a in line if a.startswith("simplon.instance=")]
+
+
+def test_every_container_name_is_fresh_and_one_docker_accepts():
+    # act
+    names = {toolchain.docker.container_name("my product/x") for _ in range(50)}
+
+    # assert: unique per invocation, and only the characters docker allows in a name
+    assert len(names) == 50
+    assert all(re.fullmatch(r"simplon-my-product-x-[0-9a-f]{12}", n) for n in names), names
