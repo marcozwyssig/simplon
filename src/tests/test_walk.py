@@ -1082,3 +1082,64 @@ def test_an_answer_with_no_author_is_a_state_this_version_cannot_fully_check(pro
     # assert: a ticket naming the wrong person is worse than a walk asked again
     assert back is None
     assert "walk state" in capsys.readouterr().out
+
+
+# --- si#394: the walk is drawn by the UI the cli registered, never imported from here --------------------
+
+
+def _walkable(product, monkeypatch):
+    """`walk` up to the point it hands the pipeline to a UI: a terminal, and a run key that does not need
+    git to describe the tree."""
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    monkeypatch.setattr(walk_mod, "run_key", lambda *args: _key(product))
+
+
+def test_the_walk_is_drawn_by_the_ui_the_run_host_carries(product, monkeypatch):
+    # arrange: a UI that records what it was handed and stops the walk there
+    import dataclasses
+
+    from simplon import cli, runhost
+
+    _walkable(product, monkeypatch)
+    handed: list[tuple[object, object]] = []
+
+    class _Drawn(Exception):
+        pass
+
+    def _draw(pipeline, prompt):
+        handed.append((pipeline, prompt))
+        raise _Drawn
+
+    runhost.register(dataclasses.replace(cli.run_host(), walk=_draw))
+
+    # act
+    with pytest.raises(_Drawn):
+        walk_mod.walk()
+
+    # assert: the whole selection, and the prompt the steps answer through
+    pipeline, prompt = handed[0]
+    assert len(pipeline.steps) == len(_plan(product).steps)
+    assert isinstance(prompt, walk_mod.Prompt)
+
+
+def test_a_walk_with_no_ui_registered_refuses_before_anybody_is_asked(product, monkeypatch):
+    """A walk has no headless fallback (`tui.run_walk`'s own head), so a host without a walk UI is a
+    refusal, said before a sitting starts - not a fall-through to forty unanswerable questions."""
+    # arrange
+    import dataclasses
+
+    from simplon import cli, runhost
+
+    _walkable(product, monkeypatch)
+    runhost.register(dataclasses.replace(cli.run_host(), walk=None))
+
+    # act / assert
+    with pytest.raises(ValueError, match="nothing registered a UI to walk in"):
+        walk_mod.walk()
+    assert walk_mod.state_path() is None or not walk_mod.state_path().is_file()
+
+
+def test_the_cli_registers_the_textual_walk():
+    from simplon import cli
+
+    assert cli.run_host().walk is cli._walk

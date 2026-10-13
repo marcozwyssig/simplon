@@ -90,7 +90,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import ClassVar
 
-from simplon import context, log, steplog, tracker
+from simplon import context, log, runhost, steplog, tracker
 from simplon.orchestrator.manifest import CommandSpec, PlanNode
 from simplon.orchestrator.steps import (Emit, Outcome, Pipeline, Step, StepState,
                                         write_run_transcript)
@@ -1030,7 +1030,7 @@ def walk(source: str = DEFAULT_SOURCE, tags: str = "", by: str = "", restart: bo
     person in the record and defaults to the checkout's own git identity; `restart` discards an earlier
     sitting's answers deliberately.
 
-    IT REFUSES RATHER THAN DEGRADING, in four places, and every one of them is a check that could
+    IT REFUSES RATHER THAN DEGRADING, in five places, and every one of them is a check that could
     otherwise not fail:
 
       * NOT A TERMINAL. There is nobody to ask, so a walk here would produce a record of nothing with a
@@ -1040,10 +1040,11 @@ def walk(source: str = DEFAULT_SOURCE, tags: str = "", by: str = "", restart: bo
         that merely looks as though it went wrong.
       * A STATE THAT MOVED, or one that cannot be checked. `refuse_to_resume`, and the argument is on
         `RunKey`.
+      * NO UI TO WALK IN: nothing registered one with the run host (si#394); `cli.main` always does.
       * TEXTUAL MISSING, which `tui.run_walk` refuses for itself where the import is.
 
-    A TRACKER PROBLEM IS NOT ONE OF THE FOUR, and that is si#206's third requirement rather than an
-    inconsistency: the four above are checked BEFORE anybody has answered anything, so refusing costs
+    A TRACKER PROBLEM IS NOT ONE OF THE FIVE, and that is si#206's third requirement rather than an
+    inconsistency: the five above are checked BEFORE anybody has answered anything, so refusing costs
     nothing. Everything after `run_walk` returns has a person's afternoon behind it, so no failure there
     may raise - a missing `tracker:` section, a dead network or a token without scope is reported and the
     record is still written.
@@ -1054,6 +1055,13 @@ def walk(source: str = DEFAULT_SOURCE, tags: str = "", by: str = "", restart: bo
             "simplon: `test walk` puts a person through the acceptance scenarios one step at a time, so "
             "it needs a terminal to ask them in, and this is not one. Run it from a terminal; the "
             "automatic mode over the same scenarios is the product's own pytest-bdd suite.")
+    host = runhost.current()
+    if host is None or host.walk is None:
+        # The UI is above the tasks and registers itself with the run (si#394); `cli.main` always does.
+        raise ValueError(
+            "simplon: nothing registered a UI to walk in, and a walk has no headless fallback - it would "
+            "ask its questions with nobody to see them. Run it through the product's CLI, which registers "
+            "the Textual walk.")
     found = features(ctx.root, source)
     wanted = parse_tags(tags)
     taken, left = select(found, wanted)
@@ -1079,8 +1087,7 @@ def walk(source: str = DEFAULT_SOURCE, tags: str = "", by: str = "", restart: bo
 
     prompt = Prompt()
     pipeline = plan(taken, state, prompt, state.sittings[-1]["by"])
-    from simplon.orchestrator.tui import run_walk    # local: Textual is not a kernel-wide import
-    rc = run_walk(pipeline, prompt)
+    rc = host.walk(pipeline, prompt)
     state.sittings[-1]["ended"] = f"{datetime.now():%Y-%m-%d %H:%M:%S}"
     # THE STATE IS WRITTEN THREE TIMES AND EACH ONE HAS A REASON, which is si#206's third requirement
     # expressed as an order rather than promised in prose: the record is the source of truth and the

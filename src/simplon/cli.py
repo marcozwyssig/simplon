@@ -22,7 +22,7 @@ import functools
 import inspect
 import os
 import sys
-from typing import Callable, Iterable, Mapping, Protocol, TypedDict, cast
+from typing import Any, Callable, Iterable, Mapping, Protocol, TypedDict, cast
 
 import typer
 
@@ -520,11 +520,19 @@ def _render(pipeline: Pipeline) -> int:
     return run_pipeline(pipeline)
 
 
+def _walk(pipeline: Pipeline, prompt: Any) -> int:
+    """Draw an acceptance walk in the Textual UI (si#394). `tui.run_walk` refuses a missing Textual itself,
+    because a walk has no headless fallback."""
+    from simplon.orchestrator.tui import run_walk
+    return run_walk(pipeline, prompt)
+
+
 def run_host() -> runhost.RunHost:
     """What this CLI tells the kernel about a run (si#391): the product's log directory, the selected
-    environment and the lab instance, each answered by the module that owns it, and the Textual UI."""
+    environment and the lab instance, each answered by the module that owns it, and the Textual UI for a
+    run and for a walk."""
     return runhost.RunHost(log_directory=outputs.log_directory, environment=environment_name,
-                           instance=labinstance.declared_id, render=_render)
+                           instance=labinstance.declared_id, render=_render, walk=_walk)
 
 
 def main(*, app: typer.Typer, context: ProductContext,

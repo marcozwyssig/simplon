@@ -367,9 +367,3 @@ e_test_impls typeOf simplon.architecture.Excluded {
   path = "test_impls"
   reason = "Bodies for the generator tests, not part of any component; it imports `tasks.testrun`, and no module imports it."
 }
-x_tasks_walk__orchestrator_tui typeOf simplon.architecture.Exception {
-  importer = simplon.components.tasks.m_tasks_walk
-  imported = simplon.components.ui.m_orchestrator_tui
-  reason = "Imports `run_walk`."
-  ticket = "si#394"
-}
