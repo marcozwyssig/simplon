@@ -95,13 +95,14 @@ and relative imports included), grouped by the ticket that resolves them:
 
 | ticket | edges |
 |---|---|
-| si#391: the kernel knows the manifest, the UI, the CLI and the lab | `orchestrator.product -> orchestrator.manifest`, `orchestrator.steps -> orchestrator.manifest`, `steplog -> context`, `orchestrator.product -> awake`, `steplog -> labinstance`, `orchestrator.steps -> orchestrator.tui`, `steplog -> cli` |
+| si#391: the kernel knows the manifest, the UI, the CLI and the lab | `orchestrator.product -> orchestrator.manifest`, `orchestrator.steps -> orchestrator.manifest`, `steplog -> context`, `orchestrator.product -> awake`, `steplog -> labinstance`, `orchestrator.steps -> orchestrator.tui`, `steplog -> cli`, `steplog -> outputs` |
 | si#392: tasks and `outputs` import `bootstrap` (all of them `validate_relative_dir`) | `tasks.acceptance -> bootstrap`, `tasks.cliref -> bootstrap`, `tasks.image -> bootstrap`, `tasks.site -> bootstrap`, `outputs -> bootstrap` |
-| si#393: the domain imports a task | `deployment -> tasks.image` |
+| si#393: `deployment` imports above the domain | `deployment -> tasks.image`, `deployment -> githubpackages` |
 | si#394: a task imports the UI | `tasks.walk -> orchestrator.tui` |
 
-The table above was measured by a throwaway script; the plan re-measures it with the real test before
-writing the model, and the test's answer is the one that counts.
+The table above is the real test's answer. The throwaway script that first measured it counted only the
+first name of each `from simplon import a, b` statement and missed `steplog -> outputs` and
+`deployment -> githubpackages`; the test found both (2026-10-13).
 
 ## The model
 

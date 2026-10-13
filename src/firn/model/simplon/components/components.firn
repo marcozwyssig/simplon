@@ -400,6 +400,12 @@ x_steplog__cli typeOf simplon.architecture.Exception {
   reason = "Imports `provenance_line`."
   ticket = "si#391"
 }
+x_steplog__outputs typeOf simplon.architecture.Exception {
+  importer = simplon.components.kernel.m_steplog
+  imported = simplon.components.domain.m_outputs
+  reason = "Imports the module `outputs`."
+  ticket = "si#391"
+}
 x_tasks_acceptance__bootstrap typeOf simplon.architecture.Exception {
   importer = simplon.components.tasks.m_tasks_acceptance
   imported = simplon.components.cli.m_bootstrap
@@ -434,6 +440,12 @@ x_deployment__tasks_image typeOf simplon.architecture.Exception {
   importer = simplon.components.domain.m_deployment
   imported = simplon.components.tasks.m_tasks_image
   reason = "Imports the module `tasks.image`."
+  ticket = "si#393"
+}
+x_deployment__githubpackages typeOf simplon.architecture.Exception {
+  importer = simplon.components.domain.m_deployment
+  imported = simplon.components.adapters.m_githubpackages
+  reason = "Imports the module `githubpackages`."
   ticket = "si#393"
 }
 x_tasks_walk__orchestrator_tui typeOf simplon.architecture.Exception {
