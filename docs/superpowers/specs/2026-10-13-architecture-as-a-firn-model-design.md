@@ -1,6 +1,7 @@
 # The architecture as a firn model - part 1: components, layers, and a test
 
-**Status:** design, approved section by section by Marco on 2026-10-13. Part 1 of four.
+**Status:** design, approved section by section by Marco on 2026-10-13. Part 1 of four. Ticket: si#390;
+the exceptions' tickets are si#391-si#394.
 
 ## The goal, in one sentence
 
@@ -92,12 +93,12 @@ allowed only as a named exception.
 **The exceptions at the start**, measured 2026-10-13 over every import in every module (function-level
 and relative imports included), grouped by the ticket that resolves them:
 
-| ticket (opened in the plan) | edges |
+| ticket | edges |
 |---|---|
-| the kernel knows the manifest, the UI, the CLI and the lab | `orchestrator.product -> orchestrator.manifest`, `orchestrator.steps -> orchestrator.manifest`, `steplog -> context`, `orchestrator.product -> awake`, `steplog -> labinstance`, `orchestrator.steps -> orchestrator.tui`, `steplog -> cli` |
-| everyone imports `bootstrap` | `tasks.acceptance -> bootstrap`, `tasks.cliref -> bootstrap`, `tasks.image -> bootstrap`, `tasks.site -> bootstrap`, `outputs -> bootstrap` |
-| the domain imports a task | `deployment -> tasks.image` |
-| a task imports the UI | `tasks.walk -> orchestrator.tui` |
+| si#391: the kernel knows the manifest, the UI, the CLI and the lab | `orchestrator.product -> orchestrator.manifest`, `orchestrator.steps -> orchestrator.manifest`, `steplog -> context`, `orchestrator.product -> awake`, `steplog -> labinstance`, `orchestrator.steps -> orchestrator.tui`, `steplog -> cli` |
+| si#392: tasks and `outputs` import `bootstrap` (all of them `validate_relative_dir`) | `tasks.acceptance -> bootstrap`, `tasks.cliref -> bootstrap`, `tasks.image -> bootstrap`, `tasks.site -> bootstrap`, `outputs -> bootstrap` |
+| si#393: the domain imports a task | `deployment -> tasks.image` |
+| si#394: a task imports the UI | `tasks.walk -> orchestrator.tui` |
 
 The table above was measured by a throwaway script; the plan re-measures it with the real test before
 writing the model, and the test's answer is the one that counts.
@@ -111,12 +112,13 @@ A new M2 package **`simplon.architecture`** (`src/firn/model/simplon/architectur
   a firn name has no `.`, as `ArtifactField.key` carries a spelling the name cannot), `component`
   (Association to `Component`, 1..1).
 - **`Excluded`** (allowRoot): `path` (1..1), `reason` (1..1).
-- **`Exception`** (allowRoot): `from` and `to` (Associations to `Module`, 1..1 each), `reason` (1..1),
-  `ticket` (`si#<n>`, 1..1).
+- **`Exception`** (allowRoot): `importer` and `imported` (Associations to `Module`, 1..1 each), `reason`
+  (1..1), `ticket` (`si#<n>`, 1..1). (`from` is a Python keyword and a likely firn one; the plan uses
+  `importer`/`imported` from the start.)
 
 The instances live in an M1 package **`simplon.components`**
 (`src/firn/model/simplon/components/components.firn`). If firn reserves a property name used above
-(`from`, `to`, `layer`), the plan renames it and reports the reservation to firn rather than working
+(`layer`, `key`, `module`), the plan renames it and reports the reservation to firn rather than working
 around it silently.
 
 ## What firn generates
@@ -174,6 +176,13 @@ Recorded here because Marco decided it during this design; part 4 gets its own s
   bodies costs - not the count above, the surface: bodies, their tests, their callers (CLAUDE.md, #34).
   The migration path (a generated wrapper, a `migrate` step, or a deprecation window that still accepts a
   function and says so) is part 4's design.
+- **The products model and generate their tasks too** (Marco, 2026-10-13). firn reaches every product
+  through simplon (`support toolchain firn`), and `simplon.pipeline` is simplon's M2, so a product's own
+  firn model imports it, declares its tasks as `simplon.pipeline.Task` instances, and generates their
+  classes from simplon's templates; the product writes only the body. That is also what keeps the rule
+  above affordable: the class a product would otherwise rewrite by hand is generated. Part 4's spec says
+  how the templates reach a product (shipped in the wheel beside the M2, or fetched) and where the
+  generated classes land in a product's tree.
 
 ## Gates
 
