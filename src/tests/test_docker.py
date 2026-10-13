@@ -461,3 +461,60 @@ def test_a_host_with_no_uid_concept_has_nothing_to_flag(tmp_path, monkeypatch):
 
     # act / assert
     assert docker.not_owned([tmp_path / "build"]) == []
+
+
+# --- si#409: a container the kernel started is stopped when the run is abandoned ----------------------
+
+def _recording_run(raises=None):
+    """A stand-in for `docker.run` that records every argv and raises `raises` on the `docker run` line."""
+    from simplon.run import Result
+    seen: list[list[str]] = []
+
+    def fake(argv, **kw):
+        seen.append(list(argv))
+        if raises is not None and argv[:2] == ["docker", "run"]:
+            raise raises
+        return Result(rc=7, out="", err="")
+    return fake, seen
+
+
+def test_a_finished_run_keeps_its_rc_and_removes_nothing(monkeypatch):
+    # arrange
+    fake, seen = _recording_run()
+    monkeypatch.setattr(docker, "run", fake)
+
+    # act
+    result = docker.run_container(["docker", "run", "--name", "c1", "img"], "c1")
+
+    # assert: the client's own rc, and no `docker rm` for a container `--rm` already took away
+    assert result.rc == 7
+    assert seen == [["docker", "run", "--name", "c1", "img"]]
+
+
+@pytest.mark.parametrize("abandoned", [KeyboardInterrupt(), RuntimeError("the pane went away")],
+                         ids=["KeyboardInterrupt", "any exception"])
+def test_an_abandoned_run_removes_its_container_by_name_and_reraises(monkeypatch, abandoned):
+    # arrange
+    fake, seen = _recording_run(raises=abandoned)
+    monkeypatch.setattr(docker, "run", fake)
+
+    # act
+    with pytest.raises(type(abandoned)):
+        docker.run_container(["docker", "run", "--name", "c1", "img"], "c1")
+
+    # assert: the container the kernel named is the one it removes, and the interruption still arrives
+    assert seen[-1] == ["docker", "rm", "-f", "c1"]
+
+
+def test_the_sigterm_handler_is_the_runs_alone(monkeypatch):
+    # arrange: the handler that turns SIGTERM into an unwind must not outlive the one run it guards
+    import signal
+    fake, _ = _recording_run()
+    monkeypatch.setattr(docker, "run", fake)
+    before = signal.getsignal(signal.SIGTERM)
+
+    # act
+    docker.run_container(["docker", "run", "img"], "c1")
+
+    # assert
+    assert signal.getsignal(signal.SIGTERM) == before

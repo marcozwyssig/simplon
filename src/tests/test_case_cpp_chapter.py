@@ -56,6 +56,7 @@ import typer
 import yaml
 
 from simplon import bootstrap, cli as cli_mod
+from simplon import docker
 from simplon import catalogue as catalogue_mod
 from simplon.orchestrator import manifest as manifest_mod
 from simplon.tasks import profiles, toolchain
@@ -611,6 +612,11 @@ def test_the_docker_line_the_chapter_shows_is_the_one_the_kernel_assembles():
     The uid/gid pair is normalised on both sides. It is the ONE part of that line that is a fact about the
     machine the transcript was taken on rather than about the product, and a suite that compared it
     literally would be red on every host but one - which is a checker reporting whose laptop ran it.
+
+    The container name joined it in si#409, for the opposite reason: it is unique per INVOCATION by
+    construction, so no two runs agree on it. And the instance is empty because `run_toolchain` resolves
+    one only for a cache volume, which this command declares none of - so the line assembled here carries
+    no `simplon.instance` label, exactly like the line the product's run really gets.
     """
     # arrange
     body = _bodies()["compile"]
@@ -619,13 +625,16 @@ def test_the_docker_line_the_chapter_shows_is_the_one_the_kernel_assembles():
 
     # act
     line = " ".join(toolchain.docker_argv(toolchain.declared(body, "build compile"),
-                                          root=root.group(1), product="cppdemo", instance="dev",
-                                          extra=[]))
+                                          root=root.group(1), product="cppdemo", instance="",
+                                          extra=[], name=docker.container_name("cppdemo")))
 
     # assert
-    generic = re.sub(r"--user \d+:\d+", "--user <uid>:<gid>", line)
-    shown = [re.sub(r"--user \d+:\d+", "--user <uid>:<gid>", block.strip())
-             for block in _blocks("text") if "docker run" in block]
+    def generic_of(text: str) -> str:
+        text = re.sub(r"--user \d+:\d+", "--user <uid>:<gid>", text)
+        return re.sub(r"--name simplon-cppdemo-[0-9a-f]{12}", "--name simplon-cppdemo-<id>", text)
+
+    generic = generic_of(line)
+    shown = [generic_of(block.strip()) for block in _blocks("text") if "docker run" in block]
     assert any(generic in candidate for candidate in shown), (
         f"the kernel assembles:\n  {generic}\nthe chapter shows:\n  " + "\n  ".join(shown))
 

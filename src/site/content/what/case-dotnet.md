@@ -151,11 +151,14 @@ points at, plus that function's own `docker run`, plus the test surface all of i
 and the argv are data, and what turns them into a process is `simplon.tasks.toolchain`, which every
 product shares. What comes out is one line:
 
-    docker run --rm --user <uid>:<gid> -v <product root>:/src -w /src \
+    docker run --rm --init --name simplon-dotnetdemo-<id> --label simplon.run=dotnetdemo \
+        --user <uid>:<gid> -v <product root>:/src -w /src \
         mcr.microsoft.com/dotnet/sdk:9.0 dotnet build
 
-The argv at the end is the only part of that line the product had a say in, and the three decisions in
-front of it are the kernel's - the ones a hand-written body gets wrong. The mount is the product root at
+The argv at the end is the only part of that line the product had a say in, and the decisions in
+front of it are the kernel's - the ones a hand-written body gets wrong. **`--init`, `--name` and the
+label** stop the container with the run: a cancelled run removes it, and one killed outright leaves it
+findable by `simplon.run` (si#409). The mount is the product root at
 the declared workdir. The **`--user` is the calling uid and gid**, from the
 first line rather than after the first CI run that left a root-owned `bin/` behind. And the image goes
 through `simplon.docker.pinned_image`, which is the same gate the kernel puts its own images through -
