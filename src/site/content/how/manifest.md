@@ -328,7 +328,7 @@ them. `tests/test_manifest_top_level.py` holds this table to the kernel in both 
 | `carriers:` | the environment selector | one entry per thing an environment is realised ON: its `proxmox:` node and kind, and the `portainer:` on it |
 | `cd:` | the loader, the environment selector | the `deploy:` and `monitor:` commands, and the environment matrix beside them: `environments:` (name, backend, description) and `default:` (the environment a command targets when no env token is given) |
 | `ci:` | the loader | the `build:`, `test:` and `release:` commands |
-| `claude:` | `support:claude-plugins` | the marketplaces and plugin ids an agent host installs |
+| `claude:` | `support:claude-plugins` | the marketplaces and plugin ids an agent host installs, and optionally `requires:`, the executables those plugins run; one missing from PATH makes the task fail (rc 1) |
 | `deploy:` | the deploy commands | `source:`, naming the `artifacts:` entry a deployment's versions are looked up in |
 | `doctoolchain_version:` | `docs:render` | the pinned docToolchain image tag |
 | `env_var:` | `support:environments` | the variable a product's env-first CLI publishes the active environment into |

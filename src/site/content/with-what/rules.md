@@ -71,9 +71,12 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 202 | nothing - the declaration had no working meaning |
+| diagnosis | 204 | nothing - the declaration had no working meaning |
 | expression rule | 29 | something it could otherwise have said |
-| **all load-time refusals** | **231** | |
+| **all load-time refusals** | **233** | |
+
+si#396 added two diagnoses: `claude.requires:` must be a list of executable names. Whether a named
+executable is on PATH is asked of the machine, so it refuses at run time and is not counted here.
 
 si#344 deleted the `env_groups:` key and took its rule (si#43) with it - everything under `cd:` takes an
 environment and nothing under `ci:` does, so there is no second spelling left to contradict. It added two:

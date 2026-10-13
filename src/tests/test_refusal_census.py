@@ -736,6 +736,11 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("claudeplugins", "declared", "repo must be 'owner/name'"): DIAGNOSIS,
     ("claudeplugins", "declared", "must be 'name@marketplace'"): DIAGNOSIS,
     ("claudeplugins", "declared", "names undeclared marketplace"): DIAGNOSIS,
+    # si#396: `requires:` names the executables the plugins run. A value that is not a list of names
+    # checks nothing a product meant - `requires: node` would iterate as four letters - so refusing it
+    # takes nothing away. Whether the named executable IS on PATH consults the machine: run time, not here.
+    ("claudeplugins", "required", "must be a list of executable names"): DIAGNOSIS,
+    ("claudeplugins", "required", "is not an executable name"): DIAGNOSIS,
 
     # --- tasks/docs.py: the docToolchain image tag ----------------------------------------------------
     ("docs", "_version", "pin the docToolchain image tag"): DIAGNOSIS,
