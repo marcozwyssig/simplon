@@ -678,7 +678,7 @@ def test_the_task_writes_the_page_where_the_manifest_pinned_it(monkeypatch, tmp_
 
 
 def test_an_output_path_that_leaves_the_product_root_is_refused(monkeypatch, tmp_path, impls):
-    # arrange: the same rule `docs:site` applies to its own paths (simplon.bootstrap.validate_relative_dir)
+    # arrange: the same rule `docs:site` applies to its own paths (simplon.layout.validate_relative_dir)
     root, mf = _built()
     ctx = ProductContext("sample", tmp_path, tmp_path / "sample.yaml")
     monkeypatch.setattr(context, "_current", ctx)

@@ -43,6 +43,7 @@ the whole point of the section.
 from __future__ import annotations
 
 import posixpath
+import re
 from typing import Mapping, NamedTuple
 
 #: The manifest section this module owns.
@@ -144,3 +145,43 @@ def declared(data: Mapping[str, object], source: str = "manifest") -> Layout:
         tests=(_relative(section["tests"], "tests", where)
                if "tests" in section else DEFAULT_TESTS),
     )
+
+
+# The Windows drive prefix (`C:`, `c:/...`): absolute, and neither the leading-slash nor the `..` check
+# would catch it on its own.
+_DRIVE_RE = re.compile(r"^[A-Za-z]:")
+
+
+def validate_relative_dir(value: str, what: str, hint: str, *, inside: str = "the target directory") -> str:
+    """Return the normalised directory if `value` is a plain relative path, else raise ValueError naming
+    `what` (the caller's word for the value) and `hint` (what a good one looks like).
+
+    Checked before anything acts on the path, so a bad value costs nothing: an absolute path or one with a
+    `..` in it would land OUTSIDE the directory the caller named - silently, and over whatever happens to
+    live there. Refuse it loudly instead. `\\` is refused rather than translated, because a value carrying
+    both separators is a guess about which one was meant.
+
+    Shared rather than restated: `--orch-dir` scaffolds INTO the path (#4) and the site build's `source`
+    and `output` are read from a manifest and then handed to `shutil.rmtree` (#2), so the second one turns
+    a leading slash into a deleted directory somewhere else entirely. Same rule, same escape, one place.
+
+    It lives in `layout`, beside the other answer to "where in the tree", and not in `bootstrap`: tasks
+    and `outputs` share it, and `bootstrap` is the cli component they may not import (si#392).
+    """
+    trimmed = (value or "").strip()
+    if not trimmed:
+        raise ValueError(f"{what} {value!r} is empty; {hint}")
+    if "\\" in trimmed:
+        raise ValueError(f"{what} {value!r} is invalid: '/' is the separator here, not '\\'; {hint}")
+    if trimmed.startswith("/") or _DRIVE_RE.match(trimmed):
+        raise ValueError(
+            f"{what} {value!r} is invalid: it must be relative, so that it lands under "
+            f"{inside} and nowhere else; {hint}")
+
+    segments = trimmed.rstrip("/").split("/")
+    for segment in segments:
+        if segment in ("", ".", ".."):
+            raise ValueError(
+                f"{what} {value!r} is invalid: {segment!r} is not a directory name, and a "
+                f"path that climbs or doubles back does not stay relative to {inside}; {hint}")
+    return "/".join(segments)

@@ -36,7 +36,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from simplon import context
-from simplon.bootstrap import validate_relative_dir
+from simplon.layout import validate_relative_dir
 
 #: The manifest key. A top-level SCALAR rather than a section: it carries one value, and a section would
 #: invite a second key to grow beside it that says the same thing differently.
