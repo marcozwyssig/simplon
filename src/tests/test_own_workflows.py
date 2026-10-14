@@ -27,6 +27,7 @@ existed and by somebody who was not trying to make it pass.
 import yaml
 
 from simplon.domain import catalogue as catalogue_mod
+from simplon.domain import artifactsection
 from simplon.tasks import workflowgen
 from simplon.domain import manifest as manifest_mod
 
@@ -48,7 +49,8 @@ def _loaded():
 
 def _report():
     return workflowgen.check(_declared(), ROOT, manifest=_loaded(), product=PRODUCT,
-                             source=MANIFEST.name)
+                             source=MANIFEST.name,
+                             artifacts=artifactsection.declared(yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))))
 
 
 # --- the gate ------------------------------------------------------------------------------------------

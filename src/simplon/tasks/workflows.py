@@ -20,7 +20,7 @@ invariants a product should not have to remember.
 """
 from __future__ import annotations
 
-from simplon.domain import context
+from simplon.domain import artifactsection, context
 from simplon.kernel import log
 from simplon.tasks import workflowgen
 
@@ -46,7 +46,7 @@ def generate(check: bool = False) -> int:
 
     if not check:
         changed = workflowgen.write(workflows, ctx.root, manifest=manifest, product=ctx.name,
-                                    source=source)
+                                    source=source, artifacts=artifactsection.declared(ctx.manifest_data()))
         absent = tuple(w.path for w in workflows
                        if not w.generated and not (ctx.root / w.path).exists())
         _report_handwritten(workflows, absent)
@@ -61,7 +61,8 @@ def generate(check: bool = False) -> int:
         # so - rather than leaving it for whoever next happens to run the gate.
         return 1 if absent else _report_unmanaged(workflowgen.unmanaged(workflows, ctx.root), source)
 
-    report = workflowgen.check(workflows, ctx.root, manifest=manifest, product=ctx.name, source=source)
+    report = workflowgen.check(workflows, ctx.root, manifest=manifest, product=ctx.name, source=source,
+                              artifacts=artifactsection.declared(ctx.manifest_data()))
     for path in report.agreed:
         log.ok(f"{path} agrees with {source}")
     _report_handwritten(workflows, report.absent)

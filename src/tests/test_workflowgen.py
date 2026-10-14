@@ -71,7 +71,8 @@ def _section(body: str) -> dict:
 def _render(manifest, body: str, key: str = "ci") -> str:
     workflows = workflowgen.parse(_section(body))
     picked = next(w for w in workflows if w.key == key)
-    return workflowgen.render(picked, manifest=manifest, product="sample", source="sample.yaml")
+    return workflowgen.render(picked, manifest=manifest, product="sample", source="sample.yaml",
+                              artifacts={})  # si#344 C.4: none declared; a kernel command that binds a port would otherwise read the context
 
 
 _MINIMAL = """
