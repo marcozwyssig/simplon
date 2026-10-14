@@ -871,6 +871,36 @@ A job-level `derive:` would have had to refuse `steps:` beside it — and that r
 expression rule, forbidding something a product legitimately wants and sending it back to writing the
 whole file by hand, which is the work this feature exists to remove.
 
+**An artifact that crosses a job boundary is handed over** (si#344). Every job starts on a fresh machine, so
+a file one job writes is not there for the next. When a command in one job `produces:` an artifact that a
+command in another job of the same workflow `consumes:`, the generated file says so itself:
+
+- the producing job archives the artifact's `path:` with `tar` after its last producing step and uploads it
+  under the artifact's name;
+- the consuming job gets `needs:` on the producing job (after any `needs:` you declared), and downloads and
+  unpacks it before its first consuming step.
+
+The archive keeps the path and the file modes, which `upload-artifact` alone does not. Producer and consumer
+in one job hand nothing over, and a workflow with no such edge is written exactly as before. The archive is
+kept a day. A producer written as a verbatim `run:` line is not seen: write it as a `command:`. On a Windows
+runner the `tar` lines are not measured.
+
+**What cannot be handed over is refused when the workflow is generated,** naming the workflow and the jobs
+involved, and the artifact where one is the cause:
+
+| The workflow would... | Refused because |
+|---|---|
+| consume an artifact that no job in it produces, and that has no `registry:` | nothing puts it there. A release whose evidence no job writes would be green with no test run |
+| consume, in one job, before the step of that job that produces it | the order is yours; the data only checks it |
+| consume an artifact that is produced in more than one job, or in a matrix job | one run uploads one artifact once |
+| hand over an artifact with no `path:` | there is no file. An image stays in one job's docker daemon, so build and use it in one job |
+| hand over an artifact whose name has anything but letters, digits, `.`, `_` and `-` | the name goes into a shell line and into `upload-artifact`, which rejects `" : < > | * ? \ /` |
+| hand over an artifact whose `path:` is absolute or has a `..` segment | `tar` stores it somewhere else, so the consumer finds nothing where it looks |
+| hand over from a job with an `if:` that the consuming job does not share | a skipped producer skips its consumer, and a skipped job is not red: the run would be green with nothing done |
+| have jobs that need each other | GitHub refuses the file. If your own `needs:` form the loop, the message says so |
+
+A hand-off between two workflows is not generated: give the artifact a `registry:` and let the body fetch it.
+
 **`runner:` names a KIND of machine, and the kernel supplies what follows from it** (si#267). This is
 the answer to a day that was spent twice: moving one repository's CI to a self-hosted runner meant
 learning that `actions/setup-python` never installs Python, that a container job cannot be the thing that

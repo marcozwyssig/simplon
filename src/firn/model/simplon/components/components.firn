@@ -269,6 +269,9 @@ tasks typeOf simplon.architecture.Component {
   module m_tasks_gitops typeOf simplon.architecture.Module {
     path = "tasks.gitops"
   }
+  module m_tasks_handoff typeOf simplon.architecture.Module {
+    path = "tasks.handoff"
+  }
   module m_tasks_hosttools typeOf simplon.architecture.Module {
     path = "tasks.hosttools"
   }

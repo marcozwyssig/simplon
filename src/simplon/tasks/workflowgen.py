@@ -64,9 +64,10 @@ from typing import NamedTuple
 
 import yaml
 
-from simplon.domain import context, runners
+from simplon.domain import artifactsection, context, runners
 from simplon.adapters import disk
-from simplon.domain.manifest import Manifest
+from simplon.domain.manifest import CommandSpec, Manifest
+from simplon.tasks import handoff
 
 #: The manifest section this module owns. A product that declares no section declares no workflows, and
 #: is told so rather than handed an empty report - "nothing declared" and "nothing wrong" are different
@@ -88,6 +89,24 @@ EXTENSIONS = ("*.yml", "*.yaml")
 #: `python:` gets neither the step nor an opinion.
 CHECKOUT_ACTION = "actions/checkout@v4"
 SETUP_PYTHON_ACTION = "actions/setup-python@v5"
+
+#: si#344 C.4: the two actions an artifact crosses a job boundary with. Pinned like the checkout.
+UPLOAD_ACTION = "actions/upload-artifact@v4"
+DOWNLOAD_ACTION = "actions/download-artifact@v4"
+
+#: The one file that crosses, in the runner's temp directory, never in the product's tree.
+HANDOFF_ARCHIVE = "${{{{ runner.temp }}}}/simplon-handoff-{artifact}.tar"
+
+HANDOFF_NOTE = """si#344 C.4: '{artifact}' is produced in one job of this workflow and consumed in another, and every
+job starts on a fresh machine. So the kernel writes its hand-off: an archive after the producing step, uploaded
+and downloaded under the artifact's name, unpacked before the consuming step. The consuming job `needs:` this one.
+
+An archive and not the bare path: upload-artifact drops file permissions (its README says so and recommends
+tar), and where it roots one path depends on whether the path is a file or a directory. The archive keeps the
+path relative to the checkout and the mode bits, so the next job finds exactly what this one wrote.
+
+The archive is scratch between jobs, so it is kept a day; `overwrite` lets a re-run upload it again (one
+producer is guaranteed, so nothing else writes that name)."""
 
 #: The clone depth si#3 measured. A shallow clone has the tag without the history behind it, so
 #: setuptools-scm derives a version that is wrong rather than failing, and PyPI accepts the wheel.
@@ -951,7 +970,8 @@ def launcher(product: str) -> str:
 
 
 def render(workflow: Workflow, *, manifest: Manifest, product: str, source: str,
-           environments: "Mapping[str, object] | None" = None) -> str:
+           environments: "Mapping[str, object] | None" = None,
+           artifacts: "Mapping[str, artifactsection.Declared] | None" = None) -> str:
     """One workflow's text. Deterministic: same manifest, same bytes.
 
     Written as TEXT rather than dumped as a document, for the reason the module docstring measures: a
@@ -977,8 +997,22 @@ def render(workflow: Workflow, *, manifest: Manifest, product: str, source: str,
         lines += _key_and_value(key, value, "")
     lines.append("")
     lines.append("jobs:")
-    for job in (*_rollout(workflow, environments), *workflow.jobs):
-        lines += _render_job(job, manifest=manifest, product=product, workflow=workflow.key)
+    jobs = (*_rollout(workflow, environments), *workflow.jobs)
+    expanded = {job.name: _expanded(job, manifest, f"workflow '{workflow.key}', job '{job.name}'") for job in jobs}
+    runs = [handoff.Run(job.name,
+                        tuple(_leaves(manifest, step, f"workflow '{workflow.key}', job '{job.name}', step {at + 1}")
+                              for at, step in enumerate(expanded[job.name])),
+                        matrix="strategy" in job.extras, needs=_declared_needs(job.extras), condition=str(job.extras.get("if") or ""))
+            for job in jobs]
+    binds = any(spec.produces or spec.consumes for run in runs for leaves in run.steps for _, spec in leaves)
+    if binds and artifacts is None:
+        # Read only when a job binds a port, for `_rollout`'s reason: an ordinary workflow must not need a
+        # registered ProductContext to render.
+        artifacts = artifactsection.declared(context.current().manifest_data())
+    handoffs = handoff.plan(workflow.key, runs, artifacts or {})
+    for job in jobs:
+        lines += _render_job(job, expanded=expanded[job.name], crossing=handoffs[job.name],
+                             artifacts=artifacts or {}, manifest=manifest, product=product, workflow=workflow.key)
     text = "\n".join(lines).rstrip("\n") + "\n"
 
     validate(text, where=f"workflow '{workflow.key}'")
@@ -1046,12 +1080,14 @@ def _disk_steps(job: Job, manifest: Manifest) -> "tuple[Step | None, Step | None
             "")
 
 
-def _render_job(job: Job, *, manifest: Manifest, product: str, workflow: str) -> list[str]:
-    where = f"workflow '{workflow}', job '{job.name}'"
-    # The derivation happens HERE and not at parse time, because it needs the manifest - the same seam a
-    # `command:` step is already resolved at. A derived step expands into the steps its groups imply and
-    # carries its own note into the first of them, so the file says where that block came from and what
-    # it left out, standing exactly where the product put it.
+def _expanded(job: Job, manifest: Manifest, where: str) -> list[Step]:
+    """The job's steps with every `derive:` placeholder replaced by the steps its groups imply.
+
+    The derivation happens HERE and not at parse time, because it needs the manifest - the same seam a
+    `command:` step is already resolved at. A derived step expands into the steps its groups imply and
+    carries its own note into the first of them, so the file says where that block came from and what
+    it left out, standing exactly where the product put it.
+    """
     steps: list[Step] = []
     for index, step in enumerate(job.steps):
         if not step.derive:
@@ -1062,11 +1098,74 @@ def _render_job(job: Job, *, manifest: Manifest, product: str, workflow: str) ->
         note = "\n\n".join(part for part in (step.note.strip(), result.note) if part)
         steps.append(head._replace(note=note))
         steps.extend(rest)
+    return steps
+
+
+def _leaves(manifest: Manifest, step: Step, where: str) -> "tuple[tuple[str, CommandSpec], ...]":
+    """The leaf commands a step runs, with their specs: itself for a leaf, its plan for an aggregate, none for a
+    verbatim step. An aggregate's plan names each leaf by a bare name exactly one group owns (#519)."""
+    if not step.command:
+        return ()
+    group, name = resolve_command(manifest, step.command, where=where)
+    spec = manifest.commands[group][name]
+    if not spec.depends_on:
+        return ((f"{group.replace('.', ' ')} {name}", spec),)
+    out: list[tuple[str, CommandSpec]] = []
+    for leaf in manifest.plan_for(name, group=group):
+        owner = next(g for g, members in manifest.commands.items() if leaf in members)
+        member = manifest.commands[owner][leaf]
+        if not member.depends_on:
+            out.append((f"{owner.replace('.', ' ')} {leaf}", member))
+    return tuple(out)
+
+
+def _declared_needs(extras: Mapping[str, object]) -> tuple[str, ...]:
+    value = extras.get("needs")
+    if value is None:
+        return ()
+    return (str(value),) if isinstance(value, str) else tuple(str(v) for v in value)  # type: ignore[attr-defined]
+
+
+def _with_needs(extras: Mapping[str, object], added: Sequence[str]) -> Mapping[str, object]:
+    """The job's own `needs:` first, in its order, then what the hand-off adds; a string while it is one."""
+    if not added:
+        return extras
+    merged = [*_declared_needs(extras), *added]
+    return {**extras, "needs": merged[0] if len(merged) == 1 else merged}
+
+
+def _send(artifact: str, path: str) -> tuple[Step, Step]:
+    archive = HANDOFF_ARCHIVE.format(artifact=artifact)
+    return (Step(verbatim={"run": f'tar -cf "{archive}" {shlex.quote(path)}'},
+                 note=HANDOFF_NOTE.format(artifact=artifact)),
+            Step(verbatim={"uses": UPLOAD_ACTION,
+                           "with": {"name": artifact, "path": archive, "if-no-files-found": "error", "retention-days": 1,
+                                    "overwrite": True}}))
+
+
+def _receive(artifact: str) -> tuple[Step, Step]:
+    archive = HANDOFF_ARCHIVE.format(artifact=artifact)
+    return (Step(verbatim={"uses": DOWNLOAD_ACTION, "with": {"name": artifact, "path": "${{ runner.temp }}"}},
+                 note=HANDOFF_NOTE.format(artifact=artifact)),
+            Step(verbatim={"run": f'tar -xf "{archive}"'}))
+
+
+def _render_job(job: Job, *, expanded: Sequence[Step], crossing: "handoff.Handoff",
+                artifacts: "Mapping[str, artifactsection.Declared]", manifest: Manifest, product: str,
+                workflow: str) -> list[str]:
+    where = f"workflow '{workflow}', job '{job.name}'"
+    steps: list[Step] = []
+    for at, step in enumerate(expanded):
+        for artifact in crossing.downloads.get(at, ()):
+            steps.extend(_receive(artifact))
+        steps.append(step)
+        for artifact in crossing.uploads.get(at, ()):
+            steps.extend(_send(artifact, artifacts[artifact].path))
     lines = [""]
     lines += _comment(job.note, "  ")
     lines.append(f"  {_scalar(job.name)}:")
     lines.append(f"    runs-on: {_scalar(job.runs_on)}")
-    for key, value in job.extras.items():
+    for key, value in _with_needs(job.extras, crossing.needs).items():
         lines += _key_and_value(key, value, "    ")
     lines.append("    steps:")
 
@@ -1269,7 +1368,7 @@ def trigger_of(doc: Mapping[object, object]) -> object:
 
 
 def write(workflows: Sequence[Workflow], root: Path, *, manifest: Manifest, product: str,
-          source: str) -> tuple[str, ...]:
+          source: str, artifacts: "Mapping[str, artifactsection.Declared] | None" = None) -> tuple[str, ...]:
     """Render every generated workflow under `root`. Returns the paths whose bytes CHANGED.
 
     A hand-written entry is skipped rather than touched: the manifest declared it somebody's own, and a
@@ -1279,7 +1378,7 @@ def write(workflows: Sequence[Workflow], root: Path, *, manifest: Manifest, prod
     for workflow in workflows:
         if not workflow.generated:
             continue
-        text = render(workflow, manifest=manifest, product=product, source=source)
+        text = render(workflow, manifest=manifest, product=product, source=source, artifacts=artifacts)
         target = root / workflow.path
         if target.exists() and target.read_text(encoding="utf-8") == text:
             continue
@@ -1290,7 +1389,7 @@ def write(workflows: Sequence[Workflow], root: Path, *, manifest: Manifest, prod
 
 
 def check(workflows: Sequence[Workflow], root: Path, *, manifest: Manifest, product: str,
-          source: str) -> Report:
+          source: str, artifacts: "Mapping[str, artifactsection.Declared] | None" = None) -> Report:
     """What disagrees, split four ways - see `Report`.
 
     A MISSING target is drift, not an error, for the same reason it is in `simplon.tasks.taskgen`: a fresh
@@ -1306,7 +1405,7 @@ def check(workflows: Sequence[Workflow], root: Path, *, manifest: Manifest, prod
         if not workflow.generated:
             (handwritten if (root / workflow.path).exists() else absent).append(workflow.path)
             continue
-        text = render(workflow, manifest=manifest, product=product, source=source)
+        text = render(workflow, manifest=manifest, product=product, source=source, artifacts=artifacts)
         target = root / workflow.path
         current = target.read_text(encoding="utf-8") if target.exists() else ""
         if current == text:

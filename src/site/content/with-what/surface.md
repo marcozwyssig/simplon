@@ -139,8 +139,9 @@ take.
 The line that does hold inside `simplon/tasks/` is **named versus unnamed**: a module some catalogue
 coordinate points its `impl:` at is reachable, by coordinate first and by import where a composition
 root has reason to. A module in there that **no** coordinate names is innards — `allure`, `gitops`,
-`profiles` and `proxmoxapi` today — and nothing outside the directory imports either. `proxmoxapi` is
-the newest and arrived as a demotion rather than as a new module: it was written beside `cli.py`, where
+`handoff`, `profiles` and `proxmoxapi` today — and nothing outside the directory imports any of them.
+`handoff` works out which artifacts cross a job boundary of a generated workflow; only `workflowgen` calls it.
+`proxmoxapi` arrived as a demotion rather than as a new module: it was written beside `cli.py`, where
 a library lives, and this rule moved it. It asks Proxmox one question — can this node really put a
 container on this storage — so that a carrier's mistake is a refusal naming a line instead of an HTTP
 500 three minutes into a provider run. Only `deploy:carrier`'s body calls it. `profiles` is the clearest
