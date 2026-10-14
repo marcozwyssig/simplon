@@ -190,17 +190,21 @@ def test_the_derived_pipeline_over_this_manifest_is_a_pipeline_that_would_run():
     si#344 B2 put `model-whole` between `model-gen` and `model-mode`; it refuses a generated file firn
     deleted or left with only its id line. Run on 2026-10-12 over the committed files: it exits 0 and
     writes nothing.
+
+    si#344 C.3 added `test image`, which runs the kernel image built by `build image` and writes its verdict
+    record. Run on 2026-10-14 with `--platform linux/amd64` (the arm64 half was not built on this machine):
+    it exits 0 and writes `build/test/kernel-image.json`, which is under the ignored `build/`.
     """
     derived = workflowgen.derive(_loaded(), ["build", "test"], where="measurement")
 
     assert [step.command for step in derived.steps] == [
         "build wheel", "build reference", "build acceptance", "build site", "build image", "build model-guard",
         "build model-gen", "build model-whole", "build model-mode", "test suite", "test typecheck-python", "test release-notes",
-        "test report", "test generated",
+        "test report", "test generated", "test image",
         "test model"]
 
 
-def test_this_repository_runs_eight_of_those_fifteen_and_the_difference_is_a_choice_not_a_defect():
+def test_this_repository_runs_eight_of_those_sixteen_and_the_difference_is_a_choice_not_a_defect():
     """THE FINDING si#267 ends on, kept as a measurement instead of a sentence in a document.
 
     A derived pipeline here would be correct and would cost more: `build site` pulls Hugo and
@@ -213,6 +217,8 @@ def test_this_repository_runs_eight_of_those_fifteen_and_the_difference_is_a_cho
     and the CI still runs no step for it because `test generated` runs it already - the catalogue is a
     `generated:` entry, regenerated and diffed there. Its four leaves (`model-guard` since B1's final
     review, `model-whole` since si#344 B2) are the fourth to seventh difference, and as cheap as the two above.
+    `test image` (si#344 C.3) is the eighth: the release runs it, between building and publishing the image,
+    and ci.yml builds that image for amd64 only and does not run it.
 
     simplon's own CI stays hand-written all the same, for a reason a derivation cannot carry: its order
     is argued in the manifest, chiefly that the prose gate goes LAST so a release section still to be
@@ -230,7 +236,7 @@ def test_this_repository_runs_eight_of_those_fifteen_and_the_difference_is_a_cho
     assert run_here < derived
     assert sorted(derived - run_here) == ["build acceptance", "build model-gen", "build model-guard",
                                           "build model-mode", "build model-whole", "build reference",
-                                          "build site"]
+                                          "build site", "test image"]
 
 
 def test_the_command_this_repository_never_puts_in_ci_is_the_one_the_catalogue_marks_attended():

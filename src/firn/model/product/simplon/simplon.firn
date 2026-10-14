@@ -84,6 +84,12 @@ simplon typeOf simplon.manifest.Product {
       key = "walk"
       task = product.simplon.simplon.t_simplon_tasks_walk_walk
     }
+    command image typeOf simplon.pipeline.TaskCommand {
+      key = "image"
+      task = simplon.catalogue.test_image
+      produces = product.simplon.simplon.a_kernel_checked
+      consumes = product.simplon.simplon.a_kernel
+    }
     command all typeOf simplon.pipeline.AggregateCommand {
       key = "all"
       member = product.simplon.simplon.test.suite
@@ -103,10 +109,11 @@ simplon typeOf simplon.manifest.Product {
       key = "tag"
       task = product.simplon.simplon.t_simplon_tasks_release_tag
     }
-    command image typeOf simplon.pipeline.TaskCommand {
-      key = "image"
+    command push_image typeOf simplon.pipeline.TaskCommand {
+      key = "push-image"
       task = simplon.catalogue.release_image
       consumes = product.simplon.simplon.a_kernel
+      consumes = product.simplon.simplon.a_kernel_checked
     }
   }
   support support typeOf simplon.pipeline.Group {
@@ -332,6 +339,11 @@ simplon typeOf simplon.manifest.Product {
   artifacts a_kernel typeOf simplon.pipeline.Artifact {
     key = "kernel"
     kind = simplon.vocabulary.image
+  }
+  artifacts a_kernel_checked typeOf simplon.pipeline.Artifact {
+    key = "kernel-checked"
+    kind = simplon.vocabulary.test_result
+    path = "build/test/kernel-image.json"
   }
   website s_website typeOf simplon.manifest.KernelSection {
     key = "website"

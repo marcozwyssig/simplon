@@ -306,6 +306,15 @@ ci:
       # 1 for findings and 2 for a usage or setup error, but `tasks/typecheck.py:check` already ends both
       # on `log.die` - SystemExit(1) - so the leaf never handed mypy's own number through in the first
       # place. There was nothing left for the aggregate to flatten. Measured, not assumed.
+      # The kernel's image, RUN (si#344 C.3). The release rule asks for a test result about every artifact
+      # a release publishes, and `release push-image` publishes `kernel` - which until this nothing ran. The
+      # verdict record it writes is the evidence `release push-image` consumes. The image has no ENTRYPOINT
+      # on purpose (deploy/image/Dockerfile, si#201), so the argv names the command.
+      image:
+        task: "test:image"
+        consumes: { image: kernel }
+        produces: { test-result: kernel-checked }
+        with: { argv: "simplon --help", expect: "usage: simplon" }
       all:
         help: "Run every test: the pytest suite, the type gate, the staleness gate, then the release-notes guard."
         depends_on: [suite, typecheck-python, generated, release-notes]
@@ -345,10 +354,12 @@ ci:
       # because a pin naming an image that is not there would send a machine with no python3 to a failure.
       #
       # It stays a command a person can type, for a re-publish or a hotfix outside the tag.
-      image:
+      # Named push-image, not image, since si#344 C.3: an aggregate plans a leaf by a name only one group owns (#519).
+      push-image:
         task: "release:image"
         consumes:
           image: kernel
+          evidence: [kernel-checked]
 
 support:
   commands:
@@ -548,6 +559,11 @@ artifacts:
     # the route did not start there at all ("no matching manifest for linux/arm64"). A release builds
     # both; CI builds amd64 only (`platform:` on its step), so the runner needs no emulator per push.
     platforms: [linux/amd64, linux/arm64]
+  # The verdict record `test image` writes about `kernel` (si#344 C.3): one producer, and what it is about
+  # is derived from what that producer consumes.
+  kernel-checked:
+    kind: test-result
+    path: build/test/kernel-image.json
 
 # The release notes' three values (si#89), and there is nothing else the kernel may know about them.
 #

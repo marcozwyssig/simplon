@@ -81,12 +81,13 @@ def test_the_declared_dockerfile_and_context_are_on_the_disk():
 @pytest.mark.parametrize("group", ["build", "release"])
 def test_both_verbs_are_placed_and_pin_the_one_image(group):
     # arrange / act
-    command = _manifest()["ci"][group]["commands"]["image"]
+    # si#344 C.3 renamed the release leaf `push-image`: an aggregate plans a leaf by a name one group owns
+    command = _manifest()["ci"][group]["commands"][{"build": "image", "release": "push-image"}[group]]
 
     # assert: the catalogue coordinate, not a body of its own, and the image bound to its port (si#344 C.2),
     # so the command line carries no argument a caller has to remember
     assert command["task"] == f"{group}:image"
-    assert command[{"build": "produces", "release": "consumes"}[group]] == {"image": IMAGE}
+    assert command[{"build": "produces", "release": "consumes"}[group]]["image"] == IMAGE
     assert "with" not in command
 
 
@@ -368,9 +369,9 @@ def test_every_release_publishes_the_image_after_the_wheel_and_ci_never_does():
     assert job["needs"] == "publish"
     assert job["permissions"]["packages"] == "write"
     built = next(i for i, r in enumerate(runs) if r.startswith("./simplon.sh build image"))
-    published = next(i for i, r in enumerate(runs) if r.startswith("./simplon.sh release image"))
+    published = next(i for i, r in enumerate(runs) if r.startswith("./simplon.sh release push-image"))
     assert built < published
-    assert "release image" not in ci_steps and "release image" not in ci_text
+    assert "release push-image" not in ci_steps and "release push-image" not in ci_text
 
 
 def test_the_pin_moves_only_after_the_publish_and_only_through_a_pull_request():
@@ -378,7 +379,7 @@ def test_the_pin_moves_only_after_the_publish_and_only_through_a_pull_request():
     runs = [step.get("run", "") for step in _release_jobs()["image"]["steps"]]
 
     # act
-    published = next(i for i, r in enumerate(runs) if r.startswith("./simplon.sh release image"))
+    published = next(i for i, r in enumerate(runs) if r.startswith("./simplon.sh release push-image"))
     pinned = next(i for i, r in enumerate(runs) if "deploy/image/repin.sh" in r)
     pushes = [line.strip() for line in runs[pinned].splitlines() if line.strip().startswith("git push")]
 

@@ -472,7 +472,8 @@ def test_the_kernels_own_manifest_rules_on_as_many_placements_as_before_the_tran
     """si#344, spec A.3: the count si#34 rules on over simplon.yaml must not drop when `ci`/`cd` became a
     tree level. A drop means the rule stopped applying to something. The one addition is
     `support:migrate`, the catalogue's own placement under `support` (the `support.manifest` subgroup), and
-    since si#346 `support:model` beside it (17 + 2 = 19)."""
+    since si#346 `support:model` beside it; since si#344 C.3 simplon places `test:image` itself, to test its
+    own image (17 + 3 = 20)."""
     # arrange
     calls = []
     original = treeform.check_coordinate_placement
@@ -487,4 +488,4 @@ def test_the_kernels_own_manifest_rules_on_as_many_placements_as_before_the_tran
         manifest_mod.load((ROOT / "simplon.yaml").read_text(), catalogue=catalogue_mod.load())
 
     # assert
-    assert calls == [PLACEMENTS_BEFORE_THE_TRANSPARENT_LEVEL + 2]
+    assert calls == [PLACEMENTS_BEFORE_THE_TRANSPARENT_LEVEL + 3]
