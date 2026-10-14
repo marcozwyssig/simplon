@@ -223,9 +223,9 @@ def test_the_innards_under_tasks_are_exactly_the_modules_no_coordinate_names():
 
     # assert: every module the catalogue names is really there, and the innards are the two that moved
     assert named <= present, f"the catalogue names {sorted(named - present)}, which is not in tasks/"
-    assert innards == {"allure", "gitops", "profiles", "proxmoxapi"}, (
-        f"the innards of simplon/tasks/ are now {sorted(innards)}; the website names allure, gitops "
-        f"and profiles, and one of the two has to change - the page FIRST, then this list")
+    assert innards == {"allure", "gitops", "handoff", "profiles", "proxmoxapi"}, (
+        f"the innards of simplon/tasks/ are now {sorted(innards)}; the website names allure, gitops, "
+        f"handoff and profiles, and one of the two has to change - the page FIRST, then this list")
 
 
 # --- the tombstones have a deadline, and something has to notice it (#50) --------------------------
