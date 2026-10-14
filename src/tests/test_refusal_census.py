@@ -598,6 +598,16 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("treeform", "_resolve_one", "declares `with:` as"): DIAGNOSIS,
     ("treeform", "_resolve_one", "names no task"): DIAGNOSIS,
     ("treeform", "_resolve_one", "with `with:` and also declares `params:`"): DIAGNOSIS,
+    # si#344 C.2 rule 7: a port binding and `with:` on the parameter it binds say one fact twice. When the two
+    # agree the manifest would have worked, so it is an expression rule (spec C.7); it binds the kernel too.
+    ("treeform", "_resolve_one", "binds a port and also pins"): EXPRESSION,
+    # --- ports.py (si#344 C.2) ------------------------------------------------------------------------
+    # A binding the task cannot take: no working meaning, so all four are diagnosis. Rule 4 (port names exist
+    # on the task) is the second; the spec files it under C.5 as a merged-reach diagnosis.
+    ("ports", "bindings", "binds a port to an artifact"): DIAGNOSIS,
+    ("ports", "bindings", "has no"): DIAGNOSIS,
+    ("ports", "_artifacts", "hands ONE artifact's name"): DIAGNOSIS,
+    ("ports", "_artifacts", "names an artifact"): DIAGNOSIS,
     ("treeform", "check_no_old_form", "is written in the flat command form"): EXPRESSION,
     # si#344, the cut. DIAGNOSIS, all of them: `_ManifestModel` ignores an unknown top-level key, so each of
     # these would otherwise load as a product with no commands, a deploy with no matrix or a site that is
@@ -923,6 +933,7 @@ REACH: dict[tuple[str, str, str], str] = {
     ("treeform", "_merge_commands", "is declared as one kind of command and refined as another"): REACH_MERGED,
     ("treeform", "_merge_commands", "redeclares `task:`"): REACH_MERGED,
     ("treeform", "_resolve_one", "declares `impl:`"): REACH_MERGED,
+    ("treeform", "_resolve_one", "binds a port and also pins"): REACH_MERGED,
     ("treeform", "_resolve_one", "declares both `task:` and `depends_on:`"): REACH_MERGED,
     ("treeform", "check_no_old_form", "is written in the flat command form"): REACH_SEAM,
     ("treeform", "check_coordinate_placement", "places the coordinate"): REACH_MERGED,

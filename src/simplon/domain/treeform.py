@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from simplon.domain import artifactsection
+from simplon.domain import artifactsection, ports
 
 # A group node's own keys. Everything else under a node would be ambiguous, which is why members live
 # under `commands:` rather than directly on the node: otherwise `help:` would be a group attribute in one
@@ -622,7 +622,30 @@ def _resolve_one(spec: dict, where: str, product_tasks: dict, catalogue_tasks: d
 
     template = dict((source or {})[ref])
     check_task(ref, template)
-    out = {"impl": template["impl"], **spec}
+    task_ports = ports.of(ref, product_tasks)
+    bound = ports.bindings(where, ref, spec, task_ports)
+    # Rule 7 (spec C.5, si#344 C.2): a binding hands the artifact's name to its port's parameter, so `with:`
+    # on that same parameter is a second source for one fact.
+    twice = sorted(p.param for p in task_ports
+                   if p.param and p.name in bound[ports.SIDE[p.direction]] and p.param in (with_ or {}))
+    if twice:
+        raise ValueError(
+            f"command '{where}' binds a port and also pins {', '.join(twice)} with `with:`. The binding "
+            f"hands the artifact's name to that parameter - drop it from `with:`")
+    # `with: { name: X }` alone is read as the binding (decided 2026-10-14, si#344)
+    for p in task_ports:
+        side = bound[ports.SIDE[p.direction]]
+        if p.param and p.name not in side and isinstance((with_ or {}).get(p.param), str):
+            side[p.name] = (str((with_ or {})[p.param]),)
+    by_binding = {p.param: bound[ports.SIDE[p.direction]][p.name][0] for p in task_ports
+                  if p.param and p.name in bound[ports.SIDE[p.direction]]}
+
+    out = {"impl": template["impl"], **spec, "task": ref}
+    out.pop("produces", None)
+    out.pop("consumes", None)
+    for key, side in bound.items():
+        if side:
+            out[key] = side
     for key in INHERITED:
         if key not in out and key in template:
             out[key] = template[key]
@@ -633,14 +656,17 @@ def _resolve_one(spec: dict, where: str, product_tasks: dict, catalogue_tasks: d
     # documents a parameter once, every instance may pin it), and any command that leaves it unpinned
     # still gets that documentation - so a pinned key is dropped from the merged map rather than rejected.
     own = spec.get("params") or {}
-    pinned = sorted(set(with_ or {}) & set(own))
+    pinned_values = {**(with_ or {}), **by_binding}
+    pinned = sorted(set(pinned_values) & set(own))
     if pinned:
         raise ValueError(
             f"command '{where}' pins {', '.join(pinned)} with `with:` and also declares `params:` for "
             f"it. A pinned parameter is off the command line, so its presentation renders nowhere - "
             f"drop the `params:` entry, or drop the pin if the user should still be able to set it")
+    if by_binding:
+        out["with"] = pinned_values
     params = {key: value for key, value in {**(template.get("params") or {}), **own}.items()
-              if key not in (with_ or {})}
+              if key not in pinned_values}
     if params:
         out["params"] = params
     return out

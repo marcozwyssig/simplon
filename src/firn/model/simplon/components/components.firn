@@ -70,6 +70,9 @@ domain typeOf simplon.architecture.Component {
   module m_domain_artifactschema typeOf simplon.architecture.Module {
     path = "domain.artifactschema"
   }
+  module m_domain_ports typeOf simplon.architecture.Module {
+    path = "domain.ports"
+  }
   module m_domain_environments typeOf simplon.architecture.Module {
     path = "domain.environments"
   }

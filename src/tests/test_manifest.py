@@ -1586,7 +1586,10 @@ def test_a_new_form_manifest_and_its_old_form_twin_load_identically():
 
     # assert
     assert new.groups == old.groups
-    assert new.commands == old.commands
+    # `task` is the name the command was written against (`lab-image` here, `frr-image` in the twin) - a
+    # spelling, not the surface (si#344 C.2 keeps it for the model and the port rules)
+    assert ({g: {n: s._replace(task="") for n, s in m.items()} for g, m in new.commands.items()}
+            == {g: {n: s._replace(task="") for n, s in m.items()} for g, m in old.commands.items()})
     assert new.tree == old.tree
 
 

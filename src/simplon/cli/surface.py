@@ -191,8 +191,8 @@ PACKAGES = frozenset({"tasks"})
 #: a product has no reason to import either.
 INTERNAL = frozenset({
     "adapters.diskguard", "adapters.oras", "adapters.tools", "cli.bootstrap", "domain.artifactschema",
-    "domain.catalogue", "domain.clitaxonomy", "domain.manifestmodel", "domain.runners", "domain.signatures",
-    "domain.yamlkeys", "kernel.moved", "kernel.provenance", "kernel.runhost", "kernel.steplog", "test_impls",
+    "domain.catalogue", "domain.clitaxonomy", "domain.manifestmodel", "domain.ports", "domain.runners",
+    "domain.signatures", "domain.yamlkeys", "kernel.moved", "kernel.provenance", "kernel.runhost", "kernel.steplog", "test_impls",
 })
 
 #: si#399 moved every module into the package of its component. Where each old path now lives, the alias
