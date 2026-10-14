@@ -928,19 +928,19 @@ def _shape(text: str, *, unknown_groups_into: str | None = None) -> Migration:
         if key == "groups":
             # Each area after the first stands below a blank line, as two top-level sections do; the
             # first stands where groups: stood, below whatever stood above that (si#406).
-            written: list[list[str]] = []
+            area_blocks: list[list[str]] = []
             if ci:
-                written.append(_area("ci", [], ci)[1])
+                area_blocks.append(_area("ci", [], ci)[1])
             if cd_block and cd_with_groups:
-                written.append(cd_block)
+                area_blocks.append(cd_block)
                 cd_placed = True
             if support:
                 support_body = list(support)
                 while support_body and not support_body[0].strip():
                     support_body.pop(0)
-                written.append(support_body)
+                area_blocks.append(support_body)
             areas: list[str] = []
-            for area_lines in written:
+            for area_lines in area_blocks:
                 if areas:
                     areas.append("")
                 areas += area_lines
