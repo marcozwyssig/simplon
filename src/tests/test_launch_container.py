@@ -378,3 +378,64 @@ def test_the_check_survives_both_launchers_quoting():
 
     # assert: nothing bash expands in double quotes, nothing cmd.exe expands or splits on, one line
     assert not set(check) & set('"$`\\!%^&|<>\n')
+
+
+# --- si#416: a signal during the install reaches the install ----------------------------------------------
+
+
+_SLOW_INSTALL = r'''#!/usr/bin/env bash
+printf "%s\n" "$*" >> "$DOCKER_LOG"
+case "$*" in
+    *"pip install"*)
+        trap 'echo "install client got TERM" >> "$DOCKER_LOG"; kill $sleeper; exit 143' TERM
+        sleep 20 & sleeper=$!
+        echo "$$ $sleeper" > "$DOCKER_LOG.install-pid"
+        wait $sleeper ;;
+esac
+exit 0
+'''
+
+
+@pytest.mark.parametrize("signum, rc", [(15, 143), (2, 130)])
+def test_a_signal_to_the_launcher_during_the_install_reaches_the_install_client(tmp_path, signum, rc):
+    # arrange: a docker client that stays in its install the way a real `pip install` resolve does, and
+    # records the signal it is sent. The CLI line is `exec`ed, so the launcher's pid IS its client; the
+    # install line is not, and before si#416 a SIGTERM there killed the shell alone and left the install
+    # container to run on with nothing waiting for it
+    import signal
+    import time
+    root = _product(tmp_path)
+    log = root / "docker.log"
+    bin_dir = root / "fakebin"
+    bin_dir.mkdir()
+    (bin_dir / "docker").write_text(_SLOW_INSTALL, encoding="utf-8")
+    (bin_dir / "docker").chmod(0o755)
+    environ = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+               "DOCKER_LOG": str(log), "DELIVERY_ROUTE": "container"}
+    launcher = subprocess.Popen(["bash", str(root / "democtl.sh"), "support", "doctor"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environ)
+    pid_file = Path(f"{log}.install-pid")
+    deadline = time.monotonic() + 10
+    while not pid_file.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert pid_file.exists(), "the fake install never started"
+    time.sleep(0.2)                     # margin for the launcher to reach its `wait`
+
+    # act: the signal goes to the launcher alone, as a `kill` or a runner's cancel sends it
+    launcher.send_signal(signum)
+    try:
+        launcher.wait(timeout=10)
+    finally:
+        for pid in pid_file.read_text(encoding="utf-8").split():   # nothing left behind outlives the test
+            try:
+                os.kill(int(pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    time.sleep(0.2)
+
+    # assert: the install client was told - with TERM either way, since a background job starts with
+    # SIGINT ignored - the launcher reports the cancel it got, and the CLI never started
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert "install client got TERM" in lines, lines
+    assert launcher.returncode in (rc, -signum), launcher.returncode
+    assert not any("python -u -m orchestrator" in line for line in lines), lines

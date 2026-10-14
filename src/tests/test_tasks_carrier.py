@@ -452,3 +452,18 @@ def test_an_interrupted_pulumi_run_is_left_to_finish_and_its_label_finds_it(_lin
     # assert: nothing removed, and the container is still one the label finds
     assert removals == []
     lifecycle_name(seen[0], "p")
+
+
+def test_pulumi_is_execed_so_the_signal_the_client_forwards_reaches_pulumi_itself(_lines, tmp_path):
+    # arrange: si#416. `--init` hands a forwarded signal to its direct child only, and measured on
+    # 2026-10-14 pulumi 3.262 takes ONE SIGINT or SIGTERM as a clean cancel - in-flight operations finish,
+    # "update canceled" - and a second as "terminating", the resource left "(interrupted)". So the shell in
+    # front must not be the child that receives it. The image's bash 5.2 happens to exec the last command
+    # of an `&&` list by itself; the `exec` says so rather than leaning on that
+    # act
+    carrier._pulumi(CARRIER, CARRIER.proxmox, "tok", tmp_path, tmp_path / "state", "h")
+
+    # assert
+    script = _lines[0][-1]
+    assert _lines[0][-3:-1] == ["bash", "-c"]
+    assert script.endswith("&& exec pulumi up --yes --non-interactive"), script

@@ -446,8 +446,23 @@ def _pulumi(carrier: carrierspec.Carrier, machine: carrierspec.Proxmox, token: s
     somebody resolves them by hand. NOT MEASURED HERE: there is no Proxmox in this suite to kill a
     Pulumi run against. Letting the run finish is the lesser harm for a tool that keeps its own state,
     so a cancel leaves it running - and `simplon.run=<product>` is what lets an operator find it and
-    decide. Stopping it CLEANLY would need SIGINT delivered to pulumi itself, and whether the `bash -c`
-    in front of it passes one on is unmeasured too; that is open work, not this function's to guess at.
+    decide.
+
+    A CLEAN STOP IS ONE SIGNAL, AND ONLY ONE (si#416). Measured on 2026-10-14 with this image and a file
+    backend, a python program whose one resource sleeps: pulumi takes a SIGINT, or a SIGTERM, as "cancelling"
+    - the operation in flight finishes and the update ends `update canceled`, state written. A SECOND
+    signal of either kind is "terminating": the resource is left `(interrupted)`, which is the pending
+    state above. `--init` hands what the client forwards to its direct child only, so the line ends in
+    `exec pulumi up`: the image's bash 5.2 already replaces itself for the last command of an `&&` list
+    (measured: pulumi's parent was docker-init), and the `exec` makes that a statement rather than a
+    property of one bash version. A Ctrl-C at a terminal reaches the client in the same process group,
+    the client forwards it, and pulumi cancels cleanly - measured through `run` with a stand-in.
+
+    WHAT IS OUT OF REACH, and why it stays so: a SIGTERM to the kernel alone - a container-route cancel,
+    a `kill` - never reaches this client, and the run goes on to its end (measured). The kernel could send
+    the one signal itself, `docker kill --signal INT <name>`, but it cannot tell whether the client has
+    already forwarded one: a group-wide signal reaches both. Its signal would then be the SECOND, which is
+    the forced stop this function exists to avoid. Finishing is the lesser harm, as above.
     """
     state.mkdir(parents=True, exist_ok=True)
     # Into THIS process's environment, which `docker run -e NAME` then reads. The alternative -
@@ -485,7 +500,7 @@ def _pulumi(carrier: carrierspec.Carrier, machine: carrierspec.Proxmox, token: s
         "pip install -q --root-user-action=ignore -r requirements.txt >/dev/null 2>&1 && "
         f"(pulumi stack init {carrier.name} --non-interactive >/dev/null 2>&1 || "
         f"pulumi stack select {carrier.name} >/dev/null 2>&1) && "
-        "pulumi up --yes --non-interactive",
+        "exec pulumi up --yes --non-interactive",
     ]
     return run.stream(argv)
 
