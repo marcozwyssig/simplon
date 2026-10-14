@@ -1,7 +1,7 @@
 """simplon - a delivery orchestrator for any software component that follows a CI/CD flow: it
 assembles a component's CLI from one manifest and runs the steps, as a framework of tasks that a
 component adopts and extends. It grew up inside netctl, which is still its largest consumer; who else
-installs it is measured and written down in `simplon.surface`.
+installs it is measured and written down in `simplon.cli.surface`.
 
 A product installs `simplon` (PyPI) and pins it in its own requirements: the kernel arrives as an
 ordinary dependency, nothing is vendored and no source path is prepended. NOTE: the import package is
@@ -31,7 +31,7 @@ from __future__ import annotations
 # and in that state there is no true answer to give - so the scaffolder must fail loudly rather than write
 # an invented pin into somebody's requirements.txt.
 try:
-    from ._version import version as __version__  # type: ignore[import-not-found,unused-ignore]
+    from simplon._version import version as __version__  # type: ignore[import-not-found,unused-ignore]
 except ImportError:  # pragma: no cover - exercised by the source-tree path, not by an installed package
     from importlib.metadata import PackageNotFoundError, version as _dist_version
 
@@ -39,3 +39,9 @@ except ImportError:  # pragma: no cover - exercised by the source-tree path, not
         __version__ = _dist_version("simplon")
     except PackageNotFoundError:
         __version__ = "0.0.0.dev0+unknown"
+
+# si#399: the modules moved into one package per component; the old import paths stay importable, as the
+# very same module objects, until the release `simplon.kernel.moved.MOVED_DUE_AFTER` names.
+from .kernel import moved as _moved  # noqa: E402
+
+_moved.install()

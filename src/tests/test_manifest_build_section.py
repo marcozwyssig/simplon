@@ -6,7 +6,7 @@ tree hangs off `groups:`, "so the two names never meet". That sentence was a pro
 have.
 
 WHAT WAS MEASURED, on 2026-09-11, over every manifest this kernel can reach - its own `simplon.yaml`,
-the five products in `simplon.surface.CONSUMERS`, and `secure-windows-images` on its
+the five products then in `simplon.cli.surface.CONSUMERS`, and `secure-windows-images` on its
 `migrate-to-simplon` branch, the seven si#159 read:
 
     carry a top-level `build:` data section   2   cleon, secure-windows-images
@@ -16,7 +16,7 @@ the five products in `simplon.surface.CONSUMERS`, and `secure-windows-images` on
 
 cleon's section holds `bundle:`, `ant:` and `site:`; secure-windows-images' holds `packer:` and
 `templates:`. Both are recorded verbatim below, because a measurement of another repository cannot be
-re-taken by a test without a network, and a datum with its date on it is what `simplon.surface` does
+re-taken by a test without a network, and a datum with its date on it is what `simplon.cli.surface` does
 with the same problem.
 
 THE ONE THING NOBODY HAD DRIVEN, and it is what decides how bad this is: what the generator does when
@@ -60,11 +60,12 @@ import typer
 import yaml
 from typer.testing import CliRunner
 
-from simplon import catalogue as catalogue_mod
-from simplon import cli, context
-from simplon.context import ProductContext
+from simplon.domain import catalogue as catalogue_mod
+from simplon import cli
+from simplon.domain import context
+from simplon.domain.context import ProductContext
 from simplon.tasks import buildfiles
-from simplon.orchestrator import manifest as manifest_mod
+from simplon.domain import manifest as manifest_mod
 
 import sitepages
 from conftest import ROOT

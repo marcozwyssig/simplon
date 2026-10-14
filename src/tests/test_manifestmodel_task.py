@@ -1,7 +1,7 @@
 """si#346 / spec D.2: `support manifest model` writes the validated manifest as a firn model."""
 import pytest
 
-from simplon import catalogue, context
+from simplon.domain import catalogue, context
 from simplon.tasks import manifestmodel as task
 
 from test_manifestmodel import DEMO

@@ -7,8 +7,9 @@ else.
 """
 import pytest
 
-from simplon import context, outputs, steplog
-from simplon.context import ProductContext
+from simplon.domain import context, outputs
+from simplon.kernel import steplog
+from simplon.domain.context import ProductContext
 
 
 @pytest.fixture(autouse=True)
@@ -66,7 +67,7 @@ def test_no_registered_product_is_not_a_crash(monkeypatch):
 def test_a_streaming_step_writes_its_output_where_it_can_be_read(tmp_path, monkeypatch):
     """The point of the whole module. `build.compile` scrolls 400 lines past a pane nobody can select
     from; afterwards there is a file."""
-    from simplon.orchestrator import steps
+    from simplon.kernel import steps
     monkeypatch.setattr(steps, "run_stream",
                         lambda argv, on_line: (on_line("compiling"), on_line("BUILD SUCCESSFUL"), 0)[2])
 
@@ -80,7 +81,7 @@ def test_a_streaming_step_writes_its_output_where_it_can_be_read(tmp_path, monke
 def test_a_failed_step_writes_its_output_too(tmp_path, monkeypatch):
     """The failing run is the one somebody wants to read - writing only on success would hand back the
     log for every run except the interesting one."""
-    from simplon.orchestrator import steps
+    from simplon.kernel import steps
     monkeypatch.setattr(steps, "run_stream",
                         lambda argv, on_line: (on_line("The command line is too long."), 1)[1])
 

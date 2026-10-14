@@ -129,7 +129,7 @@ def test_the_page_names_every_verdict_a_gate_can_carry():
 
     A number or a list typed into that page would be wrong on the first day nobody checks it, which is
     this repository's oldest lesson about documents. So the page is read back against `Verdict`."""
-    from simplon.verdict import Verdict
+    from simplon.kernel.verdict import Verdict
 
     text = _text()
 

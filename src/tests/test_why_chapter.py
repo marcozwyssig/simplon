@@ -49,8 +49,8 @@ AAA throughout.
 import ast
 import re
 
-from simplon import catalogue as catalogue_mod
-from simplon.orchestrator.model import treeform
+from simplon.domain import catalogue as catalogue_mod
+from simplon.domain import treeform
 from simplon.tasks import site as site_mod
 
 import sitepages
@@ -439,7 +439,7 @@ def test_the_kernel_source_keeps_the_meaning_the_callout_claims_for_it():
     source, throughout"*.
 
     The first round of si#29 asserted that over the site only, and the sentence was false - two
-    docstrings in `simplon.clitaxonomy` said "when a discipline gains sibling commands", which is the
+    docstrings in `simplon.domain.clitaxonomy` said "when a discipline gains sibling commands", which is the
     owner's sense (a kind of work with its own commands), not rigour. Both are reworded; this is what
     stops the next one from landing unnoticed.
 

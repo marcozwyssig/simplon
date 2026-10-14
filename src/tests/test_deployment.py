@@ -31,8 +31,8 @@ from __future__ import annotations
 
 import pytest
 
-from simplon import context, deployment
-from simplon.context import ProductContext
+from simplon.domain import context, deployment
+from simplon.domain.context import ProductContext
 
 
 def _product(tmp_path, monkeypatch, manifest: str) -> None:

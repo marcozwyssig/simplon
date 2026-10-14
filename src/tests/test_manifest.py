@@ -1,4 +1,4 @@
-"""Unit tests for the manifest-driven CLI assembly engine (simplon.orchestrator.manifest): the pure
+"""Unit tests for the manifest-driven CLI assembly engine (simplon.domain.manifest): the pure
 YAML load + schema validation of the nested group -> command -> spec TREE (#729), the impl-reference
 resolution, and the shared-taxonomy build - exercised on a SYNTHETIC manifest so the engine is validated
 independently of any product's command set. No Typer, no product impls; AAA throughout.
@@ -12,8 +12,8 @@ import textwrap
 
 import pytest
 
-from simplon import catalogue as catalogue_mod
-from simplon.orchestrator import manifest
+from simplon.domain import catalogue as catalogue_mod
+from simplon.domain import manifest
 
 _OK = """
 product: demo
@@ -787,7 +787,7 @@ def test_the_named_plan_is_the_alphabetically_first_candidate_whatever_the_hash_
     # load under several PYTHONHASHSEEDs instead and require ONE message out of all of them.
     source = str(pathlib.Path(manifest.__file__).parents[2])
     probe = (f"import sys; sys.path.insert(0, {source!r})\n"
-             "from simplon.orchestrator import manifest\n"
+             "from simplon.domain import manifest\n"
              "try:\n"
              f"    manifest.load({_TWO_PLANS_COLLIDE!r})\n"
              "except ValueError as exc:\n"
@@ -851,7 +851,7 @@ def test_load_rejects_a_nested_group_default_namesake_because_the_cli_cannot_ass
     manifest declaring `support.git` with a `git` member and one sibling: `KeyError: 'support.git'` out of
     `assemble`, a stacktrace where a sentence belongs.
 
-    No reachable manifest declares such a group - this kernel's own and the five in `surface.CONSUMERS`,
+    No reachable manifest declares such a group - this kernel's own and the five then in `surface.CONSUMERS`,
     zero of six - so a floor stated once is worth more than a feature nobody asked for.
     """
     # arrange: `support.git` is nested, has a `git` member and a sibling - the group-default shape

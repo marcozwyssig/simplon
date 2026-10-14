@@ -11,9 +11,9 @@ from contextlib import contextmanager
 
 import pytest
 
-from simplon import run
-from simplon.context import ProductContext
-from simplon import context
+from simplon.kernel import run
+from simplon.domain.context import ProductContext
+from simplon.domain import context
 from simplon.tasks import asset
 
 _MANIFEST = """

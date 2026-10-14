@@ -6,7 +6,7 @@ texts are included because a migration that lost a `help:` would change `--help`
 """
 from __future__ import annotations
 
-from simplon.orchestrator.manifest import Manifest
+from simplon.domain.manifest import Manifest
 
 
 def cli_surface(mf: Manifest) -> dict:

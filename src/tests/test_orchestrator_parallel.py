@@ -19,8 +19,8 @@ import time
 
 import pytest
 
-from simplon.orchestrator.manifest import load as manifest_load
-from simplon.orchestrator.steps import (
+from simplon.domain.manifest import load as manifest_load
+from simplon.kernel.steps import (
     Fan,
     _HeadlessOutput,
     Outcome,

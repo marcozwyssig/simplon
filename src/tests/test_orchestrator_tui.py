@@ -1,4 +1,4 @@
-"""Smoke tests for the shared Textual split-pane app (simplon.orchestrator.tui): drive it headlessly via
+"""Smoke tests for the shared Textual split-pane app (simplon.ui.tui): drive it headlessly via
 run_test() and assert the worker ran every step to its real state, that the LEFT pane is the plan tree and
 that the RIGHT pane answers for both kinds of row - a leaf's output, an aggregate's children with their exit
 codes. Skipped when Textual is not installed. The pure-data half of the same tree (state derivation, the
@@ -11,10 +11,10 @@ import pytest
 
 pytest.importorskip("textual")
 
-from simplon.orchestrator.manifest import load as manifest_load  # noqa: E402
-from simplon.orchestrator.steps import Outcome, Pipeline, Step, StepState  # noqa: E402
-from simplon.orchestrator import steps as steps_mod  # noqa: E402
-from simplon.orchestrator.tui import _StepApp  # noqa: E402
+from simplon.domain.manifest import load as manifest_load  # noqa: E402
+from simplon.kernel.steps import Outcome, Pipeline, Step, StepState  # noqa: E402
+from simplon.kernel import steps as steps_mod  # noqa: E402
+from simplon.ui.tui import _StepApp  # noqa: E402
 
 _NESTED_MANIFEST = """
 tasks:
@@ -117,7 +117,7 @@ def test_the_step_list_shows_the_speaking_name_and_the_details_pane_the_exact_co
     invocations looked fine. That made ONE renderer look like two - the bring-up read well and the image
     build did not - and it is invisible in a test that only uses label-only steps.
     """
-    from simplon.orchestrator.steps import argv_step
+    from simplon.kernel.steps import argv_step
 
     # arrange: exactly the shape that exposed it - a speaking label over a long real command
     real = ("docker run --rm -v /work:/work -e GRADLE_USER_HOME=/home/gradle/.gradle "
@@ -722,9 +722,9 @@ def test_the_bar_follows_the_runs_state_in_its_css_class():
 def test_the_tui_path_leaves_the_same_transcript_behind(tmp_path, monkeypatch):
     """si#148 item 3, the other half of the both-paths decision: `run_pipeline` writes AFTER `App.run()`
     returns, so a run the operator quit half way through still leaves a record of what did happen."""
-    from simplon import context
-    from simplon.context import ProductContext
-    from simplon.orchestrator.tui import run_pipeline
+    from simplon.domain import context
+    from simplon.domain.context import ProductContext
+    from simplon.ui.tui import run_pipeline
 
     # arrange: a TTY, a registered product, and an app that quits itself the moment the run is done
     monkeypatch.setattr(context, "_current", ProductContext("cleon", tmp_path, tmp_path / "cleon.yaml"))
@@ -1188,7 +1188,7 @@ def test_the_plain_text_paths_carry_no_markup_at_all():
     """The other half, and it is the one that would go wrong silently: `STATE_ICON` is shared with the
     HEADLESS renderer, and the run transcript is a file somebody attaches to a ticket. Colour belongs
     where the widget is rendered, never in the shared label helper."""
-    from simplon.orchestrator.steps import build_rows, render_tree, transcript
+    from simplon.kernel.steps import build_rows, render_tree, transcript
 
     # arrange
     pipeline = _planned_pipeline({"compile": 1})
@@ -1262,8 +1262,8 @@ def test_the_theme_picker_comes_free_with_the_palette():
 
 
 def test_the_palette_can_write_the_transcript_before_the_run_is_over(tmp_path, monkeypatch):
-    from simplon import context
-    from simplon.context import ProductContext
+    from simplon.domain import context
+    from simplon.domain.context import ProductContext
 
     monkeypatch.setattr(context, "_current", ProductContext("cleon", tmp_path, tmp_path / "cleon.yaml"))
 
@@ -1335,7 +1335,7 @@ def test_a_row_highlighted_mid_run_shows_what_the_step_has_already_produced(tmp_
     file rather than sleeping, so what is asserted is "before it exited" and not "faster than this
     machine".
     """
-    from simplon.orchestrator.steps import argv_step
+    from simplon.kernel.steps import argv_step
 
     release = tmp_path / "release"
     slow = argv_step("slow", ["sh", "-c",
@@ -1401,7 +1401,7 @@ def test_no_state_icon_is_a_character_the_tree_already_draws():
     is exactly how the first one got `▶`. It is checked per CHARACTER because its spellings are words,
     so a `·` or a `─` sneaking into one would not be caught by asking whether the whole word is in the
     set."""
-    from simplon.orchestrator.steps import STATE_ICON, STATE_ICON_ASCII
+    from simplon.kernel.steps import STATE_ICON, STATE_ICON_ASCII
     drawn = _tree_own_alphabet()
     for table, name in ((STATE_ICON, "STATE_ICON"), (STATE_ICON_ASCII, "STATE_ICON_ASCII")):
         collisions = {state: icon for state, icon in table.items()
@@ -1461,7 +1461,7 @@ def test_coming_back_to_a_running_step_lands_on_its_tail_and_goes_on_following_i
 
     The child is gated on files rather than timed, so every count below is exact and nothing here is a
     race against this machine."""
-    from simplon.orchestrator.steps import argv_step
+    from simplon.kernel.steps import argv_step
 
     gate_one, gate_two, release = (tmp_path / name for name in ("one", "two", "go"))
     slow = argv_step("slow", ["sh", "-c", f"""

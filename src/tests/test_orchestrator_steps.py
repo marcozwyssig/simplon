@@ -1,4 +1,4 @@
-"""Engine tests for the shared steps-runner (simplon.orchestrator.steps): the product-agnostic step
+"""Engine tests for the shared steps-runner (simplon.kernel.steps): the product-agnostic step
 model + runners moved out of netctl. Fake actions (no real subprocess, no Textual) so the state
 transitions + overall verdict are tested in isolation. This is now the home of the generic runner + its
 coverage (moved here from netctl's test_steps.py)."""
@@ -8,10 +8,10 @@ import shlex
 
 import pytest
 
-from simplon import context
-from simplon.context import ProductContext
-from simplon.orchestrator.manifest import load as manifest_load
-from simplon.orchestrator.steps import (
+from simplon.domain import context
+from simplon.domain.context import ProductContext
+from simplon.domain.manifest import load as manifest_load
+from simplon.kernel.steps import (
     FAILURE_TAIL_LINES,
     VERBOSE_ENV,
     Abort,
@@ -266,7 +266,7 @@ def test_pipeline_still_takes_name_steps_and_stop_on_failure_positionally():
 
 def test_pipeline_carries_the_plan_tree_and_the_invoked_commands_dotted_path():
     # Arrange
-    from simplon.orchestrator.manifest import CommandSpec, PlanNode
+    from simplon.domain.manifest import CommandSpec, PlanNode
 
     node = PlanNode(name="seed", path="deploy.seed", spec=CommandSpec(impl="demo.impls:seed", help="Seed."))
     # Act
@@ -1056,7 +1056,7 @@ def test_a_running_step_shows_the_lines_it_has_already_produced(monkeypatch):
     the running step, which covers the operator who touches nothing and leaves this one exactly as it
     was for the operator who navigates."""
     # arrange: a fake run_stream that asks the step what a pane could render, from INSIDE the run
-    from simplon.orchestrator import steps as steps_module
+    from simplon.kernel import steps as steps_module
 
     seen: dict[str, str] = {}
 
@@ -1081,7 +1081,7 @@ def test_the_backlog_is_the_list_the_step_already_fills_and_not_a_second_copy(mo
     """One buffer, handed over by reference. A `Step.live` that argv_step copied into would be the
     second in-memory copy si#144 rules out, and it would be a copy that goes stale mid-run."""
     # arrange
-    from simplon.orchestrator import steps as steps_module
+    from simplon.kernel import steps as steps_module
 
     monkeypatch.setattr(steps_module, "run_stream",
                         lambda argv, on_line, **kw: (on_line("one"), 0)[1])
@@ -1109,7 +1109,7 @@ def test_a_finished_step_shows_its_outcome_rather_than_the_backlog(monkeypatch):
 
 def test_a_re_run_step_does_not_show_the_previous_runs_lines(monkeypatch):
     # arrange: a fake run_stream whose output differs per run
-    from simplon.orchestrator import steps as steps_module
+    from simplon.kernel import steps as steps_module
 
     runs: list[int] = []
 

@@ -202,7 +202,7 @@ that names that body:
 
 ```python
 from simplon import context
-from simplon.run import run
+from simplon.kernel.run import run
 
 
 def integration() -> int:

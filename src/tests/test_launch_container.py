@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from simplon import bootstrap
+from simplon.cli import bootstrap
 
 #: A pinned reference of the shape `docker.pinned_image` accepts, standing in for a published kernel.
 PINNED = "registry.example:5000/simplon:v0.13.0"

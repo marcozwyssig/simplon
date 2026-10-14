@@ -25,7 +25,7 @@ def _die(msg, *a, **k):
 
 
 def _recorder(calls, rc=0):
-    from simplon.run import Result as R
+    from simplon.kernel.run import Result as R
     return lambda argv, **kw: calls.append(list(argv)) or R(rc=rc, out="", err="")
 
 
@@ -87,7 +87,7 @@ def test_it_grants_passwordless_sudo_and_the_docker_group(host, monkeypatch):
 def test_a_sudoers_file_visudo_refuses_is_never_installed(host, monkeypatch):
     # arrange: visudo says no. Writing a broken file straight into /etc/sudoers.d can lock out sudo for
     # EVERYONE, so it is validated somewhere else first and only then moved into place.
-    from simplon.run import Result as R
+    from simplon.kernel.run import Result as R
     monkeypatch.setattr(ciprivileges, "run",
                         lambda argv, **kw: R(rc=1 if "visudo" in argv[0] else 0, out="", err=""))
 
@@ -131,7 +131,7 @@ def test_the_verification_runs_AS_the_user_not_as_root(host, monkeypatch):
 
 def test_a_grant_that_did_not_take_is_reported_rather_than_claimed(host, monkeypatch):
     # arrange: everything was written, and the check as the user still refuses
-    from simplon.run import Result as R
+    from simplon.kernel.run import Result as R
     monkeypatch.setattr(ciprivileges, "run",
                         lambda argv, **kw: R(rc=1 if argv[:3] == ["sudo", "-nu", "runner"] else 0,
                                              out="", err=""))

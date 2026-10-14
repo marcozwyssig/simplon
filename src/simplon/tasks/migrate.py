@@ -38,10 +38,10 @@ from typing import NamedTuple
 
 import yaml
 
-from simplon import log
-from simplon.artifactsection import READERS, REFINES
-from simplon.orchestrator.model.treeform import DOCS_SITE_KEYS
-from simplon.yamlkeys import UniqueKeyLoader, duplicates
+from simplon.kernel import log
+from simplon.domain.artifactsection import READERS, REFINES
+from simplon.domain.treeform import DOCS_SITE_KEYS
+from simplon.domain.yamlkeys import UniqueKeyLoader, duplicates
 
 #: The phase groups each area holds. A second statement of the catalogue's `ci` / `cd` groups, kept here
 #: because this module reads a manifest the catalogue-backed loader refuses;
@@ -823,9 +823,9 @@ def migrate(manifest: str = "") -> int:
     if manifest:
         path = Path(manifest)
     else:
-        # Imported here, not at the top: `simplon.context` imports the manifest LOADER, and the package
+        # Imported here, not at the top: `simplon.domain.context` imports the manifest LOADER, and the package
         # route (`simplon manifest migrate`) exists for a manifest that loader refuses.
-        from simplon import context
+        from simplon.domain import context
         path = context.current().manifest_path
     try:
         text = path.read_text(encoding="utf-8")

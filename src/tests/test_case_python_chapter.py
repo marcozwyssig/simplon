@@ -17,7 +17,7 @@ WHAT THE CHAPTER PROMISES ITS READER, and therefore what has to be held:
   * THE COMMANDS. Every `./simplon.sh ...` the page types is resolved against the assembled command
     tree. A renamed command leaves a chapter telling people to type something that is gone.
   * THE COORDINATES. Every `namespace:name` is looked up in the catalogue.
-  * THE FIVE OUTCOMES. The gate outcome table is computed from `simplon.verdict.Verdict`, including
+  * THE FIVE OUTCOMES. The gate outcome table is computed from `simplon.kernel.verdict.Verdict`, including
     `ran` - which is the assertion si#55 is really about. A page that printed four outcomes, or that
     marked `killed` as evidence about the product, would be the very defect that ticket removed.
   * THE VERSION TRANSCRIPT. `git describe` and the wheel name are shown one under the other; the two
@@ -49,9 +49,9 @@ import subprocess
 import pytest
 import yaml
 
-from simplon import catalogue as catalogue_mod
-from simplon.orchestrator import manifest as manifest_mod
-from simplon.verdict import Verdict
+from simplon.domain import catalogue as catalogue_mod
+from simplon.domain import manifest as manifest_mod
+from simplon.kernel.verdict import Verdict
 
 import sitepages
 from conftest import ROOT

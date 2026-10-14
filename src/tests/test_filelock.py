@@ -30,7 +30,8 @@ from pathlib import Path
 
 import pytest
 
-from simplon import checksum, filelock
+from simplon.adapters import checksum
+from simplon.kernel import filelock
 
 #: An error that is NOT one of the two, to prove the recognition is a table lookup and not "any Windows
 #: error while touching a file". 2 is `ERROR_FILE_NOT_FOUND`.

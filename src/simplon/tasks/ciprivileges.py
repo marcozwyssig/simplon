@@ -25,8 +25,8 @@ import os
 import pwd
 from pathlib import Path
 
-from simplon import log
-from simplon.run import run
+from simplon.kernel import log
+from simplon.kernel.run import run
 
 #: The two files this touches. Module-level so a test can point them somewhere harmless.
 SUDOERS = Path("/etc/sudoers")

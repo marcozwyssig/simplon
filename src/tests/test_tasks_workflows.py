@@ -2,7 +2,7 @@
 
 The GENERATOR is covered by test_workflowgen.py. What is asserted here is the SEAM, and it is the same
 seam test_tasks_tasks.py holds for `tasks:generate`: that the verb reads the product's root, manifest and
-manifest filename out of `simplon.context` rather than knowing a product, and that `--check` reports
+manifest filename out of `simplon.domain.context` rather than knowing a product, and that `--check` reports
 disagreement as a NON-ZERO EXIT so one command serves both a pre-commit hook and a CI step.
 
 THE EXIT CODE IS THE POINT, not the message. si#40 is a ticket about a class of failure that is green:
@@ -15,7 +15,7 @@ import textwrap
 
 import pytest
 
-from simplon import context
+from simplon.domain import context
 from simplon.tasks import workflows as workflows_task
 
 _MANIFEST = """
@@ -178,7 +178,7 @@ def test_check_names_the_command_that_regenerates(product, capsys):
 
 def test_a_workflow_that_was_never_generated_makes_check_red(product):
     """A fresh checkout that has never generated has to be told to. Drift, not an error - the same call
-    `simplon.taskgen.check` makes, and for the same reason: raising here would read as a broken gate."""
+    `simplon.tasks.taskgen.check` makes, and for the same reason: raising here would read as a broken gate."""
     # Arrange / Act
     rc = workflows_task.generate(check=True)
 

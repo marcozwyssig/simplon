@@ -25,7 +25,7 @@ import re
 from conftest import ROOT
 
 import sitepages
-from simplon import bootstrap
+from simplon.cli import bootstrap
 
 PRODUCT = "myctl"
 

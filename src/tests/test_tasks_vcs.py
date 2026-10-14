@@ -14,9 +14,10 @@ from pathlib import Path
 
 import pytest
 
-from simplon import context, githubpackages
+from simplon.domain import context
+from simplon.adapters import githubpackages
 from simplon.tasks import vcs as vcs_cmd
-from simplon.context import ProductContext
+from simplon.domain.context import ProductContext
 
 
 @pytest.fixture(autouse=True)

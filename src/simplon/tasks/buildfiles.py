@@ -32,7 +32,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from simplon import context, log
+from simplon.domain import context
+from simplon.kernel import log
 
 #: The extensions that make a directory a target. `.cs` is here because the same model feeds the .NET
 #: half - one tree read, two renderers - and not because a C++ product ever holds one.
@@ -778,7 +779,7 @@ def _render_solution(targets: list[Target]) -> str:
 #: and `artifacts:`, and not `groups: build:`, which is where a product's command tree hangs.
 #:
 #: THIS COMMENT USED TO SAY THE TWO NAMES NEVER MEET. THEY ALREADY DO (si#172). Measured on 2026-09-11
-#: over every manifest this kernel can reach - its own, the five in `simplon.surface.CONSUMERS`, and
+#: over every manifest this kernel can reach - its own, the five then in `simplon.cli.surface.CONSUMERS`, and
 #: `secure-windows-images` on its `migrate-to-simplon` branch - two live products carry a top-level
 #: `build:` section of their own: cleon's holds `bundle:`, `ant:` and `site:`, and
 #: secure-windows-images' holds `packer:` and `templates:`. Neither holds a `targets:` key. swi's

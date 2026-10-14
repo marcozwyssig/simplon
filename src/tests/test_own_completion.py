@@ -25,8 +25,9 @@ import subprocess
 
 import yaml
 
-from simplon import catalogue as catalogue_mod, completiongen, context
-from simplon.orchestrator import manifest as manifest_mod
+from simplon.domain import catalogue as catalogue_mod, context
+from simplon.tasks import completiongen
+from simplon.domain import manifest as manifest_mod
 
 from conftest import ROOT
 

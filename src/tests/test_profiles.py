@@ -21,7 +21,7 @@ import re
 
 import pytest
 
-from simplon import bootstrap
+from simplon.cli import bootstrap
 from simplon.tasks import profiles, toolchain
 
 

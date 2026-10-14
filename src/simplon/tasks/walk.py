@@ -54,7 +54,7 @@ here.
 
 AND THE REFUSAL OUTLIVES THAT RECORD, since si#206. The transcript is overwritten by the next run in the
 same tree, so a customer's no had a lifetime of one command; it now also becomes a bug ticket on the
-product's tracker, one per scenario per product version, through `simplon.tracker`. Three things about it
+product's tracker, one per scenario per product version, through `simplon.adapters.tracker`. Three things about it
 belong here rather than there, because they are decisions this module takes:
 
   * THE WORDS ARE COLLECTED AFTER THE WALK, not at the moment of the refusal, and that is a collision with
@@ -90,11 +90,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import ClassVar
 
-from simplon import context, log, runhost, steplog, tracker
-from simplon.orchestrator.manifest import CommandSpec, PlanNode
-from simplon.orchestrator.steps import (Emit, Outcome, Pipeline, Step, StepState,
-                                        write_run_transcript)
-from simplon.run import run
+from simplon.domain import context
+from simplon.kernel import log, runhost, steplog
+from simplon.adapters import tracker
+from simplon.domain.manifest import CommandSpec, PlanNode
+from simplon.kernel.steps import Emit, Outcome, Pipeline, Step, StepState, write_run_transcript
+from simplon.kernel.run import run
 from simplon.tasks.acceptance import DEFAULT_SOURCE, Feature, Scenario
 from simplon.tasks.acceptance import Step as GherkinStep
 from simplon.tasks.acceptance import features
@@ -268,7 +269,7 @@ class RunKey:
     """What a walk was carried out against - and therefore what must be unchanged for an interrupted walk
     to be CONTINUED rather than started again.
 
-    THE INVALIDATION RULE IS THE DESIGN, exactly as in `simplon.checksum` (si#177) and for the same
+    THE INVALIDATION RULE IS THE DESIGN, exactly as in `simplon.adapters.checksum` (si#177) and for the same
     reason: being wrong here is SILENT. Twelve steps answered on Monday, the product rebuilt on Tuesday,
     the walk resumed on Wednesday - the record then claims twelve verifications against something that no
     longer exists, and every line of it reads correct. So the rule is four conditions and a refusal:

@@ -7,8 +7,8 @@ import re
 
 import pytest
 
-from simplon import catalogue
-from simplon.orchestrator import manifest
+from simplon.domain import catalogue
+from simplon.domain import manifest
 from simplon.tasks.migrate import migrate_text
 
 _SIMPLON = (pathlib.Path(__file__).resolve().parents[2] / "simplon.yaml").read_text(encoding="utf-8")

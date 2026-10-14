@@ -32,7 +32,7 @@ kinds:
 # `release:tag` - each added by a ticket that had the case in hand, never in advance.)
 #
 # `help:` here is the fallback wording. A product's own `help:` wins where it declares one, and for a
-# non-shared body the CLI summary comes from the body's DOCSTRING anyway (see simplon.taskgen).
+# non-shared body the CLI summary comes from the body's DOCSTRING anyway (see simplon.tasks.taskgen).
 
 # The CI/CD loop, owned by the platform (netctl#1444, netctl#1469). Every *ctl product runs the same
 # build -> test -> release -> deploy -> monitor loop, so declaring it once here beats each product
@@ -241,7 +241,7 @@ tasks:
   # anybody wants appearing in a CLI they did not ask for it in. The other two run inside a job, need no
   # privilege, and are what a generated workflow calls.
   #
-  # WHAT MADE THIS NECESSARY. The kernel has shipped `simplon/diskguard.py` since it was moved out of
+  # WHAT MADE THIS NECESSARY. The kernel has shipped `simplon/adapters/diskguard.py` since it was moved out of
   # netctl, and until si#327 NOTHING CALLED IT - measured over the whole tree, the only references outside
   # the module were its own tests. Meanwhile this repository's CI built an image on every push, filled a
   # runner's 64 GB refquota, and lost a day to `E: You don't have enough free space in
@@ -277,7 +277,7 @@ tasks:
   # `gate` backs EVERY declared suite level: one body, several commands, each pinning its own level with
   # `with: { name: ... }` (netctl#1469 plan 2, replacing the old invocation-name trick of netctl#1406). A
   # product declares one command per level, pins `name` and overrides the help, which is the case the
-  # shared-impl rule in simplon.taskgen exists for. A product that instantiates this WITHOUT a `name`
+  # shared-impl rule in simplon.tasks.taskgen exists for. A product that instantiates this WITHOUT a `name`
   # pin gets a real, undocumented `--name` option and the body falls back to resolving the suite by
   # invocation name (transitional, see `gate`'s own docstring) - `params.name` below only documents the
   # option for that unpinned case; a command that pins it drops the presentation, since the value is off
@@ -300,7 +300,7 @@ tasks:
   # With python3 off PATH and the suite venv already built the gate is GREEN (the venv's interpreter is
   # an absolute path); with the venv gone it ended in a rendered `FileNotFoundError` naming neither the
   # tool nor the way out, having first wiped the venv it might have reused. Both refusals now live in
-  # `simplon.pyvenv`, with the measurement.
+  # `simplon.adapters.pyvenv`, with the measurement.
   test:gate:
     impl: simplon.tasks.testrun:gate
     help: "Run a declared pytest suite against the running lab."
@@ -406,7 +406,7 @@ tasks:
     impl: simplon.tasks.env:environments
     help: "List the named environments and the backend each targets, marking the active one."
     unattended: true
-  # The manifest's SECOND output (si#40). `simplon.orchestrator.manifest` has promised since it was
+  # The manifest's SECOND output (si#40). `simplon.domain.manifest` has promised since it was
   # written that "the same manifest assembles the runtime CLI now and, in Phase 2, the CI workflows";
   # this is that phase, and it is the same shape as `tasks:generate` for the same reason - the files are
   # committed, so the manifest and the file can disagree, and `--check` is what notices.
@@ -612,7 +612,7 @@ tasks:
   # THE DEPLOY FAMILY (si#235). The one group the catalogue contributed nothing to until now, and what
   # these two add is the half none of the 32 product deploy commands does: say WHICH version is going
   # out, prove it exists, and only then hand it on. What they do NOT do is replace a product's rollout -
-  # a server's `deploy` goes through the backend the product registered, which is `simplon.backend`'s
+  # a server's `deploy` goes through the backend the product registered, which is `simplon.adapters.backend`'s
   # extension axis and names no product here.
   #
   # A TASK and not a placed command, for `release:artifact`'s reason: both need a `deploy:` section
@@ -750,7 +750,7 @@ tasks:
 
   # --- tasks: the task machinery, addressable ---------------------------------------------------------
   # `generate` writes the product's committed CLI module; `catalogue` prints this file. Both are kernel
-  # mechanisms: what is product-specific reaches them through simplon.context and a manifest-pinned
+  # mechanisms: what is product-specific reaches them through simplon.domain.context and a manifest-pinned
   # `with: { target: ... }`, never through an import.
   tasks:generate:
     impl: simplon.tasks.tasks:generate

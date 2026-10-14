@@ -5,8 +5,8 @@ import os
 
 import pytest
 
-from simplon import context
-from simplon import tools
+from simplon.domain import context
+from simplon.adapters import tools
 
 
 @pytest.fixture(autouse=True)

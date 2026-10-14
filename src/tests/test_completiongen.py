@@ -1,4 +1,4 @@
-"""Unit tests for simplon.completiongen (si#58): the manifest -> shell completion generator.
+"""Unit tests for simplon.tasks.completiongen (si#58): the manifest -> shell completion generator.
 
 WHAT THIS FILE IS FOR, and it is not "the generator produces some text". The generated file is a SECOND
 description of the command tree, and a second description is worth having only while something holds it
@@ -24,8 +24,9 @@ import pytest
 import typer
 from typer.main import get_command
 
-from simplon import cli, completiongen
-from simplon.orchestrator import manifest as manifest_mod
+from simplon import cli
+from simplon.tasks import completiongen
+from simplon.domain import manifest as manifest_mod
 
 BASH = shutil.which("bash")
 
@@ -375,8 +376,8 @@ def test_the_function_names_are_derived_from_the_product():
 
 def test_a_missing_file_is_drift_rather_than_an_error(tmp_path):
     """A fresh checkout that has never generated has to be TOLD what to run. Raising there would read as
-    a broken gate rather than as the ordinary thing it is - the stance `simplon.workflowgen` and
-    `simplon.taskgen` already take."""
+    a broken gate rather than as the ordinary thing it is - the stance `simplon.tasks.workflowgen` and
+    `simplon.tasks.taskgen` already take."""
     # arrange / act
     drift = completiongen.check(_tree(), tmp_path, product="demo", source="demo.yaml")
 

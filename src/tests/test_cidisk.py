@@ -33,7 +33,7 @@ def _die(msg, *a, **k):
 
 
 def _recorder(calls, rc=0):
-    from simplon.run import Result as R
+    from simplon.kernel.run import Result as R
     return lambda argv, **kw: calls.append(list(argv)) or R(rc=rc, out="", err="")
 
 

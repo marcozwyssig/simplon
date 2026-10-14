@@ -49,8 +49,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from simplon import context, docker, hostpath, log
-from simplon.run import run
+from simplon.domain import context
+from simplon.adapters import docker, hostpath
+from simplon.kernel import log
+from simplon.kernel.run import run
 
 #: The manifest key holding the pinned image tag. Top-level rather than a section of its own: it is one
 #: value, and the manifest already carries the other build-data pins (image names, cache volumes) flat.
@@ -89,7 +91,7 @@ def _version(data: dict) -> str:
     DECLARED, so `doctoolchain_version: latest` came through untouched - while `docs:site` refused
     exactly that in a product's manifest, at length and in writing. Two documentation renders in one
     kernel, one of them arguing for a pin the other did not ask for, is not a rule; it is a rule and an
-    exception. `simplon.docker.pinned_image` is now the one gate, and it is handed the COMPLETE
+    exception. `simplon.adapters.docker.pinned_image` is now the one gate, and it is handed the COMPLETE
     reference, because that is the string docker resolves - a tag is only pinned in the context of the
     repository it tags.
 
@@ -98,7 +100,7 @@ def _version(data: dict) -> str:
     product may no longer write `doctoolchain_version: latest`, and that is the only kind of refusal
     that spends flexibility. The bar is the one #34 cleared, zero violations across the manifests that
     exist - and RE-MEASURED in #51, because the first measurement counted three manifests and one of
-    them belonged to a repository that does not install this kernel at all (`simplon.surface`, which
+    them belonged to a repository that does not install this kernel at all (`simplon.cli.surface`, which
     names it). There are six:
 
       * `netctl.yaml` declares `doctoolchain_version: v3.5.0` and places `docs:render` - passes;
@@ -109,7 +111,7 @@ def _version(data: dict) -> str:
     is what netctl already does: write the version it means and bump it. (Read from the repositories,
     not from memory - the first version of this reasoning checked simplon alone, which is the one
     manifest that cannot reach the gate at all, and the second one checked a repository that is not a
-    consumer. `simplon.surface.CONSUMERS` is the list that says which repositories these are.)
+    consumer. `simplon.cli.surface.CONSUMERS` is the list that says which repositories these are.)
     """
     version = str(data.get(VERSION_KEY, "")).strip()
     if not version:
@@ -149,7 +151,7 @@ def _unusable(root: Path) -> list[Path]:
         for path in (top, *sorted(top.rglob("*"))):
             if not os.access(path, os.W_OK):
                 blocked.append(path)
-    # The ownership half, from `simplon.docker` rather than restated: one question asked in two task
+    # The ownership half, from `simplon.adapters.docker` rather than restated: one question asked in two task
     # bodies is one that drifts in one of them. Order is preserved and duplicates dropped - a path can
     # fail both halves and is one finding either way.
     for path in docker.not_owned(root / rel for rel in WRITTEN_PATHS):

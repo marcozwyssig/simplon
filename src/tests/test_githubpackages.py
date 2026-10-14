@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from simplon import githubpackages, run
+from simplon.adapters import githubpackages
+from simplon.kernel import run
 
 
 class _Result:

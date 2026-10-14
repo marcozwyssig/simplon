@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from simplon import log
+from simplon.kernel import log
 
 
 @dataclass(frozen=True)
@@ -371,7 +371,7 @@ PROFILES: dict[str, Profile] = {
         # have found - it took driving a real `simplon init` product. `mypy .` over a scaffolded pydemo
         # is rc 1 with FIVE errors and every one of them in the kernel's own scaffold:
         # `deploy/provision/orchestrator/.../cli.py: Cannot find implementation or library stub for
-        # module named "simplon"` (and `typer`, and `simplon.environments`). Not one was about the
+        # module named "simplon"` (and `typer`, and `simplon.domain.environments`). Not one was about the
         # product. The orchestrator is HOST-venv Python by construction - its `requirements.txt`
         # installs the kernel into `.venv`, and `test:typecheck-python` is the command that checks it,
         # in the environment where its imports exist. A container that has neither can only produce
@@ -379,7 +379,7 @@ PROFILES: dict[str, Profile] = {
         # says so. Measured with it: `Success: no issues found in 3 source files`, rc 0; with a
         # deliberate type error in the product's own package, rc 1 and one error naming that file.
         #
-        # The path is `simplon.bootstrap.DEFAULT_ORCH_DIR`, declared twice on purpose and held together
+        # The path is `simplon.cli.bootstrap.DEFAULT_ORCH_DIR`, declared twice on purpose and held together
         # by `test_the_python_analyse_excludes_the_directory_the_scaffolder_writes`: an import would
         # give this table behaviour, which is the one thing the module head promises it does not have. A
         # product that moved it with `--orch-dir`, or that states its roots in a `mypy.ini` the way the

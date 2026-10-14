@@ -14,8 +14,8 @@ AAA; the name states the behaviour under test.
 """
 import pytest
 
-from simplon import context
-from simplon.context import ProductContext
+from simplon.domain import context
+from simplon.domain.context import ProductContext
 from simplon.tasks import maven
 
 

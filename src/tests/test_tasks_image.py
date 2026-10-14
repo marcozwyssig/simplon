@@ -22,9 +22,10 @@ import pathlib
 
 import pytest
 
-from simplon import context, docker, githubpackages
-from simplon.context import ProductContext
-from simplon.run import Result
+from simplon.domain import context
+from simplon.adapters import docker, githubpackages
+from simplon.domain.context import ProductContext
+from simplon.kernel.run import Result
 from simplon.tasks import image
 
 #: The real gate, captured before the autouse fixture below neutralises it - the two tests that assert
@@ -186,7 +187,7 @@ def test_each_required_key_is_named_when_it_is_the_one_that_is_missing(missing):
 
 def test_a_registry_is_required_even_for_a_purely_local_build():
     """An unqualified name is what docker resolves against Docker Hub, so a build tagged without a
-    registry and a release pushing it are two different images (simplon.imagenames.require_registry records
+    registry and a release pushing it are two different images (simplon.adapters.imagenames.require_registry records
     that failure in full). The build has to tag what the release will push."""
     # arrange
     body = {"repository": "demo-app", "dockerfile": "Dockerfile", "context": "."}
@@ -1602,7 +1603,7 @@ def test_a_host_whose_platform_is_not_declared_tags_nothing_under_the_plain_refe
 
 
 def test_a_missing_buildx_is_refused_naming_where_it_comes_from(monkeypatch, _no_provenance, _multi, capsys):
-    """The static CLI `simplon.docker` bootstraps carries no plugins, so this is reachable on exactly the
+    """The static CLI `simplon.adapters.docker` bootstraps carries no plugins, so this is reachable on exactly the
     hosts that bootstrap exists for."""
     # arrange
     fake = _fake(monkeypatch, verdict={("docker", "buildx", "version"): 1})

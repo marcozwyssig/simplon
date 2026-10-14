@@ -111,7 +111,7 @@ def test_an_import_inside_a_function_is_an_edge(tmp_path):
 
 def test_the_walk_finds_the_imports_of_the_real_tree():
     # Non-vacuity: a resolver that found nothing would pass every check below.
-    assert ("cli", "context") in edges(SRC)
+    assert ("cli.__init__", "domain.context") in edges(SRC)
 def test_every_module_is_in_one_component_or_excluded():
     files = modules_below(SRC)
     assigned, excluded = set(MODULES), set(EXCLUDED)

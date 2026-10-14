@@ -18,8 +18,8 @@ from typer.main import get_command
 from typer.testing import CliRunner
 
 from simplon import cli
-from simplon.orchestrator import manifest
-from simplon.orchestrator.model import treeform
+from simplon.domain import manifest
+from simplon.domain import treeform
 
 
 def _impls_module():
@@ -427,8 +427,8 @@ def agg_assembled(monkeypatch):
     steps; the steps themselves are instant)."""
     import typer
 
-    from simplon.orchestrator import product
-    from simplon.orchestrator.steps import Outcome, Step, run_headless
+    from simplon.kernel import product
+    from simplon.kernel.steps import Outcome, Step, run_headless
 
     monkeypatch.setattr(product, "dispatch", run_headless)
     built: list[str] = []
@@ -958,7 +958,7 @@ def test_every_group_the_shipped_catalogue_describes_renders_that_description():
     # declares, so all eight sub-apps are actually assembled. This is the assurance that goes red when a
     # description is declared and lands nowhere - it reads the catalogue, not a copy of it, so a group
     # added tomorrow is covered without anybody remembering to add it here.
-    from simplon import catalogue as catalogue_mod
+    from simplon.domain import catalogue as catalogue_mod
 
     cat = catalogue_mod.load()
     text = """
@@ -1037,7 +1037,7 @@ def test_a_group_default_groups_blurb_stays_its_namesake_members_help():
 # --- an annotation the kernel cannot render (si#105) ---------------------------------------------------
 
 def test_an_annotation_the_generator_cannot_write_is_dropped_rather_than_handed_to_typer():
-    """`simplon.taskgen` has always emitted a bare `name=default` for a parameter whose annotation falls
+    """`simplon.tasks.taskgen` has always emitted a bare `name=default` for a parameter whose annotation falls
     outside `signatures._ANNOTATIONS`/`_COMPOSITES`; `assemble` handed Typer the raw one, and Typer
     raises `RuntimeError: Type not yet supported: dict[str, str]` while BUILDING the command. So the same
     body assembled in one mechanism and could not be constructed at all in the other, which is the one

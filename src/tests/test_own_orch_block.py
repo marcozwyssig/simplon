@@ -24,7 +24,7 @@ import subprocess
 
 from conftest import ROOT
 
-from simplon import bootstrap
+from simplon.cli import bootstrap
 
 #: Simplon's own block dir, as a POSIX-relative path -- the value `--orch-dir` was given.
 OWN_ORCH_DIR = "deploy/orchestrator"
@@ -161,7 +161,7 @@ def test_the_kernels_own_cli_reads_its_root_from_the_product_context() -> None:
 
 def test_the_product_adapter_derives_the_root_by_walking_rather_than_counting() -> None:
     # the other half of the same statement, in the file that is supposed to own it: paths.py hands the
-    # kernel a start location and nothing else, and simplon.context.bootstrap does the walking
+    # kernel a start location and nothing else, and simplon.domain.context.bootstrap does the walking
     rel = "deploy/orchestrator/src/python/orchestrator/paths.py"
 
     assert 'context.bootstrap("simplon", Path(__file__).resolve().parent)' in (

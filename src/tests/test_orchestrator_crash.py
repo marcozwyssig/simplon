@@ -7,7 +7,7 @@ worker's exception, so `_on_done` was never reached and the operator watched a r
 counting upwards for ever.
 
 Every test here names a property that was broken and is now held. `crash_text` and `Step.crash` are the
-vocabulary: FAILED is the step's fate (`simplon.verdict` argues why a sixth state and a reserved rc are
+vocabulary: FAILED is the step's fate (`simplon.kernel.verdict` argues why a sixth state and a reserved rc are
 both wrong), and the distinction between failing and blowing up lives in what gets WRITTEN.
 """
 from __future__ import annotations
@@ -16,10 +16,19 @@ import asyncio
 
 import pytest
 
-from simplon import context, steplog
-from simplon.context import ProductContext
-from simplon.orchestrator.steps import (CRASH_RC, Outcome, Pipeline, Step, StepState, failure_report,
-                                        run_headless, transcript)
+from simplon.domain import context
+from simplon.kernel import steplog
+from simplon.domain.context import ProductContext
+from simplon.kernel.steps import (
+    CRASH_RC,
+    Outcome,
+    Pipeline,
+    Step,
+    StepState,
+    failure_report,
+    run_headless,
+    transcript,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -184,7 +193,7 @@ def test_the_record_is_written_even_when_the_walk_itself_raises(tmp_path, monkey
     `KeyboardInterrupt`, a `SystemExit` and a fault in a runner's own hook. Each of those is a run whose
     record is worth more than most, and each lost all three artefacts before the `finally`."""
     # Arrange: a hook that raises, which is the fault no step-level catch can reach
-    from simplon.orchestrator import steps as steps_module
+    from simplon.kernel import steps as steps_module
 
     def exploding_walk(pipeline, hooks=None):
         pipeline.steps[0].run()
@@ -204,7 +213,7 @@ def test_a_broken_tree_print_does_not_replace_the_exception_that_was_already_tra
     would swap the operator's Ctrl-C for a `UnicodeEncodeError` from the code reporting it - si#161
     measured that very fault on that very loop."""
     # Arrange
-    from simplon.orchestrator import steps as steps_module
+    from simplon.kernel import steps as steps_module
 
     def exploding_tree(*args, **kwargs):
         raise UnicodeEncodeError("charmap", "✗", 0, 1, "cannot encode")
@@ -227,7 +236,7 @@ def test_the_tui_reaches_its_done_handler_when_a_body_blows_up():
     Nothing on the screen said the run had ended."""
     # Arrange
     pytest.importorskip("textual")
-    from simplon.orchestrator.tui import _StepApp
+    from simplon.ui.tui import _StepApp
     pipeline = Pipeline("probe", [_ok_step("probe.first"), _crashing_step(), _ok_step("probe.last")])
 
     async def drive():

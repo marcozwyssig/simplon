@@ -9,7 +9,7 @@ import pathlib
 
 import pytest
 
-from simplon import interact
+from simplon.adapters import interact
 
 #: The two spellings netctl's own naming produces, and the only reason both appear here is that one is a
 #: PREFIX of the other - which is what makes "did this name come from my instance" a real question.

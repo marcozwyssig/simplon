@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from conftest import Recorder  # noqa: F401  (re-exported for readers of this module)
-from simplon import portainer
+from simplon.adapters import portainer
 
 STACK = "someproduct-prod"
 

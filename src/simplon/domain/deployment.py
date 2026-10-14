@@ -1,0 +1,231 @@
+"""WHICH VERSION A DEPLOYMENT IS DEPLOYING (si#235).
+
+Thirty-two deploy commands across the five products this kernel can reach, and not one of them could say.
+What went up was decided by `IMAGE_VERSION` if it happened to be exported and by whatever the product's
+build file said otherwise - an environment variable no manifest mentions and no command documents. That
+is the shape si#223 decided against three days earlier: a side effect standing in for a statement.
+
+THREE VALUES, THREE MEANINGS:
+
+    1.4.0     this exact published version   a lookup, verified before anything runs
+    latest    the newest published version   a lookup, verified by existing
+    local     the current code base          a BUILD, and no registry is touched at all
+
+That separation is the design and not a convenience. ONE value that silently meant two of them - `latest`
+falling back to a build when nothing is published - would be exactly the defect this repository keeps
+finding, an outcome that cannot tell "nothing to do" from "failed". CLAUDE.md's own resolution for that
+class is to widen the range until each meaning has its own value, which is what these three are.
+
+AN EMPTY SELECTOR IS REFUSED RATHER THAN DEFAULTED, for the same reason. "Whatever is newest" is a choice
+somebody makes; a deployment that made it silently would be the side effect this module removes, wearing
+a different hat.
+
+THE SECTION POINTS, IT DOES NOT RESTATE. `artifacts:` already carries the registry and the repository -
+four of the seven reachable manifests declared `images:`, which si#344 B2 folded into it as entries of
+`kind: image`, and cleon declares `artifacts:` - so a `deploy:` section carrying a registry of its own would
+be a second source for one fact, which is what this repository removes everywhere else. It names an entry in a section that already exists:
+
+    deploy:
+      source: { artifacts: app }
+
+AND THE ENTRY MAY NOT CARRY WHAT IS NEEDED, measured rather than assumed. Across those manifests the
+entries are not one shape: `registry` and `repository` are in three, biz-cockpit's images carry both and
+`name` besides, and netctl's are bare strings rather than mappings. Each shape that lacks what is needed
+(a bare string, an entry with no registry or no repository) is refused by name here, with the keys the
+entry does have in the message - because the reader's next
+question is "what do I add", and a KeyError two frames down answers neither.
+
+WHY THE LOOKUP IS NOT PER ENVIRONMENT. `dev|test|uat|prod` choose where a deployment GOES, not where the
+artefact comes from: one source, many targets. Build once, deploy often - and a promotion is only
+provable at all if the number that went to test is the number that goes to prod.
+"""
+from __future__ import annotations
+
+from typing import Callable, NamedTuple
+
+from simplon.domain import context
+
+#: The manifest section this module reads.
+SECTION = "deploy"
+
+#: The section a `source:` points into. One since si#344 B2 folded `images:` into it: an image is an
+#: `artifacts:` entry of `kind: image`, and any entry with a registry can be what a deployment looks up.
+SOURCE_SECTION = "artifacts"
+
+#: The newest published version.
+LATEST = "latest"
+
+#: The current code base, built now.
+LOCAL = "local"
+
+#: WHAT A DEPLOYMENT IS, and it is one axis rather than a taxonomy: a CLIENT application is installed
+#: into a directory on the machine in front of you; a SERVER application is brought up on a target
+#: through the product's backend. Every product falls on one side, and si#235 asks that the two read the
+#: same everywhere rather than each product inventing its own verb.
+#:
+#: THE SCOPE BOUNDARY, stated because it is the half that is easy to assume. `client` means installing a
+#: version HERE. Distributing one to a FLEET of machines - an SCCM, an MDM, a software deployment server
+#: - is out of Simplon's scope and is not what this declares. A product that needs that drives its own
+#: tool; what the kernel offers is the same version vocabulary in front of it.
+#:
+#: WHY THIS IS A DECLARATION AND si#223's `kind:` WAS NOT. That ticket refused to let a manifest declare
+#: what a body already decides - `publish(..., check=False)` reports or acts on a pin, so a `kind:`
+#: beside it could only drift. Client-or-server is not decided anywhere else: it is a fixed property of
+#: what the product IS, it does not change per invocation, and nothing in the code states it today. A
+#: declaration is the only place it can live.
+CLIENT = "client"
+SERVER = "server"
+KINDS = (CLIENT, SERVER)
+
+
+class Source(NamedTuple):
+    """Where a deployment's artefacts come from, read off the section the `deploy:` section points at.
+
+    `application` is the client-or-server axis; `into` is the directory a CLIENT lands in and is empty
+    for a server, whose target is its backend's business rather than a path on this machine.
+    """
+
+    #: the section the entry stands in - always SOURCE_SECTION; named `section` because "kind" is an
+    #: artifact's kind (si#344 B2) and, in this module, client-or-server
+    section: str
+    name: str
+    registry: str
+    repository: str
+    application: str = SERVER
+    into: str = ""
+
+    @property
+    def reference(self) -> str:
+        """`registry/repository`, the half of an image reference that has no tag on it yet."""
+        return f"{self.registry.rstrip('/')}/{self.repository.strip('/')}"
+
+
+class Version(NamedTuple):
+    """What a deployment resolved to.
+
+    `selector` is kept verbatim beside the answer on purpose: a run that says "1.4.0" and a run that says
+    "latest, which is 1.4.0 today" are the same deployment and a different statement, and the record has
+    to be able to tell them apart a month later.
+
+    `builds` is the one bit that decides whether anything is built, and it is a separate field rather
+    than `tag == ""` so that no caller has to know that an empty tag means a build.
+    """
+
+    selector: str
+    tag: str
+    builds: bool
+
+
+def _entry(document: dict, name: str, where: str) -> dict:
+    section = document.get(SOURCE_SECTION)
+    if not isinstance(section, dict):
+        raise ValueError(
+            f"{where}'s `{SECTION}: source:` names `{SOURCE_SECTION}:`, which this manifest does not declare "
+            f"as a section")
+    if name not in section:
+        raise ValueError(
+            f"{where}'s `{SECTION}: source:` names '{name}' in `{SOURCE_SECTION}:`, which carries: "
+            f"{', '.join(sorted(section)) or '(nothing)'}")
+    entry = section[name]
+    if not isinstance(entry, dict):
+        raise ValueError(
+            f"{where}'s `{SOURCE_SECTION}: {name}:` is not a mapping ({entry!r}), so it carries no registry to "
+            f"deploy from. A deployable entry needs `registry:` and `repository:`")
+    return entry
+
+
+def declared() -> Source:
+    """The `deploy:` section's source, resolved against the section it points at.
+
+    Raises rather than returning None with a log line, which differs from `tracker.declared` on purpose:
+    a tracker problem must never cost a walk the answers a person already gave, while a deployment that
+    cannot say where its artefact comes from has nothing to lose by stopping - and everything to lose by
+    going on.
+
+    THE DOCUMENT IS HANDED ON RATHER THAN READ AND RULED ON HERE, which is what keeps this module inside
+    the refusal census rather than in its `READS_INLINE` exemption list. `tracker` and
+    `tasks.releasenotes` are named there because they answer with a `log.error` and a None, so the walk
+    would collect nothing from them even if it could follow them. These refusals RAISE, so they are
+    collectable - and a refusal that can be counted and is not is exactly the quiet growth si#53 derived
+    the population to prevent.
+    """
+    ctx = context.current()
+    return source_of(ctx.manifest_data(), ctx.manifest_path.name)
+
+
+def source_of(document: dict, where: str) -> Source:
+    """The `deploy: source:` of an already-read manifest DOCUMENT, or a refusal naming what is wrong."""
+    section = document.get(SECTION)
+    if not isinstance(section, dict):
+        raise ValueError(
+            f"{where} declares no `{SECTION}:` section, so a deployment cannot say which version it is "
+            f"deploying. It needs `source:` naming an entry of an existing section, for example "
+            f"`{SECTION}: {{ source: {{ artifacts: app }} }}`")
+    source = section.get("source")
+    if not isinstance(source, dict) or not source:
+        raise ValueError(
+            f"{where}'s `{SECTION}:` section declares no `source:`, so there is nowhere to look a "
+            f"version up. It names one entry of an existing section: "
+            f"`source: {{ {SOURCE_SECTION}: <name> }}`")
+    if list(source) != [SOURCE_SECTION]:
+        raise ValueError(
+            f"{where}'s `{SECTION}: source:` names {', '.join(sorted(str(k) for k in source))}; it takes "
+            f"exactly one key, `{SOURCE_SECTION}: <name>`")
+    name = str(source[SOURCE_SECTION] or "").strip()
+    if not name:
+        raise ValueError(f"{where}'s `{SECTION}: source: {SOURCE_SECTION}:` names no entry")
+    entry = _entry(document, name, where)
+    registry = str(entry.get("registry", "") or "").strip()
+    repository = str(entry.get("repository", "") or "").strip()
+    if not registry or not repository:
+        raise ValueError(
+            f"{where}'s `{SOURCE_SECTION}: {name}:` carries no registry to deploy from: a deployable entry needs "
+            f"`registry:` and `repository:`, and this one has {', '.join(sorted(entry)) or 'no keys'}")
+    application = str(section.get("kind", "") or "").strip()
+    if application not in KINDS:
+        raise ValueError(
+            f"{where}'s `{SECTION}:` section declares `kind: {application or '(nothing)'}`; it takes "
+            f"{' or '.join(KINDS)}. A {CLIENT} is installed into a directory on this machine, a "
+            f"{SERVER} is brought up on a target through the product's backend")
+    into = str(section.get("into", "") or "").strip()
+    if application == CLIENT and not into:
+        raise ValueError(
+            f"{where} declares `{SECTION}: kind: {CLIENT}` but no `into:`, so there is nowhere to "
+            f"install it. A client application names the directory a version lands in")
+    if application == SERVER and into:
+        raise ValueError(
+            f"{where} declares `{SECTION}: kind: {SERVER}` and an `into:`, which would do nothing where "
+            f"it is written: a server's target is its backend's business, not a path on this machine")
+    return Source(section=SOURCE_SECTION, name=name, registry=registry, repository=repository,
+                  application=application, into=into)
+
+
+def resolve(selector: str, source: Source, *, newest: Callable[[Source], str],
+            serves: Callable[[Source, str], bool]) -> Version:
+    """`selector` as a concrete version, refusing one the registry does not serve.
+
+    `local` returns FIRST, before any registry is touched. That ordering is load-bearing rather than an
+    optimisation: the whole point of deploying the current code base is that it does not depend on
+    anything having been published, so a registry that is unreachable, unauthenticated or empty must not
+    be able to fail it.
+
+    THE REGISTRY IS HANDED IN (si#393). `newest` names the newest published tag, and `serves` says whether
+    the registry really serves a tag. Asking either one is I/O through an adapter (`githubpackages`, oras),
+    and this module is the domain, which imports nothing above itself. The task that deploys,
+    `tasks.deploy`, passes the two in.
+    """
+    selector = (selector or "").strip()
+    if not selector:
+        raise ValueError(
+            f"which version? A deployment names one: a published version like `1.4.0`, `{LATEST}` for "
+            f"the newest published one, or `{LOCAL}` to build the current code base and deploy that")
+    if selector == LOCAL:
+        return Version(selector=LOCAL, tag="", builds=True)
+    if selector == LATEST:
+        return Version(selector=LATEST, tag=newest(source), builds=False)
+    if not serves(source, selector):
+        raise ValueError(
+            f"{source.reference} does not serve '{selector}', so nothing was deployed. Published "
+            f"versions are what `{LATEST}` resolves against; `{LOCAL}` deploys the current code base "
+            f"without needing one")
+    return Version(selector=selector, tag=selector, builds=False)

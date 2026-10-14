@@ -16,7 +16,8 @@ import ssl
 
 import pytest
 
-from simplon import backend, carrierspec, deployment, environments, portainer
+from simplon.adapters import backend, portainer
+from simplon.domain import carrierspec, deployment, environments
 from simplon.tasks import deploy as deploy_task
 
 from conftest import Recorder

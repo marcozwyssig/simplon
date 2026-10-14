@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from simplon import bootstrap
+from simplon.cli import bootstrap
 from simplon.tasks import docs as docs_task
 from simplon.tasks import profiles as profiles_task
 from simplon.tasks import site as site_task

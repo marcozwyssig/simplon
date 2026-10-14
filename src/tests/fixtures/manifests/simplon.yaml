@@ -484,7 +484,7 @@ tracker:
     transcript under `build/logs/`) is where the rest of that sitting is.
 
 # The workflow declarations (si#40). "One source, two outputs" has stood in
-# src/simplon/orchestrator/manifest.py since it was written: the same manifest assembles the runtime CLI,
+# src/simplon/domain/manifest.py since it was written: the same manifest assembles the runtime CLI,
 # and - this is that second output - the CI workflows.
 #
 # WHAT IS HERE AND WHAT IS NOT. The runner image, the trigger, the interpreter version and the
@@ -534,7 +534,7 @@ workflows:
           caring, which no other product has to inherit.
         # THE MACHINE, NAMED BY ITS KIND (si#267). Everything that follows from "this is a self-hosted
         # Debian runner" - no `actions/setup-python`, docker through the bootstrap - is the kernel's
-        # table now, in `simplon.runners`, learned once for everybody instead of a second time here.
+        # table now, in `simplon.domain.runners`, learned once for everybody instead of a second time here.
         # What stays this product's is the LABEL: `ghr-8` names one machine, and
         # `[self-hosted, Linux, X64]` would describe any self-hosted Linux machine this account ever
         # registers, so the day a second one joins the jobs would be shared out with nothing saying so.

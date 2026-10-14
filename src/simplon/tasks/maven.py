@@ -41,8 +41,10 @@ import urllib.request
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from simplon import artifactsection, artifactschema, context, docker, githubpackages, hostpath, log, outputs
-from simplon.run import stream
+from simplon.domain import artifactsection, artifactschema, context, outputs
+from simplon.adapters import docker, githubpackages, hostpath
+from simplon.kernel import log
+from simplon.kernel.run import stream
 # The CREDENTIAL helper is imported and not copied, deliberately, and it is the one thing here that is.
 # `_env_file` writes a 0600 file and removes it in a `finally`; two copies of that is how one of them loses
 # the `finally` on the day somebody edits the other. The SECTION READER below is copied instead - see its
@@ -257,7 +259,7 @@ def docker_argv(image: str, root: Path, env_file: Path, argv: list[str]) -> list
 def _status(url: str, token: str) -> int:
     """The HTTP status of a GET against `url`, or 0 when the request could not be made at all.
 
-    NOT `simplon.fetch`, and that is a decision rather than a missed reuse: `fetch` downloads a file with
+    NOT `simplon.adapters.fetch`, and that is a decision rather than a missed reuse: `fetch` downloads a file with
     a progress bar and a resume, and this asks a yes/no question about one object. Widening `fetch` to
     answer it would put a credential into a function whose whole shape is about bytes on disk.
 

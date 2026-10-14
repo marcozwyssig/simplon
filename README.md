@@ -9,7 +9,7 @@ A component declares its commands in one manifest. Simplon assembles the CLI
 from it, runs the steps, and knows nothing about the component itself. It grew
 up inside netctl and is now installed by several unrelated products -- an
 example of who uses it, not a limit on who can. Who those are is measured and
-written down in `simplon.surface`.
+written down in `simplon.cli.surface`.
 
 ## Using it
 
@@ -117,7 +117,7 @@ value is invented for this. The distinction lives in what gets **written**:
 * `environment.properties` in the run's allure results -- the same verdict
   inside the archive, where somebody handed only the HTML report still sees it.
 
-`simplon.verdict` holds the five outcomes (`passed`, `failed`, `setup-failed`,
+`simplon.kernel.verdict` holds the five outcomes (`passed`, `failed`, `setup-failed`,
 `not-run`, `killed`) and the reasoning; `simplon.tasks.testrun.assess_gate`
 produces one per gate for a caller that wants it in hand rather than as an rc.
 

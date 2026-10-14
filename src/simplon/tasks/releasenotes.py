@@ -52,8 +52,9 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from simplon import context, log
-from simplon.run import run
+from simplon.domain import context
+from simplon.kernel import log
+from simplon.kernel.run import run
 
 #: The manifest section this task reads. Three values, and a product that declares none of them does not
 #: place the command - which is the right outcome, and why this coordinate is offered and not placed.

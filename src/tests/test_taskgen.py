@@ -1,4 +1,4 @@
-"""Unit tests for the CLI generator (simplon.taskgen, netctl#1434, retargeted to Typer in #1437):
+"""Unit tests for the CLI generator (simplon.tasks.taskgen, netctl#1434, retargeted to Typer in #1437):
 signature introspection, `with:` binding, determinism, the drift gate, and the negative cases. Exercised
 against REAL importable bodies (simplon.test_impls), because introspecting a mock would verify the mock.
 
@@ -14,9 +14,9 @@ import typer
 from click.testing import CliRunner
 from typer.main import get_command
 
-from simplon import catalogue as catalogue_mod
-from simplon import taskgen
-from simplon.orchestrator import manifest
+from simplon.domain import catalogue as catalogue_mod
+from simplon.tasks import taskgen
+from simplon.domain import manifest
 
 _MANIFEST = """
 tasks:

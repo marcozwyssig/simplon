@@ -37,7 +37,8 @@ offers both. Today's tag list makes it harmless and the flag makes it structural
 """
 from __future__ import annotations
 
-from simplon import context, log
+from simplon.domain import context
+from simplon.kernel import log
 from simplon.tasks import gitops
 
 
@@ -176,7 +177,7 @@ def tag(tag: str) -> int:
         # WHY IT FAILED, asked of the remote rather than read out of git's prose. A taken number and a
         # dead network are different situations with different ways out, and one message covering both
         # would tell a reader nothing - but the first draft of this decided it with
-        # `"already exists" in git's stderr`, which is English, and nothing in `simplon.run` pins a
+        # `"already exists" in git's stderr`, which is English, and nothing in `simplon.kernel.run` pins a
         # locale. On a translated git that string never matches and every collision would have been
         # reported as an ordinary failure with "retry the push" underneath it, advice that can only
         # fail again.

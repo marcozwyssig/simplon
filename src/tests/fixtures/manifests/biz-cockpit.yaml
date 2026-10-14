@@ -1,5 +1,5 @@
 # biz-cockpit delivery manifest - the single declarative source the delivery kernel
-# (simplon, simplon.orchestrator.manifest) assembles biz-cockpit's CLI from. It replaced the
+# (simplon, simplon.domain.manifest) assembles biz-cockpit's CLI from. It replaced the
 # root Makefile as the build/delivery description (issue #88, ADR 0015).
 #
 # Sections:
@@ -30,7 +30,7 @@ images:
     context: src/backend
     dockerfile: pkg/Dockerfile
     # Die zwei Koordinaten, an denen eine AUSLIEFERUNG nachschlägt, ob es die genannte Version
-    # überhaupt gibt (`deploy:` weiter unten zeigt hierher; simplon.deployment liest sie). Sie
+    # überhaupt gibt (`deploy:` weiter unten zeigt hierher; simplon.domain.deployment liest sie). Sie
     # bauen und schieben nichts: `build` und `publish` bilden die Referenz weiterhin aus `name:`
     # (Regel 6) und `IMAGE_REGISTRY` (Regel 8), damit ein lokaler Bau unqualifiziert bleibt.
     # Zusammen ergeben sie genau das, was publish.yml als IMAGE_REGISTRY setzt —

@@ -17,10 +17,10 @@ import time
 
 import pytest
 
-from simplon import context, log, steplog
-from simplon.context import ProductContext
-from simplon.orchestrator.steps import (CRASH_RC, Pipeline, StepState, capturing,
-                                        run_headless)
+from simplon.domain import context
+from simplon.kernel import log, steplog
+from simplon.domain.context import ProductContext
+from simplon.kernel.steps import CRASH_RC, Pipeline, StepState, capturing, run_headless
 
 
 @pytest.fixture(autouse=True)
@@ -377,7 +377,7 @@ def test_a_line_written_in_pieces_arrives_as_one_line():
 
 
 def test_a_carriage_return_ends_a_segment_the_way_it_does_for_a_subprocess():
-    """The same `simplon.run.LINE_BREAK` both readers use: a bare `\\r` is a repaint, and what came before
+    """The same `simplon.kernel.run.LINE_BREAK` both readers use: a bare `\\r` is a repaint, and what came before
     it is finished text a reader can see."""
     # Arrange
     step = capturing("probe", lambda: sys.stdout.write("50%\r100%\r"), command="probe.bar")
@@ -404,7 +404,7 @@ def test_a_rich_console_built_before_the_step_still_writes_into_it():
 
 
 def test_a_captured_thread_is_told_it_is_not_a_terminal():
-    """Why the line above is plain: `rich.Console` and `simplon.fetch` both ask, and a writer that
+    """Why the line above is plain: `rich.Console` and `simplon.adapters.fetch` both ask, and a writer that
     claimed to be a terminal would put ANSI and cursor moves into a step log and a run transcript.
 
     THE TERMINAL HAS TO BE REAL FOR THIS TO BE A CHECK. Written against pytest's own captured stdout the

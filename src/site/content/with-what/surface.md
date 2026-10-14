@@ -11,28 +11,28 @@ The first one this site already describes at length: the **task catalogue**. A p
 `<namespace>:<name>` in its manifest and never names a Python module, which is what lets a task body
 move inside the kernel without breaking anybody.
 
-The second is ordinary Python. A product's own task bodies `import simplon.log`, `simplon.run`,
-`simplon.host` and call them directly — that is not a workaround, it is the point of a kernel. But that
-surface had no edge. Every module sat at the top level of the package side by side: the ones a product
+The second is ordinary Python. A product's own task bodies `import simplon.kernel.log`, `simplon.kernel.run`,
+`simplon.adapters.host` and call them directly — that is not a workaround, it is the point of a kernel. But that
+surface had no edge. Every module sat at the top level of the package side by side (since si#399 they sit
+in one package per component - `kernel`, `domain`, `adapters`, `tasks`, `ui`, `cli`): the ones a product
 may rely on, the ones the kernel merely shares between its own task bodies, and the ones that are pure
 internal machinery. If you were extending the kernel, the only way to find out what you were allowed to
 import was to read every consumer and guess.
 
 ## The rule
 
-**A module that only the kernel's own task bodies import is not a library.** It does not belong beside
-`cli.py` and `context.py` where the kernel lives; it belongs under `simplon/tasks/`, with the bodies
-that use it.
+**A module that only the kernel's own task bodies import is not a library.** It does not belong in
+the kernel's other packages; it belongs under `simplon/tasks/`, with the bodies that use it.
 
 ```
-simplon/log.py            library — import it
-simplon/run.py            library — import it
-simplon/catalogue.py      machinery — may change without notice
-simplon/tasks/vcs.py      a task body — reach it by coordinate, `vcs:commit`
-simplon/tasks/gitops.py   that body's innards — no promise at all
+simplon/kernel/log.py         library — import it
+simplon/kernel/run.py         library — import it
+simplon/domain/catalogue.py   machinery — may change without notice
+simplon/tasks/vcs.py          a task body — reach it by coordinate, `vcs:commit`
+simplon/tasks/gitops.py       that body's innards — no promise at all
 ```
 
-### One of them is worth naming: `simplon.fetch`
+### One of them is worth naming: `simplon.adapters.fetch`
 
 si#142 added it, and why it is public is the rule in miniature. The kernel downloaded a file in three
 places, and all three were a bare `urllib.request.urlretrieve`: no progress, no timeout, no temporary
@@ -79,7 +79,7 @@ channel rejects at 500 MB decimal, and whose own 1024-based helper spelled that 
 under a cap it was in fact sitting on. That cost it a publish. Below 1000 the two produce the same
 string, because there is no ambiguity there to resolve.
 
-### And `simplon.checksum`, which is the same argument at a different seam
+### And `simplon.adapters.checksum`, which is the same argument at a different seam
 
 si#177 added it for the same reason si#142 added `fetch`: the kernel had no way to hash a file, so the
 first product that pins media by hash wrote its own - and the interesting half is not the hashing, it is
@@ -109,7 +109,7 @@ not fully check.
 On Windows the read can meet a file another process is holding, which is observed rather than
 hypothetical: a synchronisation client or an on-access virus scanner takes byte-range locks while it
 uploads or scans, and a 5 GB medium is held for minutes. si#193 gives that condition a name rather than a
-retry. `simplon.filelock` recognises the two Windows error numbers that mean it and raises
+retry. `simplon.kernel.filelock` recognises the two Windows error numbers that mean it and raises
 `filelock.FileLockedError`, an `OSError` subclass whose message says which process class is likely
 holding the file, what to exclude, and that no retry is coming. `fetch.download` takes the same position
 in the spelling it already promised, appending the sentence to its `DownloadError`. **There is no retry
@@ -161,10 +161,10 @@ that gets renamed, because it is the half a product types.
 In the package, not on this page:
 
 ```python
-from simplon import surface
+from simplon.cli import surface
 
-surface.LIBRARY     # top-level modules you may import
-surface.PACKAGES    # the subpackages beside them: `orchestrator`, `tasks`
+surface.LIBRARY     # modules you may import, by path: `kernel.run`, `adapters.host`
+surface.PACKAGES    # the package promised whole: `tasks`
 surface.INTERNAL    # the kernel's machinery; it may change without notice
 surface.MOVED       # old path -> new home
 ```
@@ -172,18 +172,18 @@ surface.MOVED       # old path -> new home
 That is deliberate. Everywhere it can, this repository derives a fact rather than restating it — the
 command reference is read off the assembled app, the version comes off the tag. This one **cannot** be
 derived, and it is worth saying why, because it looks like it can: you can measure who imports what
-today, but a promise is about tomorrow. `simplon.verdict` has no consumer in any repository right now
+today, but a promise is about tomorrow. `simplon.kernel.verdict` has no consumer in any repository right now
 and is a library all the same — it was written as one, it names no product, and the next product to read
-a suite's outcome is meant to find it. `simplon.catalogue` has no consumer either and is machinery. The
+a suite's outcome is meant to find it. `simplon.domain.catalogue` has no consumer either and is machinery. The
 import graph cannot tell those two apart, because the difference is an intention.
 
-The example used to be `simplon.compose`, and it has since acquired a consumer — which is the argument
+The example used to be `simplon.adapters.compose`, and it has since acquired a consumer — which is the argument
 rather than a dent in it. A module classified by who imports it today would have changed sides that day
 without anybody deciding anything.
 
-So the intention is written down once, in `simplon/surface.py`, and `tests/test_surface.py` holds it to
-the tree: every top-level name — module **and** subpackage — has to appear in exactly one of the sets,
-so nothing can be added beside `cli.py` without somebody deciding which surface it is on.
+So the intention is written down once, in `simplon/cli/surface.py`, and `tests/test_surface.py` holds it to
+the tree: every module — and the `tasks` package — has to appear in exactly one of the sets, so nothing
+can be added to the kernel without somebody deciding which surface it is on.
 
 That test, and the one forbidding a library module named after a task body, bind the **kernel**, not
 you. A future kernel author may no longer place a module wherever they like or reuse a body's name;
@@ -191,10 +191,12 @@ no product manifest, command or import is affected either way.
 
 ### The machinery, by name
 
-Short enough to state, and the half you most need, because everything else at the top level is yours:
+Short enough to state, and the half you most need, because everything else is yours:
 
-`artifactschema` · `bootstrap` · `catalogue` · `clitaxonomy` · `diskguard` · `manifestmodel` · `oras` · `provenance` ·
-`runhost` · `runners` · `signatures` · `steplog` · `test_impls` · `tools` · `yamlkeys`
+`adapters.diskguard` · `adapters.oras` · `adapters.tools` · `cli.bootstrap` ·
+`domain.artifactschema` · `domain.catalogue` · `domain.clitaxonomy` · `domain.manifestmodel` ·
+`domain.runners` · `domain.signatures` · `domain.yamlkeys` · `kernel.moved` · `kernel.provenance` ·
+`kernel.runhost` · `kernel.steplog` · `test_impls`
 
 `runners` needs a word too, because `workflowgen` beside it is a library module and this is not. It is a
 **table** of facts about kinds of CI machine — what a self-hosted Debian runner provides, why
@@ -203,39 +205,113 @@ manifest, never by importing the table. That is the point of carrying it here: t
 machine once, for everybody, and stays free to add a kind or correct a measured field without that being
 a promise it broke.
 
-`bootstrap` needs a word. It carries the `simplon` console script, so `simplon.bootstrap:main` **is** a
+`bootstrap` needs a word. It carries the `simplon` console script, so `simplon.cli.bootstrap:main` **is** a
 promised entry point — what is not promised is importing the module for its other functions.
 
 ## When something moves
 
-A move is a break in the public surface: a product that writes `from simplon import allure` falls over.
-So a moved module does not simply go. It leaves a **tombstone** at the old path that still imports and
-still serves every name — and says so on use:
+A move is a break in the public surface: a product that writes `from simplon import log` falls over. So a
+moved module does not simply go. Its old path keeps importing and says so when it is imported:
 
 ```
-FutureWarning: simplon.images has moved to simplon.imagenames; import it from there.
-The old path still works and is removed at the next minor release.
+FutureWarning: simplon.log has moved to simplon.kernel.log; import it from there.
+The old path still works and is removed in 0.33.0.
 ```
 
 A `FutureWarning` rather than the customary `DeprecationWarning`, and that is measured rather than
 preferred. Python's default filters *ignore* a `DeprecationWarning` unless the frame that triggered it
-is `__main__` — and the frame that triggers this one is a product's own task body, which never is. The
-notice would have been shown to nobody. Point the tombstone at `DeprecationWarning` and the kernel's own
-test goes red with an empty stderr, which is exactly the silent disappearance the tombstone exists to
-prevent.
+is `__main__` — and the frame that triggers this one is a product's own module, which never is. The
+notice would have been shown to nobody.
 
-A star-import works too, and that took a fix rather than falling out for free: `from simplon.images
-import *` asks a module for `__all__`, and a forwarding module that refuses the question binds its own
-three private names instead — silently, with no warning at all. The tombstones answer `__all__` with the
-target's own star-import surface, so the names and the notice both arrive.
+**The old path is the very same module, not a stand-in.** The first move (0.4.x) left stub modules that
+forwarded attribute lookups. si#399 measured why that is not good enough: products patch the kernel by
+string — `patch("simplon.orchestrator.steps.run_stream")`, thirteen such lines — and a patch on a stub
+lands on the stub. The real function keeps running, and the product's test stays green while testing
+nothing. Since si#399 an alias in `simplon.kernel.moved` answers an old path with the module that lives at
+the new one, so a patch through either name reaches the code that runs, and a star-import gets the
+module's real names.
 
-The tombstones come out at the next **minor** release. Until then a product gets a working run with a
-message in it rather than a stack trace, and knows where to point the line.
+That deadline is tracked rather than remembered. `simplon.cli.surface` carries `MOVED` (what is promised),
+`MOVED_CONSUMERS` (every line in every repository that still imports an old path — measured, down to the
+file and the line number) and `MOVED_DUE_AFTER` (the release the promise names), with a test that turns
+red once a version past it is built.
 
-That deadline is tracked rather than remembered, and it has now been collected once. `simplon.surface`
-carries `MOVED` (what is promised), `MOVED_CONSUMERS` (every line in every repository that still imports
-an old path — measured, down to the file and the line number) and `MOVED_DUE_AFTER` (the release the
-promise names), with a test that turns red once a version past it is built.
+**The second period: si#399, the package per component.** Every module moved into the package of its
+component, and `simplon.orchestrator` was dissolved. The move ships in 0.31; the old paths work through
+0.32 and are gone in 0.33.0 — two minors, because about two hundred lines in seven products name one. Each
+product gets an issue listing its lines once the release is out.
+
+| old path | new home |
+|---|---|
+| `simplon.artifactschema` | `simplon.domain.artifactschema` |
+| `simplon.artifactsection` | `simplon.domain.artifactsection` |
+| `simplon.awake` | `simplon.kernel.awake` |
+| `simplon.backend` | `simplon.adapters.backend` |
+| `simplon.bootstrap` | `simplon.cli.bootstrap` |
+| `simplon.carrierspec` | `simplon.domain.carrierspec` |
+| `simplon.catalogue` | `simplon.domain.catalogue` |
+| `simplon.checksum` | `simplon.adapters.checksum` |
+| `simplon.clablifecycle` | `simplon.adapters.clablifecycle` |
+| `simplon.clabrender` | `simplon.adapters.clabrender` |
+| `simplon.clitaxonomy` | `simplon.domain.clitaxonomy` |
+| `simplon.completiongen` | `simplon.tasks.completiongen` |
+| `simplon.compose` | `simplon.adapters.compose` |
+| `simplon.context` | `simplon.domain.context` |
+| `simplon.credentials` | `simplon.adapters.credentials` |
+| `simplon.degraded` | `simplon.kernel.degraded` |
+| `simplon.deployment` | `simplon.domain.deployment` |
+| `simplon.devcontainer` | `simplon.adapters.devcontainer` |
+| `simplon.disk` | `simplon.adapters.disk` |
+| `simplon.diskguard` | `simplon.adapters.diskguard` |
+| `simplon.docker` | `simplon.adapters.docker` |
+| `simplon.environments` | `simplon.domain.environments` |
+| `simplon.fetch` | `simplon.adapters.fetch` |
+| `simplon.filelock` | `simplon.kernel.filelock` |
+| `simplon.githubpackages` | `simplon.adapters.githubpackages` |
+| `simplon.healthgate` | `simplon.adapters.healthgate` |
+| `simplon.host` | `simplon.adapters.host` |
+| `simplon.hostpath` | `simplon.adapters.hostpath` |
+| `simplon.imagenames` | `simplon.adapters.imagenames` |
+| `simplon.interact` | `simplon.adapters.interact` |
+| `simplon.labegress` | `simplon.adapters.labegress` |
+| `simplon.labhost` | `simplon.adapters.labhost` |
+| `simplon.labinstance` | `simplon.adapters.labinstance` |
+| `simplon.labnet` | `simplon.adapters.labnet` |
+| `simplon.layout` | `simplon.domain.layout` |
+| `simplon.linux` | `simplon.adapters.linux` |
+| `simplon.log` | `simplon.kernel.log` |
+| `simplon.manifestmodel` | `simplon.domain.manifestmodel` |
+| `simplon.nexusproxy` | `simplon.adapters.nexusproxy` |
+| `simplon.oras` | `simplon.adapters.oras` |
+| `simplon.orchestrator.manifest` | `simplon.domain.manifest` |
+| `simplon.orchestrator.model.treeform` | `simplon.domain.treeform` |
+| `simplon.orchestrator.plan` | `simplon.kernel.plan` |
+| `simplon.orchestrator.product` | `simplon.kernel.product` |
+| `simplon.orchestrator.steps` | `simplon.kernel.steps` |
+| `simplon.orchestrator.tui` | `simplon.ui.tui` |
+| `simplon.outputs` | `simplon.domain.outputs` |
+| `simplon.portainer` | `simplon.adapters.portainer` |
+| `simplon.ports` | `simplon.adapters.ports` |
+| `simplon.provenance` | `simplon.kernel.provenance` |
+| `simplon.pyvenv` | `simplon.adapters.pyvenv` |
+| `simplon.run` | `simplon.kernel.run` |
+| `simplon.runhost` | `simplon.kernel.runhost` |
+| `simplon.runners` | `simplon.domain.runners` |
+| `simplon.signatures` | `simplon.domain.signatures` |
+| `simplon.steplog` | `simplon.kernel.steplog` |
+| `simplon.surface` | `simplon.cli.surface` |
+| `simplon.taskgen` | `simplon.tasks.taskgen` |
+| `simplon.tools` | `simplon.adapters.tools` |
+| `simplon.topology` | `simplon.adapters.topology` |
+| `simplon.tracker` | `simplon.adapters.tracker` |
+| `simplon.verdict` | `simplon.kernel.verdict` |
+| `simplon.waits` | `simplon.kernel.waits` |
+| `simplon.workflowgen` | `simplon.tasks.workflowgen` |
+| `simplon.yamlkeys` | `simplon.domain.yamlkeys` |
+
+`simplon.orchestrator` and `simplon.orchestrator.model` themselves stay importable as empty packages until
+then, so `from simplon.orchestrator import product` keeps working. `simplon.cli` did not move: the
+command line is the `cli` package's own `__init__`.
 
 **The first period ran through 0.4.x and ended at 0.5.0.** Four modules stood as tombstones and are now
 gone; an import of one is a `ModuleNotFoundError`. The gate is what ended it: the test went red on the
@@ -243,8 +319,8 @@ release run, after the tag and before the publish, so v0.5.0 was cut, published 
 closed the same afternoon rather than lasting a fifth release. See
 [Releases](../../when/releases/#050) for what moved where.
 
-The lesson worth carrying to the next move is about the measurement, not the files. The record said six
+The lesson worth carrying to the next removal is about the measurement, not the files. The record said six
 import lines in three repositories; re-measured on the day, it was three lines in one — two of the
 recorded lines had never been simplon's at all (a sibling kernel ships a module of the same name), and
-one product had already migrated. **Re-measure before removing.** A count taken once decays, and this
+one product had already migrated. **Re-measure before removing.** A count taken once decays, and that
 one decayed inside a day.

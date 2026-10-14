@@ -25,8 +25,8 @@ from pathlib import Path
 
 import pytest
 
-from simplon import context
-from simplon.context import ProductContext
+from simplon.domain import context
+from simplon.domain.context import ProductContext
 from simplon.tasks import gitops, release
 
 import sitepages
@@ -441,7 +441,7 @@ def test_a_push_that_fails_for_no_collision_is_not_reported_as_a_taken_number(la
 
 
 def test_nothing_in_the_body_classifies_a_failure_by_reading_gits_english(lab):
-    # arrange: `simplon.run` pins no locale, so a translated git would have made every collision read as
+    # arrange: `simplon.kernel.run` pins no locale, so a translated git would have made every collision read as
     # an ordinary failure with "retry the push" underneath - advice that can only fail again. This is the
     # absence that keeps it out.
     body = (ROOT / "src" / "simplon" / "tasks" / "release.py").read_text(

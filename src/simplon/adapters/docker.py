@@ -1,0 +1,580 @@
+"""Docker CLI gate + opt-in static bootstrap (netctl#477, kernel-extracted netctl#649).
+
+Every docker-consuming command funnels through ensure_docker(): with docker on PATH it is a no-op;
+without it, it dies naming the fixes - UNLESS DELIVERY_DOCKER_BOOTSTRAP=1, which fetches the pinned
+STATIC docker CLI (client binary only, never the engine, no root needed) into <root>/build/tools/bin
+and prepends it to this process' PATH. Built for ephemeral CI runner containers running
+docker-outside-of-docker: the host mounts /var/run/docker.sock, the container only needs the client.
+
+The bootstrap is an explicit opt-in flag ON PURPOSE (default off): host mutations belong in the
+product's `install` command, which provisions the full engine on a real host. A product's ci.yml sets
+the flag for its self-hosted runner, where the socket-mount shape is intended.
+
+Product-agnostic: the repo root and the product name (for the install hint) come from the registered
+`simplon.domain.context`, so a product reuses this gate unchanged - "gleiche Maschine, anderer Katalog". Two do
+today, and the pair is measured rather than assumed (#51): netctl (`orchestrator.lab`,
+`orchestrator.tooling`) and asbundle (`orchestrator.container`).
+"""
+from __future__ import annotations
+
+import json
+import os
+import platform
+import re
+import shutil
+import signal
+import tarfile
+import threading
+import uuid
+from collections.abc import Iterable
+from pathlib import Path
+
+from simplon.domain import context
+from simplon.adapters import fetch
+from simplon.kernel import log
+from simplon.adapters import tools
+from simplon.kernel.run import Result, run
+
+# Pinned static-CLI release (download.docker.com/linux/static/stable); bump deliberately.
+DOCKER_CLI_VERSION = "29.6.1"
+# platform.machine() spellings -> docker's static-download arch directory names.
+_ARCHES = {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "aarch64", "arm64": "aarch64"}
+# Kernel-namespaced opt-in toggle (the DELIVERY_* namespace, netctl#592); a product's ci.yml sets it.
+DOCKER_BOOTSTRAP_ENV = "DELIVERY_DOCKER_BOOTSTRAP"
+
+
+def bootstrap_enabled() -> bool:
+    """True iff the operator opted into the static-CLI bootstrap (DELIVERY_DOCKER_BOOTSTRAP=1)."""
+    return os.environ.get(DOCKER_BOOTSTRAP_ENV, "0") == "1"
+
+
+def static_cli_url(machine: str, version: str = DOCKER_CLI_VERSION) -> str:
+    """The pinned static-bundle URL for a platform.machine() string. Pure (unit-tested); dies on an
+    architecture docker does not publish static binaries for."""
+    arch = _ARCHES.get(machine.lower())
+    if arch is None:
+        log.die(f"docker bootstrap: no static docker CLI for architecture '{machine}'")
+    return f"https://download.docker.com/linux/static/stable/{arch}/docker-{version}.tgz"
+
+
+def tools_bin() -> Path:
+    """Product-owned tool directory the bootstrap installs into (wiped by `clean` with build/).
+
+    The convention itself lives in simplon.adapters.tools, shared with the oras gate: two bootstraps answering
+    "where does a fetched binary go" separately is one of them drifting later.
+    """
+    return tools.bin_dir()
+
+
+def _fetch_static_cli(dest: Path) -> None:
+    """Download the pinned bundle and extract ONLY the client binary to dest (the bundle also carries
+    the engine binaries, which are useless in a container and stay out of the tool dir)."""
+    url = static_cli_url(platform.machine())
+    log.info(f"docker missing; fetching the static docker CLI {DOCKER_CLI_VERSION} "
+             f"(client only, no root; the daemon must come from the host's socket)")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    bundle = dest.parent / "docker.tgz"
+    fetch.download(url, bundle, label=f"docker CLI {DOCKER_CLI_VERSION}")
+    try:
+        with tarfile.open(bundle) as tar:
+            member = tar.getmember("docker/docker")
+            member.name = dest.name
+            tar.extract(member, dest.parent)
+    finally:
+        bundle.unlink(missing_ok=True)
+    dest.chmod(0o755)
+
+
+def _daemon_reachable() -> bool:
+    """One cheap `docker version` probe; separated for unit-testability.
+
+    AN OSError IS "NOT REACHABLE" AND NOT A TRACEBACK, which cost a measurement to find. On a CI runner
+    (ghr-8, 2026-09-16) a file named `docker` sat on PATH that `shutil.which` accepted - it checks the
+    permission bits - and that the kernel could not execute: `PermissionError: [Errno 13] Permission
+    denied: 'docker'`, the signature of a binary on a `noexec` mount. Every caller here is asking a
+    yes/no question, and the honest answer to "can I reach the daemon" on such a host is no.
+
+    Letting it propagate was worse than useless: it came out of `ensure_docker`, the one function in
+    this module whose entire purpose is to die naming the fixes, as a bare traceback naming none of
+    them. A third state that crashes the function that exists to classify states is this repository's
+    recurring defect wearing the module's own clothes.
+    """
+    try:
+        return run(["docker", "version"]).ok
+    except OSError:
+        return False
+
+
+def _sudo_prefix() -> list | None:
+    """The privilege prefix for host mutations: [] when already root, ["sudo", "-n"] when
+    passwordless sudo answers, None when this process has no way to escalate."""
+    if os.getuid() == 0:
+        return []
+    if run(["sudo", "-n", "true"]).ok:
+        return ["sudo", "-n"]
+    return None
+
+
+def _invoking_user() -> str:
+    """The account this process runs as - the one a docker group membership has to name."""
+    import pwd
+    return pwd.getpwuid(os.getuid()).pw_name
+
+
+def _join_docker_group(pfx: list) -> None:
+    """Put the invoking user in the `docker` group, which is what OWNS the socket (root:docker 660).
+
+    This is the DURABLE half of docker access, and si#87 moved it here from the failure path. It belongs
+    to the install for two reasons. The install is the one moment privilege is known to be present and
+    the state is being created from scratch; and `get.docker.com` creates the group but puts nobody in
+    it, so without this step a fresh host has an EMPTY docker group and every non-root caller is locked
+    out. Measured on three CI hosts: `getent group docker` -> `docker:x:991:`.
+
+    root is skipped deliberately: it reaches the socket by being root, and the group exists precisely
+    for those who are not.
+    """
+    run([*pfx, "groupadd", "-f", "docker"])
+    user = _invoking_user()
+    if user == "root":
+        return
+    run([*pfx, "usermod", "-aG", "docker", user])
+    log.info(f"added {user} to the docker group; a LONG-LIVED service (a CI runner agent) must be "
+             "restarted before it takes effect - a process inherits its groups at start")
+
+
+def _install_engine(pfx: list) -> None:
+    """Install the docker ENGINE via the official installer (#488; the same pipe-into-shell pattern
+    as hostsetup._install_linux, never $(...)), enable+start the service, and establish the group
+    membership that makes the socket reachable afterwards (si#87). Needs root/sudo."""
+    log.info("docker missing; installing the engine via get.docker.com (root/sudo available)")
+    shell = "sudo -E sh" if pfx else "sh"
+    run(["bash", "-c", f"curl -fsSL https://get.docker.com | {shell}"], capture=False)
+    run([*pfx, "systemctl", "enable", "--now", "docker"])
+    _join_docker_group(pfx)
+
+
+def _grant_socket_access(pfx: list) -> None:
+    """Make the socket usable by THIS process, which cannot change its own groups any more (#488).
+
+    A BRIDGE, not the fix - si#87 corrected the emphasis, because the emphasis was doing damage. The
+    durable half is the group membership, established at install time by `_join_docker_group`; the ACL
+    below (chmod 666 where setfacl is missing) only covers the running process, and the socket is
+    recreated with default modes on the next daemon restart. Because the ACL works INSTANTLY, it used to
+    hide the fact that the membership had not reached a long-lived caller at all: three CI hosts ran
+    green for months on a permissive socket left behind by an earlier run, then failed at three
+    unrelated moments when their daemons restarted.
+
+    The membership is (re)established here too, so a host whose engine predates si#87 still gets it.
+    """
+    sock = _socket_path()
+    if sock is None:
+        return
+    _join_docker_group(pfx)
+    if not run([*pfx, "setfacl", "--modify", f"user:{os.getuid()}:rw", str(sock)]).ok:
+        log.warn(f"setfacl unavailable; falling back to chmod 666 on {sock}")
+        run([*pfx, "chmod", "666", str(sock)])
+
+
+def ensure_docker() -> None:
+    """The gate every docker-consuming command calls instead of a bare which() check. Without the
+    bootstrap flag: no-op when docker is on PATH, die naming the fixes otherwise (unchanged for dev
+    hosts - on macOS the daemon may legitimately come up later via colima). With
+    DELIVERY_DOCKER_BOOTSTRAP=1 on Linux the gate makes docker WORK end to end (#477/#488): install the
+    engine when root/sudo is available, else fetch the static CLI; then verify the daemon and
+    self-fix what privileges allow (start the service, grant socket access)."""
+    bootstrap = bootstrap_enabled() and platform.system() == "Linux"
+    if shutil.which("docker") and not bootstrap:
+        return
+    if not shutil.which("docker"):
+        if not bootstrap:
+            name = context.current().name
+            log.die(f"missing required tool: docker (./{name}.sh install provisions it; on a CI "
+                    f"runner set {DOCKER_BOOTSTRAP_ENV}=1 to let {name} provision docker itself)")
+        pfx = _sudo_prefix()
+        if pfx is not None:
+            _install_engine(pfx)
+        if not shutil.which("docker"):
+            # Unprivileged (or the engine install failed): the static CLIENT still enables the
+            # docker-outside-of-docker shape where a daemon socket is provided by the host.
+            cli = tools_bin() / "docker"
+            if not cli.is_file():
+                _fetch_static_cli(cli)
+            tools.prepend_to_path(cli.parent)
+        if shutil.which("docker") is None:
+            log.die("docker bootstrap failed: no usable docker CLI after engine install / static fetch")
+    # Bootstrap mode verifies the daemon end to end and self-fixes what privileges allow.
+    if _daemon_reachable():
+        return
+    pfx = _sudo_prefix()
+    if pfx is not None:
+        run([*pfx, "systemctl", "enable", "--now", "docker"])
+        sock = _socket_path()
+        if sock is not None and sock.exists() and not os.access(sock, os.W_OK):
+            _grant_socket_access(pfx)
+        if _daemon_reachable():
+            return
+    name = context.current().name
+    log.die(f"docker CLI present but no daemon is reachable (socket: {_socket_state()}). Install the "
+            f"engine (./{name}.sh install / get.docker.com, or give the runner user NOPASSWD sudo so "
+            f"{name} can), or on a container runner mount the host socket: "
+            "-v /var/run/docker.sock:/var/run/docker.sock (plus --group-add its gid)")
+
+
+#: A docker tag: what may follow the ':' in an image reference. Used to reject the EMPTY tag ('hugo:',
+#: 'hugo::'), which reads as pinned to a careless eye and is not.
+_TAG_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,127}\Z")
+#: A content digest ('sha256:<hex>'): the strongest pin there is.
+_DIGEST_RE = re.compile(r"[A-Za-z0-9]+(?:[.+_-][A-Za-z0-9]+)*:[A-Fa-f0-9]{32,}\Z")
+
+
+def pinned_image(image: str, where: str, *, hint: str = "") -> str:
+    """Refuse an image reference that does not name a version, and hand back the reference when it does.
+
+    THE RULE. A build that renders something different depending on when it ran is not a build. An
+    untagged reference means ':latest', and ':latest' means the same command runs something else
+    tomorrow - so an untagged reference, an empty tag ('hugo:', 'hugo::', which read as pinned to a
+    careless eye) and the literal 'latest' are all refused. A tag or a digest passes; a digest is the
+    strongest form of the same statement.
+
+    WHY IT LIVES HERE, in the module about running containers, rather than beside any one caller
+    (si#47). It started in `tasks.site`, where it refused a PRODUCT's manifest image with a paragraph of
+    reasons - while the kernel itself handed docker two references that would not have survived it, and
+    `tasks.docs` demanded only that a tag be DECLARED, letting `doctoolchain_version: latest` through.
+    A rule the kernel argues for and does not keep is a rule the next reader believes less, whatever the
+    risk of the particular image. So there is now one gate and every image goes through it: the two the
+    manifest declares (`site:` image, `doctoolchain_version`) and the ones the kernel names ITSELF, which
+    are validated where they are declared, at import. That is the shape si#34 used for coordinate
+    placement - the check runs over the MERGED tree, so the catalogue's own placements are held to it too.
+
+    The registry is split off by docker's OWN rule, which needs BOTH halves: a first component is a host
+    when it carries a '.' or a ':' AND a '/' follows it, or when it is 'localhost'. That is what keeps a
+    private registry with a port (`registry.example:5000/hugo:0.148.2`) from being read as a tagged image
+    - and, just as important, what keeps `my.image:1.0` from being read as a registry. Without a slash
+    there is no registry, dot or no dot; docker reads such a reference as an image with a tag, and so does
+    this. `registry.example:5000` alone therefore passes as image `registry.example` tag `5000`, which is
+    what docker itself would do with it: nothing here can tell that port from a version without guessing,
+    and guessing costs valid references.
+
+    `hint` is the caller's, because the caller knows what the reader has to EDIT. A manifest key that
+    holds a whole reference wants the default; one that holds a bare tag - `doctoolchain_version` - does
+    not, and telling its author to write 'hugomods/hugo:exts-0.148.2' into it would be a message that
+    sends them the wrong way with total confidence.
+    """
+    hint = hint or "pin it as '<image>:<tag>' (e.g. 'hugomods/hugo:exts-0.148.2'), or by digest"
+    name, at, digest = image.partition("@")
+    if at:
+        if not name or not _DIGEST_RE.match(digest):
+            raise ValueError(f"{where}: 'image' carries a broken digest in '{image}'; {hint}")
+        return image
+    parts = image.split("/")
+    # A registry needs a '/' after it - `len(parts) > 1` IS that condition, and it is the half that stops
+    # `my.image:1.0` from being mistaken for a host.
+    registry = len(parts) > 1 and ("." in parts[0] or ":" in parts[0] or parts[0] == "localhost")
+    remainder = "/".join(parts[1:]) if registry else image
+    repo, colon, tag = remainder.rpartition(":")
+    if not colon:
+        raise ValueError(f"{where}: 'image' must pin a version ('<image>:<tag>'), got '{image}' "
+                         f"- an untagged image means ':latest', which moves under the build; {hint}")
+    if not repo or not _TAG_RE.match(tag):
+        raise ValueError(f"{where}: 'image' has no usable tag in '{image}'; {hint}")
+    if tag == "latest":
+        raise ValueError(f"{where}: 'image' must pin a version, not the moving tag 'latest' "
+                         f"(got '{image}') - a build whose output depends on when it ran is not a "
+                         f"build; {hint}")
+    return image
+
+
+#: The three spellings of Docker Hub a manifest may carry. The CLI stores the Hub credential under none
+#: of them - see `has_stored_login`.
+_HUB_HOSTS: frozenset = frozenset({"docker.io", "index.docker.io", "registry-1.docker.io"})
+
+
+def _hostname(value: str) -> str:
+    """docker's own ConvertToHostname, which is how the CLI compares a registry against a config key:
+    drop the scheme, keep everything up to the first '/'. Pure.
+
+    Both sides need it because both sides are written by different hands. A manifest says `docker.io`
+    or `registry.example.com:5000`; the config file may carry `https://index.docker.io/v1/` (what the
+    CLI writes for the Hub) or a bare host (what it writes for everything else).
+    """
+    bare = value.removeprefix("https://").removeprefix("http://")
+    name = bare.split("/", 1)[0].lower()
+    return "index.docker.io" if name in _HUB_HOSTS else name
+
+
+def has_stored_login(host: str) -> bool:
+    """Whether the docker CLI already holds a credential for `host` - asked BEFORE a push to a registry
+    this kernel mints no token for (si#200).
+
+    WHY IT IS ASKED AT ALL. `simplon.tasks.image` logs in for GitHub Packages and for nothing else, and
+    `githubpackages.is_github_packages` is the reason: a GitHub token must not be handed to whatever host
+    a YAML file names. So for every other registry - Docker Hub included - the credential is the one the
+    operator stored with `docker login`, and the kernel's whole contribution is to notice that there is
+    none. Without this the release attempts the push and the operator reads docker's own answer, `denied:
+    requested access to the resource is denied`, which names no host, no account and no fix. A refusal
+    that names the registry it was about to push to and the one command that authorises it is worth the
+    thirty lines.
+
+    WHAT IS ASKED, AND WHAT CANNOT BE. `$DOCKER_CONFIG/config.json`, else `~/.docker/config.json`, which
+    is the only file the CLI reads. Three answers count as a credential, and only the first is a secret:
+
+      * an entry under `auths` - what a plain `docker login` writes;
+      * an entry under `credHelpers` for this host - the secret is in the helper, and the file names it;
+      * a global `credsStore`, where every credential lives in a helper and the file says nothing about
+        WHICH hosts it holds. That is unknowable from here, so it counts as yes: a check that refused on
+        a guess would stop a working publish, which is worse than the message it was meant to improve.
+
+    A file that cannot be parsed is the same kind of silence and gets the same answer. A file that is not
+    there at all is not silence: the CLI reads no other, so there is nowhere a credential could be.
+
+    DOCKER HUB IS THE CASE THAT MAKES THE NORMALISATION LOAD-BEARING. `docker login docker.io` does not
+    store `docker.io`; it stores docker's IndexServer constant, `https://index.docker.io/v1/`, so a check
+    comparing host names would answer no for the one registry si#200 exists to push to. This could not be
+    measured on the machine that wrote it - there is no Hub account here (the pushes were measured against
+    a local `registry:2`, which stores the plain `localhost:5000`) - so it is taken from docker's own
+    constant rather than from an observation, and `_hostname` folds all three Hub spellings onto it.
+    """
+    root = os.environ.get("DOCKER_CONFIG") or (Path.home() / ".docker")
+    path = Path(root) / "config.json"
+    if not path.is_file():
+        return False
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True
+    if not isinstance(config, dict):
+        return True
+    if config.get("credsStore"):
+        return True
+    wanted = _hostname(host)
+    for section in ("auths", "credHelpers"):
+        stored = config.get(section)
+        if isinstance(stored, dict) and any(_hostname(str(key)) == wanted for key in stored):
+            return True
+    return False
+
+
+def not_owned(tops: Iterable[Path]) -> list[Path]:
+    """Every existing entry under `tops` that the caller does not OWN, first one first (si#319).
+
+    OWNERSHIP AND NOT WRITABILITY, and the difference is the whole reason this exists. si#78 asked
+    `os.access(W_OK)` - can this process write here - which is the right question for a tool that only
+    reads and writes files. It is the wrong one for a tool that calls `chmod`, which POSIX allows only to
+    a file's owner: a directory at mode 777 belonging to somebody else is writable by everyone and
+    chmod-able by no-one else. Measured as a non-owner against exactly such a directory: `os.access`
+    True, writing a file fine, `chmod 700` -> `PermissionError [Errno 1] Operation not permitted`. That
+    sentence is what a consumer's gradle died on, one `chmod` into its daemon registry, in a tree si#78's
+    check would have called clean.
+
+    WALKS rather than stats the tops, for si#78's own reason: after a root run and a `--user` run the
+    mixture is real - the top belongs to the caller and something under it belongs to root - and a
+    shallow look calls that tree fine.
+
+    Empty on a host with no uid concept: the mount carries no ownership to get wrong there, which is the
+    same reason `user_args` hands over nothing.
+    """
+    if not hasattr(os, "getuid"):
+        return []
+    mine = os.getuid()
+    found: list[Path] = []
+    for top in tops:
+        if not top.exists():
+            continue
+        for path in (top, *sorted(top.rglob("*"))):
+            try:
+                if path.stat().st_uid != mine:
+                    found.append(path)
+            except OSError:
+                # A path that cannot be stat'ed at all is somebody else's problem to report: this
+                # function answers about ownership, and "I could not look" is not an ownership fact.
+                continue
+    return found
+
+
+def ownership_fault(tops: Iterable[Path], root: Path) -> str:
+    """The sentence to print when a containerised run must not start, or '' when the tree is the
+    caller's (si#319).
+
+    ONE MESSAGE IN ONE PLACE, for the reason `user_args` gives about itself: a convention restated in
+    five task bodies is a convention that drifts in one of them. It names the count, the first offender
+    and the way out, because "permission denied" is what the tool would have said and that is the message
+    this one exists to replace.
+    """
+    spoiled = not_owned(tops)
+    if not spoiled:
+        return ""
+    who = f"uid {os.getuid()}" if hasattr(os, "getuid") else "this user"
+    first = spoiled[0]
+    shown = first.relative_to(root) if first.is_relative_to(root) else first
+    return (f"{len(spoiled)} entr{'y' if len(spoiled) == 1 else 'ies'} under "
+            f"{', '.join(sorted({str(top.relative_to(root)) if top.is_relative_to(root) else str(top) for top in tops}))}"
+            f"/ are not owned by {who} - first: {shown}. An earlier container that ran without --user "
+            f"left them, and a tool that chmods its own state (gradle does, on every run) dies there "
+            f"with \"Operation not permitted\" however writable they look. Remove that tree - it is a "
+            f"build output, and it takes a root shell - then run this again.")
+
+
+def user_args() -> list[str]:
+    """``--user uid:gid`` for a container that WRITES into a bind-mounted directory, and an empty list
+    on a host with no uid concept (Windows, where the mount carries no ownership to get wrong).
+
+    THE RULE, LEARNED TWICE. A bind mount hands the container the host's inodes, so whatever uid the
+    image happens to run as is the uid that ends up owning the output. Both directions hurt, and both
+    have been measured rather than assumed:
+
+      - an image running as a NON-ROOT uid that is not the caller's cannot create anything in the
+        mounted directory at all. `frankescobar/allure-docker-service` runs as uid 1000 against a host
+        uid of 5015237, and allure died with `java.nio.file.AccessDeniedException` (#6, fixed in 0.1.7);
+      - an image running as ROOT succeeds and leaves ROOT-OWNED files behind, which the caller then
+        cannot delete. Measured with `hugomods/hugo` (its default user is uid 0): the run wrote
+        `build/website/index.html` as `0:0`, the caller's `rm -rf build` came back `Permission denied`,
+        and even the SOURCE tree kept a root-owned `.hugo_build.lock` - enough to make the next run fail
+        with `failed to acquire a build lock` even when that one passed `--user` correctly.
+
+    Running the container AS THE CALLER is the fix that leaves the mount as it is: the files it writes
+    are the ones the caller can read, wipe and archive afterwards. It lives here rather than beside
+    either caller because a convention restated in two modules is a convention that drifts in one of
+    them - the same reason `tools.bin_dir` exists.
+    """
+    if not hasattr(os, "getuid"):        # Windows: no uid mapping to hand over
+        return []
+    return ["--user", f"{os.getuid()}:{os.getgid()}"]
+
+
+def _socket_path() -> Path | None:
+    """The unix socket the docker CLI will talk to: DOCKER_HOST's unix path when set, the default
+    socket otherwise, None for a non-unix DOCKER_HOST (tcp/ssh - nothing local to inspect)."""
+    host = os.environ.get("DOCKER_HOST", "")
+    if host and not host.startswith("unix://"):
+        return None
+    return Path(host.removeprefix("unix://")) if host else Path("/var/run/docker.sock")
+
+
+def _socket_state() -> str:
+    """Name the exact docker-socket gap for the daemon-unreachable die: not mounted at all, mounted
+    but not writable by this uid (the --group-add gap), or writable yet dead."""
+    path = _socket_path()
+    if path is None:
+        return f"DOCKER_HOST={os.environ.get('DOCKER_HOST', '')} (non-unix, cannot inspect)"
+    if not path.exists():
+        return f"{path} NOT MOUNTED"
+    if not os.access(path, os.W_OK):
+        # BOTH SHAPES, because the cure differs and si#360 measured the wrong one being named: a runner
+        # straight on the host lost the docker group on a reboot, and was told about `--group-add`.
+        return (f"{path} mounted but NOT WRITABLE by uid {os.getuid()}: on a host runner, put its user in "
+                f"the docker group - sudo <product>.sh support ci-privileges <user> - and RESTART the runner "
+                f"service, because a group is inherited at process start; on a container runner, missing "
+                f"--group-add with the socket's gid")
+    return f"{path} mounted and writable, but the daemon did not answer"
+
+
+#: The label every container the kernel starts through `run_container` carries, valued with the product.
+#: A NAME finds one container; this finds every one a product left behind (si#409).
+RUN_LABEL = "simplon.run"
+
+#: The label carrying the instance id, set only when the caller resolved one - see `lifecycle_args`.
+INSTANCE_LABEL = "simplon.instance"
+
+#: How long removing an abandoned container may take before the unwind gives up on it. `docker rm -f`
+#: is a SIGKILL and a removal, so this is generous; it only ever runs on the exception path.
+_REMOVE_GRACE = 30.0
+
+
+def container_name(product: str) -> str:
+    """A container name unique to ONE invocation: `simplon-<product>-<12 hex>` (si#409).
+
+    Chosen by the kernel and not by docker, because the whole point is that the kernel can name the
+    container it has to stop without asking the daemon which one it was - by the time it needs to, the
+    client that knew may already be dead. The product is folded to the characters docker accepts in a
+    name, so a product name never turns a run into `invalid container name`.
+    """
+    safe = re.sub(r"[^a-zA-Z0-9_.-]", "-", product) or "run"
+    return f"simplon-{safe}-{uuid.uuid4().hex[:12]}"
+
+
+def lifecycle_args(name: str, product: str, instance: str = "") -> list[str]:
+    """The `docker run` flags that make a kernel-started container STOPPABLE and FINDABLE (si#409).
+
+    `--init` puts docker's init as PID 1, so a SIGINT or SIGTERM that does reach the container (the
+    docker client forwards both when it receives them itself, as on a Ctrl-C at a terminal) reaches the
+    tool. Without it PID 1 is the tool, and Linux drops a signal PID 1 installed no handler for.
+
+    `--name` is what `run_container` stops on the way out. An empty `name` adds none: a caller that only
+    READS the line (every `docker_argv` test) has no container to stop, and a name invented here would
+    make two otherwise identical lines differ.
+
+    The label is for the case no handler sees. SIGKILL cannot be caught, so a client killed that way
+    leaves its container running however careful the unwind is; `docker ps --filter
+    label=simplon.run=<product>` is what still finds it. The instance joins as a second label only when
+    the caller resolved one - `toolchain:run` resolves it only for a cache volume (si#105), and inventing
+    it here would refuse every fresh product on an `instance:` section it does not have.
+    """
+    return ["--init",
+            *(["--name", name] if name else []),
+            "--label", f"{RUN_LABEL}={product}",
+            *(["--label", f"{INSTANCE_LABEL}={instance}"] if instance else [])]
+
+
+class _Terminated(BaseException):
+    """SIGTERM, turned into an exception for the length of one `run_container` so the unwind runs."""
+
+
+def run_container(argv: list[str], name: str, *, capture: bool = False) -> Result:
+    """Run a `docker run` line whose container is called `name`, and STOP that container if this
+    process is interrupted while the client runs (si#409). Returns the real Result otherwise.
+
+    WHY THE CLIENT DYING IS NOT ENOUGH. The docker CLI is a client: killing it detaches it from the
+    container and stops nothing. firn measured it on simplon 0.30.0 (firn#965) - SIGINT, SIGTERM and
+    SIGKILL each sent to bash, python and the client, and a `gradle check` container ran on to its own
+    exit 22 s after it started. Re-measured here on 2026-10-13, with `alpine:3.20 sleep 30` started
+    through `run(..., capture=False)` and the PYTHON process signalled 2.5 s in: the container was alive
+    2 s after SIGINT, after SIGTERM and after SIGKILL. `--init` alone changed none of the three, because
+    on SIGINT `subprocess.run` SIGKILLs the client 0.25 s later, and on SIGTERM python dies leaving the
+    client behind - the container is never sent anything at all.
+
+    So the kernel stops it by the name it chose: on KeyboardInterrupt, on SIGTERM, on ANY exception
+    while the client runs, `docker rm -f <name>` (which kills and removes in one call; `--rm` would have
+    removed it anyway), and then the interruption carries on. THE REAL RC IS KEPT: a KeyboardInterrupt
+    is re-raised, and SIGTERM is handed back to the default action after the cleanup, so the process
+    still dies BY SIGTERM (rc -15 / 143) rather than reporting some exit code of this module's choosing.
+    A run that is cancelled must look cancelled - stopping the work is the fix, not hiding the cancel.
+
+    SIGTERM is caught only when the process had the DEFAULT disposition and this is the main thread,
+    the only place `signal.signal` may be called. A process that installed its own handler (or ignores
+    the signal) keeps it: whatever exception that handler raises still unwinds through here.
+
+    WHAT THIS CANNOT DO: SIGKILL. No process sees its own SIGKILL, so the container outlives a client
+    killed that way, exactly as before. What changed for that case is that it is FINDABLE - the labels
+    `lifecycle_args` sets (`simplon.run=<product>`) are how a product or the next run finds and removes
+    it. There is also a narrow race the name cannot close: a client interrupted before the daemon has
+    created the container gets `No such container` from the removal, and the daemon may create it a
+    moment later. The label is the answer there too.
+    """
+    def _terminate(signum: int, frame: object) -> None:
+        raise _Terminated()
+
+    catch_term = (threading.current_thread() is threading.main_thread()
+                  and hasattr(signal, "SIGTERM")
+                  and signal.getsignal(signal.SIGTERM) == signal.SIG_DFL)
+    if catch_term:
+        signal.signal(signal.SIGTERM, _terminate)
+    try:
+        return run(argv, capture=capture)
+    except BaseException as abandoned:
+        _remove(name)
+        if isinstance(abandoned, _Terminated):
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            catch_term = False
+            os.kill(os.getpid(), signal.SIGTERM)
+        raise
+    finally:
+        if catch_term:
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+
+def _remove(name: str) -> None:
+    """Kill and remove the container called `name`, ignoring "no such container" - the unwind's half."""
+    try:
+        run(["docker", "rm", "-f", name], timeout=_REMOVE_GRACE)
+    except Exception as error:          # the unwind must not replace the interruption it is unwinding
+        log.warn(f"could not remove container {name}: {error}")

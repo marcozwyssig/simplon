@@ -4,8 +4,8 @@ import textwrap
 
 import pytest
 
-from simplon import catalogue as catalogue_mod
-from simplon.orchestrator import manifest as manifest_mod
+from simplon.domain import catalogue as catalogue_mod
+from simplon.domain import manifest as manifest_mod
 
 MIGRATE = (
     "Rewrite it with the migration, which loads no manifest and so works on this one:\n"

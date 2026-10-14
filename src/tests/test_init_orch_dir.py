@@ -34,7 +34,7 @@ from pathlib import Path
 import pytest
 
 import simplon
-from simplon import bootstrap
+from simplon.cli import bootstrap
 
 
 def _run_generated(pkg_src, argv, *, code=None):
@@ -361,7 +361,7 @@ def test_a_relocated_scaffold_runs_its_aggregate_through_the_shared_runner(tmp_p
     # arrange
     bootstrap.write("democtl", tmp_path, orch_dir=orch_dir)
     probe = (
-        "from simplon.orchestrator import product\n"
+        "from simplon.kernel import product\n"
         "seen = {}\n"
         "def _record(pipeline):\n"
         "    seen['commands'] = [s.command for s in pipeline.steps]\n"

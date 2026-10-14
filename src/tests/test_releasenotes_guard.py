@@ -20,7 +20,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from simplon import context
+from simplon.domain import context
 from simplon.tasks import releasenotes
 
 from conftest import ROOT  # noqa: F401  (keeps the src tree on sys.path)

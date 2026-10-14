@@ -1,5 +1,5 @@
 """Unit tests for waits - the poll/retry/convergence control logic (fake probe + no-op sleep)."""
-from simplon import waits
+from simplon.kernel import waits
 
 
 def test_poll_until_succeeds_within_tries_and_stops_early():

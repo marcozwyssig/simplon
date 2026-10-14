@@ -38,9 +38,9 @@ import os
 import shutil
 from pathlib import Path
 
-from simplon import log
-from simplon.run import run
-from simplon.labhost import BINFMT_IMAGE
+from simplon.kernel import log
+from simplon.kernel.run import run
+from simplon.adapters.labhost import BINFMT_IMAGE
 from simplon.tasks import image
 
 #: The one platform this registers.

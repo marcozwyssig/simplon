@@ -1,4 +1,4 @@
-"""Unit tests for simplon.outputs (si#314): the ONE directory a product's build writes into.
+"""Unit tests for simplon.domain.outputs (si#314): the ONE directory a product's build writes into.
 
 A VALUE, NOT A RULE. `output:` sets where the kernel's producing coordinates write by default; a
 coordinate that names its own destination still gets exactly what it named. That is the decision the
@@ -9,8 +9,8 @@ have refused the kernel first, and a rule that exempts the kernel is the one si#
 """
 import pytest
 
-from simplon import context, outputs
-from simplon.context import ProductContext
+from simplon.domain import context, outputs
+from simplon.domain.context import ProductContext
 from simplon.tasks import profiles
 
 

@@ -5,7 +5,7 @@ impossible, the evidence a ticket carries, and every way `gh` can let the kernel
 belongs to the walk - which refusals are collected, when the state is written relative to the network,
 and what the record says afterwards - is in `test_walk.py`, beside the rest of the walk.
 
-`gh` is never really run: `simplon.run.run` is replaced with a recorder, so what is measured is the argv
+`gh` is never really run: `simplon.kernel.run.run` is replaced with a recorder, so what is measured is the argv
 the kernel builds and the decision it takes on an answer, both of which are the thing that can be wrong.
 The one claim a fake cannot support - that a real GitHub answers these argv the way the fake does - was
 driven by hand against a real repository and written into the PR rather than asserted here.
@@ -16,8 +16,10 @@ import json
 
 import pytest
 
-from simplon import context, run, tracker
-from simplon.context import ProductContext
+from simplon.domain import context
+from simplon.kernel import run
+from simplon.adapters import tracker
+from simplon.domain.context import ProductContext
 
 
 # --- the harness ------------------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""Unit tests for simplon.devcontainer - the second backend the kernel ships.
+"""Unit tests for simplon.adapters.devcontainer - the second backend the kernel ships.
 
 No Docker and no network: `run` and `stream` are the two seams, and every case here replaces them. What
 is asserted is the argv the backend builds, the refusals it gives, and the fact that a teardown finds its
@@ -6,10 +6,11 @@ containers BY LABEL rather than by a name this module invents.
 """
 import pytest
 
-from simplon import context, devcontainer
-from simplon.deployment import Version
-from simplon.environments import Environment
-from simplon.run import Result
+from simplon.domain import context
+from simplon.adapters import devcontainer
+from simplon.domain.deployment import Version
+from simplon.domain.environments import Environment
+from simplon.kernel.run import Result
 
 _ENV = Environment("dev", devcontainer.BACKEND, "The development container.")
 _LOCAL = Version(selector="local", tag="", builds=True)

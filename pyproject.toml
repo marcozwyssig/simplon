@@ -87,7 +87,7 @@ report = [
 ]
 
 [project.scripts]
-simplon = "simplon.bootstrap:main"
+simplon = "simplon.cli.bootstrap:main"
 
 [project.urls]
 Homepage = "https://github.com/marcozwyssig/simplon"
@@ -132,7 +132,7 @@ simplon = ["catalogue.yaml", "py.typed", "templates/*.j2"]
 #                   yet and may never (the next tag could be 0.2.0). Nothing in that string points back to
 #                   a release anybody can install.
 #   no-guess-dev    0.1.12 + 3 commits -> "0.1.12.post1.dev3+g1234abc" - it names the release the tree
-#                   DESCENDS FROM. `simplon.bootstrap.released_pin` reads 0.1.12 straight off the front of
+#                   DESCENDS FROM. `simplon.cli.bootstrap.released_pin` reads 0.1.12 straight off the front of
 #                   it, which is a version that is on PyPI, so a product scaffolded from an untagged
 #                   working tree still gets a pin that installs.
 #

@@ -28,7 +28,7 @@ only the image that gets thrown away.
 NOT from setuptools-scm, although this repository has it: `simplon._version` is SIMPLON's release number,
 read out of the installed kernel wheel, and stamping it into a product's image would label agile-cockpit
 with the version of its build tool. A product has its own version, and the place it keeps it is its own
-git checkout - `simplon.context.current().root`, never this package's `__file__`. The derivation is the
+git checkout - `simplon.domain.context.current().root`, never this package's `__file__`. The derivation is the
 same one setuptools-scm performs (`git describe`), pointed at the product instead of at the kernel.
 
     VERSION  = git describe --tags --always --dirty   (a release tag when there is one; else the short
@@ -66,14 +66,14 @@ against a local `registry:2`, and two of them fail it:
     such manifest` for a tag that IS there when the registry speaks plain HTTP and `--insecure` is not
     passed, in the same words it uses for real absence. Wrong in both directions, excluded;
   - `docker buildx imagetools inspect` - correct in every case measured, including the cached one. But it
-    is a PLUGIN: the static CLI `simplon.docker` can bootstrap onto a bare runner does not carry it, so on
+    is a PLUGIN: the static CLI `simplon.adapters.docker` can bootstrap onto a bare runner does not carry it, so on
     the very host the bootstrap exists for there would have to be a fallback - and a rarely-walked
     fallback with different semantics from the main path is exactly how the false green above got in.
 
 So the probe is `oras manifest fetch --descriptor <ref>`, and it is the ONLY probe. oras talks to the
 registry over HTTP(S) and keeps no local manifest store at all, so it cannot answer from a cache the way
 `docker manifest inspect` does; it needs no daemon and no plugin; and it is the one tool this kernel
-PROVIDES rather than hopes for (`simplon.oras.ensure_oras`, `support:install`), so there is no host where
+PROVIDES rather than hopes for (`simplon.adapters.oras.ensure_oras`, `support:install`), so there is no host where
 the check is merely optimistic. Measured: rc 0 for a tag that is there, rc 1 with `not found` for one
 that is not, and rc 1 for the very `:cached` entry `docker manifest inspect` called present.
 
@@ -88,7 +88,7 @@ asked"). Parsing the client's wording to separate them would be reading formatte
 the mistake `tasks/cliref.py` is written to avoid - and here the two readings mean the same thing anyway:
 an unverified push is not a publish.
 
-WHAT THIS DOES NOT REUSE, AND WHY IT IS NOT AN OVERSIGHT. `simplon.imagenames` already holds `image_ref`,
+WHAT THIS DOES NOT REUSE, AND WHY IT IS NOT AN OVERSIGHT. `simplon.adapters.imagenames` already holds `image_ref`,
 `registry_prefix` and `require_registry`, and this module uses none of them. They are the netctl-extracted
 shape, where a registry arrives from an `IMAGE_REGISTRY` environment variable that may be unset and the
 refusal is a `log.die` at the point of use. Here the registry is a REQUIRED manifest key, so the same
@@ -108,10 +108,12 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from simplon import artifactsection, artifactschema, context, docker, githubpackages, hostpath, log, outputs
-from simplon.labhost import BINFMT_IMAGE
-from simplon.layout import validate_relative_dir
-from simplon.run import Result, run, stream
+from simplon.domain import artifactsection, artifactschema, context, outputs
+from simplon.adapters import docker, githubpackages, hostpath
+from simplon.kernel import log
+from simplon.adapters.labhost import BINFMT_IMAGE
+from simplon.domain.layout import validate_relative_dir
+from simplon.kernel.run import Result, run, stream
 
 #: The manifest section this module reads (si#344 B2: `images:` folded into it). An entry is an image when
 #: its `kind:` is `image` or a kind that refines it; a product may build more than one.
@@ -247,7 +249,7 @@ def declared(data: Mapping[str, object], name: str, source: str = "manifest",
     and a kernel that assumed `Dockerfile` at the root would build the wrong thing - or nothing - for the
     next product. `registry` is required even for a purely local build, deliberately: the reference a
     build tags is the reference a release pushes, and an unqualified one is what docker resolves against
-    Docker Hub (`simplon.imagenames.require_registry` records that failure in full). Building under one name
+    Docker Hub (`simplon.adapters.imagenames.require_registry` records that failure in full). Building under one name
     and publishing under another is how an image gets pushed somewhere nobody meant.
 
     `coordinate` is the catalogue task asking - its NEEDS apply; a product's own call keeps `build:image`'s,
@@ -801,7 +803,7 @@ def release(name: str = "", tag: str = "") -> int:
                       f"  run `docker login {host}` first (in CI: log in with the registry's own token, "
                       f"never with a GitHub one).\n"
                       f"  this kernel mints a token for GitHub Packages and for nothing else, on "
-                      f"purpose - see simplon.githubpackages.is_github_packages")
+                      f"purpose - see simplon.adapters.githubpackages.is_github_packages")
             return 1
         log.info(f"{host} is not GitHub Packages, so no GitHub token is minted for it - the push uses "
                  f"the credential `docker login {host}` has already stored")
@@ -1008,7 +1010,7 @@ def ensure_builder() -> bool:
     """Builder `BUILDER` exists and is bootstrapped, creating it when it does not; False, said, when not.
 
     buildx is DEMANDED, not provided. Unlike oras it is a docker CLI plugin and has to sit where that
-    CLI looks; the static CLI `simplon.docker` bootstraps carries none, so the refusal names the two
+    CLI looks; the static CLI `simplon.adapters.docker` bootstraps carries none, so the refusal names the two
     places one comes from.
 
     Shared with `support:ci-arm64` (si#358), which has to ask the SAME builder a build uses - a check

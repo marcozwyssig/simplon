@@ -42,8 +42,9 @@ import json
 import os
 from pathlib import Path
 
-from simplon import disk, diskguard, log
-from simplon.run import run
+from simplon.adapters import disk, diskguard
+from simplon.kernel import log
+from simplon.kernel.run import run
 
 #: The files this touches. Module-level so a test can point them somewhere harmless.
 DAEMON_JSON = Path("/etc/docker/daemon.json")
@@ -242,7 +243,7 @@ def _report(when: str) -> None:
 
 
 # --- the two in-job halves, which are the library's and only placed here ---------------------------------
-# Thin on purpose. `simplon.diskguard` is LIBRARY (`surface.py`): a product may call it directly, and two
+# Thin on purpose. `simplon.adapters.diskguard` is LIBRARY (`surface.py`): a product may call it directly, and two
 # of them do. What belongs in a task body is the COORDINATE - the name a manifest places and a workflow
 # step calls - and nothing else. A body with logic in it would be a second implementation of a decision
 # that is already tested where it lives.

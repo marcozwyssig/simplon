@@ -89,8 +89,9 @@ import sys
 from pathlib import Path
 from typing import NoReturn
 
-from simplon import context, log
-from simplon.run import Result, run
+from simplon.domain import context
+from simplon.kernel import log
+from simplon.kernel.run import Result, run
 
 #: mypy's own convention, not a product's. A product that wants another name pins it with
 #: `with: { config: <path> }` on its command; the path is read relative to the product root.
@@ -240,7 +241,7 @@ def classify(output: str) -> tuple[list[str], int]:
 def _echo(result: Result) -> None:
     """Put mypy's own output back in front of the reader, unchanged.
 
-    The run is CAPTURED since si#203, because `simplon.run`'s own rule says to capture when the caller
+    The run is CAPTURED since si#203, because `simplon.kernel.run`'s own rule says to capture when the caller
     inspects the output and reports its own verdict - which is exactly what `classify` now does. The
     findings are what a person came for, so they are written out verbatim rather than summarised, and
     they go through this process' stdout so the step log and the TUI transcript carry them too.

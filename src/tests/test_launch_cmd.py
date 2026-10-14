@@ -3,7 +3,7 @@
 launch.sh and launch.cmd live in `src/simplon/templates/` as Jinja templates that `simplon init` renders
 per product, so there is no single launcher file to assert against. Two things survive that: the crlf
 policy `.gitattributes` holds for simplon's OWN `simplon.cmd`, and - since si#57 - the line endings
-`simplon.bootstrap.write` gives a SCAFFOLDED product, which used to be whichever ones the scaffolding host
+`simplon.cli.bootstrap.write` gives a SCAFFOLDED product, which used to be whichever ones the scaffolding host
 happened to have.
 
 WHAT IS MEASURED HERE AND WHAT IS INHERITED, because the two are not the same strength of evidence and
@@ -25,8 +25,8 @@ import stat
 import subprocess
 from pathlib import Path
 
-from simplon import bootstrap
-from simplon.run import run
+from simplon.cli import bootstrap
+from simplon.kernel.run import run
 from conftest import ROOT
 
 

@@ -1,5 +1,5 @@
-"""Unit tests for the task catalogue (simplon.catalogue, netctl#1437) and the `import:` expansion it
-feeds (simplon.orchestrator.manifest).
+"""Unit tests for the task catalogue (simplon.domain.catalogue, netctl#1437) and the `import:` expansion it
+feeds (simplon.domain.manifest).
 
 The catalogue is the coordinate space between the platform and a product: `<namespace>:<name>` resolves
 to whatever module currently holds the body, so a body can move inside the kernel without breaking a
@@ -14,9 +14,9 @@ from pathlib import Path
 
 import pytest
 
-from simplon import catalogue
-from simplon.orchestrator import manifest
-from simplon.orchestrator.model import treeform
+from simplon.domain import catalogue
+from simplon.domain import manifest
+from simplon.domain import treeform
 from conftest import ROOT
 
 _CATALOGUE = """

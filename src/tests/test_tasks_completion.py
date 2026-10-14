@@ -2,7 +2,7 @@
 
 The GENERATOR is covered by test_completiongen.py. What is asserted here is the SEAM, the same one
 test_tasks_workflows.py holds for `support:workflows`: that the verb reads the product's root, manifest
-and manifest filename out of `simplon.context` rather than knowing a product, and that `--check` reports
+and manifest filename out of `simplon.domain.context` rather than knowing a product, and that `--check` reports
 disagreement as a NON-ZERO EXIT so one command serves both a pre-commit hook and a CI step.
 
 AND ONE THING THE OTHER VERBS DO NOT HAVE TO SAY. This command's output is inert until somebody sources
@@ -16,7 +16,8 @@ import textwrap
 
 import pytest
 
-from simplon import completiongen, context
+from simplon.tasks import completiongen
+from simplon.domain import context
 from simplon.tasks import completion as completion_task
 
 _MANIFEST = """

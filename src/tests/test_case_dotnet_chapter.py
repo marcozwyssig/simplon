@@ -55,10 +55,11 @@ import pytest
 import typer
 import yaml
 
-from simplon import bootstrap, docker, labinstance
-from simplon import catalogue as catalogue_mod
+from simplon.cli import bootstrap
+from simplon.adapters import docker, labinstance
+from simplon.domain import catalogue as catalogue_mod
 from simplon import cli as simplon_cli
-from simplon.orchestrator import manifest as manifest_mod
+from simplon.domain import manifest as manifest_mod
 from simplon.tasks import profiles, toolchain
 from simplon.tasks.testrun import Gate
 
@@ -581,7 +582,7 @@ def test_the_design_shape_the_chapter_says_is_refused_now_assembles():
 def test_the_missing_instance_refusal_the_chapter_quotes_is_the_kernels_own():
     """`toolchain:run` resolves the lab instance before it looks at whether the command declares a cache,
     so a product without an `instance:` section dies on its first toolchain command. The chapter shows
-    that refusal; the sentence is built from `simplon.labinstance`'s own section name rather than
+    that refusal; the sentence is built from `simplon.adapters.labinstance`'s own section name rather than
     retyped, and the fixture is checked to really carry the section that answers it."""
     # act / assert: the page quotes the message, spelled the way the kernel spells it
     assert f"is missing the '{labinstance.MANIFEST_SECTION}' section" in _text(), (

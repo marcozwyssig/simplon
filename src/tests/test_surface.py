@@ -1,7 +1,7 @@
 """The kernel's two public surfaces, and the tombstones left where a module moved (#37).
 
-`simplon.surface` is a declaration, not a derivation - a promise is about tomorrow, so no import graph
-can produce it. What these tests do is hold the declaration to the tree: every top-level module is
+`simplon.cli.surface` is a declaration, not a derivation - a promise is about tomorrow, so no import graph
+can produce it. What these tests do is hold the declaration to the tree: every module is
 classified, every classification names something real, and every tombstone still serves the names it
 used to serve while saying where they went.
 
@@ -20,7 +20,8 @@ from pathlib import Path
 import pytest
 
 import simplon
-from simplon import log, surface
+from simplon.kernel import log
+from simplon.cli import surface
 
 import sitepages
 from conftest import ROOT
@@ -32,28 +33,43 @@ NOT_CLASSIFIED = {"__init__", "_version"}
 
 
 def _top_level_names() -> set[str]:
-    """Every name importable as `simplon.<x>`, read off the directory - MODULES and SUBPACKAGES both.
+    """Every module a product could import, read off the directory, as its path below `simplon`.
 
-    The subpackages are the half this originally missed, and missing them was not a rounding error:
-    `simplon.orchestrator` and `simplon.tasks` are the second and third most imported things the kernel
-    offers. A version of this that globbed `*.py` called the declaration complete while the two biggest
-    names in it were classified by nobody, and a new subpackage beside `cli.py` passed in silence.
+    Since si#399 the modules sit in one package per component, so the unit is the dotted path
+    (`kernel.run`), not the file name beside `cli.py`. A component package's own `__init__` is a marker
+    and is not a module of either surface - except `cli`, whose `__init__` IS the command line. Under
+    `tasks/` the package is the unit, as before (`PACKAGES`): a module there is placed by the catalogue,
+    unless the declaration names it on its own.
+
+    The subpackages were the half the first version of this missed, and missing them was not a rounding
+    error: a version that globbed `*.py` at the top called the declaration complete while the two biggest
+    names in it were classified by nobody.
     """
-    modules = {p.stem for p in SRC.glob("*.py")} - NOT_CLASSIFIED
-    packages = {d.name for d in SRC.iterdir() if d.is_dir() and (d / "__init__.py").exists()}
-    return modules | packages
+    named = set(surface.LIBRARY | surface.INTERNAL)
+    found: set[str] = set()
+    for path in SRC.rglob("*.py"):
+        parts = path.relative_to(SRC).with_suffix("").parts
+        if parts[-1] == "__init__":
+            parts = parts[:-1]
+            if parts != ("cli",):
+                continue
+        dotted = ".".join(parts)
+        if dotted in NOT_CLASSIFIED or (parts[0] in surface.PACKAGES and dotted not in named):
+            continue
+        found.add(dotted)
+    return found | {d.name for d in SRC.iterdir() if d.name in surface.PACKAGES}
 
 
 def _declared() -> set[str]:
     """Every name the declaration places, whichever set it places it in."""
-    return set(surface.LIBRARY | surface.INTERNAL | surface.PACKAGES) | set(surface.MOVED)
+    return set(surface.LIBRARY | surface.INTERNAL | surface.PACKAGES)
 
 
 # --- the declaration against the tree ---------------------------------------------------------------
 
 
 def test_every_top_level_module_is_classified():
-    """The point of the whole module: a new file beside `cli.py` cannot appear without somebody saying
+    """The point of the whole module: a new module cannot appear in the kernel without somebody saying
     which surface it is on. This is the test that makes the declaration a decision rather than a note -
     add a module and this goes red until it is placed."""
     # act
@@ -105,12 +121,15 @@ def test_no_module_is_promised_under_a_task_body_s_name():
     def singular(name: str) -> str:
         return name[:-1] if name.endswith("s") and not name.endswith("ss") else name
 
-    bodies = {p.stem for p in (SRC / "tasks").glob("*.py")} - {"__init__"}
+    # si#399 put `taskgen`, `completiongen` and `workflowgen` under tasks/ as library modules; a module is
+    # no collision with itself, so the bodies are the modules there the declaration does not promise.
+    promised = {m for m in surface.LIBRARY if m.startswith("tasks.")}
+    bodies = {p.stem for p in (SRC / "tasks").glob("*.py")} - {"__init__"} - {m[len("tasks."):] for m in promised}
     by_body = {singular(b): b for b in bodies}
 
     # act
-    collisions = {f"simplon.{m} / simplon.tasks.{by_body[singular(m)]}"
-                  for m in surface.LIBRARY if singular(m) in by_body}
+    collisions = {f"simplon.{m} / simplon.tasks.{by_body[singular(m.rpartition('.')[2])]}"
+                  for m in surface.LIBRARY - promised if singular(m.rpartition(".")[2]) in by_body}
 
     # assert
     assert not collisions, (
@@ -118,44 +137,69 @@ def test_no_module_is_promised_under_a_task_body_s_name():
         f"renamed, because nothing at the call site says which is which")
 
 
-# --- the tombstone machinery, with no tombstone standing ---------------------------------------------
+# --- the old paths, answered by the alias (si#399) ------------------------------------------------------
 #
-# `MOVED` is empty since 0.5.0 and the four modules are gone, so nothing in the tree reaches `moved_attr`
-# any more. The machinery stays because the next move needs it, and it is measured rather than obvious -
-# FutureWarning over DeprecationWarning, and `__all__` answered rather than refused, each cost a defect
-# to find. Kept untested it would rot silently, so these three exercise it against a SYNTHETIC pair
-# instead of a real tombstone: `simplon.log` stands in for the new home, and no old module has to exist.
+# The 0.4 tombstones were stub modules, and `moved_attr` served their attributes. si#399 replaced both with
+# an alias in `simplon.kernel.moved`: an old path is the SAME module object as its new one. What these hold
+# is the reason that was chosen, measured - a product's patch through an old path lands on the real code.
 
 
-def test_a_move_is_announced_when_an_attribute_is_served_through_it():
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        served = surface.moved_attr("simplon.gone", "simplon.log", "info")
+@pytest.mark.parametrize("old, new", sorted(surface.MOVED.items()))
+def test_an_old_path_is_the_very_module_at_its_new_home(old, new):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        aliased = importlib.import_module(f"simplon.{old}")
 
-    assert served is log.info
-    assert [str(w.message) for w in caught] == [surface.moved_message("simplon.gone", "simplon.log")]
-
-
-def test_a_dunder_probe_is_refused_rather_than_announced():
-    """`inspect`, `pytest` and `importlib` probe every module they touch. Announcing a move for those
-    would report a migration no product code asked for, and teach the reader to ignore the message."""
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        with pytest.raises(AttributeError):
-            surface.moved_attr("simplon.gone", "simplon.log", "__path__")
-
-    assert not caught, [str(w.message) for w in caught]
+    assert aliased is importlib.import_module(new)
+    assert aliased.__spec__.name == new, "the alias rewrote where the module says it lives"
 
 
-def test_a_star_import_gets_the_targets_own_surface_and_is_still_announced():
-    """The recurring defect in miniature: refuse `__all__` and a star-import falls back to the
-    tombstone's own module dict, binding the wrong names while warning about nothing."""
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        names = surface.moved_attr("simplon.gone", "simplon.log", "__all__")
+def test_a_patch_through_an_old_path_patches_the_code_that_runs():
+    """THE DEFECT THE ALIAS WAS CHOSEN FOR. Thirteen product sites patch by string, five of them exactly
+    this one. On a stub module the patch would land on the stub, the real `run_stream` would run, and the
+    product's test would stay green testing nothing. Seen red by having the alias hand back a copy of the
+    module instead of the module itself."""
+    from unittest import mock
 
-    assert set(names) == {n for n in vars(log) if not n.startswith("_")}
-    assert [str(w.message) for w in caught] == [surface.moved_message("simplon.gone", "simplon.log")]
+    from simplon.kernel import steps
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        with mock.patch("simplon.orchestrator.steps.run_stream") as patched:
+            assert steps.run_stream is patched
+
+
+def test_a_dissolved_package_still_reaches_its_children():
+    """`from simplon.orchestrator import product` is the line every scaffolded product carries."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        from simplon.orchestrator import product
+        from simplon.orchestrator.model import treeform
+
+    from simplon.domain import treeform as new_treeform
+    from simplon.kernel import product as new_product
+    assert (product, treeform) == (new_product, new_treeform)
+
+
+def test_importing_an_old_path_says_where_it_went_at_the_line_that_imported(tmp_path):
+    """A fresh interpreter, because an alias warns once per process: the first import of the old name.
+    The warning has to point at the product's line, not at importlib - a FutureWarning attributed to
+    `<frozen importlib._bootstrap>` tells the reader nothing they can change."""
+    script = tmp_path / "product.py"
+    script.write_text("from simplon.orchestrator import steps\n", encoding="utf-8")
+
+    result = subprocess.run([sys.executable, str(script)], capture_output=True, text=True,
+                            env={**os.environ, "PYTHONWARNINGS": "default"})
+
+    assert result.returncode == 0, result.stderr
+    assert f"{script}:1: FutureWarning: " + surface.moved_message(
+        "simplon.orchestrator.steps", "simplon.kernel.steps") in result.stderr, result.stderr
+
+
+def test_a_name_that_never_existed_is_still_not_found():
+    """The alias answers the old paths and only them; anything else stays a ModuleNotFoundError."""
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("simplon.nosuchmodule")
 
 
 def test_the_innards_under_tasks_are_exactly_the_modules_no_coordinate_names():
@@ -171,7 +215,8 @@ def test_the_innards_under_tasks_are_exactly_the_modules_no_coordinate_names():
     # arrange
     catalogue = (SRC / "catalogue.yaml").read_text(encoding="utf-8")
     named = set(re.findall(r"impl:\s*\"?simplon\.tasks\.([a-z0-9_]+):", catalogue))
-    present = {p.stem for p in (SRC / "tasks").glob("*.py")} - {"__init__"}
+    present = ({p.stem for p in (SRC / "tasks").glob("*.py")} - {"__init__"}
+               - {m[len("tasks."):] for m in surface.LIBRARY if m.startswith("tasks.")})
 
     # act
     innards = present - named
@@ -207,8 +252,8 @@ def test_every_tombstone_records_who_still_uses_the_old_path():
     who pays for it. A tombstone with no record beside it is a removal nobody can cost, so the next
     minor arrives, nobody knows whether it is safe, and the safe move is always to wait one more.
 
-    An EMPTY tuple is an answer here, and a valuable one: `allure` and `vcs` have no consumer at all.
-    What this forbids is a fifth tombstone appearing with nothing said about it.
+    An EMPTY tuple is an answer here, and a valuable one: 29 of si#399's 65 moves have no consumer at all.
+    What this forbids is a move appearing with nothing said about it.
     """
     # act
     unrecorded = set(surface.MOVED) - set(surface.MOVED_CONSUMERS)
@@ -256,9 +301,9 @@ def test_the_tombstones_are_gone_by_the_release_they_were_promised_for():
     # assert
     assert not (due and surface.MOVED), (
         f"this is {simplon.__version__}, past {'.'.join(map(str, surface.MOVED_DUE_AFTER))}, and the "
-        f"tombstones {sorted(surface.MOVED)} are still here - they were promised to go at this "
-        f"release. Removing them is: delete src/simplon/{{{','.join(sorted(surface.MOVED))}}}.py, "
-        f"empty surface.MOVED and surface.MOVED_CONSUMERS, and drop the migration table and the "
+        f"old paths {sorted(surface.MOVED)} still import - they were promised to go at this "
+        f"release. Removing them is: empty simplon.kernel.moved.MOVED and DISSOLVED and "
+        f"surface.MOVED_CONSUMERS, and drop the migration table and the "
         f"deadline sentence from {PAGE.relative_to(sitepages.ROOT)}. Re-measure "
         f"MOVED_CONSUMERS first - "
         f"the record says {sum(len(v) for v in surface.MOVED_CONSUMERS.values())} import lines are "
@@ -274,7 +319,7 @@ def test_the_release_page_sends_a_minor_release_to_the_record():
     page = sitepages.chapter("releasing.md").read_text(encoding="utf-8")
 
     # assert: the record by name, not a retyped copy of what is in it
-    for named in ("simplon.surface", "MOVED_CONSUMERS", "MOVED_DUE_AFTER"):
+    for named in ("simplon.cli.surface", "MOVED_CONSUMERS", "MOVED_DUE_AFTER"):
         assert named in page, (
             f"the release page does not name {named}, so a minor release is sent nowhere and the "
             f"only thing that notices the tombstone deadline is a failed publish")
@@ -288,7 +333,7 @@ def test_the_release_page_sends_a_minor_release_to_the_record():
 def _prose_files() -> list[Path]:
     root = ROOT
     return [p for p in [*SRC.rglob("*.py"), root / "README.md", *(root / "src" / "site").rglob("*.md")]
-            if p.resolve() != (SRC / "surface.py").resolve()]
+            if p.resolve() != (SRC / "cli" / "surface.py").resolve()]
 
 
 def test_no_kernel_prose_names_a_repository_measured_not_to_use_the_kernel():
@@ -357,7 +402,7 @@ def test_the_website_names_the_same_internals():
     page = PAGE.read_text(encoding="utf-8")
 
     # act
-    named = {n.strip("`") for n in re.findall(r"`[a-z_]+`(?= ·|\n)", page)}
+    named = {n.strip("`") for n in re.findall(r"`[a-z_.]+`(?= ·|\n)", page)}
 
     # assert
     assert surface.INTERNAL <= named, (

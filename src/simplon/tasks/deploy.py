@@ -3,14 +3,14 @@
 ONE SHAPE FOR EVERY PRODUCT, and the axis is what the product IS rather than what it is written in: a
 CLIENT application is installed into a directory on this machine, a SERVER application is brought up on a
 target through the product's own backend. Both name the version they are deploying, in the same three
-words (`1.4.0`, `latest`, `local`), and `simplon.deployment` is where that vocabulary lives.
+words (`1.4.0`, `latest`, `local`), and `simplon.domain.deployment` is where that vocabulary lives.
 
 WHAT IS OUT OF SCOPE, stated here because it is the half somebody will assume is coming. `client` means
 installing a version HERE. Distributing one to a FLEET - an SCCM, an MDM, a software deployment server -
 is not Simplon's business and is not what these commands grow into. A product that needs it drives its
 own tool, with this vocabulary in front of it.
 
-THE SERVER PATH DISPATCHES ON NOTHING, which is the whole of `simplon.backend`'s design: the product
+THE SERVER PATH DISPATCHES ON NOTHING, which is the whole of `simplon.adapters.backend`'s design: the product
 registers one implementation per backend tag and the kernel resolves the environment to an instance. What
 si#235 added there is a REGISTRATION seam, because a catalogue task is called by the CLI with
 manifest-pinned parameters and nothing else - it cannot be handed a registry as an argument the way
@@ -19,7 +19,7 @@ manifest-pinned parameters and nothing else - it cannot be handed a registry as 
 THIS MODULE NOW NAMES ONE BACKEND, and the sentence above used to say it named none. si#5 made
 `backend: portainer` work with no product code at all, because the whole chain under it is the kernel's
 own - `deploy carrier` builds the Portainer and `carriers:` describes it. `_backends` is where that is
-said out loud, in one place, merged UNDER whatever the product registered. `simplon.backend` itself still
+said out loud, in one place, merged UNDER whatever the product registered. `simplon.adapters.backend` itself still
 names nobody: the seam is unchanged, it simply arrives with something in it.
 
 THE CLIENT PATH INSTALLS INTO `into/<version>`, one directory per version rather than one directory
@@ -32,8 +32,9 @@ import os
 import shutil
 from pathlib import Path
 
-from simplon import (backend, context, deployment, devcontainer, environments, githubpackages,
-                     log, portainer)
+from simplon.adapters import backend, devcontainer, githubpackages, portainer
+from simplon.domain import context, deployment, environments
+from simplon.kernel import log
 from simplon.tasks import image
 
 

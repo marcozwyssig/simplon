@@ -29,7 +29,7 @@ import pytest
 
 from conftest import ROOT  # noqa: E402 - the one product-root anchor (si#283)
 PROBE = (
-    "import simplon.catalogue as c, pathlib;"
+    "import simplon.domain.catalogue as c, pathlib;"
     "p = pathlib.Path(c.__file__).parent;"
     "assert 'site-packages' in str(p), p;"
     "cat = c.load();"
@@ -42,8 +42,8 @@ PROBE = (
 # the scaffolded product so `orchestrator.cli`'s impls resolve. Run with the product dir as cwd.
 _GENERATE_CLI = (
     "import sys; sys.path.insert(0, 'deploy/provision/orchestrator/src/python');"
-    "from simplon import taskgen, catalogue;"
-    "from simplon.orchestrator import manifest;"
+    "from simplon.tasks import taskgen; from simplon.domain import catalogue;"
+    "from simplon.domain import manifest;"
     "text = open('demo.yaml', encoding='utf-8').read();"
     "m = manifest.load(text, catalogue=catalogue.load());"
     "src = taskgen.render(m, source='demo.yaml', product='demo');"
@@ -173,7 +173,7 @@ def test_the_wheel_carries_its_catalogue(installed):
 
 
 def test_the_installed_console_script_scaffolds_a_product(installed, tmp_path):
-    # arrange: the console script, not `python -m simplon.bootstrap` - the entry point is its own piece
+    # arrange: the console script, not `python -m simplon.cli.bootstrap` - the entry point is its own piece
     # of packaging metadata and can be missing while the module imports perfectly well
     exe = installed / ("simplon.exe" if sys.platform == "win32" else "simplon")
     assert exe.exists(), f"the wheel installed no console script at {exe}"

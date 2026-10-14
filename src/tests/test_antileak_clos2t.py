@@ -1,8 +1,8 @@
 """netctl#731 Strand 4 - the ANTI-LEAK PROOF. Strand 1 proved the manifest CAN express netctl's mesh;
 that alone does not prove the schema/renderer/substrate are not secretly netctl-shaped. This suite renders
 a SECOND, deliberately-non-netctl topology (`clos-2t`, a 2-tier leaf-spine DC fabric) through the SAME
-generic schema (S1 `simplon.topology`), the SAME generic engine (S2 `simplon.clabrender`) and the SAME
-substrate verdict (S3 `simplon.labnet`/`simplon.clablifecycle`) - with ZERO product code.
+generic schema (S1 `simplon.adapters.topology`), the SAME generic engine (S2 `simplon.adapters.clabrender`) and the SAME
+substrate verdict (S3 `simplon.adapters.labnet`/`simplon.adapters.clablifecycle`) - with ZERO product code.
 
 clos-2t differs from netctl on every axis: a Clos graph (not a site mesh); a vendor mix Nokia SR Linux +
 Arista cEOS + Alpine (none of frr/ios/vyos, no cisco_iol); opaque roles spine/leaf/host (none of l3s/w3s/
@@ -24,9 +24,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-from simplon import clablifecycle, clabrender, degraded, labnet, topology
-from simplon.clablifecycle import BringUpSpec
-from simplon.run import Result
+from simplon.adapters import clablifecycle, clabrender, labnet, topology
+from simplon.kernel import degraded
+from simplon.adapters.clablifecycle import BringUpSpec
+from simplon.kernel.run import Result
 
 _FIXTURE = Path(__file__).resolve().parent / "fixtures" / "clos-2t.topology.yml"
 

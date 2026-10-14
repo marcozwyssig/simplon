@@ -9,8 +9,9 @@ claims that (design section 6). It IS evidence about the shape of a command, whi
 """
 import pytest
 
-from simplon import context, githubpackages
-from simplon.context import ProductContext
+from simplon.domain import context
+from simplon.adapters import githubpackages
+from simplon.domain.context import ProductContext
 from simplon.tasks import nuget
 
 _MANIFEST = """

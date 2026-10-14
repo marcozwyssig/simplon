@@ -12,8 +12,9 @@ from difflib import SequenceMatcher
 import pytest
 import yaml
 
-from simplon import bootstrap, catalogue
-from simplon.orchestrator import manifest as manifest_mod
+from simplon.cli import bootstrap
+from simplon.domain import catalogue
+from simplon.domain import manifest as manifest_mod
 from simplon.tasks import toolchain
 
 
@@ -82,10 +83,10 @@ def test_an_unknown_language_is_refused_before_anything_is_written(manifest, mon
 
 
 def test_the_version_is_a_parameter_a_command_can_actually_carry(manifest):
-    # arrange: `simplon.signatures.bindable` DROPS a VAR_KEYWORD parameter, so a `**params` body was
+    # arrange: `simplon.domain.signatures.bindable` DROPS a VAR_KEYWORD parameter, so a `**params` body was
     # handed nothing at all - the loader accepted `with: { version: ... }` and discarded it, and every
     # language then raised `KeyError: 'version'` on the profile's first line (si#105)
-    from simplon import signatures
+    from simplon.domain import signatures
 
     # act
     names = [p.name for p in signatures.bindable(toolchain.scaffold)]

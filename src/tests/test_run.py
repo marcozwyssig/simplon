@@ -9,8 +9,8 @@ from unittest import mock
 
 import pytest
 
-from simplon import run as run_module
-from simplon.run import Result, chain, run_stream, stream
+from simplon.kernel import run as run_module
+from simplon.kernel.run import Result, chain, run_stream, stream
 
 
 def test_run_stream_emits_each_line_and_returns_the_real_rc():

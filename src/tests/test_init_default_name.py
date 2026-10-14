@@ -17,12 +17,12 @@ from pathlib import Path
 
 import pytest
 
-from simplon import bootstrap
-from simplon.run import Result
+from simplon.cli import bootstrap
+from simplon.kernel.run import Result
 
 
 def _git(*args: str, cwd: Path) -> str:
-    """One git call, checked. Not `simplon.run` on purpose: this is the test's own arrangement, and it
+    """One git call, checked. Not `simplon.kernel.run` on purpose: this is the test's own arrangement, and it
     must fail loudly here rather than turn into a scaffold with a surprising name."""
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True,
                           check=True).stdout.strip()

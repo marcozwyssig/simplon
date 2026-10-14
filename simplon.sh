@@ -183,7 +183,7 @@ if [ "$DELIVERY_ROUTE" = container ]; then
     # it is on the venv route, through the TUI's own `sys.stdout.isatty()` check.
     if [ -t 0 ] && [ -t 1 ]; then DOCKER_RUN+=(-t); fi
     # AS THE CALLER. A bind mount hands the container the host's inodes, so a container running as root
-    # leaves root-owned build outputs the caller cannot delete - which is the rule `simplon.docker.user_args`
+    # leaves root-owned build outputs the caller cannot delete - which is the rule `simplon.adapters.docker.user_args`
     # already carries for every toolchain container, applied to the kernel's own. It also makes that
     # function's `os.getuid()` answer the caller's uid inside the container, so the sibling containers
     # inherit the right owner for free.

@@ -1,5 +1,5 @@
 # netctl CLI manifest (#437, #434) - the declarative source the kernel manifest engine
-# (simplon.orchestrator.manifest) assembles netctl's Typer CLI from. It encodes the command
+# (simplon.domain.manifest) assembles netctl's Typer CLI from. It encodes the command
 # taxonomy (groups + which groups are env-first) and, per command, the implementation reference
 # ("module:function", the existing orchestrator.cli callback) plus a one-line help summary. orchestrator.cli loads
 # this file at import and assembles the app from it; the env-gate reuses the same taxonomy.
@@ -19,7 +19,7 @@ product: netctl
 # The image names, cache volumes, docToolchain version and clab topology name that used to be Python
 # literals in orchestrator.paths. They live here so a second product supplies its own via its own manifest;
 # paths.py reads these RAW (import yaml + yaml.safe_load), not through the manifest engine. The engine
-# (simplon.orchestrator.manifest.load) reads only groups/env_groups and IGNORES these
+# (simplon.domain.manifest.load) reads only groups/env_groups and IGNORES these
 # extra top-level sections, so CLI assembly and the manifest-parity test are unaffected.
 images:
   web: netctl:local
@@ -41,7 +41,7 @@ topology:
 
 # --- the multi-tenant lab instance (#453/#564/#465, moved to the kernel in #1404) ---
 # The RESOLUTION (flag -> env var -> linked-git-worktree-derived id -> default) is platform mechanics and
-# lives in `simplon.labinstance`; netctl holds no function for it. These three values are the only
+# lives in `simplon.adapters.labinstance`; netctl holds no function for it. These three values are the only
 # product-specific parts of that precedence and reach the kernel as DATA through this manifest, read raw
 # via ProductContext.manifest_data() exactly like images/volumes above.
 instance:
@@ -127,7 +127,7 @@ suites:
 
 # --- lab egress isolation, as DATA (#1003/#1004, moved out of Python by #1408) ---
 # The MECHANISM - the DOCKER-USER default-deny on the mgmt bridge, the instance-scoped rule comments, the
-# uplink ARP hardening - is `simplon.labegress`, because "an emulated network must not touch the LAN" is
+# uplink ARP hardening - is `simplon.adapters.labegress`, because "an emulated network must not touch the LAN" is
 # a property of running clab on a developer's machine, not of netctl. netctl holds no function for it.
 #
 # What is netctl's is the three names below. They are spellings, not switches, and none of them can be
@@ -178,7 +178,7 @@ claude:
 
 # --- the LAN Sonatype Nexus artefact proxy, as DATA (#948/#994/#996, moved out of Python by #1405) ---
 # The lifecycle - start the container, create the proxy repositories, report honest state - is MECHANISM
-# and lives in `simplon.nexusproxy`. What is netctl's is exactly what stands below, and it is the reason the
+# and lives in `simplon.adapters.nexusproxy`. What is netctl's is exactly what stands below, and it is the reason the
 # `nexus` command's impl can be the kernel's without netctl keeping a forwarding function: the kernel reads
 # this section RAW through ProductContext.manifest_data(), like images/volumes/claude above.
 #
@@ -300,7 +300,7 @@ groups:
   # `tooling.build_pipeline()` - a hand-ordered list of up to thirteen steps in product Python, two of them
   # appended or not by an `if` - is the depends_on plan below, resolved by the ONE kernel resolver
   # (`Manifest.plan_for`: transitive, deduped, ordered) and dispatched by
-  # `simplon.orchestrator.product.run_command`. The three "internal non-command steps" that
+  # `simplon.kernel.product.run_command`. The three "internal non-command steps" that
   # were the stated blocker (the Linux ownership reclaim #498, the freshness verification #424 and the
   # frontend clear #1047) are gone as blockers: two became first-class commands (reclaim-workspace,
   # verify-freshness) and the third lives inside `web-jar-only`, which has always cleared the generated

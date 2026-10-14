@@ -292,7 +292,7 @@ def _machine(monkeypatch, tmp_path, *, requires, on_path):
     for `claude` and the names in `on_path`. Returns the log lines, by level."""
     import types
 
-    from simplon.run import Result as RunResult
+    from simplon.kernel.run import Result as RunResult
 
     data = _with_requires(requires)
     ctx = types.SimpleNamespace(manifest_data=lambda: data, manifest_path=tmp_path / "m.yaml")
