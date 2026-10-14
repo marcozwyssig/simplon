@@ -144,7 +144,7 @@ the number that says whether a rib is filled:
 
 | namespace | kind | tasks in the catalogue today |
 |---|---|---|
-| `build` | phase, agnostic | 7 |
+| `build` | phase, agnostic | 8 |
 | `test` | phase, agnostic | 8 |
 | `release` | phase, agnostic | 7 |
 | `deploy` | phase, env-first | 3 |
@@ -155,7 +155,7 @@ the number that says whether a rib is filled:
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Fifty-one coordinates: thirty-nine carrying a placement, twelve free to be filed. The numbers in this sentence, in that
+Fifty-two coordinates: forty carrying a placement, twelve free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -179,12 +179,13 @@ it - or **placed**, written into the tree for everybody. The bar a placed comman
 *Produce the artefacts.* Whatever a product ships: a wheel, a container image, a bundle, a generated
 site.
 
-**In the catalogue today: 7 tasks.**
+**In the catalogue today: 8 tasks.**
 
 - `build:cmake-files`
 - `build:conan-cache`
 - `build:dotnet-solution`
 - `build:image`
+- `build:maven-pack`
 - `build:nuget-config`
 - `build:nuget-pack`
 - `build:nuget-restore`
@@ -298,6 +299,10 @@ it reads the coordinates back out of the registry - and the reason is specific t
 it**, so a green publish that uploaded nothing is reachable here in a way it is not for `dotnet nuget push`.
 Its verification has three outcomes rather than two, because a `401` means the token may not look and is not
 the same answer as a missing jar.
+
+Since si#344 C.3 it is two tasks, as `release:nuget` is: `build:maven-pack` stages `gradle publish` into a file
+repository under the entry's `path:`, so the jar exists before the release and a test can consume it, and
+`release:maven` uploads exactly those files and then reads them back.
 
 **It also answers the snapshot question itself** (si#330), rather than leaving it to each manifest. A
 `-SNAPSHOT` version republishes under one coordinate; a release version is immutable. So a release version

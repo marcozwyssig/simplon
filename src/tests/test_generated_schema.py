@@ -89,7 +89,7 @@ def test_every_reader_names_a_catalogue_coordinate_a_kind_and_needs_of_that_kind
              for c, needs in artifactschema.NEEDS.items()}
 
     # assert
-    assert len(artifactschema.READERS) == 11
+    assert len(artifactschema.READERS) == 12
     assert unknown == []
     assert set(artifactschema.READERS.values()) <= set(artifactschema.REFINES)
     assert set(artifactschema.NEEDS) == set(artifactschema.READERS)
@@ -110,7 +110,8 @@ def test_a_reader_needs_what_its_body_checked_before_si344_b2():
         "build:nuget-restore": ("registry", "image", "project"),
         "build:nuget-pack": ("image", "project", "path"),
         "release:nuget": ("registry", "image", "path"),
-        "release:maven": ("registry", "image", "group", "modules"),
+        "build:maven-pack": ("image", "group", "modules", "path"),
+        "release:maven": ("registry", "group", "modules", "path"),
     }
 
 

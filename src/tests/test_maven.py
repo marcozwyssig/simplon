@@ -12,6 +12,9 @@ absent, and could-not-ask - for the reason si#327 paid for three days earlier.
 
 AAA; the name states the behaviour under test.
 """
+import http.server
+import threading
+
 import pytest
 
 from simplon.domain import context
@@ -44,16 +47,6 @@ def test_pom_url_turns_the_group_into_path_segments():
     # assert
     assert url == ("https://maven.pkg.github.com/marcozwyssig/firn/"
                    "info/zwyssig/firn/core/0.2.0/core-0.2.0.pom")
-
-
-def test_publish_argv_pins_the_version_and_takes_no_daemon():
-    # arrange / act
-    argv = maven.publish_argv("0.2.0")
-
-    # assert: `-Pversion=` rather than an edit to build.gradle - the version is a property of the RELEASE,
-    # and a number checked into a build file is a number two people can pick at once. `--no-daemon`
-    # because a daemon in a `--rm` container is a process nobody reaps.
-    assert argv == ["gradle", "publish", "-Pversion=0.2.0", "--no-daemon"]
 
 
 # --- the container line --------------------------------------------------------------------------------
@@ -215,11 +208,6 @@ def test_an_unaskable_registry_does_not_block_a_release_publish(monkeypatch):
 # --- si#337: the gradle task is the coordinate's, and `task:` is withdrawn ---------------------------------
 
 
-def test_the_gradle_task_is_always_publish():
-    # arrange / act / assert
-    assert maven.publish_argv("1.0") == ["gradle", "publish", "-Pversion=1.0", "--no-daemon"]
-
-
 def test_a_declared_task_is_refused_rather_than_ignored():
     # arrange: si#334's case - a task that never reaches the registry. Ignoring the key would run the
     # root `publish` instead of what the product named, a different publication with no word said.
@@ -241,8 +229,8 @@ def test_an_entry_without_the_withdrawn_key_passes():
 
 
 
-def test_publish_refuses_a_declared_task_before_docker_is_touched(monkeypatch, tmp_path):
-    # arrange: a complete entry that still carries the 0.24.0 key, read the way `publish` reads it. The
+def test_pack_refuses_a_declared_task_before_docker_is_touched(monkeypatch, tmp_path):
+    # arrange: a complete entry that still carries the 0.24.0 key, read the way `pack` reads it. The
     # refusal has to come before a container could start - a helper nobody calls refuses nothing.
     path = tmp_path / "firn.yaml"
     path.write_text("artifacts:\n  firn:\n    kind: maven\n    registry: maven.pkg.github.com/o/r\n"
@@ -256,7 +244,7 @@ def test_publish_refuses_a_declared_task_before_docker_is_touched(monkeypatch, t
 
     # act / assert: 0.25.0's sentence, not the schema's generic "not a key" - the reader asks first
     with pytest.raises(ValueError, match="`task:` was withdrawn"):
-        maven.publish("firn")
+        maven.pack("firn")
 
 
 def test_verify_refuses_to_report_on_nothing(monkeypatch):
@@ -278,14 +266,14 @@ def test_may_publish_inherits_the_refusal_rather_than_calling_nothing_published(
         maven.may_publish("maven.pkg.github.com/o/r", "g.h", [], "1.0", "t")
 
 
-# --- si#412: the publish container is named, labelled, and removed on interrupt -------------------------
+# --- si#412: the pack container is named, labelled, and removed on interrupt -------------------------
 
 @pytest.fixture
 def _publishable(monkeypatch, tmp_path):
-    """A complete jar entry and every outside call `publish` makes, answered - so only the line is left."""
+    """A complete jar entry and every outside call `pack` and `push` make, answered - so only the line is left."""
     path = tmp_path / "firn.yaml"
     path.write_text("artifacts:\n  firn:\n    kind: maven\n    registry: maven.pkg.github.com/o/r\n"
-                    "    image: gradle:9.7.1-jdk21\n    group: g.h\n    modules: [core]\n    tag: '1.0'\n",
+                    "    image: gradle:9.7.1-jdk21\n    group: g.h\n    modules: [core]\n    tag: '1.0'\n    path: build/maven\n",
                     encoding="utf-8")
     monkeypatch.setattr(context, "_current", ProductContext("firn", tmp_path, path))
     monkeypatch.setattr(maven.docker, "ensure_docker", lambda: None)
@@ -294,20 +282,25 @@ def _publishable(monkeypatch, tmp_path):
     monkeypatch.setattr(maven, "may_publish", lambda *a: (True, ""))
     monkeypatch.setattr(maven, "verify", lambda *a: (maven.PRESENT, []))
 
+    def _stream(argv, cwd=None):  # the layout a real `gradle publish` leaves
+        _stage(tmp_path / "build" / "maven")
+        return 0
+    monkeypatch.setattr(maven, "stream", _stream)
 
-def test_the_publish_names_and_labels_its_container(_publishable, monkeypatch):
+
+def test_the_pack_names_and_labels_its_container(_publishable, monkeypatch):
     # arrange
     seen: list = []
     monkeypatch.setattr(maven, "stream", lambda argv, cwd=None: (seen.append(list(argv)), 0)[1])
 
     # act
-    maven.publish("firn")
+    maven.pack("firn")
 
     # assert
     lifecycle_name(seen[0], "firn")
 
 
-def test_an_interrupted_publish_removes_the_container_it_named(_publishable, monkeypatch, removals):
+def test_an_interrupted_pack_removes_the_container_it_named(_publishable, monkeypatch, removals):
     # arrange
     seen: list = []
 
@@ -318,7 +311,182 @@ def test_an_interrupted_publish_removes_the_container_it_named(_publishable, mon
 
     # act
     with pytest.raises(KeyboardInterrupt):
-        maven.publish("firn")
+        maven.pack("firn")
 
     # assert
     assert removals == [lifecycle_name(seen[0], "firn")]
+
+
+# --- si#344 C.3: pack stages, push uploads what was staged -----------------------------------------------
+
+def _stage(staging, group="g.h", module="core", version="1.0"):
+    """The layout `gradle publish` writes into a file repository: artefacts and checksums per version,
+    maven-metadata.xml per module."""
+    base = staging.joinpath(*group.split("."), module)
+    (base / version).mkdir(parents=True, exist_ok=True)
+    for suffix in (".jar", ".jar.sha1", ".pom", ".pom.sha1", ".module"):
+        (base / version / f"{module}-{version}{suffix}").write_text("x", encoding="utf-8")
+    (base / "maven-metadata.xml").write_text("<metadata/>", encoding="utf-8")
+    (base / "maven-metadata.xml.sha1").write_text("x", encoding="utf-8")
+
+
+def test_pack_argv_runs_the_staging_task_with_the_kernels_init_script():
+    # act
+    argv = maven.pack_argv("1.4.0")
+
+    # assert
+    assert argv == ["gradle", "publishAllPublicationsToSimplonStagingRepository", "-Pversion=1.4.0",
+                    "--init-script", "/work/build/gradle-home/simplon-staging.gradle", "--no-daemon"]
+
+
+def test_the_init_script_adds_one_file_repository_and_nothing_else():
+    # act
+    text = maven.init_script_text("/work/build/maven")
+
+    # assert
+    assert 'name = "simplonStaging"' in text
+    assert 'url = uri("/work/build/maven")' in text
+    assert 'plugins.withId("maven-publish")' in text
+
+
+def test_staged_lists_artefacts_before_each_modules_metadata(tmp_path):
+    # arrange
+    _stage(tmp_path)
+
+    # act
+    files, missing = maven.staged(tmp_path, "g.h", ["core"], "1.0")
+
+    # assert
+    names = [f.name for f in files]
+    assert missing == []
+    assert names.index("core-1.0.pom") < names.index("maven-metadata.xml")
+    assert names[-2:] == ["maven-metadata.xml", "maven-metadata.xml.sha1"]
+
+
+def test_staged_names_a_module_the_pack_did_not_stage(tmp_path):
+    # arrange
+    _stage(tmp_path, module="core")
+
+    # act
+    _, missing = maven.staged(tmp_path, "g.h", ["core", "api"], "1.0")
+
+    # assert
+    assert missing == ["api"]
+
+
+class _Recorder(http.server.BaseHTTPRequestHandler):
+    puts: list = []
+    status = 201
+
+    def do_PUT(self):  # noqa: N802 - the stdlib's spelling
+        length = int(self.headers.get("Content-Length", "0"))
+        self.rfile.read(length)
+        type(self).puts.append((self.path, self.headers.get("Authorization")))
+        self.send_response(type(self).status)
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture
+def _registry(monkeypatch):
+    """A local HTTP server standing in for the registry; `repository_url` is pointed at it."""
+    _Recorder.puts, _Recorder.status = [], 201
+    server = http.server.HTTPServer(("127.0.0.1", 0), _Recorder)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setattr(maven, "repository_url",
+                        lambda registry, checked=False: f"http://127.0.0.1:{server.server_port}/o/r")
+    yield _Recorder
+    server.shutdown()
+
+
+def test_upload_puts_every_staged_file_at_its_relative_path_with_the_token(tmp_path, _registry):
+    # arrange
+    _stage(tmp_path)
+    files, _ = maven.staged(tmp_path, "g.h", ["core"], "1.0")
+
+    # act
+    status, refused = maven.upload("maven.pkg.github.com/o/r", tmp_path, files, "t")
+
+    # assert
+    assert (status, refused) == (0, "")
+    paths = [p for p, _ in _registry.puts]
+    assert paths[0] == "/o/r/g/h/core/1.0/core-1.0.jar"
+    assert paths[-1] == "/o/r/g/h/core/maven-metadata.xml.sha1"
+    assert {auth for _, auth in _registry.puts} == {"Bearer t"}
+
+
+def test_upload_stops_at_the_first_refused_file_and_names_it(tmp_path, _registry):
+    # arrange
+    _stage(tmp_path)
+    files, _ = maven.staged(tmp_path, "g.h", ["core"], "1.0")
+    _registry.status = 403
+
+    # act
+    status, refused = maven.upload("maven.pkg.github.com/o/r", tmp_path, files, "t")
+
+    # assert
+    assert status == 403
+    assert refused == "g/h/core/1.0/core-1.0.jar"
+    assert len(_registry.puts) == 1
+
+
+def test_a_push_with_nothing_staged_for_its_version_names_the_pack_command(_publishable, monkeypatch):
+    # act / assert
+    with pytest.raises(ValueError, match="nothing staged for 1.0 under build/maven: run `build:maven-pack` first"):
+        maven.push("firn")
+
+
+def test_the_push_uploads_and_then_reads_back(_publishable, monkeypatch, tmp_path):
+    # arrange
+    _stage(tmp_path / "build" / "maven")
+    calls: list = []
+    monkeypatch.setattr(maven, "upload", lambda *a: calls.append("upload") or (0, ""))
+    monkeypatch.setattr(maven, "verify", lambda *a: calls.append("verify") or (maven.PRESENT, []))
+
+    # act
+    rc = maven.push("firn")
+
+    # assert
+    assert rc == 0
+    assert calls == ["upload", "verify"]
+
+
+def test_a_release_version_already_published_is_refused_before_anything_is_uploaded(_publishable, monkeypatch,
+                                                                                   tmp_path):
+    # arrange
+    _stage(tmp_path / "build" / "maven")
+    monkeypatch.setattr(maven, "may_publish", lambda *a: (False, "already in the registry"))
+    monkeypatch.setattr(maven, "upload", lambda *a: pytest.fail("uploaded although refused"))
+
+    # act
+    rc = maven.push("firn")
+
+    # assert
+    assert rc == 1
+
+
+def test_a_staging_path_outside_the_output_root_is_refused_before_anything_is_deleted(_publishable, tmp_path):
+    # arrange
+    path = tmp_path / "firn.yaml"
+    path.write_text(path.read_text(encoding="utf-8").replace("path: build/maven", "path: ."), encoding="utf-8")
+    (tmp_path / "keep.txt").write_text("x", encoding="utf-8")
+
+    # act / assert
+    with pytest.raises(ValueError, match="is not inside the output root"):
+        maven.pack("firn")
+    assert (tmp_path / "keep.txt").exists()
+
+
+def test_a_pack_that_exits_0_and_staged_nothing_is_a_failed_step(_publishable, monkeypatch, capsys):
+    # arrange: gradle answers 0 and writes nothing
+    monkeypatch.setattr(maven, "stream", lambda argv: 0)
+
+    # act
+    rc = maven.pack("firn")
+
+    # assert
+    assert rc == 1
+    assert "staged nothing for core" in capsys.readouterr().err

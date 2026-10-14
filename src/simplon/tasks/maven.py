@@ -1,4 +1,4 @@
-"""Publishing a jar: `gradle publish` into GitHub's Maven registry, with the coordinates read back (si#329).
+"""Publishing a jar in two steps: stage with `gradle publish` into a file repository, then upload what was staged and read it back (si#329, si#344 C.3).
 
 WHY THIS EXISTS, MEASURED. The kernel BUILDS four languages - `tasks/profiles.py` carries cpp, java, dotnet
 and python - and published two of them. It has pinned a Gradle image since si#316 (`gradle:9.7.1-jdk{version}`)
@@ -19,6 +19,17 @@ verifies is the same defect as a report nobody reads, and this project has shipp
 publish` that exits 0 having uploaded nothing is exactly that shape - and it is reachable, because a Gradle
 build with no `maven-publish` plugin configured has no `publish` task work to do and does not fail for it.
 
+WHY THE TWO HALVES ARE TWO TASKS (si#344 C.3). `gradle publish` builds and uploads in one run, so the jar
+first existed inside its own release and no test could consume it - and the release rule asks for a test
+result about every artifact a release publishes. `build:maven-pack` now runs the same `publish`, aimed at
+a file repository the kernel's init script adds under the entry's `path:`; `release:maven` uploads exactly
+those files, artefacts before metadata, and then runs the read-back it always ran. Gradle's own
+`publishToMavenLocal` was the cheaper route and was not taken: Maven's local repository writes
+`maven-metadata-local.xml` and no checksums, which is not the layout a remote repository holds.
+NOT PROVEN: that GitHub's Maven registry accepts a plain PUT per file. `mvn deploy` does exactly that, and
+the client here is measured against a local HTTP server, but the machine this was written on has no
+`write:packages` token.
+
 AND THE VERIFICATION HAS THREE OUTCOMES, not two. `401` is not "the jar is missing", it is "we were not
 allowed to look", and reporting the second as the first sends a reader to the build file when the answer is
 a token scope. si#327 paid for that distinction three days before this module was written, in a module whose
@@ -36,6 +47,7 @@ machine and stays in `docker inspect` for as long as the container exists.
 """
 from __future__ import annotations
 
+import shutil
 import urllib.error
 import urllib.request
 from collections.abc import Mapping, Sequence
@@ -49,7 +61,7 @@ from simplon.kernel.run import stream
 # `_env_file` writes a 0600 file and removes it in a `finally`; two copies of that is how one of them loses
 # the `finally` on the day somebody edits the other. The SECTION READER below is copied instead - see its
 # own docstring for why the asymmetry is the right way round.
-from simplon.tasks.nuget import _env_file
+from simplon.tasks.nuget import _env_file, _inside_the_output_root
 
 #: The manifest section this module reads - the same one `tasks/artifact`, `tasks/asset`, `tasks/nuget` and
 #: `tasks/conan` read. si#127's reasoning, applied a fourth time: a registry, a package and a scope are the
@@ -83,16 +95,44 @@ TIMEOUT = 30.0
 #: than a nicety.
 SNAPSHOT_SUFFIX = "-SNAPSHOT"
 
-#: The gradle task, and it is ONE task rather than the product's to name (si#337). 0.24.0 let an `artifacts:`
-#: entry say `task:`, and si#334 measured what that bought: `task: publishToMavenLocal` reached no registry,
-#: the read-back then found nothing and reported a green local publish as a failed release - with a
-#: diagnosis about `maven-publish` that was not the cause. The key was too WIDE, not too weakly checked:
-#: this coordinate's whole claim is "the jars are in the registry, and I looked", and a task that does not
-#: go to the registry cannot be held to that claim at all. So the task is fixed and the read-back always
-#: runs. A publish that is NOT a release - `publishToMavenLocal`, a task with another name - is the
-#: product's own command through `toolchain:run`, which is where `release:conan`'s head already puts the
-#: division of labour.
-TASK = "publish"
+#: The gradle task the pack runs (si#344 C.3): every publication, into the one repository the kernel's init
+#: script adds. Fixed, for si#337's reason: a task the product names could aim anywhere, and this task's
+#: claim is "the declared modules are staged where the push reads them".
+STAGE_TASK = "publishAllPublicationsToSimplonStagingRepository"
+
+#: The init script's file name, under `GRADLE_HOME` - inside the mounted tree, where the container can read it.
+INIT_SCRIPT = "simplon-staging.gradle"
+
+
+def init_script_text(staging: str) -> str:
+    """The init script that adds a file repository named `simplonStaging` at `staging` to every project
+    applying `maven-publish`, and changes nothing else. Pure."""
+    return ("// Written by simplon's build:maven-pack (si#344 C.3). Adds one file repository; changes nothing else.\n"
+            "allprojects {\n"
+            "    plugins.withId(\"maven-publish\") {\n"
+            "        publishing {\n"
+            "            repositories {\n"
+            "                maven {\n"
+            "                    name = \"simplonStaging\"\n"
+            f"                    url = uri(\"{staging}\")\n"
+            "                }\n"
+            "            }\n"
+            "        }\n"
+            "    }\n"
+            "}\n")
+
+
+def pack_argv(version: str) -> list[str]:
+    """`gradle <STAGE_TASK>` with the version the tag names and the kernel's init script. Pure.
+
+    `-Pversion=` rather than an edit to `build.gradle`: the version is a property of the RELEASE, and a
+    number checked into a build file is a number two people can pick at once.
+
+    `--no-daemon` because a Gradle daemon inside a `--rm` container is a process nobody reaps.
+    """
+    return ["gradle", STAGE_TASK, f"-Pversion={version}",
+            "--init-script", f"{WORKDIR}/{GRADLE_HOME}/{INIT_SCRIPT}", "--no-daemon"]
+
 
 #: Keys an `artifacts:` entry for this coordinate used to accept and no longer does. REFUSED rather than
 #: ignored, because ignoring `task: ":core:publish"` would run the root `publish` instead - a different
@@ -101,7 +141,7 @@ TASK = "publish"
 WITHDRAWN = ("task",)
 
 
-def _declared(name: str) -> artifactschema.MavenEntry:
+def _declared(name: str, coordinate: str) -> artifactschema.MavenEntry:
     """The `artifacts:` entry `name` names, or a refusal listing the ones that exist.
 
     COPIED FROM `tasks/nuget` RATHER THAN IMPORTED, and the asymmetry with `_env_file` above is the point.
@@ -135,7 +175,7 @@ def _declared(name: str) -> artifactschema.MavenEntry:
     body = section[name]
     if isinstance(body, Mapping):
         refuse_withdrawn(body, name)
-    return artifactsection.entry(section, name, ENTRY, ctx.manifest_path.name, "release:maven")
+    return artifactsection.entry(section, name, ENTRY, ctx.manifest_path.name, coordinate)
 
 
 def repository_url(registry: str, *, checked: bool = False) -> str:
@@ -186,9 +226,9 @@ def refuse_withdrawn(spec: Mapping[str, object], name: str) -> None:
     for key in WITHDRAWN:
         if key in spec:
             raise ValueError(
-                f"artifact '{name}': `{key}:` was withdrawn in 0.25.0 (si#337). `release:maven` always runs "
-                f"`gradle {TASK}` and reads every module back from the registry - a task that does not "
-                f"publish there cannot be held to that. Delete the key; a publish that is not a release "
+                f"artifact '{name}': `{key}:` was withdrawn in 0.25.0 (si#337). `build:maven-pack` always runs "
+                f"`gradle {STAGE_TASK}` and `release:maven` reads every module back from the registry - a task "
+                f"that does not stage there cannot be held to that. Delete the key; a publish that is not a release "
                 f"(`publishToMavenLocal`, a task with another name) is your own command through "
                 f"`toolchain:run`")
 
@@ -224,19 +264,6 @@ def may_publish(registry: str, group: str, modules: "Sequence[str]", version: st
                       "neither 200 nor 404. Proceeding, because that is a token that may not read rather "
                       "than a version that is taken")
     return True, ""
-
-
-def publish_argv(version: str) -> list[str]:
-    """`gradle publish`, with the version the tag names. Pure.
-
-    `-Pversion=` rather than an edit to `build.gradle`: the version is a property of the RELEASE, and a
-    number checked into a build file is a number two people can pick at once - the argument `release:tag`
-    is built on, one level down.
-
-    `--no-daemon` because a Gradle daemon inside a `--rm` container is a process nobody reaps, and the
-    container's exit then waits on it.
-    """
-    return ["gradle", TASK, f"-Pversion={version}", "--no-daemon"]
 
 
 def docker_argv(image: str, root: Path, env_file: Path, argv: list[str],
@@ -312,6 +339,52 @@ def verify(registry: str, group: str, modules: Sequence[str], version: str,
     return (ABSENT, missing) if missing else (PRESENT, [])
 
 
+def staged(staging: Path, group: str, modules: Sequence[str], version: str) -> tuple[list[Path], list[str]]:
+    """The files to upload for `modules` at `version`, in upload order - each module's version directory
+    with its own metadata last, then the module's `maven-metadata.xml*` - and the modules with nothing staged.
+
+    METADATA LAST, because a reader who sees the metadata first may resolve a version whose jar is not there yet.
+    """
+    files: list[Path] = []
+    missing: list[str] = []
+    for module in modules:
+        base = staging.joinpath(*group.split("."), module)
+        here = base / version
+        if not here.is_dir() or not any(here.glob("*.pom")):
+            missing.append(module)
+            continue
+        inner = sorted(p for p in here.iterdir() if p.is_file())
+        files += [p for p in inner if not p.name.startswith("maven-metadata")]
+        files += [p for p in inner if p.name.startswith("maven-metadata")]
+        files += sorted(p for p in base.glob("maven-metadata.xml*") if p.is_file())
+    return files, missing
+
+
+def _put(url: str, data: bytes, token: str) -> int:
+    """The HTTP status of one PUT, or 0 when it could not be made - `_status`'s three-way shape."""
+    request = urllib.request.Request(url, data=data, method="PUT")
+    request.add_header("Authorization", f"Bearer {token}")
+    request.add_header("Content-Type", "application/octet-stream")
+    try:
+        with urllib.request.urlopen(request, timeout=TIMEOUT) as answer:
+            return int(answer.status)
+    except urllib.error.HTTPError as refused:
+        return int(refused.code)
+    except (urllib.error.URLError, OSError, ValueError):
+        return 0
+
+
+def upload(registry: str, staging: Path, files: Sequence[Path], token: str) -> tuple[int, str]:
+    """PUT each file at its path relative to `staging`; `(0, "")`, or the first refusal and its path."""
+    base = repository_url(registry)
+    for path in files:
+        relative = path.relative_to(staging).as_posix()
+        status = _put(f"{base}/{relative}", path.read_bytes(), token)
+        if not 200 <= status < 300:
+            return status or 1, relative
+    return 0, ""
+
+
 def _modules(spec: artifactschema.MavenEntry, name: str) -> list[str]:
     """The modules `name` publishes, refusing an empty declaration by name.
 
@@ -335,39 +408,76 @@ def _modules(spec: artifactschema.MavenEntry, name: str) -> list[str]:
     return [str(item) for item in declared]
 
 
-def publish(name: str = "", tag: str = "") -> int:
-    """Publish the jars `name` declares to the GitHub Maven registry it names, and read them back.
-
-    The refusal order is the one a product hits: which artifact, then its keys, then the tree it writes,
-    then docker. Everything that can be decided without starting a container is decided first.
-    """
-    spec = _declared(name)
-    (registry, image, group) = (spec.registry or "", spec.image or "", spec.group or "")
-    repository_url(registry, checked=True)
-    modules = _modules(spec, name)
-    pinned = docker.pinned_image(image, f"artifact '{name}'",
-                                 hint="a published jar names the JDK and Gradle it was built with")
-
+def _resolved(spec: artifactschema.MavenEntry, name: str, tag: str) -> str:
     resolved = tag or spec.tag or ""
     if not resolved:
         raise ValueError(
             f"artifact '{name}' has no tag: declare `tag:` in the `{SECTION}:` section for a constant "
             f"one, or pass --tag for a version that is only known after a build")
+    return resolved
 
+
+def pack(name: str = "", tag: str = "") -> int:
+    """Stage the jars `name` declares into its `path:` as a Maven file repository (si#344 C.3)."""
+    spec = _declared(name, "build:maven-pack")
+    group = spec.group or ""
+    modules = _modules(spec, name)
+    pinned = docker.pinned_image(spec.image or "", f"artifact '{name}'",
+                                 hint="a published jar names the JDK and Gradle it was built with")
+    resolved = _resolved(spec, name, tag)
     root = context.current().root
+    relative = spec.path or ""
+    target = _inside_the_output_root(root, relative, name)
+
     docker.ensure_docker()
-    # si#319: the tree this container writes has to be the CALLER'S, not merely writable - and
-    # `GRADLE_USER_HOME` below points into exactly that tree.
+    # si#319: the tree this container writes has to be the CALLER'S, not merely writable.
     fault = docker.ownership_fault([outputs.root()], root)
     if fault:
         log.error(fault)
         raise ValueError(fault)
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir(parents=True)
     (root / GRADLE_HOME).mkdir(parents=True, exist_ok=True)
+    (root / GRADLE_HOME / INIT_SCRIPT).write_text(init_script_text(f"{WORKDIR}/{relative}"), encoding="utf-8")
+
+    with _env_file(githubpackages.token()) as env_file:
+        log.info(f"staging {group}:{{{','.join(modules)}}}:{resolved} into {relative} with `gradle {STAGE_TASK}`")
+        # si#412: named, labelled, and removed if this run is interrupted.
+        container, lifecycle = docker.lifecycle()
+        with docker.stopped_on_interrupt(container):
+            rc = stream(docker_argv(pinned, root, env_file, pack_argv(resolved), lifecycle))
+    if rc != 0:
+        log.error(f"`gradle {STAGE_TASK}` failed (rc={rc}; see output above)")
+        return rc
+    _, missing = staged(target, group, modules, resolved)
+    if missing:
+        log.error(f"`gradle {STAGE_TASK}` exited 0 and staged nothing for {', '.join(missing)} at {resolved} "
+                  f"under {relative}. A module without a `maven-publish` publication has nothing to publish "
+                  f"and does not fail for it - which is what this check exists to catch")
+        return 1
+    log.ok(f"staged {len(modules)} module(s) as {group}:*:{resolved} into {relative}")
+    return 0
+
+
+def push(name: str = "", tag: str = "") -> int:
+    """Upload what `build:maven-pack` staged for this version and read it back (si#344 C.3)."""
+    spec = _declared(name, "release:maven")
+    (registry, group) = (spec.registry or "", spec.group or "")
+    repository_url(registry, checked=True)
+    modules = _modules(spec, name)
+    resolved = _resolved(spec, name, tag)
+    root = context.current().root
+    relative = spec.path or ""
+    staging = (root / relative).resolve()
+    files, missing = staged(staging, group, modules, resolved)
+    if missing:
+        raise ValueError(f"nothing staged for {resolved} under {relative}: run `build:maven-pack` first "
+                         f"(missing: {', '.join(missing)})")
 
     token = githubpackages.token()
-    # si#330: the snapshot question, answered here and not left to each manifest. A release version that is
-    # already published is refused BEFORE a container starts, because the alternative is a half-replaced
-    # coordinate.
+    # si#330: a release version that is already published is refused BEFORE anything is uploaded, because
+    # the alternative is a half-replaced coordinate.
     allowed, said = may_publish(registry, group, modules, resolved, token)
     if not allowed:
         log.error(said)
@@ -375,47 +485,34 @@ def publish(name: str = "", tag: str = "") -> int:
     if said:
         log.warn(said)
 
-    with _env_file(token) as env_file:
-        log.info(f"publishing {group}:{{{','.join(modules)}}}:{resolved} to {repository_url(registry)} "
-                 f"with `gradle {TASK}`")
-        # si#412: named, labelled, and removed if this run is interrupted - a cancelled publish must stop
-        # publishing. What it leaves is a partial set at worst, which the read-back below names next run.
-        container, lifecycle = docker.lifecycle()
-        with docker.stopped_on_interrupt(container):
-            rc = stream(docker_argv(pinned, root, env_file, publish_argv(resolved), lifecycle))
+    log.info(f"uploading {len(files)} file(s) of {group}:{{{','.join(modules)}}}:{resolved} to "
+             f"{repository_url(registry)}")
+    status, refused = upload(registry, staging, files, token)
+    if status != 0:
+        log.error(f"the registry refused {refused} (HTTP {status})\n"
+                  f"if it refused rather than the network, the usual cause is a token without the package "
+                  f"scopes:\n" + githubpackages.scope_advice())
+        return 1
 
-    if rc != 0:
-        # The scope advice is a HINT tied to a condition, never appended to every failure - image.py's
-        # rule, because a publish fails on a full disk and a dead network too.
-        log.error(f"`gradle {TASK}` failed (rc={rc}; see output above)\n"
-                  f"if the registry refused it rather than the build, the usual cause is a token without "
-                  f"the package scopes:\n" + githubpackages.scope_advice())
-        return rc
-
-    state, missing = verify(registry, group, modules, resolved, token)
+    state, missing_back = verify(registry, group, modules, resolved, token)
     if state == ABSENT:
-        log.error(
-            f"`gradle {TASK}` reported success and {repository_url(registry)} does not carry "
-            f"{', '.join(f'{group}:{m}:{resolved}' for m in missing)}. A build with no `maven-publish` "
-            f"publication configured has no work to do and does not fail for it - which is what this "
-            f"read-back exists to catch")
+        log.error(f"every upload was accepted and {repository_url(registry)} does not carry "
+                  f"{', '.join(f'{group}:{m}:{resolved}' for m in missing_back)}")
         return 1
     if state == UNKNOWN:
         log.warn(
-            f"published, but this task could not VERIFY it: {repository_url(registry)} answered neither "
+            f"uploaded, but this task could not VERIFY it: {repository_url(registry)} answered neither "
             f"200 nor 404 for the modules' POMs. That is a token that may not read the registry, or a "
             f"request that never arrived - not evidence that the jars are missing.\n"
             + githubpackages.scope_advice())
         return 0
-    # WHAT THE OK LINE MAY CLAIM DIFFERS BY KIND, and that is si#330's question showing up one last time.
-    # For a release the read-back proves this run put the artefact there, because `may_publish` established
-    # it was absent beforehand. For a snapshot it proves PRESENCE and nothing more - the coordinate may have
-    # been occupied by an earlier run, and saying "published" for both would be one sentence covering two
-    # different claims.
+    # WHAT THE OK LINE MAY CLAIM DIFFERS BY KIND (si#330): for a release the read-back proves this run put
+    # the artefact there, because `may_publish` established it was absent beforehand; for a snapshot only
+    # presence.
     if is_snapshot(resolved):
         log.ok(f"{len(modules)} module(s) present as {group}:*:{resolved} at {repository_url(registry)} - a "
                f"snapshot, so this confirms they are THERE and not that this run put them there")
     else:
-        log.ok(f"published and read back {len(modules)} module(s) as {group}:*:{resolved} at "
+        log.ok(f"uploaded and read back {len(modules)} module(s) as {group}:*:{resolved} at "
                f"{repository_url(registry)}")
     return 0

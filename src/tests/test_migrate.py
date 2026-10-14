@@ -563,7 +563,7 @@ def test_cleon_without_its_hand_edit_is_refused_by_name_with_the_kinds():
     # an order change
     assert result.reason == (
         "artifacts: updatesite declares no `kind:`, and no command reads it through a catalogue task that "
-        "names its kind (build:conan-cache, build:image, build:nuget-config, build:nuget-pack, build:nuget-restore, release:artifact, release:conan, release:image, release:maven, release:nuget, test:image) - add `kind:` to it by hand, one of artifact, image, directory, site, nuget, maven, conan, test-result, release-notes, tag, release, and run again")
+        "names its kind (build:conan-cache, build:image, build:maven-pack, build:nuget-config, build:nuget-pack, build:nuget-restore, release:artifact, release:conan, release:image, release:maven, release:nuget, test:image) - add `kind:` to it by hand, one of artifact, image, directory, site, nuget, maven, conan, test-result, release-notes, tag, release, and run again")
 
 
 def test_netctls_bare_image_references_keep_their_value_and_their_comment():

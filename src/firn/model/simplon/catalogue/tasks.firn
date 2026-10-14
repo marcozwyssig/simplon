@@ -121,16 +121,28 @@ release_nuget typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.artifact.f_path
   }
 }
+build_maven_pack typeOf simplon.pipeline.CatalogueTask {
+  key = "build:maven-pack"
+  body = "simplon.tasks.maven:pack"
+  output maven typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.maven
+    param = "name"
+    needs = simplon.vocabulary.maven.f_image
+    needs = simplon.vocabulary.maven.f_group
+    needs = simplon.vocabulary.maven.f_modules
+    needs = simplon.vocabulary.artifact.f_path
+  }
+}
 release_maven typeOf simplon.pipeline.CatalogueTask {
   key = "release:maven"
-  body = "simplon.tasks.maven:publish"
+  body = "simplon.tasks.maven:push"
   input maven typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.maven
     param = "name"
     needs = simplon.vocabulary.artifact.f_registry
-    needs = simplon.vocabulary.maven.f_image
     needs = simplon.vocabulary.maven.f_group
     needs = simplon.vocabulary.maven.f_modules
+    needs = simplon.vocabulary.artifact.f_path
   }
 }
 docs_site typeOf simplon.pipeline.CatalogueTask {
