@@ -30,6 +30,11 @@ test_image typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.image.f_dockerfile
     needs = simplon.vocabulary.image.f_context
   }
+  output test_result typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.test_result
+    param = "results"
+    needs = simplon.vocabulary.artifact.f_path
+  }
 }
 release_image typeOf simplon.pipeline.CatalogueTask {
   key = "release:image"
@@ -42,6 +47,9 @@ release_image typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.image.f_dockerfile
     needs = simplon.vocabulary.image.f_context
   }
+  input evidence typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.test_result
+  }
 }
 release_artifact typeOf simplon.pipeline.CatalogueTask {
   key = "release:artifact"
@@ -53,6 +61,9 @@ release_artifact typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.directory.f_repository
     needs = simplon.vocabulary.directory.f_media_type
     needs = simplon.vocabulary.artifact.f_path
+  }
+  input evidence typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.test_result
   }
 }
 build_conan_cache typeOf simplon.pipeline.CatalogueTask {
@@ -77,6 +88,9 @@ release_conan typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.conan.f_repository
     needs = simplon.vocabulary.conan.f_media_type
     needs = simplon.vocabulary.artifact.f_path
+  }
+  input evidence typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.test_result
   }
 }
 build_nuget_config typeOf simplon.pipeline.CatalogueTask {
@@ -120,6 +134,9 @@ release_nuget typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.nuget.f_image
     needs = simplon.vocabulary.artifact.f_path
   }
+  input evidence typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.test_result
+  }
 }
 build_maven_pack typeOf simplon.pipeline.CatalogueTask {
   key = "build:maven-pack"
@@ -143,6 +160,9 @@ release_maven typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.maven.f_group
     needs = simplon.vocabulary.maven.f_modules
     needs = simplon.vocabulary.artifact.f_path
+  }
+  input evidence typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.test_result
   }
 }
 docs_site typeOf simplon.pipeline.CatalogueTask {

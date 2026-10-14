@@ -29,7 +29,7 @@ hand `entry` the SECTION, never the document, so they stay in the census's `READ
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TypeVar
+from typing import NamedTuple, TypeVar
 
 from pydantic import ValidationError
 
@@ -117,13 +117,21 @@ def check(document: Mapping[str, object], kinds: Mapping[str, str], source: str)
         _validated(kind, body, where)
 
 
-def declared(document: Mapping[str, object]) -> dict[str, tuple[str, bool]]:
-    """Each `artifacts:` entry -> (its kind, whether it names a `registry:`), for the port rules (si#344
-    C.2). `check` has refused an entry without a kind before this is asked."""
+class Declared(NamedTuple):
+    """What the port rules read of one `artifacts:` entry (si#344 C.2, C.3)."""
+
+    kind: str
+    registry: bool
+    path: str
+
+
+def declared(document: Mapping[str, object]) -> dict[str, Declared]:
+    """Each `artifacts:` entry -> its kind, whether it names a `registry:`, and its `path:` ("" for none).
+    `check` has refused an entry without a kind before this is asked."""
     section = document.get(SECTION)
     if not isinstance(section, Mapping):
         return {}
-    return {str(name): (str(body["kind"]), bool(body.get("registry")))
+    return {str(name): Declared(str(body["kind"]), bool(body.get("registry")), str(body.get("path") or ""))
             for name, body in section.items() if isinstance(body, Mapping) and "kind" in body}
 
 

@@ -62,18 +62,18 @@ template ArtifactSchema {
       |    "${t.key}": (
       for p : t.input {
         if p.param {
-          |        Port("${p.name}", "input", "${p.accepts.name.replace("_", "-")}", "${p.param}", (<<for f : p.needs>>"${f.key}", <<end>>)),
+          |        Port("${p.name.replace("_", "-")}", "input", "${p.accepts.name.replace("_", "-")}", "${p.param}", (<<for f : p.needs>>"${f.key}", <<end>>)),
         }
         if not p.param {
-          |        Port("${p.name}", "input", "${p.accepts.name.replace("_", "-")}", "", (<<for f : p.needs>>"${f.key}", <<end>>)),
+          |        Port("${p.name.replace("_", "-")}", "input", "${p.accepts.name.replace("_", "-")}", "", (<<for f : p.needs>>"${f.key}", <<end>>)),
         }
       }
       for p : t.output {
         if p.param {
-          |        Port("${p.name}", "output", "${p.accepts.name.replace("_", "-")}", "${p.param}", (<<for f : p.needs>>"${f.key}", <<end>>)),
+          |        Port("${p.name.replace("_", "-")}", "output", "${p.accepts.name.replace("_", "-")}", "${p.param}", (<<for f : p.needs>>"${f.key}", <<end>>)),
         }
         if not p.param {
-          |        Port("${p.name}", "output", "${p.accepts.name.replace("_", "-")}", "", (<<for f : p.needs>>"${f.key}", <<end>>)),
+          |        Port("${p.name.replace("_", "-")}", "output", "${p.accepts.name.replace("_", "-")}", "", (<<for f : p.needs>>"${f.key}", <<end>>)),
         }
       }
       |    ),

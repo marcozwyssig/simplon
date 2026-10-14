@@ -535,6 +535,7 @@ tasks:
       rc:     { help: "the exit code to expect (default 0); `rc: 2` means exactly 2, and 0 is then red" }
       user:   { help: "run as the invoking uid:gid (default true), so bind-mounted output is owned" }
       platform: { help: "one of the image's declared `platforms:` to run; default every declared one" }
+      results: { help: "the test result to write the verdict record to (normally bound with `produces:`)" }
 
   build:image:
     impl: simplon.tasks.image:build

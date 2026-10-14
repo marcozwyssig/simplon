@@ -154,6 +154,7 @@ def render(manifest: Manifest, *, source: str, product: str,
     imports: list[str] = []
     body: list[str] = []
     has_aggregate = False
+    uses_results = False
 
     # Every function first, so the module reads as a list of what a task IS before how it is wired.
     funcs = _function_names(manifest)
@@ -171,9 +172,18 @@ def render(manifest: Manifest, *, source: str, product: str,
                 takes_ctx = signatures.takes_context(impl_body)
                 params = _params(impl_body, spec.with_, spec.params, where=where)
                 call = _call(f"{module}.{attribute}", params, takes_context=takes_ctx)
+                # si#344 C.3: a command bound to produce an artifact has its call wrapped in the result
+                # check - `before` is the first argument, so it is evaluated before the body runs, and
+                # `held` turns an rc 0 that wrote no test result into 1 (`simplon.domain.results`).
+                produced = tuple(a for names in spec.produces.values() for a in names)
+                if produced:
+                    uses_results = True
+                    wrapped = f"_results.held(_results.before({produced!r}), _rc({call}))"
+                else:
+                    wrapped = f"_rc({call})"
                 tasks.append({"func": func, "help_repr": repr(_docstring(spec, impl_body)),
                               "signature": _signature(params, takes_context=takes_ctx),
-                              "call": f"_rc({call})"})
+                              "call": wrapped})
             else:
                 # An impl-less AGGREGATE has no body to wrap: it expands through its dependency plan,
                 # which the product dispatches. Skipping it would delete a real, invocable command
@@ -262,7 +272,7 @@ def render(manifest: Manifest, *, source: str, product: str,
                      for name in manifest.groups.get(group, ()))
     return env.get_template("cli.py.j2").render(source=source, imports=sorted(imports),
                                                 tasks=tasks, body=body, covered=covered,
-                                                has_aggregate=has_aggregate)
+                                                has_aggregate=has_aggregate, uses_results=uses_results)
 
 
 def _selected(manifest: Manifest, groups: frozenset[str] | None) -> frozenset[str]:

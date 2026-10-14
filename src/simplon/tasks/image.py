@@ -109,6 +109,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from simplon.domain import artifactsection, artifactschema, context, outputs
+from simplon.domain import results as results_mod
 from simplon.adapters import docker, githubpackages, hostpath
 from simplon.kernel import log
 from simplon.adapters.labhost import BINFMT_IMAGE
@@ -608,7 +609,7 @@ def build(name: str = "", tag: str = "", platform: str = "") -> int:
 
 
 def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect: str = "",
-          rc: int = 0, user: bool = True, platform: str = "") -> int:
+          rc: int = 0, user: bool = True, platform: str = "", results: str = "") -> int:
     """Run the container image `name` declares and check that it answers (si#301).
 
     `rc` IS AN EXPECTATION AND NOT A TOLERANCE (si#303), which is the whole of why it takes a value
@@ -646,6 +647,10 @@ def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect
     so an arm64 image that cannot start is found before it is published rather than by an arm64 user.
     Every platform runs even after one has failed, because which of them failed is the whole content of
     the answer; `platform:` narrows the run to one.
+
+    **`results` is the test result the verdict record goes to** (si#344 C.3): the command binds it with
+    `produces: { test-result: <artifact> }`. The record is written on a red run too - a release reads it as
+    evidence that the test RAN, and the rc says how it went.
     """
     cfg, root = _declared_for(name, "test:image")
     docker.ensure_docker()
@@ -653,6 +658,8 @@ def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect
     ref = reference(cfg, resolved)
     if not _platform_declared(cfg, name, platform):
         return 1
+    # Resolved before docker starts, so an entry that is not a test result is refused before anything runs.
+    record_path = results_mod.path_of(results) if results else None
     runs = ([(each, platform_reference(ref, each)) for each in ([platform] if platform else cfg.platforms)]
             if cfg.platforms else [("", ref)])
     absent = [each for _, each in runs if not present_locally(each)]
@@ -669,13 +676,22 @@ def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect
         if bound is None:
             return 1
         options += bound
-    verdicts = [_run_once(each, [*(["--platform", one] if one else []), *options], argv, expect, rc)
+    outcomes = [(one, each, *_run_once(each, [*(["--platform", one] if one else []), *options], argv, expect,
+                                       rc))
                 for one, each in runs]
-    return next((verdict for verdict in verdicts if verdict != 0), 0)
+    verdict = next((v for _, _, v, _ in outcomes if v != 0), 0)
+    if record_path is not None:
+        record_path.parent.mkdir(parents=True, exist_ok=True)
+        record_path.write_text(json.dumps({
+            "image": name, "verdict": verdict,
+            "runs": [{"reference": each, "platform": one, "argv": argv, "expected_rc": rc, "rc": got,
+                      "verdict": v} for one, each, v, got in outcomes]}, indent=2) + "\n", encoding="utf-8")
+    return verdict
 
 
-def _run_once(ref: str, options: list[str], argv: str, expect: str, rc: int) -> int:
-    """One `docker run` of `ref` and its verdict: 0, or the code `smoke` hands back.
+def _run_once(ref: str, options: list[str], argv: str, expect: str, rc: int) -> tuple[int, int]:
+    """One `docker run` of `ref`: its verdict - 0, or the code `smoke` hands back - and the container's own
+    rc, which the verdict record carries (si#344 C.3).
 
     Named and labelled `simplon.run=<product>`, and removed if the run is interrupted (si#412): an image
     under test is exactly the container nobody knows the lifetime of, and a cancelled job must not leave
@@ -692,13 +708,13 @@ def _run_once(ref: str, options: list[str], argv: str, expect: str, rc: int) -> 
         # `result.rc or 1` and not `result.rc`: when a REFUSAL was expected and the image exited 0, the
         # container's own code is the success this test is refusing to accept, and handing it back would
         # report the failure as green.
-        return result.rc or 1
+        return (result.rc or 1, result.rc)
     if expect and expect not in result.out:
         log.error(f"{ref} exited {result.rc} and did not say what was expected.\n"
                   f"  expected to find: {expect}\n" + _indented(result))
-        return 1
+        return (1, result.rc)
     log.ok(f"ran {ref}")
-    return 0
+    return (0, result.rc)
 
 
 def _mount_argv(mount: str, root: Path) -> list[str] | None:

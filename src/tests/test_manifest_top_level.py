@@ -127,6 +127,8 @@ MODULES: dict[str, tuple[str, ...]] = {
     # carries one value, and a section would invite a second key to grow beside it saying the same thing
     # differently.
     "domain.outputs": ("output",),
+    # si#344 C.3: the `test-result` entries a command produces, read around its body at run time.
+    "domain.results": ("artifacts",),
     # `carriers:` is read HERE and not in `carrierspec.py`, which is the same shape as `deployment`'s inner
     # half: that module is handed the document and validates it, this one is what reaches the document
     # and cross-checks an environment's `carrier:` against what it declares. The key belongs to whoever

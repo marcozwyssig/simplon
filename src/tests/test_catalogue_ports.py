@@ -13,23 +13,26 @@ from simplon.domain import artifactschema, catalogue
 P = artifactschema.Port
 IMAGE_NEEDS = ("registry", "repository", "dockerfile", "context")
 OCI_NEEDS = ("registry", "repository", "media_type", "path")
+EVIDENCE = P("evidence", "input", "test-result", "", ())
 
 
 def test_the_ports_are_the_ones_measured_from_the_bodies():
     # assert: pinned as a literal - built from READERS on both sides, this could not see a wrong direction
     assert artifactschema.PORTS == {
         "build:image": (P("image", "output", "image", "name", IMAGE_NEEDS),),
-        "test:image": (P("image", "input", "image", "name", IMAGE_NEEDS),),
-        "release:image": (P("image", "input", "image", "name", IMAGE_NEEDS),),
-        "release:artifact": (P("directory", "input", "directory", "name", OCI_NEEDS),),
+        "test:image": (P("image", "input", "image", "name", IMAGE_NEEDS),
+                       P("test-result", "output", "test-result", "results", ("path",))),
+        "release:image": (P("image", "input", "image", "name", IMAGE_NEEDS), EVIDENCE),
+        "release:artifact": (P("directory", "input", "directory", "name", OCI_NEEDS), EVIDENCE),
         "build:conan-cache": (P("conan", "input", "conan", "name", OCI_NEEDS),),
-        "release:conan": (P("conan", "input", "conan", "name", OCI_NEEDS),),
+        "release:conan": (P("conan", "input", "conan", "name", OCI_NEEDS), EVIDENCE),
         "build:nuget-config": (P("nuget", "input", "nuget", "name", ("registry",)),),
         "build:nuget-restore": (P("nuget", "input", "nuget", "name", ("registry", "image", "project")),),
         "build:nuget-pack": (P("nuget", "output", "nuget", "name", ("image", "project", "path")),),
-        "release:nuget": (P("nuget", "input", "nuget", "name", ("registry", "image", "path")),),
+        "release:nuget": (P("nuget", "input", "nuget", "name", ("registry", "image", "path")), EVIDENCE),
         "build:maven-pack": (P("maven", "output", "maven", "name", ("image", "group", "modules", "path")),),
-        "release:maven": (P("maven", "input", "maven", "name", ("registry", "group", "modules", "path")),),
+        "release:maven": (P("maven", "input", "maven", "name", ("registry", "group", "modules", "path")),
+                          EVIDENCE),
         "docs:site": (P("site", "output", "site", "", ()),),
         "toolchain:run": (P("source", "input", "artifact", "", ()), P("out", "output", "artifact", "", ())),
     }

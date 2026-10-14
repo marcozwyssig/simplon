@@ -40,18 +40,18 @@ template Docs {
     for t : `simplon.pipeline.CatalogueTask` {
       for p : t.input {
         if p.param {
-          || `${t.key}` | `${p.name}` | input | `${p.accepts.name.replace("_", "-")}` | `${p.param}` |
+          || `${t.key}` | `${p.name.replace("_", "-")}` | input | `${p.accepts.name.replace("_", "-")}` | `${p.param}` |
         }
         if not p.param {
-          || `${t.key}` | `${p.name}` | input | `${p.accepts.name.replace("_", "-")}` |  |
+          || `${t.key}` | `${p.name.replace("_", "-")}` | input | `${p.accepts.name.replace("_", "-")}` |  |
         }
       }
       for p : t.output {
         if p.param {
-          || `${t.key}` | `${p.name}` | output | `${p.accepts.name.replace("_", "-")}` | `${p.param}` |
+          || `${t.key}` | `${p.name.replace("_", "-")}` | output | `${p.accepts.name.replace("_", "-")}` | `${p.param}` |
         }
         if not p.param {
-          || `${t.key}` | `${p.name}` | output | `${p.accepts.name.replace("_", "-")}` |  |
+          || `${t.key}` | `${p.name.replace("_", "-")}` | output | `${p.accepts.name.replace("_", "-")}` |  |
         }
       }
     }

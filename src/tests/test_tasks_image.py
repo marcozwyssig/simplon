@@ -1198,6 +1198,46 @@ def test_what_the_image_says_is_still_checked_when_a_refusal_was_expected(_no_pr
     assert "model is broken" in capsys.readouterr().err
 
 
+# --- si#344 C.3: a test writes its own result ---------------------------------------------------------
+
+def test_a_smoke_run_writes_its_verdict_record_to_the_result_it_is_bound_to(cli, _no_provenance, _product,
+                                                                           _tagged, monkeypatch):
+    # arrange
+    text = (_product / "demo.yaml").read_text(encoding="utf-8")
+    (_product / "demo.yaml").write_text(
+        text + "  app-checked: { kind: test-result, path: build/test/app.json }\n", encoding="utf-8")
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+
+    # act
+    rc = image.smoke("app", argv="check", results="app-checked")
+
+    # assert
+    assert rc == 0
+    record = json.loads((_product / "build" / "test" / "app.json").read_text(encoding="utf-8"))
+    assert record["image"] == "app"
+    assert record["verdict"] == 0
+    assert record["runs"] == [{"reference": "ghcr.io/owner/demo-app:1.2.3", "platform": "", "argv": "check",
+                               "expected_rc": 0, "rc": 0, "verdict": 0}]
+
+
+def test_a_failing_smoke_run_still_writes_its_record_with_the_failure(cli, _no_provenance, _product, _tagged,
+                                                                      monkeypatch):
+    # arrange
+    text = (_product / "demo.yaml").read_text(encoding="utf-8")
+    (_product / "demo.yaml").write_text(
+        text + "  app-checked: { kind: test-result, path: build/test/app.json }\n", encoding="utf-8")
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+    cli.verdict[("docker", "run")] = 2
+
+    # act
+    rc = image.smoke("app", argv="check", results="app-checked")
+
+    # assert
+    assert rc == 2
+    record = json.loads((_product / "build" / "test" / "app.json").read_text(encoding="utf-8"))
+    assert record["verdict"] == 2
+
+
 # --- the pointer a build leaves behind (si#314) --------------------------------------------------------
 
 def test_a_build_records_what_it_produced_under_the_output_directory(cli, _no_provenance, _product,

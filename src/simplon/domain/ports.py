@@ -115,8 +115,10 @@ def _artifacts(where: str, key: str, port: Port, value: object) -> tuple[str, ..
         + (", or a list of them on a port without `param:`" if key == "consumes" else ""))
 
 
-def check(manifest: "Manifest", declared: Mapping[str, tuple[str, bool]], kinds: Mapping[str, str]) -> None:
-    """Load rules 1, 2, 3 and 5 (spec C.5, si#344 C.2) over the loaded manifest. All four are diagnosis."""
+def check(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared"],
+          kinds: Mapping[str, str]) -> None:
+    """Load rules 1, 2, 3 and 5 (spec C.5, si#344 C.2) over the loaded manifest, all four diagnosis; then
+    the test-result rules (si#344 C.3, `_check_results`)."""
     producers: dict[str, list[str]] = {}
     consumers: list[tuple[str, str]] = []
     for group, members in manifest.commands.items():
@@ -135,7 +137,7 @@ def check(manifest: "Manifest", declared: Mapping[str, tuple[str, bool]], kinds:
                             raise ValueError(
                                 f"command '{where}' binds '{artifact}' to port '{port_name}', and `artifacts:` "
                                 f"declares no '{artifact}' - declare it there with its `kind:`")
-                        kind = declared[artifact][0]
+                        kind = declared[artifact].kind
                         if not artifactsection.accepts(kinds, port.accepts, kind):
                             raise ValueError(
                                 f"command '{where}' binds '{artifact}', a `{kind}`, to port '{port_name}', which "
@@ -145,7 +147,7 @@ def check(manifest: "Manifest", declared: Mapping[str, tuple[str, bool]], kinds:
                         else:
                             consumers.append((where, artifact))
     for where, artifact in consumers:
-        if artifact not in producers and not declared[artifact][1]:
+        if artifact not in producers and not declared[artifact].registry:
             raise ValueError(
                 f"command '{where}' consumes '{artifact}', and no command produces it - produce it with a "
                 f"command, or give it a `registry:` it is fetched from")
@@ -153,6 +155,7 @@ def check(manifest: "Manifest", declared: Mapping[str, tuple[str, bool]], kinds:
         for name, spec in members.items():
             if spec.depends_on:
                 _check_plan(manifest, f"{group} {name}", manifest.plan_for(name, group=group))
+    _check_results(manifest, declared, kinds)
 
 
 def _check_plan(manifest: "Manifest", aggregate: str, plan: tuple[str, ...]) -> None:
@@ -175,3 +178,39 @@ def _check_plan(manifest: "Manifest", aggregate: str, plan: tuple[str, ...]) -> 
                 raise ValueError(
                     f"aggregate '{aggregate}' plans '{step}' before '{producer}', and '{step}' consumes "
                     f"'{artifact}', which '{producer}' produces - list '{producer}' first in `depends_on`")
+
+
+#: The kinds a release produces about itself (si#344 C.3, decided 2026-10-14). The release rule asks for test
+#: results about every OTHER artifact a release command consumes: the notes, the tag, the bundle and the
+#: evidence itself are not what a release publishes.
+OWN_KINDS = ("test-result", "release-notes", "tag", "release")
+
+
+def _top(group: str) -> str:
+    return group.split(".", 1)[0]
+
+
+def _check_results(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared"],
+                   kinds: Mapping[str, str]) -> dict[str, set[str]]:
+    """A produced test result has a `path:` and is produced under `ci: test:` (si#344 C.3). Returns what
+    each artifact's test results are: artifact -> the results whose producer consumes it."""
+    about: dict[str, set[str]] = {}
+    for group, members in manifest.commands.items():
+        for name, spec in members.items():
+            made = [a for names in spec.produces.values() for a in names
+                    if artifactsection.accepts(kinds, "test-result", declared[a].kind)]
+            if not made:
+                continue
+            where = f"{group} {name}"
+            for result in made:
+                if not declared[result].path:
+                    raise ValueError(
+                        f"command '{where}' produces the test result '{result}', which declares no `path:` - "
+                        f"a test result is what the test writes, so name where")
+            if (manifest.area_of(group), _top(group)) != ("ci", "test"):
+                raise ValueError(
+                    f"command '{where}' produces the test result '{made[0]}' outside `ci: test:` - a test "
+                    f"result is evidence that a test ran, so only a command under `ci: test:` produces one")
+            for subject in (a for names in spec.consumes.values() for a in names):
+                about.setdefault(subject, set()).update(made)
+    return about

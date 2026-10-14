@@ -169,6 +169,8 @@ CHAPTER = sitepages.chapter("rules.md")
 #: red the day a new one appears. That is the property si#61 asked for: a manifest reader cannot join the
 #: kernel quietly, whether or not the walk can follow it.
 READS_INLINE = {
+    "domain.results": "`before`/`path_of` read `artifacts:` at RUN time, around a body the dispatcher is "
+                      "calling - the read and the run are one wrapper (si#344 C.3)",
     "domain.environments": "reads `environments:`/`default:` into a local `data` inside `Provider.registry`, "
                     "which then builds backends - the reading and the wiring are one function",
     "adapters.labinstance": "`spec()` reads the topology section and goes on to talk to docker in the same body",
@@ -628,6 +630,12 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("ports", "check", "and no command produces it"): DIAGNOSIS,
     ("ports", "_check_plan", "plans two producers of"): DIAGNOSIS,
     ("ports", "_check_plan", "first in `depends_on`"): DIAGNOSIS,
+    # si#344 C.3. A test result with no `path:` has nowhere to be written: diagnosis. One produced outside
+    # `ci: test:` would have worked - it is an expression rule, and it rules on the merged tree.
+    ("ports", "_check_results", "a test result is what the test writes"): DIAGNOSIS,
+    ("ports", "_check_results", "so only a command under `ci: test:` produces one"): EXPRESSION,
+    # `domain.results` (si#344 C.3) raises too, at RUN time around a body; it is in READS_INLINE, so the walk
+    # does not follow it and its three refusals are in neither count - measured: keys for them matched nothing.
     ("treeform", "check_no_old_form", "is written in the flat command form"): EXPRESSION,
     # si#344, the cut. DIAGNOSIS, all of them: `_ManifestModel` ignores an unknown top-level key, so each of
     # these would otherwise load as a product with no commands, a deploy with no matrix or a site that is
@@ -929,6 +937,8 @@ CENSUS: dict[tuple[str, str, str], str] = {
 
 #: For each EXPRESSION rule only, the third kind `CLAUDE.md` names: how far the rule reaches.
 REACH: dict[tuple[str, str, str], str] = {
+    # si#344 C.3: `_check_results` is handed the merged Manifest, so it rules on the catalogue's placements too.
+    ("ports", "_check_results", "so only a command under `ci: test:` produces one"): REACH_MERGED,
     # si#5's one expression rule. MERGED: this kernel's own manifest goes through the same parser, so a
     # stray key under a carrier of simplon's own would be refused exactly the same way. It declares no
     # carrier today, which is why the claim is about the parser rather than about a placement.
@@ -1991,8 +2001,9 @@ def test_no_expression_rule_exempts_the_kernel_from_itself():
 # catalogue - `test_a_section_rule_has_no_kernel_half_to_withhold` derives that from their signatures - so
 # there is nothing there for a rule to be denied.
 
-#: The two modules on the merge path, where a manifest has a platform half and a product half.
-TREE_MODULES = ("manifest", "treeform")
+#: The modules on the merge path, where a manifest has a platform half and a product half (ports since
+#: si#344 C.3: its rules run on the loaded, merged Manifest).
+TREE_MODULES = ("manifest", "treeform", "ports")
 
 #: The two expression rules pydantic runs, and why they need naming instead of wrapping. Both are
 #: validators on `_ManifestModel` - a field validator and a model validator - so no expression in the
@@ -2082,6 +2093,7 @@ def _populations(monkeypatch) -> dict[str, list[str]]:
     the coordinate. That was measured here, and reading it late is what turned it into a false exemption.
     """
     from simplon.domain import manifest as manifest_mod
+    from simplon.domain import ports as ports_mod
     from simplon.domain import treeform
 
     seen: dict[str, list[str]] = {}
@@ -2096,7 +2108,7 @@ def _populations(monkeypatch) -> dict[str, list[str]]:
         monkeypatch.setattr(module, name, wrapper)
 
     for name in sorted(_rule_bearing_functions()):
-        for module in (treeform, manifest_mod):
+        for module in (treeform, manifest_mod, ports_mod):
             if hasattr(module, name):
                 record(module, name)
                 break
