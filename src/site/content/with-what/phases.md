@@ -144,9 +144,9 @@ the number that says whether a rib is filled:
 
 | namespace | kind | tasks in the catalogue today |
 |---|---|---|
-| `build` | phase, agnostic | 6 |
+| `build` | phase, agnostic | 8 |
 | `test` | phase, agnostic | 8 |
-| `release` | phase, agnostic | 7 |
+| `release` | phase, agnostic | 8 |
 | `deploy` | phase, env-first | 3 |
 | `monitor` | phase, env-first | 0 |
 | `support` | not a phase | 14 |
@@ -155,7 +155,7 @@ the number that says whether a rib is filled:
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Fifty coordinates: thirty-eight carrying a placement, twelve free to be filed. The numbers in this sentence, in that
+Fifty-three coordinates: forty-one carrying a placement, twelve free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -179,13 +179,15 @@ it - or **placed**, written into the tree for everybody. The bar a placed comman
 *Produce the artefacts.* Whatever a product ships: a wheel, a container image, a bundle, a generated
 site.
 
-**In the catalogue today: 6 tasks.**
+**In the catalogue today: 8 tasks.**
 
 - `build:cmake-files`
 - `build:conan-cache`
 - `build:dotnet-solution`
 - `build:image`
+- `build:maven-pack`
 - `build:nuget-config`
+- `build:nuget-pack`
 - `build:nuget-restore`
 
 **What a product brings itself.** The artefact, and the source tree the two generators read. There are
@@ -264,18 +266,19 @@ A step the person REFUSES becomes a bug ticket, worded by the product through a
 *Publish them.* The point where a mistake stops being local: a tag can be deleted but not un-seen, and a
 pushed image is somebody else's dependency by the time you notice.
 
-**In the catalogue today: 7 tasks.**
+**In the catalogue today: 8 tasks.**
 
 - `release:artifact`
 - `release:asset`
 - `release:conan`
 - `release:image`
 - `release:maven`
+- `release:notes`
 - `release:nuget`
 - `release:tag`
 
 **What a product brings itself.** An `artifacts:` entry of the kind the task reads, or an `assets:` section, and - for
-`release:tag` - a workflow that a tag actually triggers. All seven are **offered** rather than placed, and `release:tag`
+`release:tag` - a workflow that a tag actually triggers. All eight are **offered** rather than placed, and `release:tag`
 is the case that fixed that bar: it is the one `release:` task that reads no product data at all, so it
 came closest to being handed to everybody, and it is still not - because it **publishes**, and a
 misfire is public and cannot be taken back.
@@ -298,6 +301,10 @@ it**, so a green publish that uploaded nothing is reachable here in a way it is 
 Its verification has three outcomes rather than two, because a `401` means the token may not look and is not
 the same answer as a missing jar.
 
+Since si#344 C.3 it is two tasks, as `release:nuget` is: `build:maven-pack` stages `gradle publish` into a file
+repository under the entry's `path:`, so the jar exists before the release and a test can consume it, and
+`release:maven` uploads exactly those files and then reads them back.
+
 **It also answers the snapshot question itself** (si#330), rather than leaving it to each manifest. A
 `-SNAPSHOT` version republishes under one coordinate; a release version is immutable. So a release version
 that is *already* in the registry is refused **before a container starts**, because publishing again would
@@ -307,7 +314,9 @@ a release the read-back proves this run put the artefact there, for a snapshot i
 there, because an earlier run may have left it. One sentence covering both claims would be the weaker of the
 two.
 
-The gradle task is always `publish`, and the read-back always runs (si#337). 0.24.0 let the entry name
+The gradle task is fixed and not the product's to name: the pack runs
+`publishAllPublicationsToSimplonStagingRepository` into a file repository, and `release:maven` uploads what was
+staged and reads it back. The read-back always runs (si#337). 0.24.0 let the entry name
 another one with `task:`, and si#334 measured the cost: `task: publishToMavenLocal` reaches no registry, so
 the read-back found nothing and reported a green local publish as a failed release, with a wrong diagnosis.
 The key was too wide rather than too weakly checked - this coordinate claims "the jars are in the registry,

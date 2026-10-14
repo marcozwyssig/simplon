@@ -153,6 +153,8 @@ LIBRARY = frozenset({
     "adapters.ports", "adapters.pyvenv", "adapters.topology", "adapters.tracker", "cli", "cli.surface",
     "domain.artifactsection", "domain.carrierspec", "domain.context", "domain.deployment",
     "domain.environments", "domain.layout", "domain.manifest", "domain.outputs", "domain.treeform",
+    # si#344 C.3: a GENERATED product module imports it, to hold a command's test results.
+    "domain.results",
     "kernel.awake", "kernel.degraded", "kernel.filelock", "kernel.log", "kernel.plan", "kernel.product",
     "kernel.run", "kernel.steps", "kernel.verdict", "kernel.waits", "tasks.completiongen", "tasks.taskgen",
     "tasks.workflowgen", "ui.tui",

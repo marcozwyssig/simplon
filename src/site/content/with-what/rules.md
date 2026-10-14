@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 222 | nothing - the declaration had no working meaning |
-| expression rule | 30 | something it could otherwise have said |
-| **all load-time refusals** | **252** | |
+| diagnosis | 227 | nothing - the declaration had no working meaning |
+| expression rule | 36 | something it could otherwise have said |
+| **all load-time refusals** | **263** | |
 
 si#396 added two diagnoses: `claude.requires:` must be a list of executable names. Whether a named
 executable is on PATH is asked of the machine, so it refuses at run time and is not counted here.
@@ -121,7 +121,7 @@ Self-binding is not a third bucket of refusals; it is how far an expression rule
 
 | reach | count | meaning |
 | --- | --- | --- |
-| the kernel is held to it too | 23 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
+| the kernel is held to it too | 29 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
 | a statement about the platform/product seam | 7 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
 | the kernel exempts itself | 0 | there is no longer a rule the kernel declines to apply to itself |
 
@@ -145,7 +145,7 @@ being talked about? The second one is the one that keeps going missing.
 **What replaces it is a measurement rather than a label.** The reach column above was hand-written, and a
 hand-written word beside a rule is exactly the kind of thing that was wrong. So the kernel's own manifest is
 now loaded against the real catalogue with every rule-bearing function on the merge path recorded, and each
-rule is asked what it was actually handed. The catalogue holds **50** coordinates and its own tree places
+rule is asked what it was actually handed. The catalogue holds **53** coordinates and its own tree places
 **11** of them; those 11 are the platform's half - in the merged tree because the catalogue put them there,
 not because this product asked - and all 11 reach every rule the table calls *held to it too*. Exactly two
 functions never see them, `check_no_old_form` (which rules on the product's document alone; it was shown

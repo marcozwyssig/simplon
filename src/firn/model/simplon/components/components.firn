@@ -73,6 +73,9 @@ domain typeOf simplon.architecture.Component {
   module m_domain_ports typeOf simplon.architecture.Module {
     path = "domain.ports"
   }
+  module m_domain_results typeOf simplon.architecture.Module {
+    path = "domain.results"
+  }
   module m_domain_environments typeOf simplon.architecture.Module {
     path = "domain.environments"
   }

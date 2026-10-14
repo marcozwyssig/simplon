@@ -376,9 +376,10 @@ AGILE_COCKPIT = textwrap.dedent("""
           unit:   { task: "test:gate", with: { name: unit } }
           system: { task: "test:gate", with: { name: system } }
           report: { task: "test:report" }
+          image:  { task: "test:image", consumes: { image: app }, produces: { test-result: app-checked } }
       release:
         commands:
-          image: { task: "release:image", with: { name: app } }
+          image: { task: "release:image", consumes: { image: app, evidence: [app-checked] } }
     cd:
       deploy:
         commands:
@@ -400,6 +401,9 @@ AGILE_COCKPIT = textwrap.dedent("""
     artifacts:
       app: { kind: image, registry: ghcr.io/marcozwyssig, repository: agile-cockpit,
              dockerfile: deploy/Dockerfile, context: ".", tag: latest }
+      # si#344 C.3 rule 6: the release consumes a result about the image it publishes. The real manifest
+      # does not yet (RELEASE_RULE_BILL), so this copy is agile-cockpit as it would answer the rule.
+      app-checked: { kind: test-result, path: build/test/app.json }
 """)
 
 
@@ -472,7 +476,8 @@ def test_the_kernels_own_manifest_rules_on_as_many_placements_as_before_the_tran
     """si#344, spec A.3: the count si#34 rules on over simplon.yaml must not drop when `ci`/`cd` became a
     tree level. A drop means the rule stopped applying to something. The one addition is
     `support:migrate`, the catalogue's own placement under `support` (the `support.manifest` subgroup), and
-    since si#346 `support:model` beside it (17 + 2 = 19)."""
+    since si#346 `support:model` beside it; since si#344 C.3 simplon places `test:image` itself, to test its
+    own image, and `release:notes` for its release (17 + 4 = 21)."""
     # arrange
     calls = []
     original = treeform.check_coordinate_placement
@@ -487,4 +492,4 @@ def test_the_kernels_own_manifest_rules_on_as_many_placements_as_before_the_tran
         manifest_mod.load((ROOT / "simplon.yaml").read_text(), catalogue=catalogue_mod.load())
 
     # assert
-    assert calls == [PLACEMENTS_BEFORE_THE_TRANSPARENT_LEVEL + 2]
+    assert calls == [PLACEMENTS_BEFORE_THE_TRANSPARENT_LEVEL + 4]

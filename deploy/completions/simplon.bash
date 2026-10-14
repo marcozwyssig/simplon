@@ -22,8 +22,8 @@ _simplon_nodes() {
     case "$1" in
         '') _simplon_reply=('build' 'test' 'release' 'support') ;;
         'build') _simplon_reply=('wheel' 'reference' 'acceptance' 'site' 'image' 'docs' 'model' 'model-guard' 'model-gen' 'model-whole' 'model-mode') ;;
-        'test') _simplon_reply=('suite' 'typecheck-python' 'release-notes' 'report' 'generated' 'walk' 'all' 'model') ;;
-        'release') _simplon_reply=('tag' 'image') ;;
+        'test') _simplon_reply=('suite' 'typecheck-python' 'release-notes' 'report' 'generated' 'walk' 'image' 'all' 'model') ;;
+        'release') _simplon_reply=('notes' 'tag' 'push-image' 'all') ;;
         'support') _simplon_reply=('git' 'tasks' 'manifest' 'install' 'completion' 'doctor' 'workflows' 'claude-plugins' 'ci-privileges' 'ci-disk-hygiene' 'ci-arm64' 'ci-disk-preflight' 'ci-disk-cleanup') ;;
         'support.git') _simplon_reply=('commit' 'push' 'prune-branches' 'submodules' 'auth-scopes') ;;
         'support.tasks') _simplon_reply=('catalogue' 'generate') ;;

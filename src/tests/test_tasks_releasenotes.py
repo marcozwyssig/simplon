@@ -525,3 +525,75 @@ def test_a_merge_that_really_names_no_ticket_still_falls_back_rather_than_raisin
 
     # assert
     assert named == {72}
+
+
+# --- release:notes - generating the notes from the same walk (si#344 C.3, spec decision 16) -------------
+
+def test_the_notes_list_every_merge_since_the_previous_tag_with_its_tickets(tmp_path):
+    # arrange
+    root = _repo(tmp_path)
+    _commit(root, "start")
+    _merge(root, "si10-old", ["feat(si#10): old"], "Merge si10-old (si#10)")
+    _git(root, "tag", "v0.1.0")
+    _merge(root, "si12-thing", ["feat(si#12): a thing"], "Merge si12-thing (si#12)")
+    _merge(root, "si13-other", ["fix(si#13): another"], "Merge si13-other (si#13, si#14)")
+
+    # act
+    text = releasenotes.render(root, "v0.2.0")
+
+    # assert
+    assert text.splitlines()[0] == "## v0.2.0"
+    assert "- Merge si13-other (si#13, si#14) (#13, #14)" in text
+    assert "- Merge si12-thing (si#12) (#12)" in text
+    assert text.index("si13-other") < text.index("si12-thing")
+    assert "si10-old" not in text
+
+
+def test_without_a_previous_tag_the_notes_cover_the_whole_history(tmp_path):
+    # arrange
+    root = _repo(tmp_path)
+    _commit(root, "start")
+    _merge(root, "si12-thing", ["feat(si#12): a thing"], "Merge si12-thing (si#12)")
+
+    # act
+    text = releasenotes.render(root, "v0.1.0")
+
+    # assert
+    assert "- Merge si12-thing (si#12) (#12)" in text
+
+
+def test_a_range_with_no_merge_says_so_rather_than_writing_an_empty_section(tmp_path):
+    # arrange
+    root = _repo(tmp_path)
+    _commit(root, "start")
+    _git(root, "tag", "v0.1.0")
+
+    # act
+    text = releasenotes.render(root, "v0.1.1")
+
+    # assert
+    assert "no merge since v0.1.0" in text
+
+
+def test_write_puts_the_notes_where_the_artifact_says(tmp_path, monkeypatch):
+    # arrange
+    root = _repo(tmp_path)
+    _commit(root, "start")
+    _manifest(monkeypatch, root, "product: sample\nartifacts:\n  notes: { kind: release-notes, path: build/release/notes.md }\n")
+
+    # act
+    rc = releasenotes.write("notes", "v0.1.0")
+
+    # assert
+    assert rc == 0
+    assert (root / "build" / "release" / "notes.md").read_text(encoding="utf-8").startswith("## v0.1.0")
+
+
+def test_write_without_a_tag_is_refused_by_name(tmp_path, monkeypatch):
+    # arrange
+    root = _repo(tmp_path)
+    _manifest(monkeypatch, root, "product: sample\nartifacts:\n  notes: { kind: release-notes, path: build/notes.md }\n")
+
+    # act / assert
+    with pytest.raises(ValueError, match="which release\\? pass the tag"):
+        releasenotes.write("notes", "")

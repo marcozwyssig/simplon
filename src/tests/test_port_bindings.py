@@ -18,6 +18,9 @@ artifacts:
   docs: { kind: directory, registry: ghcr.io/o, repository: d, media_type: text/html, path: build/site }
 """
 
+#: ARTIFACTS plus the test result a release must consume about `kernel` (rule 6, si#344 C.3).
+CHECKED = ARTIFACTS + "  checked: { kind: test-result, path: build/test/kernel.json }\n"
+
 
 def _load(commands: str, *, tasks: str = "", artifacts: str = ARTIFACTS) -> manifest_mod.Manifest:
     text = f"product: demo\n{tasks}ci:\n{commands}{artifacts}"
@@ -44,14 +47,17 @@ def test_produces_binds_the_output_port_and_hands_the_name_to_its_parameter():
 
 
 def test_consumes_binds_the_input_port():
-    # act
+    # act: rule 6 wants a test result about what a release publishes, so one test writes it
     m = _load("  build:\n    commands:\n"
               '      image: { task: "build:image", produces: { image: kernel } }\n'
+              "  test:\n    commands:\n"
+              '      image: { task: "test:image", consumes: { image: kernel }, produces: { test-result: checked } }\n'
               "  release:\n    commands:\n"
-              '      image: { task: "release:image", consumes: { image: kernel } }\n')
+              '      image: { task: "release:image", consumes: { image: kernel, evidence: [checked] } }\n',
+              artifacts=CHECKED)
 
     # assert
-    assert m.spec_for("release", "image").consumes == {"image": ("kernel",)}
+    assert m.spec_for("release", "image").consumes == {"image": ("kernel",), "evidence": ("checked",)}
     assert m.spec_for("release", "image").with_ == {"name": "kernel"}
 
 
@@ -242,11 +248,14 @@ def test_a_consumer_with_no_producer_and_no_registry_is_refused():
 
 def test_a_consumer_of_an_artifact_with_a_registry_needs_no_producer():
     # act: rule 2's exception, an external input (si#343)
-    m = _load("  release:\n    commands:\n"
-              '      image: { task: "release:image", consumes: { image: kernel } }\n')
+    m = _load("  test:\n    commands:\n"
+              '      image: { task: "test:image", consumes: { image: kernel }, produces: { test-result: checked } }\n'
+              "  release:\n    commands:\n"
+              '      image: { task: "release:image", consumes: { image: kernel, evidence: [checked] } }\n',
+              artifacts=CHECKED)
 
     # assert
-    assert m.spec_for("release", "image").consumes == {"image": ("kernel",)}
+    assert m.spec_for("release", "image").consumes == {"image": ("kernel",), "evidence": ("checked",)}
 
 
 def test_several_producers_of_one_artifact_load_when_no_plan_holds_two():
@@ -284,14 +293,22 @@ def test_a_plan_that_consumes_before_it_produces_is_refused():
                        "'make' produces - list 'make' first in `depends_on`")
 
 
-@pytest.mark.parametrize("key", ["produces", "consumes"])
-def test_an_aggregate_that_binds_a_port_is_refused_not_crashed(key):
+def test_an_aggregate_that_consumes_is_refused_not_crashed():
     # act: an aggregate runs no task, so it has no port to bind (final review, si#344 C.2)
-    message = _refusal(BUILD + f'      all: {{ help: "h", depends_on: [image], {key}: {{ image: local }} }}\n')
+    message = _refusal(BUILD + '      all: { help: "h", depends_on: [image], consumes: { image: local } }\n')
 
     # assert
-    assert message == (f"command 'build all' declares `{key}:`, and an aggregate runs no task, so it has no "
-                       f"port to bind - bind the port on the command that runs the task")
+    assert message == ("command 'build all' declares `consumes:`, and an aggregate runs no task, so it has no "
+                       "port to bind - bind the port on the command that runs the task")
+
+
+def test_an_aggregate_outside_ci_release_that_produces_is_refused_by_rule_8():
+    # act: since si#344 C.3 an aggregate may name its one output, but only under `ci: release:`
+    message = _refusal(BUILD + '      all: { help: "h", depends_on: [image], produces: { release: local } }\n')
+
+    # assert
+    assert message == ("aggregate 'build all' names an output, and only an aggregate under `ci: release:` does - "
+                       "its one output is the release bundle")
 
 
 def test_a_params_entry_on_a_bound_parameter_names_the_binding_not_with():

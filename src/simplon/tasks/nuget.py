@@ -1,4 +1,4 @@
-"""`release:nuget`, `build:nuget-config`, `build:nuget-restore` - hand a .NET library over, and take one (si#127).
+"""`build:nuget-pack`, `release:nuget`, `build:nuget-config`, `build:nuget-restore` - hand a .NET library over, and take one (si#127, si#344 C.3).
 
 WHY ALL THREE ARE THE KERNEL'S, AND WHY THEY ARE ONE MODULE. si#102 landed a uniform build that
 compiles a .NET solution in a container and runs the assembly; what it could not do was hand the result
@@ -11,6 +11,12 @@ neighbour `release:artifact` already reads (design section 2: the cluster adds n
 PUBLISHING ALONE IS HALF A FEATURE, which is si#127's own decision and the reason `build:nuget-config`
 and `build:nuget-restore` are here rather than in a ticket after this one. A package nobody can resolve
 has not been handed over.
+
+PACKING AND PUSHING ARE TWO COMMANDS SINCE si#344 C.3, and the reason is the release rule rather than
+tidiness: a release consumes the results of the tests on what it publishes, and a package that first
+existed inside its own push could not be tested by anybody. `pack` writes `*.<version>.nupkg` into the
+entry's `path:`; `push` pushes exactly that file. A pack that exits 0 and wrote no package for its version
+is a failed step - "nothing to do" passing for "packed" is the defect this repository hunts.
 
 WHERE THE TOKEN GOES, AND THE THREE MEASUREMENTS THAT DECIDE IT. Driven on 2026-09-09 against a real
 authenticated NuGet v3 feed (BaGet behind an nginx basic-auth proxy - the shape GitHub Packages
@@ -253,10 +259,6 @@ def config(name: str = "") -> int:
 
 # --- publishing ---------------------------------------------------------------------------------------
 
-#: Where the packed .nupkg lands inside the container. Under `build/` because that is what a product
-#: gitignores, and the same directory the second command reads it back from - the two are one fact.
-PACK_DIR = "build/nuget"
-
 #: The container's view of the product tree. `/work`, the same mount point `toolchain:run` uses, so a
 #: path printed by one command means the same thing in the other.
 WORKDIR = "/work"
@@ -316,82 +318,124 @@ def docker_argv(image: str, root: Path, env_file: Path, argv: list[str],
 def _contained(image: str, root: Path, env_file: Path, argv: list[str]) -> int:
     """Stream one dotnet line in a container that is named, labelled `simplon.run=<product>`, and
     removed if this run is interrupted (si#412) - `docker.stopped_on_interrupt` says why the client
-    dying is not enough. One helper because `publish` and `restore` start three such lines between them.
+    dying is not enough. One helper because `pack`, `push` and `restore` start three such lines between them.
     """
     container, lifecycle = docker.lifecycle()
     with docker.stopped_on_interrupt(container):
         return stream(docker_argv(image, root, env_file, argv, lifecycle))
 
 
-def pack_argv(project: str, version: str) -> list[str]:
-    """`dotnet pack`, with the version the tag names. Pure.
+def pack_argv(project: str, version: str, out: str) -> list[str]:
+    """`dotnet pack`, with the version the tag names, into `out` (relative to the product root). Pure.
 
     `-p:PackageVersion=` rather than an edit to the .csproj: the version is a property of the RELEASE,
     and a number checked into a project file is a number two people can pick at once - the argument
     `release:tag` is built on, one level down.
     """
-    return ["dotnet", "pack", project, "-c", "Release", "-o", f"{WORKDIR}/{PACK_DIR}",
+    return ["dotnet", "pack", project, "-c", "Release", "-o", f"{WORKDIR}/{out}",
             f"-p:PackageVersion={version}"]
 
 
-def push_argv(source_name: str) -> list[str]:
-    """`dotnet nuget push`, with NO api key. Pure.
+def push_argv(source_name: str, package: str) -> list[str]:
+    """`dotnet nuget push` of ONE package (relative to the product root), with NO api key. Pure.
 
-    MEASURED, and the module head carries the transcript: `--api-key` alone does not authenticate
-    against a feed that wants an Authorization header (401), the `<apikeys>` config section cannot hold
-    one on Linux at all, and a push against a source that carries credentials needs none. So the one
-    element that would have had to be a secret is not there, and the warning NuGet prints about it
-    ("No API Key was provided") is the sound of the design working.
+    One file and not a glob (si#344 C.3): the directory may still hold an older version's package, and a
+    glob would push it beside this one. MEASURED, and the module head carries the transcript: `--api-key`
+    alone does not authenticate against a feed that wants an Authorization header (401), the `<apikeys>`
+    config section cannot hold one on Linux at all, and a push against a source that carries credentials
+    needs none.
     """
-    return ["dotnet", "nuget", "push", f"{WORKDIR}/{PACK_DIR}/*.nupkg",
-            "--source", source_name, "--skip-duplicate"]
+    return ["dotnet", "nuget", "push", f"{WORKDIR}/{package}", "--source", source_name, "--skip-duplicate"]
 
 
-def publish(name: str = "", tag: str = "") -> int:
-    """Pack the project `name` declares and push it to the GitHub feed `name` names.
+def packed(directory: Path, version: str) -> list[Path]:
+    """The packages `dotnet pack` wrote for exactly `version` (`<id>.<version>.nupkg`), sorted. Pure."""
+    if not directory.is_dir():
+        return []
+    return sorted(p for p in directory.glob(f"*.{version}.nupkg") if p.is_file())
 
-    Two container runs rather than one shell line, because a shell line is a third quoting layer between
-    the manifest and the tool, and the rc of a pipeline is not the rc of the command that failed.
-    """
-    registry, pinned, project = _for_container(name, "release:nuget")
-    spec = _declared(name, "release:nuget")
-    source_name = _source_name(spec, name)
 
+def _inside_the_output_root(root: Path, relative: str, name: str) -> Path:
+    """`root/relative`, refused unless it lies strictly inside the output root - this task deletes in it."""
+    target = (root / relative).resolve()
+    top = outputs.root().resolve()
+    if target == top or not target.is_relative_to(top):
+        raise ValueError(
+            f"artifact '{name}' declares `path: {relative}`, which is not inside the output root ({top}): "
+            f"a pack empties its path first, so it may only be a directory the kernel owns")
+    return target
+
+
+def _version(spec: artifactschema.NugetEntry, name: str, tag: str) -> str:
     resolved = tag or spec.tag or ""
     if not resolved:
         raise ValueError(
             f"artifact '{name}' has no tag: declare `tag:` in the `{SECTION}:` section for a constant "
             f"one, or pass --tag for a version that is only known after a build")
+    return resolved
 
+
+def pack(name: str = "", tag: str = "") -> int:
+    """Pack the project `name` declares into its `path:`, as the version the tag names (si#344 C.3)."""
+    spec = _declared(name, "build:nuget-pack")
+    pinned = docker.pinned_image(spec.image or "", f"artifact '{name}'",
+                                 hint="a published package names the SDK it was built with")
+    project, out = spec.project or "", spec.path or ""
+    resolved = _version(spec, name, tag)
     root = context.current().root
-    _config_or_refuse(root, source_name)
     if not (root / project).is_file():
         raise ValueError(f"nothing to pack: {project} does not exist under the product root. the "
                          f"project is the product's, not this task's")
+    target = _inside_the_output_root(root, out, name)
 
     docker.ensure_docker()
-    # si#319: the tree this container writes must be the CALLER'S, not merely writable. `DOTNET_CLI_HOME`
-    # below is the hand-made half of exactly this problem, inherited from si#102 - a container run as the
-    # caller has no writable home, so the tool was pointed into the mounted tree, which then carries
-    # whatever ownership an earlier root run left.
+    # si#319: the tree this container writes must be the CALLER'S, not merely writable.
     fault = docker.ownership_fault([outputs.root()], root)
     if fault:
         log.error(fault)
         raise ValueError(fault)
-
-    (root / PACK_DIR).mkdir(parents=True, exist_ok=True)
+    target.mkdir(parents=True, exist_ok=True)
+    for old in target.glob("*.nupkg"):
+        old.unlink()
     (root / CLI_HOME).mkdir(parents=True, exist_ok=True)
 
     with _env_file(githubpackages.token()) as env_file:
-        log.info(f"packing {project} as {resolved}")
-        rc = _contained(pinned, root, env_file, pack_argv(project, resolved))
-        if rc != 0:
-            log.error(f"dotnet pack {project} failed (rc={rc}; see output above)")
-            return rc
+        log.info(f"packing {project} as {resolved} into {out}")
+        rc = _contained(pinned, root, env_file, pack_argv(project, resolved, out))
+    if rc != 0:
+        log.error(f"dotnet pack {project} failed (rc={rc}; see output above)")
+        return rc
+    if not packed(target, resolved):
+        log.error(f"dotnet pack {project} exited 0 and wrote no package for {resolved} under {out} - "
+                  f"a pack that made nothing is not a pack")
+        return 1
+    log.ok(f"packed {', '.join(p.name for p in packed(target, resolved))} into {out}")
+    return 0
 
-        log.info(f"pushing {resolved} to {index_url(registry)}")
-        rc = _contained(pinned, root, env_file, push_argv(source_name))
 
+def push(name: str = "", tag: str = "") -> int:
+    """Push the package `build:nuget-pack` wrote for this version to the GitHub feed `name` names."""
+    registry, pinned, _ = _for_container(name, "release:nuget")
+    spec = _declared(name, "release:nuget")
+    source_name = _source_name(spec, name)
+    resolved = _version(spec, name, tag)
+    root = context.current().root
+    out = spec.path or ""
+    found = packed((root / out).resolve(), resolved)
+    if not found:
+        raise ValueError(f"nothing packed for {resolved} under {out}: run `build:nuget-pack` first")
+    _config_or_refuse(root, source_name)
+
+    docker.ensure_docker()
+    (root / CLI_HOME).mkdir(parents=True, exist_ok=True)
+    rc = 0
+    with _env_file(githubpackages.token()) as env_file:
+        for package in found:
+            relative = package.relative_to(root.resolve()).as_posix()
+            log.info(f"pushing {package.name} to {index_url(registry)}")
+            rc = _contained(pinned, root, env_file, push_argv(source_name, relative))
+            if rc != 0:
+                break
     if rc != 0:
         # The scope advice is a HINT tied to a host and a condition, never appended to every failure -
         # image.py's rule, and the reason is that a push fails on a full disk and a dead network too.
@@ -399,7 +443,6 @@ def publish(name: str = "", tag: str = "") -> int:
                   "if the registry refused it rather than the network, the usual cause is a token "
                   "without the package scopes:\n" + githubpackages.scope_advice())
         return rc
-
     log.ok(f"published {resolved} to {index_url(registry)}")
     return 0
 
@@ -410,7 +453,7 @@ def _for_container(name: str, coordinate: str) -> tuple[str, str, str]:
     """The three things both container commands need: registry, pinned image, project. A missing one is
     refused by `_declared`, from what the coordinate NEEDS (si#344 B2).
 
-    Shared by `publish` and `restore` because the refusals are the ones a product hits FIRST, and two
+    Shared by `push` and `restore` because the refusals are the ones a product hits FIRST, and two
     copies of them are two wordings a reader would have to learn.
     """
     spec = _declared(name, coordinate)

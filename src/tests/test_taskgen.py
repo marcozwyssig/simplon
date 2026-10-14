@@ -1411,3 +1411,29 @@ def test_both_mechanisms_render_the_same_group_blurb(tmp_path):
             f"die beiden Mechanismen beschreiben '{' '.join(path)}' verschieden"
     assert blurb(live_app, "support").startswith("Host preflight"), \
         "beide Mechanismen sind einig - und beide zeigen den erfundenen Satz"
+
+
+# --- si#344 C.3: a command that produces is wrapped in the result check ------------------------------
+
+def _render_with_produces(produces):
+    """The default manifest's one leaf, bound to produce `produces`, rendered."""
+    m = _load()
+    spec = m.commands["lab"]["seed"]._replace(produces=produces)
+    return taskgen.render(m._replace(commands={"lab": {"seed": spec}}), source="m.yaml", product="demo")
+
+
+def test_a_command_that_produces_wraps_its_call_in_the_result_check():
+    # arrange: a leaf bound to produce `checked`
+    text = _render_with_produces({"test-result": ("checked",)})
+
+    # assert
+    assert "_results.held(_results.before(('checked',)), _rc(" in text
+    assert "from simplon.domain import results as _results" in text
+
+
+def test_a_command_that_produces_nothing_has_no_result_check():
+    # arrange
+    text = _render_with_produces({})
+
+    # assert
+    assert "_results" not in text

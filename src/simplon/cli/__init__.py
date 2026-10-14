@@ -31,7 +31,7 @@ from simplon.domain import clitaxonomy, outputs, signatures
 from simplon.adapters import labinstance
 from simplon.kernel import log, runhost
 from simplon.domain.context import ENVIRONMENT_ENV, ProductContext, environment_name, launcher
-from simplon.domain import manifest
+from simplon.domain import manifest, results
 from simplon.kernel.product import StepFactoryContext, run_command
 from simplon.kernel.steps import NO_TUI_ENV, Pipeline
 from simplon.kernel.provenance import provenance_line
@@ -236,9 +236,16 @@ def _bound(fn: Callable[..., object], spec: manifest.CommandSpec,
         for p in keep
     ]
 
+    # si#344 C.3: a command bound to produce a test result fails when its body exits 0 without writing it
+    # (`simplon.domain.results`) - the same check the generated module wraps its call in.
+    produced = tuple(a for names in (spec.produces or {}).values() for a in names)
+
     @functools.wraps(fn)
     def _wrapped(*args: object, **kwargs: object) -> None:
-        raise typer.Exit(code=_rc(fn(*args, **{**kwargs, **pinned})))
+        if not produced:
+            raise typer.Exit(code=_rc(fn(*args, **{**kwargs, **pinned})))
+        snapshot = results.before(produced)
+        raise typer.Exit(code=results.held(snapshot, _rc(fn(*args, **{**kwargs, **pinned}))))
 
     # `_Introspectable` rather than a bare assignment, because `__signature__` is a CPython protocol that
     # the type system does not model: `inspect.signature()` reads it off ANY callable that carries it, and

@@ -13,7 +13,7 @@ which turns out to be a different act entirely, for a reason that has nothing to
 
 | you have | you publish with | a consumer gets it with |
 |---|---|---|
-| a .NET library | `release:nuget` | `build:nuget-config`, then an ordinary restore |
+| a .NET library | `build:nuget-pack`, then `release:nuget` | `build:nuget-config`, then an ordinary restore |
 | a Conan package | `release:conan` | `build:conan-cache`, then `conan cache restore` |
 
 Both read the manifest's existing `artifacts:` section - the same one `release:artifact` reads. There is
@@ -32,11 +32,17 @@ artifacts:
     registry: nuget.pkg.github.com/marcozwyssig
     image: mcr.microsoft.com/dotnet/sdk:9.0
     project: src/Core/Core.csproj
+    path: build/nuget
     tag: 1.4.0
 ```
 
-`release:nuget` runs `dotnet pack` and then `dotnet nuget push`, both inside the pinned SDK image. The
-version comes from `--tag` if you pass one and from `tag:` if you do not - the same rule
+`build:nuget-pack` runs `dotnet pack` inside the pinned SDK image and writes `<id>.<version>.nupkg` into the
+artifact's `path:`. `release:nuget` then runs `dotnet nuget push` on exactly that file. They are two commands so
+that a test can consume the package in between: the release rule asks for a test result about every artifact a
+release publishes (si#344). The jar side has the same shape: `build:maven-pack` stages the modules into the
+artifact's `path:` and `release:maven` uploads exactly what was staged and reads it back.
+
+The version comes from `--tag` if you pass one and from `tag:` if you do not - the same rule
 `release:artifact` follows, and for the same reason: some products know their number before the build
 and some only after it.
 
@@ -183,7 +189,7 @@ API:
 | a Gradle or Maven publish | none |
 | `dotnet nuget push` | none |
 | `conan upload` | none |
-| a manifest placing `release:nuget` or `release:conan` | none |
+| a manifest placing `build:nuget-pack`, `release:nuget` or `release:conan` | none |
 
 **Not one product in the family publishes a language package.** Not a wheel, not a jar, not a nupkg, not
 a Conan package. The two tasks this chapter documents are placed by nobody, and the demos they were

@@ -306,6 +306,15 @@ ci:
       # 1 for findings and 2 for a usage or setup error, but `tasks/typecheck.py:check` already ends both
       # on `log.die` - SystemExit(1) - so the leaf never handed mypy's own number through in the first
       # place. There was nothing left for the aggregate to flatten. Measured, not assumed.
+      # The kernel's image, RUN (si#344 C.3). The release rule asks for a test result about every artifact
+      # a release publishes, and `release push-image` publishes `kernel` - which until this nothing ran. The
+      # verdict record it writes is the evidence `release push-image` consumes. The image has no ENTRYPOINT
+      # on purpose (deploy/image/Dockerfile, si#201), so the argv names the command.
+      image:
+        task: "test:image"
+        consumes: { image: kernel }
+        produces: { test-result: kernel-checked }
+        with: { argv: "simplon --help", expect: "usage: simplon" }
       all:
         help: "Run every test: the pytest suite, the type gate, the staleness gate, then the release-notes guard."
         depends_on: [suite, typecheck-python, generated, release-notes]
@@ -322,6 +331,21 @@ ci:
           - check
   release:
     commands:
+      # The release's members (si#344 C.3, spec C.4): the notes, the image and the tag are three leaves
+      # because each fails differently. `all` STATES the release - its members, its bundle, and the one
+      # order that keeps a failed push from leaving a public tag behind - and the load checks that order
+      # (rule 8). `stop_on_failure: true` is what makes the order hold at run time: without it a failed
+      # push would not stop the plan, and the tag would still be cut. Rule 8 refuses the aggregate
+      # without it.
+      #
+      # IT IS NOT YET A RUNNABLE RELEASE. An aggregate passes no arguments to its leaves, and `notes` and
+      # `tag` both need the tag: `./simplon.sh release all` stops at `notes` with "which release?" and
+      # runs nothing after it. Passing the tag through an aggregate is open (si#344). Until then the
+      # release starts with `./simplon.sh release tag vX`, and that tag push is what triggers release.yml, which
+      # builds, tests and publishes the image AFTER the tag exists: the opposite of the order `all` states, so a
+      # failed publish leaves the tag behind. Changing that is open (si#344).
+      notes: { task: "release:notes", produces: { release-notes: kernel-notes } }
+      #
       # The release itself (#32). Simplon cuts its own releases with the command it ships, for the same
       # reason it builds and tests itself with itself: a step never run in its own house rots unseen, and
       # this one had rotted the furthest - it was the only part of the loop that lived in the README as
@@ -335,7 +359,7 @@ ci:
       # Note what is NOT here: a version. There is nowhere to put one. `pyproject.toml` declares
       # `dynamic = ["version"]`, setuptools-scm derives the number from the tag, and the tag is the
       # argument - so `./simplon.sh release tag v0.1.14` IS the whole act of choosing 0.1.14.
-      tag: { task: "release:tag" }
+      tag: { task: "release:tag", consumes: { release-notes: kernel-notes }, produces: { tag: kernel-tag } }
       # Publishing that image (si#200, moved to ghcr by si#313). Since 2026-10-10 EVERY RELEASE does it:
       # release.yml's `image` job runs this command after the wheel is on PyPI, with the run's own
       # GITHUB_TOKEN, and then opens the pull request that moves deploy/image/image.pin. It used to be on
@@ -345,10 +369,17 @@ ci:
       # because a pin naming an image that is not there would send a machine with no python3 to a failure.
       #
       # It stays a command a person can type, for a re-publish or a hotfix outside the tag.
-      image:
+      # Named push-image, not image, since si#344 C.3: an aggregate plans a leaf by a name only one group owns (#519).
+      push-image:
         task: "release:image"
         consumes:
           image: kernel
+          evidence: [kernel-checked]
+      all:
+        depends_on: [notes, push-image, tag]
+        produces: { release: kernel-release }
+        stop_on_failure: true
+        help: "The release's members in their one safe order: notes, image, tag (the tag is not passed through yet, si#344)."
 
 support:
   commands:
@@ -548,6 +579,20 @@ artifacts:
     # the route did not start there at all ("no matching manifest for linux/arm64"). A release builds
     # both; CI builds amd64 only (`platform:` on its step), so the runner needs no emulator per push.
     platforms: [linux/amd64, linux/arm64]
+  # The verdict record `test image` writes about `kernel` (si#344 C.3): one producer, and what it is about
+  # is derived from what that producer consumes.
+  kernel-checked:
+    kind: test-result
+    path: build/test/kernel-image.json
+  # The release's own artifacts (si#344 C.3): the notes `release notes` writes, the tag `release tag` cuts
+  # (no path - its value is the tag name) and the bundle `release all` names, whose content is derived.
+  kernel-notes:
+    kind: release-notes
+    path: build/release/notes.md
+  kernel-tag:
+    kind: tag
+  kernel-release:
+    kind: release
 
 # The release notes' three values (si#89), and there is nothing else the kernel may know about them.
 #

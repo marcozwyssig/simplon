@@ -170,6 +170,71 @@ The loader holds every binding before anything runs:
 Several commands may produce one artifact (an everyday single-platform build beside the release's
 all-platform one); a plan picks one.
 
+### A release consumes its test results, and names one bundle
+
+A release is the chain the bindings draw: build produces the image, a test consumes it and produces a
+`test-result`, the publish consumes the image and the result as its `evidence`, and an aggregate under
+`ci: release:` names the bundle.
+
+The evidence is **declared and ordered, never read**. The load checks that every test result a release
+needs is bound to it; nothing at run time opens the record. The publish bodies do not read the verdict, so
+a red record on disk is not told apart from a green one when the release runs. What keeps an untested image
+out of the registry today is the step order: release.yml runs `build image`, then `test image`, then
+`release push-image`, and stops at the first failure, as `release all` does with `stop_on_failure: true`.
+Reading the verdict at release time is open work (si#344, C.4 or later).
+
+This is simplon's own `simplon.yaml`:
+
+```yaml
+ci:
+  test:
+    commands:
+      image:
+        task: "test:image"
+        consumes: { image: kernel }
+        produces: { test-result: kernel-checked }
+        with: { argv: "simplon --help", expect: "usage: simplon" }
+  release:
+    commands:
+      notes: { task: "release:notes", produces: { release-notes: kernel-notes } }
+      tag: { task: "release:tag", consumes: { release-notes: kernel-notes }, produces: { tag: kernel-tag } }
+      push-image:
+        task: "release:image"
+        consumes:
+          image: kernel
+          evidence: [kernel-checked]
+      all:
+        depends_on: [notes, push-image, tag]
+        produces: { release: kernel-release }
+        stop_on_failure: true
+artifacts:
+  kernel-checked: { kind: test-result, path: build/test/kernel-image.json }
+  kernel-release: { kind: release }
+```
+
+Two rules hold the chain (the kinds page has [the ports](../../with-what/kinds/#ports)):
+
+- **Rule 6.** A release command that consumes an artifact must bind every test result about it to `evidence`.
+  A test result is about what its producer consumes, directly. With no such test the load refuses: "... and no
+  test produces a result about it - add a command under `ci: test:` ...". With one left unbound it refuses:
+  "... so no release goes past a test that ran". The four kinds a release produces about itself
+  (`test-result`, `release-notes`, `tag`, `release`) need no evidence.
+- **Rule 8.** Only an aggregate under `ci: release:` names an output, and it names exactly one, a
+  `kind: release` artifact. The load refuses "... only an aggregate under `ci: release:` does" and "... a
+  release aggregate names exactly one output", and it refuses a plan that lists `release:tag` before a publish
+  ("... a tag cut before the push it announces ..."), because a public tag is false if the push fails. It
+  also refuses a release aggregate without `stop_on_failure: true` ("... leaves `stop_on_failure` false"):
+  the order holds at run time only if a failed member stops the plan.
+
+`release all` **states** the release - its members, its bundle and their one safe order, checked at load -
+and with `stop_on_failure` a failed leaf stops the plan. It is not yet a release you run: an aggregate
+passes no arguments to its leaves, and `release notes` and `release tag` both need the tag, so
+`./simplon.sh release all` stops at `notes` with "which release?" and runs nothing after it. Passing the tag
+through an aggregate is open (si#344). Until then a release starts with `./simplon.sh release tag vX`, and
+that tag push is what triggers release.yml, which builds, tests and publishes the image after the tag exists.
+That is the opposite of the order `all` states, so a failed publish leaves the tag behind. Changing that is open
+(si#344).
+
 ## Refining a platform command, and replacing one
 
 A command the catalogue already places can be refined in the product's own tree: change its `help:`, add
@@ -361,7 +426,7 @@ them. `tests/test_manifest_top_level.py` holds this table to the kernel in both 
 
 | key | read by | what it carries |
 | --- | --- | --- |
-| `artifacts:` | `release:artifact`, `release:nuget-*`, `release:conan-*`, `release:maven`, `build:image`, `release:image`, `test:image` | one entry per artifact, each with its `kind:` (`image`, `directory`, `nuget`, `maven`, `conan`, ...) and that kind's keys - see [the kinds](../../with-what/kinds/) |
+| `artifacts:` | `release:artifact`, `build:nuget-pack`, `release:nuget`, `release:conan-*`, `build:maven-pack`, `release:maven`, `build:image`, `release:image`, `test:image` | one entry per artifact, each with its `kind:` (`image`, `directory`, `nuget`, `maven`, `conan`, ...) and that kind's keys - see [the kinds](../../with-what/kinds/) |
 | `assets:` | `release:asset` | one entry per file attached to a GitHub release |
 | `build:` | `build:cmake-files`, `build:dotnet-solution` | `targets:`, the dependency edges between build targets that a directory layout cannot show |
 | `carriers:` | the environment selector | one entry per thing an environment is realised ON: its `proxmox:` node and kind, and the `portainer:` on it |
@@ -492,7 +557,8 @@ Each kind's keys and their shapes are checked when the manifest loads - a list w
 string or a number where a string does (`tag: 25` is the tag `25`) - and a key the kind does not take is
 refused by name, with the nearest key it does take, because otherwise it would be ignored without a word.
 What a task NEEDS it is told when it runs, all at once: `release:nuget` needs `registry`, `image` and
-`project`, `build:nuget-config` only `registry`, so one entry can serve both. The refusal of an unknown key
+`path`; `build:nuget-pack` needs `image`, `project` and `path`; `build:nuget-config` only `registry`, so one entry
+can serve both. The refusal of an unknown key
 lists the keys the kind does take; your own code asks `simplon.domain.artifactsection.is_a(kind, "image")` rather
 than comparing `kind` to a string, so a kind that refines `image` is one too. Before si#344 B2 `path:` was called `source:`,
 `images:` was a section of its own, and an entry needed no `kind:`; the loader refuses each of those by

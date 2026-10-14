@@ -19,6 +19,10 @@ already did (`t_`), so no two sections can meet by construction:
     a_  an `artifacts:` entry (since si#344 B2 an image is one, of `kind: image`)
     s_  a kernel section                  d_  a section only the product reads
 
+An `artifacts:` entry of a kind refining `release` is the one `a_` child the Product does not own: the
+release aggregate that names it composes it (`ReleaseCommand.release`, si#344 C.3), and a kind refining
+`test-result` is exported as a `TestResult`, whose `about` the M2 derives.
+
 The price: a top-level group literally named like a prefixed child (`e_dev`, `d_jdk`, `t_...`) is
 refused by ModelExportError. A PRODUCT cannot write one - `load` locks the top-level groups to the
 platform's tree (`ci: e_dev:` is refused as "a group the platform's tree does not declare") - so it is
@@ -53,6 +57,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 
+from simplon.domain import artifactsection
 from simplon.domain.artifactschema import PORTS
 from simplon.domain.environments import matrix_section
 from simplon.domain.manifest import Manifest
@@ -129,8 +134,9 @@ def _tree(manifest: Manifest) -> dict[str, dict]:
 
 
 class _Export:
-    def __init__(self, manifest: Manifest, product: str) -> None:
+    def __init__(self, manifest: Manifest, product: str, document: Mapping[str, object]) -> None:
         self.manifest = manifest
+        self.document = document
         self.product = product
         self.root = f"product.{mangle(product)}.{mangle(product)}"
         self.names = _Names(f"product '{product}'")
@@ -178,6 +184,14 @@ class _Export:
                 owner, _, member = path.rpartition(".")
                 body.append(f"member = {self.paths[owner]}.{mangle(member)}")
             kind = "AggregateCommand"
+            for bundle in spec.produces.get("release", ()):
+                # A release aggregate COMPOSES its bundle (ReleaseCommand.release, spec C.4), so the bundle
+                # is not among the Product's artifacts (`artifacts` skips it) and its path is
+                # <this command>.a_<bundle>, not {self.root}.a_<bundle>. Nothing references a bundle in
+                # C.3; the first command that consumes one has to name that composed path.
+                kind = "ReleaseCommand"
+                body += _block(f"release a_{mangle(bundle)} typeOf simplon.pipeline.Release",
+                               self.artifact_fields(bundle))
         else:
             if spec.task in PORTS:
                 # a catalogue task the model carries (si#344 C.1): referenced, never re-declared (C.2)
@@ -243,17 +257,32 @@ class _Export:
             return lines
         if not isinstance(entries, Mapping):
             raise ModelExportError(f"artifacts: is a {type(entries).__name__}, not a mapping")
+        # The class follows the kind (si#344 C.3), read through the kernel's refinement table: the model's
+        # vocabulary IS the kernel's (simplon.vocabulary is generated from it), so a kind that refines
+        # `test-result` is a TestResult there too. A `release` entry is composed inside the aggregate that
+        # names it (`command`), so it is skipped here - firn would otherwise hold it twice.
         for entry, body in entries.items():
             kind = body.get("kind") if isinstance(body, Mapping) else None
             if not isinstance(kind, str):
                 raise ModelExportError(f"artifacts: {entry} declares no kind the model can name")
-            fields = [f"key = {_q(str(entry))}", f"kind = simplon.vocabulary.{mangle(kind)}"]
-            path = body.get("path")
-            if isinstance(path, (str, int, float)) and not isinstance(path, bool):
-                fields.append(f"path = {_q(str(path))}")  # a number is the text of its digits, as the readers take it
-            lines += _block(f"artifacts {self.names(str(entry), 'a_')} typeOf simplon.pipeline.Artifact",
-                            fields)
+            if artifactsection.accepts(artifactsection.REFINES, "release", kind):
+                continue
+            cls = "TestResult" if artifactsection.accepts(artifactsection.REFINES, "test-result", kind) else "Artifact"
+            lines += _block(f"artifacts {self.names(str(entry), 'a_')} typeOf simplon.pipeline.{cls}",
+                            self.artifact_fields(str(entry)))
         return lines
+
+    def artifact_fields(self, entry: str) -> list[str]:
+        """The lines one `artifacts:` entry carries, wherever it is composed: its key, the kind it DECLARES
+        and its `path:` when it has one."""
+        entries = self.document.get("artifacts")
+        body = entries.get(entry) if isinstance(entries, Mapping) else None
+        body = body if isinstance(body, Mapping) else {}
+        fields = [f"key = {_q(entry)}", f"kind = simplon.vocabulary.{mangle(str(body.get('kind')))}"]
+        path = body.get("path")
+        if isinstance(path, (str, int, float)) and not isinstance(path, bool):
+            fields.append(f"path = {_q(str(path))}")  # a number is the text of its digits, as the readers take it
+        return fields
 
     def sections(self, document: Mapping[str, object], kernel_sections: frozenset[str]) -> list[str]:
         lines: list[str] = []
@@ -276,7 +305,7 @@ def export(manifest: Manifest, document: Mapping[str, object], product: str,
     `document` is the YAML the manifest was loaded from (sections the Manifest does not carry are read
     off it), and `kernel_sections` decides which of its top-level keys are the kernel's and which are
     the product's own data - `KERNEL_SECTIONS` in every real call."""
-    run = _Export(manifest, product)
+    run = _Export(manifest, product, document)
     body = [f"key = {_q(product)}"]
     body += run.groups()   # first: names the tasks the commands run
     body += run.task_lines()

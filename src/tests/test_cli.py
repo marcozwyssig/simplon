@@ -530,6 +530,29 @@ def test_bound_falls_back_to_the_bodys_docstring_when_the_command_declares_none(
     assert wrapped.__doc__ == "The body's own docstring, used only when nothing else describes it."
 
 
+def test_bound_turns_a_body_that_exits_0_without_writing_its_test_result_into_rc_1(tmp_path, monkeypatch):
+    # arrange: si#344 C.3 - the assembled path holds the same check the generated module wraps its call in
+    from simplon.domain import context
+    from simplon.domain.context import ProductContext
+    (tmp_path / "demo.yaml").write_text(
+        "product: demo\nartifacts:\n  checked: { kind: test-result, path: build/test/app.json }\n",
+        encoding="utf-8")
+    monkeypatch.setattr(context, "_current", ProductContext("demo", tmp_path, tmp_path / "demo.yaml"))
+
+    def body():
+        return 0
+
+    spec = manifest.CommandSpec(impl="demo_impls:body", help="h", produces={"test-result": ("checked",)})
+    wrapped = cli._bound(body, spec, where="demo cmd")
+
+    # act
+    with pytest.raises(typer.Exit) as exited:
+        wrapped()
+
+    # assert
+    assert exited.value.exit_code == 1
+
+
 # --- one impl bound to several commands (netctl#1406) ---------------------------------------------------
 
 

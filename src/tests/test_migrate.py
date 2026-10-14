@@ -563,7 +563,7 @@ def test_cleon_without_its_hand_edit_is_refused_by_name_with_the_kinds():
     # an order change
     assert result.reason == (
         "artifacts: updatesite declares no `kind:`, and no command reads it through a catalogue task that "
-        "names its kind (build:conan-cache, build:image, build:nuget-config, build:nuget-restore, release:artifact, release:conan, release:image, release:maven, release:nuget, test:image) - add `kind:` to it by hand, one of artifact, image, directory, site, nuget, maven, conan, test-result, release-notes, tag, release, and run again")
+        "names its kind (build:conan-cache, build:image, build:maven-pack, build:nuget-config, build:nuget-pack, build:nuget-restore, release:artifact, release:conan, release:image, release:maven, release:notes, release:nuget, test:image) - add `kind:` to it by hand, one of artifact, image, directory, site, nuget, maven, conan, test-result, release-notes, tag, release, and run again")
 
 
 def test_netctls_bare_image_references_keep_their_value_and_their_comment():
@@ -795,15 +795,34 @@ def test_a_migrated_real_manifest_assembles_the_cli_it_always_did(product):
     golden = json.loads((FIXTURES / "golden" / f"{product}.json").read_text())
     migrated = migrate_text(realmanifests.text(product))
 
-    # act
-    surface = cli_surface(manifest.load(migrated.text, catalogue=catalogue.load(),
-                                        manifest_path=f"{product}.yaml"))
+    # act: a product the release rule refuses is answered in memory (realmanifests), so its surface is still held
+    surface = cli_surface(manifest.load(realmanifests.answer_release_rule(product, migrated.text),
+                                        catalogue=catalogue.load(), manifest_path=f"{product}.yaml"))
 
-    # assert
+    # assert: the one command the answer adds is taken out, as NEW_IN_EVERY_PRODUCT's are
+    if product in realmanifests.RELEASE_RULE_ANSWERS:
+        assert surface["groups"]["test"].remove(realmanifests.ADDED_TEST_COMMAND) is None
+        surface["commands"]["test"].pop(realmanifests.ADDED_TEST_COMMAND)
     for group, members in NEW_IN_EVERY_PRODUCT.items():
         assert surface["groups"].pop(group) == members
         surface["commands"].pop(group)
     assert surface == golden
+
+
+def test_the_release_rule_refuses_exactly_the_products_that_release_untested():
+    # arrange / act
+    refused = set()
+    for product in PRODUCTS:
+        migrated = migrate_text(realmanifests.text(product))
+        try:
+            manifest.load(migrated.text, catalogue=catalogue.load(), manifest_path=f"{product}.yaml")
+        except ValueError as exc:
+            if "no test produces a result about it" not in str(exc):
+                raise
+            refused.add(product)
+
+    # assert
+    assert refused == realmanifests.RELEASE_RULE_BILL
 
 
 @pytest.mark.parametrize("product", PRODUCTS)

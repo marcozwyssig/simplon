@@ -422,3 +422,14 @@ def test_an_unanswerable_question_is_reported_as_unanswerable(on_main_step):
     # Assert
     assert "NOT CLASSIFIED" in script
     assert "possibly stale ref" in script
+
+
+def test_the_release_tests_the_image_between_building_and_publishing_it():
+    # arrange
+    text = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+
+    # assert: si#344 C.3 - `release push-image` consumes the verdict record `test image` writes
+    build = text.index("./simplon.sh build image --tag")
+    test = text.index("./simplon.sh test image --tag")
+    release = text.index("./simplon.sh release push-image --tag")
+    assert build < test < release

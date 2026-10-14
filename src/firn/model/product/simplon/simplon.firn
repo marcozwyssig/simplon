@@ -84,6 +84,12 @@ simplon typeOf simplon.manifest.Product {
       key = "walk"
       task = product.simplon.simplon.t_simplon_tasks_walk_walk
     }
+    command image typeOf simplon.pipeline.TaskCommand {
+      key = "image"
+      task = simplon.catalogue.test_image
+      produces = product.simplon.simplon.a_kernel_checked
+      consumes = product.simplon.simplon.a_kernel
+    }
     command all typeOf simplon.pipeline.AggregateCommand {
       key = "all"
       member = product.simplon.simplon.test.suite
@@ -99,14 +105,32 @@ simplon typeOf simplon.manifest.Product {
   ci release typeOf simplon.pipeline.Group {
     key = "release"
     area = simplon.pipeline.Area.ci
+    command notes typeOf simplon.pipeline.TaskCommand {
+      key = "notes"
+      task = simplon.catalogue.release_notes
+      produces = product.simplon.simplon.a_kernel_notes
+    }
     command tag typeOf simplon.pipeline.TaskCommand {
       key = "tag"
-      task = product.simplon.simplon.t_simplon_tasks_release_tag
+      task = simplon.catalogue.release_tag
+      produces = product.simplon.simplon.a_kernel_tag
+      consumes = product.simplon.simplon.a_kernel_notes
     }
-    command image typeOf simplon.pipeline.TaskCommand {
-      key = "image"
+    command push_image typeOf simplon.pipeline.TaskCommand {
+      key = "push-image"
       task = simplon.catalogue.release_image
       consumes = product.simplon.simplon.a_kernel
+      consumes = product.simplon.simplon.a_kernel_checked
+    }
+    command all typeOf simplon.pipeline.ReleaseCommand {
+      key = "all"
+      member = product.simplon.simplon.release.notes
+      member = product.simplon.simplon.release.push_image
+      member = product.simplon.simplon.release.tag
+      release a_kernel_release typeOf simplon.pipeline.Release {
+        key = "kernel-release"
+        kind = simplon.vocabulary.release
+      }
     }
   }
   support support typeOf simplon.pipeline.Group {
@@ -249,10 +273,6 @@ simplon typeOf simplon.manifest.Product {
     key = "simplon.tasks.walk:walk"
     body = "simplon.tasks.walk:walk"
   }
-  tasks t_simplon_tasks_release_tag typeOf simplon.pipeline.Task {
-    key = "simplon.tasks.release:tag"
-    body = "simplon.tasks.release:tag"
-  }
   tasks t_simplon_tasks_hosttools_install typeOf simplon.pipeline.Task {
     key = "simplon.tasks.hosttools:install"
     body = "simplon.tasks.hosttools:install"
@@ -332,6 +352,20 @@ simplon typeOf simplon.manifest.Product {
   artifacts a_kernel typeOf simplon.pipeline.Artifact {
     key = "kernel"
     kind = simplon.vocabulary.image
+  }
+  artifacts a_kernel_checked typeOf simplon.pipeline.TestResult {
+    key = "kernel-checked"
+    kind = simplon.vocabulary.test_result
+    path = "build/test/kernel-image.json"
+  }
+  artifacts a_kernel_notes typeOf simplon.pipeline.Artifact {
+    key = "kernel-notes"
+    kind = simplon.vocabulary.release_notes
+    path = "build/release/notes.md"
+  }
+  artifacts a_kernel_tag typeOf simplon.pipeline.Artifact {
+    key = "kernel-tag"
+    kind = simplon.vocabulary.tag
   }
   website s_website typeOf simplon.manifest.KernelSection {
     key = "website"

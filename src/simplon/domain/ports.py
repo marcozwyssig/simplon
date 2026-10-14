@@ -115,13 +115,19 @@ def _artifacts(where: str, key: str, port: Port, value: object) -> tuple[str, ..
         + (", or a list of them on a port without `param:`" if key == "consumes" else ""))
 
 
-def check(manifest: "Manifest", declared: Mapping[str, tuple[str, bool]], kinds: Mapping[str, str]) -> None:
-    """Load rules 1, 2, 3 and 5 (spec C.5, si#344 C.2) over the loaded manifest. All four are diagnosis."""
+def check(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared"],
+          kinds: Mapping[str, str]) -> None:
+    """Load rules 1, 2, 3 and 5 (spec C.5, si#344 C.2) over the loaded manifest, all four diagnosis; then
+    the test-result rules (si#344 C.3, `_check_results`)."""
     producers: dict[str, list[str]] = {}
     consumers: list[tuple[str, str]] = []
     for group, members in manifest.commands.items():
         for name, spec in members.items():
             where = f"{group} {name}"
+            if not spec.task:
+                for artifact in (a for names in spec.produces.values() for a in names):
+                    producers.setdefault(artifact, []).append(where)
+                continue
             for port in spec.ports:
                 if port.accepts not in kinds:
                     raise ValueError(
@@ -135,7 +141,7 @@ def check(manifest: "Manifest", declared: Mapping[str, tuple[str, bool]], kinds:
                             raise ValueError(
                                 f"command '{where}' binds '{artifact}' to port '{port_name}', and `artifacts:` "
                                 f"declares no '{artifact}' - declare it there with its `kind:`")
-                        kind = declared[artifact][0]
+                        kind = declared[artifact].kind
                         if not artifactsection.accepts(kinds, port.accepts, kind):
                             raise ValueError(
                                 f"command '{where}' binds '{artifact}', a `{kind}`, to port '{port_name}', which "
@@ -145,7 +151,7 @@ def check(manifest: "Manifest", declared: Mapping[str, tuple[str, bool]], kinds:
                         else:
                             consumers.append((where, artifact))
     for where, artifact in consumers:
-        if artifact not in producers and not declared[artifact][1]:
+        if artifact not in producers and not declared[artifact].registry:
             raise ValueError(
                 f"command '{where}' consumes '{artifact}', and no command produces it - produce it with a "
                 f"command, or give it a `registry:` it is fetched from")
@@ -153,6 +159,54 @@ def check(manifest: "Manifest", declared: Mapping[str, tuple[str, bool]], kinds:
         for name, spec in members.items():
             if spec.depends_on:
                 _check_plan(manifest, f"{group} {name}", manifest.plan_for(name, group=group))
+    _check_bundles(manifest, declared, kinds)
+    about = _check_results(manifest, declared, kinds)
+    _check_release(manifest, declared, kinds, about)
+
+
+def _check_bundles(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared"],
+                   kinds: Mapping[str, str]) -> None:
+    """Rule 8 (spec C.4, C.5): only an aggregate under `ci: release:` names an output, exactly one, of kind
+    `release`; it sets `stop_on_failure: true`, so a failed member stops the plan; and its plan cuts no
+    `release:tag` before a publish member. A publish member is one whose
+    task takes evidence - an input port accepting `test-result` - so the set is derived, not listed."""
+    for group, members in manifest.commands.items():
+        for name, spec in members.items():
+            if spec.task or not spec.produces:
+                continue
+            where = f"{group} {name}"
+            if not _under(manifest, group, "release"):
+                raise ValueError(
+                    f"aggregate '{where}' names an output, and only an aggregate under `ci: release:` does - "
+                    f"its one output is the release bundle")
+            if list(spec.produces) != ["release"] or len(spec.produces["release"]) != 1:
+                raise ValueError(
+                    f"aggregate '{where}' names {', '.join(spec.produces)}: a release aggregate names exactly "
+                    f"one output, `produces: {{ release: <artifact> }}`")
+            bundle = spec.produces["release"][0]
+            if bundle not in declared:
+                raise ValueError(
+                    f"aggregate '{where}' names the bundle '{bundle}', and `artifacts:` declares no "
+                    f"'{bundle}' - declare it with `kind: release`")
+            if not artifactsection.accepts(kinds, "release", declared[bundle].kind):
+                raise ValueError(
+                    f"aggregate '{where}' names '{bundle}', a `{declared[bundle].kind}`, as its release - the "
+                    f"bundle is a `kind: release`")
+            if not spec.stop_on_failure:
+                raise ValueError(
+                    f"aggregate '{where}' names a release and leaves `stop_on_failure` false - without it a "
+                    f"failed publish leaf does not stop the plan, so the tag ordered last would still be cut; "
+                    f"set `stop_on_failure: true`")
+            plan = manifest.plan_for(name, group=group)
+            specs = [manifest.spec_by_name(step) for step in plan]
+            publishes = [at for at, s in enumerate(specs)
+                         if s and any(p.direction == "input" and p.accepts == "test-result" for p in s.ports)]
+            for at, (step, s) in enumerate(zip(plan, specs)):
+                if s and s.task == "release:tag" and publishes and at < max(publishes):
+                    raise ValueError(
+                        f"aggregate '{where}' plans '{step}' before '{plan[max(publishes)]}' - a tag cut before "
+                        f"the push it announces is a public statement that is false if the push fails; list "
+                        f"the tag after every publish in `depends_on`")
 
 
 def _check_plan(manifest: "Manifest", aggregate: str, plan: tuple[str, ...]) -> None:
@@ -175,3 +229,73 @@ def _check_plan(manifest: "Manifest", aggregate: str, plan: tuple[str, ...]) -> 
                 raise ValueError(
                     f"aggregate '{aggregate}' plans '{step}' before '{producer}', and '{step}' consumes "
                     f"'{artifact}', which '{producer}' produces - list '{producer}' first in `depends_on`")
+
+
+#: The kinds a release produces about itself (si#344 C.3, decided 2026-10-14). The release rule asks for test
+#: results about every OTHER artifact a release command consumes: the notes, the tag, the bundle and the
+#: evidence itself are not what a release publishes.
+OWN_KINDS = ("test-result", "release-notes", "tag", "release")
+
+
+def _top(group: str) -> str:
+    return group.split(".", 1)[0]
+
+
+def _under(manifest: "Manifest", group: str, phase: str) -> bool:
+    """Whether `group` sits under `ci: <phase>:`."""
+    return (manifest.area_of(group), _top(group)) == ("ci", phase)
+
+
+def _check_results(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared"],
+                   kinds: Mapping[str, str]) -> dict[str, set[str]]:
+    """A produced test result has a `path:` and is produced under `ci: test:` (si#344 C.3). Returns what
+    each artifact's test results are: artifact -> the results whose producer consumes it."""
+    about: dict[str, set[str]] = {}
+    for group, members in manifest.commands.items():
+        for name, spec in members.items():
+            made = [a for names in spec.produces.values() for a in names
+                    if artifactsection.accepts(kinds, "test-result", declared[a].kind)]
+            if not made:
+                continue
+            where = f"{group} {name}"
+            for result in made:
+                if not declared[result].path:
+                    raise ValueError(
+                        f"command '{where}' produces the test result '{result}', which declares no `path:` - "
+                        f"a test result is what the test writes, so name where")
+            if not _under(manifest, group, "test"):
+                raise ValueError(
+                    f"command '{where}' produces the test result '{made[0]}' outside `ci: test:` - a test "
+                    f"result is evidence that a test ran, so only a command under `ci: test:` produces one")
+            for subject in (a for names in spec.consumes.values() for a in names):
+                about.setdefault(subject, set()).update(made)
+    return about
+
+
+def _check_release(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared"],
+                   kinds: Mapping[str, str], about: Mapping[str, set[str]]) -> None:
+    """Rule 6 (spec C.3, C.5): a command under `ci: release:` that consumes an artifact X consumes every test
+    result about X, and at least one exists. X is every consumed artifact whose kind is not one of OWN_KINDS
+    (decided 2026-10-14). "About" is direct: a result is about what its producer consumes."""
+    for group, members in manifest.commands.items():
+        if not _under(manifest, group, "release"):
+            continue
+        for name, spec in members.items():
+            where = f"{group} {name}"
+            consumed = [a for names in spec.consumes.values() for a in names]
+            evidence = {a for a in consumed if artifactsection.accepts(kinds, "test-result", declared[a].kind)}
+            for subject in consumed:
+                if any(artifactsection.accepts(kinds, own, declared[subject].kind) for own in OWN_KINDS):
+                    continue
+                wanted = about.get(subject, set())
+                if not wanted:
+                    raise ValueError(
+                        f"command '{where}' releases '{subject}', and no test produces a result about it - add "
+                        f"a command under `ci: test:` that consumes '{subject}' and produces a `test-result`, "
+                        f"and bind that result to this command's `evidence` port")
+                missing = sorted(wanted - evidence)
+                if missing:
+                    raise ValueError(
+                        f"command '{where}' releases '{subject}' without the test result(s) "
+                        f"{', '.join(missing)} about it - bind every one to its `evidence` port, so no "
+                        f"release goes past a test that ran")

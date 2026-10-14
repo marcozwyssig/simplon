@@ -153,12 +153,16 @@ TaskCommand typeOf firn.core.Class extends simplon.pipeline.Command {
 }
 
 // What a test result is ABOUT is derived from what its producer consumes, never declared (spec C.3).
+// Its producer is whoever REFERENCES it through `produces`: since C.2 the Product owns the artifact, so
+// `self.owner()` is the Product and the old `self.owner().consumes` answered empty. `.-produces` is firn's
+// reverse navigation (docs/04 §3.2); `TaskCommand[produces == self]` was measured too (2026-10-14) and
+// answers empty for a command that produces two artifacts - it compares the whole set, not membership.
 TestResult typeOf firn.core.Class extends simplon.pipeline.Artifact {
   property about typeOf firn.core.SelectorRelation {
     range = simplon.pipeline.Artifact
     subjectCardinality = 0..N
     objectCardinality = 0..N
-    selector = "self.owner().consumes"
+    selector = "self.-produces.consumes"
   }
 }
 

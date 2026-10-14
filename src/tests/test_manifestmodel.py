@@ -143,6 +143,36 @@ def test_an_image_is_an_artifact_of_the_image_kind():
     assert 'key = "kernel"' in block and "kind = simplon.vocabulary.image" in block
 
 
+def _own() -> str:
+    """simplon's own live manifest, exported: the one that declares a test result and a release bundle
+    (si#344 C.3), so the export of both is asked of the manifest that ships them."""
+    text = (Path(__file__).resolve().parents[2] / "simplon.yaml").read_text(encoding="utf-8")
+    loaded = manifest_mod.load(text, catalogue=catalogue.load(), manifest_path="simplon.yaml")
+    return manifestmodel.export(loaded, yaml.safe_load(text), "simplon", manifestmodel.KERNEL_SECTIONS)
+
+
+def test_a_test_result_is_exported_as_a_test_result():
+    # act
+    block = _block(_own(), "artifacts a_kernel_checked typeOf simplon.pipeline.TestResult {")
+
+    # assert
+    assert 'path = "build/test/kernel-image.json"' in block
+
+
+def test_the_release_aggregate_is_exported_with_its_bundle_inside():
+    # act
+    text = _own()
+    command = text.split("command all typeOf simplon.pipeline.ReleaseCommand {", 1)[1]
+
+    # assert: the bundle is composed in its aggregate (ReleaseCommand.release), and nowhere else - firn would
+    # otherwise hold two resources for one manifest entry
+    assert command.lstrip().startswith('key = "all"')
+    bundle = _block(command, "release a_kernel_release typeOf simplon.pipeline.Release {")
+    assert 'key = "kernel-release"' in bundle and "kind = simplon.vocabulary.release" in bundle
+    assert "artifacts a_kernel_release typeOf" not in text
+    assert text.count("a_kernel_release typeOf") == 1
+
+
 def test_an_artifacts_entry_carries_its_declared_kind_and_its_path():
     # arrange
     # (DEMO declares `artifacts:` already since si#344 B2, so the entry joins it: a second `artifacts:` key
@@ -179,7 +209,7 @@ def test_a_kind_with_a_dash_is_exported_by_its_firn_name():
     # act
     block = _block(manifestmodel.export(_load(DEMO), yaml.safe_load(text), "demo",
                                         manifestmodel.KERNEL_SECTIONS),
-                   "artifacts a_junit typeOf simplon.pipeline.Artifact {")
+                   "artifacts a_junit typeOf simplon.pipeline.TestResult {")   # a test result since si#344 C.3
 
     # assert
     assert "kind = simplon.vocabulary.test_result" in block
@@ -334,7 +364,7 @@ def _source(name: str) -> tuple[manifest_mod.Manifest, str]:
     """DEMO, or a reachable manifest migrated and loaded exactly as test_migrate's golden test does."""
     if name == "demo":
         return _load(DEMO), DEMO
-    text = migrate_text(realmanifests.text(name)).text
+    text = realmanifests.answer_release_rule(name, migrate_text(realmanifests.text(name)).text)
     return manifest_mod.load(text, catalogue=catalogue.load(), manifest_path=f"{name}.yaml"), text
 
 

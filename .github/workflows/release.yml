@@ -322,7 +322,8 @@ jobs:
           image: tonistiigi/binfmt:qemu-v10.2.3
           platforms: arm64
       - run: ./simplon.sh build image --tag "$GITHUB_REF_NAME"
-      - run: ./simplon.sh release image --tag "$GITHUB_REF_NAME"
+      - run: ./simplon.sh test image --tag "$GITHUB_REF_NAME"
+      - run: ./simplon.sh release push-image --tag "$GITHUB_REF_NAME"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Open the pull request that pins the published image

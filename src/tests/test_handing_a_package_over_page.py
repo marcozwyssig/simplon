@@ -153,3 +153,12 @@ def test_no_coordinate_the_page_names_is_fiction():
     assert named, "the page names no coordinate, so this test is ruling on nothing"
     for coordinate in sorted(named):
         assert coordinate in known, f"the page names '{coordinate}', the catalogue does not carry it"
+
+
+def test_the_page_says_a_package_is_packed_by_one_command_and_pushed_by_another():
+    # arrange
+    text = _text()
+
+    # assert
+    assert "`build:nuget-pack`" in text and "`build:maven-pack`" in text
+    assert "a test can consume the package in between" in text

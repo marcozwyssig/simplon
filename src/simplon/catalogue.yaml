@@ -535,6 +535,7 @@ tasks:
       rc:     { help: "the exit code to expect (default 0); `rc: 2` means exactly 2, and 0 is then red" }
       user:   { help: "run as the invoking uid:gid (default true), so bind-mounted output is owned" }
       platform: { help: "one of the image's declared `platforms:` to run; default every declared one" }
+      results: { help: "the test result to write the verdict record to (normally bound with `produces:`)" }
 
   build:image:
     impl: simplon.tasks.image:build
@@ -674,13 +675,24 @@ tasks:
   # does not authenticate against a feed that wants an Authorization header, the `<apikeys>` config
   # section cannot hold one on Linux at all, and a push against a source that already carries
   # credentials needs no key. See src/simplon/tasks/nuget.py for the transcripts.
-  release:nuget:
-    impl: simplon.tasks.nuget:publish
-    help: "Pack the declared project and push it to GitHub's NuGet feed."
+  # si#344 C.3: PACK AND PUSH ARE TWO TASKS, so the package exists between them and a test can consume it.
+  # The release rule (spec C.3) asks for a test result about what a release publishes, and a package that
+  # first existed inside its own push could not have one. `build:nuget-pack` writes it to the entry's
+  # `path:`; `release:nuget` pushes exactly the package that path holds for the version.
+  build:nuget-pack:
+    impl: simplon.tasks.nuget:pack
+    help: "Pack the declared project into the artifact's path, as the version the tag names."
     unattended: true
     params:
-      name: { help: "the artifact to publish (normally pinned per command with `with:`)" }
-      tag:  { help: "the package version to publish, for one only known after a build" }
+      name: { help: "the artifact to pack (normally bound with `produces:`)" }
+      tag:  { help: "the package version, for one only known after a build" }
+  release:nuget:
+    impl: simplon.tasks.nuget:push
+    help: "Push the package `build:nuget-pack` wrote for this version to GitHub's NuGet feed."
+    unattended: true
+    params:
+      name: { help: "the artifact to push (normally bound with `consumes:`)" }
+      tag:  { help: "the package version to push, for one only known after a build" }
   # si#128, and the comment is the ticket's own warning: GitHub Packages has NO Conan registry - the
   # kinds it serves are npm, RubyGems, Maven, Gradle, NuGet and Docker/Container. So this is a
   # TRANSPORT, not a remote. `conan cache save` writes a .tgz, this moves it into the registry as an OCI
@@ -716,13 +728,28 @@ tasks:
   # nothing. That is `release:image`'s rule ("a push nobody verifies is the same defect as a report nobody
   # reads") meeting a tool that really can exit 0 having done nothing. The verification has three
   # outcomes: a 401 means the token may not look, which is not the same as a missing jar.
-  release:maven:
-    impl: simplon.tasks.maven:publish
-    help: "Publish the declared Gradle modules to GitHub's Maven registry and read the coordinates back."
+  #
+  # si#344 C.3: STAGE AND UPLOAD ARE TWO TASKS, for `release:nuget`'s reason. `build:maven-pack` runs
+  # `gradle publish` into a FILE repository under the entry's `path:`, added by an init script the kernel
+  # writes, so the product's build file is not touched; `release:maven` uploads exactly those files with
+  # HTTP PUT and reads the POMs back. The upload is not measured against GitHub from the machine it was
+  # written on (no `write:packages` token) - the same gap tasks/nuget.py records. Also unmeasured: `release:maven`
+  # uploads the staged `maven-metadata.xml*`, which lists only the staged version; if the registry honours a PUT
+  # over existing metadata, the module's version list is replaced by a one-version file (`mvn deploy` merges first).
+  build:maven-pack:
+    impl: simplon.tasks.maven:pack
+    help: "Stage the declared Gradle modules into the artifact's path as a Maven file repository."
     unattended: true
     params:
-      name: { help: "the artifact to publish (normally pinned per command with `with:`)" }
-      tag:  { help: "the version to publish, for one only known after a build" }
+      name: { help: "the artifact to stage (normally bound with `produces:`)" }
+      tag:  { help: "the version to stage, for one only known after a build" }
+  release:maven:
+    impl: simplon.tasks.maven:push
+    help: "Upload what `build:maven-pack` staged to GitHub's Maven registry and read the coordinates back."
+    unattended: true
+    params:
+      name: { help: "the artifact to upload (normally bound with `consumes:`)" }
+      tag:  { help: "the version to upload, for one only known after a build" }
   release:image:
     impl: simplon.tasks.image:release
     help: "Push the product's container image and verify the tag, and every declared platform, is in the registry."
@@ -730,6 +757,18 @@ tasks:
     params:
       name: { help: "the image to publish (normally pinned per command with `with:`)" }
       tag:  { help: "the tag to publish under, for a version only known after a build" }
+  # The release NOTES (si#344 C.3, spec decision 16), generated from the merges since the previous tag and
+  # the tickets they name - the walk `test:release-notes` already makes to check a hand-written page, not a
+  # second one. OFFERED, not placed, for `release:tag`'s reason: it is one leaf of a release, and a product
+  # that releases by hand-written notes alone has nothing waiting for it.
+  release:notes:
+    impl: simplon.tasks.releasenotes:write
+    help: "Write the release notes for a tag from the merges and tickets since the previous one."
+    unattended: true
+    params:
+      name: { help: "the release-notes artifact to write (normally bound with `produces:`)" }
+      tag:  { help: "the tag being released, exactly as it will exist (e.g. v1.4.0)", metavar: "TAG" }
+
   # The release TAG - the one step of the loop that was still two git commands typed by hand (#32), and
   # the guard #23 asked for, sitting inside it.
   #
