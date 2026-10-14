@@ -167,12 +167,40 @@ def test_an_lxc_without_the_emulator_gets_the_interpreter_the_script_and_an_enab
 
     # assert
     assert rc == 0
-    assert host.ran("docker", "create", ciarm64.BINFMT_IMAGE)
-    assert host.ran("docker", "cp", f"c0ffee:{ciarm64.INTERPRETER_INSIDE}", str(ciarm64.INTERPRETER))
+    created = next(call for call in host.calls if call[:2] == ["docker", "create"])
+    assert created[-1] == ciarm64.BINFMT_IMAGE
+    name = created[created.index("--name") + 1]
+    assert host.ran("docker", "cp", f"{name}:{ciarm64.INTERPRETER_INSIDE}", str(ciarm64.INTERPRETER))
+    assert host.ran("docker", "rm", name)
     assert ciarm64.SCRIPT.read_text() == ciarm64.script()
     assert (ciarm64.UNIT_DIR / ciarm64.UNIT).read_text() == ciarm64.unit()
     assert host.ran("systemctl", "enable", "--now", ciarm64.UNIT)
     assert not host.ran("apt-get")
+
+
+def test_an_interrupt_between_create_and_rm_removes_the_container_it_created(monkeypatch, root, removals):
+    # arrange: si#416. `docker create` then `docker cp` then `docker rm`, and before it no `finally` - an
+    # interrupt during the copy left the created container behind. It is named now, so the unwind can
+    # remove it by the name it chose rather than by an id only the dead client had
+    host = _on(monkeypatch, _Host("lxc"))
+    real = host.run
+
+    def interrupted_copy(argv, **kw):
+        if list(argv)[:2] == ["docker", "cp"]:
+            host.calls.append(list(argv))
+            raise KeyboardInterrupt
+        return real(argv, **kw)
+
+    monkeypatch.setattr(ciarm64, "run", interrupted_copy)
+
+    # act
+    with pytest.raises(KeyboardInterrupt):
+        ciarm64.arm64()
+
+    # assert: the container `docker create` was told to call itself is the one removed
+    created = next(call for call in host.calls if call[:2] == ["docker", "create"])
+    assert removals == [created[created.index("--name") + 1]]
+    assert created[created.index("--label") + 1].startswith("simplon.run=")
 
 
 def test_a_recipe_that_ran_but_left_the_builder_without_arm64_is_red(monkeypatch, root, capsys):

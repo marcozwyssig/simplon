@@ -40,6 +40,7 @@ from pathlib import Path
 
 from simplon.kernel import log
 from simplon.kernel.run import run
+from simplon.adapters import docker
 from simplon.adapters.labhost import BINFMT_IMAGE
 from simplon.tasks import image
 
@@ -164,15 +165,18 @@ def _install_vm() -> bool:
 def _install_lxc() -> bool:
     if not INTERPRETER.exists():
         log.info(f"copying the static {INTERPRETER_INSIDE} out of {BINFMT_IMAGE} to {INTERPRETER}")
-        created = run(["docker", "create", BINFMT_IMAGE])
-        if not created.answered:
-            log.error(f"`docker create {BINFMT_IMAGE}` failed, so there is no interpreter to register: "
-                      f"{(created.err or created.out).strip() or '(it said nothing)'}")
-            return False
-        container = created.out.strip()
         INTERPRETER.parent.mkdir(parents=True, exist_ok=True)
-        copied = run(["docker", "cp", f"{container}:{INTERPRETER_INSIDE}", str(INTERPRETER)])
-        run(["docker", "rm", container])
+        # NAMED, so an interrupt between the create and the rm removes it (si#416): the id `docker create`
+        # prints is known only once it has answered, and the name is known before it is asked.
+        container, lifecycle = docker.lifecycle()
+        with docker.stopped_on_interrupt(container):
+            created = run(["docker", "create", *lifecycle, BINFMT_IMAGE])
+            if not created.answered:
+                log.error(f"`docker create {BINFMT_IMAGE}` failed, so there is no interpreter to register: "
+                          f"{(created.err or created.out).strip() or '(it said nothing)'}")
+                return False
+            copied = run(["docker", "cp", f"{container}:{INTERPRETER_INSIDE}", str(INTERPRETER)])
+            run(["docker", "rm", container])
         if not copied.ok:
             log.error(f"copying {INTERPRETER_INSIDE} out of {BINFMT_IMAGE} failed: "
                       f"{(copied.err or copied.out).strip() or '(it said nothing)'}")
