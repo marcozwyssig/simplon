@@ -675,9 +675,17 @@ def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect
 
 
 def _run_once(ref: str, options: list[str], argv: str, expect: str, rc: int) -> int:
-    """One `docker run` of `ref` and its verdict: 0, or the code `smoke` hands back."""
-    command = ["docker", "run", "--rm", *options, ref, *shlex.split(argv)]
-    result = run(command)
+    """One `docker run` of `ref` and its verdict: 0, or the code `smoke` hands back.
+
+    Named and labelled `simplon.run=<product>`, and removed if the run is interrupted (si#412): an image
+    under test is exactly the container nobody knows the lifetime of, and a cancelled job must not leave
+    it running into the next one - `docker.stopped_on_interrupt` says why the client dying is not enough.
+    The flags sit after `options`, so a line still starts `docker run --rm --platform <p>`.
+    """
+    name, lifecycle = docker.lifecycle()
+    command = ["docker", "run", "--rm", *options, *lifecycle, ref, *shlex.split(argv)]
+    with docker.stopped_on_interrupt(name):
+        result = run(command)
     if result.rc != rc:
         log.error(f"{ref} exited {result.rc}" + (f", and {rc} was expected" if rc else "") + "\n"
                   + _indented(result))

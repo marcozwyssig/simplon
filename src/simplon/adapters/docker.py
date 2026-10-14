@@ -26,7 +26,8 @@ import signal
 import tarfile
 import threading
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from simplon.domain import context
@@ -516,12 +517,43 @@ def lifecycle_args(name: str, product: str, instance: str = "") -> list[str]:
 
 
 class _Terminated(BaseException):
-    """SIGTERM, turned into an exception for the length of one `run_container` so the unwind runs."""
+    """SIGTERM, turned into an exception for the length of one `stopped_on_interrupt` so the unwind runs."""
+
+
+def lifecycle(product: str | None = None, instance: str = "") -> tuple[str, list[str]]:
+    """`(name, flags)` for ONE kernel-started container: a fresh `container_name` and the
+    `lifecycle_args` that carry it (si#412). The name is what `stopped_on_interrupt` is then handed.
+
+    `product` defaults to the registered product context's name, because every catalogue task runs inside
+    one and the label is only worth having if it is the name a product filters by
+    (`--filter label=simplon.run=<product>`). A caller with NO context - `allure.render_report` is handed a
+    directory and nothing else, on purpose - gets an EMPTY value rather than a refusal: the container
+    still carries the `simplon.run` key, which `--filter label=simplon.run` finds, and inventing a product
+    name here would label it as somebody else's.
+    """
+    if product is None:
+        try:
+            product = context.current().name
+        except RuntimeError:
+            product = ""
+    name = container_name(product)
+    return name, lifecycle_args(name, product, instance)
 
 
 def run_container(argv: list[str], name: str, *, capture: bool = False) -> Result:
-    """Run a `docker run` line whose container is called `name`, and STOP that container if this
-    process is interrupted while the client runs (si#409). Returns the real Result otherwise.
+    """`run(argv)` for a `docker run` line whose container is called `name`, inside
+    `stopped_on_interrupt(name)` - see that for why (si#409). Returns the real Result."""
+    with stopped_on_interrupt(name):
+        return run(argv, capture=capture)
+
+
+@contextmanager
+def stopped_on_interrupt(name: str) -> Iterator[None]:
+    """STOP the container called `name` if this process is interrupted while the block runs (si#409).
+
+    A context manager rather than only `run_container` (si#412), because the sites that start a container
+    start their line in different ways - `stream`, a captured `run`, `run(..., capture=False)` - and each
+    keeps its own call; what they share is this unwind around it.
 
     WHY THE CLIENT DYING IS NOT ENOUGH. The docker CLI is a client: killing it detaches it from the
     container and stops nothing. firn measured it on simplon 0.30.0 (firn#965) - SIGINT, SIGTERM and
@@ -559,7 +591,7 @@ def run_container(argv: list[str], name: str, *, capture: bool = False) -> Resul
     if catch_term:
         signal.signal(signal.SIGTERM, _terminate)
     try:
-        return run(argv, capture=capture)
+        yield
     except BaseException as abandoned:
         _remove(name)
         if isinstance(abandoned, _Terminated):

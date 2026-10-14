@@ -958,3 +958,19 @@ def test_unknown_member_fails_loudly_with_the_member_list():
     # assert
     assert "statuss" in message
     assert "status" in message
+
+
+# --- si#412: why the probe container is the one `docker run` without the si#409 lifecycle ---------------
+
+@pytest.mark.parametrize("shape", [{}, {"netns_of": "nexus", "authenticated": True, "method": "PUT"}],
+                         ids=["build-container probe", "service call"])
+def test_every_probe_container_ends_by_itself_within_its_timeout(shape):
+    """The exemption in `_curl_argv`'s docstring rests on this and on nothing else: curl's own
+    `--connect-timeout` and `-m` bound the container's life, so a cancelled run cannot orphan it for
+    longer than the probe would have taken anyway. Drop either flag and the exemption is void."""
+    # act
+    argv = nexusproxy._curl_argv(CFG, "http://nexus:8081/", nexusproxy.CONTENT_PROBE_TIMEOUT_S, **shape)
+
+    # assert
+    assert float(argv[argv.index("--connect-timeout") + 1]) <= nexusproxy.CONTENT_PROBE_TIMEOUT_S
+    assert float(argv[argv.index("-m") + 1]) == nexusproxy.CONTENT_PROBE_TIMEOUT_S

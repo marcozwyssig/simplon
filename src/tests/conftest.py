@@ -109,3 +109,56 @@ def docker_is_usable() -> bool:
         return run(["docker", "version"]).ok
     except OSError:
         return False
+
+
+def lifecycle_name(argv: list[str], product: str) -> str:
+    """The container name a `docker run` line carries, once it is shown to carry all of si#409's
+    lifecycle: `--init`, a `--name`, and the `simplon.run=<product>` label (si#412).
+
+    One helper for every site because the property is one property: a site that grew its own
+    spelling of the check would be the place the next one drifts from it."""
+    assert argv[:2] == ["docker", "run"], f"not a docker run line: {argv}"
+    assert "--init" in argv, f"no --init: {argv}"
+    labels = [argv[i + 1] for i, token in enumerate(argv[:-1]) if token == "--label"]
+    assert f"simplon.run={product}" in labels, f"no simplon.run={product} label: {argv}"
+    assert "--name" in argv, f"no --name: {argv}"
+    return argv[argv.index("--name") + 1]
+
+
+@pytest.fixture
+def removals(monkeypatch):
+    """Every `docker rm -f <name>` the si#409 unwind issues, recorded instead of run (si#412).
+
+    The unwind runs through `simplon.adapters.docker.run`, so a site's own faked `run`/`stream` never
+    sees it - which is what lets a test tell the site's container line from the cleanup after it."""
+    from simplon.adapters import docker
+    from simplon.kernel.run import Result
+    seen: list[str] = []
+
+    def fake(argv, **kwargs):
+        if argv[:3] == ["docker", "rm", "-f"]:
+            seen.append(argv[3])
+        return Result(rc=0, out="", err="")
+    monkeypatch.setattr(docker, "run", fake)
+    return seen
+
+
+def without_lifecycle(argv: list[str]) -> list[str]:
+    """`argv` with si#409's lifecycle flags taken out, for a test that pins the REST of a line.
+
+    The name is fresh per run by construction, so a test that compares a whole line would otherwise have
+    to fake the name generator; this keeps such a test about what it was written for."""
+    out: list[str] = []
+    skip = False
+    for i, token in enumerate(argv):
+        if skip:
+            skip = False
+            continue
+        if token == "--init":
+            continue
+        if token == "--name" or (token == "--label" and i + 1 < len(argv)
+                                 and argv[i + 1].startswith("simplon.")):
+            skip = True
+            continue
+        out.append(token)
+    return out

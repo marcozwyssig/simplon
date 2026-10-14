@@ -15,6 +15,8 @@ from simplon.domain.context import ProductContext
 from simplon.kernel.run import Result
 from simplon.tasks import docs as docs_cmd
 
+from conftest import lifecycle_name
+
 
 def _register(monkeypatch, tmp_path, data):
     ctx = ProductContext("sample", tmp_path, tmp_path / "sample.yaml")
@@ -429,3 +431,41 @@ def test_render_falls_back_to_root_when_the_tree_is_writable_but_not_the_callers
     # assert
     argv = seen[0]
     assert argv[argv.index("--user") + 1] == "0:0"
+
+
+# --- si#412: the render container is named, labelled, and removed on interrupt --------------------------
+
+def _interrupting(seen: list):
+    """A `run` that records the line and is interrupted while the client runs."""
+    def fake(argv, **kwargs):
+        seen.append(list(argv))
+        raise KeyboardInterrupt
+    return fake
+
+
+def test_the_render_container_is_named_and_labelled(monkeypatch, tmp_path):
+    # arrange
+    _register(monkeypatch, tmp_path, {"doctoolchain_version": "v9.9.9"})
+    seen: list = []
+    _stub_run(monkeypatch, rc=0, seen=seen)
+    _html(tmp_path)
+
+    # act
+    docs_cmd.render()
+
+    # assert
+    lifecycle_name(seen[0], "sample")
+
+
+def test_an_interrupted_render_removes_the_container_it_named(monkeypatch, tmp_path, removals):
+    # arrange
+    _register(monkeypatch, tmp_path, {"doctoolchain_version": "v9.9.9"})
+    seen: list = []
+    monkeypatch.setattr(docs_cmd, "run", _interrupting(seen))
+
+    # act
+    with pytest.raises(KeyboardInterrupt):
+        docs_cmd.render()
+
+    # assert
+    assert removals == [lifecycle_name(seen[0], "sample")]

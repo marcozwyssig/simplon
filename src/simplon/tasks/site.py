@@ -339,10 +339,13 @@ def _hugo(cfg: Site, root: Path, argv: list[str]) -> bool:
     # a cold cache on every run, which is the behaviour it had before this existed; what it must not do
     # is hand hugo a HUGO_CACHEDIR that is not there.
     (root / CACHE_DIR).mkdir(parents=True, exist_ok=True)
-    return run(["docker", "run", "--rm", *docker.user_args(),
-                "-v", f"{hostpath.translate(root)}:{MOUNT}", "-w", str(MOUNT / cfg.source),
-                "-e", f"HUGO_CACHEDIR={MOUNT / CACHE_DIR}",
-                "--entrypoint", "hugo", cfg.image, *argv], capture=False).ok
+    # si#412: named, labelled, and removed if the build is interrupted - `docker.stopped_on_interrupt`.
+    container, lifecycle = docker.lifecycle()
+    with docker.stopped_on_interrupt(container):
+        return run(["docker", "run", "--rm", *lifecycle, *docker.user_args(),
+                    "-v", f"{hostpath.translate(root)}:{MOUNT}", "-w", str(MOUNT / cfg.source),
+                    "-e", f"HUGO_CACHEDIR={MOUNT / CACHE_DIR}",
+                    "--entrypoint", "hugo", cfg.image, *argv], capture=False).ok
 
 
 def _wipe(out: Path, cfg: Site) -> bool:
@@ -477,10 +480,13 @@ def _renders(diagram: Diagram, scratch: Path) -> bool:
     out = scratch / "diagram.svg"
     out.unlink(missing_ok=True)
     src.write_text(diagram.body, encoding="utf-8")
-    ok = run(["docker", "run", "--rm", *docker.user_args(),
-              "-v", f"{hostpath.translate(scratch)}:{MERMAID_MOUNT}", MERMAID_IMAGE,
-              "-i", str(MERMAID_MOUNT / src.name), "-o", str(MERMAID_MOUNT / out.name)],
-             capture=False).ok
+    # si#412: one container per diagram, so one name per diagram - see `_hugo`.
+    container, lifecycle = docker.lifecycle()
+    with docker.stopped_on_interrupt(container):
+        ok = run(["docker", "run", "--rm", *lifecycle, *docker.user_args(),
+                  "-v", f"{hostpath.translate(scratch)}:{MERMAID_MOUNT}", MERMAID_IMAGE,
+                  "-i", str(MERMAID_MOUNT / src.name), "-o", str(MERMAID_MOUNT / out.name)],
+                 capture=False).ok
     return ok and out.is_file()
 
 

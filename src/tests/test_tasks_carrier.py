@@ -28,6 +28,8 @@ import pytest
 from simplon.domain import carrierspec, environments
 from simplon.tasks import carrier, proxmoxapi
 
+from conftest import lifecycle_name
+
 def _code(text: str) -> str:
     """`text` with its comment lines removed.
 
@@ -393,3 +395,60 @@ def test_the_backends_are_read_from_a_cd_matrix():
 
     # act / assert
     assert carrier._backends(document) == ("proxmox",)
+
+
+# --- si#412: both containers are named and labelled; only the play is removed on interrupt ---------------
+
+@pytest.fixture
+def _lines(monkeypatch, tmp_path):
+    """Every line `_pulumi` / `_ansible` streams, recorded; the product registered so the label has a name."""
+    from simplon.domain import context
+    seen: list = []
+    monkeypatch.setattr(context, "_current", context.ProductContext("p", tmp_path, tmp_path / "p.yaml"))
+    monkeypatch.setattr(carrier.run, "stream", lambda argv, **kw: (seen.append(list(argv)), 0)[1])
+    monkeypatch.setenv(f"PORTAINER{carrier.PASSWORD_SUFFIX}", "a-long-enough-password")
+    return seen
+
+
+def _interrupted(monkeypatch, seen: list) -> None:
+    def stream(argv, **kw):
+        seen.append(list(argv))
+        raise KeyboardInterrupt
+    monkeypatch.setattr(carrier.run, "stream", stream)
+
+
+def test_the_pulumi_and_the_ansible_containers_are_named_and_labelled(_lines, tmp_path):
+    # act
+    carrier._pulumi(CARRIER, CARRIER.proxmox, "tok", tmp_path, tmp_path / "state", "h")
+    carrier._ansible(CARRIER, "10.0.0.9", tmp_path, tmp_path / "key", 9443)
+
+    # assert
+    assert [bool(lifecycle_name(line, "p")) for line in _lines] == [True, True]
+
+
+def test_an_interrupted_play_removes_the_container_it_named(_lines, monkeypatch, removals, tmp_path):
+    # arrange
+    seen: list = []
+    _interrupted(monkeypatch, seen)
+
+    # act
+    with pytest.raises(KeyboardInterrupt):
+        carrier._ansible(CARRIER, "10.0.0.9", tmp_path, tmp_path / "key", 9443)
+
+    # assert
+    assert removals == [lifecycle_name(seen[0], "p")]
+
+
+def test_an_interrupted_pulumi_run_is_left_to_finish_and_its_label_finds_it(_lines, monkeypatch, removals,
+                                                                            tmp_path):
+    # arrange: the documented exemption - a SIGKILLed `pulumi up` leaves pending operations in the state
+    seen: list = []
+    _interrupted(monkeypatch, seen)
+
+    # act
+    with pytest.raises(KeyboardInterrupt):
+        carrier._pulumi(CARRIER, CARRIER.proxmox, "tok", tmp_path, tmp_path / "state", "h")
+
+    # assert: nothing removed, and the container is still one the label finds
+    assert removals == []
+    lifecycle_name(seen[0], "p")

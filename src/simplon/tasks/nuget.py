@@ -57,7 +57,7 @@ import os
 import re
 import stat
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from xml.sax.saxutils import quoteattr
@@ -287,7 +287,8 @@ def _env_file(token: str) -> Iterator[Path]:
         path.unlink(missing_ok=True)
 
 
-def docker_argv(image: str, root: Path, env_file: Path, argv: list[str]) -> list[str]:
+def docker_argv(image: str, root: Path, env_file: Path, argv: list[str],
+                lifecycle: Sequence[str] = ()) -> list[str]:
     """The container line for one dotnet invocation. PURE: it assembles, it runs nothing.
 
     Pure for the reason `toolchain.docker_argv` is pure: the decisions here - whose uid, which mount,
@@ -299,14 +300,27 @@ def docker_argv(image: str, root: Path, env_file: Path, argv: list[str]) -> list
     names, and nothing else - no implicit inheritance from the caller"; a secret is precisely what a
     manifest may not name, so it has no `--env-file`. Widening it would put a credential into the one
     shape si#105 wrote to keep declarations reviewable.
+
+    `lifecycle` is `docker.lifecycle()`'s flags (si#412), handed in by `_contained` because the name in
+    them is fresh per call - choosing it here would make the line impure.
     """
-    return ["docker", "run", "--rm",
+    return ["docker", "run", "--rm", *lifecycle,
             *docker.user_args(),
             "-v", f"{hostpath.translate(root)}:{WORKDIR}", "-w", WORKDIR,
             "--env-file", str(env_file),
             "-e", f"DOTNET_CLI_HOME={WORKDIR}/{CLI_HOME}",
             "-e", "DOTNET_CLI_TELEMETRY_OPTOUT=1", "-e", "DOTNET_NOLOGO=1",
             image, *argv]
+
+
+def _contained(image: str, root: Path, env_file: Path, argv: list[str]) -> int:
+    """Stream one dotnet line in a container that is named, labelled `simplon.run=<product>`, and
+    removed if this run is interrupted (si#412) - `docker.stopped_on_interrupt` says why the client
+    dying is not enough. One helper because `publish` and `restore` start three such lines between them.
+    """
+    container, lifecycle = docker.lifecycle()
+    with docker.stopped_on_interrupt(container):
+        return stream(docker_argv(image, root, env_file, argv, lifecycle))
 
 
 def pack_argv(project: str, version: str) -> list[str]:
@@ -370,13 +384,13 @@ def publish(name: str = "", tag: str = "") -> int:
 
     with _env_file(githubpackages.token()) as env_file:
         log.info(f"packing {project} as {resolved}")
-        rc = stream(docker_argv(pinned, root, env_file, pack_argv(project, resolved)))
+        rc = _contained(pinned, root, env_file, pack_argv(project, resolved))
         if rc != 0:
             log.error(f"dotnet pack {project} failed (rc={rc}; see output above)")
             return rc
 
         log.info(f"pushing {resolved} to {index_url(registry)}")
-        rc = stream(docker_argv(pinned, root, env_file, push_argv(source_name)))
+        rc = _contained(pinned, root, env_file, push_argv(source_name))
 
     if rc != 0:
         # The scope advice is a HINT tied to a host and a condition, never appended to every failure -
@@ -451,7 +465,7 @@ def restore(name: str = "") -> int:
 
     with _env_file(githubpackages.token()) as env_file:
         log.info(f"restoring {project} against {index_url(registry)}")
-        rc = stream(docker_argv(pinned, root, env_file, ["dotnet", "restore", project]))
+        rc = _contained(pinned, root, env_file, ["dotnet", "restore", project])
 
     if rc != 0:
         log.error(f"dotnet restore {project} failed (rc={rc}; see output above)\n"

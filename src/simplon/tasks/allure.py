@@ -622,11 +622,16 @@ def render_report(report_dir: str, results: str | None = None, *, prefix: str = 
         # failure it has never had. What allure MEASURED (#6) is the other direction entirely: an image
         # running as uid 1000 against a host uid that is not 1000, which `_docker_user` answers. The day
         # a stale tree kills a render here, this is where the check goes.
-        ok = run(["docker", "run", "--rm", *_docker_user(),
-                  "-v", f"{hostpath.translate(report_dir)}:/work", "-w", "/work",
-                  "--entrypoint", "allure", IMAGE,
-                  "generate", "--single-file", "--clean",
-                  os.path.join("/work", os.path.relpath(results, report_dir)), "-o", "/work/allure-report"]).ok
+        # si#412: named, labelled, and removed if the render is interrupted. With no product context
+        # here the label's value is empty - `docker.lifecycle` says why that and not a refusal.
+        container, lifecycle = docker.lifecycle()
+        with docker.stopped_on_interrupt(container):
+            ok = run(["docker", "run", "--rm", *lifecycle, *_docker_user(),
+                      "-v", f"{hostpath.translate(report_dir)}:/work", "-w", "/work",
+                      "--entrypoint", "allure", IMAGE,
+                      "generate", "--single-file", "--clean",
+                      os.path.join("/work", os.path.relpath(results, report_dir)),
+                      "-o", "/work/allure-report"]).ok
         if not ok:
             log.error(f"docker allure render failed; no report archived for this run. {hint}")
             return Render(tool=tool)

@@ -157,3 +157,44 @@ def test_a_SIGKILLed_run_leaves_a_container_its_label_still_finds(product, tmp_p
     assert len(left) == 1, f"expected the one orphan SIGKILL cannot prevent, found {left}"
     names = run(["docker", "ps", "-a", "--format", "{{.Names}}", "--filter", f"label=simplon.run={product}"])
     assert names.out.split() == [name]
+
+
+# --- si#412: a catalogue site, not only `toolchain:run` -----------------------------------------------
+
+#: The child for a SITE: `test:image`'s `_run_once`, exactly as `smoke` calls it, under a registered
+#: product - the shape every si#412 site shares (`docker.lifecycle` + `docker.stopped_on_interrupt`
+#: around the site's own `run`). Captured output, unlike `toolchain:run`'s streamed one.
+SITE_CHILD = """
+import sys
+from pathlib import Path
+from simplon.domain import context
+from simplon.tasks import image
+product, root, ref, seconds = sys.argv[1:5]
+context.set_current(context.ProductContext(product, Path(root), Path(root) / "x.yaml"))
+print("-", flush=True)
+sys.exit(image._run_once(ref, [], "sleep " + seconds, "", 0))
+"""
+
+
+@needs_docker
+@pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM], ids=["SIGINT", "SIGTERM"])
+def test_a_cancelled_smoke_run_leaves_no_container_behind(product, tmp_path, sig):
+    # arrange: the child is the same as `_start`'s except for what it runs
+    src = str(Path(simplon.__file__).resolve().parents[1])
+    child = subprocess.Popen([sys.executable, "-c", SITE_CHILD, product, str(tmp_path), IMAGE, SLEEP],
+                             env={**os.environ, "PYTHONPATH": src}, stdout=subprocess.PIPE, text=True)
+    assert child.stdout is not None
+    child.stdout.readline()
+    deadline = time.monotonic() + 120
+    while not _left_by(product):
+        assert time.monotonic() < deadline and child.poll() is None, "the smoke container never started"
+        time.sleep(0.2)
+    time.sleep(1.0)
+
+    # act
+    child.send_signal(sig)
+    rc = child.wait(timeout=60)
+
+    # assert
+    assert _left_by(product) == [], f"{sig.name} left the smoke container behind"
+    assert rc == -sig, f"{sig.name}: the child exited rc {rc}"

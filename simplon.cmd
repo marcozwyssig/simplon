@@ -132,6 +132,13 @@ rem THE SOCKET. On Windows the engine is a named pipe, but a LINUX container rea
 rem socket Docker Desktop keeps inside its own VM, which is why this is the same path the .sh mounts and
 rem not //./pipe/docker_engine - that pipe is for Windows containers. Inherited, not driven.
 set "DOCKER_ARGS=--rm --init -i"
+rem THE LABEL, AND ONLY THE LABEL, of si#412's lifecycle. The .sh names its container and traps INT/TERM
+rem to stop it, because a docker client that dies stops nothing; cmd.exe has no trap to run, so a name
+rem here would be a name nobody stops by. What it can carry is `simplon.run=<product>`, the label the kernel
+rem puts on every container it starts, so `docker ps --filter label=simplon.run=<product>` finds what a
+rem cancelled Windows run left. Whether Docker Desktop's client forwards a console Ctrl-C to the
+rem container through `--init` is not measured: there was no Windows to take it on.
+set "DOCKER_ARGS=%DOCKER_ARGS% --label simplon.run=%LAUNCH_PRODUCT%"
 if defined DELIVERY_CONTAINER_TTY set "DOCKER_ARGS=%DOCKER_ARGS% -t"
 set "DOCKER_ARGS=%DOCKER_ARGS% -v /var/run/docker.sock:/var/run/docker.sock"
 set "DOCKER_ARGS=%DOCKER_ARGS% -v "%LAUNCH_ROOT%:/src" -w /src"

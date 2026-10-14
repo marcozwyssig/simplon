@@ -783,7 +783,16 @@ def _curl_argv(cfg: NexusConfig, url: str, timeout: float, *, netns_of: str | No
     the same image every gradle invocation already runs in, so no extra image is ever pulled. Two
     deliberate differences from that probe: `-o -` keeps the BODY (the EULA 403 body is the diagnosis, a
     boolean is not enough here), and `-w` tags the status code so the body cannot be mistaken for it. `-f`
-    stays absent for the same reason as in #990: any HTTP answer is an answer."""
+    stays absent for the same reason as in #990: any HTTP answer is an answer.
+
+    NO NAME, NO LABEL, NO REMOVAL ON INTERRUPT - the one `docker run` si#412 leaves as it was, because the
+    defect it repairs cannot happen here. That defect is a container that outlives a cancelled run by as
+    long as its tool likes; this container's tool is curl under `-m <timeout>` and `--connect-timeout`,
+    so it ends by itself within the probe's own timeout whatever happens to the client. Measured on
+    2026-10-14 with these flags: an unroutable address ended the container in 3.3 s (`--connect-timeout
+    3`), a peer that accepts and never answers in 5.2 s (`-m 5`). The longest timeout passed here is
+    CONTENT_PROBE_TIMEOUT_S. The Nexus SERVICE container is the opposite case and is not a `docker run`:
+    `up` starts it with compose to outlive every run, which is the point of it."""
     argv = ["docker", "run", "--rm"]
     if authenticated:
         argv.append("-i")  # the credential arrives on stdin as a curl config, never in argv
