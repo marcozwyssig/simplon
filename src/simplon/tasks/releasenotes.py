@@ -1,4 +1,4 @@
-"""`test:release-notes` - a product's releases page against the tags and merges its repository carries.
+"""`test:release-notes` and `release:notes` - a product's releases page against the tags and merges its repository carries, and the notes generated from the same walk.
 
 WHY THIS IS THE KERNEL'S (si#89). The rule was written here, as `tests/test_releases_page.py`, and it
 worked: it caught v0.7.1 going out with notes that described ONE of the seven merges the tag carried,
@@ -36,6 +36,12 @@ branch has the merge that just landed as `HEAD`, so a pull request's own ticket 
 second it merges. Neither fact was hidden - neither was ever stated either. So every run of this gate
 names what `HEAD` resolved to before it names anything else.
 
+GENERATING IS THE SAME WALK (si#344 C.3, decision 16). `release:notes` writes, for the tag being cut, one
+line per merge since the previous `vX.Y.Z` tag with the tickets it names, through `merges_in` and
+`tickets_of` - the functions the guard reads with. It does not grow a second walk, and the hand-written
+page stays: generated notes name every ticket in their range by construction, which is what the guard
+enforces on prose, but they do not say what a change MEANT.
+
 THE REFUSALS HERE ARE RUN-TIME, and that is a deliberate placement rather than an accident. The
 `releases:` section is read inside the body, the shape `tasks.artifact` reads `artifacts:` with, so no
 load-time refusal is added and the kernel's refusal census keeps its counts. A product meets these
@@ -52,13 +58,18 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from simplon.domain import context
+from simplon.domain import artifactschema, artifactsection, context
 from simplon.kernel import log
 from simplon.kernel.run import run
 
 #: The manifest section this task reads. Three values, and a product that declares none of them does not
 #: place the command - which is the right outcome, and why this coordinate is offered and not placed.
 SECTION = "releases"
+
+#: The section `release:notes` WRITES into: the artifact whose `path:` the notes go to, same section as every
+#: other publishing task reads (`tasks.nuget.SECTION`).
+ARTIFACTS = "artifacts"
+ENTRY = artifactschema.Release_notesEntry
 
 #: A version as the PAGE spells one: `0.4.0`, three parts, no `v`. The tag carries the `v` and the
 #: heading does not, so a product that wrote the tag into the manifest would get a floor matching no
@@ -245,13 +256,13 @@ def is_githubs_own_merge(subject: str) -> bool:
 
 
 def merges_in(root: Path, start: str, end: str) -> list[tuple[str, str]]:
-    """`(sha, subject)` for every merge commit in `start..end`, newest first.
+    """`(sha, subject)` for every merge commit in `start..end`, newest first (an empty `start` is the whole history).
 
     MERGES AND NOT COMMITS, because a merge is the unit a release is assembled from: work happens on a
     branch and arrives in one commit whose subject says which ticket arrived. Counting commits instead
     would count a branch's internal history, which nobody promised to describe.
     """
-    out = _git(root, "log", "--merges", "--format=%H\t%s", f"{start}..{end}")
+    out = _git(root, "log", "--merges", "--format=%H\t%s", f"{start}..{end}" if start else end)
     found = []
     for line in out.splitlines():
         sha, _, subject = line.partition("\t")
@@ -585,4 +596,41 @@ def _assess(root: Path, spec: Declared) -> int:
 
     log.ok(f"the release notes are complete: {ruled} tags, sections and merges ruled on, and every "
            f"section from {spell(spec.complete_from)} on names every change its range carries")
+    return 0
+
+
+# --- release:notes - the notes generated from the same walk (si#344 C.3, decision 16) ---------------------
+
+def render(root: Path, tag: str) -> str:
+    """The notes for `tag`: one bullet per merge since the previous `vX.Y.Z` tag, newest first. Pure over git."""
+    released = released_versions(root)
+    previous = tag_of(released[-1]) if released else ""
+    merges = merges_in(root, previous, "HEAD")
+    lines = [f"## {tag}", ""]
+    if not merges:
+        lines.append(f"no merge since {previous}." if previous else "no merge in this repository yet.")
+    for sha, subject in merges:
+        tickets = sorted(tickets_of(root, sha, subject))
+        lines.append(f"- {subject}" + (f" ({', '.join(f'#{n}' for n in tickets)})" if tickets else ""))
+    return "\n".join(lines) + "\n"
+
+
+def write(name: str = "", tag: str = "") -> int:
+    """`release:notes`: write `render(root, tag)` to the `release-notes` artifact `name`'s `path:`."""
+    if not tag.strip():
+        raise ValueError("which release? pass the tag being cut, exactly as it will exist (e.g. v1.4.0)")
+    if not name:
+        raise ValueError(f"which artifact? pin one with `with: {{ name: ... }}` from the "
+                         f"`{ARTIFACTS}:` section, or pass --name")
+    ctx = context.current()
+    section = ctx.manifest_data().get(ARTIFACTS) or {}
+    if name not in section:
+        raise ValueError(f"no artifact '{name}' in {ctx.manifest_path.name}'s `{ARTIFACTS}:` "
+                         f"section; declared are: {', '.join(sorted(section)) or '(none)'}")
+    entry = artifactsection.entry(section, name, ENTRY, ctx.manifest_path.name,
+                                  "release:notes")
+    target = ctx.root / str(entry.path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(render(ctx.root, tag.strip()), encoding="utf-8")
+    log.ok(f"wrote the notes for {tag.strip()} to {entry.path}")
     return 0

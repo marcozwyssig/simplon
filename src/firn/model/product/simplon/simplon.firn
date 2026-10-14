@@ -107,7 +107,7 @@ simplon typeOf simplon.manifest.Product {
     area = simplon.pipeline.Area.ci
     command tag typeOf simplon.pipeline.TaskCommand {
       key = "tag"
-      task = product.simplon.simplon.t_simplon_tasks_release_tag
+      task = simplon.catalogue.release_tag
     }
     command push_image typeOf simplon.pipeline.TaskCommand {
       key = "push-image"
@@ -255,10 +255,6 @@ simplon typeOf simplon.manifest.Product {
   tasks t_simplon_tasks_walk_walk typeOf simplon.pipeline.Task {
     key = "simplon.tasks.walk:walk"
     body = "simplon.tasks.walk:walk"
-  }
-  tasks t_simplon_tasks_release_tag typeOf simplon.pipeline.Task {
-    key = "simplon.tasks.release:tag"
-    body = "simplon.tasks.release:tag"
   }
   tasks t_simplon_tasks_hosttools_install typeOf simplon.pipeline.Task {
     key = "simplon.tasks.hosttools:install"

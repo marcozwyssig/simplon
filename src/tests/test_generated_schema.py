@@ -89,7 +89,7 @@ def test_every_reader_names_a_catalogue_coordinate_a_kind_and_needs_of_that_kind
              for c, needs in artifactschema.NEEDS.items()}
 
     # assert
-    assert len(artifactschema.READERS) == 12
+    assert len(artifactschema.READERS) == 13
     assert unknown == []
     assert set(artifactschema.READERS.values()) <= set(artifactschema.REFINES)
     assert set(artifactschema.NEEDS) == set(artifactschema.READERS)
@@ -110,6 +110,7 @@ def test_a_reader_needs_what_its_body_checked_before_si344_b2():
         "build:nuget-restore": ("registry", "image", "project"),
         "build:nuget-pack": ("image", "project", "path"),
         "release:nuget": ("registry", "image", "path"),
+        "release:notes": ("path",),
         "build:maven-pack": ("image", "group", "modules", "path"),
         "release:maven": ("registry", "group", "modules", "path"),
     }
@@ -190,7 +191,11 @@ def test_every_reader_in_the_model_is_a_coordinate_whose_body_reads_that_kind():
     readers = {}
     for coordinate, spec in tasks.items():
         module = importlib.import_module(spec["impl"].split(":")[0])
-        if getattr(module, "SECTION", None) == "artifacts" and hasattr(module, "ENTRY"):
+        # `ARTIFACTS` first: tasks.releasenotes already has a `SECTION` (its `releases:`) and WRITES into `artifacts:`
+        section = getattr(module, "ARTIFACTS", getattr(module, "SECTION", None))
+        if coordinate == "test:release-notes":
+            continue  # shares tasks.releasenotes with `release:notes` but reads `releases:`, not an artifact entry
+        if section == "artifacts" and hasattr(module, "ENTRY"):
             readers[coordinate] = module.ENTRY.KIND
 
     # act / assert: both directions - a reader the model lacks, and a port binding `name` no body reads by (si#344 C.1)

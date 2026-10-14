@@ -165,6 +165,25 @@ release_maven typeOf simplon.pipeline.CatalogueTask {
     accepts = simplon.vocabulary.test_result
   }
 }
+release_notes typeOf simplon.pipeline.CatalogueTask {
+  key = "release:notes"
+  body = "simplon.tasks.releasenotes:write"
+  output release_notes typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.release_notes
+    param = "name"
+    needs = simplon.vocabulary.artifact.f_path
+  }
+}
+release_tag typeOf simplon.pipeline.CatalogueTask {
+  key = "release:tag"
+  body = "simplon.tasks.release:tag"
+  input release_notes typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.release_notes
+  }
+  output tag typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.tag
+  }
+}
 docs_site typeOf simplon.pipeline.CatalogueTask {
   key = "docs:site"
   body = "simplon.tasks.site:build"

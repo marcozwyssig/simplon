@@ -757,6 +757,18 @@ tasks:
     params:
       name: { help: "the image to publish (normally pinned per command with `with:`)" }
       tag:  { help: "the tag to publish under, for a version only known after a build" }
+  # The release NOTES (si#344 C.3, spec decision 16), generated from the merges since the previous tag and
+  # the tickets they name - the walk `test:release-notes` already makes to check a hand-written page, not a
+  # second one. OFFERED, not placed, for `release:tag`'s reason: it is one leaf of a release, and a product
+  # that releases by hand-written notes alone has nothing waiting for it.
+  release:notes:
+    impl: simplon.tasks.releasenotes:write
+    help: "Write the release notes for a tag from the merges and tickets since the previous one."
+    unattended: true
+    params:
+      name: { help: "the release-notes artifact to write (normally bound with `produces:`)" }
+      tag:  { help: "the tag being released, exactly as it will exist (e.g. v1.4.0)", metavar: "TAG" }
+
   # The release TAG - the one step of the loop that was still two git commands typed by hand (#32), and
   # the guard #23 asked for, sitting inside it.
   #

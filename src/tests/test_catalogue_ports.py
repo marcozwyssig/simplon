@@ -29,6 +29,8 @@ def test_the_ports_are_the_ones_measured_from_the_bodies():
         "build:nuget-config": (P("nuget", "input", "nuget", "name", ("registry",)),),
         "build:nuget-restore": (P("nuget", "input", "nuget", "name", ("registry", "image", "project")),),
         "build:nuget-pack": (P("nuget", "output", "nuget", "name", ("image", "project", "path")),),
+        "release:notes": (P("release-notes", "output", "release-notes", "name", ("path",)),),
+        "release:tag": (P("release-notes", "input", "release-notes", "", ()), P("tag", "output", "tag", "", ())),
         "release:nuget": (P("nuget", "input", "nuget", "name", ("registry", "image", "path")), EVIDENCE),
         "build:maven-pack": (P("maven", "output", "maven", "name", ("image", "group", "modules", "path")),),
         "release:maven": (P("maven", "input", "maven", "name", ("registry", "group", "modules", "path")),
