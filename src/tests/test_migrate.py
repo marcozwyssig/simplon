@@ -58,6 +58,7 @@ NEW = textwrap.dedent("""\
       build:
         commands:
           wheel: { task: wheel }
+
     cd:
       default: dev   # the default env
       environments:
@@ -66,6 +67,7 @@ NEW = textwrap.dedent("""\
       deploy:
         commands:
           up: { task: "deploy:up" }
+
     support:
       commands:
         doctor: { task: doctor }
@@ -518,7 +520,66 @@ def test_a_column_0_comment_above_a_group_travels_with_that_group():
     assert result.status == "migrated", result.reason
     assert result.text == ("product: demo\n"
                            "cd:\n# --- deploy ---\n  deploy:\n    commands:\n      up: { task: up }\n"
-                           "support:\n  commands:\n    doctor: { task: doctor }\n")
+                           "\nsupport:\n  commands:\n    doctor: { task: doctor }\n")
+
+
+def test_a_column_0_comment_that_moves_with_a_group_is_named_for_checking():
+    """si#406: a column-0 comment says nothing about which key it belongs to. It still travels with the
+    group below it - in firn one of three such banners belonged there - but the run names it."""
+    # arrange: lines 6-7 are column 0 inside groups:, above `  deploy:`
+    text = ("product: demo\n"
+            "groups:\n  build:\n    commands:\n      wheel: { task: wheel }\n"
+            "# --- images ---\n# about the images: section\n  deploy:\n    commands:\n      up: { task: up }\n")
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "migrated", result.reason
+    assert result.checks == ("lines 6-7: a column-0 comment moved with groups: deploy into cd: - a "
+                             "comment at column 0 does not say which key it belongs to, so check it "
+                             "belongs there",)
+
+
+def test_a_comment_at_the_groups_own_indent_is_not_named_for_checking():
+    # act: OLD's `# --- deploy ---` stands at the group's indent, so it says which key it announces
+    result = migrate_text(OLD)
+
+    # assert
+    assert result.checks == ()
+
+
+def test_areas_the_splice_writes_one_after_another_are_separated_by_a_blank_line():
+    """si#406: firn's `cd:` followed the last `ci:` line, and `support:` the last `cd:` line, directly."""
+    # arrange: firn's shape - no blank line above `support`, one above `deploy`
+    text = ("product: demo\n\n"
+            "groups:\n  build:\n    commands:\n      wheel: { task: wheel }\n"
+            "  support:\n    commands:\n      doctor: { task: doctor }\n"
+            "\n  deploy:\n    commands:\n      up: { task: up }\n"
+            "\nsuites: {}\n")
+
+    # act
+    result = migrate_text(text)
+
+    # assert: one blank line between areas, and none added where the original had what it had
+    assert result.status == "migrated", result.reason
+    assert result.text == ("product: demo\n\n"
+                           "ci:\n  build:\n    commands:\n      wheel: { task: wheel }\n"
+                           "\ncd:\n  deploy:\n    commands:\n      up: { task: up }\n"
+                           "\nsupport:\n  commands:\n    doctor: { task: doctor }\n"
+                           "\nsuites: {}\n")
+
+
+def test_a_cd_written_where_the_environments_stood_keeps_the_blank_line_above_them():
+    # arrange: no groups:, so cd: stands where `environments:` stood - below a blank line
+    text = "product: demo\n\nenvironments:\n  dev: { backend: local }\n"
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "migrated", result.reason
+    assert result.text == "product: demo\n\ncd:\n  environments:\n    dev: { backend: local }\n"
 
 
 @pytest.mark.parametrize("product", PRODUCTS)
@@ -853,6 +914,23 @@ def test_migrate_writes_the_file_and_says_what_moved(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "groups: build -> ci: build" in out
     assert f"demo.yaml: migrated to the current form ({len(migrate_text(OLD).moved)} change(s))" in out
+
+
+def test_migrate_warns_about_each_comment_to_check_and_counts_them(tmp_path, capsys):
+    # arrange
+    path = tmp_path / "demo.yaml"
+    path.write_text("product: demo\ngroups:\n# about something else\n  deploy:\n    commands:\n"
+                    "      up: { task: up }\n")
+
+    # act
+    rc = migrate_mod.migrate(str(path))
+
+    # assert: still migrated - the comment is kept, only its place is in doubt
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert any("  !" in line and "line 3: a column-0 comment moved with groups: deploy into cd:" in line
+               for line in out.splitlines())
+    assert "migrated to the current form (1 change(s), 1 to check above)" in out
 
 
 def test_migrate_on_a_current_manifest_is_rc_0_with_its_own_sentence(tmp_path, capsys):

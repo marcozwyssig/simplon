@@ -29,6 +29,12 @@ under it, and the comment lines directly above it. The last part is the one a re
 instead of staying behind at the end of `ci:`. Lines move whole, so a trailing comment goes where its
 line goes. The one block that is DELETED rather than moved, `env_groups:`, takes the comments above it
 along: they explained a key the ci/cd form no longer has.
+
+A COLUMN-0 COMMENT IS A GUESS, AND THE RUN SAYS SO (si#406). Inside `groups:` a comment at column 0 is
+read as the next group's, by position, because nothing else can be read from it - in firn one of three
+such banners above `deploy:` announced deploy, and the other two announced top-level sections. The move
+keeps the guess and names every such run of lines as a warning, with the area it went to. And the areas
+the splice writes one after another stand a blank line apart, as top-level sections do.
 """
 from __future__ import annotations
 
@@ -61,6 +67,7 @@ class Migration(NamedTuple):
     text: str              # the new text ("migrated"), else the input unchanged
     moved: tuple[str, ...] = ()  # one human-readable line per section moved
     reason: str = ""       # "refused" only: what could not be migrated, naming the line
+    checks: tuple[str, ...] = ()  # "migrated" only: what the splice moved but cannot vouch for (si#406)
 
 
 def _blocks(lines: list[str], key_re: re.Pattern, indent: int) -> list[tuple[str | None, list[str]]]:
@@ -170,13 +177,34 @@ def _render(value: object) -> str:
     return str(value)
 
 
-def _area(key: str, head: list[str], children: list[list[str]]) -> list[str]:
-    """`key:` followed by its children. Blank lines directly under the key line are dropped: they
-    separated a moved block from whatever stood above it in its old place, and above it now is `key:`."""
+def _area(key: str, head: list[str], children: list[list[str]]) -> tuple[list[str], list[str]]:
+    """`key:` followed by its children, and apart from it the blank lines the first child had above it.
+
+    Those blank lines separated a moved block from whatever stood above it in its old place; above it
+    now is `key:`, so they cannot stay under it. Where the area goes decides what becomes of them: `cd:`
+    standing where `environments:` stood keeps the ones that stood above that key, and an area following
+    another area gets exactly one (si#406)."""
     body = [line for child in children for line in child]
+    above: list[str] = []
     while body and not body[0].strip():
-        body.pop(0)
-    return head + [f"{key}:"] + body
+        above.append(body.pop(0))
+    return above, head + [f"{key}:"] + body
+
+
+def _column_0_comments(child: list[str], first: int) -> list[tuple[int, int]]:
+    """The runs of column-0 comment lines in a moved group, as (first, last) line numbers of the original.
+
+    `_blocks` reads such a comment as the next key's, by position, because nothing else can be read from
+    it: firn's `# --- the development environment ---` above `  deploy:` announced deploy, and the two
+    banners above it announced `images:` and `suites:` (si#406). The move keeps the guess; this names it."""
+    runs: list[tuple[int, int]] = []
+    for number, line in enumerate(child, first):
+        if line.startswith("#"):
+            if runs and runs[-1][1] == number - 1:
+                runs[-1] = (runs[-1][0], number)
+            else:
+                runs.append((number, number))
+    return runs
 
 
 def _accounting(old: list[str], new: list[str], removed: list[str], added: list[str]) -> tuple[str, str]:
@@ -765,6 +793,7 @@ def _shape(text: str, *, unknown_groups_into: str | None = None) -> Migration:
     blocks = _blocks(lines, _TOP, 0)
     keys = [key for key, _ in blocks]
     moved: list[str] = []
+    checks: list[str] = []
 
     # Rule 2 (and 1): the groups block, split into its children and sorted into areas.
     ci: list[list[str]] = []
@@ -823,9 +852,11 @@ def _shape(text: str, *, unknown_groups_into: str | None = None) -> Migration:
             if name in CI or (name not in CD + ("support",) and unknown_groups_into == "ci"):
                 ci.append(child)
                 moved.append(f"groups: {name} -> ci: {name}")
+                area = "ci"
             elif name in CD or (name != "support" and unknown_groups_into == "cd"):
                 cd.append(child)
                 moved.append(f"groups: {name} -> cd: {name}")
+                area = "cd"
             elif name == "support":
                 shallow = next((i for i, line in enumerate(child)
                                 if line.strip() and not line.startswith("  ")), None)
@@ -842,6 +873,11 @@ def _shape(text: str, *, unknown_groups_into: str | None = None) -> Migration:
                 return refused(f"groups: {name} is none of {', '.join(CI + CD + ('support',))} - a "
                                "manifest loaded against the platform catalogue cannot have it, so there "
                                "is no area to move it to")
+            for low, high in _column_0_comments(child, starts):
+                lines_said = f"line {low}" if low == high else f"lines {low}-{high}"
+                checks.append(f"{lines_said}: a column-0 comment moved with groups: {name} into {area}: - a "
+                              "comment at column 0 does not say which key it belongs to, so check it "
+                              "belongs there")
 
     # Rule 3: default / environments, under cd: before its groups.
     env_blocks = [block for key, block in blocks if key in ENV_KEYS]
@@ -884,20 +920,30 @@ def _shape(text: str, *, unknown_groups_into: str | None = None) -> Migration:
 
     # Assemble: the new areas replace groups: in place; cd: stands at the first env key if there is
     # no groups: to stand in for, or groups: had no deploy/monitor to give it.
-    cd_block = _area("cd", [], env_lines + cd) if (env_lines or cd) else []
+    cd_above, cd_block = _area("cd", [], env_lines + cd) if (env_lines or cd) else ([], [])
     cd_with_groups = "groups" in keys and bool(cd)
     out: list[str] = []
     cd_placed = False
     for key, block in blocks:
         if key == "groups":
-            areas: list[str] = []
+            # Each area after the first stands below a blank line, as two top-level sections do; the
+            # first stands where groups: stood, below whatever stood above that (si#406).
+            area_blocks: list[list[str]] = []
             if ci:
-                areas += _area("ci", [], ci)
+                area_blocks.append(_area("ci", [], ci)[1])
             if cd_block and cd_with_groups:
-                areas += cd_block
+                area_blocks.append(cd_block)
                 cd_placed = True
             if support:
-                areas += support
+                support_body = list(support)
+                while support_body and not support_body[0].strip():
+                    support_body.pop(0)
+                area_blocks.append(support_body)
+            areas: list[str] = []
+            for area_lines in area_blocks:
+                if areas:
+                    areas.append("")
+                areas += area_lines
             if areas:
                 head_end = areas.index(next(line for line in areas if _TOP.match(line))) + 1
                 areas[head_end - 1] += groups_comment
@@ -906,7 +952,7 @@ def _shape(text: str, *, unknown_groups_into: str | None = None) -> Migration:
             out += groups_head + areas
         elif key in ENV_KEYS:
             if cd_block and not cd_with_groups and not cd_placed:
-                out += cd_block
+                out += cd_above + cd_block
                 added.append(cd_block[0])
                 cd_placed = True
         elif key == "env_groups":
@@ -938,7 +984,7 @@ def _shape(text: str, *, unknown_groups_into: str | None = None) -> Migration:
         return refused(f"the spliced text loses a line the original had: {lost}")
     if extra:
         return refused(f"the spliced text has a line the original did not: {extra}")
-    return Migration("migrated", new, tuple(moved))
+    return Migration("migrated", new, tuple(moved), checks=tuple(checks))
 
 
 def migrate_text(text: str, *, unknown_groups_into: str | None = None) -> Migration:
@@ -952,16 +998,16 @@ def migrate_text(text: str, *, unknown_groups_into: str | None = None) -> Migrat
         found = "nothing" if document is None else f"a {type(document).__name__}"
         return Migration("refused", text, (), f"it is not a manifest: the document holds {found}, not a "
                          "mapping of top-level keys (product, tasks, ci, cd, support, ...)")
-    current, moved = text, list[str]()
+    current, moved, checks = text, list[str](), list[str]()
     for step in (_dedupe, lambda t: _shape(t, unknown_groups_into=unknown_groups_into), _fold, _bind):
         result = step(current)
         if result.status == "refused":
             return Migration("refused", text, (), result.reason)
         if result.status == "migrated":
-            current, moved = result.text, [*moved, *result.moved]
+            current, moved, checks = result.text, [*moved, *result.moved], [*checks, *result.checks]
     if current == text:
         return Migration("current", text)
-    return Migration("migrated", current, tuple(moved))
+    return Migration("migrated", current, tuple(moved), checks=tuple(checks))
 
 
 def migrate(manifest: str = "") -> int:
@@ -1000,5 +1046,8 @@ def migrate(manifest: str = "") -> int:
         return 1
     for line in result.moved:
         log.info(line)
-    log.ok(f"{path.name}: migrated to the current form ({len(result.moved)} change(s))")
+    for line in result.checks:
+        log.warn(line)
+    to_check = f", {len(result.checks)} to check above" if result.checks else ""
+    log.ok(f"{path.name}: migrated to the current form ({len(result.moved)} change(s){to_check})")
     return 0
