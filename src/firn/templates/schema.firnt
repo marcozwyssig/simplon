@@ -24,7 +24,7 @@ template ArtifactSchema {
     |import datetime
     |import difflib
     |from collections.abc import Mapping
-    |from typing import ClassVar, TypeAlias
+    |from typing import ClassVar, NamedTuple, TypeAlias
     |
     |from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator, model_validator
     |
@@ -53,6 +53,50 @@ template ArtifactSchema {
     |NEEDS: dict[str, tuple[str, ...]] = {
     for r : `simplon.pipeline.KindReader` {
       |    "${r.coordinate}": (<<for f : r.needs>>"${f.key}", <<end>>),
+    }
+    |}
+    |
+    |
+    |class Port(NamedTuple):
+    |    """One port of a catalogue task (si#344 C.1): its name, `input` or `output`, the kind it accepts (and
+    |    every kind refining it), the body parameter that receives the bound artifact's name ("" for none) and
+    |    the keys it needs on the entry it reads."""
+    |
+    |    name: str
+    |    direction: str
+    |    accepts: str
+    |    param: str
+    |    needs: tuple[str, ...]
+    |
+    |
+    |#: Each catalogue task that takes or gives an artifact -> its ports, inputs first.
+    |PORTS: dict[str, tuple[Port, ...]] = {
+    for t : `simplon.pipeline.CatalogueTask` {
+      |    "${t.key}": (
+      for p : t.input {
+        if p.param {
+          |        Port("${p.name}", "input", "${p.accepts.name.replace("_", "-")}", "${p.param}", (<<for f : p.needs>>"${f.key}", <<end>>)),
+        }
+        if not p.param {
+          |        Port("${p.name}", "input", "${p.accepts.name.replace("_", "-")}", "", (<<for f : p.needs>>"${f.key}", <<end>>)),
+        }
+      }
+      for p : t.output {
+        if p.param {
+          |        Port("${p.name}", "output", "${p.accepts.name.replace("_", "-")}", "${p.param}", (<<for f : p.needs>>"${f.key}", <<end>>)),
+        }
+        if not p.param {
+          |        Port("${p.name}", "output", "${p.accepts.name.replace("_", "-")}", "", (<<for f : p.needs>>"${f.key}", <<end>>)),
+        }
+      }
+      |    ),
+    }
+    |}
+    |
+    |#: Each of those tasks -> the body the model names. catalogue.yaml names it too until si#400 generates it.
+    |BODIES: dict[str, str] = {
+    for t : `simplon.pipeline.CatalogueTask` {
+      |    "${t.key}": "${t.body}",
     }
     |}
     for k : `simplon.pipeline.ArtifactKind` {

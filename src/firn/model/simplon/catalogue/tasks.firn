@@ -1,0 +1,140 @@
+// simplon.catalogue (si#344 C.1): the catalogue's tasks that take or give an artifact, with their ports.
+// Measured from the bodies on 2026-10-14 (docs/superpowers/plans/2026-10-14-si344-c1-ports-on-catalogue-tasks.md):
+// all ten readers by name take `name`; the direction is what the body does with the entry. A port is named
+// after the kind it accepts, so a product can guess it; `toolchain:run`'s two are the spec's `source`/`out`.
+// `key` and `body` repeat catalogue.yaml's coordinate and impl until si#400 generates those from here;
+// src/tests/test_catalogue_ports.py holds the two to each other.
+package simplon.catalogue
+
+build_image typeOf simplon.pipeline.CatalogueTask {
+  key = "build:image"
+  body = "simplon.tasks.image:build"
+  output image typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.image
+    param = "name"
+    needs = simplon.vocabulary.artifact.f_registry
+    needs = simplon.vocabulary.image.f_repository
+    needs = simplon.vocabulary.image.f_dockerfile
+    needs = simplon.vocabulary.image.f_context
+  }
+}
+test_image typeOf simplon.pipeline.CatalogueTask {
+  key = "test:image"
+  body = "simplon.tasks.image:smoke"
+  input image typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.image
+    param = "name"
+    needs = simplon.vocabulary.artifact.f_registry
+    needs = simplon.vocabulary.image.f_repository
+    needs = simplon.vocabulary.image.f_dockerfile
+    needs = simplon.vocabulary.image.f_context
+  }
+}
+release_image typeOf simplon.pipeline.CatalogueTask {
+  key = "release:image"
+  body = "simplon.tasks.image:release"
+  input image typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.image
+    param = "name"
+    needs = simplon.vocabulary.artifact.f_registry
+    needs = simplon.vocabulary.image.f_repository
+    needs = simplon.vocabulary.image.f_dockerfile
+    needs = simplon.vocabulary.image.f_context
+  }
+}
+release_artifact typeOf simplon.pipeline.CatalogueTask {
+  key = "release:artifact"
+  body = "simplon.tasks.artifact:publish"
+  input directory typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.directory
+    param = "name"
+    needs = simplon.vocabulary.artifact.f_registry
+    needs = simplon.vocabulary.directory.f_repository
+    needs = simplon.vocabulary.directory.f_media_type
+    needs = simplon.vocabulary.artifact.f_path
+  }
+}
+build_conan_cache typeOf simplon.pipeline.CatalogueTask {
+  key = "build:conan-cache"
+  body = "simplon.tasks.conan:fetch"
+  input conan typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.conan
+    param = "name"
+    needs = simplon.vocabulary.artifact.f_registry
+    needs = simplon.vocabulary.conan.f_repository
+    needs = simplon.vocabulary.conan.f_media_type
+    needs = simplon.vocabulary.artifact.f_path
+  }
+}
+release_conan typeOf simplon.pipeline.CatalogueTask {
+  key = "release:conan"
+  body = "simplon.tasks.conan:publish"
+  input conan typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.conan
+    param = "name"
+    needs = simplon.vocabulary.artifact.f_registry
+    needs = simplon.vocabulary.conan.f_repository
+    needs = simplon.vocabulary.conan.f_media_type
+    needs = simplon.vocabulary.artifact.f_path
+  }
+}
+build_nuget_config typeOf simplon.pipeline.CatalogueTask {
+  key = "build:nuget-config"
+  body = "simplon.tasks.nuget:config"
+  input nuget typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.nuget
+    param = "name"
+    needs = simplon.vocabulary.artifact.f_registry
+  }
+}
+build_nuget_restore typeOf simplon.pipeline.CatalogueTask {
+  key = "build:nuget-restore"
+  body = "simplon.tasks.nuget:restore"
+  input nuget typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.nuget
+    param = "name"
+    needs = simplon.vocabulary.artifact.f_registry
+    needs = simplon.vocabulary.nuget.f_image
+    needs = simplon.vocabulary.nuget.f_project
+  }
+}
+release_nuget typeOf simplon.pipeline.CatalogueTask {
+  key = "release:nuget"
+  body = "simplon.tasks.nuget:publish"
+  input nuget typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.nuget
+    param = "name"
+    needs = simplon.vocabulary.artifact.f_registry
+    needs = simplon.vocabulary.nuget.f_image
+    needs = simplon.vocabulary.nuget.f_project
+  }
+}
+release_maven typeOf simplon.pipeline.CatalogueTask {
+  key = "release:maven"
+  body = "simplon.tasks.maven:publish"
+  input maven typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.maven
+    param = "name"
+    needs = simplon.vocabulary.artifact.f_registry
+    needs = simplon.vocabulary.maven.f_image
+    needs = simplon.vocabulary.maven.f_group
+    needs = simplon.vocabulary.maven.f_modules
+  }
+}
+docs_site typeOf simplon.pipeline.CatalogueTask {
+  key = "docs:site"
+  body = "simplon.tasks.site:build"
+  output site typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.site
+  }
+}
+toolchain_run typeOf simplon.pipeline.CatalogueTask {
+  key = "toolchain:run"
+  body = "simplon.tasks.toolchain:run_toolchain"
+  input source typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.artifact
+  }
+  output out typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.artifact
+  }
+}
