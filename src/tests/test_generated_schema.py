@@ -93,7 +93,7 @@ def test_every_reader_names_a_catalogue_coordinate_a_kind_and_needs_of_that_kind
     assert unknown == []
     assert set(artifactschema.READERS.values()) <= set(artifactschema.REFINES)
     assert set(artifactschema.NEEDS) == set(artifactschema.READERS)
-    assert all(artifactschema.NEEDS.values()), "a reader with no needs: a template that answered nothing"
+    assert all(artifactschema.NEEDS.values()), "a port binding `name` with no needs: a template that answered nothing"
     assert stray == {c: [] for c in artifactschema.NEEDS}
 
 
@@ -191,5 +191,5 @@ def test_every_reader_in_the_model_is_a_coordinate_whose_body_reads_that_kind():
         if getattr(module, "SECTION", None) == "artifacts" and hasattr(module, "ENTRY"):
             readers[coordinate] = module.ENTRY.KIND
 
-    # act / assert: both directions - a reader the model lacks, and a model reader no body has
+    # act / assert: both directions - a reader the model lacks, and a port binding `name` no body reads by (si#344 C.1)
     assert readers == artifactschema.READERS

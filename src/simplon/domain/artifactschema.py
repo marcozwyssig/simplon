@@ -1,4 +1,5 @@
-# GENERATED from src/firn/model/simplon/vocabulary/kinds.firn by `./simplon.sh build model`. Do not edit:
+# GENERATED from src/firn/model/simplon/vocabulary/kinds.firn (the kinds) and
+# src/firn/model/simplon/catalogue/tasks.firn (the ports) by `./simplon.sh build model`. Do not edit:
 # firn rewrites the whole file on every run, and this file has no protected region. If it is missing or
 # empty, every `./simplon.sh` command stops at import: `git checkout -- src/simplon/domain/artifactschema.py`.
 """The `artifacts:` entry of each kind, as a pydantic model (si#344 B2, spec B.1-B.3).
@@ -15,7 +16,7 @@ from __future__ import annotations
 import datetime
 import difflib
 from collections.abc import Mapping
-from typing import ClassVar, TypeAlias
+from typing import ClassVar, NamedTuple, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator, model_validator
 
@@ -40,34 +41,83 @@ REFINES: dict[str, str] = {
     "release": "artifact",
 }
 
-#: The catalogue coordinate that reads ONE entry by name (`with: { name: ... }`) -> the kind it reads.
-#: `simplon manifest migrate` derives a kindless entry's kind from it.
-READERS: dict[str, str] = {
-    "test:image": "image",
-    "build:image": "image",
-    "release:image": "image",
-    "release:artifact": "directory",
-    "build:conan-cache": "conan",
-    "release:conan": "conan",
-    "build:nuget-config": "nuget",
-    "build:nuget-restore": "nuget",
-    "release:nuget": "nuget",
-    "release:maven": "maven",
+
+
+class Port(NamedTuple):
+    """One port of a catalogue task (si#344 C.1): its name, `input` or `output`, the kind it accepts (and
+    every kind refining it), the body parameter that receives the bound artifact's name ("" for none) and
+    the keys it needs on the entry it reads."""
+
+    name: str
+    direction: str
+    accepts: str
+    param: str
+    needs: tuple[str, ...]
+
+
+#: Each catalogue task that takes or gives an artifact -> its ports, inputs first.
+PORTS: dict[str, tuple[Port, ...]] = {
+    "build:image": (
+        Port("image", "output", "image", "name", ("registry", "repository", "dockerfile", "context", )),
+    ),
+    "test:image": (
+        Port("image", "input", "image", "name", ("registry", "repository", "dockerfile", "context", )),
+    ),
+    "release:image": (
+        Port("image", "input", "image", "name", ("registry", "repository", "dockerfile", "context", )),
+    ),
+    "release:artifact": (
+        Port("directory", "input", "directory", "name", ("registry", "repository", "media_type", "path", )),
+    ),
+    "build:conan-cache": (
+        Port("conan", "input", "conan", "name", ("registry", "repository", "media_type", "path", )),
+    ),
+    "release:conan": (
+        Port("conan", "input", "conan", "name", ("registry", "repository", "media_type", "path", )),
+    ),
+    "build:nuget-config": (
+        Port("nuget", "input", "nuget", "name", ("registry", )),
+    ),
+    "build:nuget-restore": (
+        Port("nuget", "input", "nuget", "name", ("registry", "image", "project", )),
+    ),
+    "release:nuget": (
+        Port("nuget", "input", "nuget", "name", ("registry", "image", "project", )),
+    ),
+    "release:maven": (
+        Port("maven", "input", "maven", "name", ("registry", "image", "group", "modules", )),
+    ),
+    "docs:site": (
+        Port("site", "output", "site", "", ()),
+    ),
+    "toolchain:run": (
+        Port("source", "input", "artifact", "", ()),
+        Port("out", "output", "artifact", "", ()),
+    ),
 }
 
-#: The catalogue coordinate -> the keys it needs, in the order a reader is told about them.
-NEEDS: dict[str, tuple[str, ...]] = {
-    "test:image": ("registry", "repository", "dockerfile", "context", ),
-    "build:image": ("registry", "repository", "dockerfile", "context", ),
-    "release:image": ("registry", "repository", "dockerfile", "context", ),
-    "release:artifact": ("registry", "repository", "media_type", "path", ),
-    "build:conan-cache": ("registry", "repository", "media_type", "path", ),
-    "release:conan": ("registry", "repository", "media_type", "path", ),
-    "build:nuget-config": ("registry", ),
-    "build:nuget-restore": ("registry", "image", "project", ),
-    "release:nuget": ("registry", "image", "project", ),
-    "release:maven": ("registry", "image", "group", "modules", ),
+#: Each of those tasks -> the body the model names. catalogue.yaml names it too until si#400 generates it.
+BODIES: dict[str, str] = {
+    "build:image": "simplon.tasks.image:build",
+    "test:image": "simplon.tasks.image:smoke",
+    "release:image": "simplon.tasks.image:release",
+    "release:artifact": "simplon.tasks.artifact:publish",
+    "build:conan-cache": "simplon.tasks.conan:fetch",
+    "release:conan": "simplon.tasks.conan:publish",
+    "build:nuget-config": "simplon.tasks.nuget:config",
+    "build:nuget-restore": "simplon.tasks.nuget:restore",
+    "release:nuget": "simplon.tasks.nuget:publish",
+    "release:maven": "simplon.tasks.maven:publish",
+    "docs:site": "simplon.tasks.site:build",
+    "toolchain:run": "simplon.tasks.toolchain:run_toolchain",
 }
+
+#: The catalogue coordinate that reads ONE entry by name (`with: { name: ... }`) -> the kind it reads: its
+#: port that binds `name`. `simplon manifest migrate` derives a kindless entry's kind from it.
+READERS: dict[str, str] = {c: p.accepts for c, ports in PORTS.items() for p in ports if p.param == "name"}
+
+#: The catalogue coordinate -> the keys that port needs, in the order a reader is told about them.
+NEEDS: dict[str, tuple[str, ...]] = {c: p.needs for c, ports in PORTS.items() for p in ports if p.param == "name"}
 
 
 class ArtifactEntry(BaseModel):
@@ -298,4 +348,4 @@ def validate(kind: str, body: Mapping[str, object]) -> ArtifactEntry:
     if kind == "release":
         return ReleaseEntry.model_validate(body)
     raise KeyError(kind)
-# Generated by firn, do not edit outside protected regions. id=[ArtifactSchema:,b6e026fcda82306e]
+# Generated by firn, do not edit outside protected regions. id=[ArtifactSchema:,7941470648514f95]

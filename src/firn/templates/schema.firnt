@@ -7,7 +7,8 @@ template ArtifactSchema {
   // `build model-whole` and src/tests/test_generated_schema.py refuse that module too. A field's type is
   // `_<shape>`, an alias the module defines, so the template needs no conditional per shape.
   file "domain/artifactschema.py" language python {
-    |# GENERATED from src/firn/model/simplon/vocabulary/kinds.firn by `./simplon.sh build model`. Do not edit:
+    |# GENERATED from src/firn/model/simplon/vocabulary/kinds.firn (the kinds) and
+    |# src/firn/model/simplon/catalogue/tasks.firn (the ports) by `./simplon.sh build model`. Do not edit:
     |# firn rewrites the whole file on every run, and this file has no protected region. If it is missing or
     |# empty, every `./simplon.sh` command stops at import: `git checkout -- src/simplon/domain/artifactschema.py`.
     |"""The `artifacts:` entry of each kind, as a pydantic model (si#344 B2, spec B.1-B.3).
@@ -24,7 +25,7 @@ template ArtifactSchema {
     |import datetime
     |import difflib
     |from collections.abc import Mapping
-    |from typing import ClassVar, TypeAlias
+    |from typing import ClassVar, NamedTuple, TypeAlias
     |
     |from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator, model_validator
     |
@@ -41,20 +42,57 @@ template ArtifactSchema {
     }
     |}
     |
-    |#: The catalogue coordinate that reads ONE entry by name (`with: { name: ... }`) -> the kind it reads.
-    |#: `simplon manifest migrate` derives a kindless entry's kind from it.
-    |READERS: dict[str, str] = {
-    for r : `simplon.pipeline.KindReader` {
-      |    "${r.coordinate}": "${r.reads.name.replace("_", "-")}",
+    |
+    |
+    |class Port(NamedTuple):
+    |    """One port of a catalogue task (si#344 C.1): its name, `input` or `output`, the kind it accepts (and
+    |    every kind refining it), the body parameter that receives the bound artifact's name ("" for none) and
+    |    the keys it needs on the entry it reads."""
+    |
+    |    name: str
+    |    direction: str
+    |    accepts: str
+    |    param: str
+    |    needs: tuple[str, ...]
+    |
+    |
+    |#: Each catalogue task that takes or gives an artifact -> its ports, inputs first.
+    |PORTS: dict[str, tuple[Port, ...]] = {
+    for t : `simplon.pipeline.CatalogueTask` {
+      |    "${t.key}": (
+      for p : t.input {
+        if p.param {
+          |        Port("${p.name}", "input", "${p.accepts.name.replace("_", "-")}", "${p.param}", (<<for f : p.needs>>"${f.key}", <<end>>)),
+        }
+        if not p.param {
+          |        Port("${p.name}", "input", "${p.accepts.name.replace("_", "-")}", "", (<<for f : p.needs>>"${f.key}", <<end>>)),
+        }
+      }
+      for p : t.output {
+        if p.param {
+          |        Port("${p.name}", "output", "${p.accepts.name.replace("_", "-")}", "${p.param}", (<<for f : p.needs>>"${f.key}", <<end>>)),
+        }
+        if not p.param {
+          |        Port("${p.name}", "output", "${p.accepts.name.replace("_", "-")}", "", (<<for f : p.needs>>"${f.key}", <<end>>)),
+        }
+      }
+      |    ),
     }
     |}
     |
-    |#: The catalogue coordinate -> the keys it needs, in the order a reader is told about them.
-    |NEEDS: dict[str, tuple[str, ...]] = {
-    for r : `simplon.pipeline.KindReader` {
-      |    "${r.coordinate}": (<<for f : r.needs>>"${f.key}", <<end>>),
+    |#: Each of those tasks -> the body the model names. catalogue.yaml names it too until si#400 generates it.
+    |BODIES: dict[str, str] = {
+    for t : `simplon.pipeline.CatalogueTask` {
+      |    "${t.key}": "${t.body}",
     }
     |}
+    |
+    |#: The catalogue coordinate that reads ONE entry by name (`with: { name: ... }`) -> the kind it reads: its
+    |#: port that binds `name`. `simplon manifest migrate` derives a kindless entry's kind from it.
+    |READERS: dict[str, str] = {c: p.accepts for c, ports in PORTS.items() for p in ports if p.param == "name"}
+    |
+    |#: The catalogue coordinate -> the keys that port needs, in the order a reader is told about them.
+    |NEEDS: dict[str, tuple[str, ...]] = {c: p.needs for c, ports in PORTS.items() for p in ports if p.param == "name"}
     for k : `simplon.pipeline.ArtifactKind` {
       if not k.refines {
         |

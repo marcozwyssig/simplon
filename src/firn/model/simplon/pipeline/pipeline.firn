@@ -46,28 +46,6 @@ ArtifactField typeOf firn.core.Class extends firn.core.NamedResource {
   }
 }
 
-// A catalogue coordinate that reads ONE `artifacts:` entry by name (`with: { name: ... }`), the kind it
-// reads, and the keys it NEEDS (si#344 B2). Requiredness belongs to the reader, not to the kind:
-// `build:nuget-config` needs a registry only, `release:nuget` an image and a project too.
-// `simplon manifest migrate` derives a kindless entry's kind from `reads`. Part C's ports replace it.
-KindReader typeOf firn.core.Class extends firn.core.NamedResource {
-  allowRoot = true
-  property coordinate typeOf firn.core.Attribute {
-    range = firn.core.StringLiteral
-    subjectCardinality = 1..1
-  }
-  property reads typeOf firn.core.Association {
-    range = simplon.pipeline.ArtifactKind
-    subjectCardinality = 1..1
-    objectCardinality = 0..N
-  }
-  property needs typeOf firn.core.Association {
-    range = simplon.pipeline.ArtifactField
-    subjectCardinality = 0..N
-    objectCardinality = 0..N
-  }
-}
-
 Registry typeOf firn.core.Class extends firn.core.NamedResource {
   allowRoot = true
   property host typeOf firn.core.Attribute {
@@ -76,6 +54,10 @@ Registry typeOf firn.core.Class extends firn.core.NamedResource {
   }
 }
 
+// A task's port (spec C.1): the kind it accepts (and every kind refining it), the body parameter that
+// receives the bound artifact's NAME at run time, if any, and the keys that port NEEDS on the entry it
+// reads (si#344 B2's requiredness, which belongs to the reader: `build:nuget-config` needs a registry only,
+// `release:nuget` an image and a project too). Since si#344 C.1 the port IS the reader; B2's separate reader class is gone.
 Port typeOf firn.core.Class extends firn.core.NamedResource {
   property accepts typeOf firn.core.Association {
     range = simplon.pipeline.ArtifactKind
@@ -85,6 +67,11 @@ Port typeOf firn.core.Class extends firn.core.NamedResource {
   property param typeOf firn.core.Attribute {
     range = firn.core.StringLiteral
     subjectCardinality = 0..1
+  }
+  property needs typeOf firn.core.Association {
+    range = simplon.pipeline.ArtifactField
+    subjectCardinality = 0..N
+    objectCardinality = 0..N
   }
 }
 
@@ -108,6 +95,13 @@ Task typeOf firn.core.Class extends firn.core.NamedResource {
     subjectCardinality = 0..N
     objectCardinality = 0..1
   }
+}
+
+// A task the PLATFORM offers (si#344 C.1): a catalogue coordinate in `key`, its body in `body`. Its own
+// class, because every product model declares plain Tasks in the same firn project (`support manifest
+// model`), and a template over `Task` would gather theirs too. si#400 builds the base classes on this.
+CatalogueTask typeOf firn.core.Class extends simplon.pipeline.Task {
+  allowRoot = true
 }
 
 Artifact typeOf firn.core.Class extends firn.core.NamedResource {
