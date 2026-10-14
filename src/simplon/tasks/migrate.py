@@ -654,6 +654,8 @@ def _with_flow(match: re.Match, port: str, key: str) -> list[str] | None:
         return None
     rest = [item for item in items if item not in named]
     value = named[0].split(":", 1)[1].strip()
+    if not isinstance(yaml.safe_load(value or "~"), str):
+        return None   # the loader reads only a string as the binding: nothing to rewrite
     # the split is trusted only if it parses back to what the line said (a comma inside a value would not)
     if yaml.safe_load("{" + ", ".join(rest) + "}") != {k: v for k, v in yaml.safe_load("{" + body + "}").items()
                                                        if k != "name"}:
@@ -680,6 +682,8 @@ def _with_block(lines: list[str], at: int, match: re.Match, port: str, key: str)
         return None
     found = _NAME_LINE.match(body[names[0]])
     assert found is not None
+    if not isinstance(yaml.safe_load(found["value"]), str):
+        return None   # the loader reads only a string as the binding: nothing to rewrite
     binding = f"{' ' * child}{port}: {found['value']}{found['comment'] or ''}"
     if len(own) == 1:
         return end, [f"{match['indent']}{key}:{match['comment'] or ''}",

@@ -1094,3 +1094,17 @@ def test_the_binding_pass_runs_twice_as_current():
 
     # act / assert
     assert migrate_text(once.text).status == "current"
+
+
+@pytest.mark.parametrize("pinned", ["with: { name: 25 }", "with: { name: yes }",
+                                    "with: { name: null, platform: x }", "with:\n          name: 25",
+                                    "with:\n          name: [a, b]"])
+def test_a_with_name_that_is_not_a_string_is_left_as_written_not_refused(pinned):
+    # arrange: the loader reads only a string as the binding, so there is nothing to rewrite (final review)
+    text = _commands(f'      image:\n        task: "build:image"\n        {pinned}\n')
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert (result.status, result.text) == ("current", text), result.reason

@@ -595,6 +595,11 @@ def _resolve_one(spec: dict, where: str, product_tasks: dict, catalogue_tasks: d
             f"once under `tasks:` and point this command at it with `task:`")
     ref = spec.pop("task", None)
     if ref is None:
+        for key in ("produces", "consumes"):
+            if key in spec:
+                raise ValueError(
+                    f"command '{where}' declares `{key}:`, and an aggregate runs no task, so it has no port to "
+                    f"bind - bind the port on the command that runs the task")
         if not spec.get("depends_on"):
             raise ValueError(
                 f"command '{where}' declares neither `task:` nor `depends_on:`. A command either "
@@ -658,6 +663,14 @@ def _resolve_one(spec: dict, where: str, product_tasks: dict, catalogue_tasks: d
     # still gets that documentation - so a pinned key is dropped from the merged map rather than rejected.
     own = spec.get("params") or {}
     pinned_values = {**(with_ or {}), **by_binding}
+    presented = [p for p in task_ports if p.param in by_binding and p.param in own
+                 and p.name in bound[ports.SIDE[p.direction]] and p.param not in (with_ or {})]
+    if presented:
+        port = presented[0]
+        raise ValueError(
+            f"command '{where}' binds port '{port.name}', which hands the artifact's name to `{port.param}`, and "
+            f"also declares `params:` for {port.param}. A bound parameter is off the command line, so its "
+            f"presentation renders nowhere - drop the `params:` entry")
     pinned = sorted(set(pinned_values) & set(own))
     if pinned:
         raise ValueError(

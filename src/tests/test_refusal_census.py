@@ -601,6 +601,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # si#344 C.2 rule 7: a port binding and `with:` on the parameter it binds say one fact twice. When the two
     # agree the manifest would have worked, so it is an expression rule (spec C.7); it binds the kernel too.
     ("treeform", "_resolve_one", "binds a port and also pins"): EXPRESSION,
+    # si#344 C.2 final review: an aggregate runs no task, so a binding on it binds nothing (it crashed the loader
+    # before); and a bound parameter's `params:` renders nowhere, the `with:` refusal above for a binding.
+    ("treeform", "_resolve_one", "an aggregate runs no task"): DIAGNOSIS,
+    ("treeform", "_resolve_one", "which hands the artifact's name to"): DIAGNOSIS,
     # --- ports.py (si#344 C.2) ------------------------------------------------------------------------
     # A binding the task cannot take: no working meaning, so all four are diagnosis. Rule 4 (port names exist
     # on the task) is the second; the spec files it under C.5 as a merged-reach diagnosis.

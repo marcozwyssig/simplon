@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 220 | nothing - the declaration had no working meaning |
+| diagnosis | 222 | nothing - the declaration had no working meaning |
 | expression rule | 30 | something it could otherwise have said |
-| **all load-time refusals** | **250** | |
+| **all load-time refusals** | **252** | |
 
 si#396 added two diagnoses: `claude.requires:` must be a list of executable names. Whether a named
 executable is on PATH is asked of the machine, so it refuses at run time and is not counted here.

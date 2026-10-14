@@ -137,16 +137,6 @@ def test_a_binding_beside_with_on_the_parameter_it_binds_is_refused():
                        "hands the artifact's name to that parameter - drop it from `with:`")
 
 
-def test_a_binding_on_a_parameter_the_command_presents_with_params_is_refused():
-    # act: the bound parameter is off the command line, so its presentation renders nowhere
-    message = _refusal("  build:\n    commands:\n"
-                       '      image: { task: "build:image", produces: { image: kernel },'
-                       ' params: { name: { help: "x" } } }\n')
-
-    # assert
-    assert "pins name with `with:` and also declares `params:` for it" in message
-
-
 PRODUCT_TASK = """\
 tasks:
   pack:
@@ -292,3 +282,25 @@ def test_a_plan_that_consumes_before_it_produces_is_refused():
     # assert
     assert message == ("aggregate 'release all' plans 'ship' before 'make', and 'ship' consumes 'local', which "
                        "'make' produces - list 'make' first in `depends_on`")
+
+
+@pytest.mark.parametrize("key", ["produces", "consumes"])
+def test_an_aggregate_that_binds_a_port_is_refused_not_crashed(key):
+    # act: an aggregate runs no task, so it has no port to bind (final review, si#344 C.2)
+    message = _refusal(BUILD + f'      all: {{ help: "h", depends_on: [image], {key}: {{ image: local }} }}\n')
+
+    # assert
+    assert message == (f"command 'build all' declares `{key}:`, and an aggregate runs no task, so it has no "
+                       f"port to bind - bind the port on the command that runs the task")
+
+
+def test_a_params_entry_on_a_bound_parameter_names_the_binding_not_with():
+    # act: the person wrote `produces:`, not `with:` (final review, si#344 C.2)
+    message = _refusal("  build:\n    commands:\n"
+                       '      image: { task: "build:image", produces: { image: kernel },'
+                       ' params: { name: { help: "x" } } }\n')
+
+    # assert
+    assert message == ("command 'build image' binds port 'image', which hands the artifact's name to `name`, "
+                       "and also declares `params:` for name. A bound parameter is off the command line, so "
+                       "its presentation renders nowhere - drop the `params:` entry")
