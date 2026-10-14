@@ -341,7 +341,9 @@ ci:
       # IT IS NOT YET A RUNNABLE RELEASE. An aggregate passes no arguments to its leaves, and `notes` and
       # `tag` both need the tag: `./simplon.sh release all` stops at `notes` with "which release?" and
       # runs nothing after it. Passing the tag through an aggregate is open (si#344). Until then the
-      # release is `./simplon.sh release tag vX`, and release.yml runs the rest in this same order.
+      # release starts with `./simplon.sh release tag vX`, and that tag push is what triggers release.yml, which
+      # builds, tests and publishes the image AFTER the tag exists: the opposite of the order `all` states, so a
+      # failed publish leaves the tag behind. Changing that is open (si#344).
       notes: { task: "release:notes", produces: { release-notes: kernel-notes } }
       #
       # The release itself (#32). Simplon cuts its own releases with the command it ships, for the same

@@ -231,7 +231,9 @@ and with `stop_on_failure` a failed leaf stops the plan. It is not yet a release
 passes no arguments to its leaves, and `release notes` and `release tag` both need the tag, so
 `./simplon.sh release all` stops at `notes` with "which release?" and runs nothing after it. Passing the tag
 through an aggregate is open (si#344). Until then a release starts with `./simplon.sh release tag vX`, and
-release.yml runs the rest in the same order.
+that tag push is what triggers release.yml, which builds, tests and publishes the image after the tag exists.
+That is the opposite of the order `all` states, so a failed publish leaves the tag behind. Changing that is open
+(si#344).
 
 ## Refining a platform command, and replacing one
 
