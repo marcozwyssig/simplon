@@ -12,6 +12,8 @@ from simplon.adapters import githubpackages
 from simplon.domain.context import ProductContext
 from simplon.tasks import nuget
 
+from conftest import lifecycle_name
+
 _MANIFEST = """
 product: demo
 artifacts:
@@ -59,6 +61,23 @@ def test_the_restore_runs_the_declared_project_in_the_pinned_image(lines):
     assert len(lines) == 1
     assert lines[0][-3:] == ["dotnet", "restore", "src/App/App.csproj"]
     assert "mcr.microsoft.com/dotnet/sdk:9.0" in lines[0]
+
+
+def test_an_interrupted_restore_removes_the_container_it_named_and_labelled(monkeypatch, removals):
+    # arrange: si#412
+    seen: list = []
+
+    def _stream(argv, cwd=None):
+        seen.append(list(argv))
+        raise KeyboardInterrupt
+    monkeypatch.setattr(nuget, "stream", _stream)
+
+    # act
+    with pytest.raises(KeyboardInterrupt):
+        nuget.restore(name="corelib")
+
+    # assert
+    assert removals == [lifecycle_name(seen[0], "demo")]
 
 
 def test_the_credential_reaches_the_container_as_a_file_and_the_token_is_in_no_line(lines):

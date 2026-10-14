@@ -255,12 +255,30 @@ if [ "$DELIVERY_ROUTE" = container ]; then
         esac
     done < <(compgen -e)
 
+    # EACH KERNEL CONTAINER IS NAMED AND LABELLED FOR THE PRODUCT (si#412): `simplon.run=<product>`, the
+    # label the kernel puts on every container it starts itself, so one `docker ps --filter
+    # label=simplon.run=<product>` finds what this file started AND what the kernel inside it started. A
+    # name per invocation, like `simplon.adapters.docker.container_name`, because the install below and
+    # the CLI are two containers.
+    #
+    # NO TRAP, and that is measured rather than overlooked. The CLI line is `exec`ed, so the pid a runner
+    # cancel or a `kill` reaches IS the docker client, and the client proxies SIGINT and SIGTERM to the
+    # container (SIGTERM measured with `-t` as well); through `--init` they reach the kernel's python, whose own unwind
+    # (`docker.stopped_on_interrupt`) removes the toolchain containers it started. Measured 2026-10-14
+    # with a real kernel image: SIGTERM, SIGINT and a group-wide SIGINT to the launcher each left nothing.
+    # A trap would need the client in the background instead of `exec`ed, for no case this does not
+    # already cover. What no handler covers is SIGKILL, and the label is what finds that orphan. The
+    # install below is the one line not `exec`ed: a signal to the shell during it leaves a bounded
+    # `pip install` to finish, labelled.
+    _launch_name() { printf 'simplon-%s-%s' "$LAUNCH_PRODUCT" "$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')"; }
+    DOCKER_RUN+=(--label "simplon.run=$LAUNCH_PRODUCT")
+
     # THE PRODUCT'S DEPENDENCIES, installed on the same condition the venv route uses: only when
     # requirements.txt is newer than the last successful install. The stamp is on the host side of the
     # mount, so this comparison costs no container at all on the normal run.
     if [ ! -f "$CSTAMP" ] || [ "$REQ" -nt "$CSTAMP" ]; then
         mkdir -p "$CDEPS"
-        "${DOCKER_RUN[@]}" "$KERNEL_IMAGE" \
+        "${DOCKER_RUN[@]}" --name "$(_launch_name)" "$KERNEL_IMAGE" \
             pip install --user -q --disable-pip-version-check --root-user-action=ignore \
                 --no-warn-script-location -r "$ORCH_IN_SRC/requirements.txt"
         touch "$CSTAMP"
@@ -268,7 +286,7 @@ if [ "$DELIVERY_ROUTE" = container ]; then
 
     # -u for the reason the venv route gives: unbuffered, so streamed output stays live and correctly
     # ordered when piped.
-    exec "${DOCKER_RUN[@]}" "$KERNEL_IMAGE" python -u -m "$LAUNCH_MODULE" "$@"
+    exec "${DOCKER_RUN[@]}" --name "$(_launch_name)" "$KERNEL_IMAGE" python -u -m "$LAUNCH_MODULE" "$@"
 fi
 
 command -v python3 >/dev/null 2>&1 || {

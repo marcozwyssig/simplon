@@ -165,7 +165,16 @@ BINFMT_IMAGE = docker.pinned_image("tonistiigi/binfmt:qemu-v10.2.3", "simplon.ad
 def ensure_amd64_emulation(host: Host) -> None:
     """Ensure an F-flagged (container-capable) amd64 binfmt handler exists in the VM, so x86 nodes can
     exec. colima's Rosetta counts; only register qemu as a fallback when neither rosetta nor a qemu-x86_64
-    F-handler is present. No-op on Linux."""
+    F-handler is present. No-op on Linux.
+
+    THE `docker run` HERE CARRIES NO si#409 LIFECYCLE, and si#412 left it so on purpose. It runs INSIDE the
+    colima VM, through `colima ssh -- sudo docker`, so an interrupt of this process ends an ssh session,
+    not a docker client the kernel holds - what that does to the client on the far side, and whether a
+    host-side `docker rm -f` would reach the container root started there, are both unmeasured: there is
+    no colima on the Linux machine that wrote this. And the container is not the long-running kind the
+    lifecycle exists for: `--install amd64` registers a binfmt handler and exits. Labelling a container
+    one cannot also remove would promise a cleanup nobody has seen work; the day a darwin host measures
+    an orphan here, the measurement says which of the two to add."""
     if not IS_DARWIN:
         return
     probe = ('grep -q "flags:.*F" /proc/sys/fs/binfmt_misc/rosetta '

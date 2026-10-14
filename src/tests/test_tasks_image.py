@@ -22,6 +22,8 @@ import pathlib
 
 import pytest
 
+from conftest import lifecycle_name, without_lifecycle
+
 from simplon.domain import context
 from simplon.adapters import docker, githubpackages
 from simplon.domain.context import ProductContext
@@ -1036,6 +1038,39 @@ def test_a_smoke_run_starts_the_reference_the_build_would_have_produced(cli, _no
     assert f"{_product / 'fixture'}:/workspace" in started[0]
 
 
+def test_a_smoke_run_names_and_labels_its_container_for_the_product(cli, _no_provenance, _product,
+                                                                    _tagged, monkeypatch):
+    # arrange: si#412 - firn's cleanup could find a `toolchain:run` container by label, not this one
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+
+    # act
+    image.smoke("app", argv="check")
+
+    # assert
+    lifecycle_name(cli.argv_starting("docker", "run")[0], "demo")
+
+
+def test_an_interrupted_smoke_run_removes_the_container_it_named(_no_provenance, _product, _tagged,
+                                                                  removals, monkeypatch):
+    # arrange: the interrupt arrives while the client runs, as a Ctrl-C or a runner cancel does
+    started: list = []
+
+    def interrupted(argv, **kwargs):
+        if argv[:2] == ["docker", "run"]:
+            started.append(list(argv))
+            raise KeyboardInterrupt
+        return Result(rc=0, out="", err="")
+    monkeypatch.setattr(image, "run", interrupted)
+    monkeypatch.setattr(image, "present_locally", lambda ref: True)
+
+    # act
+    with pytest.raises(KeyboardInterrupt):
+        image.smoke("app", argv="check")
+
+    # assert: the container the line named is the one removed, and the interrupt still arrives
+    assert removals == [lifecycle_name(started[0], "demo")]
+
+
 def test_a_smoke_run_refuses_an_image_the_daemon_does_not_hold(cli, _no_provenance, _product, _tagged,
                                                                monkeypatch, capsys):
     """It runs what a build produced and never pulls, so a missing image is a refusal that names the
@@ -1898,7 +1933,7 @@ def test_a_multi_platform_smoke_runs_every_declared_platform_under_its_own_platf
 
     # assert
     assert rc == 0
-    assert fake.argv_starting("docker", "run") == [
+    assert [without_lifecycle(each) for each in fake.argv_starting("docker", "run")] == [
         ["docker", "run", "--rm", "--platform", "linux/amd64", "ghcr.io/owner/demo-multi:1.0-linux-amd64",
          "--version"],
         ["docker", "run", "--rm", "--platform", "linux/arm64", "ghcr.io/owner/demo-multi:1.0-linux-arm64",
@@ -1914,7 +1949,7 @@ def test_a_smoke_pinned_to_one_platform_runs_only_that_one(monkeypatch, _no_prov
 
     # assert
     assert rc == 0
-    assert [call[4] for call in fake.argv_starting("docker", "run")] == ["linux/arm64"]
+    assert [without_lifecycle(call)[4] for call in fake.argv_starting("docker", "run")] == ["linux/arm64"]
 
 
 def test_a_smoke_pinned_to_an_undeclared_platform_is_refused(monkeypatch, _no_provenance, _multi, capsys):

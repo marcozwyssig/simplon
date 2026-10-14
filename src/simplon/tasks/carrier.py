@@ -438,6 +438,16 @@ def _pulumi(carrier: carrierspec.Carrier, machine: carrierspec.Proxmox, token: s
     fails non-interactively with *"PULUMI_ACCESS_TOKEN must be set for login during non-interactive CLI
     sessions"* - the CLI falls back to Pulumi Cloud rather than reading the file URL. The environment
     variable skips the login step entirely, which is what a pipeline needs.
+
+    NAMED AND LABELLED, AND DELIBERATELY NOT REMOVED ON INTERRUPT (si#412) - the one labelled container
+    that is not. `docker rm -f` is a SIGKILL, and a `pulumi up` killed that way cannot write back what
+    it was half-way through: Pulumi documents that it leaves the operations it had begun as PENDING in the
+    checkpoint - here, the state file this product commits - and the next `up` stops on them until
+    somebody resolves them by hand. NOT MEASURED HERE: there is no Proxmox in this suite to kill a
+    Pulumi run against. Letting the run finish is the lesser harm for a tool that keeps its own state,
+    so a cancel leaves it running - and `simplon.run=<product>` is what lets an operator find it and
+    decide. Stopping it CLEANLY would need SIGINT delivered to pulumi itself, and whether the `bash -c`
+    in front of it passes one on is unmeasured too; that is open work, not this function's to guess at.
     """
     state.mkdir(parents=True, exist_ok=True)
     # Into THIS process's environment, which `docker run -e NAME` then reads. The alternative -
@@ -456,6 +466,7 @@ def _pulumi(carrier: carrierspec.Carrier, machine: carrierspec.Proxmox, token: s
         # `-e NAME` AND NEVER `-e NAME=value`: argv is world-readable - `/proc/<pid>/cmdline` on
         # Linux, `ps` on macOS - which is `credentials.py`'s own rule, and `docker run -e NAME` takes
         # the value out of THIS process's environment without ever writing it on a command line.
+        *docker.lifecycle()[1],
         "-e", PULUMI_PASSPHRASE_ENV,
         "-e", "PULUMI_BACKEND_URL=file:///state",
         "-e", f"CARRIER_ENDPOINT={machine.endpoint}",
@@ -484,13 +495,18 @@ def _ansible(carrier: carrierspec.Carrier, address: str, work: Path, key: Path, 
 
     The key is MOUNTED, never copied into the tree and never passed as a value: what the manifest and
     the environment carry is a PATH, which is not a secret.
+
+    Named, labelled, and removed if this run is interrupted (si#412). Unlike `_pulumi` there is no state
+    to corrupt: a play stopped half-way leaves a host part-configured, and the next run converges it,
+    which is what a play is for.
     """
     (work / "carrier.yml").write_text(
         PLAYBOOK.format(image=PORTAINER_IMAGE, port=port), encoding="utf-8")
     (work / "inventory.ini").write_text(
         f"[carrier]\n{carrier.name} ansible_host={address} ansible_user=root\n", encoding="utf-8")
+    container, lifecycle = docker.lifecycle()
     argv = [
-        "docker", "run", "--rm",
+        "docker", "run", "--rm", *lifecycle,
         # The password rides the environment for the same reason, and the playbook reads it with
         # `lookup('env', ...)` rather than carrying a rendered copy of it on disk.
         "-e", f"{_declared_portainer(carrier).url_from}{PASSWORD_SUFFIX}",
@@ -500,7 +516,8 @@ def _ansible(carrier: carrierspec.Carrier, address: str, work: Path, key: Path, 
         docker.pinned_image(ANSIBLE_IMAGE, "the carrier's Ansible toolchain"),
         "ansible-playbook", "-i", "inventory.ini", "carrier.yml", "--private-key", "/key",
     ]
-    return run.stream(argv)
+    with docker.stopped_on_interrupt(container):
+        return run.stream(argv)
 
 
 def up(environment: str = "") -> int:

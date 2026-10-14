@@ -218,6 +218,30 @@ def test_the_venv_route_starts_no_container_at_all(tmp_path):
     assert done.docker == [], f"the venv route started a container: {done.docker}"
 
 
+# --- si#412: the kernel's own container is named and labelled for the product ---------------------------
+
+
+def test_each_kernel_container_is_named_and_labelled_for_the_product(tmp_path):
+    # arrange: the install and the CLI are two containers, so they need two names - a trap that stopped
+    # the install's name while the CLI ran would stop nothing
+    root = _product(tmp_path)
+
+    # act
+    done = _run(root, "support", "doctor")
+
+    # assert
+    assert done.returncode == 0, done.stderr
+    assert len(done.docker) == 2, done.docker
+    names = []
+    for line in done.docker:
+        words = line.split()
+        assert words[:2] == ["run", "--rm"] and "--init" in words, line
+        assert words[words.index("--label") + 1] == "simplon.run=democtl", line
+        names.append(words[words.index("--name") + 1])
+    assert all(name.startswith("simplon-democtl-") for name in names), names
+    assert names[0] != names[1]
+
+
 # --- the two launchers declare the same route -------------------------------------------------------------
 
 
@@ -232,6 +256,8 @@ def test_the_venv_route_starts_no_container_at_all(tmp_path):
     ":/src",
     "-w /src",
     "python -u -m",
+    "--init",                                    # si#409: a signal that reaches the container reaches python
+    "simplon.run=",                              # si#412: what a cancelled run left is findable
 ])
 def test_both_launchers_declare_the_same_container_route(token):
     # arrange / act

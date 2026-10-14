@@ -10,6 +10,11 @@ from types import SimpleNamespace
 
 from simplon.tasks import allure
 
+import pytest
+
+from conftest import lifecycle_name
+from simplon.domain import context
+
 
 def test_report_filename_produces_a_timestamped_single_file_html_name_for_a_given_time():
     # arrange: a fixed run start time
@@ -925,3 +930,46 @@ def test_a_self_sourced_dir_is_refused_before_its_files_are_aged(tmp_path):
     assert merged.self_sourced == (str(dst),)
     assert merged.stale == ()
     assert "the previous run's" not in merged.line, merged.line
+
+
+# --- si#412: the docker render is named, labelled, and removed on interrupt ----------------------------
+
+def _docker_only(monkeypatch, tmp_path) -> str:
+    """No allure CLI, docker present, and NO product context - the shape `render_report` runs in."""
+    report_dir = str(tmp_path)
+    os.makedirs(os.path.join(report_dir, "allure-results"))
+    monkeypatch.setattr(allure.shutil, "which", lambda name: "/usr/bin/docker" if name == "docker" else None)
+    monkeypatch.setattr(context, "_current", None)
+    return report_dir
+
+
+def test_the_docker_render_is_named_and_labelled_even_with_no_product_to_name(tmp_path, monkeypatch):
+    # arrange
+    report_dir = _docker_only(monkeypatch, tmp_path)
+    seen = {}
+    monkeypatch.setattr(allure, "run",
+                        lambda argv, **kw: seen.update(argv=argv) or _fake_docker_allure(report_dir)(argv, **kw))
+
+    # act
+    allure.render_report(report_dir)
+
+    # assert: the label is there with an empty value - `--filter label=simplon.run` still finds it
+    lifecycle_name(seen["argv"], "")
+
+
+def test_an_interrupted_docker_render_removes_the_container_it_named(tmp_path, monkeypatch, removals):
+    # arrange
+    report_dir = _docker_only(monkeypatch, tmp_path)
+    seen: list = []
+
+    def interrupted(argv, **kw):
+        seen.append(list(argv))
+        raise KeyboardInterrupt
+    monkeypatch.setattr(allure, "run", interrupted)
+
+    # act
+    with pytest.raises(KeyboardInterrupt):
+        allure.render_report(report_dir)
+
+    # assert
+    assert removals == [lifecycle_name(seen[0], "")]

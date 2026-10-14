@@ -192,13 +192,16 @@ def render() -> int:
     out = ctx.root / OUTPUT_DIR
     user = _user_args(ctx.root)
     log.info(f"rendering docs via docToolchain ({' + '.join(GENERATORS)}) in Docker -> {OUTPUT_DIR}/")
-    rc = run(["docker", "run", "--rm", "--platform", "linux/amd64", "--entrypoint", "/bin/bash",
-              *user,
-              "-e", "DTC_HEADLESS=true", "-v", f"{hostpath.translate(ctx.root)}:/project",
-              "-w", "/project",
-              f"{IMAGE_REPOSITORY}:{version}", "-c",
-              f"doctoolchain . {' '.join(GENERATORS)} -PmainConfigFile={CONFIG_FILE}"],
-             capture=False).rc
+    # si#412: named, labelled, and removed if the render is interrupted - `docker.stopped_on_interrupt`.
+    container, lifecycle = docker.lifecycle()
+    with docker.stopped_on_interrupt(container):
+        rc = run(["docker", "run", "--rm", "--platform", "linux/amd64", "--entrypoint", "/bin/bash",
+                  *lifecycle, *user,
+                  "-e", "DTC_HEADLESS=true", "-v", f"{hostpath.translate(ctx.root)}:/project",
+                  "-w", "/project",
+                  f"{IMAGE_REPOSITORY}:{version}", "-c",
+                  f"doctoolchain . {' '.join(GENERATORS)} -PmainConfigFile={CONFIG_FILE}"],
+                 capture=False).rc
     if rc != 0:
         # WHICH UID IT RAN AS IS PART OF THE CAUSE NOW. With one branch there was nothing to say; with two
         # it is the first thing a reader has to know, because the two failures look nothing alike - a

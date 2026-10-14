@@ -18,6 +18,8 @@ from simplon.domain import context
 from simplon.domain.context import ProductContext
 from simplon.tasks import maven
 
+from conftest import lifecycle_name
+
 
 # --- the pure layer ------------------------------------------------------------------------------------
 
@@ -274,3 +276,49 @@ def test_may_publish_inherits_the_refusal_rather_than_calling_nothing_published(
     # act / assert
     with pytest.raises(ValueError, match="checked nothing"):
         maven.may_publish("maven.pkg.github.com/o/r", "g.h", [], "1.0", "t")
+
+
+# --- si#412: the publish container is named, labelled, and removed on interrupt -------------------------
+
+@pytest.fixture
+def _publishable(monkeypatch, tmp_path):
+    """A complete jar entry and every outside call `publish` makes, answered - so only the line is left."""
+    path = tmp_path / "firn.yaml"
+    path.write_text("artifacts:\n  firn:\n    kind: maven\n    registry: maven.pkg.github.com/o/r\n"
+                    "    image: gradle:9.7.1-jdk21\n    group: g.h\n    modules: [core]\n    tag: '1.0'\n",
+                    encoding="utf-8")
+    monkeypatch.setattr(context, "_current", ProductContext("firn", tmp_path, path))
+    monkeypatch.setattr(maven.docker, "ensure_docker", lambda: None)
+    monkeypatch.setattr(maven.docker, "ownership_fault", lambda tops, root: "")
+    monkeypatch.setattr(maven.githubpackages, "token", lambda: "t")
+    monkeypatch.setattr(maven, "may_publish", lambda *a: (True, ""))
+    monkeypatch.setattr(maven, "verify", lambda *a: (maven.PRESENT, []))
+
+
+def test_the_publish_names_and_labels_its_container(_publishable, monkeypatch):
+    # arrange
+    seen: list = []
+    monkeypatch.setattr(maven, "stream", lambda argv, cwd=None: (seen.append(list(argv)), 0)[1])
+
+    # act
+    maven.publish("firn")
+
+    # assert
+    lifecycle_name(seen[0], "firn")
+
+
+def test_an_interrupted_publish_removes_the_container_it_named(_publishable, monkeypatch, removals):
+    # arrange
+    seen: list = []
+
+    def _stream(argv, cwd=None):
+        seen.append(list(argv))
+        raise KeyboardInterrupt
+    monkeypatch.setattr(maven, "stream", _stream)
+
+    # act
+    with pytest.raises(KeyboardInterrupt):
+        maven.publish("firn")
+
+    # assert
+    assert removals == [lifecycle_name(seen[0], "firn")]

@@ -239,14 +239,16 @@ def publish_argv(version: str) -> list[str]:
     return ["gradle", TASK, f"-Pversion={version}", "--no-daemon"]
 
 
-def docker_argv(image: str, root: Path, env_file: Path, argv: list[str]) -> list[str]:
+def docker_argv(image: str, root: Path, env_file: Path, argv: list[str],
+                lifecycle: Sequence[str] = ()) -> list[str]:
     """The container line for one gradle invocation. PURE: it assembles, it runs nothing.
 
     Pure for `nuget.docker_argv`'s reason: whose uid, which mount, where gradle may write and how the
     credential arrives are exactly the decisions a test should be able to read with no docker daemon in
-    the room.
+    the room. `lifecycle` is `docker.lifecycle()`'s flags (si#412), handed in because the name in them is
+    fresh per call - choosing it here would make the line impure.
     """
-    return ["docker", "run", "--rm",
+    return ["docker", "run", "--rm", *lifecycle,
             *docker.user_args(),
             "-v", f"{hostpath.translate(root)}:{WORKDIR}", "-w", WORKDIR,
             "--env-file", str(env_file),
@@ -376,7 +378,11 @@ def publish(name: str = "", tag: str = "") -> int:
     with _env_file(token) as env_file:
         log.info(f"publishing {group}:{{{','.join(modules)}}}:{resolved} to {repository_url(registry)} "
                  f"with `gradle {TASK}`")
-        rc = stream(docker_argv(pinned, root, env_file, publish_argv(resolved)))
+        # si#412: named, labelled, and removed if this run is interrupted - a cancelled publish must stop
+        # publishing. What it leaves is a partial set at worst, which the read-back below names next run.
+        container, lifecycle = docker.lifecycle()
+        with docker.stopped_on_interrupt(container):
+            rc = stream(docker_argv(pinned, root, env_file, publish_argv(resolved), lifecycle))
 
     if rc != 0:
         # The scope advice is a HINT tied to a condition, never appended to every failure - image.py's

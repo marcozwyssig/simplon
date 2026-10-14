@@ -16,6 +16,8 @@ from simplon.domain.context import ProductContext
 from simplon.kernel.run import Result
 from simplon.tasks import site as site_task
 
+from conftest import lifecycle_name
+
 _IMAGE = "hugomods/hugo:exts-0.148.2"
 # A complete section, so each test can vary the ONE key it is about.
 _SITE = {"image": _IMAGE, "source": "website", "output": "build/website",
@@ -1088,3 +1090,50 @@ def test_the_diagram_sweep_does_not_read_the_theme_out_of_the_cache(tmp_path):
 
     # assert
     assert [d.page.name for d in found] == ["mine.md"]
+
+
+# --- si#412: hugo and mermaid containers are named, labelled, and removed on interrupt -------------------
+
+def _interrupting(seen: list):
+    """A `run` that records the line and is interrupted while the client runs."""
+    def fake(argv, **kwargs):
+        seen.append(list(argv))
+        raise KeyboardInterrupt
+    return fake
+
+
+def _diagram(tmp_path):
+    return site_task.Diagram(page=tmp_path / "p.md", line=1, body=_GOOD_DIAGRAM)
+
+
+def test_the_hugo_and_the_mermaid_containers_are_named_and_labelled(monkeypatch, tmp_path):
+    # arrange
+    _register(monkeypatch, tmp_path)
+    seen = _stub_run(monkeypatch, seen=[])
+
+    # act
+    site_task._hugo(site_task.Site(image=_IMAGE, source="website", output="build"), tmp_path, ["version"])
+    site_task._renders(_diagram(tmp_path), tmp_path)
+
+    # assert: two runs, two names
+    names = {lifecycle_name(argv, "sample") for argv, _ in seen}
+    assert len(names) == 2
+
+
+@pytest.mark.parametrize("which", ["hugo", "mermaid"])
+def test_an_interrupted_site_container_is_removed_by_the_name_it_was_given(monkeypatch, tmp_path, removals,
+                                                                           which):
+    # arrange
+    _register(monkeypatch, tmp_path)
+    seen: list = []
+    monkeypatch.setattr(site_task, "run", _interrupting(seen))
+
+    # act
+    with pytest.raises(KeyboardInterrupt):
+        if which == "hugo":
+            site_task._hugo(site_task.Site(image=_IMAGE, source="website", output="build"), tmp_path, [])
+        else:
+            site_task._renders(_diagram(tmp_path), tmp_path)
+
+    # assert
+    assert removals == [lifecycle_name(seen[0], "sample")]

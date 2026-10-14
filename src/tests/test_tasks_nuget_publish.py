@@ -14,6 +14,8 @@ from simplon.adapters import githubpackages
 from simplon.domain.context import ProductContext
 from simplon.tasks import nuget
 
+from conftest import lifecycle_name
+
 _MANIFEST = """
 product: demo
 artifacts:
@@ -87,6 +89,34 @@ def test_the_pack_carries_the_version_the_tag_names(lines):
     packed = _of(lines, "pack")
     assert "-p:PackageVersion=2.0.1" in packed
     assert "src/Core/Core.csproj" in packed
+
+
+def test_the_pack_and_the_push_each_name_and_label_their_own_container(lines):
+    # act: si#412 - two containers, so two names; one name for both would stop the wrong one
+    nuget.publish(name="corelib", tag="2.0.1")
+
+    # assert
+    names = [lifecycle_name(line, "demo") for line in lines]
+    assert len(names) == 2 and names[0] != names[1]
+
+
+def test_an_interrupted_push_removes_the_container_it_named(monkeypatch, removals):
+    # arrange: the pack finishes, the push is interrupted while its client runs
+    seen: list = []
+
+    def _stream(argv, cwd=None):
+        seen.append(list(argv))
+        if "push" in argv:
+            raise KeyboardInterrupt
+        return 0
+    monkeypatch.setattr(nuget, "stream", _stream)
+
+    # act
+    with pytest.raises(KeyboardInterrupt):
+        nuget.publish(name="corelib", tag="2.0.1")
+
+    # assert: the push's container and not the pack's, and the interrupt still arrives
+    assert removals == [lifecycle_name(seen[-1], "demo")]
 
 
 def test_a_tag_declared_in_the_manifest_needs_no_argument(lines):
