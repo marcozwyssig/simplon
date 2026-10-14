@@ -175,7 +175,7 @@ nothing is left running (si#416).
   `support claude-plugins` reports each one missing from `PATH` (si#396, #398).
 - The refusal census counts a module that borrows another module's manifest reader (si#331, #414).
 - `deploy/image/image.pin` points at the published v0.30.0 image (#387).
-- These notes.
+- These notes (#429).
 
 ## 0.30.0
 
