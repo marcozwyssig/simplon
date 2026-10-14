@@ -174,7 +174,7 @@ def _check_bundles(manifest: "Manifest", declared: Mapping[str, "artifactsection
             if spec.task or not spec.produces:
                 continue
             where = f"{group} {name}"
-            if (manifest.area_of(group), _top(group)) != ("ci", "release"):
+            if not _under(manifest, group, "release"):
                 raise ValueError(
                     f"aggregate '{where}' names an output, and only an aggregate under `ci: release:` does - "
                     f"its one output is the release bundle")
@@ -235,6 +235,11 @@ def _top(group: str) -> str:
     return group.split(".", 1)[0]
 
 
+def _under(manifest: "Manifest", group: str, phase: str) -> bool:
+    """Whether `group` sits under `ci: <phase>:`."""
+    return (manifest.area_of(group), _top(group)) == ("ci", phase)
+
+
 def _check_results(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared"],
                    kinds: Mapping[str, str]) -> dict[str, set[str]]:
     """A produced test result has a `path:` and is produced under `ci: test:` (si#344 C.3). Returns what
@@ -252,7 +257,7 @@ def _check_results(manifest: "Manifest", declared: Mapping[str, "artifactsection
                     raise ValueError(
                         f"command '{where}' produces the test result '{result}', which declares no `path:` - "
                         f"a test result is what the test writes, so name where")
-            if (manifest.area_of(group), _top(group)) != ("ci", "test"):
+            if not _under(manifest, group, "test"):
                 raise ValueError(
                     f"command '{where}' produces the test result '{made[0]}' outside `ci: test:` - a test "
                     f"result is evidence that a test ran, so only a command under `ci: test:` produces one")
@@ -267,7 +272,7 @@ def _check_release(manifest: "Manifest", declared: Mapping[str, "artifactsection
     result about X, and at least one exists. X is every consumed artifact whose kind is not one of OWN_KINDS
     (decided 2026-10-14). "About" is direct: a result is about what its producer consumes."""
     for group, members in manifest.commands.items():
-        if (manifest.area_of(group), _top(group)) != ("ci", "release"):
+        if not _under(manifest, group, "release"):
             continue
         for name, spec in members.items():
             where = f"{group} {name}"
