@@ -268,8 +268,7 @@ if [ "$DELIVERY_ROUTE" = container ]; then
     # with a real kernel image: SIGTERM, SIGINT and a group-wide SIGINT to the launcher each left nothing.
     # A trap would need the client in the background instead of `exec`ed, for no case this does not
     # already cover. What no handler covers is SIGKILL, and the label is what finds that orphan. The
-    # install below is the one line not `exec`ed: a signal to the shell during it leaves a bounded
-    # `pip install` to finish, labelled.
+    # install below cannot be `exec`ed, because the CLI comes after it, so it gets the trap instead (si#416).
     _launch_name() { printf 'simplon-%s-%s' "$LAUNCH_PRODUCT" "$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')"; }
     DOCKER_RUN+=(--label "simplon.run=$LAUNCH_PRODUCT")
 
@@ -278,9 +277,26 @@ if [ "$DELIVERY_ROUTE" = container ]; then
     # mount, so this comparison costs no container at all on the normal run.
     if [ ! -f "$CSTAMP" ] || [ "$REQ" -nt "$CSTAMP" ]; then
         mkdir -p "$CDEPS"
+        # IN THE BACKGROUND, WITH A TRAP THAT HANDS THE SIGNAL ON (si#416). In the foreground, measured: a
+        # SIGTERM to this shell killed the shell alone and left the install's client and container running
+        # with nothing waiting for them, and a SIGINT was held until the install finished on its own,
+        # because bash waits out a foreground child before it acts on one. `wait` returns at once on a
+        # trapped signal; the client is told, the shell waits for it to go, and the run ends as cancelled.
+        # The client is told with TERM either way: a background job of a shell without job control starts
+        # with SIGINT ignored, and the client forwards TERM to the container as it would INT.
+        _stop=
         "${DOCKER_RUN[@]}" --name "$(_launch_name)" "$KERNEL_IMAGE" \
             pip install --user -q --disable-pip-version-check --root-user-action=ignore \
-                --no-warn-script-location -r "$ORCH_IN_SRC/requirements.txt"
+                --no-warn-script-location -r "$ORCH_IN_SRC/requirements.txt" &
+        _install=$!
+        trap '_stop=130; kill -TERM "$_install" 2>/dev/null || true' INT
+        trap '_stop=143; kill -TERM "$_install" 2>/dev/null || true' TERM
+        _rc=0
+        wait "$_install" || _rc=$?
+        while [ -n "$_stop" ] && kill -0 "$_install" 2>/dev/null; do wait "$_install" || true; done
+        trap - INT TERM
+        [ -z "$_stop" ] || exit "$_stop"
+        [ "$_rc" -eq 0 ] || exit "$_rc"
         # A simplon the install put over the image's own would run instead of it, silently (si#366). The
         # check is the image's interpreter in isolated mode; on a refusal the stamp is not written, so the
         # next run installs and checks again.
