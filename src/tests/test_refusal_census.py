@@ -608,6 +608,13 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("ports", "bindings", "has no"): DIAGNOSIS,
     ("ports", "_artifacts", "hands ONE artifact's name"): DIAGNOSIS,
     ("ports", "_artifacts", "names an artifact"): DIAGNOSIS,
+    # A product task's port declaration the loader cannot read (si#344 C.2): diagnosis, each one.
+    ("ports", "declared", "not a mapping of port name to port"): DIAGNOSIS,
+    ("ports", "declared", "is not a mapping: it takes"): DIAGNOSIS,
+    ("ports", "declared", "a port takes"): DIAGNOSIS,
+    ("ports", "declared", "declares no `accepts:`"): DIAGNOSIS,
+    ("ports", "declared", "is the name of a body parameter"): DIAGNOSIS,
+    ("ports", "declared", "a port name says which port"): DIAGNOSIS,
     ("treeform", "check_no_old_form", "is written in the flat command form"): EXPRESSION,
     # si#344, the cut. DIAGNOSIS, all of them: `_ManifestModel` ignores an unknown top-level key, so each of
     # these would otherwise load as a product with no commands, a deploy with no matrix or a site that is

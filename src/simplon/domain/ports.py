@@ -19,11 +19,55 @@ SIDE = {"output": "produces", "input": "consumes"}
 
 
 def of(ref: str, product_tasks: Mapping[str, object]) -> tuple[Port, ...]:
-    """The ports of the task a command's `task:` names: the model's for a coordinate. A product task has
-    none until it may declare them."""
+    """The ports of the task a command's `task:` names: the model's for a coordinate, the task's own
+    `input:`/`output:` for a product task."""
     if ":" in ref:
         return PORTS.get(ref, ())
-    return ()
+    spec = product_tasks.get(ref)
+    return declared(ref, spec) if isinstance(spec, Mapping) else ()
+
+
+#: What a port declaration takes.
+_PORT_KEYS = ("accepts", "param")
+
+
+def declared(task: str, spec: Mapping[str, object]) -> tuple[Port, ...]:
+    """A product task's own `input:` and `output:` (si#344 C.2) as Ports, inputs first. The shape only:
+    which kinds exist is the catalogue's, and `check` holds `accepts:` to it."""
+    out: list[Port] = []
+    seen: dict[str, str] = {}
+    for direction in ("input", "output"):
+        raw = spec.get(direction)
+        if raw is None:
+            continue
+        if not isinstance(raw, Mapping):
+            raise ValueError(
+                f"task '{task}' declares `{direction}:` as {type(raw).__name__}, not a mapping of port name to "
+                f"port: `{direction}: {{ <port>: {{ accepts: <kind>, param: <parameter> }} }}`")
+        for key, body in raw.items():
+            name = str(key)
+            if not isinstance(body, Mapping):
+                raise ValueError(
+                    f"task '{task}' port '{name}' is not a mapping: it takes `accepts:` and optionally `param:`")
+            unknown = sorted(str(k) for k in body if k not in _PORT_KEYS)
+            if unknown:
+                raise ValueError(
+                    f"task '{task}' port '{name}' declares unknown key `{unknown[0]}:` - a port takes "
+                    f"{', '.join(_PORT_KEYS)}")
+            accepts, param = body.get("accepts"), body.get("param", "")
+            if not isinstance(accepts, str) or not accepts.strip():
+                raise ValueError(
+                    f"task '{task}' port '{name}' declares no `accepts:` - name the kind of artifact it takes")
+            if not isinstance(param, str):
+                raise ValueError(
+                    f"task '{task}' port '{name}': `param:` is the name of a body parameter, written as text")
+            if name in seen:
+                raise ValueError(
+                    f"task '{task}' declares port '{name}' as an {seen[name]} and an {direction}: a port name "
+                    f"says which port a command binds, so it names one")
+            seen[name] = direction
+            out.append(Port(name, direction, accepts.strip(), param.strip(), ()))
+    return tuple(out)
 
 
 def bindings(where: str, ref: str, spec: Mapping[str, object],

@@ -145,3 +145,51 @@ def test_a_binding_on_a_parameter_the_command_presents_with_params_is_refused():
 
     # assert
     assert "pins name with `with:` and also declares `params:` for it" in message
+
+
+PRODUCT_TASK = """\
+tasks:
+  pack:
+    impl: "orchestrator.cli:pack"
+    help: "Pack the site."
+    input:
+      site: { accepts: site }
+    output:
+      bundle: { accepts: directory, param: name }
+"""
+
+
+def test_a_product_task_declares_ports_and_its_command_binds_them():
+    # act
+    spec = _load("  build:\n    commands:\n"
+                 "      pack: { task: pack, consumes: { site: web }, produces: { bundle: docs } }\n",
+                 tasks=PRODUCT_TASK,
+                 artifacts=ARTIFACTS + "  web: { kind: site, path: build/site }\n").spec_for("build", "pack")
+
+    # assert: the port with `param:` hands the name over; the one without is checked only
+    assert [(p.name, p.direction, p.accepts, p.param) for p in spec.ports] == [
+        ("site", "input", "site", ""), ("bundle", "output", "directory", "name")]
+    assert spec.consumes == {"site": ("web",)}
+    assert spec.produces == {"bundle": ("docs",)}
+    assert spec.with_ == {"name": "docs"}
+
+
+@pytest.mark.parametrize("ports,fragment", [
+    ("    output: [bundle]\n", "declares `output:` as list, not a mapping of port name to port"),
+    ("    output:\n      bundle: directory\n", "port 'bundle' is not a mapping: it takes `accepts:`"),
+    ("    output:\n      bundle: { accepts: directory, kind: x }\n", "port 'bundle' declares unknown key `kind:`"),
+    ("    output:\n      bundle: { param: name }\n", "port 'bundle' declares no `accepts:`"),
+    ("    output:\n      bundle: { accepts: directory, param: 3 }\n", "`param:` is the name of a body parameter"),
+    ("    input:\n      bundle: { accepts: site }\n    output:\n      bundle: { accepts: directory }\n",
+     "declares port 'bundle' as an input and an output"),
+])
+def test_a_port_declaration_the_loader_cannot_read_is_refused(ports, fragment):
+    # arrange
+    tasks = ('tasks:\n  pack:\n    impl: "orchestrator.cli:pack"\n    help: "Pack."\n' + ports)
+
+    # act
+    message = _refusal("  build:\n    commands:\n      pack: { task: pack }\n", tasks=tasks)
+
+    # assert
+    assert message.startswith("task 'pack' ")
+    assert fragment in message

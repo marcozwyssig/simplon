@@ -540,7 +540,7 @@ INHERITED = ("help", "passthrough_args", "unattended")
 
 # What a TASK may declare. Everything else that `_CommandSpecModel` accepts belongs to the instance:
 # a template that pinned a value, hid itself or planned other commands would not be a template.
-TASK_KEYS = ("impl", "help", "passthrough_args", "params", "unattended")
+TASK_KEYS = ("impl", "help", "passthrough_args", "params", "unattended", "input", "output")
 COMMAND_ONLY_KEYS = ("hidden", "keep_awake", "stop_on_failure", "parallel", "depends_on", "with", "task")
 
 
@@ -568,6 +568,7 @@ def check_task(name: str, spec: dict) -> None:
             raise ValueError(
                 f"task '{name}' declares unknown key `{key}:`. A task takes "
                 f"{', '.join(TASK_KEYS)} - check the spelling")
+    ports.declared(name, spec)
 
 
 def resolve(flat: dict, product_tasks: dict, catalogue_tasks: dict) -> dict:
