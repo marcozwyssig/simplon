@@ -27,10 +27,13 @@ PINNED = "registry.example:5000/simplon:v0.13.0"
 
 
 def _fake_docker(bin_dir: Path, log: Path) -> None:
-    """A `docker` on PATH that records its argv, one invocation per line, and succeeds."""
+    """A `docker` on PATH that records its argv, one invocation per line, and succeeds - or exits
+    `$FAKE_DOCKER_RC` for an invocation whose argv contains `$FAKE_DOCKER_FAIL_ON`."""
     bin_dir.mkdir(parents=True, exist_ok=True)
     script = bin_dir / "docker"
-    script.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$DOCKER_LOG"\nexit 0\n',
+    script.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$DOCKER_LOG"\n'
+                      'if [ -n "${FAKE_DOCKER_FAIL_ON:-}" ] && [[ "$*" == *"$FAKE_DOCKER_FAIL_ON"* ]]; then\n'
+                      '    exit "${FAKE_DOCKER_RC:-1}"\nfi\nexit 0\n',
                       encoding="utf-8")
     script.chmod(0o755)
 
@@ -103,11 +106,29 @@ def test_the_products_own_dependencies_are_installed_into_the_mount_before_the_c
     # act
     done = _run(root, "support", "doctor")
 
-    # assert: two invocations, install first, and the install lands under build/ rather than in the venv
-    assert len(done.docker) == 2, done.docker
+    # assert: install first, then the check that nothing it installed shadows the image's kernel
+    # (si#366), then the command - and the install lands under build/ rather than in the venv
+    assert len(done.docker) == 3, done.docker
     assert "pip install --user" in done.docker[0]
     assert "requirements.txt" in done.docker[0]
     assert "-e PYTHONUSERBASE=/src/build/container/python" in done.docker[0]
+    assert "python -I -c" in done.docker[1]
+    assert "python -u -m" in done.docker[2]
+
+
+def test_a_simplon_the_install_put_over_the_images_own_stops_the_run_and_leaves_no_stamp(tmp_path):
+    """si#366: a `simplon==` pin in requirements.txt other than the image's own was installed into the
+    user base and silently ran instead of the image's kernel."""
+    # arrange: the check (the one `python -I` invocation) reports a shadow
+    root = _product(tmp_path)
+
+    # act
+    done = _run(root, "support", "doctor", env={"FAKE_DOCKER_FAIL_ON": "python -I -c", "FAKE_DOCKER_RC": "2"})
+
+    # assert: rc 2, the command never ran, and the next run installs and checks again
+    assert done.returncode == 2
+    assert not any("python -u -m" in call for call in done.docker), done.docker
+    assert not (root / "build" / "container" / "python" / ".deps-stamp").exists()
 
 
 def test_the_dependency_install_is_skipped_once_the_stamp_is_newer_than_the_requirements(tmp_path):
@@ -222,8 +243,8 @@ def test_the_venv_route_starts_no_container_at_all(tmp_path):
 
 
 def test_each_kernel_container_is_named_and_labelled_for_the_product(tmp_path):
-    # arrange: the install and the CLI are two containers, so they need two names - a trap that stopped
-    # the install's name while the CLI ran would stop nothing
+    # arrange: the install, its check (si#366) and the CLI are three containers, so they need three names
+    # - a trap that stopped the install's name while the CLI ran would stop nothing
     root = _product(tmp_path)
 
     # act
@@ -231,7 +252,7 @@ def test_each_kernel_container_is_named_and_labelled_for_the_product(tmp_path):
 
     # assert
     assert done.returncode == 0, done.stderr
-    assert len(done.docker) == 2, done.docker
+    assert len(done.docker) == 3, done.docker
     names = []
     for line in done.docker:
         words = line.split()
@@ -258,6 +279,7 @@ def test_each_kernel_container_is_named_and_labelled_for_the_product(tmp_path):
     "python -u -m",
     "--init",                                    # si#409: a signal that reaches the container reaches python
     "simplon.run=",                              # si#412: what a cancelled run left is findable
+    bootstrap.USERBASE_CHECK,                    # si#366: the image's kernel is the one that runs
 ])
 def test_both_launchers_declare_the_same_container_route(token):
     # arrange / act
@@ -277,3 +299,82 @@ def test_the_batch_launcher_forwards_the_products_own_environment_namespace():
     # assert
     assert "set FOO_CTL_ 2^>nul" in rendered["foo-ctl.cmd"]
     assert "{{ product_env_prefix }}" not in rendered["foo-ctl.cmd"]
+
+
+# --- the check itself: a kernel in the user base other than the image's own (si#366) -------------------
+
+
+def _user_base_with(tmp_path: Path, version: str, *, editable: bool = False) -> Path:
+    """A PYTHONUSERBASE holding a `simplon` distribution of `version`, the way `pip install --user`
+    leaves one: a dist-info in the user site, with `direct_url.json` marking an editable install."""
+    import sysconfig
+    base = tmp_path / "userbase"
+    site = Path(sysconfig.get_path("purelib", "posix_user", {"userbase": str(base)}))
+    info = site / f"simplon-{version}.dist-info"
+    info.mkdir(parents=True)
+    (info / "METADATA").write_text(f"Metadata-Version: 2.1\nName: simplon\nVersion: {version}\n",
+                                   encoding="utf-8")
+    if editable:
+        (info / "direct_url.json").write_text('{"url": "file:///src", "dir_info": {"editable": true}}',
+                                              encoding="utf-8")
+    return base
+
+
+def _own() -> str:
+    """The version the check compares against, asked of the same isolated interpreter: in a dev venv
+    pytest's own sys.path can see a different simplon distribution than `-I` does - in the image the two
+    are one."""
+    import sys
+    return subprocess.run([sys.executable, "-I", "-c", "from importlib import metadata as m; "
+                           "print(m.version('simplon'))"], capture_output=True, text=True,
+                          check=True).stdout.strip()
+
+
+def _check(base: Path) -> subprocess.CompletedProcess:
+    """The check exactly as both launchers run it, but on this interpreter: `-I` keeps the user site
+    out, so the simplon it compares against is the one this interpreter carries - the image's, there."""
+    import sys
+    return subprocess.run([sys.executable, "-I", "-c", bootstrap.USERBASE_CHECK, str(base),
+                           "deploy/orchestrator/requirements.txt", "deploy/image/image.pin", "democtl"],
+                          capture_output=True, text=True, check=False)
+
+
+def test_the_check_refuses_a_different_simplon_in_the_user_base_naming_both_versions_and_files(tmp_path):
+    # arrange
+    base = _user_base_with(tmp_path, "0.1.0")
+
+    # act
+    done = _check(base)
+
+    # assert
+    assert done.returncode == 2
+    assert done.stderr == (
+        f"democtl: deploy/orchestrator/requirements.txt pins simplon 0.1.0, and pip installed it over "
+        f"the simplon {_own()} the kernel image carries (deploy/image/image.pin), so every "
+        f"command would run 0.1.0 - make the simplon pin there and the image in that file agree, and run "
+        f"again.\n")
+
+
+@pytest.mark.parametrize("case", ["none", "same version", "editable"])
+def test_the_check_passes_what_does_not_shadow_the_image_by_accident(tmp_path, case):
+    # arrange: nothing in the user base; the image's own version; or a working tree installed `-e` on
+    # purpose, which is how simplon's own requirements.txt runs the kernel being developed
+    if case == "none":
+        base = tmp_path / "empty"
+    else:
+        base = _user_base_with(tmp_path, _own() if case == "same version" else "0.1.0",
+                               editable=case == "editable")
+
+    # act
+    done = _check(base)
+
+    # assert
+    assert (done.returncode, done.stderr) == (0, "")
+
+
+def test_the_check_survives_both_launchers_quoting():
+    # arrange: one source, pasted inside double quotes into a bash line and a cmd.exe line
+    check = bootstrap.USERBASE_CHECK
+
+    # assert: nothing bash expands in double quotes, nothing cmd.exe expands or splits on, one line
+    assert not set(check) & set('"$`\\!%^&|<>\n')

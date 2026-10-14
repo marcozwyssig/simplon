@@ -179,6 +179,8 @@ python -c "import os,sys; s,r=sys.argv[1],sys.argv[2]; sys.exit(0 if os.path.exi
 if errorlevel 1 (
     if not exist "%LAUNCH_ROOT%\build\container\python" mkdir "%LAUNCH_ROOT%\build\container\python"
     docker run %DOCKER_ARGS% %DOCKER_ENV% "%KERNEL_IMAGE%" pip install --user -q --disable-pip-version-check --root-user-action=ignore --no-warn-script-location -r "%ORCH_IN_SRC%/requirements.txt" || exit /b 1
+    rem si#366: a simplon the install put over the image's own would run instead of it, silently.
+    docker run %DOCKER_ARGS% %DOCKER_ENV% "%KERNEL_IMAGE%" python -I -c "import sys,sysconfig; from importlib import metadata as m; ub,req,pin,prod=sys.argv[1:5]; site=sysconfig.get_path('purelib','posix_user',{'userbase':ub}); found=[d for d in m.distributions(path=[site]) if (d.metadata['Name'] or '').lower()=='simplon']; own=m.version('simplon'); bad=[d.version for d in found if not d.version==own and not 'editable' in (d.read_text('direct_url.json') or '')]; bad and print(prod+': '+req+' pins simplon '+bad[0]+', and pip installed it over the simplon '+own+' the kernel image carries ('+pin+'), so every command would run '+bad[0]+' - make the simplon pin there and the image in that file agree, and run again.',file=sys.stderr); sys.exit(2 if bad else 0)" /src/build/container/python "deploy\orchestrator\requirements.txt" "deploy\image\image.pin" "simplon" || exit /b 2
     docker run %DOCKER_ARGS% %DOCKER_ENV% "%KERNEL_IMAGE%" python -c "import pathlib,os; p=pathlib.Path('/src/build/container/python/.deps-stamp'); p.touch()" || exit /b 1
 )
 

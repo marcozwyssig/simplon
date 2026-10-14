@@ -281,6 +281,12 @@ if [ "$DELIVERY_ROUTE" = container ]; then
         "${DOCKER_RUN[@]}" --name "$(_launch_name)" "$KERNEL_IMAGE" \
             pip install --user -q --disable-pip-version-check --root-user-action=ignore \
                 --no-warn-script-location -r "$ORCH_IN_SRC/requirements.txt"
+        # A simplon the install put over the image's own would run instead of it, silently (si#366). The
+        # check is the image's interpreter in isolated mode; on a refusal the stamp is not written, so the
+        # next run installs and checks again.
+        "${DOCKER_RUN[@]}" --name "$(_launch_name)" "$KERNEL_IMAGE" \
+            python -I -c "{{ userbase_check }}" /src/build/container/python \
+                "${REQ#"$ROOT/"}" "${LAUNCH_IMAGE_PIN#"$ROOT/"}" "$LAUNCH_PRODUCT" || exit 2
         touch "$CSTAMP"
     fi
 
