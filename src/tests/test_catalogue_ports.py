@@ -103,3 +103,20 @@ def test_the_model_has_no_second_source_for_what_a_reader_reads():
     assert "KindReader" not in template.read_text()
     assert artifactschema.READERS == {c: p.accepts for c, ports in artifactschema.PORTS.items()
                                       for p in ports if p.param == "name"}
+
+
+def test_the_kinds_page_lists_every_port_the_module_has():
+    # arrange
+    import re
+    from pathlib import Path
+    page = (Path(__file__).resolve().parents[1] / "site" / "content" / "with-what" / "kinds.md").read_text()
+    row = re.compile(r"^\| `([a-z-]+:[a-z-]+)` \| `([a-z-]+)` \| (input|output) \| `([a-z-]+)` \| (`[a-z_]+`|) \|$", re.M)
+
+    # act
+    listed = {(c, n, d, a, b.strip("`")) for c, n, d, a, b in row.findall(page)}
+    expected = {(c, p.name, p.direction, p.accepts, p.param)
+                for c, ports in artifactschema.PORTS.items() for p in ports}
+
+    # assert: the page is a second rendering of one model, so it is held to the module both ways
+    assert expected, "no ports - the comparison would mean nothing"
+    assert listed == expected

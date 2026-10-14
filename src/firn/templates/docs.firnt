@@ -23,5 +23,31 @@ template Docs {
         || `${k.name.replace("_", "-")}` |  |
       }
     }
+    |
+    |## Ports
+    |
+    |A catalogue task takes and gives artifacts through its ports. A port accepts a kind and every kind that
+    |refines it; a port that binds a parameter receives the bound artifact's name in it.
+    |
+    || Task | Port | Direction | Accepts | Binds |
+    ||---|---|---|---|---|
+    for t : `simplon.pipeline.CatalogueTask` {
+      for p : t.input {
+        if p.param {
+          || `${t.key}` | `${p.name}` | input | `${p.accepts.name.replace("_", "-")}` | `${p.param}` |
+        }
+        if not p.param {
+          || `${t.key}` | `${p.name}` | input | `${p.accepts.name.replace("_", "-")}` |  |
+        }
+      }
+      for p : t.output {
+        if p.param {
+          || `${t.key}` | `${p.name}` | output | `${p.accepts.name.replace("_", "-")}` | `${p.param}` |
+        }
+        if not p.param {
+          || `${t.key}` | `${p.name}` | output | `${p.accepts.name.replace("_", "-")}` |  |
+        }
+      }
+    }
   }
 }
