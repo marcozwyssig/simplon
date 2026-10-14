@@ -120,3 +120,31 @@ def test_the_kinds_page_lists_every_port_the_module_has():
     # assert: the page is a second rendering of one model, so it is held to the module both ways
     assert expected, "no ports - the comparison would mean nothing"
     assert listed == expected
+
+
+def test_each_generated_file_names_both_models_it_is_generated_from():
+    # arrange: since C.1 the ports come from simplon/catalogue/tasks.firn, not only from the vocabulary;
+    # a header naming one would send whoever changes a port to a file that has none
+    from pathlib import Path
+    src = Path(__file__).resolve().parents[1]
+    files = [src / "simplon" / "domain" / "artifactschema.py", src / "site" / "content" / "with-what" / "kinds.md"]
+
+    # act
+    missing = {f.name: [m for m in ("vocabulary/kinds.firn", "catalogue/tasks.firn") if m not in f.read_text()]
+               for f in files}
+
+    # assert
+    assert missing == {f.name: [] for f in files}
+
+
+def test_the_kinds_page_does_not_offer_ports_a_manifest_cannot_bind_yet():
+    # arrange: `produces:`/`consumes:` arrive with si#344 C.2; until then a product that tries them from the
+    # page is refused, so the page says so
+    from pathlib import Path
+    page = (Path(__file__).resolve().parents[1] / "site" / "content" / "with-what" / "kinds.md").read_text()
+
+    # act
+    ports = page[page.index("## Ports"):]
+
+    # assert
+    assert "A manifest cannot bind a port yet" in ports

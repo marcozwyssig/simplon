@@ -7,7 +7,8 @@ template ArtifactSchema {
   // `build model-whole` and src/tests/test_generated_schema.py refuse that module too. A field's type is
   // `_<shape>`, an alias the module defines, so the template needs no conditional per shape.
   file "domain/artifactschema.py" language python {
-    |# GENERATED from src/firn/model/simplon/vocabulary/kinds.firn by `./simplon.sh build model`. Do not edit:
+    |# GENERATED from src/firn/model/simplon/vocabulary/kinds.firn (the kinds) and
+    |# src/firn/model/simplon/catalogue/tasks.firn (the ports) by `./simplon.sh build model`. Do not edit:
     |# firn rewrites the whole file on every run, and this file has no protected region. If it is missing or
     |# empty, every `./simplon.sh` command stops at import: `git checkout -- src/simplon/domain/artifactschema.py`.
     |"""The `artifacts:` entry of each kind, as a pydantic model (si#344 B2, spec B.1-B.3).
