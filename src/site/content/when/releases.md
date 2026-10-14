@@ -23,6 +23,160 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.31.0
+
+**What a product has to do:** a product that releases an image now has to show that a test ran on that
+image, or its manifest is refused when it loads. Every product also has to re-render its launcher. The
+command line does not change.
+
+1. **Migrate first, if you have not.** The 0.30.0 steps still apply to a manifest in the `groups:` form.
+   Measured on 2026-10-14 against the eight manifests on the default branches: six were still in that
+   form. After `simplon manifest migrate` (and cleon's `kind: directory` from the 0.30.0 notes), asbundle,
+   biz-cockpit, cleon, netctl and swi load unchanged under 0.31.0.
+2. **firn and agile-cockpit: answer the release rule.** Both release an image that no test reads, and
+   0.31.0 refuses that at load:
+
+   ```
+   command 'release push-image' releases 'firn', and no test produces a result about it - add a command
+   under `ci: test:` that consumes 'firn' and produces a `test-result`, and bind that result to this
+   command's `evidence` port
+   ```
+
+   The smallest answer adds one test command and one artifact, and binds them. For firn (agile-cockpit is
+   the same, with `release image` and the image `app`):
+
+   ```yaml
+   artifacts:
+     firn-checked: { kind: test-result, path: build/test/firn-checked.json }
+   ci:
+     test:
+       commands:
+         release-evidence:
+           task: test:image
+           consumes: { image: firn }
+           produces: { test-result: firn-checked }
+     release:
+       commands:
+         push-image:
+           task: release:image
+           consumes: { image: firn, evidence: [firn-checked] }
+   ```
+
+   Both manifests, migrated and answered this way, load under 0.31.0 (measured).
+3. **Re-render the launcher.** Scaffold into an empty directory and copy only the two launchers over
+   yours:
+
+   ```
+   simplon init <product> --dir /tmp/fresh --orch-dir <your orchestrator dir>
+   cp /tmp/fresh/<product>.sh /tmp/fresh/<product>.cmd .
+   ```
+
+   Do not run `simplon init --force` in the checkout itself, as the 0.28.0 notes said: it also rewrites the
+   manifest, `requirements.txt` and `cli.py` back to the empty scaffold (measured on 2026-10-14). The new
+   launcher brings two things:
+   - The container route now stops when `requirements.txt` pins a different simplon from the one in
+     `deploy/image/image.pin` (si#366). **Move both pins to 0.31.0 together.** An editable install passes.
+   - The containers the launcher starts are labelled `simplon.run=<product>` (si#412).
+4. **Imports, before 0.33.0:** 65 modules moved (si#399). The old paths still work and warn; they are
+   removed in 0.33.0. The table is under *What you may import* (with-what/surface).
+
+### Artifacts are produced and consumed, and a release needs a test result (si#344, #417, #418, #421, #422)
+
+A command can say which artifact it makes and which it reads: `produces: { <port>: <artifact> }` and
+`consumes: { <port>: <artifact> }`. Each catalogue task declares its ports, and a product task can declare
+them with `input:` / `output:`. `simplon manifest migrate` rewrites `with: { name: X }` into the matching
+binding. That rewrite is optional: `with: { name: X }` on its own is read as the same binding, which is why
+the rules below hold for a manifest that was never migrated.
+
+The kernel checks the chain at load:
+
+- An artifact has one producer per plan.
+- A command that consumes an artifact needs a command that produces it, or the artifact needs a
+  `registry:` it is fetched from.
+- An artifact bound to a port is of a kind the port accepts.
+- The port exists on the task.
+- An aggregate lists a producer before the command that consumes its artifact.
+- **Rule 6:** a command that releases an artifact binds a `test-result` about it to its `evidence` port.
+  This is the one that binds firn and agile-cockpit (step 2 above). simplon's own manifest answers it too.
+- A port that is bound is not also pinned with `with:`.
+- An aggregate under `ci: release:` names its one bundle (`produces: { release: <artifact> }`), stops on
+  the first failure, and lists the tag after every publish.
+
+Packaging is split from publishing. `build:nuget-pack` and `build:maven-pack` write the package;
+`release:nuget` and `release:maven` keep their names and now push only what the pack wrote. None of the
+eight manifests used either. `release:notes` writes a release's notes from the merges since the previous
+tag. `support workflows` hands an artifact from the job that makes it to the job that reads it, and
+refuses a crossing it would write wrongly. No product's generated workflow changes at this bump
+(measured).
+
+**Not done yet:** a release aggregate does not pass a tag to its leaves yet, so simplon's own
+`release all` stops at the notes. Evidence is bound but not read, so a red test result is not yet told
+from a green one.
+
+### Modules moved into layers (si#399, #413; si#390, si#391, si#392, si#393, si#394, #395, #397, #401, #402, #408)
+
+The 65 top-level modules now live in `simplon.kernel`, `simplon.domain`, `simplon.adapters`,
+`simplon.tasks`, `simplon.ui` and `simplon.cli`. Every module keeps its name: `simplon.X` becomes
+`simplon.<layer>.X`, and `simplon.orchestrator.*` is dissolved (`orchestrator.steps` →
+`kernel.steps`, `orchestrator.manifest` → `domain.manifest`, `orchestrator.tui` → `ui.tui`). An old import
+returns the very same module, so a `patch("simplon.orchestrator.steps.run_stream")` still patches the code
+that runs. It warns once:
+
+```
+FutureWarning: simplon.orchestrator.steps has moved to simplon.kernel.steps; import it from there. The
+old path still works and is removed in 0.33.0.
+```
+
+Measured on 2026-10-14: 194 import lines across seven repositories use an old path. Each product gets
+its own issue with its own list after this release.
+
+The layers are held by a test: no module imports from a layer above its own, and the exceptions counted
+when the work began (16) are down to zero. Behind that, three things a product may notice:
+
+- `deployment.resolve` takes the registry as a parameter (si#393). No product calls it (searched).
+- A run started outside `cli.main` now warns that no UI was registered, instead of silently running
+  headless (si#391).
+- `test walk` with no walk UI registered refuses, at run time (si#394).
+
+simplon's components are a firn model now (si#390). Building it found firn#968: firn v0.1.0 deleted a
+test file with rc 0.
+
+### A container the kernel starts is named, labelled and stopped (si#409, #411; si#412, #415; si#416)
+
+The containers the kernel starts carry `--init`, a name of its own and the label
+`simplon.run=<product>`. On SIGINT, SIGTERM or an exception it is removed with `docker rm -f`. Before,
+measured: an interrupted `gradle check` container ran on to its own end. SIGKILL cannot be caught; the
+label is what finds that orphan: `docker ps -aq --filter label=simplon.run=<product>`.
+
+Two sites keep the run going on purpose. `pulumi up` is never killed, because a killed `pulumi up` leaves
+pending operations in the state file the product commits. Measured with pulumi 3.262: a single SIGINT or
+SIGTERM is a clean cancel, and a second signal is a hard stop. A Ctrl-C at a terminal reaches it once and
+cancels it cleanly; a SIGTERM to the kernel alone does not reach it, and the run finishes (si#416).
+
+The launcher's container route installs in the background now. Measured on the 0.30.0 launcher: a
+Ctrl-C during the install was lost, and the CLI then ran with rc 0. Now it ends with 130 or 143, and
+nothing is left running (si#416).
+
+### `manifest migrate` and the refusals around it (si#403, si#404, si#405, si#406, #423, #424, #425, #426)
+
+- A manifest refused at import prints its message, without a traceback, rc 1 (si#405).
+- `simplon manifest migrate --help` prints the help, rc 0; any other leading option is refused, rc 2.
+  The help names all three rewrites (si#403).
+- The migration leaves one blank line between the areas it writes. A comment at column 0 inside a group
+  it moves is moved with it and reported as a line range to check, because such a comment does not say
+  which key it belongs to (si#406).
+- The scaffold and the launcher speak of `ci:` / `cd:` / `support:` and `artifacts:` (si#404).
+
+### Smaller changes
+
+- A misspelt area that carries `commands:` or `environments:`, such as `ic:`, is refused with the nearest
+  area name; an empty manifest is refused (si#388, #389). None of the eight manifests is refused by it.
+- `claude.requires: [<executable>, ...]` lists the executables a Claude plugin needs, and
+  `support claude-plugins` reports each one missing from `PATH` (si#396, #398).
+- The refusal census counts a module that borrows another module's manifest reader (si#331, #414).
+- `deploy/image/image.pin` points at the published v0.30.0 image (#387).
+- These notes (#429).
+
 ## 0.30.0
 
 **What a product has to do:** run the migration once. This release refuses a manifest that declares
