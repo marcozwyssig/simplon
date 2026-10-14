@@ -881,10 +881,12 @@ command in another job of the same workflow `consumes:`, the generated file says
   unpacks it before its first consuming step.
 
 The archive keeps the path and the file modes, which `upload-artifact` alone does not. Producer and consumer
-in one job hand nothing over, and a workflow with no such edge is written exactly as before.
+in one job hand nothing over, and a workflow with no such edge is written exactly as before. The archive is
+kept a day. A producer written as a verbatim `run:` line is not seen: write it as a `command:`. On a Windows
+runner the `tar` lines are not measured.
 
-**What cannot be handed over is refused when the workflow is generated,** naming the workflow, the job and
-the artifact:
+**What cannot be handed over is refused when the workflow is generated,** naming the workflow and the jobs
+involved, and the artifact where one is the cause:
 
 | The workflow would... | Refused because |
 |---|---|
@@ -892,7 +894,10 @@ the artifact:
 | consume, in one job, before the step of that job that produces it | the order is yours; the data only checks it |
 | consume an artifact that is produced in more than one job, or in a matrix job | one run uploads one artifact once |
 | hand over an artifact with no `path:` | there is no file. An image stays in one job's docker daemon, so build and use it in one job |
-| have jobs that need each other | GitHub refuses the file |
+| hand over an artifact whose name has anything but letters, digits, `.`, `_` and `-` | the name goes into a shell line and into `upload-artifact`, which rejects `" : < > | * ? \ /` |
+| hand over an artifact whose `path:` is absolute or has a `..` segment | `tar` stores it somewhere else, so the consumer finds nothing where it looks |
+| hand over from a job with an `if:` that the consuming job does not share | a skipped producer skips its consumer, and a skipped job is not red: the run would be green with nothing done |
+| have jobs that need each other | GitHub refuses the file. If your own `needs:` form the loop, the message says so |
 
 A hand-off between two workflows is not generated: give the artifact a `registry:` and let the body fetch it.
 

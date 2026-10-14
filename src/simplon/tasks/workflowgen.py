@@ -103,7 +103,10 @@ and downloaded under the artifact's name, unpacked before the consuming step. Th
 
 An archive and not the bare path: upload-artifact drops file permissions (its README says so and recommends
 tar), and where it roots one path depends on whether the path is a file or a directory. The archive keeps the
-path relative to the checkout and the mode bits, so the next job finds exactly what this one wrote."""
+path relative to the checkout and the mode bits, so the next job finds exactly what this one wrote.
+
+The archive is scratch between jobs, so it is kept a day; `overwrite` lets a re-run upload it again (one
+producer is guaranteed, so nothing else writes that name)."""
 
 #: The clone depth si#3 measured. A shallow clone has the tag without the history behind it, so
 #: setuptools-scm derives a version that is wrong rather than failing, and PyPI accepts the wheel.
@@ -999,7 +1002,7 @@ def render(workflow: Workflow, *, manifest: Manifest, product: str, source: str,
     runs = [handoff.Run(job.name,
                         tuple(_leaves(manifest, step, f"workflow '{workflow.key}', job '{job.name}', step {at + 1}")
                               for at, step in enumerate(expanded[job.name])),
-                        matrix="strategy" in job.extras, needs=_declared_needs(job.extras))
+                        matrix="strategy" in job.extras, needs=_declared_needs(job.extras), condition=str(job.extras.get("if") or ""))
             for job in jobs]
     binds = any(spec.produces or spec.consumes for run in runs for leaves in run.steps for _, spec in leaves)
     if binds and artifacts is None:
@@ -1136,7 +1139,8 @@ def _send(artifact: str, path: str) -> tuple[Step, Step]:
     return (Step(verbatim={"run": f'tar -cf "{archive}" {shlex.quote(path)}'},
                  note=HANDOFF_NOTE.format(artifact=artifact)),
             Step(verbatim={"uses": UPLOAD_ACTION,
-                           "with": {"name": artifact, "path": archive, "if-no-files-found": "error"}}))
+                           "with": {"name": artifact, "path": archive, "if-no-files-found": "error", "retention-days": 1,
+                                    "overwrite": True}}))
 
 
 def _receive(artifact: str) -> tuple[Step, Step]:

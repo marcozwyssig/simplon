@@ -19,13 +19,17 @@ accident.
   it: GitHub refuses a second upload under one name in one run, and which one to take would be a guess.
 - An artifact with no `path:` that crosses: there is no file to hand over. An image lives in one job's docker
   daemon, and the next job's daemon has it only when the runner happens to be shared.
+- An artifact whose name cannot be written safely, or whose `path:` tar would store somewhere else.
+- A producer job that runs only under an `if:` its consumer does not share: a skipped job is not red.
 - Jobs that need each other: GitHub refuses the file, far from the cause.
 
 This module knows nothing about YAML or GitHub's steps; `workflowgen` writes them.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
@@ -36,12 +40,14 @@ if TYPE_CHECKING:
 class Run(NamedTuple):
     """One job as the hand-off sees it. `steps[i]` holds the (command path, spec) of every leaf step `i` runs -
     one for a leaf, the plan for an aggregate, none for a verbatim step. `matrix` is true for a job with a
-    `strategy:`, which runs once per entry. `needs` is what the product declared."""
+    `strategy:`, which runs once per entry. `needs` is what the product declared; `condition` is the
+    job-level `if:` as text, empty for none."""
 
     job: str
     steps: "tuple[tuple[tuple[str, CommandSpec], ...], ...]"
     matrix: bool = False
     needs: tuple[str, ...] = ()
+    condition: str = ""
 
 
 class Handoff(NamedTuple):
@@ -57,6 +63,18 @@ def _bound(sides: Mapping[str, tuple[str, ...]]) -> tuple[str, ...]:
     return tuple(artifact for names in sides.values() for artifact in names)
 
 
+#: What an artifact name that crosses may be made of. The name lands in a shell line and in upload-artifact's
+#: `name:`, which rejects `" : < > | * ? \\ /`.
+_SAFE_NAME = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def _relocated(path: str) -> bool:
+    """True when tar would store `path` somewhere other than where it is read: GNU tar strips a leading `/` and
+    `../` (exit 0, "Removing leading"), so the consumer would find nothing at the path."""
+    posix = PurePosixPath(path)
+    return posix.is_absolute() or ".." in posix.parts or re.match(r"[A-Za-z]:", path) is not None
+
+
 def plan(workflow: str, runs: Sequence[Run], artifacts: Mapping[str, "Declared"]) -> dict[str, Handoff]:
     """Every job's hand-off, or a ValueError naming the workflow, the job and the artifact."""
     first: dict[str, dict[str, tuple[int, str]]] = {}
@@ -68,6 +86,8 @@ def plan(workflow: str, runs: Sequence[Run], artifacts: Mapping[str, "Declared"]
                     first.setdefault(artifact, {}).setdefault(run.job, (at, path))
                     last.setdefault(artifact, {})[run.job] = at
     matrix = {run.job: run.matrix for run in runs}
+    condition = {run.job: run.condition for run in runs}
+    added: dict[str, set[str]] = {run.job: set() for run in runs}
     needs: dict[str, list[str]] = {run.job: [] for run in runs}
     uploads: dict[str, dict[int, list[str]]] = {run.job: {} for run in runs}
     downloads: dict[str, dict[int, list[str]]] = {run.job: {} for run in runs}
@@ -107,6 +127,26 @@ def plan(workflow: str, runs: Sequence[Run], artifacts: Mapping[str, "Declared"]
                         raise ValueError(
                             f"{where}: '{path}' consumes '{artifact}' from job '{source}', and '{artifact}' declares "
                             f"no `path:`, so there is no file to hand over - run its producer and '{path}' in one job")
+                    if not _SAFE_NAME.fullmatch(artifact):
+                        raise ValueError(
+                            f"{where}: '{path}' consumes '{artifact}' from job '{source}', and an artifact can be "
+                            f"handed over only under a name of letters, digits, `.`, `_` and `-` - rename "
+                            f"'{artifact}', or run its producer and '{path}' in one job")
+                    if _relocated(declared.path):
+                        raise ValueError(
+                            f"{where}: '{path}' consumes '{artifact}' from job '{source}', and its `path:` "
+                            f"'{declared.path}' is absolute or leaves the checkout, so tar would store it somewhere "
+                            f"else and '{path}' would find nothing there - give '{artifact}' a path inside the "
+                            f"checkout")
+                    if condition[source] and condition[source] != condition[run.job]:
+                        # A skipped producer skips its consumer through `needs:`, and a skipped job is not red.
+                        # Before C.4 the consumer failed on the missing file; now the run would be green with
+                        # nothing done.
+                        raise ValueError(
+                            f"{where}: '{path}' consumes '{artifact}' from job '{source}', which runs only "
+                            f"`if: {condition[source]}`, and job '{run.job}' does not - when '{source}' is skipped "
+                            f"GitHub skips '{run.job}' with it, and a skipped job is not a red one; give both jobs "
+                            f"the same `if:`, or run '{path}' in '{source}'")
                     if artifact not in fetched:
                         fetched.add(artifact)
                         downloads[run.job].setdefault(at, []).append(artifact)
@@ -114,15 +154,18 @@ def plan(workflow: str, runs: Sequence[Run], artifacts: Mapping[str, "Declared"]
                         uploads[source].setdefault(after, []).append(artifact)
                     if source not in needs[run.job] and source not in run.needs:
                         needs[run.job].append(source)
-    _acyclic(workflow, {run.job: (*run.needs, *needs[run.job]) for run in runs})
+                        added[run.job].add(source)
+    _acyclic(workflow, {run.job: (*run.needs, *needs[run.job]) for run in runs}, added)
     return {run.job: Handoff(tuple(needs[run.job]),
                              {at: tuple(names) for at, names in uploads[run.job].items()},
                              {at: tuple(names) for at, names in downloads[run.job].items()})
             for run in runs}
 
 
-def _acyclic(workflow: str, needs: Mapping[str, tuple[str, ...]]) -> None:
-    """Refuse jobs that wait for each other, through the hand-off or the product's own `needs:`."""
+def _acyclic(workflow: str, needs: Mapping[str, tuple[str, ...]], added: Mapping[str, set[str]]) -> None:
+    """Refuse jobs that wait for each other, through the hand-off or the product's own `needs:`. `added` is the
+    edges the hand-off contributed (job -> jobs it was made to wait for); a loop with none of them is the
+    product's own, and is not blamed on artifacts."""
     done: set[str] = set()
 
     def visit(job: str, trail: tuple[str, ...]) -> None:
@@ -130,10 +173,12 @@ def _acyclic(workflow: str, needs: Mapping[str, tuple[str, ...]]) -> None:
             return
         if job in trail:
             loop = (*trail[trail.index(job):], job)
+            head = f"workflow '{workflow}': jobs need each other: {' -> '.join(loop)}"
+            if not any(b in added.get(a, ()) for a, b in zip(loop, loop[1:])):
+                raise ValueError(f"{head} - the jobs' own `needs:` form the loop; remove one of them")
             raise ValueError(
-                f"workflow '{workflow}': jobs need each other: {' -> '.join(loop)} - an artifact one of them "
-                f"consumes is produced by a job that waits for it; move a producer or a consumer so the jobs form "
-                f"a chain")
+                f"{head} - an artifact one of them consumes is produced by a job that waits for it; move a "
+                f"producer or a consumer so the jobs form a chain")
         for other in needs.get(job, ()):
             visit(other, (*trail, job))
         done.add(job)

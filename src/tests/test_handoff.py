@@ -51,9 +51,9 @@ def _leaf(path):
     return (path, LOADED.spec_for(group, name))
 
 
-def _run(job, *steps, matrix=False, needs=()):
+def _run(job, *steps, matrix=False, needs=(), condition=""):
     """A job whose step i runs the one leaf `steps[i]`."""
-    return handoff.Run(job, tuple((_leaf(step),) for step in steps), matrix=matrix, needs=needs)
+    return handoff.Run(job, tuple((_leaf(step),) for step in steps), matrix=matrix, needs=needs, condition=condition)
 
 
 def test_a_result_made_in_one_job_and_consumed_in_another_is_handed_over():
@@ -191,3 +191,59 @@ def test_a_declared_needs_is_not_repeated_in_the_added_ones():
 
     # assert: the hand-off still downloads, and adds no second `test`
     assert out["release"] == handoff.Handoff(downloads={1: ("app-checked",)})
+
+
+def _variant(old, new):
+    """The same manifest with `old` replaced everywhere, so a spec binds the name or path being tried."""
+    text = TEXT.replace(old, new)
+    loaded = manifest.load(text, catalogue=catalogue.load(), manifest_path="demo.yaml")
+    leaf = lambda path: (path, loaded.spec_for(*path.rsplit(" ", 1)))  # noqa: E731
+    return (lambda job, *steps, **kw: handoff.Run(job, tuple((leaf(s),) for s in steps), **kw),
+            artifactsection.declared(yaml.safe_load(text)))
+
+
+def test_an_artifact_name_the_shell_or_upload_would_choke_on_is_refused():
+    # arrange: `app:checked` is a legal manifest name, and upload-artifact rejects the colon
+    run, artifacts = _variant("app-checked", "app:checked")
+
+    # act / assert
+    with pytest.raises(ValueError, match="can be handed over only under a name of letters, digits, `.`, `_` and `-`"):
+        handoff.plan("ci", [run("test", "build image", "test image"), run("release", "build image", "release push-image")], artifacts)
+
+
+@pytest.mark.parametrize("path", ["/tmp/app.json", "../up/app.json", "a/../../app.json", "C:/app.json"])
+def test_a_path_tar_would_store_somewhere_else_is_refused(path):
+    # arrange
+    run, artifacts = _variant("build/test/app.json", path)
+
+    # act / assert
+    with pytest.raises(ValueError, match="tar would store it somewhere else"):
+        handoff.plan("ci", [run("test", "build image", "test image"), run("release", "build image", "release push-image")], artifacts)
+
+
+def test_a_producer_that_runs_only_under_a_condition_its_consumer_lacks_is_refused():
+    # arrange
+    runs = [_run("test", "build image", "test image", condition="github.ref == 'refs/heads/main'"),
+            _run("release", "build image", "release push-image")]
+
+    # act / assert
+    with pytest.raises(ValueError, match=r"runs only `if: github.ref == 'refs/heads/main'`, and job 'release' does not"):
+        handoff.plan("ci", runs, ARTIFACTS)
+
+
+def test_the_same_condition_on_both_jobs_is_allowed():
+    # arrange: both are skipped together, so nothing is green by accident
+    runs = [_run("test", "build image", "test image", condition="github.ref == 'x'"),
+            _run("release", "build image", "release push-image", condition="github.ref == 'x'")]
+
+    # act / assert
+    assert handoff.plan("ci", runs, ARTIFACTS)["release"].needs == ("test",)
+
+
+def test_a_loop_of_declared_needs_alone_is_not_blamed_on_artifacts():
+    # arrange: no artifact crosses at all
+    runs = [_run("a", "build image", needs=("b",)), _run("b", "build left", needs=("a",))]
+
+    # act / assert
+    with pytest.raises(ValueError, match=r"need each other: a -> b -> a - the jobs' own `needs:` form the loop"):
+        handoff.plan("ci", runs, ARTIFACTS)

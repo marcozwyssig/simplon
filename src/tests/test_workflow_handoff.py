@@ -74,7 +74,8 @@ def test_the_producing_job_archives_and_uploads_after_its_producing_step():
     assert steps[4] == {"uses": "actions/upload-artifact@v4",
                         "with": {"name": "app-checked",
                                  "path": "${{ runner.temp }}/simplon-handoff-app-checked.tar",
-                                 "if-no-files-found": "error"}}
+                                 "if-no-files-found": "error",
+                                 "retention-days": 1, "overwrite": True}}
 
 
 def test_the_consuming_job_needs_the_producer_and_downloads_before_its_consuming_step():
@@ -255,3 +256,12 @@ def test_the_handoff_lines_fail_on_a_path_that_was_not_written(tmp_path):
     # assert
     assert packed.returncode != 0
     assert "build/test/app.json" in packed.stderr
+
+
+def test_a_job_level_if_on_the_producer_alone_stops_generation():
+    # arrange: the test job (the producer) runs only on main; the release job has no `if:`
+    body = SPLIT.replace("      test:\n        runs-on", "      test:\n        if: github.ref == 'refs/heads/main'\n        runs-on")
+
+    # act / assert
+    with pytest.raises(ValueError, match=r"runs only `if: github.ref == 'refs/heads/main'`, and job 'release' does not"):
+        _render(body)
