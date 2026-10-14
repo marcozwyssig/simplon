@@ -155,7 +155,8 @@ def check(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared
         for name, spec in members.items():
             if spec.depends_on:
                 _check_plan(manifest, f"{group} {name}", manifest.plan_for(name, group=group))
-    _check_results(manifest, declared, kinds)
+    about = _check_results(manifest, declared, kinds)
+    _check_release(manifest, declared, kinds, about)
 
 
 def _check_plan(manifest: "Manifest", aggregate: str, plan: tuple[str, ...]) -> None:
@@ -214,3 +215,32 @@ def _check_results(manifest: "Manifest", declared: Mapping[str, "artifactsection
             for subject in (a for names in spec.consumes.values() for a in names):
                 about.setdefault(subject, set()).update(made)
     return about
+
+
+def _check_release(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared"],
+                   kinds: Mapping[str, str], about: Mapping[str, set[str]]) -> None:
+    """Rule 6 (spec C.3, C.5): a command under `ci: release:` that consumes an artifact X consumes every test
+    result about X, and at least one exists. X is every consumed artifact whose kind is not one of OWN_KINDS
+    (decided 2026-10-14). "About" is direct: a result is about what its producer consumes."""
+    for group, members in manifest.commands.items():
+        if (manifest.area_of(group), _top(group)) != ("ci", "release"):
+            continue
+        for name, spec in members.items():
+            where = f"{group} {name}"
+            consumed = [a for names in spec.consumes.values() for a in names]
+            evidence = {a for a in consumed if artifactsection.accepts(kinds, "test-result", declared[a].kind)}
+            for subject in consumed:
+                if any(artifactsection.accepts(kinds, own, declared[subject].kind) for own in OWN_KINDS):
+                    continue
+                wanted = about.get(subject, set())
+                if not wanted:
+                    raise ValueError(
+                        f"command '{where}' releases '{subject}', and no test produces a result about it - add "
+                        f"a command under `ci: test:` that consumes '{subject}' and produces a `test-result`, "
+                        f"and bind that result to this command's `evidence` port")
+                missing = sorted(wanted - evidence)
+                if missing:
+                    raise ValueError(
+                        f"command '{where}' releases '{subject}' without the test result(s) "
+                        f"{', '.join(missing)} about it - bind every one to its `evidence` port, so no "
+                        f"release goes past a test that ran")

@@ -795,15 +795,32 @@ def test_a_migrated_real_manifest_assembles_the_cli_it_always_did(product):
     golden = json.loads((FIXTURES / "golden" / f"{product}.json").read_text())
     migrated = migrate_text(realmanifests.text(product))
 
-    # act
+    # act / assert: a product the release rule refuses asserts the refusal, not the surface
+    if product in realmanifests.RELEASE_RULE_BILL:
+        with pytest.raises(ValueError, match="no test produces a result about it"):
+            manifest.load(migrated.text, catalogue=catalogue.load(), manifest_path=f"{product}.yaml")
+        return
     surface = cli_surface(manifest.load(migrated.text, catalogue=catalogue.load(),
                                         manifest_path=f"{product}.yaml"))
-
-    # assert
     for group, members in NEW_IN_EVERY_PRODUCT.items():
         assert surface["groups"].pop(group) == members
         surface["commands"].pop(group)
     assert surface == golden
+
+
+def test_the_release_rule_refuses_exactly_the_products_that_release_untested():
+    # arrange / act
+    refused = set()
+    for product in PRODUCTS:
+        migrated = migrate_text(realmanifests.text(product))
+        try:
+            manifest.load(migrated.text, catalogue=catalogue.load(), manifest_path=f"{product}.yaml")
+        except ValueError as exc:
+            if "no test produces a result about it" in str(exc):
+                refused.add(product)
+
+    # assert
+    assert refused == realmanifests.RELEASE_RULE_BILL
 
 
 @pytest.mark.parametrize("product", PRODUCTS)

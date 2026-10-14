@@ -23,3 +23,7 @@ def text(product: str) -> str:
     anchor, edited = HAND_EDITS[product]
     assert raw.count(anchor) == 1, f"{product}: the hand edit's anchor {anchor!r} is not there exactly once"
     return raw.replace(anchor, edited)
+
+#: The products whose migrated fixture the release rule refuses (si#344 C.3): each releases an image no test
+#: writes a result about. Measured over the eight on 2026-10-14; the live manifests agree (si#344 C.3 plan).
+RELEASE_RULE_BILL = frozenset({"agile-cockpit", "firn", "simplon"})

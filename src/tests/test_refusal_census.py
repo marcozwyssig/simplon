@@ -634,6 +634,8 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # `ci: test:` would have worked - it is an expression rule, and it rules on the merged tree.
     ("ports", "_check_results", "a test result is what the test writes"): DIAGNOSIS,
     ("ports", "_check_results", "so only a command under `ci: test:` produces one"): EXPRESSION,
+    ("ports", "_check_release", "and no test produces a result about it"): EXPRESSION,
+    ("ports", "_check_release", "so no release goes past a test that ran"): EXPRESSION,
     # `domain.results` (si#344 C.3) raises too, at RUN time around a body; it is in READS_INLINE, so the walk
     # does not follow it and its three refusals are in neither count - measured: keys for them matched nothing.
     ("treeform", "check_no_old_form", "is written in the flat command form"): EXPRESSION,
@@ -939,6 +941,8 @@ CENSUS: dict[tuple[str, str, str], str] = {
 REACH: dict[tuple[str, str, str], str] = {
     # si#344 C.3: `_check_results` is handed the merged Manifest, so it rules on the catalogue's placements too.
     ("ports", "_check_results", "so only a command under `ci: test:` produces one"): REACH_MERGED,
+    ("ports", "_check_release", "and no test produces a result about it"): REACH_MERGED,
+    ("ports", "_check_release", "so no release goes past a test that ran"): REACH_MERGED,
     # si#5's one expression rule. MERGED: this kernel's own manifest goes through the same parser, so a
     # stray key under a carrier of simplon's own would be refused exactly the same way. It declares no
     # carrier today, which is why the claim is about the parser rather than about a placement.

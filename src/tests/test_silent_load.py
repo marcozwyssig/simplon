@@ -7,6 +7,8 @@ import re
 
 import pytest
 
+import realmanifests
+
 from simplon.domain import catalogue
 from simplon.domain import manifest
 from simplon.tasks.migrate import migrate_text
@@ -56,7 +58,13 @@ def test_every_reachable_manifest_still_loads_after_migration():
             text = text.replace("updatesite:\n", "updatesite:\n    kind: directory\n", 1)
         result = migrate_text(text)
         assert result.status == "migrated", (path.name, result.reason)
-        manifest.load(result.text, catalogue=catalogue.load())
+        try:
+            manifest.load(result.text, catalogue=catalogue.load())
+        except ValueError as exc:
+            # the release rule (si#344 C.3) is the one refusal a migrated fixture may meet, and only the
+            # products measured to release untested
+            assert path.stem in realmanifests.RELEASE_RULE_BILL, (path.name, str(exc))
+            assert "no test produces a result about it" in str(exc), (path.name, str(exc))
 
 
 @pytest.mark.parametrize("text", ["", "---\n", "# only a comment\n"])

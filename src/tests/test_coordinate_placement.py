@@ -376,9 +376,10 @@ AGILE_COCKPIT = textwrap.dedent("""
           unit:   { task: "test:gate", with: { name: unit } }
           system: { task: "test:gate", with: { name: system } }
           report: { task: "test:report" }
+          image:  { task: "test:image", consumes: { image: app }, produces: { test-result: app-checked } }
       release:
         commands:
-          image: { task: "release:image", with: { name: app } }
+          image: { task: "release:image", consumes: { image: app, evidence: [app-checked] } }
     cd:
       deploy:
         commands:
@@ -400,6 +401,9 @@ AGILE_COCKPIT = textwrap.dedent("""
     artifacts:
       app: { kind: image, registry: ghcr.io/marcozwyssig, repository: agile-cockpit,
              dockerfile: deploy/Dockerfile, context: ".", tag: latest }
+      # si#344 C.3 rule 6: the release consumes a result about the image it publishes. The real manifest
+      # does not yet (RELEASE_RULE_BILL), so this copy is agile-cockpit as it would answer the rule.
+      app-checked: { kind: test-result, path: build/test/app.json }
 """)
 
 
