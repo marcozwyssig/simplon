@@ -105,8 +105,8 @@ ci:
       # Dockerfile states it, guards it and names the fix.
       image:
         task: "build:image"
-        with:
-          name: kernel
+        produces:
+          image: kernel
       # The documentation website, as ONE command, and an impl-less AGGREGATE rather than a leaf (#2, task
       # 3). `reference` writes src/site/content/with-what/commands.md by reading the assembled CLI; `site`
       # runs Hugo over src/site/ and publishes into build/site/ (si#314: `<output>/site`). The first WRITES a page the second READS, so
@@ -347,8 +347,8 @@ ci:
       # It stays a command a person can type, for a re-publish or a hotfix outside the tag.
       image:
         task: "release:image"
-        with:
-          name: kernel
+        consumes:
+          image: kernel
 
 support:
   commands:

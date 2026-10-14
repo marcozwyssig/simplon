@@ -83,10 +83,11 @@ def test_both_verbs_are_placed_and_pin_the_one_image(group):
     # arrange / act
     command = _manifest()["ci"][group]["commands"]["image"]
 
-    # assert: the catalogue coordinate, not a body of its own, and the name pinned so the command line
-    # carries no argument a caller has to remember
+    # assert: the catalogue coordinate, not a body of its own, and the image bound to its port (si#344 C.2),
+    # so the command line carries no argument a caller has to remember
     assert command["task"] == f"{group}:image"
-    assert command["with"] == {"name": IMAGE}
+    assert command[{"build": "produces", "release": "consumes"}[group]] == {"image": IMAGE}
+    assert "with" not in command
 
 
 def test_the_image_declares_no_tag_so_there_is_one_source_for_the_version():

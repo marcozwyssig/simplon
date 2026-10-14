@@ -1014,3 +1014,83 @@ def test_an_image_entry_that_is_neither_a_mapping_nor_a_reference_is_told_what_t
         "images: app holds '5', which is neither a mapping nor an image reference - write a mapping with its "
         "`kind:` (`app: { kind: image, local: \"<reference>\" }`), or the image reference as a quoted string "
         "(`app: \"<reference>\"`), and run again")
+
+
+def _commands(body: str) -> str:
+    return ("product: p\nci:\n  build:\n    commands:\n" + body
+            + "artifacts:\n  k: { kind: image, registry: r, repository: k, dockerfile: D, context: . }\n")
+
+
+def test_a_block_with_holding_only_name_becomes_the_binding_and_keeps_its_comments():
+    # arrange
+    text = _commands('      image:\n        task: "build:image"\n        with:   # pinned\n'
+                     "          name: k   # the kernel\n")
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert result.status == "migrated", result.reason
+    assert ('        produces:   # pinned\n          image: k   # the kernel\n') in result.text
+    assert "with:" not in result.text
+
+
+def test_a_block_with_holding_more_keeps_the_rest_under_with():
+    # arrange
+    text = _commands('      image:\n        task: "build:image"\n        with:\n          name: k\n'
+                     "          platform: linux/amd64\n")
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert ("        produces:\n          image: k\n        with:\n          platform: linux/amd64\n"
+            in result.text)
+
+
+@pytest.mark.parametrize("written,expected", [
+    ("with: { name: k }", "produces: { image: k }"),
+    ("with: { name: k, platform: linux/arm64 }   # arm",
+     "produces: { image: k }\n        with: { platform: linux/arm64 }   # arm"),
+])
+def test_a_flow_with_becomes_the_binding(written, expected):
+    # arrange
+    text = _commands(f'      image:\n        task: "build:image"\n        {written}\n')
+
+    # act
+    result = migrate_text(text)
+
+    # assert
+    assert f"        {expected}\n" in result.text
+
+
+def test_an_input_port_becomes_consumes():
+    # arrange
+    text = _commands('      image:\n        task: "release:image"\n        with: { name: k }\n')
+
+    # act / assert
+    assert "        consumes: { image: k }\n" in migrate_text(text).text
+
+
+@pytest.mark.parametrize("command", [
+    '      image:\n        task: "build:image"\n        with: &pinned\n          name: k\n',
+    '      image: { task: "build:image", with: { name: k } }\n',
+    '      gate:\n        task: "test:gate"\n        with: { name: unit }\n',
+])
+def test_what_the_pass_cannot_rewrite_safely_or_need_not_is_left_as_written(command):
+    # arrange: an anchor others may merge, a one-line command, and a task whose `name` is no port
+    text = _commands(command)
+
+    # act
+    result = migrate_text(text)
+
+    # assert: the loader reads the first two as the same binding (decided 2026-10-14)
+    assert (result.status, result.text) == ("current", text)
+
+
+def test_the_binding_pass_runs_twice_as_current():
+    # arrange
+    once = migrate_text(_commands('      image:\n        task: "build:image"\n        with: { name: k }\n'))
+
+    # act / assert
+    assert migrate_text(once.text).status == "current"

@@ -10,13 +10,15 @@ AND NOTHING IS TRUSTED THAT WAS NOT PARSED BACK. The spliced text is loaded agai
 the original says the new form must contain. If they differ, nothing is written and the difference is
 named. A splice that is wrong in a way nobody reads is worse than no splice.
 
-THREE PASSES, ONE COMMAND (si#344 B2). `_dedupe` runs first: a key written twice is dropped when the second
+FOUR PASSES, ONE COMMAND (si#344 B2, C.2). `_dedupe` runs first: a key written twice is dropped when the second
 copy is the first line for line, and refused when they differ (si#344 B2, decision 4). `_shape` is cut 1
 (`groups:` into `ci:` / `cd:` / `support:`); `_fold` is cut 2 (`images:` into `artifacts:` with `kind: image`,
 a `kind:` on every artifacts entry, `source:` into `path:`, `deploy: source: { images: }` into
 `{ artifacts: }`). A product still on the `groups:` form arrives in the current form in one run, and one that
 already ran cut 1 reruns the same command for cut 2. Each pass is spliced, parsed back against its own oracle and
-line-accounted on its own; a refusal in any pass writes nothing, so no pass is ever half-applied.
+line-accounted on its own; a refusal in any pass writes nothing, so no pass is ever half-applied. `_bind` is si#344 C.2:
+`with: { name: X }` on a port task becomes `produces:`/`consumes:`; what it cannot rewrite safely stays, and the
+loader reads it as the same binding.
 
 THREE OUTCOMES, AND THEY STAY THREE: migrated, already current, refused. "Nothing to migrate" is rc 0
 with its own sentence - it is not the same green as "migrated", and it is not a failure either.
@@ -39,6 +41,7 @@ from typing import NamedTuple
 import yaml
 
 from simplon.kernel import log
+from simplon.domain.artifactschema import PORTS
 from simplon.domain.artifactsection import READERS, REFINES
 from simplon.domain.treeform import DOCS_SITE_KEYS
 from simplon.domain.yamlkeys import UniqueKeyLoader, duplicates
@@ -596,6 +599,150 @@ def _fold(text: str) -> Migration:
     return Migration("migrated", new, tuple(moved))
 
 
+#: Each catalogue coordinate whose port binds `name` -> (that port, the command key that binds it).
+_BINDS_NAME = {coordinate: (p.name, "produces" if p.direction == "output" else "consumes")
+               for coordinate, ports in PORTS.items() for p in ports if p.param == "name"}
+_TASK_LINE = re.compile(r"""^(?P<indent> *)task:\s*(?P<q>["']?)(?P<coordinate>[^"'\s#]+)(?P=q)\s*(?:#.*)?$""")
+_WITH_FLOW = re.compile(r"^(?P<indent> *)with:\s*\{(?P<body>[^{}&*<]*)\}(?P<comment>\s+#.*)?$")
+_WITH_BLOCK = re.compile(r"^(?P<indent> *)with:(?P<comment>\s+#.*)?$")
+_NAME_LINE = re.compile(r"^(?P<indent> *)name:\s*(?P<value>[^\s#&*|>][^#]*?)(?P<comment>\s+#.*)?$")
+
+
+def _bound(node: object) -> object:
+    """The document as the loader reads it since si#344 C.2: on a coordinate in `_BINDS_NAME`, a string
+    `with: name` IS that port's binding. The oracle `_bind`'s splice is held to."""
+    if isinstance(node, list):
+        return [_bound(value) for value in node]
+    if not isinstance(node, dict):
+        return node
+    out = {key: _bound(value) for key, value in node.items()}
+    task, pinned = out.get("task"), out.get("with")
+    if isinstance(task, str) and task in _BINDS_NAME and isinstance(pinned, dict) \
+            and isinstance(pinned.get("name"), str):
+        port, key = _BINDS_NAME[task]
+        written = out.get(key)
+        out[key] = {port: pinned["name"], **(written if isinstance(written, dict) else {})}
+        rest = {k: v for k, v in pinned.items() if k != "name"}
+        if rest:
+            out["with"] = rest
+        else:
+            out.pop("with")
+    return out
+
+
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def _siblings(lines: list[str], at: int, width: int) -> tuple[int, int]:
+    """[first, last) of the mapping the key on line `at`, `width` spaces in, stands in."""
+    def inside(line: str) -> bool:
+        return not line.strip() or line.lstrip().startswith("#") or _indent(line) >= width
+    first, last = at, at + 1
+    while first > 0 and inside(lines[first - 1]):
+        first -= 1
+    while last < len(lines) and inside(lines[last]):
+        last += 1
+    return first, last
+
+
+def _with_flow(match: re.Match, port: str, key: str) -> list[str] | None:
+    indent, body, comment = match["indent"], match["body"], match["comment"] or ""
+    items = [item.strip() for item in body.split(",") if item.strip()]
+    named = [item for item in items if re.match(r"name\s*:", item)]
+    if len(named) != 1:
+        return None
+    rest = [item for item in items if item not in named]
+    value = named[0].split(":", 1)[1].strip()
+    # the split is trusted only if it parses back to what the line said (a comma inside a value would not)
+    if yaml.safe_load("{" + ", ".join(rest) + "}") != {k: v for k, v in yaml.safe_load("{" + body + "}").items()
+                                                       if k != "name"}:
+        return None
+    if not rest:
+        return [f"{indent}{key}: {{ {port}: {value} }}{comment}"]
+    return [f"{indent}{key}: {{ {port}: {value} }}", f"{indent}with: {{ {', '.join(rest)} }}{comment}"]
+
+
+def _with_block(lines: list[str], at: int, match: re.Match, port: str, key: str) -> tuple[int, list[str]] | None:
+    """The `with:` block on line `at`, rewritten: (the line after it, its new lines), or None."""
+    width = len(match["indent"])
+    end = at + 1
+    while end < len(lines) and (not lines[end].strip() or _indent(lines[end]) > width):
+        end += 1
+    body = lines[at + 1:end]
+    keys = [line for line in body if line.strip() and not line.lstrip().startswith("#")]
+    if not keys:
+        return None
+    child = _indent(keys[0])
+    names = [n for n, line in enumerate(body) if _indent(line) == child and _NAME_LINE.match(line)]
+    own = [line for line in keys if _indent(line) == child]
+    if len(names) != 1 or any(line.lstrip().startswith("<<") for line in own):
+        return None
+    found = _NAME_LINE.match(body[names[0]])
+    assert found is not None
+    binding = f"{' ' * child}{port}: {found['value']}{found['comment'] or ''}"
+    if len(own) == 1:
+        return end, [f"{match['indent']}{key}:{match['comment'] or ''}",
+                     *(binding if n == names[0] else line for n, line in enumerate(body))]
+    return end, [f"{match['indent']}{key}:", binding, lines[at],
+                 *(line for n, line in enumerate(body) if n != names[0])]
+
+
+def _bind(text: str) -> Migration:
+    """Pass 3 (si#344 C.2): `with: { name: X }` on a coordinate whose port binds `name` becomes that port's
+    binding - `produces: { image: X }` on `build:image`, `consumes: { image: X }` on `release:image`. Only a
+    `task:` on its own line whose sibling `with:` carries no anchor, alias or merge key is rewritten; the
+    rest stays as written, which the loader reads as the same binding (decided 2026-10-14), so leaving it
+    is never wrong - only older."""
+    old, reason = _parse(text)
+    if reason:
+        return Migration("refused", text, (), reason)
+    if not isinstance(old, dict):
+        return Migration("current", text)
+    lines = text.splitlines()
+    edits: list[tuple[int, int, list[str], str]] = []
+    for number, line in enumerate(lines):
+        task = _TASK_LINE.match(line)
+        if not task or task["coordinate"] not in _BINDS_NAME:
+            continue
+        port, key = _BINDS_NAME[task["coordinate"]]
+        width = len(task["indent"])
+        first, last = _siblings(lines, number, width)
+        for at in range(first, last):
+            if _indent(lines[at]) != width:
+                continue
+            flow, block = _WITH_FLOW.match(lines[at]), _WITH_BLOCK.match(lines[at])
+            new = _with_flow(flow, port, key) if flow else None
+            end = at + 1
+            if block:
+                rewritten = _with_block(lines, at, block, port, key)
+                if rewritten:
+                    end, new = rewritten
+            if new:
+                edits.append((at, end, new, f"line {at + 1}: {task['coordinate']} binds its `{port}` port with "
+                                            f"`{key}:` instead of `with: name`"))
+    if not edits:
+        return Migration("current", text)
+    out = list(lines)
+    removed: list[str] = []
+    added: list[str] = []
+    for start, end, new, _ in sorted(edits, reverse=True):
+        removed += out[start:end]
+        added += new
+        out[start:end] = new
+    new_text = "\n".join(out) + ("\n" if text.endswith("\n") else "")
+    parsed, reason = _parse(new_text)
+    if reason:
+        return Migration("refused", text, (), f"the bound text does not parse back: {reason}")
+    if _bound(parsed) != _bound(old):
+        return Migration("refused", text, (), "the bound text does not read back as the same bindings: "
+                         + _first_difference(_bound(old), _bound(parsed)))
+    lost, extra = _accounting(lines, out, removed, added)
+    if lost or extra:
+        return Migration("refused", text, (), f"binding changed a line it should not have: {lost or extra}")
+    return Migration("migrated", new_text, tuple(move for *_, move in sorted(edits)))
+
+
 def _shape(text: str, *, unknown_groups_into: str | None = None) -> Migration:
     """Pass 1 (si#344 A): splice `text` from the `groups:` form into the ci/cd form; see the module head."""
     old, reason = _parse(text)
@@ -802,7 +949,7 @@ def migrate_text(text: str, *, unknown_groups_into: str | None = None) -> Migrat
         return Migration("refused", text, (), f"it is not a manifest: the document holds {found}, not a "
                          "mapping of top-level keys (product, tasks, ci, cd, support, ...)")
     current, moved = text, list[str]()
-    for step in (_dedupe, lambda t: _shape(t, unknown_groups_into=unknown_groups_into), _fold):
+    for step in (_dedupe, lambda t: _shape(t, unknown_groups_into=unknown_groups_into), _fold, _bind):
         result = step(current)
         if result.status == "refused":
             return Migration("refused", text, (), result.reason)
