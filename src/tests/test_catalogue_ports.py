@@ -137,9 +137,8 @@ def test_each_generated_file_names_both_models_it_is_generated_from():
     assert missing == {f.name: [] for f in files}
 
 
-def test_the_kinds_page_does_not_offer_ports_a_manifest_cannot_bind_yet():
-    # arrange: `produces:`/`consumes:` arrive with si#344 C.2; until then a product that tries them from the
-    # page is refused, so the page says so
+def test_the_kinds_page_says_how_a_command_binds_a_port():
+    # arrange: since si#344 C.2 a command binds a port; the page says how, and no longer that it cannot
     from pathlib import Path
     page = (Path(__file__).resolve().parents[1] / "site" / "content" / "with-what" / "kinds.md").read_text()
 
@@ -147,4 +146,6 @@ def test_the_kinds_page_does_not_offer_ports_a_manifest_cannot_bind_yet():
     ports = page[page.index("## Ports"):]
 
     # assert
-    assert "A manifest cannot bind a port yet" in ports
+    assert "A manifest cannot bind a port yet" not in ports
+    assert "`produces: { <port>: <artifact> }`" in ports
+    assert "`consumes: { <port>: <artifact> }`" in ports

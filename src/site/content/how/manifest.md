@@ -131,6 +131,45 @@ prune-branches:
     remote:  { help: "also delete merged branches on origin" }
 ```
 
+## Binding artifacts: `produces:` and `consumes:`
+
+A task that takes or gives an artifact has **ports**, listed with the kind each accepts on
+[the kinds page](../../with-what/kinds/). A command binds each port to an `artifacts:` entry:
+
+```yaml
+ci:
+  build:
+    commands:
+      image: { task: "build:image", produces: { image: kernel } }
+  release:
+    commands:
+      image: { task: "release:image", consumes: { image: kernel } }
+artifacts:
+  kernel: { kind: image, registry: ghcr.io/me, repository: kernel, dockerfile: Dockerfile, context: . }
+```
+
+A port with a parameter hands the artifact's name to it. This replaces `with: { name: kernel }`, which
+still loads and is read as the same binding. `simplon manifest migrate` rewrites it, and writing both is
+refused, because the two say one thing twice. A task of your own declares its ports beside its `impl:`:
+
+```yaml
+tasks:
+  pack:
+    impl: "orchestrator.cli:pack"
+    input:  { site: { accepts: site } }
+    output: { bundle: { accepts: directory, param: name } }
+```
+
+The loader holds every binding before anything runs:
+
+- the port exists on the task, on the side the key binds;
+- the artifact is declared, and its kind is the port's or refines it;
+- something produces what a command consumes, or the artifact names a `registry:` it is fetched from;
+- no aggregate plans two producers of one artifact, or a consumer before its producer.
+
+Several commands may produce one artifact (an everyday single-platform build beside the release's
+all-platform one); a plan picks one.
+
 ## Refining a platform command, and replacing one
 
 A command the catalogue already places can be refined in the product's own tree: change its `help:`, add
