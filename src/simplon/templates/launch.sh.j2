@@ -99,8 +99,8 @@ if [ "$DELIVERY_ROUTE" = inside ]; then
 fi
 
 # THE PIN, READ BY A SHELL. This is the whole reason si#200 put the reference in a plain file instead of
-# under an `images:` key: bash has to know which kernel to run BEFORE any Python exists to parse the
-# manifest with. Comments and blank lines out, first line left is the reference; `grep` exits 1 on no
+# in an `artifacts:` entry (an `images:` key, then): bash has to know which kernel to run BEFORE any
+# Python exists to parse the manifest with. Comments and blank lines out, first line left is the reference; `grep` exits 1 on no
 # match, which under `set -e` would end the run, hence the `|| true`.
 KERNEL_IMAGE=""
 if [ -f "$LAUNCH_IMAGE_PIN" ]; then

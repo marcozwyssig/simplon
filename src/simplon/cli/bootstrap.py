@@ -587,7 +587,7 @@ it creates the root Typer app, ships the command-impl callables the manifest's "
 resolve to, and hands the app + product context + environments + aliases to Simplon's binding layer
 (simplon.cli). The generic assembly (a sub-app per group, hidden flat aliases, the flat-group collapse,
 the CI/CD panels) and the env-first dispatch live in the kernel, driven entirely by the manifest - so a
-fresh product adds groups/commands in @@PRODUCT@@.yaml and impl callables HERE, and nowhere else.
+fresh product adds commands in @@PRODUCT@@.yaml and impl callables HERE, and nowhere else.
 
 Replace the placeholder bodies (build/check/up/down/status - one per phase of the loop) with your own;
 keep them as module-level callables so the manifest's task refs resolve
@@ -705,8 +705,8 @@ simplon.domain.context.current() and never hardcodes "@@PRODUCT@@".
 
 The walk up to the marker, the DELIVERY_* overrides and the fail-loud on a broken checkout are the
 KERNEL's (simplon.domain.context.bootstrap). What only this product knows is its name and where this file
-sits, so that is all this module says. Extend it to read the manifest's raw build-data sections
-(images/volumes/...) through CONTEXT.manifest_data() as your pipeline grows.
+sits, so that is all this module says. Extend it to read the manifest's raw sections the kernel does
+not model - your own top-level keys - through CONTEXT.manifest_data() as your pipeline grows.
 """
 from __future__ import annotations
 
@@ -1091,9 +1091,9 @@ def next_steps(name: str, target: Path, *, orch_dir: str = DEFAULT_ORCH_DIR) -> 
         "Next steps:",
         f"  1. cd {target}",
         "  2. git init  (if this is a fresh repo)",
-        f"  3. fill in {product}.yaml with your real groups and commands",
+        f"  3. fill in {product}.yaml with your real commands, under `ci:` / `cd:` / `support:`",
         f"  4. run the CLI:  ./{product}.sh help",
-        f"  5. grow it: add groups + commands in {product}.yaml and impl callables in",
+        f"  5. grow it: add commands in {product}.yaml and impl callables in",
         f"       {pkg_dir}/cli.py",
     ])
 

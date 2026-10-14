@@ -243,6 +243,29 @@ def test_next_steps_names_the_product_and_the_target_but_no_submodule(tmp_path):
     assert "submodule" not in steps
 
 
+def test_next_steps_say_where_commands_go_in_the_keys_the_kernel_reads():
+    """si#404: the next steps told a new product to fill in "groups", a key the kernel now refuses."""
+    # act
+    steps = bootstrap.next_steps("fooctl", Path("fooctl"))
+
+    # assert
+    assert "groups" not in steps
+    assert "`ci:` / `cd:` / `support:`" in steps
+
+
+def test_the_scaffold_names_no_section_si344_removed():
+    # arrange: every file `simplon init` writes, launcher included
+    files = bootstrap.render("fooctl")
+
+    # act
+    stale = sorted(path for path, text in files.items()
+                   if "images/volumes" in text or "groups/commands" in text or "groups + commands" in text
+                   or "under an `images:` key" in text)
+
+    # assert
+    assert stale == []
+
+
 # --- the kernel is a pinned PyPI dependency now, not a -r include into a vendored submodule ------------
 
 def test_requirements_pin_the_kernel_by_version_and_do_not_repin_its_deps():
