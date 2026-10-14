@@ -55,5 +55,11 @@ template Docs {
         }
       }
     }
+    |
+    |**A release consumes the results of the tests on what it publishes.** Every publish leaf has an `evidence` input
+    |port accepting `test-result`. A command under `ci: release:` that consumes an artifact must bind
+    |every test result about it there, and at least one must exist (rule 6). A test result is about what its producer consumes, directly:
+    |a unit test of the source is not a test of the image built from it. The notes, the tag, the bundle and the evidence
+    |itself need none.
   }
 }

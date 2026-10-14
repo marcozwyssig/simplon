@@ -170,6 +170,50 @@ The loader holds every binding before anything runs:
 Several commands may produce one artifact (an everyday single-platform build beside the release's
 all-platform one); a plan picks one.
 
+### A release consumes its test results, and names one bundle
+
+A release is the chain the bindings draw: build produces the image, a test consumes it and produces a
+`test-result`, the publish consumes the image and the result as its `evidence`, and an aggregate under
+`ci: release:` names the bundle. This is simplon's own `simplon.yaml`:
+
+```yaml
+ci:
+  test:
+    commands:
+      image:
+        task: "test:image"
+        consumes: { image: kernel }
+        produces: { test-result: kernel-checked }
+        with: { argv: "simplon --help", expect: "usage: simplon" }
+  release:
+    commands:
+      notes: { task: "release:notes", produces: { release-notes: kernel-notes } }
+      tag: { task: "release:tag", consumes: { release-notes: kernel-notes }, produces: { tag: kernel-tag } }
+      push-image:
+        task: "release:image"
+        consumes:
+          image: kernel
+          evidence: [kernel-checked]
+      all:
+        depends_on: [notes, push-image, tag]
+        produces: { release: kernel-release }
+artifacts:
+  kernel-checked: { kind: test-result, path: build/test/kernel-image.json }
+  kernel-release: { kind: release }
+```
+
+Two rules hold the chain (the kinds page has [the ports](../../with-what/kinds/#ports)):
+
+- **Rule 6.** A release command that consumes an artifact must bind every test result about it to `evidence`.
+  A test result is about what its producer consumes, directly. With no such test the load refuses: "... and no
+  test produces a result about it - add a command under `ci: test:` ...". With one left unbound it refuses:
+  "... so no release goes past a test that ran". The four kinds a release produces about itself
+  (`test-result`, `release-notes`, `tag`, `release`) need no evidence.
+- **Rule 8.** Only an aggregate under `ci: release:` names an output, and it names exactly one, a
+  `kind: release` artifact. The load refuses "... only an aggregate under `ci: release:` does" and "... a
+  release aggregate names exactly one output", and it refuses a plan that lists `release:tag` before a publish
+  ("... a tag cut before the push it announces ..."), because a public tag is false if the push fails.
+
 ## Refining a platform command, and replacing one
 
 A command the catalogue already places can be refined in the product's own tree: change its `help:`, add

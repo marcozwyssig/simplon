@@ -156,3 +156,13 @@ def test_the_kinds_page_says_how_a_command_binds_a_port():
     assert "A manifest cannot bind a port yet" not in ports
     assert "`produces: { <port>: <artifact> }`" in ports
     assert "`consumes: { <port>: <artifact> }`" in ports
+
+
+def test_the_kinds_page_says_a_release_consumes_the_test_results():
+    # arrange
+    from pathlib import Path
+    text = (Path(__file__).resolve().parents[1] / "site" / "content" / "with-what" / "kinds.md").read_text(encoding="utf-8")
+
+    # assert
+    assert "`evidence`" in text
+    assert "every test result about" in text

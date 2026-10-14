@@ -205,6 +205,12 @@ does not have is a template, which is why `depends_on` is a command key and coul
 The rest of the mechanics - post-order walk, dedup, list order as execution order - are in [the
 manifest](../manifest/#aggregates-depends_on).
 
+An aggregate runs no body and binds no port. The one output it may name is a release's bundle,
+`produces: { release: <artifact> }`, and only under `ci: release:` (rule 8; see [the release
+chain](../manifest/#a-release-consumes-its-test-results-and-names-one-bundle)). `depends_on` reaches a leaf
+by a bare name only one group owns (#519), which is why simplon's publish leaf is `push-image` and not
+`image`: `build image` and `test image` already own that name.
+
 ## Refinement, and deliberate replacement
 
 Because the catalogue *places* some commands itself, a product's tree and the platform's can name the same
