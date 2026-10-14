@@ -86,3 +86,20 @@ def test_a_task_has_no_two_ports_of_one_name_on_one_side():
 
     # assert: `consumes: { image: ... }` must name exactly one port
     assert doubled == {}
+
+
+def test_the_model_has_no_second_source_for_what_a_reader_reads():
+    # arrange: KindReader was B2's placeholder ("Part C's ports replace it"); once ports exist it is a
+    # second statement of the same fact, and two statements drift
+    from pathlib import Path
+    model = Path(__file__).resolve().parents[1] / "firn" / "model"
+    template = Path(__file__).resolve().parents[1] / "firn" / "templates" / "schema.firnt"
+
+    # act
+    mentions = sorted(str(p.relative_to(model)) for p in model.rglob("*.firn") if "KindReader" in p.read_text())
+
+    # assert
+    assert mentions == []
+    assert "KindReader" not in template.read_text()
+    assert artifactschema.READERS == {c: p.accepts for c, ports in artifactschema.PORTS.items()
+                                      for p in ports if p.param == "name"}

@@ -41,20 +41,6 @@ template ArtifactSchema {
     }
     |}
     |
-    |#: The catalogue coordinate that reads ONE entry by name (`with: { name: ... }`) -> the kind it reads.
-    |#: `simplon manifest migrate` derives a kindless entry's kind from it.
-    |READERS: dict[str, str] = {
-    for r : `simplon.pipeline.KindReader` {
-      |    "${r.coordinate}": "${r.reads.name.replace("_", "-")}",
-    }
-    |}
-    |
-    |#: The catalogue coordinate -> the keys it needs, in the order a reader is told about them.
-    |NEEDS: dict[str, tuple[str, ...]] = {
-    for r : `simplon.pipeline.KindReader` {
-      |    "${r.coordinate}": (<<for f : r.needs>>"${f.key}", <<end>>),
-    }
-    |}
     |
     |
     |class Port(NamedTuple):
@@ -99,6 +85,13 @@ template ArtifactSchema {
       |    "${t.key}": "${t.body}",
     }
     |}
+    |
+    |#: The catalogue coordinate that reads ONE entry by name (`with: { name: ... }`) -> the kind it reads: its
+    |#: port that binds `name`. `simplon manifest migrate` derives a kindless entry's kind from it.
+    |READERS: dict[str, str] = {c: p.accepts for c, ports in PORTS.items() for p in ports if p.param == "name"}
+    |
+    |#: The catalogue coordinate -> the keys that port needs, in the order a reader is told about them.
+    |NEEDS: dict[str, tuple[str, ...]] = {c: p.needs for c, ports in PORTS.items() for p in ports if p.param == "name"}
     for k : `simplon.pipeline.ArtifactKind` {
       if not k.refines {
         |
