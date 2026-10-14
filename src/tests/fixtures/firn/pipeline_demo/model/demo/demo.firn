@@ -1,5 +1,10 @@
 package demo
 
+// The demo in the shape `support manifest model` exports (si#344 C.2/C.3): one Product owns every
+// artifact (`a_` children), its groups sit under their area, and a command REFERENCES what it produces
+// and consumes. A release aggregate composes its bundle. `test_firn_pipeline_e2e.py` asks every
+// SelectorRelation of simplon.pipeline for its value over this file.
+
 kimage typeOf simplon.pipeline.ArtifactKind {
 }
 kresult typeOf simplon.pipeline.ArtifactKind {
@@ -20,50 +25,61 @@ SaveImage typeOf simplon.pipeline.Task {
   body = "simplon.tasks.image:save"
 }
 
-build typeOf simplon.pipeline.Group {
-  area = simplon.pipeline.Area.ci
-  command image typeOf simplon.pipeline.TaskCommand {
-    task = demo.BuildImage
-    produces kernel typeOf simplon.pipeline.Artifact {
-      kind = demo.kimage
+demo typeOf simplon.manifest.Product {
+  key = "demo"
+  ci build typeOf simplon.pipeline.Group {
+    area = simplon.pipeline.Area.ci
+    command image typeOf simplon.pipeline.TaskCommand {
+      task = demo.BuildImage
+      produces = demo.demo.a_kernel
+    }
+    command save typeOf simplon.pipeline.TaskCommand {
+      task = demo.SaveImage
+      consumes = demo.demo.a_kernel
+      produces = demo.demo.a_kernel_archive
+    }
+    command all typeOf simplon.pipeline.AggregateCommand {
+      member = demo.demo.build.save
     }
   }
-  command save typeOf simplon.pipeline.TaskCommand {
-    task = demo.SaveImage
-    consumes = demo.build.image.kernel
-    produces kernel_archive typeOf simplon.pipeline.Artifact {
-      kind = demo.kimage
-      path = "build/image/kernel.tar"
+  ci test typeOf simplon.pipeline.Group {
+    area = simplon.pipeline.Area.ci
+    // two products on one command: `TaskCommand[produces == self]` compares the whole set and answers
+    // empty here (measured 2026-10-14), so this line is what keeps `TestResult.about` honest
+    command image typeOf simplon.pipeline.TaskCommand {
+      task = demo.TestImage
+      consumes = demo.demo.a_kernel
+      produces = demo.demo.a_log
+      produces = demo.demo.a_checked
     }
   }
-  command all typeOf simplon.pipeline.AggregateCommand {
-    member = demo.build.save
-  }
-}
-
-test typeOf simplon.pipeline.Group {
-  area = simplon.pipeline.Area.ci
-  command image typeOf simplon.pipeline.TaskCommand {
-    task = demo.TestImage
-    consumes = demo.build.image.kernel
-    produces checked typeOf simplon.pipeline.TestResult {
-      kind = demo.kresult
-      path = "build/test/image.json"
+  ci release typeOf simplon.pipeline.Group {
+    area = simplon.pipeline.Area.ci
+    command image typeOf simplon.pipeline.TaskCommand {
+      task = demo.PublishImage
+      consumes = demo.demo.a_kernel
+      consumes = demo.demo.a_checked
+    }
+    command all typeOf simplon.pipeline.ReleaseCommand {
+      member = demo.demo.release.image
+      release a_bundle typeOf simplon.pipeline.Release {
+        kind = demo.kbundle
+      }
     }
   }
-}
-
-release typeOf simplon.pipeline.Group {
-  area = simplon.pipeline.Area.ci
-  command image typeOf simplon.pipeline.TaskCommand {
-    task = demo.PublishImage
-    consumes = demo.build.image.kernel
-    consumes = demo.test.image.checked
+  artifacts a_kernel typeOf simplon.pipeline.Artifact {
+    kind = demo.kimage
   }
-  command all typeOf simplon.pipeline.ReleaseCommand {
-    member = demo.release.image
-    release bundle typeOf simplon.pipeline.Release {
-      kind = demo.kbundle
-    }
+  artifacts a_kernel_archive typeOf simplon.pipeline.Artifact {
+    kind = demo.kimage
+    path = "build/image/kernel.tar"
+  }
+  artifacts a_log typeOf simplon.pipeline.Artifact {
+    kind = demo.kresult
+    path = "build/test/image.log"
+  }
+  artifacts a_checked typeOf simplon.pipeline.TestResult {
+    kind = demo.kresult
+    path = "build/test/image.json"
   }
 }

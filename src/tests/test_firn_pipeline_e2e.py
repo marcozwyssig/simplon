@@ -25,7 +25,8 @@ needs_docker = pytest.mark.skipif(not docker_is_usable(), reason="no docker daem
 def demo(tmp_path):
     """The demo project with the real simplon.pipeline beside it, as one firn project."""
     shutil.copytree(DEMO, tmp_path, dirs_exist_ok=True)
-    shutil.copytree(SRC_FIRN / "model" / "simplon" / "pipeline", tmp_path / "model" / "simplon" / "pipeline")
+    for package in ("pipeline", "manifest"):   # the demo is shaped like the export: a Product owns it all
+        shutil.copytree(SRC_FIRN / "model" / "simplon" / package, tmp_path / "model" / "simplon" / package)
     return tmp_path
 
 
@@ -39,10 +40,21 @@ def test_simplons_own_firn_project_checks_clean():
 
 
 @needs_docker
+def test_the_demo_checks_clean(demo):
+    # arrange / act: `query` answers over a model `check` refuses (measured 2026-10-14: the demo still
+    # composed its artifacts under `produces` after C.2 made it an Association - E009 - and every query
+    # below stayed green), so a demo that has drifted from the metamodel is red here and not nowhere
+    rc, out = firn_rc(demo, "check")
+
+    # assert
+    assert rc == 0, out
+
+
+@needs_docker
 @pytest.mark.parametrize("selector, expected", [
-    ("TestResult.about", ["demo.build.image.kernel"]),
-    ("AggregateCommand.produced", ["demo.build.save.kernel_archive"]),
-    ("Release.published", ["demo.build.image.kernel", "demo.test.image.checked"]),
+    ("TestResult.about", ["demo.demo.a_kernel"]),
+    ("AggregateCommand.produced", ["demo.demo.a_kernel_archive"]),
+    ("Release.published", ["demo.demo.a_kernel", "demo.demo.a_checked"]),
 ])
 def test_every_selector_relation_answers_what_the_fixture_says(demo, selector, expected):
     # arrange / act
