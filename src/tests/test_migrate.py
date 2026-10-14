@@ -795,13 +795,14 @@ def test_a_migrated_real_manifest_assembles_the_cli_it_always_did(product):
     golden = json.loads((FIXTURES / "golden" / f"{product}.json").read_text())
     migrated = migrate_text(realmanifests.text(product))
 
-    # act / assert: a product the release rule refuses asserts the refusal, not the surface
-    if product in realmanifests.RELEASE_RULE_BILL:
-        with pytest.raises(ValueError, match="no test produces a result about it"):
-            manifest.load(migrated.text, catalogue=catalogue.load(), manifest_path=f"{product}.yaml")
-        return
-    surface = cli_surface(manifest.load(migrated.text, catalogue=catalogue.load(),
-                                        manifest_path=f"{product}.yaml"))
+    # act: a product the release rule refuses is answered in memory (realmanifests), so its surface is still held
+    surface = cli_surface(manifest.load(realmanifests.answer_release_rule(product, migrated.text),
+                                        catalogue=catalogue.load(), manifest_path=f"{product}.yaml"))
+
+    # assert: the one command the answer adds is taken out, as NEW_IN_EVERY_PRODUCT's are
+    if product in realmanifests.RELEASE_RULE_ANSWERS:
+        assert surface["groups"]["test"].remove(realmanifests.ADDED_TEST_COMMAND) is None
+        surface["commands"]["test"].pop(realmanifests.ADDED_TEST_COMMAND)
     for group, members in NEW_IN_EVERY_PRODUCT.items():
         assert surface["groups"].pop(group) == members
         surface["commands"].pop(group)
@@ -816,8 +817,9 @@ def test_the_release_rule_refuses_exactly_the_products_that_release_untested():
         try:
             manifest.load(migrated.text, catalogue=catalogue.load(), manifest_path=f"{product}.yaml")
         except ValueError as exc:
-            if "no test produces a result about it" in str(exc):
-                refused.add(product)
+            if "no test produces a result about it" not in str(exc):
+                raise
+            refused.add(product)
 
     # assert
     assert refused == realmanifests.RELEASE_RULE_BILL

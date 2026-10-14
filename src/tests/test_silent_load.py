@@ -65,6 +65,7 @@ def test_every_reachable_manifest_still_loads_after_migration():
             # products measured to release untested
             assert path.stem in realmanifests.RELEASE_RULE_BILL, (path.name, str(exc))
             assert "no test produces a result about it" in str(exc), (path.name, str(exc))
+            manifest.load(realmanifests.answer_release_rule(path.stem, result.text), catalogue=catalogue.load())
 
 
 @pytest.mark.parametrize("text", ["", "---\n", "# only a comment\n"])

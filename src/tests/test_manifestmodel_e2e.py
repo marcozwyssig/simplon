@@ -34,13 +34,11 @@ def test_there_are_eight_reachable_manifests():
 @pytest.mark.parametrize("name", NAMES)
 def test_a_reachable_manifest_exports_to_a_model_firn_accepts(tmp_path, name):
     # arrange
-    if name in realmanifests.RELEASE_RULE_BILL:
-        pytest.skip("the release rule refuses this fixture (si#344 C.3, RELEASE_RULE_BILL); "
-                    "its live manifest answers the rule, the frozen one does not")
     migrated = migrate_text(realmanifests.text(name))
     assert migrated.status == "migrated", migrated.reason
-    mf = manifest_mod.load(migrated.text, catalogue=catalogue.load(), manifest_path=f"{name}.yaml")
-    out = manifestmodel.export(mf, yaml.safe_load(migrated.text), name, manifestmodel.KERNEL_SECTIONS)
+    text = realmanifests.answer_release_rule(name, migrated.text)
+    mf = manifest_mod.load(text, catalogue=catalogue.load(), manifest_path=f"{name}.yaml")
+    out = manifestmodel.export(mf, yaml.safe_load(text), name, manifestmodel.KERNEL_SECTIONS)
     shutil.copy(SRC_FIRN_TOML, tmp_path / "firn.toml")
     shutil.copytree(SRC_FIRN, tmp_path / "firn")
     target = tmp_path / "firn" / "model" / "product" / manifestmodel.mangle(name)

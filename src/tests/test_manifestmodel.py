@@ -334,10 +334,7 @@ def _source(name: str) -> tuple[manifest_mod.Manifest, str]:
     """DEMO, or a reachable manifest migrated and loaded exactly as test_migrate's golden test does."""
     if name == "demo":
         return _load(DEMO), DEMO
-    if name in realmanifests.RELEASE_RULE_BILL:
-        pytest.skip("the release rule refuses this fixture (si#344 C.3, RELEASE_RULE_BILL); "
-                    "its live manifest answers the rule, the frozen one does not")
-    text = migrate_text(realmanifests.text(name)).text
+    text = realmanifests.answer_release_rule(name, migrate_text(realmanifests.text(name)).text)
     return manifest_mod.load(text, catalogue=catalogue.load(), manifest_path=f"{name}.yaml"), text
 
 
