@@ -803,7 +803,7 @@ tasks:
   # --- manifest: the product's own manifest as the thing worked on (si#344) -------------------------
   support:migrate:
     impl: simplon.tasks.migrate:migrate
-    help: "Rewrite this product's manifest from `groups:` to `ci:` / `cd:` / `support:` (si#344)."
+    help: "Rewrite this product's manifest into the current form (si#344): `groups:` into `ci:` / `cd:` / `support:`, `images:` into `artifacts:`, and `with: name` into `produces:` / `consumes:`."
     unattended: true
     params:
       manifest: { help: "the manifest to rewrite (default: this product's own)", argument: true }

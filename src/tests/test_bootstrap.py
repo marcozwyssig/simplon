@@ -525,6 +525,64 @@ def test_simplon_manifest_migrate_names_the_candidates_when_it_cannot_choose(tmp
     assert "found a.yaml, b.yaml here" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_simplon_manifest_migrate_help_is_help_and_reads_no_file(tmp_path, monkeypatch, capsys, flag):
+    """si#403: `--help` was handed to `migrate` as the manifest's file name and refused as unreadable."""
+    # arrange: a directory with one manifest, which a migration would otherwise default to
+    (tmp_path / "demo.yaml").write_text("product: demo\ngroups: {}\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    # act
+    rc = bootstrap.main(["manifest", "migrate", flag])
+
+    # assert: help, on stdout, rc 0 - and the manifest untouched
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert out.startswith("usage: simplon manifest migrate [MANIFEST]\n")
+    assert "cannot read it" not in out
+    assert (tmp_path / "demo.yaml").read_text(encoding="utf-8") == "product: demo\ngroups: {}\n"
+
+
+def test_simplon_manifest_migrate_help_says_what_support_manifest_migrate_says(capsys):
+    # arrange: two routes to one migration, so one description - the catalogue's
+    from simplon.domain import catalogue
+    described = catalogue.load().resolve("support:migrate")["help"]
+
+    # act
+    bootstrap.main(["manifest", "migrate", "--help"])
+
+    # assert
+    assert described in capsys.readouterr().out
+
+
+def test_simplon_manifest_migrate_refuses_an_unknown_option_as_usage_not_as_a_file(tmp_path, monkeypatch,
+                                                                                    capsys):
+    # arrange
+    monkeypatch.chdir(tmp_path)
+
+    # act
+    rc = bootstrap.main(["manifest", "migrate", "--dry-run"])
+
+    # assert: a usage error, rc 2, and no "cannot read it: --dry-run"
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert err.startswith("simplon manifest migrate: unknown option --dry-run\n")
+    assert "usage: simplon manifest migrate [MANIFEST]" in err
+
+
+def test_the_migrations_description_names_every_rewrite_it_makes():
+    """si#403: 0.30.0 rewrote `images:` into `artifacts:` too, and the help named only the `groups:` cut."""
+    # arrange
+    from simplon.domain import catalogue
+
+    # act
+    described = catalogue.load().resolve("support:migrate")["help"]
+
+    # assert
+    for rewrite in ("`groups:`", "`images:`", "`artifacts:`", "`with: name`", "`produces:`"):
+        assert rewrite in described
+
+
 @pytest.mark.parametrize("argv", [["manifest"], ["manifest", "migrat"], ["manifest", "--help"]])
 def test_simplon_manifest_without_a_known_subcommand_is_usage_and_scaffolds_nothing(tmp_path, monkeypatch,
                                                                                    capsys, argv):

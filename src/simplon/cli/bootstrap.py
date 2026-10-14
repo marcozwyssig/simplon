@@ -1109,6 +1109,16 @@ def _manifest_migrate(args: list[str]) -> int:
     This entry point loads no manifest at all.
     """
     from simplon.tasks import migrate as migrate_mod
+    if args[:1] in (["--help"], ["-h"]):
+        # The description is the catalogue's, so this route and `support manifest migrate --help` cannot
+        # say two different things about one migration (si#403: this one named only the `groups:` cut).
+        from simplon.domain import catalogue
+        print(f"{_MANIFEST_USAGE}\n\n{catalogue.load().resolve('support:migrate')['help']}")
+        return 0
+    if args[:1] and args[0].startswith("-"):
+        # An option this route does not have is a usage error, not a manifest whose file is missing.
+        print(f"simplon manifest migrate: unknown option {args[0]}\n{_MANIFEST_USAGE}", file=sys.stderr)
+        return 2
     if len(args) > 1:
         print(_MANIFEST_USAGE, file=sys.stderr)
         return 2
@@ -1168,7 +1178,8 @@ def main(argv: list[str] | None = None) -> int:
         print("simplon: nothing to do. The one command is `simplon init [<product>] [--dir DIR] "
               "[--orch-dir DIR] [--force]`, and the product name is optional inside a git repository; "
               "use `simplon init --help` for the options. The other is `simplon manifest migrate "
-              "[MANIFEST]`, which rewrites a manifest from `groups:` to `ci:` / `cd:` / `support:`.", file=sys.stderr)
+              "[MANIFEST]`, which rewrites a manifest into the current form; `simplon manifest migrate --help` "
+              "says what it rewrites.", file=sys.stderr)
         return 2
 
     parser = argparse.ArgumentParser(
