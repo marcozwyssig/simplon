@@ -30,8 +30,10 @@ template Docs {
     |A catalogue task takes and gives artifacts through its ports. A port accepts a kind and every kind that
     |refines it; a port that binds a parameter receives the bound artifact's name in it.
     |
-    |A manifest cannot bind a port yet: `produces:` and `consumes:` on a command arrive with a later release
-    |(si#344 C.2). Until then a command still selects its artifact with `with: { name: ... }`.
+    |A command binds a port with `produces: { <port>: <artifact> }` on an output and
+    |`consumes: { <port>: <artifact> }` on an input. The artifact is an `artifacts:` entry whose kind the port accepts.
+    |A port that binds a parameter hands the artifact's name to it; `with: { name: ... }` on that parameter is read as
+    |the same binding, and `simplon manifest migrate` rewrites it into the port's.
     |
     || Task | Port | Direction | Accepts | Binds |
     ||---|---|---|---|---|

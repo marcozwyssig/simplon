@@ -117,6 +117,16 @@ def check(document: Mapping[str, object], kinds: Mapping[str, str], source: str)
         _validated(kind, body, where)
 
 
+def declared(document: Mapping[str, object]) -> dict[str, tuple[str, bool]]:
+    """Each `artifacts:` entry -> (its kind, whether it names a `registry:`), for the port rules (si#344
+    C.2). `check` has refused an entry without a kind before this is asked."""
+    section = document.get(SECTION)
+    if not isinstance(section, Mapping):
+        return {}
+    return {str(name): (str(body["kind"]), bool(body.get("registry")))
+            for name, body in section.items() if isinstance(body, Mapping) and "kind" in body}
+
+
 def entry(section: Mapping[str, object], name: str, wanted: type[Entry], source: str, coordinate: str) -> Entry:
     """The entry `name`, validated as the generated model of its kind - `wanted`'s kind or one that refines
     it - and holding every key `coordinate` needs (`NEEDS`, in the model). A ValueError says which kind it is

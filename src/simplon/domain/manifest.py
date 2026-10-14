@@ -34,7 +34,8 @@ from typing import Any, Callable, NamedTuple, cast
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from simplon.domain import artifactsection, yamlkeys
+from simplon.domain import artifactsection, ports, yamlkeys
+from simplon.domain.artifactschema import Port
 from simplon.domain.clitaxonomy import CommandTaxonomy, TaxonomyNode, merge_trees
 from simplon.domain import treeform
 from simplon.kernel.plan import PlanNode
@@ -122,6 +123,12 @@ class CommandSpec(NamedTuple):
     unattended: bool | None = None
     with_: dict[str, object] = {}
     params: dict[str, "ParamPresentation"] = {}
+    # si#344 C.2: the `task:` this command named (a coordinate, or a product task's bare name; "" for an
+    # aggregate), the artifacts it binds to its task's ports, and those ports.
+    task: str = ""
+    produces: dict[str, tuple[str, ...]] = {}
+    consumes: dict[str, tuple[str, ...]] = {}
+    ports: tuple[Port, ...] = ()
 
 
 class ParamPresentation(NamedTuple):
@@ -388,6 +395,9 @@ class _CommandSpecModel(BaseModel):
     keep_awake: bool = False
     hidden: bool = False
     unattended: bool | None = None
+    task: str = ""
+    produces: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+    consumes: dict[str, tuple[str, ...]] = Field(default_factory=dict)
 
     @field_validator("impl", "help", mode="before")
     @classmethod
@@ -939,6 +949,8 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
                                   parallel=spec.parallel, keep_awake=spec.keep_awake,
                                   hidden=spec.hidden, unattended=spec.unattended,
                                   with_=spec.with_,
+                                  task=spec.task, produces=spec.produces, consumes=spec.consumes,
+                                  ports=ports.of(spec.task, product_tasks) if spec.task else (),
                                   params={pname: ParamPresentation(help=p.help, short=p.short,
                                                                    argument=p.argument,
                                                                    metavar=p.metavar,
@@ -986,8 +998,11 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
                 f"declare it there, or move its commands to a top-level group")
     if validate_with:
         _validate_param_bindings(commands)
-    return Manifest(groups=groups, env_groups=env_groups, commands=commands, tree=tree,
-                    generate=generate, areas=areas)
+    loaded = Manifest(groups=groups, env_groups=env_groups, commands=commands, tree=tree,
+                      generate=generate, areas=areas)
+    ports.check(loaded, artifactsection.declared(data),
+                getattr(catalogue, "kinds", {}) or artifactsection.REFINES)
+    return loaded
 
 
 def _catalogue_tree(declared: dict[str, dict],

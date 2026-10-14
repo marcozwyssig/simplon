@@ -252,9 +252,10 @@ def test_a_coordinate_resolves_against_the_catalogue():
     # act
     resolved = treeform.resolve(flat, PRODUCT_TASKS, CATALOGUE_TASKS)
 
-    # assert: impl and the template's help and params come along, and `task` is gone
+    # assert: impl and the template's help and params come along, and `task` is kept: the model and the
+    # port rules read it (si#344 C.2)
     assert resolved["support.git"]["push"] == {
-        "impl": "simplon.tasks.vcs:push", "help": "push it.",
+        "impl": "simplon.tasks.vcs:push", "help": "push it.", "task": "vcs:push",
         "params": {"remote": {"help": "the remote"}}}
 
 
@@ -269,7 +270,7 @@ def test_a_bare_name_resolves_against_the_product_and_the_command_keeps_its_own_
     # assert
     assert resolved["build"]["frr-image"] == {
         "impl": "orchestrator.tooling:lab_image", "help": "Build the FRR lab node image.",
-        "with": {"key": "frr"}}
+        "with": {"key": "frr"}, "task": "lab-image"}
 
 
 def test_two_commands_may_instantiate_one_task():
@@ -352,7 +353,7 @@ def test_a_command_pinning_a_parameter_the_template_declares_loads():
     # command line never shows
     assert resolved["build"]["frr-image"] == {
         "impl": "orchestrator.tooling:lab_image", "help": "build an image.",
-        "with": {"key": "frr", "dockerfile": "Frr"}}
+        "with": {"key": "frr", "dockerfile": "Frr"}, "task": "lab-image"}
 
 
 def test_one_command_pins_a_template_parameter_and_another_leaves_it_documented():

@@ -195,7 +195,7 @@ Short enough to state, and the half you most need, because everything else is yo
 
 `adapters.diskguard` · `adapters.oras` · `adapters.tools` · `cli.bootstrap` ·
 `domain.artifactschema` · `domain.catalogue` · `domain.clitaxonomy` · `domain.manifestmodel` ·
-`domain.runners` · `domain.signatures` · `domain.yamlkeys` · `kernel.moved` · `kernel.provenance` ·
+`domain.ports` · `domain.runners` · `domain.signatures` · `domain.yamlkeys` · `kernel.moved` · `kernel.provenance` ·
 `kernel.runhost` · `kernel.steplog` · `test_impls`
 
 `runners` needs a word too, because `workflowgen` beside it is a library module and this is not. It is a

@@ -598,6 +598,36 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("treeform", "_resolve_one", "declares `with:` as"): DIAGNOSIS,
     ("treeform", "_resolve_one", "names no task"): DIAGNOSIS,
     ("treeform", "_resolve_one", "with `with:` and also declares `params:`"): DIAGNOSIS,
+    # si#344 C.2 rule 7: a port binding and `with:` on the parameter it binds say one fact twice. When the two
+    # agree the manifest would have worked, so it is an expression rule (spec C.7); it binds the kernel too.
+    ("treeform", "_resolve_one", "binds a port and also pins"): EXPRESSION,
+    # si#344 C.2 final review: an aggregate runs no task, so a binding on it binds nothing (it crashed the loader
+    # before); and a bound parameter's `params:` renders nowhere, the `with:` refusal above for a binding.
+    ("treeform", "_resolve_one", "an aggregate runs no task"): DIAGNOSIS,
+    ("treeform", "_resolve_one", "which hands the artifact's name to"): DIAGNOSIS,
+    # --- ports.py (si#344 C.2) ------------------------------------------------------------------------
+    # A binding the task cannot take: no working meaning, so all four are diagnosis. Rule 4 (port names exist
+    # on the task) is the second; the spec files it under C.5 as a merged-reach diagnosis.
+    ("ports", "bindings", "binds a port to an artifact"): DIAGNOSIS,
+    ("ports", "bindings", "has no"): DIAGNOSIS,
+    ("ports", "_artifacts", "hands ONE artifact's name"): DIAGNOSIS,
+    ("ports", "_artifacts", "names an artifact"): DIAGNOSIS,
+    # A product task's port declaration the loader cannot read (si#344 C.2): diagnosis, each one.
+    ("ports", "declared", "not a mapping of port name to port"): DIAGNOSIS,
+    ("ports", "declared", "is not a mapping: it takes"): DIAGNOSIS,
+    ("ports", "declared", "a port takes"): DIAGNOSIS,
+    ("ports", "declared", "declares no `accepts:`"): DIAGNOSIS,
+    ("ports", "declared", "is the name of a body parameter"): DIAGNOSIS,
+    ("ports", "declared", "a port name says which port"): DIAGNOSIS,
+    # C.5 rules 1, 2, 3 and 5 (si#344 C.2), all diagnosis, merged (spec C.7). Rule 1 is per plan (decided
+    # 2026-10-14): firn's three producers of one image are a working product, and refusing them would have been
+    # an expression rule nobody measured.
+    ("ports", "check", "no kind the catalogue declares"): DIAGNOSIS,
+    ("ports", "check", "declare it there with its"): DIAGNOSIS,
+    ("ports", "check", "and the kinds that refine it"): DIAGNOSIS,
+    ("ports", "check", "and no command produces it"): DIAGNOSIS,
+    ("ports", "_check_plan", "plans two producers of"): DIAGNOSIS,
+    ("ports", "_check_plan", "first in `depends_on`"): DIAGNOSIS,
     ("treeform", "check_no_old_form", "is written in the flat command form"): EXPRESSION,
     # si#344, the cut. DIAGNOSIS, all of them: `_ManifestModel` ignores an unknown top-level key, so each of
     # these would otherwise load as a product with no commands, a deploy with no matrix or a site that is
@@ -923,6 +953,7 @@ REACH: dict[tuple[str, str, str], str] = {
     ("treeform", "_merge_commands", "is declared as one kind of command and refined as another"): REACH_MERGED,
     ("treeform", "_merge_commands", "redeclares `task:`"): REACH_MERGED,
     ("treeform", "_resolve_one", "declares `impl:`"): REACH_MERGED,
+    ("treeform", "_resolve_one", "binds a port and also pins"): REACH_MERGED,
     ("treeform", "_resolve_one", "declares both `task:` and `depends_on:`"): REACH_MERGED,
     ("treeform", "check_no_old_form", "is written in the flat command form"): REACH_SEAM,
     ("treeform", "check_coordinate_placement", "places the coordinate"): REACH_MERGED,

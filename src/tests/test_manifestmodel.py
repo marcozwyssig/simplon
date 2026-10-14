@@ -81,17 +81,20 @@ def test_a_name_that_is_not_a_firn_name_keeps_its_original_in_key():
 
 
 def test_a_command_runs_the_task_named_by_its_measured_impl():
-    # arrange: `build:image` resolves to this impl in today's catalogue (measured, not assumed)
-    assert _load().spec_for("build", "image").impl == "simplon.tasks.image:build"
+    # arrange: a product task, which no catalogue model carries (since si#344 C.2 a modelled catalogue task is
+    # referenced instead - `test_a_command_on_a_modelled_catalogue_task_references_it...`)
+    text = DEMO.replace("cd:\n", 'tasks:\n  wheel: { impl: "orchestrator.cli:build_wheel", help: "Build." }\n'
+                        "cd:\n").replace("      all:", "      wheel: { task: wheel }\n      all:")
+    assert _load(text).spec_for("build", "wheel").impl == "orchestrator.cli:build_wheel"
 
     # act
-    out = _export()
+    out = _export(text)
 
     # assert
-    assert "task = product.demo.demo.t_simplon_tasks_image_build" in _block(
-        out, "command image typeOf simplon.pipeline.TaskCommand {")
-    task = _block(out, "tasks t_simplon_tasks_image_build typeOf simplon.pipeline.Task {")
-    assert 'key = "simplon.tasks.image:build"' in task and 'body = "simplon.tasks.image:build"' in task
+    assert "task = product.demo.demo.t_orchestrator_cli_build_wheel" in _block(
+        out, "command wheel typeOf simplon.pipeline.TaskCommand {")
+    task = _block(out, "tasks t_orchestrator_cli_build_wheel typeOf simplon.pipeline.Task {")
+    assert 'key = "orchestrator.cli:build_wheel"' in task and 'body = "orchestrator.cli:build_wheel"' in task
 
 
 def test_an_aggregate_names_its_members_and_runs_no_task():
@@ -352,8 +355,9 @@ def test_the_export_drops_nothing(name):
     # everything else: `cd: site:` (nothing in the M2 holds a Site until a deploy reads one) and a
     # `tasks:` entry no command places (one Task per impl a command USES, R9). Both are left out of
     # every count below on purpose, and nothing here counts them.
-    impls = {mf.spec_for(group, command).impl for group, members in mf.groups.items() for command in members
-             if not mf.spec_for(group, command).depends_on}
+    from simplon.domain.artifactschema import PORTS
+    specs = [mf.spec_for(group, command) for group, members in mf.groups.items() for command in members]
+    impls = {s.impl for s in specs if not s.depends_on and s.task not in PORTS}
 
     # act
     out = manifestmodel.export(mf, document, name, manifestmodel.KERNEL_SECTIONS)
@@ -365,6 +369,48 @@ def test_the_export_drops_nothing(name):
     assert _count(out, r"environments \w+") == len(envs)
     assert len(re.findall(r"^  default = ", out, re.MULTILINE)) == (matrix["default"] is not None)
     assert impls and _count(out, r"tasks \w+") == len(impls)
+    assert len(re.findall(r"^\s+produces = ", out, re.MULTILINE)) == sum(
+        len(names) for s in specs for names in s.produces.values())
+    assert len(re.findall(r"^\s+consumes = ", out, re.MULTILINE)) == sum(
+        len(names) for s in specs for names in s.consumes.values())
     assert _count(out, r"artifacts \w+") == len(document.get("artifacts") or {})
     assert len(re.findall(r"typeOf simplon\.manifest\.(KernelSection|ProductData) \{$", out, re.MULTILINE)) == len(
         [key for key in document if key not in structure])
+
+
+BOUND = DEMO.replace('image: { task: "build:image" }',
+                     'image: { task: "build:image", produces: { image: kernel } }')
+
+
+def test_a_command_on_a_modelled_catalogue_task_references_it_and_declares_no_task_of_its_own():
+    # act
+    out = _export(BOUND)
+
+    # assert: si#344 C.2 - the catalogue task is the one source of its ports
+    command = _block(out, "command image typeOf simplon.pipeline.TaskCommand {")
+    assert "task = simplon.catalogue.build_image" in command
+    assert "t_simplon_tasks_image_build" not in out
+
+
+def test_a_binding_is_exported_as_a_reference_to_the_artifact():
+    # act
+    out = _export(BOUND)
+
+    # assert
+    assert "produces = product.demo.demo.a_kernel" in _block(
+        out, "command image typeOf simplon.pipeline.TaskCommand {")
+
+
+def test_a_product_tasks_ports_are_exported_on_its_task():
+    # arrange
+    text = BOUND.replace("cd:\n", 'tasks:\n  pack:\n    impl: "orchestrator.cli:pack"\n    help: "Pack."\n'
+                         "    output:\n      bundle: { accepts: directory, param: name }\n"
+                         "cd:\n").replace("      all:", "      pack: { task: pack }\n      all:")
+
+    # act
+    out = _export(text)
+
+    # assert
+    task = _block(out, "tasks t_orchestrator_cli_pack typeOf simplon.pipeline.Task {")
+    assert "output bundle typeOf simplon.pipeline.Port {" in task
+    assert "accepts = simplon.vocabulary.directory" in task and 'param = "name"' in task

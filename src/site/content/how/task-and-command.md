@@ -46,16 +46,16 @@ different answer to the second one twice over.
 
 ## Which keys belong to which
 
-A task takes exactly five keys:
+A task takes exactly seven keys:
 
 ```text
-impl   help   passthrough_args   params   unattended
+impl   help   passthrough_args   params   unattended   input   output
 ```
 
 A command takes those it needs to place a task, plus the ones that describe *this* placement:
 
 ```text
-task   with   help   params   hidden   keep_awake   stop_on_failure   parallel   depends_on   override
+task   with   produces   consumes   help   params   hidden   keep_awake   stop_on_failure   parallel   depends_on   override
 ```
 
 Three of the task's keys are **inherited** by every command that instantiates it unless the command says
@@ -99,11 +99,11 @@ are worth reading as a group, because together they are the whole of the rule.
 > task 'wheel' declares `with:`, which belongs on a command rather than on the task it instantiates. Move
 > it to the command under `ci:`, `cd:` or `support:`.
 
-**A task that declares a key nobody reads.** Anything outside the five is rejected rather than dropped,
+**A task that declares a key nobody reads.** Anything outside the seven is rejected rather than dropped,
 including keys that read as entirely plausible on a template:
 
 > task 'wheel' declares unknown key `group:`. A task takes impl, help, passthrough_args, params,
-> unattended - check the spelling.
+> unattended, input, output - check the spelling.
 
 **A task with no body at all.** The message names the alternative, because the mistake it usually
 represents is reaching for the wrong construct:
