@@ -29,6 +29,9 @@ those files, artefacts before metadata, and then runs the read-back it always ra
 NOT PROVEN: that GitHub's Maven registry accepts a plain PUT per file. `mvn deploy` does exactly that, and
 the client here is measured against a local HTTP server, but the machine this was written on has no
 `write:packages` token.
+UNMEASURED CONSEQUENCE: `push` uploads the staged `maven-metadata.xml*`, which lists only the staged version.
+If the registry honours a PUT over an existing metadata file, the module's version list is replaced by a
+one-version file; `mvn deploy` merges the remote metadata first and this task does not. Not fixed, not measured.
 
 AND THE VERIFICATION HAS THREE OUTCOMES, not two. `401` is not "the jar is missing", it is "we were not
 allowed to look", and reporting the second as the first sends a reader to the build file when the answer is
