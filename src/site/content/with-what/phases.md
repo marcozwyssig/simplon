@@ -144,7 +144,7 @@ the number that says whether a rib is filled:
 
 | namespace | kind | tasks in the catalogue today |
 |---|---|---|
-| `build` | phase, agnostic | 6 |
+| `build` | phase, agnostic | 7 |
 | `test` | phase, agnostic | 8 |
 | `release` | phase, agnostic | 7 |
 | `deploy` | phase, env-first | 3 |
@@ -155,7 +155,7 @@ the number that says whether a rib is filled:
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Fifty coordinates: thirty-eight carrying a placement, twelve free to be filed. The numbers in this sentence, in that
+Fifty-one coordinates: thirty-nine carrying a placement, twelve free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -179,13 +179,14 @@ it - or **placed**, written into the tree for everybody. The bar a placed comman
 *Produce the artefacts.* Whatever a product ships: a wheel, a container image, a bundle, a generated
 site.
 
-**In the catalogue today: 6 tasks.**
+**In the catalogue today: 7 tasks.**
 
 - `build:cmake-files`
 - `build:conan-cache`
 - `build:dotnet-solution`
 - `build:image`
 - `build:nuget-config`
+- `build:nuget-pack`
 - `build:nuget-restore`
 
 **What a product brings itself.** The artefact, and the source tree the two generators read. There are

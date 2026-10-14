@@ -674,13 +674,24 @@ tasks:
   # does not authenticate against a feed that wants an Authorization header, the `<apikeys>` config
   # section cannot hold one on Linux at all, and a push against a source that already carries
   # credentials needs no key. See src/simplon/tasks/nuget.py for the transcripts.
-  release:nuget:
-    impl: simplon.tasks.nuget:publish
-    help: "Pack the declared project and push it to GitHub's NuGet feed."
+  # si#344 C.3: PACK AND PUSH ARE TWO TASKS, so the package exists between them and a test can consume it.
+  # The release rule (spec C.3) asks for a test result about what a release publishes, and a package that
+  # first existed inside its own push could not have one. `build:nuget-pack` writes it to the entry's
+  # `path:`; `release:nuget` pushes exactly the package that path holds for the version.
+  build:nuget-pack:
+    impl: simplon.tasks.nuget:pack
+    help: "Pack the declared project into the artifact's path, as the version the tag names."
     unattended: true
     params:
-      name: { help: "the artifact to publish (normally pinned per command with `with:`)" }
-      tag:  { help: "the package version to publish, for one only known after a build" }
+      name: { help: "the artifact to pack (normally bound with `produces:`)" }
+      tag:  { help: "the package version, for one only known after a build" }
+  release:nuget:
+    impl: simplon.tasks.nuget:push
+    help: "Push the package `build:nuget-pack` wrote for this version to GitHub's NuGet feed."
+    unattended: true
+    params:
+      name: { help: "the artifact to push (normally bound with `consumes:`)" }
+      tag:  { help: "the package version to push, for one only known after a build" }
   # si#128, and the comment is the ticket's own warning: GitHub Packages has NO Conan registry - the
   # kinds it serves are npm, RubyGems, Maven, Gradle, NuGet and Docker/Container. So this is a
   # TRANSPORT, not a remote. `conan cache save` writes a .tgz, this moves it into the registry as an OCI

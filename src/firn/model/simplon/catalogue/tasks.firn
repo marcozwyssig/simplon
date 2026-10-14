@@ -2,6 +2,7 @@
 // Measured from the bodies on 2026-10-14 (docs/superpowers/plans/2026-10-14-si344-c1-ports-on-catalogue-tasks.md):
 // all ten readers by name take `name`; the direction is what the body does with the entry. A port is named
 // after the kind it accepts, so a product can guess it; `toolchain:run`'s two are the spec's `source`/`out`.
+// si#344 C.3 (decided 2026-10-14): release:nuget and release:maven are split into a pack task (output) and a push task (input), so a test can sit between them.
 // `key` and `body` repeat catalogue.yaml's coordinate and impl until si#400 generates those from here;
 // src/tests/test_catalogue_ports.py holds the two to each other.
 package simplon.catalogue
@@ -98,15 +99,26 @@ build_nuget_restore typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.nuget.f_project
   }
 }
+build_nuget_pack typeOf simplon.pipeline.CatalogueTask {
+  key = "build:nuget-pack"
+  body = "simplon.tasks.nuget:pack"
+  output nuget typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.nuget
+    param = "name"
+    needs = simplon.vocabulary.nuget.f_image
+    needs = simplon.vocabulary.nuget.f_project
+    needs = simplon.vocabulary.artifact.f_path
+  }
+}
 release_nuget typeOf simplon.pipeline.CatalogueTask {
   key = "release:nuget"
-  body = "simplon.tasks.nuget:publish"
+  body = "simplon.tasks.nuget:push"
   input nuget typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.nuget
     param = "name"
     needs = simplon.vocabulary.artifact.f_registry
     needs = simplon.vocabulary.nuget.f_image
-    needs = simplon.vocabulary.nuget.f_project
+    needs = simplon.vocabulary.artifact.f_path
   }
 }
 release_maven typeOf simplon.pipeline.CatalogueTask {

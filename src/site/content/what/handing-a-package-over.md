@@ -32,10 +32,11 @@ artifacts:
     registry: nuget.pkg.github.com/marcozwyssig
     image: mcr.microsoft.com/dotnet/sdk:9.0
     project: src/Core/Core.csproj
+    path: build/nuget
     tag: 1.4.0
 ```
 
-`release:nuget` runs `dotnet pack` and then `dotnet nuget push`, both inside the pinned SDK image. The
+`build:nuget-pack` runs `dotnet pack` into the entry's `path:` and `release:nuget` runs `dotnet nuget push` on the package it wrote, both inside the pinned SDK image. The
 version comes from `--tag` if you pass one and from `tag:` if you do not - the same rule
 `release:artifact` follows, and for the same reason: some products know their number before the build
 and some only after it.

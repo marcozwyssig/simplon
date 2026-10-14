@@ -182,7 +182,7 @@ def test_a_use_names_the_first_key_its_coordinate_needs_and_all_of_them():
 
     # assert: decision B - the same entry is enough for `build:nuget-config`, which needs a registry only
     assert str(caught.value) == ("demo.yaml: 'artifacts.lib' declares no `image:`, which release:nuget needs - "
-                                 "it reads registry, image, project")
+                                 "it reads registry, image, path")
     assert artifactsection.entry({"lib": {"kind": "nuget", "registry": "nuget.pkg.github.com/o"}}, "lib",
                                  artifactschema.NugetEntry, "demo.yaml", "build:nuget-config").registry
 
