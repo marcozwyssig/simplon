@@ -606,6 +606,7 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # si#344 C.2 final review: an aggregate runs no task, so a binding on it binds nothing (it crashed the loader
     # before); and a bound parameter's `params:` renders nowhere, the `with:` refusal above for a binding.
     ("treeform", "_resolve_one", "an aggregate runs no task"): DIAGNOSIS,
+    ("treeform", "_resolve_one", "an aggregate's one output is"): DIAGNOSIS,
     ("treeform", "_resolve_one", "which hands the artifact's name to"): DIAGNOSIS,
     # --- ports.py (si#344 C.2) ------------------------------------------------------------------------
     # A binding the task cannot take: no working meaning, so all four are diagnosis. Rule 4 (port names exist
@@ -636,6 +637,12 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("ports", "_check_results", "so only a command under `ci: test:` produces one"): EXPRESSION,
     ("ports", "_check_release", "and no test produces a result about it"): EXPRESSION,
     ("ports", "_check_release", "so no release goes past a test that ran"): EXPRESSION,
+    # si#344 C.3 rule 8: a release is one aggregate naming one bundle, and its tag follows every publish.
+    ("ports", "_check_bundles", "only an aggregate under `ci: release:` does"): EXPRESSION,
+    ("ports", "_check_bundles", "a release aggregate names exactly"): EXPRESSION,
+    ("ports", "_check_bundles", "declare it with `kind: release`"): DIAGNOSIS,
+    ("ports", "_check_bundles", "the bundle is a `kind: release`"): DIAGNOSIS,
+    ("ports", "_check_bundles", "a tag cut before"): DIAGNOSIS,
     # `domain.results` (si#344 C.3) raises too, at RUN time around a body; it is in READS_INLINE, so the walk
     # does not follow it and its three refusals are in neither count - measured: keys for them matched nothing.
     ("treeform", "check_no_old_form", "is written in the flat command form"): EXPRESSION,
@@ -943,6 +950,8 @@ REACH: dict[tuple[str, str, str], str] = {
     ("ports", "_check_results", "so only a command under `ci: test:` produces one"): REACH_MERGED,
     ("ports", "_check_release", "and no test produces a result about it"): REACH_MERGED,
     ("ports", "_check_release", "so no release goes past a test that ran"): REACH_MERGED,
+    ("ports", "_check_bundles", "only an aggregate under `ci: release:` does"): REACH_MERGED,
+    ("ports", "_check_bundles", "a release aggregate names exactly"): REACH_MERGED,
     # si#5's one expression rule. MERGED: this kernel's own manifest goes through the same parser, so a
     # stray key under a carrier of simplon's own would be refused exactly the same way. It declares no
     # carrier today, which is why the claim is about the parser rather than about a placement.

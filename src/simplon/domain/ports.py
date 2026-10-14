@@ -124,6 +124,10 @@ def check(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared
     for group, members in manifest.commands.items():
         for name, spec in members.items():
             where = f"{group} {name}"
+            if not spec.task:
+                for artifact in (a for names in spec.produces.values() for a in names):
+                    producers.setdefault(artifact, []).append(where)
+                continue
             for port in spec.ports:
                 if port.accepts not in kinds:
                     raise ValueError(
@@ -155,8 +159,48 @@ def check(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared
         for name, spec in members.items():
             if spec.depends_on:
                 _check_plan(manifest, f"{group} {name}", manifest.plan_for(name, group=group))
+    _check_bundles(manifest, declared, kinds)
     about = _check_results(manifest, declared, kinds)
     _check_release(manifest, declared, kinds, about)
+
+
+def _check_bundles(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared"],
+                   kinds: Mapping[str, str]) -> None:
+    """Rule 8 (spec C.4, C.5): only an aggregate under `ci: release:` names an output, exactly one, of kind
+    `release`; and its plan cuts no `release:tag` before a publish member. A publish member is one whose
+    task takes evidence - an input port accepting `test-result` - so the set is derived, not listed."""
+    for group, members in manifest.commands.items():
+        for name, spec in members.items():
+            if spec.task or not spec.produces:
+                continue
+            where = f"{group} {name}"
+            if (manifest.area_of(group), _top(group)) != ("ci", "release"):
+                raise ValueError(
+                    f"aggregate '{where}' names an output, and only an aggregate under `ci: release:` does - "
+                    f"its one output is the release bundle")
+            if list(spec.produces) != ["release"] or len(spec.produces["release"]) != 1:
+                raise ValueError(
+                    f"aggregate '{where}' names {', '.join(spec.produces)}: a release aggregate names exactly "
+                    f"one output, `produces: {{ release: <artifact> }}`")
+            bundle = spec.produces["release"][0]
+            if bundle not in declared:
+                raise ValueError(
+                    f"aggregate '{where}' names the bundle '{bundle}', and `artifacts:` declares no "
+                    f"'{bundle}' - declare it with `kind: release`")
+            if not artifactsection.accepts(kinds, "release", declared[bundle].kind):
+                raise ValueError(
+                    f"aggregate '{where}' names '{bundle}', a `{declared[bundle].kind}`, as its release - the "
+                    f"bundle is a `kind: release`")
+            plan = manifest.plan_for(name, group=group)
+            specs = [manifest.spec_by_name(step) for step in plan]
+            publishes = [at for at, s in enumerate(specs)
+                         if s and any(p.direction == "input" and p.accepts == "test-result" for p in s.ports)]
+            for at, (step, s) in enumerate(zip(plan, specs)):
+                if s and s.task == "release:tag" and publishes and at < max(publishes):
+                    raise ValueError(
+                        f"aggregate '{where}' plans '{step}' before '{plan[max(publishes)]}' - a tag cut before "
+                        f"the push it announces is a public statement that is false if the push fails; list "
+                        f"the tag after every publish in `depends_on`")
 
 
 def _check_plan(manifest: "Manifest", aggregate: str, plan: tuple[str, ...]) -> None:

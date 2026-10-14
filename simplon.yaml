@@ -331,6 +331,11 @@ ci:
           - check
   release:
     commands:
+      # The release as one act (si#344 C.3, spec C.4): the notes, the image and the tag are three leaves
+      # because each fails differently, and `all` plans them in the one order that keeps a failed push
+      # from leaving a public tag behind. Its bundle is derived from what the leaves produce and consume.
+      notes: { task: "release:notes", produces: { release-notes: kernel-notes } }
+      #
       # The release itself (#32). Simplon cuts its own releases with the command it ships, for the same
       # reason it builds and tests itself with itself: a step never run in its own house rots unseen, and
       # this one had rotted the furthest - it was the only part of the loop that lived in the README as
@@ -344,7 +349,7 @@ ci:
       # Note what is NOT here: a version. There is nowhere to put one. `pyproject.toml` declares
       # `dynamic = ["version"]`, setuptools-scm derives the number from the tag, and the tag is the
       # argument - so `./simplon.sh release tag v0.1.14` IS the whole act of choosing 0.1.14.
-      tag: { task: "release:tag" }
+      tag: { task: "release:tag", consumes: { release-notes: kernel-notes }, produces: { tag: kernel-tag } }
       # Publishing that image (si#200, moved to ghcr by si#313). Since 2026-10-10 EVERY RELEASE does it:
       # release.yml's `image` job runs this command after the wheel is on PyPI, with the run's own
       # GITHUB_TOKEN, and then opens the pull request that moves deploy/image/image.pin. It used to be on
@@ -360,6 +365,10 @@ ci:
         consumes:
           image: kernel
           evidence: [kernel-checked]
+      all:
+        depends_on: [notes, push-image, tag]
+        produces: { release: kernel-release }
+        help: "Write the notes, publish the tested image, then cut the tag."
 
 support:
   commands:
@@ -564,6 +573,15 @@ artifacts:
   kernel-checked:
     kind: test-result
     path: build/test/kernel-image.json
+  # The release's own artifacts (si#344 C.3): the notes `release notes` writes, the tag `release tag` cuts
+  # (no path - its value is the tag name) and the bundle `release all` names, whose content is derived.
+  kernel-notes:
+    kind: release-notes
+    path: build/release/notes.md
+  kernel-tag:
+    kind: tag
+  kernel-release:
+    kind: release
 
 # The release notes' three values (si#89), and there is nothing else the kernel may know about them.
 #

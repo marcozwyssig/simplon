@@ -477,7 +477,7 @@ def test_the_kernels_own_manifest_rules_on_as_many_placements_as_before_the_tran
     tree level. A drop means the rule stopped applying to something. The one addition is
     `support:migrate`, the catalogue's own placement under `support` (the `support.manifest` subgroup), and
     since si#346 `support:model` beside it; since si#344 C.3 simplon places `test:image` itself, to test its
-    own image (17 + 3 = 20)."""
+    own image, and `release:notes` for its release (17 + 4 = 21)."""
     # arrange
     calls = []
     original = treeform.check_coordinate_placement
@@ -492,4 +492,4 @@ def test_the_kernels_own_manifest_rules_on_as_many_placements_as_before_the_tran
         manifest_mod.load((ROOT / "simplon.yaml").read_text(), catalogue=catalogue_mod.load())
 
     # assert
-    assert calls == [PLACEMENTS_BEFORE_THE_TRANSPARENT_LEVEL + 3]
+    assert calls == [PLACEMENTS_BEFORE_THE_TRANSPARENT_LEVEL + 4]

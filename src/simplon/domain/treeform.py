@@ -595,11 +595,20 @@ def _resolve_one(spec: dict, where: str, product_tasks: dict, catalogue_tasks: d
             f"once under `tasks:` and point this command at it with `task:`")
     ref = spec.pop("task", None)
     if ref is None:
-        for key in ("produces", "consumes"):
-            if key in spec:
+        if "consumes" in spec:
+            raise ValueError(
+                f"command '{where}' declares `consumes:`, and an aggregate runs no task, so it has no port to "
+                f"bind - bind the port on the command that runs the task")
+        produced = spec.get("produces")
+        if produced is not None:
+            # si#344 C.3: the one output an aggregate names is its release bundle; which aggregates may name
+            # one, and what kind it is, is rule 8 (ports._check_bundles), decided over the loaded manifest.
+            if not isinstance(produced, dict) or not produced \
+                    or not all(isinstance(v, str) and v.strip() for v in produced.values()):
                 raise ValueError(
-                    f"command '{where}' declares `{key}:`, and an aggregate runs no task, so it has no port to "
-                    f"bind - bind the port on the command that runs the task")
+                    f"command '{where}' declares `produces:` as {produced!r}: an aggregate's one output is "
+                    f"written `produces: {{ release: <artifact> }}`")
+            spec["produces"] = {str(k): (v.strip(),) for k, v in produced.items()}
         if not spec.get("depends_on"):
             raise ValueError(
                 f"command '{where}' declares neither `task:` nor `depends_on:`. A command either "

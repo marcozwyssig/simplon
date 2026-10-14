@@ -293,14 +293,22 @@ def test_a_plan_that_consumes_before_it_produces_is_refused():
                        "'make' produces - list 'make' first in `depends_on`")
 
 
-@pytest.mark.parametrize("key", ["produces", "consumes"])
-def test_an_aggregate_that_binds_a_port_is_refused_not_crashed(key):
+def test_an_aggregate_that_consumes_is_refused_not_crashed():
     # act: an aggregate runs no task, so it has no port to bind (final review, si#344 C.2)
-    message = _refusal(BUILD + f'      all: {{ help: "h", depends_on: [image], {key}: {{ image: local }} }}\n')
+    message = _refusal(BUILD + '      all: { help: "h", depends_on: [image], consumes: { image: local } }\n')
 
     # assert
-    assert message == (f"command 'build all' declares `{key}:`, and an aggregate runs no task, so it has no "
-                       f"port to bind - bind the port on the command that runs the task")
+    assert message == ("command 'build all' declares `consumes:`, and an aggregate runs no task, so it has no "
+                       "port to bind - bind the port on the command that runs the task")
+
+
+def test_an_aggregate_outside_ci_release_that_produces_is_refused_by_rule_8():
+    # act: since si#344 C.3 an aggregate may name its one output, but only under `ci: release:`
+    message = _refusal(BUILD + '      all: { help: "h", depends_on: [image], produces: { release: local } }\n')
+
+    # assert
+    assert message == ("aggregate 'build all' names an output, and only an aggregate under `ci: release:` does - "
+                       "its one output is the release bundle")
 
 
 def test_a_params_entry_on_a_bound_parameter_names_the_binding_not_with():
