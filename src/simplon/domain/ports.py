@@ -11,8 +11,14 @@ loader writes the binding into the command's `with:`. A port without one is chec
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
+
+from simplon.domain import artifactsection
 
 from simplon.domain.artifactschema import PORTS, Port
+
+if TYPE_CHECKING:
+    from simplon.domain.manifest import Manifest
 
 #: The command key that binds each direction's ports.
 SIDE = {"output": "produces", "input": "consumes"}
@@ -107,3 +113,65 @@ def _artifacts(where: str, key: str, port: Port, value: object) -> tuple[str, ..
     raise ValueError(
         f"command '{where}' binds port '{port.name}' to {value!r}: `{key}:` names an artifact"
         + (", or a list of them on a port without `param:`" if key == "consumes" else ""))
+
+
+def check(manifest: "Manifest", declared: Mapping[str, tuple[str, bool]], kinds: Mapping[str, str]) -> None:
+    """Load rules 1, 2, 3 and 5 (spec C.5, si#344 C.2) over the loaded manifest. All four are diagnosis."""
+    producers: dict[str, list[str]] = {}
+    consumers: list[tuple[str, str]] = []
+    for group, members in manifest.commands.items():
+        for name, spec in members.items():
+            where = f"{group} {name}"
+            for port in spec.ports:
+                if port.accepts not in kinds:
+                    raise ValueError(
+                        f"command '{where}': port '{port.name}' of task '{spec.task}' accepts '{port.accepts}', "
+                        f"which is no kind the catalogue declares - it declares: {', '.join(kinds)}")
+            for key, side in (("produces", spec.produces), ("consumes", spec.consumes)):
+                for port_name, artifacts in side.items():
+                    port = next(p for p in spec.ports if p.name == port_name)
+                    for artifact in artifacts:
+                        if artifact not in declared:
+                            raise ValueError(
+                                f"command '{where}' binds '{artifact}' to port '{port_name}', and `artifacts:` "
+                                f"declares no '{artifact}' - declare it there with its `kind:`")
+                        kind = declared[artifact][0]
+                        if not artifactsection.accepts(kinds, port.accepts, kind):
+                            raise ValueError(
+                                f"command '{where}' binds '{artifact}', a `{kind}`, to port '{port_name}', which "
+                                f"accepts `{port.accepts}` and the kinds that refine it")
+                        if key == "produces":
+                            producers.setdefault(artifact, []).append(where)
+                        else:
+                            consumers.append((where, artifact))
+    for where, artifact in consumers:
+        if artifact not in producers and not declared[artifact][1]:
+            raise ValueError(
+                f"command '{where}' consumes '{artifact}', and no command produces it - produce it with a "
+                f"command, or give it a `registry:` it is fetched from")
+    for group, members in manifest.commands.items():
+        for name, spec in members.items():
+            if spec.depends_on:
+                _check_plan(manifest, f"{group} {name}", manifest.plan_for(name, group=group))
+
+
+def _check_plan(manifest: "Manifest", aggregate: str, plan: tuple[str, ...]) -> None:
+    """Rule 1 per plan (decided 2026-10-14) and rule 5: one producer of an artifact in a plan, planned
+    before every consumer of it there."""
+    made: dict[str, tuple[int, str]] = {}
+    for at, step in enumerate(plan):
+        spec = manifest.spec_by_name(step)
+        for artifact in (a for names in (spec.produces if spec else {}).values() for a in names):
+            if artifact in made:
+                raise ValueError(
+                    f"aggregate '{aggregate}' plans two producers of '{artifact}': '{made[artifact][1]}' and "
+                    f"'{step}' - one plan builds an artifact once, so plan one of them")
+            made[artifact] = (at, step)
+    for at, step in enumerate(plan):
+        spec = manifest.spec_by_name(step)
+        for artifact in (a for names in (spec.consumes if spec else {}).values() for a in names):
+            if artifact in made and made[artifact][0] > at:
+                producer = made[artifact][1]
+                raise ValueError(
+                    f"aggregate '{aggregate}' plans '{step}' before '{producer}', and '{step}' consumes "
+                    f"'{artifact}', which '{producer}' produces - list '{producer}' first in `depends_on`")

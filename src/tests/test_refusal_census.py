@@ -615,6 +615,15 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("ports", "declared", "declares no `accepts:`"): DIAGNOSIS,
     ("ports", "declared", "is the name of a body parameter"): DIAGNOSIS,
     ("ports", "declared", "a port name says which port"): DIAGNOSIS,
+    # C.5 rules 1, 2, 3 and 5 (si#344 C.2), all diagnosis, merged (spec C.7). Rule 1 is per plan (decided
+    # 2026-10-14): firn's three producers of one image are a working product, and refusing them would have been
+    # an expression rule nobody measured.
+    ("ports", "check", "no kind the catalogue declares"): DIAGNOSIS,
+    ("ports", "check", "declare it there with its"): DIAGNOSIS,
+    ("ports", "check", "and the kinds that refine it"): DIAGNOSIS,
+    ("ports", "check", "and no command produces it"): DIAGNOSIS,
+    ("ports", "_check_plan", "plans two producers of"): DIAGNOSIS,
+    ("ports", "_check_plan", "first in `depends_on`"): DIAGNOSIS,
     ("treeform", "check_no_old_form", "is written in the flat command form"): EXPRESSION,
     # si#344, the cut. DIAGNOSIS, all of them: `_ManifestModel` ignores an unknown top-level key, so each of
     # these would otherwise load as a product with no commands, a deploy with no matrix or a site that is

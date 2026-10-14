@@ -998,8 +998,11 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
                 f"declare it there, or move its commands to a top-level group")
     if validate_with:
         _validate_param_bindings(commands)
-    return Manifest(groups=groups, env_groups=env_groups, commands=commands, tree=tree,
-                    generate=generate, areas=areas)
+    loaded = Manifest(groups=groups, env_groups=env_groups, commands=commands, tree=tree,
+                      generate=generate, areas=areas)
+    ports.check(loaded, artifactsection.declared(data),
+                getattr(catalogue, "kinds", {}) or artifactsection.REFINES)
+    return loaded
 
 
 def _catalogue_tree(declared: dict[str, dict],

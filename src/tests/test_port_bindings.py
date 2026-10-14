@@ -162,6 +162,7 @@ tasks:
 def test_a_product_task_declares_ports_and_its_command_binds_them():
     # act
     spec = _load("  build:\n    commands:\n"
+                 '      site: { task: "docs:site", produces: { site: web } }\n'
                  "      pack: { task: pack, consumes: { site: web }, produces: { bundle: docs } }\n",
                  tasks=PRODUCT_TASK,
                  artifacts=ARTIFACTS + "  web: { kind: site, path: build/site }\n").spec_for("build", "pack")
@@ -193,3 +194,101 @@ def test_a_port_declaration_the_loader_cannot_read_is_refused(ports, fragment):
     # assert
     assert message.startswith("task 'pack' ")
     assert fragment in message
+
+
+BUILD = '  build:\n    commands:\n      image: { task: "build:image", produces: { image: local } }\n'
+
+
+def test_an_artifact_no_entry_declares_is_refused():
+    # act: rule 3 cannot hold a kind it does not know
+    message = _refusal("  build:\n    commands:\n"
+                       '      image: { task: "build:image", produces: { image: ghost } }\n')
+
+    # assert
+    assert message == ("command 'build image' binds 'ghost' to port 'image', and `artifacts:` declares no "
+                       "'ghost' - declare it there with its `kind:`")
+
+
+def test_an_artifact_of_a_kind_the_port_does_not_accept_is_refused():
+    # act: rule 3, kind conformance through `refines`
+    message = _refusal("  build:\n    commands:\n"
+                       '      image: { task: "build:image", produces: { image: docs } }\n')
+
+    # assert
+    assert message == ("command 'build image' binds 'docs', a `directory`, to port 'image', which accepts "
+                       "`image` and the kinds that refine it")
+
+
+def test_a_port_that_accepts_the_root_kind_takes_every_kind():
+    # act: `toolchain:run`'s ports accept `artifact`, which every kind refines
+    m = _load(BUILD + '      tool: { task: "toolchain:run", consumes: { source: [local, docs] } }\n')
+
+    # assert
+    assert m.spec_for("build", "tool").consumes == {"source": ("local", "docs")}
+
+
+def test_a_product_port_accepting_a_kind_the_catalogue_lacks_is_refused():
+    # arrange
+    tasks = 'tasks:\n  pack:\n    impl: "orchestrator.cli:pack"\n    help: "Pack."\n' \
+            "    output:\n      bundle: { accepts: tarball }\n"
+
+    # act
+    message = _refusal("  build:\n    commands:\n      pack: { task: pack }\n", tasks=tasks)
+
+    # assert
+    assert message.startswith("command 'build pack': port 'bundle' of task 'pack' accepts 'tarball', which is "
+                              "no kind the catalogue declares - it declares: artifact")
+
+
+def test_a_consumer_with_no_producer_and_no_registry_is_refused():
+    # act: rule 2
+    message = _refusal("  release:\n    commands:\n"
+                       '      image: { task: "release:image", consumes: { image: local } }\n')
+
+    # assert
+    assert message == ("command 'release image' consumes 'local', and no command produces it - produce it "
+                       "with a command, or give it a `registry:` it is fetched from")
+
+
+def test_a_consumer_of_an_artifact_with_a_registry_needs_no_producer():
+    # act: rule 2's exception, an external input (si#343)
+    m = _load("  release:\n    commands:\n"
+              '      image: { task: "release:image", consumes: { image: kernel } }\n')
+
+    # assert
+    assert m.spec_for("release", "image").consumes == {"image": ("kernel",)}
+
+
+def test_several_producers_of_one_artifact_load_when_no_plan_holds_two():
+    # act: firn's three `build:image` for one image (decided 2026-10-14)
+    m = _load("  build:\n    commands:\n"
+              '      image: { task: "build:image", with: { name: kernel, platform: linux/amd64 } }\n'
+              '      image-all: { task: "build:image", with: { name: kernel } }\n')
+
+    # assert
+    assert m.spec_for("build", "image-all").produces == {"image": ("kernel",)}
+
+
+def test_a_plan_holding_two_producers_of_one_artifact_is_refused():
+    # act: rule 1, per plan
+    message = _refusal("  build:\n    commands:\n"
+                       '      image: { task: "build:image", produces: { image: kernel } }\n'
+                       '      image-all: { task: "build:image", produces: { image: kernel } }\n'
+                       '      all: { depends_on: [image, image-all], help: "Everything." }\n')
+
+    # assert
+    assert message == ("aggregate 'build all' plans two producers of 'kernel': 'image' and 'image-all' - one "
+                       "plan builds an artifact once, so plan one of them")
+
+
+def test_a_plan_that_consumes_before_it_produces_is_refused():
+    # act: rule 5 - the run order is `depends_on`, and this one contradicts the data
+    message = _refusal("  build:\n    commands:\n"
+                       '      make: { task: "build:image", produces: { image: local } }\n'
+                       "  release:\n    commands:\n"
+                       '      ship: { task: "release:image", consumes: { image: local } }\n'
+                       '      all: { depends_on: [ship, make], help: "Release." }\n')
+
+    # assert
+    assert message == ("aggregate 'release all' plans 'ship' before 'make', and 'ship' consumes 'local', which "
+                       "'make' produces - list 'make' first in `depends_on`")

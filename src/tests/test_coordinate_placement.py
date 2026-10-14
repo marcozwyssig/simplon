@@ -395,6 +395,11 @@ AGILE_COCKPIT = textwrap.dedent("""
             push: {}
             prune-branches: {}
             submodules: {}
+    # si#344 C.2: the image both commands bind, as the real manifest declares it - rule 3 holds a binding
+    # to a declared artifact at load
+    artifacts:
+      app: { kind: image, registry: ghcr.io/marcozwyssig, repository: agile-cockpit,
+             dockerfile: deploy/Dockerfile, context: ".", tag: latest }
 """)
 
 
