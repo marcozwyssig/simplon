@@ -511,6 +511,37 @@ support:
     install: { task: "support:install" }
 """
 
+#: The container route's check that the kernel which runs is the image's own (si#366), as one line of
+#: Python both launchers paste after `pip install --user`. A `simplon==` pin in requirements.txt other
+#: than the image's own was installed into the user base, which comes first on sys.path, and every command
+#: then ran that kernel and said nothing.
+#:
+#: RUN AS `python -I`, AND THAT IS THE POINT. Isolated mode keeps the user site off sys.path, so the
+#: simplon this compares against is the image's - and the code doing the comparing is the image's
+#: interpreter with no kernel import at all. A check inside the kernel would run in the shadow itself, and
+#: the shadow that matters is the OLD one (a requirements.txt left behind by an image bump), which would
+#: not carry it. `-I` also ignores PYTHONUSERBASE, so the user base is handed over as an argument.
+#:
+#: AN EDITABLE INSTALL IS NOT A SHADOW: `-e .` is how simplon's own requirements.txt runs the working tree
+#: being developed, on purpose. Only an index install of another version is refused.
+#:
+#: ONE LINE, AND NO CHARACTER EITHER SHELL TOUCHES inside double quotes - no `$`, backtick, `"`, `\\`, `!`
+#: for bash; no `%`, `^`, `&`, `|`, `<`, `>` for cmd.exe. `test_the_check_survives_both_launchers_quoting`
+#: holds that, and the argv is: user base, requirements file, pin file, product - the last three only for
+#: the sentence.
+USERBASE_CHECK = (
+    "import sys,sysconfig; from importlib import metadata as m; ub,req,pin,prod=sys.argv[1:5]; "
+    "site=sysconfig.get_path('purelib','posix_user',{'userbase':ub}); "
+    "found=[d for d in m.distributions(path=[site]) if (d.metadata['Name'] or '').lower()=='simplon']; "
+    "own=m.version('simplon'); "
+    "bad=[d.version for d in found if not d.version==own and not 'editable' in (d.read_text('direct_url.json') or '')]; "
+    "bad and print(prod+': '+req+' pins simplon '+bad[0]+', and pip installed it over the simplon '+own+' the kernel "
+    "image carries ('+pin+'), so every command would run '+bad[0]+' - make the simplon pin there and the image "
+    "in that file agree, and run again.',file=sys.stderr); "
+    "sys.exit(2 if bad else 0)"
+)
+
+
 def _render_launcher(name: str, template: str, orch_dir: str) -> str:
     """Read a launcher template from package data and fill in the product name + the block dir.
 
@@ -537,7 +568,8 @@ def _render_launcher(name: str, template: str, orch_dir: str) -> str:
     # files("simplon") and then joinpath -- not files("simplon.templates"):
     # the templates directory is not a package and has no __init__.py.
     raw = files("simplon").joinpath("templates", template).read_text(encoding="utf-8")
-    return (raw.replace("{{ product }}", name)
+    return (raw.replace("{{ userbase_check }}", USERBASE_CHECK)
+               .replace("{{ product }}", name)
                .replace("{{ product_env_prefix }}", env_var_name(name).removesuffix("_ENV"))
                .replace("{{ orch_dir_win }}", orch_dir.replace("/", "\\"))
                .replace("{{ orch_dir }}", orch_dir))

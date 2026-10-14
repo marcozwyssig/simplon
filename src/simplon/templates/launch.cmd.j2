@@ -179,6 +179,8 @@ python -c "import os,sys; s,r=sys.argv[1],sys.argv[2]; sys.exit(0 if os.path.exi
 if errorlevel 1 (
     if not exist "%LAUNCH_ROOT%\build\container\python" mkdir "%LAUNCH_ROOT%\build\container\python"
     docker run %DOCKER_ARGS% %DOCKER_ENV% "%KERNEL_IMAGE%" pip install --user -q --disable-pip-version-check --root-user-action=ignore --no-warn-script-location -r "%ORCH_IN_SRC%/requirements.txt" || exit /b 1
+    rem si#366: a simplon the install put over the image's own would run instead of it, silently.
+    docker run %DOCKER_ARGS% %DOCKER_ENV% "%KERNEL_IMAGE%" python -I -c "{{ userbase_check }}" /src/build/container/python "{{ orch_dir_win }}\requirements.txt" "deploy\image\image.pin" "{{ product }}" || exit /b 2
     docker run %DOCKER_ARGS% %DOCKER_ENV% "%KERNEL_IMAGE%" python -c "import pathlib,os; p=pathlib.Path('/src/build/container/python/.deps-stamp'); p.touch()" || exit /b 1
 )
 

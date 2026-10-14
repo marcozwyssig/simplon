@@ -281,6 +281,12 @@ if [ "$DELIVERY_ROUTE" = container ]; then
         "${DOCKER_RUN[@]}" --name "$(_launch_name)" "$KERNEL_IMAGE" \
             pip install --user -q --disable-pip-version-check --root-user-action=ignore \
                 --no-warn-script-location -r "$ORCH_IN_SRC/requirements.txt"
+        # A simplon the install put over the image's own would run instead of it, silently (si#366). The
+        # check is the image's interpreter in isolated mode; on a refusal the stamp is not written, so the
+        # next run installs and checks again.
+        "${DOCKER_RUN[@]}" --name "$(_launch_name)" "$KERNEL_IMAGE" \
+            python -I -c "import sys,sysconfig; from importlib import metadata as m; ub,req,pin,prod=sys.argv[1:5]; site=sysconfig.get_path('purelib','posix_user',{'userbase':ub}); found=[d for d in m.distributions(path=[site]) if (d.metadata['Name'] or '').lower()=='simplon']; own=m.version('simplon'); bad=[d.version for d in found if not d.version==own and not 'editable' in (d.read_text('direct_url.json') or '')]; bad and print(prod+': '+req+' pins simplon '+bad[0]+', and pip installed it over the simplon '+own+' the kernel image carries ('+pin+'), so every command would run '+bad[0]+' - make the simplon pin there and the image in that file agree, and run again.',file=sys.stderr); sys.exit(2 if bad else 0)" /src/build/container/python \
+                "${REQ#"$ROOT/"}" "${LAUNCH_IMAGE_PIN#"$ROOT/"}" "$LAUNCH_PRODUCT" || exit 2
         touch "$CSTAMP"
     fi
 
