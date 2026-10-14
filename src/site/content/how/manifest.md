@@ -174,7 +174,16 @@ all-platform one); a plan picks one.
 
 A release is the chain the bindings draw: build produces the image, a test consumes it and produces a
 `test-result`, the publish consumes the image and the result as its `evidence`, and an aggregate under
-`ci: release:` names the bundle. This is simplon's own `simplon.yaml`:
+`ci: release:` names the bundle.
+
+The evidence is **declared and ordered, never read**. The load checks that every test result a release
+needs is bound to it; nothing at run time opens the record. The publish bodies do not read the verdict, so
+a red record on disk is not told apart from a green one when the release runs. What keeps an untested image
+out of the registry today is the step order: release.yml runs `build image`, then `test image`, then
+`release push-image`, and stops at the first failure, as `release all` does with `stop_on_failure: true`.
+Reading the verdict at release time is open work (si#344, C.4 or later).
+
+This is simplon's own `simplon.yaml`:
 
 ```yaml
 ci:
@@ -197,6 +206,7 @@ ci:
       all:
         depends_on: [notes, push-image, tag]
         produces: { release: kernel-release }
+        stop_on_failure: true
 artifacts:
   kernel-checked: { kind: test-result, path: build/test/kernel-image.json }
   kernel-release: { kind: release }
@@ -212,7 +222,16 @@ Two rules hold the chain (the kinds page has [the ports](../../with-what/kinds/#
 - **Rule 8.** Only an aggregate under `ci: release:` names an output, and it names exactly one, a
   `kind: release` artifact. The load refuses "... only an aggregate under `ci: release:` does" and "... a
   release aggregate names exactly one output", and it refuses a plan that lists `release:tag` before a publish
-  ("... a tag cut before the push it announces ..."), because a public tag is false if the push fails.
+  ("... a tag cut before the push it announces ..."), because a public tag is false if the push fails. It
+  also refuses a release aggregate without `stop_on_failure: true` ("... leaves `stop_on_failure` false"):
+  the order holds at run time only if a failed member stops the plan.
+
+`release all` **states** the release - its members, its bundle and their one safe order, checked at load -
+and with `stop_on_failure` a failed leaf stops the plan. It is not yet a release you run: an aggregate
+passes no arguments to its leaves, and `release notes` and `release tag` both need the tag, so
+`./simplon.sh release all` stops at `notes` with "which release?" and runs nothing after it. Passing the tag
+through an aggregate is open (si#344). Until then a release starts with `./simplon.sh release tag vX`, and
+release.yml runs the rest in the same order.
 
 ## Refining a platform command, and replacing one
 

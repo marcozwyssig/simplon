@@ -643,6 +643,9 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("ports", "_check_bundles", "declare it with `kind: release`"): DIAGNOSIS,
     ("ports", "_check_bundles", "the bundle is a `kind: release`"): DIAGNOSIS,
     ("ports", "_check_bundles", "a tag cut before"): DIAGNOSIS,
+    # final review of si#344 C.3: an order the load checks is only an order the run keeps if a failed
+    # member stops the plan. A release aggregate that may not say `stop_on_failure: false` - expression.
+    ("ports", "_check_bundles", "leaves `stop_on_failure` false"): EXPRESSION,
     # `domain.results` (si#344 C.3) raises too, at RUN time around a body; it is in READS_INLINE, so the walk
     # does not follow it and its three refusals are in neither count - measured: keys for them matched nothing.
     ("treeform", "check_no_old_form", "is written in the flat command form"): EXPRESSION,
@@ -952,6 +955,7 @@ REACH: dict[tuple[str, str, str], str] = {
     ("ports", "_check_release", "so no release goes past a test that ran"): REACH_MERGED,
     ("ports", "_check_bundles", "only an aggregate under `ci: release:` does"): REACH_MERGED,
     ("ports", "_check_bundles", "a release aggregate names exactly"): REACH_MERGED,
+    ("ports", "_check_bundles", "leaves `stop_on_failure` false"): REACH_MERGED,
     # si#5's one expression rule. MERGED: this kernel's own manifest goes through the same parser, so a
     # stray key under a carrier of simplon's own would be refused exactly the same way. It declares no
     # carrier today, which is why the claim is about the parser rather than about a placement.

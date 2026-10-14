@@ -331,9 +331,17 @@ ci:
           - check
   release:
     commands:
-      # The release as one act (si#344 C.3, spec C.4): the notes, the image and the tag are three leaves
-      # because each fails differently, and `all` plans them in the one order that keeps a failed push
-      # from leaving a public tag behind. Its bundle is derived from what the leaves produce and consume.
+      # The release's members (si#344 C.3, spec C.4): the notes, the image and the tag are three leaves
+      # because each fails differently. `all` STATES the release - its members, its bundle, and the one
+      # order that keeps a failed push from leaving a public tag behind - and the load checks that order
+      # (rule 8). `stop_on_failure: true` is what makes the order hold at run time: without it a failed
+      # push would not stop the plan, and the tag would still be cut. Rule 8 refuses the aggregate
+      # without it.
+      #
+      # IT IS NOT YET A RUNNABLE RELEASE. An aggregate passes no arguments to its leaves, and `notes` and
+      # `tag` both need the tag: `./simplon.sh release all` stops at `notes` with "which release?" and
+      # runs nothing after it. Passing the tag through an aggregate is open (si#344). Until then the
+      # release is `./simplon.sh release tag vX`, and release.yml runs the rest in this same order.
       notes: { task: "release:notes", produces: { release-notes: kernel-notes } }
       #
       # The release itself (#32). Simplon cuts its own releases with the command it ships, for the same
@@ -368,7 +376,8 @@ ci:
       all:
         depends_on: [notes, push-image, tag]
         produces: { release: kernel-release }
-        help: "Write the notes, publish the tested image, then cut the tag."
+        stop_on_failure: true
+        help: "The release's members in their one safe order: notes, image, tag (the tag is not passed through yet, si#344)."
 
 support:
   commands:

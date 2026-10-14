@@ -72,8 +72,8 @@ an argument.
 | kind | today | what it costs a product |
 | --- | --- | --- |
 | diagnosis | 227 | nothing - the declaration had no working meaning |
-| expression rule | 35 | something it could otherwise have said |
-| **all load-time refusals** | **262** | |
+| expression rule | 36 | something it could otherwise have said |
+| **all load-time refusals** | **263** | |
 
 si#396 added two diagnoses: `claude.requires:` must be a list of executable names. Whether a named
 executable is on PATH is asked of the machine, so it refuses at run time and is not counted here.
@@ -121,7 +121,7 @@ Self-binding is not a third bucket of refusals; it is how far an expression rule
 
 | reach | count | meaning |
 | --- | --- | --- |
-| the kernel is held to it too | 28 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
+| the kernel is held to it too | 29 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
 | a statement about the platform/product seam | 7 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
 | the kernel exempts itself | 0 | there is no longer a rule the kernel declines to apply to itself |
 

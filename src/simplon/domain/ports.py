@@ -167,7 +167,8 @@ def check(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared
 def _check_bundles(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared"],
                    kinds: Mapping[str, str]) -> None:
     """Rule 8 (spec C.4, C.5): only an aggregate under `ci: release:` names an output, exactly one, of kind
-    `release`; and its plan cuts no `release:tag` before a publish member. A publish member is one whose
+    `release`; it sets `stop_on_failure: true`, so a failed member stops the plan; and its plan cuts no
+    `release:tag` before a publish member. A publish member is one whose
     task takes evidence - an input port accepting `test-result` - so the set is derived, not listed."""
     for group, members in manifest.commands.items():
         for name, spec in members.items():
@@ -191,6 +192,11 @@ def _check_bundles(manifest: "Manifest", declared: Mapping[str, "artifactsection
                 raise ValueError(
                     f"aggregate '{where}' names '{bundle}', a `{declared[bundle].kind}`, as its release - the "
                     f"bundle is a `kind: release`")
+            if not spec.stop_on_failure:
+                raise ValueError(
+                    f"aggregate '{where}' names a release and leaves `stop_on_failure` false - without it a "
+                    f"failed publish leaf does not stop the plan, so the tag ordered last would still be cut; "
+                    f"set `stop_on_failure: true`")
             plan = manifest.plan_for(name, group=group)
             specs = [manifest.spec_by_name(step) for step in plan]
             publishes = [at for at, s in enumerate(specs)

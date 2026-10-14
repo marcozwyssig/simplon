@@ -61,5 +61,10 @@ template Docs {
     |every test result about it there, and at least one must exist (rule 6). A test result is about what its producer consumes, directly:
     |a unit test of the source is not a test of the image built from it. The notes, the tag, the bundle and the evidence
     |itself need none.
+    |
+    |The evidence is declared and ordered, never read. The load checks the binding; no publish body opens the record,
+    |so a red verdict on disk is not told apart from a green one when the release runs. Only the step order (build,
+    |then test, then publish, stopping at the first failure) keeps an untested artifact out of a registry. Reading the
+    |verdict at release time is open work (si#344, C.4 or later).
   }
 }
