@@ -313,7 +313,9 @@ a release the read-back proves this run put the artefact there, for a snapshot i
 there, because an earlier run may have left it. One sentence covering both claims would be the weaker of the
 two.
 
-The gradle task is fixed and not the product's to name: the pack runs `publishAllPublicationsToSimplonStagingRepository` into a file repository, and `release:maven` uploads what was staged and reads it back. The read-back always runs, and the read-back always runs (si#337). 0.24.0 let the entry name
+The gradle task is fixed and not the product's to name: the pack runs
+`publishAllPublicationsToSimplonStagingRepository` into a file repository, and `release:maven` uploads what was
+staged and reads it back. The read-back always runs (si#337). 0.24.0 let the entry name
 another one with `task:`, and si#334 measured the cost: `task: publishToMavenLocal` reaches no registry, so
 the read-back found nothing and reported a green local publish as a failed release, with a wrong diagnosis.
 The key was too wide rather than too weakly checked - this coordinate claims "the jars are in the registry,

@@ -39,7 +39,10 @@ artifacts:
 `build:nuget-pack` runs `dotnet pack` inside the pinned SDK image and writes `<id>.<version>.nupkg` into the
 artifact's `path:`. `release:nuget` then runs `dotnet nuget push` on exactly that file. They are two commands so
 that a test can consume the package in between: the release rule asks for a test result about every artifact a
-release publishes (si#344). The version comes from `--tag` if you pass one and from `tag:` if you do not - the same rule
+release publishes (si#344). The jar side has the same shape: `build:maven-pack` stages the modules into the
+artifact's `path:` and `release:maven` uploads exactly what was staged and reads it back.
+
+The version comes from `--tag` if you pass one and from `tag:` if you do not - the same rule
 `release:artifact` follows, and for the same reason: some products know their number before the build
 and some only after it.
 

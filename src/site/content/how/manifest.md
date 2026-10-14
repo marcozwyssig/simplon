@@ -492,7 +492,8 @@ Each kind's keys and their shapes are checked when the manifest loads - a list w
 string or a number where a string does (`tag: 25` is the tag `25`) - and a key the kind does not take is
 refused by name, with the nearest key it does take, because otherwise it would be ignored without a word.
 What a task NEEDS it is told when it runs, all at once: `release:nuget` needs `registry`, `image` and
-`path`; `build:nuget-pack` needs `image`, `project` and `path`; `build:nuget-config` only `registry`, so one entry can serve both. The refusal of an unknown key
+`path`; `build:nuget-pack` needs `image`, `project` and `path`; `build:nuget-config` only `registry`, so one entry
+can serve both. The refusal of an unknown key
 lists the keys the kind does take; your own code asks `simplon.domain.artifactsection.is_a(kind, "image")` rather
 than comparing `kind` to a string, so a kind that refines `image` is one too. Before si#344 B2 `path:` was called `source:`,
 `images:` was a section of its own, and an entry needed no `kind:`; the loader refuses each of those by

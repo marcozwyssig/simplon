@@ -160,5 +160,5 @@ def test_the_page_says_a_package_is_packed_by_one_command_and_pushed_by_another(
     text = _text()
 
     # assert
-    assert "`build:nuget-pack`" in text
+    assert "`build:nuget-pack`" in text and "`build:maven-pack`" in text
     assert "a test can consume the package in between" in text
