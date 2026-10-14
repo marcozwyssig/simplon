@@ -1238,6 +1238,25 @@ def test_a_failing_smoke_run_still_writes_its_record_with_the_failure(cli, _no_p
     assert record["verdict"] == 2
 
 
+def test_a_smoke_run_refused_before_it_runs_leaves_no_earlier_record_behind(cli, _no_provenance, _product,
+                                                                           _tagged, monkeypatch):
+    # arrange: yesterday's green record, and an image the daemon does not hold today (final review, C.3)
+    text = (_product / "demo.yaml").read_text(encoding="utf-8")
+    (_product / "demo.yaml").write_text(
+        text + "  app-checked: { kind: test-result, path: build/test/app.json }\n", encoding="utf-8")
+    stale = _product / "build" / "test" / "app.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text('{"image": "app", "verdict": 0, "runs": []}\n', encoding="utf-8")
+    monkeypatch.setattr(image, "present_locally", lambda ref: False)
+
+    # act
+    rc = image.smoke("app", argv="check", results="app-checked")
+
+    # assert
+    assert rc == 1
+    assert not stale.exists()
+
+
 # --- the pointer a build leaves behind (si#314) --------------------------------------------------------
 
 def test_a_build_records_what_it_produced_under_the_output_directory(cli, _no_provenance, _product,

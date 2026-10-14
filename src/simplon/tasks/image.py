@@ -650,16 +650,21 @@ def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect
 
     **`results` is the test result the verdict record goes to** (si#344 C.3): the command binds it with
     `produces: { test-result: <artifact> }`. The record is written on a red run too - a release reads it as
-    evidence that the test RAN, and the rc says how it went.
+    evidence that the test RAN, and the rc says how it went. A run refused before it runs writes none, and
+    removes the record an earlier run left there, so no stale verdict outlives the refusal.
     """
     cfg, root = _declared_for(name, "test:image")
+    # Resolved before docker starts, so an entry that is not a test result is refused before anything runs.
+    # And an earlier run's record goes BEFORE any refusal below (final review of si#344 C.3): a run that
+    # stops at an absent image or a bad mount must not leave yesterday's `"verdict": 0` beside today's rc 1.
+    record_path = results_mod.path_of(results) if results else None
+    if record_path is not None:
+        record_path.unlink(missing_ok=True)
     docker.ensure_docker()
     resolved = resolve_tag(cfg, tag, build_arguments(cfg, root).get(VERSION_ARG, ""))
     ref = reference(cfg, resolved)
     if not _platform_declared(cfg, name, platform):
         return 1
-    # Resolved before docker starts, so an entry that is not a test result is refused before anything runs.
-    record_path = results_mod.path_of(results) if results else None
     runs = ([(each, platform_reference(ref, each)) for each in ([platform] if platform else cfg.platforms)]
             if cfg.platforms else [("", ref)])
     absent = [each for _, each in runs if not present_locally(each)]
