@@ -198,9 +198,8 @@ READS_INLINE = {
                    "which modules call the document accessor, and a module that borrows another's reader "
                    "calls it nowhere. Three manifest refusals were invisible to the count. Reading the "
                    "section here is what makes the module visible, and the wider hole - a refusal "
-                   "decided on manifest values obtained through ANOTHER module's reader, which this "
-                   "derivation cannot see at all - is reported as its own ticket rather than left in a "
-                   "comment",
+                   "decided on manifest values obtained through ANOTHER module's reader - was si#331, "
+                   "and BORROWS_A_READER now holds it",
     "adapters.tracker": "`declared()` reads the `tracker:` section inline at the front of the one function that "
                "reaches a tracker, the same shape as tasks.releasenotes - and it refuses the same way, "
                "with `log.error` and a None, because it is called after a person has answered a walk "
@@ -216,6 +215,29 @@ READS_INLINE = {
                            "validation is `ctx.manifest()`, which IS the walked seam, and the export's "
                            "own refusals (`ModelExportError`) are raised at run time, after the load, "
                            "and are caught, with RuntimeError from an unreadable document, into rc 1 (si#346)",
+}
+
+#: Modules that use ANOTHER module's manifest reader without calling the accessor themselves (si#331).
+#:
+#: `tasks/maven.py` first imported `_declared` from `tasks/nuget`, refused on what it returned, and every
+#: check stayed green: both populations are derived from who CALLS `manifest_data()`, and a module that
+#: borrows a reader calls it nowhere. Measured again on main after si#399: with maven's entries removed and
+#: the import put back, `test_refusal_census.py` and `test_manifest_top_level.py` were 280 passed.
+#:
+#: So a module that names a reader function of another module - called, or handed on as a reference - is
+#: a reader too, and it is accounted for here with the reason it decides nothing on what it borrows, or
+#: it reads the section itself and joins READS_INLINE. EXACTLY, so an entry outliving its use goes red.
+#: What this cannot see, said rather than discovered: a manifest value passed in as an ARGUMENT by a
+#: caller that read it, rather than fetched through a borrowed function.
+BORROWS_A_READER = {
+    "cli": "hands `labinstance.declared_id` and `outputs.log_directory` to `runhost.RunHost` as references "
+           "for the run transcript's header and the step logs (si#391); it calls neither and refuses "
+           "nothing on what they return",
+    "tasks.nexus": "`nexus` is a thin task over `nexusproxy.dispatch`, which reads the `nexus:` section "
+                   "itself and is the module the census accounts for; this module raises nothing",
+    "tasks.walk": "`file_tickets` asks `tracker.declared()` where to file, after a person has answered; a "
+                  "missing `tracker:` section is reported by tracker itself with `log.error` and a None, "
+                  "and none of this module's raises decides on the destination (si#206)",
 }
 
 #: The funnel that re-raises a Pydantic error as the plain ValueError `load()` promises. It refuses
@@ -1098,6 +1120,54 @@ def _inline_readers() -> tuple[str, ...]:
     return tuple(sorted(out))
 
 
+
+def _calls_the_accessor(node: ast.AST) -> bool:
+    return any(isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+               and call.func.attr == DOCUMENT_ACCESSOR for call in ast.walk(node))
+
+
+@functools.lru_cache(maxsize=None)
+def _reader_functions(dotted: str) -> frozenset[str]:
+    """The functions of one module that reach `manifest_data()`, themselves or through a module-local call."""
+    module = _module(dotted)
+    hit = {name for name, bodies in module.funcs.items() if any(_calls_the_accessor(b) for b in bodies)}
+    grew = True
+    while grew:
+        grew = False
+        for name, bodies in module.funcs.items():
+            if name not in hit and any(isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                                       and call.func.id in hit for b in bodies for call in ast.walk(b)):
+                hit.add(name)
+                grew = True
+    return frozenset(hit)
+
+
+@functools.lru_cache(maxsize=None)
+def _borrowers() -> dict[str, tuple[str, ...]]:
+    """Modules that use another module's reader function and do not call the accessor themselves (si#331).
+
+    A use is `module.reader` - called or handed on - or `from simplon.module import reader`.
+    """
+    out: dict[str, set[str]] = {}
+    for dotted in _kernel_modules():
+        module = _module(dotted)
+        if _calls_the_accessor(module.tree):
+            continue
+        used: set[str] = set()
+        for node in ast.walk(module.tree):
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+                target = module.imports.get(node.value.id)
+                if target and target != dotted and node.attr in _reader_functions(target):
+                    used.add(f"{target}.{node.attr}")
+            elif isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("simplon."):
+                base = node.module[len("simplon."):]
+                if _module_file(base):
+                    used.update(f"{base}.{alias.name}" for alias in node.names
+                                if alias.name in _reader_functions(base))
+        if used:
+            out[dotted] = used
+    return {dotted: tuple(sorted(used)) for dotted, used in sorted(out.items())}
+
 # --- which top-level SECTIONS the kernel reads (si#346) ---------------------------------------------------
 #
 # The firn model of a manifest (`simplon.manifest`) has one property per section the kernel reads, and the
@@ -1573,6 +1643,30 @@ def test_every_module_that_reads_the_manifest_is_accounted_for():
         f"READS_INLINE names a module that no longer reads the manifest: "
         f"{sorted(set(READS_INLINE) - touching)}")
 
+
+
+def test_a_module_that_borrows_another_modules_reader_is_accounted_for():
+    """si#331: the test above asks who CALLS the accessor, and a module that borrows a reader calls it nowhere.
+
+    That is how `tasks/maven.py` joined with three manifest refusals and nothing red. A module that uses
+    another module's reader function is accounted for in BORROWS_A_READER, with the reason it decides
+    nothing on what it borrows - or it reads the section itself and the test above takes it.
+    """
+    # arrange: the readers exist at all, so an empty answer below would mean something
+    assert any(_reader_functions(dotted) for dotted in _kernel_modules()), (
+        "no kernel function reaches the accessor - the walk is broken, and the comparison below would "
+        "mean nothing")
+
+    # act
+    borrowers = _borrowers()
+
+    # assert
+    assert set(borrowers) == set(BORROWS_A_READER), (
+        "a module uses another module's manifest reader without reading the manifest itself, so its "
+        "refusals on what it borrows are in neither half of the census. Read the section in the module "
+        "(then the test above accounts for it), or say in BORROWS_A_READER why it decides nothing on it - "
+        f"new: { {m: borrowers[m] for m in sorted(set(borrowers) - set(BORROWS_A_READER))} }, "
+        f"gone: {sorted(set(BORROWS_A_READER) - set(borrowers))}")
 
 def test_the_section_walk_is_an_accessor_and_not_a_reader():
     """si#175, and it is si#61's property held over a second spelling of the seam.

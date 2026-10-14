@@ -115,8 +115,8 @@ def _declared(name: str) -> artifactschema.MavenEntry:
     derived from which modules call `manifest_data()`, and a module that borrows another's reader calls it
     nowhere. Three new manifest refusals were therefore invisible to the count whose whole purpose is that
     the sum cannot grow quietly. Reading the section here puts them back in the population. The general
-    hole - a refusal decided on manifest values obtained through another module's reader - is wider than
-    this module and is reported separately.
+    hole - a refusal decided on manifest values obtained through another module's reader - was si#331, and
+    the census's `BORROWS_A_READER` now turns a borrowed reader red.
 
     Since si#344 B2 it hands the SECTION, never the document, to `artifactsection.entry`, which checks the
     kind, the keys and what `release:maven` needs - the census still reads that as an inline read, so the
