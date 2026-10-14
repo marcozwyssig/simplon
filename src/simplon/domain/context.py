@@ -18,6 +18,7 @@ Product toggles keep their own ``<PRODUCT>_*`` namespace and never leak in here.
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,6 +53,31 @@ MANIFEST_ENV = "DELIVERY_MANIFEST"
 #: importing the kernel directly - has no active environment, and a reader is told so rather than handed
 #: the manifest's default, which would put a fact in a transcript that no run produced.
 ENVIRONMENT_ENV = "DELIVERY_ENVIRONMENT"
+
+
+class ManifestRefused(ValueError):
+    """The product's manifest was refused while it loaded: the message is the whole diagnosis (si#405).
+
+    A ValueError still, so every caller that catches the load's refusal keeps catching it. The subclass
+    exists for the one reader with nobody above it: a product's composition root loads its manifest at
+    IMPORT (`_MANIFEST = paths.CONTEXT.manifest()` in every scaffolded `cli.py`), before `simplon.cli.main`
+    exists to catch anything, so the refusal used to arrive at the foot of a full Python traceback that
+    added nothing to it. `set_current` installs `_print_a_refusal_without_its_traceback` for that case.
+    """
+
+
+def _print_a_refusal_without_its_traceback(previous):
+    """An excepthook that prints an uncaught `ManifestRefused` as its message alone and hands every other
+    exception to `previous`, so a defect keeps its traceback. Python still exits 1 after the hook: a
+    refused manifest stays a failure, never "nothing to do"."""
+    def hook(kind, value, traceback):
+        if isinstance(value, ManifestRefused):
+            sys.stderr.write(f"{value}\n")
+            return
+        previous(kind, value, traceback)
+
+    hook.prints_manifest_refusals = True  # type: ignore[attr-defined]
+    return hook
 
 
 def environment_name() -> str:
@@ -188,9 +214,10 @@ class ProductContext:
                                   catalogue=catalogue.load(),
                                   manifest_path=str(self.manifest_path))
         except ValueError as exc:
-            if _treeform.MIGRATE_COMMAND not in str(exc):
-                raise
-            raise ValueError(self._with_the_launchers_paths(str(exc))) from None
+            message = str(exc)
+            if _treeform.MIGRATE_COMMAND in message:
+                message = self._with_the_launchers_paths(message)
+            raise ManifestRefused(message) from None
 
     def _with_the_launchers_paths(self, message: str) -> str:
         """The si#344 cut's way out, with the two placeholders the loader could not fill filled in.
@@ -282,6 +309,10 @@ def set_current(ctx: ProductContext) -> ProductContext:
     return it, so the adapter can `CONTEXT = context.set_current(context.ProductContext.resolve(...))`."""
     global _current
     _current = ctx
+    # HERE, because this is the one call every product makes before it loads its manifest - through
+    # `bootstrap` or, like netctl, by hand - and the hook is installed once however often it is called.
+    if not getattr(sys.excepthook, "prints_manifest_refusals", False):
+        sys.excepthook = _print_a_refusal_without_its_traceback(sys.excepthook)
     return ctx
 
 

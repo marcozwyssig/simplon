@@ -189,3 +189,77 @@ def test_set_current_registers_and_returns_the_context(monkeypatch, tmp_path):
     # assert: the same context is registered and handed back for the adapter's one-liner
     assert returned is ctx
     assert context.current() is ctx
+
+
+_IMPORT_TIME_LOAD = """
+import sys
+from pathlib import Path
+from simplon.domain import context
+ctx = context.set_current(context.ProductContext("sample", Path(sys.argv[1]).parent, Path(sys.argv[1])))
+{body}
+"""
+
+
+def _run_a_product_import(tmp_path, body: str):
+    """A product's composition root in miniature: register the context the way `paths.py` does, then do
+    at module level what the scaffolded `cli.py` does (`_MANIFEST = paths.CONTEXT.manifest()`) - in a
+    process of its own, because what is under test is what Python prints when nothing catches it."""
+    import subprocess
+    import sys
+
+    return subprocess.run([sys.executable, "-c", _IMPORT_TIME_LOAD.format(body=body),
+                           str(tmp_path / "sample.yaml")], capture_output=True, text=True, check=False)
+
+
+def test_a_manifest_refused_at_import_prints_the_diagnosis_without_a_traceback(tmp_path):
+    """si#405: the refusal is raised while the product's `cli.py` imports, so no `main` is there to catch
+    it; the traceback above it says nothing the diagnosis does not, and buries the line to act on."""
+    # arrange
+    (tmp_path / "sample.yaml").write_text(_GROUPS_MANIFEST, encoding="utf-8")
+
+    # act
+    done = _run_a_product_import(tmp_path, "_MANIFEST = ctx.manifest()")
+
+    # assert: the diagnosis alone, and still a failure - a refused manifest is not "nothing to do"
+    assert done.returncode == 1
+    assert "Traceback" not in done.stderr
+    assert done.stderr.startswith(f"{tmp_path / 'sample.yaml'} declares `groups:`, which si#344 replaced")
+
+
+def test_every_manifest_diagnosis_at_import_drops_the_traceback_not_only_the_cut(tmp_path):
+    # arrange: a manifest that does not parse - a diagnosis that is not the si#344 cut
+    (tmp_path / "sample.yaml").write_text("00# the header comment\n\nproduct: sample\n", encoding="utf-8")
+
+    # act
+    done = _run_a_product_import(tmp_path, "_MANIFEST = ctx.manifest()")
+
+    # assert
+    assert done.returncode == 1
+    assert "Traceback" not in done.stderr
+    assert "line 3, column 8" in done.stderr
+
+
+def test_an_exception_that_is_not_a_manifest_refusal_keeps_its_traceback(tmp_path):
+    # arrange: the hook a registered context installs must not swallow a real defect's traceback
+    (tmp_path / "sample.yaml").write_text(_SAMPLE_MANIFEST, encoding="utf-8")
+
+    # act
+    done = _run_a_product_import(tmp_path, "ctx.manifest()\nraise ValueError('a defect, not a diagnosis')")
+
+    # assert
+    assert done.returncode == 1
+    assert "Traceback" in done.stderr
+    assert "ValueError: a defect, not a diagnosis" in done.stderr
+
+
+def test_a_manifest_refusal_is_still_a_value_error_to_a_caller(tmp_path):
+    # arrange: every caller and test that catches the load's ValueError keeps catching it
+    path = tmp_path / "sample.yaml"
+    path.write_text(_GROUPS_MANIFEST, encoding="utf-8")
+
+    # act
+    with pytest.raises(context.ManifestRefused) as caught:
+        ProductContext("sample", tmp_path, path).manifest()
+
+    # assert
+    assert isinstance(caught.value, ValueError)
