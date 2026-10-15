@@ -121,6 +121,29 @@ RUN arch="$(uname -m)" \
  && rm /tmp/docker.tgz \
  && docker --version
 
+# BUILDX, added by si#441 and found by a consumer (firn#957). The static bundle above carries the docker
+# client and no CLI plugins, so on the container route every build that needs BuildKit - a `RUN --mount`,
+# which is what firn's toolchain Dockerfile uses, and every `docker buildx bake` `build:image` runs for an
+# image with `platforms:` - failed with "the --mount option requires BuildKit". A host with docker and no
+# python3, which is the whole premise of this image, could not run firn's first Quickstart command. The
+# route measurements before it (firn#198/#959/#961) missed it because the toolchain image was already on
+# the daemon, so nothing was built.
+#
+# Into the SYSTEM-WIDE plugin directory, because the launcher may run this image as any `--user`, and a
+# plugin under one user's ~/.docker is invisible to the next. The pin follows `gh`'s reasoning below and
+# not docker's: nothing in the kernel fetches or expects a buildx version, so the number lives here alone
+# and tests/test_own_image.py asserts it is exact. Not checksum-verified, the gap the two neighbouring
+# layers already name.
+ARG BUILDX_VERSION=0.37.2
+RUN arch="$(uname -m)" \
+ && case "$arch" in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; \
+      *) echo "no buildx release for $arch" >&2; exit 1 ;; esac \
+ && mkdir -p /usr/local/lib/docker/cli-plugins \
+ && curl -fsSL "https://github.com/docker/buildx/releases/download/v$BUILDX_VERSION/buildx-v$BUILDX_VERSION.linux-$arch" \
+      -o /usr/local/lib/docker/cli-plugins/docker-buildx \
+ && chmod 0755 /usr/local/lib/docker/cli-plugins/docker-buildx \
+ && docker buildx version
+
 # THE GITHUB CLI, added by si#225, and the interesting part is why si#200's own rule did not catch it.
 # That rule is sound: a tool goes in when it changes a VERDICT, which is why the docker client is above
 # and oras is not. But the measurement behind it was `test all` driven through both routes, and si#206's
