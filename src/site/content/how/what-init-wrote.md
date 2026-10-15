@@ -68,6 +68,21 @@ identifier resolved on `PYTHONPATH`, not a location.
 Pass the same flag on a later refresh, and note that `--force` overwrites the launchers: a hand-edit
 does not survive one.
 
+## Taking the launchers of a new kernel
+
+A kernel release can change the launchers, and `--force` would also rewrite your manifest, `cli.py` and
+`requirements.txt`. To take only the launchers, run this at the product root after the pin is bumped:
+
+```sh
+simplon init --dir . --launchers-only
+```
+
+It rewrites `<product>.sh` and `<product>.cmd` and touches nothing else (si#407). The block dir is read
+off the `LAUNCH_ORCH_DIR=` line of the existing `<product>.sh`, so a product on a layout other than the
+default needs no `--orch-dir`. Passing one that contradicts the line is refused, and so is a launcher
+that carries no such line. Each file is reported as `unchanged`, `replaced` or `written`. A hand edit to
+a launcher is lost, as with `--force`.
+
 ## Two routes, one CLI
 
 The launcher runs the kernel either as Python in a virtual environment on this host or as a container,

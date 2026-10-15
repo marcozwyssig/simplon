@@ -1112,6 +1112,58 @@ def write(name: str, target: Path, *, force: bool = False, orch_dir: str = DEFAU
     return sorted(written)
 
 
+#: The one line of a rendered shell launcher that names the block dir (`launch.sh.j2`).
+_ORCH_LINE = re.compile(r'^LAUNCH_ORCH_DIR="\$ROOT/(?P<dir>[^"]+)"\s*$', re.MULTILINE)
+
+
+def launcher_orch_dir(name: str, target: Path, asked: str | None) -> str:
+    """The block dir the product's EXISTING shell launcher names, for `--launchers-only` (si#407).
+
+    READ, NOT ASKED FOR, and the measurement is why: two of seven launchers in this family (agile-cockpit,
+    simplon) sit on `deploy/orchestrator` rather than the default, and a re-render that forgot `--orch-dir`
+    would write a launcher pointing at a block that is not there - and say it had succeeded. So the line
+    the last render wrote is the source. `asked` is an `--orch-dir` on the same command line: equal to the
+    line it changes nothing, different from it is a contradiction and refused, because which of the two
+    was meant is a guess. A launcher without the line - absent, or hand-written - is refused too: there is
+    nothing to read, and a default would be the guess this function exists not to make."""
+    shim = target / shim_relpath(name)
+    if not shim.is_file():
+        raise ValueError(f"simplon init --launchers-only: there is no {shim.name} under {target} to re-render; "
+                         f"scaffold the product with `simplon init` first")
+    found = _ORCH_LINE.search(shim.read_text(encoding="utf-8"))
+    if found is None:
+        raise ValueError(f"simplon init --launchers-only: {shim.name} carries no `LAUNCH_ORCH_DIR=\"$ROOT/...\"` "
+                         f"line, so the block it launches cannot be read off it; re-scaffold with "
+                         f"`simplon init --force --orch-dir <dir>` instead")
+    current = validate_orch_dir(found.group("dir"))
+    if asked is not None and validate_orch_dir(asked) != current:
+        raise ValueError(f"simplon init --launchers-only: --orch-dir says {asked!r} and {shim.name} launches "
+                         f"{current!r}; drop --orch-dir to keep the block where it is, or move the block with "
+                         f"`simplon init --force --orch-dir {asked}`")
+    return current
+
+
+def write_launchers(name: str, target: Path, orch_dir: str) -> dict[str, str]:
+    """Write ONLY the two launchers (si#407) and say, per file, what happened: `unchanged`, `replaced` or
+    `written`. Overwrites without `force` - re-rendering them is the whole request - and touches nothing
+    else, the manifest, `cli.py` and `requirements.txt` above all, which is what `--force` costs today."""
+    product = validate_product_name(name)
+    files = render(product, orch_dir=orch_dir)
+    shim = shim_relpath(product)
+    outcome: dict[str, str] = {}
+    for rel in (shim, f"{product}.cmd"):
+        path = target / rel
+        content = files[rel]
+        encoded = content.replace("\n", newline_for(rel)).encode("utf-8")
+        if path.is_file() and path.read_bytes() == encoded:
+            outcome[rel] = "unchanged"
+            continue
+        outcome[rel] = "replaced" if path.exists() else "written"
+        path.write_text(content, encoding="utf-8", newline=newline_for(rel))
+        path.chmod(0o755 if rel == shim else 0o644)
+    return outcome
+
+
 def next_steps(name: str, target: Path, *, orch_dir: str = DEFAULT_ORCH_DIR) -> str:
     """The post-scaffold guidance printed after a successful write: nothing to vendor, just run the CLI -
     the launcher provisions its own venv and installs the pinned kernel from PyPI on first run."""
@@ -1228,7 +1280,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dir", dest="directory", default=None,
                         help=("target directory (default: ./<product>, or the repository root when the "
                               "product name was read from the repository); use '.' to scaffold in place"))
-    parser.add_argument("--orch-dir", dest="orch_dir", default=DEFAULT_ORCH_DIR,
+    parser.add_argument("--orch-dir", dest="orch_dir", default=None,
                         help=("where the orchestrator block goes, relative to the target: it holds .venv, "
                               "requirements.txt and src/python/ (default: %(default)s, which is where "
                               "every product puts it). A product that owns its repository root passes "
@@ -1236,6 +1288,10 @@ def main(argv: list[str] | None = None) -> int:
                               "shim, so hand-editing the generated one does not survive."))
     parser.add_argument("--force", action="store_true",
                         help="overwrite existing files instead of refusing")
+    parser.add_argument("--launchers-only", dest="launchers_only", action="store_true",
+                        help=("re-render ONLY <product>.sh and <product>.cmd, for a new kernel release, and "
+                              "touch nothing else (si#407). Overwrites them without --force, so a hand edit "
+                              "to a launcher is lost. The block dir is read from the existing <product>.sh"))
     args = parser.parse_args(argv)
 
     # Both defaults are resolved before anything is written, and both can refuse: a directory that is not
@@ -1249,7 +1305,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             product = validate_product_name(args.product)
             implied_target = Path.cwd() / product
-        orch_dir = validate_orch_dir(args.orch_dir)
+        orch_dir = validate_orch_dir(args.orch_dir if args.orch_dir is not None else DEFAULT_ORCH_DIR)
     except ValueError as exc:
         print(f"simplon init: {exc}", file=sys.stderr)
         return 2
@@ -1266,6 +1322,15 @@ def main(argv: list[str] | None = None) -> int:
                   f"rather than in a subdirectory (pass --dir to change that)", file=sys.stderr)
         else:
             print(f"simplon init: writing it to {target}, as --dir asks", file=sys.stderr)
+    if args.launchers_only:
+        try:
+            outcome = write_launchers(product, target, launcher_orch_dir(product, target, args.orch_dir))
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        for rel, what in outcome.items():
+            print(f"simplon init: {rel} {what}")
+        return 0
     # Read BEFORE the write, because afterwards the three outcomes are indistinguishable from the tree:
     # a `.gitignore` holding the block looks the same whether this run created it, appended it, or found
     # it there. A scaffolder that touches a file the product maintains has to say which of those it did.
