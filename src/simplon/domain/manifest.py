@@ -105,6 +105,14 @@ class CommandSpec(NamedTuple):
     listed subcommand or a separate flat command to begin with, it is the sub-app's default callback - so
     `load()` rejects it there, the same reasoning `keep_awake` on a leaf already uses (netctl#1238): a flag
     that does nothing where it is written is worse than no flag.
+
+    `passes` (an aggregate's, si#433) names parameters the aggregate takes on its OWN command line and
+    hands to every planned leaf whose body takes that parameter unpinned. Each leaf runs as its own
+    subprocess, so without it an aggregate could not give its leaves anything: simplon's `release all`
+    stopped at its first leaf with "which release?". DECLARED rather than derived from the leaves'
+    signatures, because a shared parameter NAME is not a shared meaning - `name` is the notes file on
+    one release leaf and the image on the next - and forwarding by name alone would hand one value to
+    both. Rejected on a leaf for `parallel`'s reason: a leaf plans nothing to pass it to.
     """
     impl: str
     help: str
@@ -114,6 +122,7 @@ class CommandSpec(NamedTuple):
     parallel: bool = False
     keep_awake: bool = False
     hidden: bool = False
+    passes: tuple[str, ...] = ()
     #: si#267: can this command run with nobody watching? `None` is the third state and means NOBODY HAS
     #: SAID - which is not the same as "no". A derivation that read an unset flag as false would quietly
     #: drop a command from a pipeline, and a pipeline missing a gate is green for the wrong reason; one
@@ -390,6 +399,7 @@ class _CommandSpecModel(BaseModel):
     params: dict[str, _ParamPresentationModel] = Field(default_factory=dict)
     passthrough_args: bool = False
     depends_on: tuple[str, ...] = ()
+    passes: tuple[str, ...] = ()
     stop_on_failure: bool = False
     parallel: bool = False
     keep_awake: bool = False
@@ -404,7 +414,7 @@ class _CommandSpecModel(BaseModel):
     def _stripped_str(cls, value: object) -> str:
         return str(value).strip()
 
-    @field_validator("depends_on", mode="before")
+    @field_validator("depends_on", "passes", mode="before")
     @classmethod
     def _str_tuple(cls, value: object) -> tuple[str, ...]:
         # A before-validator's input is raw YAML, so the shape has to be TESTED rather than assumed. The
@@ -414,7 +424,7 @@ class _CommandSpecModel(BaseModel):
         if not value:
             return ()
         if not isinstance(value, Iterable):
-            raise ValueError("'depends_on' must be a list of command names")
+            raise ValueError("'depends_on' and 'passes' must be a list of names")
         return tuple(str(dep) for dep in value)
 
     @field_validator("passthrough_args", "stop_on_failure", "parallel", "keep_awake", "hidden",
@@ -541,6 +551,13 @@ class _ManifestModel(BaseModel):
                         f"command '{group}.{name}': parallel applies to an aggregate (depends_on); a "
                         f"leaf has no dependencies to run side by side - declare it on the aggregate "
                         f"whose dependencies may share a machine")
+                # `passes` hands the aggregate's own option to the leaves it PLANS (si#433); a leaf plans
+                # nothing, so the key would be inert where it is written - parallel's trap above.
+                if spec.passes and not spec.depends_on:
+                    raise ValueError(
+                        f"command '{group}.{name}': passes applies to an aggregate (depends_on); a "
+                        f"leaf plans no other command to pass a value to - a leaf takes the value "
+                        f"on its own command line")
                 # keep_awake is honoured by `run_command`, which only ever runs an aggregate's PLAN. The
                 # CLI binds a leaf straight to its impl, so the flag there would be silently ignored -
                 # and a flag that does nothing where it is written is worse than no flag (netctl#1238).
@@ -945,7 +962,8 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     groups = {group: tuple(members) for group, members in model.groups.items()}
     commands = {
         group: {name: CommandSpec(impl=spec.impl, help=spec.help, passthrough_args=spec.passthrough_args,
-                                  depends_on=spec.depends_on, stop_on_failure=spec.stop_on_failure,
+                                  depends_on=spec.depends_on, passes=spec.passes,
+                                  stop_on_failure=spec.stop_on_failure,
                                   parallel=spec.parallel, keep_awake=spec.keep_awake,
                                   hidden=spec.hidden, unattended=spec.unattended,
                                   with_=spec.with_,

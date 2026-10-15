@@ -71,13 +71,17 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 229 | nothing - the declaration had no working meaning |
+| diagnosis | 230 | nothing - the declaration had no working meaning |
 | expression rule | 36 | something it could otherwise have said |
-| **all load-time refusals** | **265** | |
+| **all load-time refusals** | **266** | |
 
 si#419 added one diagnosis: a `parallel: true` aggregate may not run a consumer beside the producer of
 what it consumes, because a fan starts its branches at once and the consumer may read the artifact before
 it is written. No live manifest says `parallel:`, so it refuses none of them.
+
+si#433 added one diagnosis: `passes:` on a leaf. A leaf plans no other command, so it has nothing to
+pass a value to. Whether a leaf takes what its aggregate passes is a question about the leaf's body, so it
+is asked when the CLI is assembled and is not counted here.
 
 si#420 added one diagnosis: two ports of a product task that hand one `param:` two different artifacts.
 The body receives one name, so one of the bindings was dropped without a word.

@@ -18,6 +18,8 @@ step-runner one - a command name -> Step factory - so it is named for what it is
 from __future__ import annotations
 
 import contextlib
+import inspect
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -41,7 +43,10 @@ class StepFactoryContext:
     shared name disambiguated only by a docstring was a footgun."""
 
     product: str
-    step_factory: Callable[[str], Step]
+    #: `(name)` -> Step, or `(name, args=...)` -> Step for a factory that can hand a leaf the arguments
+    #: its aggregate `passes:` (si#433). The kernel's own two take both; a product's own written before
+    #: si#433 takes the name alone, and `run_command` says so rather than dropping the arguments.
+    step_factory: Callable[..., Step]
 
     @classmethod
     def for_shim(cls, product: str, script: str | Path, manifest: Plan) -> "StepFactoryContext":
@@ -66,9 +71,9 @@ class StepFactoryContext:
         """
         argv0 = str(script)
 
-        def factory(cmd: str) -> Step:
+        def factory(cmd: str, args: Sequence[str] = ()) -> Step:
             spec = manifest.spec_by_name(cmd)
-            return argv_step(cmd, [argv0, cmd], command=manifest.path_by_name(cmd) or cmd,
+            return argv_step(cmd, [argv0, cmd, *args], command=manifest.path_by_name(cmd) or cmd,
                              help=spec.help if spec is not None else "")
 
         return cls(product=product, step_factory=factory)
@@ -98,9 +103,9 @@ class StepFactoryContext:
         `for_shim` stays: a product whose steps must re-do the bootstrap - a self-updating launcher, a
         requirements change mid-plan - still wants the script, and that is a real if rare shape.
         """
-        def factory(cmd: str) -> Step:
+        def factory(cmd: str, args: Sequence[str] = ()) -> Step:
             spec = manifest.spec_by_name(cmd)
-            return argv_step(cmd, [sys.executable, "-u", "-m", module, cmd],
+            return argv_step(cmd, [sys.executable, "-u", "-m", module, cmd, *args],
                              command=manifest.path_by_name(cmd) or cmd,
                              help=spec.help if spec is not None else "")
 
@@ -114,7 +119,17 @@ class StepFactoryContext:
 ProductContext = StepFactoryContext
 
 
-def run_command(name: str, manifest: Plan, ctx: StepFactoryContext, *, group: str | None = None) -> int:
+def _takes_args(factory: Callable[..., Step]) -> bool:
+    """Whether `factory` accepts the `args=` keyword `run_command` hands a leaf's arguments in (si#433)."""
+    try:
+        params = inspect.signature(factory).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(p.name == "args" or p.kind is p.VAR_KEYWORD for p in params)
+
+
+def run_command(name: str, manifest: Plan, ctx: StepFactoryContext, *, group: str | None = None,
+                leaf_args: Mapping[str, Sequence[str]] | None = None) -> int:
     """Run the command `name` as its dependency-resolved plan (#895/#896) and return the pipeline's exit
     code (0 iff every planned step passed). `manifest.plan_tree_for` is the whole of transitive + dedup +
     once + order; each planned leaf is mapped through `ctx.step_factory` into a Step (typically a streaming
@@ -147,10 +162,25 @@ def run_command(name: str, manifest: Plan, ctx: StepFactoryContext, *, group: st
     contract: a host with no inhibitor warns and runs anyway.
 
     `group` disambiguates a root name owned by several groups (the #519 `test all` shape); it flows
-    through to `plan_tree_for`. Fails loudly with a clear ValueError when `name` does not resolve."""
+    through to `plan_tree_for`. Fails loudly with a clear ValueError when `name` does not resolve.
+
+    `leaf_args` (si#433) maps a planned leaf's NAME to the arguments appended to its command line - what
+    the aggregate `passes:`, already in that leaf's own form (`simplon.cli` derives it from the leaf's
+    body). A leaf it does not name gets none, and its factory is called exactly as before si#433. A
+    factory that cannot take them is refused HERE, before anything runs: building the step without them
+    would run the leaf without the value its aggregate was given, which is the failure `passes:` exists
+    to end."""
     spec = manifest.root_spec_for(name, group=group)
     tree = manifest.plan_tree_for(name, group=group)
-    steps = [ctx.step_factory(leaf.name) for leaf in tree.leaves()]
+    given = {leaf: tuple(args) for leaf, args in (leaf_args or {}).items() if args}
+    if given and not _takes_args(ctx.step_factory):
+        raise ValueError(
+            f"`{name}` passes arguments to {', '.join(sorted(given))}, but {ctx.product}'s step factory "
+            f"takes no arguments - it takes a command name only. Give it an `args` keyword that it appends "
+            f"to the step's command line, or build it with `StepFactoryContext.for_shim`/`for_module`")
+    steps = [ctx.step_factory(leaf.name, args=given[leaf.name]) if leaf.name in given
+             else ctx.step_factory(leaf.name)
+             for leaf in tree.leaves()]
     pipeline = Pipeline(name=name, steps=steps, stop_on_failure=spec.stop_on_failure,
                         tree=tree, root_path=tree.path)
     # Ask the pairing verdict HERE, before anything runs. It is decided by the two lines above and cannot

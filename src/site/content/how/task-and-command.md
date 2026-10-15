@@ -55,7 +55,7 @@ impl   help   passthrough_args   params   unattended   input   output
 A command takes those it needs to place a task, plus the ones that describe *this* placement:
 
 ```text
-task   with   produces   consumes   help   params   hidden   keep_awake   stop_on_failure   parallel   depends_on   override
+task   with   produces   consumes   help   params   hidden   keep_awake   stop_on_failure   parallel   depends_on   passes   override
 ```
 
 Three of the task's keys are **inherited** by every command that instantiates it unless the command says
@@ -80,8 +80,8 @@ would destroy the third state at the loader's own door.
 `impl` is not in that list, because it is never the command's to declare. `with` is not in it either, and
 the reason is worth stating plainly: **a template that pinned a value would not be a template.** It would
 be one particular use of itself, and the second product that wanted the same body with different data
-would have to fork it. The same argument covers `hidden`, `keep_awake`, `stop_on_failure`, `parallel`
-and `depends_on` - a template that hid itself, or planned other commands, has stopped being a template
+would have to fork it. The same argument covers `hidden`, `keep_awake`, `stop_on_failure`, `parallel`,
+`depends_on` and `passes` - a template that hid itself, or planned other commands, has stopped being a template
 and become a use.
 
 ## The five refusals
@@ -208,8 +208,8 @@ manifest](../manifest/#aggregates-depends_on).
 An aggregate runs no body and binds no port. The one output it may name is a release's bundle,
 `produces: { release: <artifact> }`, and only under `ci: release:`, with `stop_on_failure: true` (rule 8; see
 [the release chain](../manifest/#a-release-consumes-its-test-results-and-names-one-bundle)). Such an
-aggregate states the release's members and their order; it passes no arguments to them, so a member that
-needs the tag cannot get it through the aggregate yet (si#344). `depends_on` reaches a leaf
+aggregate states the release's members and their order, and hands them the tag it is given with
+[`passes: [tag]`](../manifest/#passes-what-an-aggregate-hands-its-leaves) (si#433). `depends_on` reaches a leaf
 by a bare name only one group owns (#519), which is why simplon's publish leaf is `push-image` and not
 `image`: `build image` and `test image` already own that name.
 
