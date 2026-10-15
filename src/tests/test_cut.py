@@ -142,7 +142,7 @@ def test_an_artifact_with_no_kind_is_refused_listing_the_kinds():
         """)
     assert str(caught.value) == (
         "demo.yaml: `artifacts: site:` declares no `kind:`; since si#344 every entry names one of artifact, "
-        "image, directory, site, nuget, maven, conan, test-result, release-notes, tag, release, and the "
+        "image, directory, file, site, nuget, maven, conan, test-result, release-notes, tag, release, and the "
         "migration derives it from the command that reads the entry.\n" + MIGRATE)
 
 

@@ -71,9 +71,15 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 230 | nothing - the declaration had no working meaning |
-| expression rule | 37 | something it could otherwise have said |
-| **all load-time refusals** | **267** | |
+| diagnosis | 231 | nothing - the declaration had no working meaning |
+| expression rule | 38 | something it could otherwise have said |
+| **all load-time refusals** | **269** | |
+
+si#343 added one expression rule and one diagnosis. The rule refuses a `consumes:` on a `build:image`
+command. Its `file` port is bound by the `contexts:` of the image it builds, which already names the files,
+so `consumes:` would say it twice - the same reason si#435 gave. Nothing it refuses was accepted before,
+because the port is new, and none of the eight manifests declares a `kind: file`. The diagnosis is a `file`
+context with no `path:`: the build is handed the directory the file lies in, so there is nothing to hand.
 
 si#435 added one expression rule: a `consumes:` on a `deploy:up` command. Its port is bound by `deploy:
 source:`, which already names what is deployed, so `consumes:` would say it twice. Nothing it refuses was
@@ -138,7 +144,7 @@ Self-binding is not a third bucket of refusals; it is how far an expression rule
 
 | reach | count | meaning |
 | --- | --- | --- |
-| the kernel is held to it too | 30 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
+| the kernel is held to it too | 31 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
 | a statement about the platform/product seam | 7 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
 | the kernel exempts itself | 0 | there is no longer a rule the kernel declines to apply to itself |
 
@@ -162,7 +168,7 @@ being talked about? The second one is the one that keeps going missing.
 **What replaces it is a measurement rather than a label.** The reach column above was hand-written, and a
 hand-written word beside a rule is exactly the kind of thing that was wrong. So the kernel's own manifest is
 now loaded against the real catalogue with every rule-bearing function on the merge path recorded, and each
-rule is asked what it was actually handed. The catalogue holds **53** coordinates and its own tree places
+rule is asked what it was actually handed. The catalogue holds **54** coordinates and its own tree places
 **11** of them; those 11 are the platform's half - in the merged tree because the catalogue put them there,
 not because this product asked - and all 11 reach every rule the table calls *held to it too*. Exactly two
 functions never see them, `check_no_old_form` (which rules on the product's document alone; it was shown

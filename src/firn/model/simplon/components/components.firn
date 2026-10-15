@@ -260,6 +260,9 @@ tasks typeOf simplon.architecture.Component {
   module m_tasks_docs typeOf simplon.architecture.Module {
     path = "tasks.docs"
   }
+  module m_tasks_fetchfile typeOf simplon.architecture.Module {
+    path = "tasks.fetchfile"
+  }
   module m_tasks_env typeOf simplon.architecture.Module {
     path = "tasks.env"
   }

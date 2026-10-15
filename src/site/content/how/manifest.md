@@ -727,6 +727,51 @@ A **GitHub-hosted runner** is set up fresh for every job, so the generated workf
 `docker/setup-qemu-action` (and `docker/setup-buildx-action`) step before `build image`; simplon generates
 neither.
 
+#### A file from outside, fetched once and handed to the build
+
+A Dockerfile that downloads an archive itself cannot build offline, and it downloads the archive again
+whenever the builder's cache is pruned. A `kind: file` entry lets simplon do the download instead
+(si#343). `build:fetch` checks the file's sha256 and leaves it under `path:`, and an image whose
+`contexts:` names the entry is handed the file's directory as a build context under the entry's name:
+
+```yaml
+artifacts:
+  gradle-dist:
+    kind: file
+    path: build/dist/gradle.zip     # git-ignored; the build context is build/dist
+    url: https://services.gradle.org/distributions/gradle-{version}-bin.zip
+    sha256: acd53f1edaf02f1a8ff99879f8a34b302661a057d9b063ae9e35b552f804d20a
+    version_from: { file: gradle/libs.versions.toml, key: versions.gradle }
+  toolchain:
+    kind: image
+    # ... registry, repository, dockerfile, context as above
+    contexts: [gradle-dist]         # RUN --mount=type=bind,from=gradle-dist,source=/gradle.zip,...
+```
+
+```yaml
+ci:
+  build:
+    commands:
+      gradle: { task: "build:fetch", produces: { file: gradle-dist } }
+      toolchain: { task: "build:image", produces: { image: toolchain } }
+```
+
+- **`version_from:`** is optional. It names a TOML file under the product root and a dotted key in it,
+  and `{version}` in `url:` is replaced by that value, so the version is written in one place. A
+  `{version}` without `version_from:` is refused, and so is a `version_from:` with no `{version}` in the
+  url.
+- **The sha256 belongs to one file.** When the version moves, the download arrives with another
+  checksum. Nothing is stored, and the run is red and names both the checksum and where the version was
+  read from.
+- **A file already there with its checksum is not fetched again**, and the run says so. A file there with
+  another checksum, such as the archive of an older version, is replaced.
+- **`build:image` consumes the file without a `consumes:`.** The loader derives the binding from
+  `contexts:`, so an aggregate that plans the image before the fetch is refused. So is an image whose
+  file no command fetches. Writing `consumes: { file: ... }` on the image command is refused, because
+  `contexts:` already says it.
+- **A file context needs BuildKit** (`--build-context`), the builder that `docker build` uses since
+  Docker 23 and the one the kernel image carries.
+
 ### `releases:` - where the notes live, and from when they are complete
 
 `test:release-notes` reads this one. It is the smallest product-data section in the kernel, and that is

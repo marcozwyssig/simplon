@@ -50,6 +50,35 @@ def section_bound(document: Mapping[str, object]) -> dict[str, str]:
     return {"deploy:up": name.strip()} if isinstance(name, str) and name.strip() else {}
 
 
+#: The catalogue task whose input port the ENTRY bound to another of its ports binds (si#343, decided
+#: 2026-10-15): (the port whose artifact's entry is read, the port bound from it). `build:image`'s `file` is
+#: each `kind: file` its image's own `contexts:` names - a `consumes:` beside it would be a second statement.
+ENTRY_BOUND: dict[str, tuple[str, str]] = {"build:image": ("image", "file")}
+
+
+def entry_bound(document: Mapping[str, object]) -> dict[str, tuple[str, ...]]:
+    """{artifact: the `kind: file` entries its `contexts:` names}, for each entry that names one. A name that is
+    no entry, or an entry of another kind, binds nothing here: `tasks.image` answers it when it builds."""
+    # Literal keys, as `tasks.image` reads them: the refusal census resolves a section by its literal.
+    section = document.get("artifacts")
+    if not isinstance(section, Mapping):
+        return {}
+    out: dict[str, tuple[str, ...]] = {}
+    for name, body in section.items():
+        contexts = body.get("contexts") if isinstance(body, Mapping) else None
+        if not isinstance(contexts, list):
+            continue
+        files = tuple(c.strip() for c in contexts if isinstance(c, str) and _is_file(section.get(c.strip())))
+        if files:
+            out[str(name)] = files
+    return out
+
+
+def _is_file(body: object) -> bool:
+    return isinstance(body, Mapping) and artifactsection.accepts(
+        artifactsection.REFINES, "file", str(body.get("kind", "")))
+
+
 #: What a port declaration takes.
 _PORT_KEYS = ("accepts", "param")
 

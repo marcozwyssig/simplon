@@ -573,7 +573,8 @@ def check_task(name: str, spec: dict) -> None:
 
 
 def resolve(flat: dict, product_tasks: dict, catalogue_tasks: dict,
-            section_bound: dict[str, str] | None = None) -> dict:
+            section_bound: dict[str, str] | None = None,
+            entry_bound: dict[str, tuple[str, ...]] | None = None) -> dict:
     """Every command's `task:` replaced by the template it names.
 
     ONE resolution function, two sources: a name CONTAINING a colon is a catalogue coordinate, a name
@@ -581,20 +582,22 @@ def resolve(flat: dict, product_tasks: dict, catalogue_tasks: dict,
     intersect, so nothing shadows anything and there is no precedence rule to remember.
 
     `section_bound` is `ports.section_bound` of the manifest: the artifact a section binds to a
-    `ports.SECTION_BOUND` task's port (si#435).
+    `ports.SECTION_BOUND` task's port (si#435). `entry_bound` is `ports.entry_bound`: the files an
+    artifact's own entry binds to a `ports.ENTRY_BOUND` task's port (si#343).
     """
     out: dict[str, dict] = {}
     for path, members in (flat or {}).items():
         resolved: dict[str, dict] = {}
         for name, spec in (members or {}).items():
             resolved[str(name)] = _resolve_one(dict(spec or {}), f"{path} {name}",
-                                               product_tasks, catalogue_tasks, section_bound or {})
+                                               product_tasks, catalogue_tasks, section_bound or {},
+                                               entry_bound or {})
         out[str(path)] = resolved
     return out
 
 
 def _resolve_one(spec: dict, where: str, product_tasks: dict, catalogue_tasks: dict,
-                 section_bound: dict[str, str]) -> dict:
+                 section_bound: dict[str, str], entry_bound: dict[str, tuple[str, ...]]) -> dict:
     if "impl" in spec:
         raise ValueError(
             f"command '{where}' declares `impl:`. A command is an instance of a task: declare the body "
@@ -670,6 +673,19 @@ def _resolve_one(spec: dict, where: str, product_tasks: dict, catalogue_tasks: d
                 f"`deploy: source:`, which already names what is deployed - name it there, once")
         if ref in section_bound:
             bound["consumes"][section_port] = (section_bound[ref],)
+    # A port the bound artifact's ENTRY binds (si#343), refused in `consumes:` for the same reason.
+    entry_ports = ports.ENTRY_BOUND.get(ref)
+    if entry_ports is not None:
+        via, port_name = entry_ports
+        if port_name in bound["consumes"]:
+            raise ValueError(
+                f"command '{where}' binds `consumes: {port_name}`, and task '{ref}' takes that port from the "
+                f"`contexts:` of the artifact its '{via}' port binds, which already names the files - name "
+                f"them there, once")
+        via_port = next(p for p in task_ports if p.name == via)
+        via_bound = bound[ports.SIDE[via_port.direction]].get(via)
+        if via_bound and via_bound[0] in entry_bound:
+            bound["consumes"][port_name] = entry_bound[via_bound[0]]
     by_binding: dict[str, str] = {}
     handed: dict[str, str] = {}   # param -> the port that handed it, for the message below
     for p in task_ports:

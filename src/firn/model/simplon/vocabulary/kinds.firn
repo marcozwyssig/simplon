@@ -80,6 +80,21 @@ directory typeOf simplon.pipeline.ArtifactKind {
     shape = "text"
   }
 }
+file typeOf simplon.pipeline.ArtifactKind {
+  refines = simplon.vocabulary.artifact
+  field f_url typeOf simplon.pipeline.ArtifactField {
+    key = "url"
+    shape = "text"
+  }
+  field f_sha256 typeOf simplon.pipeline.ArtifactField {
+    key = "sha256"
+    shape = "text"
+  }
+  field f_version_from typeOf simplon.pipeline.ArtifactField {
+    key = "version_from"
+    shape = "table"
+  }
+}
 site typeOf simplon.pipeline.ArtifactKind {
   refines = simplon.vocabulary.directory
 }

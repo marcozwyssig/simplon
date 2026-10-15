@@ -18,6 +18,22 @@ build_image typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.image.f_dockerfile
     needs = simplon.vocabulary.image.f_context
   }
+  // si#343 (decided 2026-10-15): the `file` entries the image's own `contexts:` names, and never `consumes:` -
+  // so no `param`: the body reads them off the image entry, and the loader derives the binding from there.
+  input file typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.file
+  }
+}
+build_fetch typeOf simplon.pipeline.CatalogueTask {
+  key = "build:fetch"
+  body = "simplon.tasks.fetchfile:fetch"
+  output file typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.file
+    param = "name"
+    needs = simplon.vocabulary.artifact.f_path
+    needs = simplon.vocabulary.file.f_url
+    needs = simplon.vocabulary.file.f_sha256
+  }
 }
 test_image typeOf simplon.pipeline.CatalogueTask {
   key = "test:image"
