@@ -26,12 +26,15 @@ a file repository the kernel's init script adds under the entry's `path:`; `rele
 those files, artefacts before metadata, and then runs the read-back it always ran. Gradle's own
 `publishToMavenLocal` was the cheaper route and was not taken: Maven's local repository writes
 `maven-metadata-local.xml` and no checksums, which is not the layout a remote repository holds.
-NOT PROVEN: that GitHub's Maven registry accepts a plain PUT per file. `mvn deploy` does exactly that, and
-the client here is measured against a local HTTP server, but the machine this was written on has no
-`write:packages` token.
-UNMEASURED CONSEQUENCE: `push` uploads the staged `maven-metadata.xml*`, which lists only the staged version.
-If the registry honours a PUT over an existing metadata file, the module's version list is replaced by a
-one-version file; `mvn deploy` merges the remote metadata first and this task does not. Not fixed, not measured.
+MEASURED AGAINST GITHUB (si#436, 2026-10-15): GitHub's Maven registry accepts a plain PUT per file, and a
+second release does NOT replace the version list. `upload` put 0.0.1 and then 0.0.2 of a scratch module
+(`ch.zwyssig.simplon.probe:si436-probe` in marcozwyssig/simplon, hand-staged in the layout `gradle publish`
+writes). Each PUT carried a `maven-metadata.xml` that listed only its own version. Read back afterwards, the
+metadata listed `0.0.1` and `0.0.2` with `latest` 0.0.2. What GitHub served was not the uploaded file either:
+it had no XML declaration and no `<release>`, both of which the upload carried. So GitHub builds the metadata
+itself, and the remote merge `mvn deploy` does first is not needed here. This task publishes only to GitHub
+(`repository_url(checked=True)`), so no other registry's behaviour is reachable from it.
+Still unmeasured: a staging directory written by a real `gradle publish`. The probe built its layout by hand.
 
 AND THE VERIFICATION HAS THREE OUTCOMES, not two. `401` is not "the jar is missing", it is "we were not
 allowed to look", and reporting the second as the first sends a reader to the build file when the answer is
