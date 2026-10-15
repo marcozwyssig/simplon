@@ -732,10 +732,9 @@ tasks:
   # si#344 C.3: STAGE AND UPLOAD ARE TWO TASKS, for `release:nuget`'s reason. `build:maven-pack` runs
   # `gradle publish` into a FILE repository under the entry's `path:`, added by an init script the kernel
   # writes, so the product's build file is not touched; `release:maven` uploads exactly those files with
-  # HTTP PUT and reads the POMs back. The upload is not measured against GitHub from the machine it was
-  # written on (no `write:packages` token) - the same gap tasks/nuget.py records. Also unmeasured: `release:maven`
-  # uploads the staged `maven-metadata.xml*`, which lists only the staged version; if the registry honours a PUT
-  # over existing metadata, the module's version list is replaced by a one-version file (`mvn deploy` merges first).
+  # HTTP PUT and reads the POMs back. Measured against GitHub on 2026-10-15 (si#436): two versions of a
+  # scratch module uploaded with this upload, and GitHub's `maven-metadata.xml` lists both, although each
+  # PUT carried a one-version file. GitHub keeps the version list itself (tasks/maven.py has the numbers).
   build:maven-pack:
     impl: simplon.tasks.maven:pack
     help: "Stage the declared Gradle modules into the artifact's path as a Maven file repository."
