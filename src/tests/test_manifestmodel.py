@@ -91,8 +91,8 @@ def test_a_command_runs_the_task_its_task_names_and_the_task_carries_the_impl():
     out = _export(text)
 
     # assert
-    assert "task = product.demo.demo.t_wheel" in _block(out, "command wheel typeOf simplon.pipeline.TaskCommand {")
-    task = _block(out, "tasks t_wheel typeOf simplon.pipeline.Task {")
+    assert "task = product.demo.Wheel" in _block(out, "command wheel typeOf simplon.pipeline.TaskCommand {")
+    task = _block(out, "Wheel typeOf simplon.pipeline.TaskType extends simplon.pipeline.Task {")
     assert 'key = "wheel"' in task and 'body = "orchestrator.cli:build_wheel"' in task
 
 
@@ -384,9 +384,9 @@ def test_the_export_drops_nothing(name):
     # everything else: `cd: site:` (nothing in the M2 holds a Site until a deploy reads one) and a
     # `tasks:` entry no command places (one Task per impl a command USES, R9). Both are left out of
     # every count below on purpose, and nothing here counts them.
-    from simplon.domain.artifactschema import PORTS
+    from simplon.domain.artifactschema import BODIES
     specs = [mf.spec_for(group, command) for group, members in mf.groups.items() for command in members]
-    impls = {s.impl for s in specs if not s.depends_on and s.task not in PORTS}
+    impls = {s.impl for s in specs if not s.depends_on and s.task not in BODIES}
 
     # act
     out = manifestmodel.export(mf, document, name, manifestmodel.KERNEL_SECTIONS)
@@ -397,7 +397,12 @@ def test_the_export_drops_nothing(name):
     assert len(re.findall(r"typeOf simplon\.pipeline\.Group \{$", out, re.MULTILINE)) == len(mf.groups)
     assert _count(out, r"environments \w+") == len(envs)
     assert len(re.findall(r"^  default = ", out, re.MULTILINE)) == (matrix["default"] is not None)
-    assert impls and _count(out, r"tasks \w+") == len(impls)
+    # the demo places only catalogue tasks, every one a class in the model since si#400 4a
+    assert impls or name == "demo"
+    classes = re.findall(r"^(\w+) typeOf simplon\.pipeline\.TaskType extends", out, re.MULTILINE)
+    assert len(classes) == len(impls)
+    assert sorted(re.findall(rf"^  tasks = product\.{re.escape(manifestmodel.mangle(name))}\.(\w+)$", out,
+                             re.MULTILINE)) == sorted(classes)
     assert len(re.findall(r"^\s+produces = ", out, re.MULTILINE)) == sum(
         len(names) for s in specs for names in s.produces.values())
     assert len(re.findall(r"^\s+consumes = ", out, re.MULTILINE)) == sum(
@@ -417,7 +422,7 @@ def test_a_command_on_a_modelled_catalogue_task_references_it_and_declares_no_ta
 
     # assert: si#344 C.2 - the catalogue task is the one source of its ports
     command = _block(out, "command image typeOf simplon.pipeline.TaskCommand {")
-    assert "task = simplon.catalogue.build_image" in command
+    assert "task = simplon.catalogue.BuildImage" in command
     assert "t_simplon_tasks_image_build" not in out
 
 
@@ -440,8 +445,8 @@ def test_a_product_tasks_ports_are_exported_on_its_task():
     out = _export(text)
 
     # assert
-    task = _block(out, "tasks t_pack typeOf simplon.pipeline.Task {")
-    assert "output bundle typeOf simplon.pipeline.Port {" in task
+    task = _block(out, "Pack typeOf simplon.pipeline.TaskType extends simplon.pipeline.Task {")
+    assert "property bundle typeOf simplon.pipeline.OutputPort {" in task
     assert "accepts = simplon.vocabulary.directory" in task and 'param = "name"' in task
 
 
@@ -459,8 +464,53 @@ def test_two_product_tasks_on_one_impl_are_two_tasks_with_their_own_ports():
     out = _export(text)
 
     # assert
-    a = _block(out, "tasks t_pack_a typeOf simplon.pipeline.Task {")
-    b = _block(out, "tasks t_pack_b typeOf simplon.pipeline.Task {")
-    assert 'key = "pack-a"' in a and 'body = "orchestrator.cli:pack"' in a and "output a typeOf" in a
-    assert 'key = "pack-b"' in b and 'body = "orchestrator.cli:pack"' in b and "output b typeOf" in b
-    assert "task = product.demo.demo.t_pack_b" in _block(out, "command pb typeOf simplon.pipeline.TaskCommand {")
+    a = out.split("PackA typeOf simplon.pipeline.TaskType extends simplon.pipeline.Task {", 1)[1].split("\n}", 1)[0]
+    b = out.split("PackB typeOf simplon.pipeline.TaskType extends simplon.pipeline.Task {", 1)[1].split("\n}", 1)[0]
+    assert 'key = "pack-a"' in a and 'body = "orchestrator.cli:pack"' in a and "property a typeOf" in a
+    assert 'key = "pack-b"' in b and 'body = "orchestrator.cli:pack"' in b and "property b typeOf" in b
+    assert "task = product.demo.PackB" in _block(out, "command pb typeOf simplon.pipeline.TaskCommand {")
+
+
+def test_a_command_on_a_portless_catalogue_task_references_the_catalogue_class():
+    # arrange: vcs:push has no port, so before si#400 4a the export re-declared it as a product task
+    text = DEMO.replace("      all:", '      push: { task: "vcs:push" }\n      all:')
+
+    # act
+    out = _export(text)
+
+    # assert
+    assert "task = simplon.catalogue.VcsPush" in _block(out, "command push typeOf simplon.pipeline.TaskCommand {")
+    assert "VcsPush typeOf" not in out
+    assert "simplon.tasks.vcs:push" not in out
+
+
+def test_a_product_task_is_a_class_at_the_root_of_the_products_package():
+    # arrange
+    text = DEMO.replace("cd:\n", 'tasks:\n  wheel: { impl: "orchestrator.cli:build_wheel", help: "Build." }\n'
+                        "cd:\n").replace("      all:", "      wheel: { task: wheel }\n      all:")
+
+    # act
+    out = _export(text)
+
+    # assert: a class cannot be composed, so it stands outside the Product block, at column 0
+    assert re.search(r"^Wheel typeOf simplon\.pipeline\.TaskType extends simplon\.pipeline\.Task \{$", out, re.MULTILINE)
+    assert out.index("Wheel typeOf") > out.index("\n}\n", out.index("demo typeOf simplon.manifest.Product"))
+
+
+@pytest.mark.parametrize("name, expected", [
+    ("build:image", "BuildImage"), ("support:ci-disk-cleanup", "SupportCiDiskCleanup"),
+    ("pack_a", "PackA"), ("7zip", "T7zip"),
+])
+def test_class_name_capitalises_each_part_of_a_coordinate(name, expected):
+    assert manifestmodel.class_name(name) == expected
+
+
+def test_two_product_tasks_that_map_to_one_class_name_are_refused():
+    # arrange
+    text = DEMO.replace("cd:\n", 'tasks:\n  pack-a: { impl: "m:a", help: "A." }\n'
+                        '  pack_a: { impl: "m:b", help: "B." }\ncd:\n').replace(
+        "      all:", "      a: { task: pack-a }\n      b: { task: pack_a }\n      all:")
+
+    # act / assert
+    with pytest.raises(manifestmodel.ModelExportError, match="PackA"):
+        _export(text)

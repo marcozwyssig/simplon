@@ -3,14 +3,16 @@
 // all ten readers by name take `name`; the direction is what the body does with the entry. A port is named
 // after the kind it accepts, so a product can guess it; `toolchain:run`'s two are the spec's `source`/`out`.
 // si#344 C.3 (decided 2026-10-14): release:nuget and release:maven are split into a pack task (output) and a push task (input), so a test can sit between them.
-// `key` and `body` repeat catalogue.yaml's coordinate and impl until si#400 generates those from here;
+// `key` and `body` repeat catalogue.yaml's coordinate and impl until si#400 4c generates those from here;
 // src/tests/test_catalogue_ports.py holds the two to each other.
 package simplon.catalogue
 
-build_image typeOf simplon.pipeline.CatalogueTask {
+BuildImage typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
   key = "build:image"
   body = "simplon.tasks.image:build"
-  output image typeOf simplon.pipeline.Port {
+  property image typeOf simplon.pipeline.OutputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.image
     param = "name"
     needs = simplon.vocabulary.artifact.f_registry
@@ -20,14 +22,18 @@ build_image typeOf simplon.pipeline.CatalogueTask {
   }
   // si#343 (decided 2026-10-15): the `file` entries the image's own `contexts:` names, and never `consumes:` -
   // so no `param`: the body reads them off the image entry, and the loader derives the binding from there.
-  input file typeOf simplon.pipeline.Port {
+  property file typeOf simplon.pipeline.InputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.file
   }
 }
-build_fetch typeOf simplon.pipeline.CatalogueTask {
+BuildFetch typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
   key = "build:fetch"
   body = "simplon.tasks.fetchfile:fetch"
-  output file typeOf simplon.pipeline.Port {
+  property file typeOf simplon.pipeline.OutputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.file
     param = "name"
     needs = simplon.vocabulary.artifact.f_path
@@ -35,10 +41,12 @@ build_fetch typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.file.f_sha256
   }
 }
-test_image typeOf simplon.pipeline.CatalogueTask {
+TestImage typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
   key = "test:image"
   body = "simplon.tasks.image:smoke"
-  input image typeOf simplon.pipeline.Port {
+  property image typeOf simplon.pipeline.InputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.image
     param = "name"
     needs = simplon.vocabulary.artifact.f_registry
@@ -46,16 +54,20 @@ test_image typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.image.f_dockerfile
     needs = simplon.vocabulary.image.f_context
   }
-  output test_result typeOf simplon.pipeline.Port {
+  property test_result typeOf simplon.pipeline.OutputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.test_result
     param = "results"
     needs = simplon.vocabulary.artifact.f_path
   }
 }
-release_image typeOf simplon.pipeline.CatalogueTask {
+ReleaseImage typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
   key = "release:image"
   body = "simplon.tasks.image:release"
-  input image typeOf simplon.pipeline.Port {
+  property image typeOf simplon.pipeline.InputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.image
     param = "name"
     needs = simplon.vocabulary.artifact.f_registry
@@ -63,14 +75,18 @@ release_image typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.image.f_dockerfile
     needs = simplon.vocabulary.image.f_context
   }
-  input evidence typeOf simplon.pipeline.Port {
+  property evidence typeOf simplon.pipeline.InputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.test_result
   }
 }
-release_artifact typeOf simplon.pipeline.CatalogueTask {
+ReleaseArtifact typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
   key = "release:artifact"
   body = "simplon.tasks.artifact:publish"
-  input directory typeOf simplon.pipeline.Port {
+  property directory typeOf simplon.pipeline.InputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.directory
     param = "name"
     needs = simplon.vocabulary.artifact.f_registry
@@ -78,14 +94,18 @@ release_artifact typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.directory.f_media_type
     needs = simplon.vocabulary.artifact.f_path
   }
-  input evidence typeOf simplon.pipeline.Port {
+  property evidence typeOf simplon.pipeline.InputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.test_result
   }
 }
-build_conan_cache typeOf simplon.pipeline.CatalogueTask {
+BuildConanCache typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
   key = "build:conan-cache"
   body = "simplon.tasks.conan:fetch"
-  input conan typeOf simplon.pipeline.Port {
+  property conan typeOf simplon.pipeline.InputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.conan
     param = "name"
     needs = simplon.vocabulary.artifact.f_registry
@@ -94,10 +114,12 @@ build_conan_cache typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.artifact.f_path
   }
 }
-release_conan typeOf simplon.pipeline.CatalogueTask {
+ReleaseConan typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
   key = "release:conan"
   body = "simplon.tasks.conan:publish"
-  input conan typeOf simplon.pipeline.Port {
+  property conan typeOf simplon.pipeline.InputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.conan
     param = "name"
     needs = simplon.vocabulary.artifact.f_registry
@@ -105,23 +127,29 @@ release_conan typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.conan.f_media_type
     needs = simplon.vocabulary.artifact.f_path
   }
-  input evidence typeOf simplon.pipeline.Port {
+  property evidence typeOf simplon.pipeline.InputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.test_result
   }
 }
-build_nuget_config typeOf simplon.pipeline.CatalogueTask {
+BuildNugetConfig typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
   key = "build:nuget-config"
   body = "simplon.tasks.nuget:config"
-  input nuget typeOf simplon.pipeline.Port {
+  property nuget typeOf simplon.pipeline.InputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.nuget
     param = "name"
     needs = simplon.vocabulary.artifact.f_registry
   }
 }
-build_nuget_restore typeOf simplon.pipeline.CatalogueTask {
+BuildNugetRestore typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
   key = "build:nuget-restore"
   body = "simplon.tasks.nuget:restore"
-  input nuget typeOf simplon.pipeline.Port {
+  property nuget typeOf simplon.pipeline.InputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.nuget
     param = "name"
     needs = simplon.vocabulary.artifact.f_registry
@@ -129,10 +157,12 @@ build_nuget_restore typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.nuget.f_project
   }
 }
-build_nuget_pack typeOf simplon.pipeline.CatalogueTask {
+BuildNugetPack typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
   key = "build:nuget-pack"
   body = "simplon.tasks.nuget:pack"
-  output nuget typeOf simplon.pipeline.Port {
+  property nuget typeOf simplon.pipeline.OutputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.nuget
     param = "name"
     needs = simplon.vocabulary.nuget.f_image
@@ -140,24 +170,30 @@ build_nuget_pack typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.artifact.f_path
   }
 }
-release_nuget typeOf simplon.pipeline.CatalogueTask {
+ReleaseNuget typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
   key = "release:nuget"
   body = "simplon.tasks.nuget:push"
-  input nuget typeOf simplon.pipeline.Port {
+  property nuget typeOf simplon.pipeline.InputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.nuget
     param = "name"
     needs = simplon.vocabulary.artifact.f_registry
     needs = simplon.vocabulary.nuget.f_image
     needs = simplon.vocabulary.artifact.f_path
   }
-  input evidence typeOf simplon.pipeline.Port {
+  property evidence typeOf simplon.pipeline.InputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.test_result
   }
 }
-build_maven_pack typeOf simplon.pipeline.CatalogueTask {
+BuildMavenPack typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
   key = "build:maven-pack"
   body = "simplon.tasks.maven:pack"
-  output maven typeOf simplon.pipeline.Port {
+  property maven typeOf simplon.pipeline.OutputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.maven
     param = "name"
     needs = simplon.vocabulary.maven.f_image
@@ -166,10 +202,12 @@ build_maven_pack typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.artifact.f_path
   }
 }
-release_maven typeOf simplon.pipeline.CatalogueTask {
+ReleaseMaven typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
   key = "release:maven"
   body = "simplon.tasks.maven:push"
-  input maven typeOf simplon.pipeline.Port {
+  property maven typeOf simplon.pipeline.InputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.maven
     param = "name"
     needs = simplon.vocabulary.artifact.f_registry
@@ -177,53 +215,216 @@ release_maven typeOf simplon.pipeline.CatalogueTask {
     needs = simplon.vocabulary.maven.f_modules
     needs = simplon.vocabulary.artifact.f_path
   }
-  input evidence typeOf simplon.pipeline.Port {
+  property evidence typeOf simplon.pipeline.InputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.test_result
   }
 }
-release_notes typeOf simplon.pipeline.CatalogueTask {
+ReleaseNotes typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
   key = "release:notes"
   body = "simplon.tasks.releasenotes:write"
-  output release_notes typeOf simplon.pipeline.Port {
+  property release_notes typeOf simplon.pipeline.OutputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.release_notes
     param = "name"
     needs = simplon.vocabulary.artifact.f_path
   }
 }
-release_tag typeOf simplon.pipeline.CatalogueTask {
+ReleaseTag typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
   key = "release:tag"
   body = "simplon.tasks.release:tag"
-  input release_notes typeOf simplon.pipeline.Port {
+  property release_notes typeOf simplon.pipeline.InputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.release_notes
   }
-  output tag typeOf simplon.pipeline.Port {
+  property tag typeOf simplon.pipeline.OutputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.tag
   }
 }
-docs_site typeOf simplon.pipeline.CatalogueTask {
+DocsSite typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
   key = "docs:site"
   body = "simplon.tasks.site:build"
-  output site typeOf simplon.pipeline.Port {
+  property site typeOf simplon.pipeline.OutputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.site
   }
 }
 // si#435 (decided 2026-10-15): deploy:up's input is bound by the manifest's `deploy: source:`, the section that
 // already names what is deployed, and never by `consumes:` - so no `param`: the body reads the section itself.
 // It accepts any artifact: a server deploys an image, a client installs a directory.
-deploy_up typeOf simplon.pipeline.CatalogueTask {
+DeployUp typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
   key = "deploy:up"
   body = "simplon.tasks.deploy:up"
-  input source typeOf simplon.pipeline.Port {
+  property source typeOf simplon.pipeline.InputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.artifact
   }
 }
-toolchain_run typeOf simplon.pipeline.CatalogueTask {
+ToolchainRun typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
   key = "toolchain:run"
   body = "simplon.tasks.toolchain:run_toolchain"
-  input source typeOf simplon.pipeline.Port {
+  property source typeOf simplon.pipeline.InputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.artifact
   }
-  output out typeOf simplon.pipeline.Port {
+  property out typeOf simplon.pipeline.OutputPort {
+    range = firn.core.StringLiteral
+    subjectCardinality = 0..N
     accepts = simplon.vocabulary.artifact
   }
+}
+
+// si#400 4a: the catalogue's tasks that take or give no artifact. Every catalogue task is a class now,
+// so a product command on one references it rather than re-declaring it.
+VcsCommit typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "vcs:commit"
+  body = "simplon.tasks.vcs:commit"
+}
+VcsPush typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "vcs:push"
+  body = "simplon.tasks.vcs:push"
+}
+VcsPruneBranches typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "vcs:prune-branches"
+  body = "simplon.tasks.vcs:prune_branches"
+}
+VcsAuthScopes typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "vcs:auth-scopes"
+  body = "simplon.tasks.vcs:auth_scopes"
+}
+VcsSubmodules typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "vcs:submodules"
+  body = "simplon.tasks.vcs:submodules"
+}
+SupportCiPrivileges typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "support:ci-privileges"
+  body = "simplon.tasks.ciprivileges:grant"
+}
+SupportCiDiskHygiene typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "support:ci-disk-hygiene"
+  body = "simplon.tasks.cidisk:hygiene"
+}
+SupportCiArm64 typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "support:ci-arm64"
+  body = "simplon.tasks.ciarm64:arm64"
+}
+SupportCiDiskPreflight typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "support:ci-disk-preflight"
+  body = "simplon.tasks.cidisk:preflight"
+}
+SupportCiDiskCleanup typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "support:ci-disk-cleanup"
+  body = "simplon.tasks.cidisk:cleanup"
+}
+TestGate typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "test:gate"
+  body = "simplon.tasks.testrun:gate"
+}
+TestTypecheckPython typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "test:typecheck-python"
+  body = "simplon.tasks.typecheck:check"
+}
+TestGenerated typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "test:generated"
+  body = "simplon.tasks.generated:check"
+}
+TestReleaseNotes typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "test:release-notes"
+  body = "simplon.tasks.releasenotes:check"
+}
+TestReport typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "test:report"
+  body = "simplon.tasks.testrun:report_cmd"
+}
+TestAccept typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "test:accept"
+  body = "simplon.tasks.testrun:accept_cmd"
+}
+TestWalk typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "test:walk"
+  body = "simplon.tasks.walk:walk"
+}
+SupportNexus typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "support:nexus"
+  body = "simplon.tasks.nexus:nexus_cmd"
+}
+SupportInstall typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "support:install"
+  body = "simplon.tasks.hosttools:install"
+}
+SupportClaudePlugins typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "support:claude-plugins"
+  body = "simplon.tasks.claudeplugins:install_cmd"
+}
+SupportEnvironments typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "support:environments"
+  body = "simplon.tasks.env:environments"
+}
+SupportCompletion typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "support:completion"
+  body = "simplon.tasks.completion:generate"
+}
+SupportWorkflows typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "support:workflows"
+  body = "simplon.tasks.workflows:generate"
+}
+DocsRender typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "docs:render"
+  body = "simplon.tasks.docs:render"
+}
+DocsReference typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "docs:reference"
+  body = "simplon.tasks.cliref:reference"
+}
+DocsAcceptance typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "docs:acceptance"
+  body = "simplon.tasks.acceptance:document"
+}
+BuildCmakeFiles typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "build:cmake-files"
+  body = "simplon.tasks.buildfiles:cmake"
+}
+BuildDotnetSolution typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "build:dotnet-solution"
+  body = "simplon.tasks.buildfiles:dotnet"
+}
+DeployCarrier typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "deploy:carrier"
+  body = "simplon.tasks.carrier:up"
+}
+DeployDown typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "deploy:down"
+  body = "simplon.tasks.deploy:down"
+}
+ReleaseAsset typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "release:asset"
+  body = "simplon.tasks.asset:publish"
+}
+TasksGenerate typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "tasks:generate"
+  body = "simplon.tasks.tasks:generate"
+}
+TasksCatalogue typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "tasks:catalogue"
+  body = "simplon.tasks.tasks:catalogue"
+}
+SupportMigrate typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "support:migrate"
+  body = "simplon.tasks.migrate:migrate"
+}
+SupportModel typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "support:model"
+  body = "simplon.tasks.manifestmodel:model"
+}
+SupportToolchain typeOf simplon.pipeline.CatalogueTaskType extends simplon.pipeline.Task {
+  key = "support:toolchain"
+  body = "simplon.tasks.toolchain:scaffold"
 }

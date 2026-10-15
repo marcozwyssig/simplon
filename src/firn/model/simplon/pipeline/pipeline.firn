@@ -1,7 +1,7 @@
 // simplon.pipeline (si#371, si#346): the metamodel of simplon's delivery pipeline, written for firn.
 //
-// What it says: a Task is a filter type with input and output Ports, each accepting an ArtifactKind; a
-// TaskCommand is a filter instance that runs one Task and REFERENCES what it produces and what it
+// What it says: a Task is a CLASS (si#400 4a) whose input and output Ports are its properties, each accepting
+// an ArtifactKind; a TaskCommand is a filter instance that runs one Task class and REFERENCES what it produces and what it
 // consumes: the Product owns every artifact, and several commands may produce one, but no plan holds two of
 // them (si#344 C.2, decided 2026-10-14). A Group holds commands and
 // belongs to one Area (ci, cd, support). Aggregates, releases, environments, sites and registries are
@@ -59,7 +59,7 @@ Registry typeOf firn.core.Class extends firn.core.NamedResource {
 // receives the bound artifact's NAME at run time, if any, and the keys that port NEEDS on the entry it
 // reads (si#344 B2's requiredness, which belongs to the reader: `build:nuget-config` needs a registry only,
 // `release:nuget` an image and a project too). Since si#344 C.1 the port IS the reader; B2's separate reader class is gone.
-Port typeOf firn.core.Class extends firn.core.NamedResource {
+Port typeOf firn.core.Class extends firn.core.Attribute {
   property accepts typeOf firn.core.Association {
     range = simplon.pipeline.ArtifactKind
     subjectCardinality = 1..1
@@ -76,33 +76,32 @@ Port typeOf firn.core.Class extends firn.core.NamedResource {
   }
 }
 
-Task typeOf firn.core.Class extends firn.core.NamedResource {
-  allowRoot = true
+// A port is a PROPERTY of its task class (si#400 4a); its direction is its type, no longer the
+// composition (`input`/`output`) it sat in. Its value is the bound entry's NAME, which is what a body
+// receives today through `param`.
+InputPort typeOf firn.core.Class extends simplon.pipeline.Port {}
+OutputPort typeOf firn.core.Class extends simplon.pipeline.Port {}
+
+// si#400 4a: a task is a CLASS. Its coordinate and its body are values on the class, so they live one storey
+// up, on its metaclass (firn docs/03 §8.4). A task class without `key` is firn's E004 - decision 4 of the
+// part 4 spec, a diagnosis, and it holds the catalogue too.
+TaskType typeOf firn.core.Class extends firn.core.Class {
   property key typeOf firn.core.Attribute {
     range = firn.core.StringLiteral
-    subjectCardinality = 0..1
+    subjectCardinality = 1..1
   }
   property body typeOf firn.core.Attribute {
     range = firn.core.StringLiteral
     subjectCardinality = 0..1
   }
-  property input typeOf firn.core.Composition {
-    range = simplon.pipeline.Port
-    subjectCardinality = 0..N
-    objectCardinality = 0..1
-  }
-  property output typeOf firn.core.Composition {
-    range = simplon.pipeline.Port
-    subjectCardinality = 0..N
-    objectCardinality = 0..1
-  }
 }
 
-// A task the PLATFORM offers (si#344 C.1): a catalogue coordinate in `key`, its body in `body`. Its own
-// class, because every product model declares plain Tasks in the same firn project (`support manifest
-// model`), and a template over `Task` would gather theirs too. si#400 builds the base classes on this.
-CatalogueTask typeOf firn.core.Class extends simplon.pipeline.Task {
-  allowRoot = true
+// The PLATFORM's tasks: their own metaclass, so a template over the catalogue does not gather the
+// product tasks that `support manifest model` writes into the same firn project (si#344 C.1's reason).
+CatalogueTaskType typeOf firn.core.Class extends simplon.pipeline.TaskType {}
+
+Task typeOf firn.core.Class extends firn.core.NamedResource {
+  modifier = firn.core.InheritanceModifier.Abstract
 }
 
 Artifact typeOf firn.core.Class extends firn.core.NamedResource {
@@ -136,7 +135,7 @@ Command typeOf firn.core.Class extends firn.core.NamedResource {
 
 TaskCommand typeOf firn.core.Class extends simplon.pipeline.Command {
   property task typeOf firn.core.Association {
-    range = simplon.pipeline.Task
+    range = simplon.pipeline.TaskType
     subjectCardinality = 1..1
     objectCardinality = 0..N
   }

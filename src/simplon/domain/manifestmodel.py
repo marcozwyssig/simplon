@@ -36,12 +36,16 @@ silently holds one command where the manifest has two is the defect this kernel 
 What is NOT exported, said so that "drops nothing" stays true of the rest:
   - `cd: site:` - the M2 has a Site class, but nothing holds one until a deploy reads a site (spec,
     "What this is NOT"); a manifest's `cd: site:` is not in the model.
-  - a `tasks:` entry no command places - one Task per task a command USES (plan rule 2), so a task the
-    product offers and never places (si#53) is invisible until parts B/C need it. A Task is keyed by the
-    name a command's `task:` gives, as a CatalogueTask is by its coordinate, and not by its impl: two
-    tasks on one body may declare different ports, and keyed by impl the second's were dropped (si#420).
-  - a Task for a command on a catalogue task the model carries (`artifactschema.PORTS`): the command
-    references `simplon.catalogue.<task>` instead, the one source of its ports (si#344 C.2).
+  - a `tasks:` entry no command places - one task class per task a command USES (plan rule 2), so a task
+    the product offers and never places (si#53) is invisible until parts B/C need it. A task class is
+    keyed by the name a command's `task:` gives, as a catalogue class is by its coordinate, and not by its
+    impl: two tasks on one body may declare different ports, and keyed by impl the second's were dropped
+    (si#420). Since si#400 4a it is a CLASS (`<Name> typeOf simplon.pipeline.TaskType extends
+    simplon.pipeline.Task`) at the root of the product's package, because a class cannot be composed
+    under the Product.
+  - a task class for a command on a catalogue task: every catalogue task is a class in the model since
+    si#400 4a (`artifactschema.BODIES`), so the command references `simplon.catalogue.<Class>` instead,
+    the one source of its ports (si#344 C.2).
 `cd: default:` IS exported, as `Product.default` - the name as written, not a reference to one of
 `Product.environments`, because a loadable manifest may name none (simplon's own: `default: dev`, no
 matrix); whether it names a real one stays `environments.parse_data`'s verdict at run time.
@@ -60,7 +64,7 @@ import re
 from collections.abc import Mapping
 
 from simplon.domain import artifactsection
-from simplon.domain.artifactschema import PORTS
+from simplon.domain.artifactschema import BODIES
 from simplon.domain.environments import matrix_section
 from simplon.domain.manifest import Manifest
 
@@ -93,6 +97,18 @@ def mangle(name: str) -> str:
     [A-Za-z0-9_] becomes `_`, and a leading digit gets `_`."""
     out = _NOT_NAME.sub("_", name)
     return f"_{out}" if out[:1].isdigit() else out
+
+
+_PARTS = re.compile(r"[:\-_]+")
+
+
+def class_name(name: str) -> str:
+    """A task's coordinate or a product task's name as a firn CLASS name (si#400 4a): every part between
+    `:`, `-` and `_` capitalised and joined, `T` in front of a leading digit. PascalCase also keeps a
+    class clear of firn's keywords, which are all lower case."""
+    out = "".join(part[:1].upper() + part[1:] for part in _PARTS.split(name) if part)
+    out = _NOT_NAME.sub("_", out)
+    return f"T{out}" if out[:1].isdigit() else out
 
 
 def _q(text: str) -> str:
@@ -140,10 +156,12 @@ class _Export:
         self.manifest = manifest
         self.document = document
         self.product = product
-        self.root = f"product.{mangle(product)}.{mangle(product)}"
+        self.package = f"product.{mangle(product)}"
+        self.root = f"{self.package}.{mangle(product)}"
         self.names = _Names(f"product '{product}'")
         self.paths: dict[str, str] = {}   # dotted group path -> firn path below the Product
-        self.tasks: dict[str, tuple[str, str, tuple]] = {}   # task -> (firn name, impl, ports), first use first
+        self.tasks: dict[str, tuple[str, str, tuple]] = {}   # task -> (class name, impl, ports), first use first
+        self.classes: dict[str, str] = {}   # class name -> the task that took it (si#400 4a)
 
     def area(self, group: str) -> str:
         area = self.manifest.area_of(group)
@@ -195,13 +213,14 @@ class _Export:
                 body += _block(f"release a_{mangle(bundle)} typeOf simplon.pipeline.Release",
                                self.artifact_fields(bundle))
         else:
-            if spec.task in PORTS:
-                # a catalogue task the model carries (si#344 C.1): referenced, never re-declared (C.2)
-                body.append(f"task = simplon.catalogue.{mangle(spec.task)}")
+            if spec.task in BODIES:
+                # a catalogue task: every one is a class in the model since si#400 4a, referenced, never
+                # re-declared (C.2)
+                body.append(f"task = simplon.catalogue.{class_name(spec.task)}")
             else:
                 if spec.task not in self.tasks:
-                    self.tasks[spec.task] = (self.names(spec.task, "t_"), spec.impl, spec.ports)
-                body.append(f"task = {self.root}.{self.tasks[spec.task][0]}")
+                    self.tasks[spec.task] = (self.task_class(spec.task), spec.impl, spec.ports)
+                body.append(f"task = {self.package}.{self.tasks[spec.task][0]}")
             for key, side in (("produces", spec.produces), ("consumes", spec.consumes)):
                 body += [f"{key} = {self.root}.a_{mangle(artifact)}" for names in side.values() for artifact in names]
             kind = "TaskCommand"
@@ -216,16 +235,30 @@ class _Export:
             by_area[area] += self.group(part, children, part, f"{area} {self.paths[part].rsplit('.', 1)[1]}")
         return [line for area in _AREAS for line in by_area[area]]
 
+    def task_class(self, task: str) -> str:
+        """The class name a product task gets, refusing a second task on it: firn would merge the two."""
+        name = class_name(task)
+        if name in self.classes:
+            raise ModelExportError(
+                f"product '{self.product}': tasks '{self.classes[name]}' and '{task}' are both the class "
+                f"'{name}', and firn would merge them into one class - rename one of them")
+        self.classes[name] = task
+        return name
+
     def task_lines(self) -> list[str]:
+        """Each product task as a CLASS at the package root (si#400 4a): its coordinate and body on the class,
+        its ports its properties, the direction the port's type."""
         lines: list[str] = []
         for task, (name, impl, ports) in self.tasks.items():
             body = [f"key = {_q(task)}", f"body = {_q(impl)}"]
             for port in ports:
-                fields = [f"accepts = simplon.vocabulary.{mangle(port.accepts)}"]
+                kind = "InputPort" if port.direction == "input" else "OutputPort"
+                fields = ["range = firn.core.StringLiteral", "subjectCardinality = 0..N",
+                          f"accepts = simplon.vocabulary.{mangle(port.accepts)}"]
                 if port.param:
                     fields.append(f"param = {_q(port.param)}")
-                body += _block(f"{port.direction} {mangle(port.name)} typeOf simplon.pipeline.Port", fields)
-            lines += _block(f"tasks {name} typeOf simplon.pipeline.Task", body)
+                body += _block(f"property {mangle(port.name)} typeOf simplon.pipeline.{kind}", fields)
+            lines += ["", *_block(f"{name} typeOf simplon.pipeline.TaskType extends simplon.pipeline.Task", body)]
         return lines
 
     def environments(self, document: Mapping[str, object]) -> list[str]:
@@ -310,7 +343,7 @@ def export(manifest: Manifest, document: Mapping[str, object], product: str,
     run = _Export(manifest, product, document)
     body = [f"key = {_q(product)}"]
     body += run.groups()   # first: names the tasks the commands run
-    body += run.task_lines()
+    body += [f"tasks = {run.package}.{name}" for name, _, _ in run.tasks.values()]
     body += run.environments(document)
     body += run.artifacts(document)
     body += run.sections(document, frozenset(kernel_sections))
@@ -319,5 +352,6 @@ def export(manifest: Manifest, document: Mapping[str, object], product: str,
         f"package product.{mangle(product)}",
         "",
         *_block(f"{mangle(product)} typeOf simplon.manifest.Product", body),
+        *run.task_lines(),
     ]
     return "\n".join(lines) + "\n"

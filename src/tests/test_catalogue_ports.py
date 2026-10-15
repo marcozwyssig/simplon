@@ -43,7 +43,7 @@ def test_the_ports_are_the_ones_measured_from_the_bodies():
     }
 
 
-def test_every_modelled_task_is_a_catalogue_coordinate_with_the_body_the_catalogue_names():
+def test_every_catalogue_task_is_modelled_with_the_body_the_catalogue_names():
     # arrange
     tasks = catalogue.load().tasks
 
@@ -52,8 +52,10 @@ def test_every_modelled_task_is_a_catalogue_coordinate_with_the_body_the_catalog
     wrong = {c: (body, tasks[c]["impl"]) for c, body in artifactschema.BODIES.items()
              if c in tasks and tasks[c]["impl"] != body}
 
-    # assert: the model and the hand-written catalogue are two sources for one body until si#400
-    assert set(artifactschema.BODIES) == set(artifactschema.PORTS)
+    # assert: since si#400 4a EVERY catalogue task is a class in the model, not only those with ports;
+    # the model and the hand-written catalogue stay two sources for one body until plan 4c
+    assert set(artifactschema.BODIES) == set(tasks)
+    assert set(artifactschema.PORTS) <= set(artifactschema.BODIES)
     assert unknown == []
     assert wrong == {}
 

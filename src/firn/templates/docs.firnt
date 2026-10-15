@@ -37,8 +37,8 @@ template Docs {
     |
     || Task | Port | Direction | Accepts | Binds |
     ||---|---|---|---|---|
-    for t : `simplon.pipeline.CatalogueTask` {
-      for p : t.input {
+    for t : `simplon.pipeline.CatalogueTaskType` {
+      for p : t.property:`simplon.pipeline.InputPort` {
         if p.param {
           || `${t.key}` | `${p.name.replace("_", "-")}` | input | `${p.accepts.name.replace("_", "-")}` | `${p.param}` |
         }
@@ -46,7 +46,7 @@ template Docs {
           || `${t.key}` | `${p.name.replace("_", "-")}` | input | `${p.accepts.name.replace("_", "-")}` |  |
         }
       }
-      for p : t.output {
+      for p : t.property:`simplon.pipeline.OutputPort` {
         if p.param {
           || `${t.key}` | `${p.name.replace("_", "-")}` | output | `${p.accepts.name.replace("_", "-")}` | `${p.param}` |
         }

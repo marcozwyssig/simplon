@@ -148,8 +148,10 @@ Product typeOf firn.core.Class extends firn.core.NamedResource {
     subjectCardinality = 0..N
     objectCardinality = 0..1
   }
-  property tasks typeOf firn.core.Composition {
-    range = simplon.pipeline.Task
+  // The product's own task classes (si#400 4a). A class cannot be composed, so each stands at the root of the
+  // product's package and the Product REFERENCES it; the kernel reads `tasks:`, so the Product keeps the property.
+  property tasks typeOf firn.core.Association {
+    range = simplon.pipeline.TaskType
     subjectCardinality = 0..N
     objectCardinality = 0..1
   }

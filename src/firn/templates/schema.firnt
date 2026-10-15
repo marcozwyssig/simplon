@@ -58,31 +58,33 @@ template ArtifactSchema {
     |
     |#: Each catalogue task that takes or gives an artifact -> its ports, inputs first.
     |PORTS: dict[str, tuple[Port, ...]] = {
-    for t : `simplon.pipeline.CatalogueTask` {
-      |    "${t.key}": (
-      for p : t.input {
-        if p.param {
-          |        Port("${p.name.replace("_", "-")}", "input", "${p.accepts.name.replace("_", "-")}", "${p.param}", (<<for f : p.needs>>"${f.key}", <<end>>)),
+    for t : `simplon.pipeline.CatalogueTaskType` {
+      if not t.property:`simplon.pipeline.Port`.isEmpty() {
+        |    "${t.key}": (
+        for p : t.property:`simplon.pipeline.InputPort` {
+          if p.param {
+            |        Port("${p.name.replace("_", "-")}", "input", "${p.accepts.name.replace("_", "-")}", "${p.param}", (<<for f : p.needs>>"${f.key}", <<end>>)),
+          }
+          if not p.param {
+            |        Port("${p.name.replace("_", "-")}", "input", "${p.accepts.name.replace("_", "-")}", "", (<<for f : p.needs>>"${f.key}", <<end>>)),
+          }
         }
-        if not p.param {
-          |        Port("${p.name.replace("_", "-")}", "input", "${p.accepts.name.replace("_", "-")}", "", (<<for f : p.needs>>"${f.key}", <<end>>)),
+        for p : t.property:`simplon.pipeline.OutputPort` {
+          if p.param {
+            |        Port("${p.name.replace("_", "-")}", "output", "${p.accepts.name.replace("_", "-")}", "${p.param}", (<<for f : p.needs>>"${f.key}", <<end>>)),
+          }
+          if not p.param {
+            |        Port("${p.name.replace("_", "-")}", "output", "${p.accepts.name.replace("_", "-")}", "", (<<for f : p.needs>>"${f.key}", <<end>>)),
+          }
         }
+        |    ),
       }
-      for p : t.output {
-        if p.param {
-          |        Port("${p.name.replace("_", "-")}", "output", "${p.accepts.name.replace("_", "-")}", "${p.param}", (<<for f : p.needs>>"${f.key}", <<end>>)),
-        }
-        if not p.param {
-          |        Port("${p.name.replace("_", "-")}", "output", "${p.accepts.name.replace("_", "-")}", "", (<<for f : p.needs>>"${f.key}", <<end>>)),
-        }
-      }
-      |    ),
     }
     |}
     |
-    |#: Each of those tasks -> the body the model names. catalogue.yaml names it too until si#400 generates it.
+    |#: Each catalogue task -> the body the model names. catalogue.yaml names it too until si#400 4c.
     |BODIES: dict[str, str] = {
-    for t : `simplon.pipeline.CatalogueTask` {
+    for t : `simplon.pipeline.CatalogueTaskType` {
       |    "${t.key}": "${t.body}",
     }
     |}

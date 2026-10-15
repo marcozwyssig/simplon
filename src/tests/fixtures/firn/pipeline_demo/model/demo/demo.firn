@@ -12,16 +12,20 @@ kresult typeOf simplon.pipeline.ArtifactKind {
 kbundle typeOf simplon.pipeline.ArtifactKind {
 }
 
-BuildImage typeOf simplon.pipeline.Task {
+BuildImage typeOf simplon.pipeline.TaskType extends simplon.pipeline.Task {
+  key = "build:image"
   body = "simplon.tasks.image:build"
 }
-TestImage typeOf simplon.pipeline.Task {
+TestImage typeOf simplon.pipeline.TaskType extends simplon.pipeline.Task {
+  key = "test:image"
   body = "simplon.tasks.image:test"
 }
-PublishImage typeOf simplon.pipeline.Task {
+PublishImage typeOf simplon.pipeline.TaskType extends simplon.pipeline.Task {
+  key = "release:image"
   body = "simplon.tasks.image:publish"
 }
-SaveImage typeOf simplon.pipeline.Task {
+SaveImage typeOf simplon.pipeline.TaskType extends simplon.pipeline.Task {
+  key = "build:save"
   body = "simplon.tasks.image:save"
 }
 
