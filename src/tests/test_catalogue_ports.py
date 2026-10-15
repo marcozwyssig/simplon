@@ -36,6 +36,8 @@ def test_the_ports_are_the_ones_measured_from_the_bodies():
         "release:maven": (P("maven", "input", "maven", "name", ("registry", "group", "modules", "path")),
                           EVIDENCE),
         "docs:site": (P("site", "output", "site", "", ()),),
+        # si#435: bound by `deploy: source:`, so no `param:` - the body reads the section itself
+        "deploy:up": (P("source", "input", "artifact", "", ()),),
         "toolchain:run": (P("source", "input", "artifact", "", ()), P("out", "output", "artifact", "", ())),
     }
 

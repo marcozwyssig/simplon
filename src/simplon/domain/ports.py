@@ -34,6 +34,22 @@ def of(ref: str, product_tasks: Mapping[str, object]) -> tuple[Port, ...]:
     return declared(ref, spec) if isinstance(spec, Mapping) else ()
 
 
+#: The catalogue task whose input port a manifest SECTION binds, and never `consumes:` (si#435, decided
+#: 2026-10-15): `deploy:up`'s `source` is what `deploy: source:` already names, so a `consumes:` beside it
+#: would be a second statement of one fact.
+SECTION_BOUND: dict[str, str] = {"deploy:up": "source"}
+
+
+def section_bound(document: Mapping[str, object]) -> dict[str, str]:
+    """{coordinate: artifact} for each SECTION_BOUND task whose section names an artifact. A section that names
+    none binds nothing: `deploy:up` refuses that itself when it runs (`deployment.source_of`), as before."""
+    # Literal keys, as `deployment.source_of` reads them: the refusal census resolves a section by its literal.
+    deploy = document.get("deploy")
+    source = deploy.get("source") if isinstance(deploy, Mapping) else None
+    name = source.get("artifacts") if isinstance(source, Mapping) else None
+    return {"deploy:up": name.strip()} if isinstance(name, str) and name.strip() else {}
+
+
 #: What a port declaration takes.
 _PORT_KEYS = ("accepts", "param")
 

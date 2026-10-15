@@ -604,6 +604,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # si#344 C.2 rule 7: a port binding and `with:` on the parameter it binds say one fact twice. When the two
     # agree the manifest would have worked, so it is an expression rule (spec C.7); it binds the kernel too.
     ("treeform", "_resolve_one", "binds a port and also pins"): EXPRESSION,
+    # si#435 (decided 2026-10-15): `deploy:up`'s port is bound by `deploy: source:`, so `consumes:` on it says
+    # that fact twice. Agreeing, it would have worked: an expression rule, as rule 7 is. It costs nothing measured:
+    # the form was refused before the port existed (no port to bind), and 0 of 8 manifests write it.
+    ("treeform", "_resolve_one", "takes that port from `deploy: source:`"): EXPRESSION,
     # si#344 C.2 final review: an aggregate runs no task, so a binding on it binds nothing (it crashed the loader
     # before); and a bound parameter's `params:` renders nowhere, the `with:` refusal above for a binding.
     ("treeform", "_resolve_one", "an aggregate runs no task"): DIAGNOSIS,
@@ -990,6 +994,7 @@ REACH: dict[tuple[str, str, str], str] = {
     ("treeform", "_merge_commands", "redeclares `task:`"): REACH_MERGED,
     ("treeform", "_resolve_one", "declares `impl:`"): REACH_MERGED,
     ("treeform", "_resolve_one", "binds a port and also pins"): REACH_MERGED,
+    ("treeform", "_resolve_one", "takes that port from `deploy: source:`"): REACH_MERGED,
     ("treeform", "_resolve_one", "declares both `task:` and `depends_on:`"): REACH_MERGED,
     ("treeform", "check_no_old_form", "is written in the flat command form"): REACH_SEAM,
     ("treeform", "check_coordinate_placement", "places the coordinate"): REACH_MERGED,

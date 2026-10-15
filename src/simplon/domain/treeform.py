@@ -572,24 +572,29 @@ def check_task(name: str, spec: dict) -> None:
     ports.declared(name, spec)
 
 
-def resolve(flat: dict, product_tasks: dict, catalogue_tasks: dict) -> dict:
+def resolve(flat: dict, product_tasks: dict, catalogue_tasks: dict,
+            section_bound: dict[str, str] | None = None) -> dict:
     """Every command's `task:` replaced by the template it names.
 
     ONE resolution function, two sources: a name CONTAINING a colon is a catalogue coordinate, a name
     without one is a task defined in the manifest doing the referring. The two name spaces cannot
     intersect, so nothing shadows anything and there is no precedence rule to remember.
+
+    `section_bound` is `ports.section_bound` of the manifest: the artifact a section binds to a
+    `ports.SECTION_BOUND` task's port (si#435).
     """
     out: dict[str, dict] = {}
     for path, members in (flat or {}).items():
         resolved: dict[str, dict] = {}
         for name, spec in (members or {}).items():
             resolved[str(name)] = _resolve_one(dict(spec or {}), f"{path} {name}",
-                                               product_tasks, catalogue_tasks)
+                                               product_tasks, catalogue_tasks, section_bound or {})
         out[str(path)] = resolved
     return out
 
 
-def _resolve_one(spec: dict, where: str, product_tasks: dict, catalogue_tasks: dict) -> dict:
+def _resolve_one(spec: dict, where: str, product_tasks: dict, catalogue_tasks: dict,
+                 section_bound: dict[str, str]) -> dict:
     if "impl" in spec:
         raise ValueError(
             f"command '{where}' declares `impl:`. A command is an instance of a task: declare the body "
@@ -655,6 +660,16 @@ def _resolve_one(spec: dict, where: str, product_tasks: dict, catalogue_tasks: d
         value = (with_ or {}).get(p.param)
         if p.param and p.name not in side and isinstance(value, str) and value.strip():
             side[p.name] = (value.strip(),)
+    # A port a section binds (si#435): `consumes:` on it would be a second statement of what the section
+    # says, so it is refused - as it was before the port existed, now naming where the binding is said.
+    section_port = ports.SECTION_BOUND.get(ref)
+    if section_port is not None:
+        if section_port in bound["consumes"]:
+            raise ValueError(
+                f"command '{where}' binds `consumes: {section_port}`, and task '{ref}' takes that port from "
+                f"`deploy: source:`, which already names what is deployed - name it there, once")
+        if ref in section_bound:
+            bound["consumes"][section_port] = (section_bound[ref],)
     by_binding: dict[str, str] = {}
     handed: dict[str, str] = {}   # param -> the port that handed it, for the message below
     for p in task_ports:

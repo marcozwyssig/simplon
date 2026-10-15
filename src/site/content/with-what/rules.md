@@ -72,8 +72,14 @@ an argument.
 | kind | today | what it costs a product |
 | --- | --- | --- |
 | diagnosis | 230 | nothing - the declaration had no working meaning |
-| expression rule | 36 | something it could otherwise have said |
-| **all load-time refusals** | **266** | |
+| expression rule | 37 | something it could otherwise have said |
+| **all load-time refusals** | **267** | |
+
+si#435 added one expression rule: a `consumes:` on a `deploy:up` command. Its port is bound by `deploy:
+source:`, which already names what is deployed, so `consumes:` would say it twice. Nothing it refuses was
+accepted before, because until si#435 the task had no port to bind, and none of the eight manifests writes
+it. It moved one diagnosis earlier without adding one: a `deploy: source:` naming an entry `artifacts:` does
+not declare is refused at load by the port's rule, not first when `deploy up` runs.
 
 si#419 added one diagnosis: a `parallel: true` aggregate may not run a consumer beside the producer of
 what it consumes, because a fan starts its branches at once and the consumer may read the artifact before
@@ -132,7 +138,7 @@ Self-binding is not a third bucket of refusals; it is how far an expression rule
 
 | reach | count | meaning |
 | --- | --- | --- |
-| the kernel is held to it too | 29 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
+| the kernel is held to it too | 30 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
 | a statement about the platform/product seam | 7 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
 | the kernel exempts itself | 0 | there is no longer a rule the kernel declines to apply to itself |
 

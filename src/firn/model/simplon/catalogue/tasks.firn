@@ -191,6 +191,16 @@ docs_site typeOf simplon.pipeline.CatalogueTask {
     accepts = simplon.vocabulary.site
   }
 }
+// si#435 (decided 2026-10-15): deploy:up's input is bound by the manifest's `deploy: source:`, the section that
+// already names what is deployed, and never by `consumes:` - so no `param`: the body reads the section itself.
+// It accepts any artifact: a server deploys an image, a client installs a directory.
+deploy_up typeOf simplon.pipeline.CatalogueTask {
+  key = "deploy:up"
+  body = "simplon.tasks.deploy:up"
+  input source typeOf simplon.pipeline.Port {
+    accepts = simplon.vocabulary.artifact
+  }
+}
 toolchain_run typeOf simplon.pipeline.CatalogueTask {
   key = "toolchain:run"
   body = "simplon.tasks.toolchain:run_toolchain"
