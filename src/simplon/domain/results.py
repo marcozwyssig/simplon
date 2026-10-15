@@ -11,8 +11,10 @@ generated module is rendered from the manifest's commands and does not carry the
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from contextvars import ContextVar
 from pathlib import Path
+from typing import NamedTuple
 
 from simplon.domain import artifactsection, context
 from simplon.kernel import log
@@ -89,21 +91,64 @@ def held(snapshot: Snapshot, rc: int) -> int:
 #
 # The record is the verdict record `test:image` writes, the one producer of a test result in the catalogue
 # (measured over the eight reachable manifests on 2026-10-15: no product task produces one). Its contract
-# is a JSON object with an integer `verdict`, 0 for green. Three answers are kept apart, because each
+# is a JSON object with an integer `verdict`, 0 for green. Four answers are kept apart, because each
 # sends the reader somewhere else: NOT WRITTEN (the test has not run here - run it), RED (it ran and
-# failed - read its runs), and NO VERDICT (something wrote the file, but nothing a release can read).
+# failed - read its runs), NO VERDICT (something wrote the file, but nothing a release can read), and NO
+# SUBJECT (si#439: green, but not saying what it ran - run it again).
+#
+# A green record is not yet evidence about what is published: one left from an earlier build reads green
+# too (si#439). So each run names its `reference` and the daemon `id` that reference had, and the guard
+# hands those to the body through `tested()`. The body compares them with what it pushes, because only
+# it knows that; the wrapper knows no kind.
 
-def _verdict(path: Path) -> "int | None":
-    """The record's verdict, or None when the file is no verdict record."""
+class Subject(NamedTuple):
+    """One run a bound record says it made: the test result it came from, the reference it ran and the
+    id that reference had when it ran (si#439)."""
+
+    artifact: str
+    reference: str
+    id: str
+
+
+#: What the evidence guard read for the body it is running: None outside a guard - the command binds no
+#: evidence - and the subjects of every bound record inside one. Two values, because "bound to nothing" and
+#: "bound to records that name nothing" are two answers, and only the guard can tell them apart.
+_tested: ContextVar["tuple[Subject, ...] | None"] = ContextVar("tested", default=None)
+
+
+def _record(path: Path) -> "dict | None":
+    """The record's JSON object, or None when the file is not one."""
     try:
         record = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, ValueError):
         return None
-    verdict = record.get("verdict") if isinstance(record, dict) else None
+    return record if isinstance(record, dict) else None
+
+
+def _verdict(record: "dict | None") -> "int | None":
+    """The record's verdict, or None when it carries none."""
+    verdict = record.get("verdict") if record is not None else None
     # `bool` is an int to Python and not a verdict here: `true` would otherwise read as verdict 1.
     return verdict if isinstance(verdict, int) and not isinstance(verdict, bool) else None
 
 
+def _subjects(name: str, record: dict) -> "tuple[Subject, ...] | None":
+    """What the record says it ran, or None when it does not say (si#439).
+
+    A run names its subject with a `reference` and the `id` that reference had. A record with no run, or
+    with a run missing either, names no subject: written before si#439, or by something that is not a
+    test of what a release publishes."""
+    runs = record.get("runs")
+    if not isinstance(runs, list) or not runs:
+        return None
+    out = []
+    for run in runs:
+        reference = run.get("reference") if isinstance(run, dict) else None
+        id_ = run.get("id") if isinstance(run, dict) else None
+        if not (isinstance(reference, str) and reference and isinstance(id_, str) and id_):
+            return None
+        out.append(Subject(name, reference, id_))
+    return tuple(out)
 def evidence_of(spec: object) -> tuple[str, ...]:
     """The artifacts a command binds to its input ports that take a test result - its evidence, in port
     order. Read off the ports rather than off the port NAME `evidence`, so a product task whose input port
@@ -114,28 +159,58 @@ def evidence_of(spec: object) -> tuple[str, ...]:
                  for name in consumes.get(port.name, ()))
 
 
-def refused(evidence: Sequence[str]) -> int:
-    """1 when any test result in `evidence` is not written, red or no verdict, saying which and why; else 0.
+def _read(evidence: Sequence[str]) -> "tuple[Subject, ...] | None":
+    """The subjects of every record in `evidence`, or None after saying which record is not written, red,
+    holds no verdict or names no subject.
 
     Every record is read before answering, because which of them failed is the whole content of the
-    answer. The caller runs the release body only on 0.
+    answer. A record with no subject is refused rather than read for its verdict alone (si#439, Marco's
+    choice): a green verdict about something unnamed is the stale record this check exists to stop.
     """
     root = context.current().root
     reasons: list[str] = []
+    subjects: list[Subject] = []
     for name in evidence:
         path = path_of(name)
         shown = f"'{name}' ({path.relative_to(root) if path.is_relative_to(root) else path})"
         if not path.exists():
             reasons.append(f"{shown} has not been written - the test that produces it has not run here")
             continue
-        verdict = _verdict(path) if path.is_file() else None
-        if verdict is None:
+        record = _record(path) if path.is_file() else None
+        verdict = _verdict(record)
+        if record is None or verdict is None:
             reasons.append(f"{shown} holds no verdict - a release reads a JSON record with an integer "
                            f"`verdict`, the one `test:image` writes")
         elif verdict != 0:
             reasons.append(f"{shown} is red: verdict {verdict} - its `runs` say which run failed")
+        elif (named := _subjects(name, record)) is None:
+            reasons.append(f"{shown} is green but does not name what it tested - every run needs its "
+                           f"`reference` and `id`; run the test again to write a record that does")
+        else:
+            subjects.extend(named)
     if reasons:
         log.error("nothing was published: the evidence this release is bound to does not say the test "
                   "passed\n  " + "\n  ".join(reasons))
+        return None
+    return tuple(subjects)
+
+
+def guarded(evidence: Sequence[str], body: Callable[[], int]) -> int:
+    """`body()`'s rc when every record in `evidence` is green and names its subject, else 1 without
+    calling it. While the body runs, `tested()` answers what the records say they ran."""
+    subjects = _read(evidence)
+    if subjects is None:
         return 1
-    return 0
+    token = _tested.set(subjects)
+    try:
+        return body()
+    finally:
+        _tested.reset(token)
+
+
+def tested() -> "tuple[Subject, ...] | None":
+    """What the bound evidence says it ran, for the release body to compare with what it publishes
+    (si#439) - or None when the running command is bound to no evidence. The verdict is the wrapper's to
+    read; whether the record is about THESE bytes only the body can say, because only it knows what it
+    pushes."""
+    return _tested.get()

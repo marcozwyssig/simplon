@@ -29,6 +29,7 @@ from simplon.domain import context
 from simplon.adapters import docker, githubpackages
 from simplon.domain.context import ProductContext
 from simplon.kernel.run import Result
+from simplon.domain import results as results_mod
 from simplon.tasks import image
 
 #: The real gate, captured before the autouse fixture below neutralises it - the two tests that assert
@@ -662,6 +663,75 @@ def test_a_release_logs_in_pushes_and_then_asks_the_registry(cli, logins):
     assert cli.argv_starting("oras", "manifest", "fetch")
 
 
+# --- si#439: the evidence must be about what is pushed ------------------------------------------------
+# A green record from an earlier build read green. The release now compares each reference it pushes with
+# the daemon id the bound evidence ran, inside the guard that read it (`results.tested`).
+
+def _released_after(subjects, name="app"):
+    """`release` run the way the guard runs it: with `subjects` as what the bound evidence ran."""
+    token = results_mod._tested.set(tuple(results_mod.Subject("checked", ref, id_) for ref, id_ in subjects))
+    try:
+        return image.release(name=name, tag="1.0")
+    finally:
+        results_mod._tested.reset(token)
+
+
+def test_a_release_whose_evidence_ran_these_bytes_publishes(cli, logins):
+    # arrange
+    cli.outputs[("docker", "image", "inspect", "--format")] = "sha256:aa\n"
+
+    # act
+    rc = _released_after([("ghcr.io/owner/demo-app:1.0", "sha256:aa")])
+
+    # assert
+    assert rc == 0
+    assert cli.argv_starting("docker", "push")
+
+
+def test_evidence_about_another_tag_publishes_nothing(cli, logins, capsys):
+    # arrange: the case si#439 measured - yesterday's green record, a release by hand with another --tag
+    cli.outputs[("docker", "image", "inspect", "--format")] = "sha256:aa\n"
+
+    # act
+    rc = _released_after([("ghcr.io/owner/demo-app:0.9", "sha256:aa")])
+
+    # assert
+    assert rc == 1
+    assert cli.argv_starting("docker", "push") == [] and logins == []
+    err = capsys.readouterr().err
+    assert "ghcr.io/owner/demo-app:1.0 was never tested: the evidence ran ghcr.io/owner/demo-app:0.9" in err
+
+
+def test_evidence_about_the_same_tag_before_a_rebuild_publishes_nothing(cli, logins, capsys):
+    # arrange: the case a reference comparison would miss - same tag, new bytes
+    cli.outputs[("docker", "image", "inspect", "--format")] = "sha256:bb\n"
+
+    # act
+    rc = _released_after([("ghcr.io/owner/demo-app:1.0", "sha256:aa")])
+
+    # assert: told apart from "never tested", because the fix is the same but the cause is not
+    assert rc == 1
+    assert cli.argv_starting("docker", "push") == []
+    err = capsys.readouterr().err
+    assert "was rebuilt after it was tested: the test ran sha256:aa, and it is sha256:bb now" in err
+    assert "never tested" not in err
+
+
+def test_a_multi_platform_release_compares_every_platform_it_pushes(monkeypatch, logins, _no_provenance,
+                                                                   _recorded, _multi, capsys):
+    # arrange: arm64 was smoked, amd64 was not
+    fake = _fake(monkeypatch, outputs={("oras", "manifest", "fetch"): _INDEX_BOTH,
+                                       ("docker", "image", "inspect", "--format"): "sha256:aa\n"})
+
+    # act
+    rc = _released_after([("ghcr.io/owner/demo-multi:1.0-linux-arm64", "sha256:aa")], name="multi")
+
+    # assert
+    assert rc == 1
+    assert fake.argv_starting("docker", "buildx", "bake") == []
+    assert "demo-multi:1.0-linux-amd64 was never tested" in capsys.readouterr().err
+
+
 def test_a_push_that_exits_zero_without_the_tag_reaching_the_registry_is_red(monkeypatch, logins,
                                                                             capsys):
     """#31 acceptance 3, seen red. `docker push` reports success, the registry does not serve the tag -
@@ -1208,17 +1278,18 @@ def test_a_smoke_run_writes_its_verdict_record_to_the_result_it_is_bound_to(cli,
     (_product / "demo.yaml").write_text(
         text + "  app-checked: { kind: test-result, path: build/test/app.json }\n", encoding="utf-8")
     monkeypatch.setattr(image, "present_locally", lambda ref: True)
+    cli.outputs[("docker", "image", "inspect", "--format")] = "sha256:aa\n"
 
     # act
     rc = image.smoke("app", argv="check", results="app-checked")
 
-    # assert
+    # assert: si#439 - each run names the daemon id of what it ran, the subject a release compares
     assert rc == 0
     record = json.loads((_product / "build" / "test" / "app.json").read_text(encoding="utf-8"))
     assert record["image"] == "app"
     assert record["verdict"] == 0
-    assert record["runs"] == [{"reference": "ghcr.io/owner/demo-app:1.2.3", "platform": "", "argv": "check",
-                               "expected_rc": 0, "rc": 0, "verdict": 0}]
+    assert record["runs"] == [{"reference": "ghcr.io/owner/demo-app:1.2.3", "id": "sha256:aa", "platform": "",
+                               "argv": "check", "expected_rc": 0, "rc": 0, "verdict": 0}]
 
 
 def test_a_failing_smoke_run_still_writes_its_record_with_the_failure(cli, _no_provenance, _product, _tagged,

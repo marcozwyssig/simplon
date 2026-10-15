@@ -239,17 +239,18 @@ def _bound(fn: Callable[..., object], spec: manifest.CommandSpec,
     # si#344 C.3: a command bound to produce a test result fails when its body exits 0 without writing it
     # (`simplon.domain.results`) - the same check the generated module wraps its call in.
     produced = tuple(a for names in (spec.produces or {}).values() for a in names)
-    # si#434: a command bound to evidence runs its body only when every record it is bound to is green.
+    # si#434: a command bound to evidence runs its body only when every record it is bound to is green,
+    # and si#439: the body learns what those records ran (`results.tested`).
     evidence = results.evidence_of(spec)
 
     @functools.wraps(fn)
     def _wrapped(*args: object, **kwargs: object) -> None:
-        if evidence and results.refused(evidence):
-            raise typer.Exit(code=1)
-        if not produced:
-            raise typer.Exit(code=_rc(fn(*args, **{**kwargs, **pinned})))
-        snapshot = results.before(produced)
-        raise typer.Exit(code=results.held(snapshot, _rc(fn(*args, **{**kwargs, **pinned}))))
+        def body() -> int:
+            if not produced:
+                return _rc(fn(*args, **{**kwargs, **pinned}))
+            snapshot = results.before(produced)
+            return results.held(snapshot, _rc(fn(*args, **{**kwargs, **pinned})))
+        raise typer.Exit(code=results.guarded(evidence, body) if evidence else body())
 
     # `_Introspectable` rather than a bare assignment, because `__signature__` is a CPython protocol that
     # the type system does not model: `inspect.signature()` reads it off ANY callable that carries it, and

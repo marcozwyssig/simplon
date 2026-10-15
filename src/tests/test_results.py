@@ -91,8 +91,14 @@ def test_path_of_refuses_an_entry_that_is_not_a_test_result(_product):
 
 # --- a release reads its evidence (si#434) ------------------------------------------------------------
 # Rule 6 binds every test result about what a release publishes to its `evidence` port, and until si#434
-# nothing opened them: a release after a red test and one after a green test ran alike. Missing, red and
-# unreadable are three answers, and each says so in its own words.
+# nothing opened them: a release after a red test and one after a green test ran alike. Missing, red,
+# unreadable and (si#439) green-about-nothing are four answers, and each says so in its own words.
+
+GREEN = '{"image": "app", "verdict": 0, "runs": [{"reference": "r:1", "id": "sha256:aa"}]}'
+
+
+def _refused(evidence) -> int:
+    return results.guarded(evidence, lambda: 0)
 
 def _record(root, text: str) -> None:
     (root / "build" / "test").mkdir(parents=True, exist_ok=True)
@@ -101,10 +107,10 @@ def _record(root, text: str) -> None:
 
 def test_a_green_record_lets_the_release_run(_product):
     # arrange
-    _record(_product, '{"image": "app", "verdict": 0, "runs": []}')
+    _record(_product, GREEN)
 
     # act / assert
-    assert results.refused(("checked",)) == 0
+    assert _refused(("checked",)) == 0
 
 
 def test_a_red_record_refuses_the_release_and_names_the_verdict(_product, capsys):
@@ -112,7 +118,7 @@ def test_a_red_record_refuses_the_release_and_names_the_verdict(_product, capsys
     _record(_product, '{"image": "app", "verdict": 3, "runs": []}')
 
     # act
-    rc = results.refused(("checked",))
+    rc = _refused(("checked",))
 
     # assert
     assert rc == 1
@@ -122,7 +128,7 @@ def test_a_red_record_refuses_the_release_and_names_the_verdict(_product, capsys
 
 def test_a_missing_record_refuses_in_other_words_than_a_red_one(_product, capsys):
     # act
-    rc = results.refused(("checked",))
+    rc = _refused(("checked",))
 
     # assert: "the test has not run here" and "the test failed" are two outcomes
     assert rc == 1
@@ -137,7 +143,7 @@ def test_a_record_that_is_no_verdict_refuses_rather_than_reading_as_green(_produ
     _record(_product, text)
 
     # act
-    rc = results.refused(("checked",))
+    rc = _refused(("checked",))
 
     # assert
     assert rc == 1
@@ -149,7 +155,7 @@ def test_a_directory_result_holds_no_verdict_a_release_can_read(_product, capsys
     (_product / "build" / "test" / "report").mkdir(parents=True)
 
     # act
-    rc = results.refused(("report",))
+    rc = _refused(("report",))
 
     # assert
     assert rc == 1
@@ -161,7 +167,7 @@ def test_every_record_is_read_even_after_one_is_red(_product, capsys):
     _record(_product, '{"verdict": 1}')
 
     # act
-    rc = results.refused(("checked", "report"))
+    rc = _refused(("checked", "report"))
 
     # assert: which of them failed is the whole content of the answer
     assert rc == 1
@@ -178,7 +184,7 @@ def _release_spec():
                                 ports=PORTS["release:image"])
 
 
-@pytest.mark.parametrize("record, ran, rc", [('{"verdict": 0}', True, 0), ('{"verdict": 2}', False, 1),
+@pytest.mark.parametrize("record, ran, rc", [(GREEN, True, 0), ('{"verdict": 2}', False, 1),
                                              (None, False, 1)])
 def test_the_assembled_cli_runs_a_release_body_only_on_green_evidence(_product, record, ran, rc):
     # arrange: the live dispatch path, around a body that records whether it ran
@@ -208,3 +214,39 @@ def test_the_assembled_cli_runs_a_release_body_only_on_green_evidence(_product, 
 def test_evidence_is_what_a_command_binds_to_a_port_taking_a_test_result():
     # act / assert: the image the release publishes is not evidence; the test result is
     assert results.evidence_of(_release_spec()) == ("checked",)
+
+
+# --- what the evidence ran (si#439) -------------------------------------------------------------------
+# A green record from an earlier build read green too. Each run now names its reference and the daemon id
+# it ran, the guard hands those to the body, and a record that names nothing is refused - not read for its
+# verdict alone (Marco's choice on si#439).
+
+@pytest.mark.parametrize("runs", ['[]', '[{"reference": "r:1"}]', '[{"reference": "r:1", "id": ""}]',
+                                  '[{"id": "sha256:aa"}]', '"r:1"'])
+def test_a_green_record_that_names_no_subject_is_refused_in_its_own_words(_product, capsys, runs):
+    # arrange: the shape every record had before si#439
+    _record(_product, '{"image": "app", "verdict": 0, "runs": %s}' % runs)
+    called: list[int] = []
+
+    # act
+    rc = results.guarded(("checked",), lambda: called.append(1) or 0)
+
+    # assert
+    assert rc == 1 and not called
+    err = capsys.readouterr().err
+    assert "'checked' (build/test/app.json) is green but does not name what it tested" in err
+    assert "is red" not in err and "holds no verdict" not in err
+
+
+def test_the_body_learns_what_the_evidence_ran_and_only_while_it_runs(_product):
+    # arrange
+    _record(_product, GREEN)
+    seen: list = []
+
+    # act
+    rc = results.guarded(("checked",), lambda: seen.append(results.tested()) or 0)
+
+    # assert: inside the guard the subjects; outside it None - "bound to nothing", not "names nothing"
+    assert rc == 0
+    assert seen == [(results.Subject("checked", "r:1", "sha256:aa"),)]
+    assert results.tested() is None

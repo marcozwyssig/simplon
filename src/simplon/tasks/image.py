@@ -104,7 +104,7 @@ import os
 import re
 import shlex
 import shutil
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -650,9 +650,13 @@ def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect
 
     **`results` is the test result the verdict record goes to** (si#344 C.3): the command binds it with
     `produces: { test-result: <artifact> }`. The record is written on a red run too, because a release
-    bound to it reads its `verdict` before publishing (si#434, `simplon.domain.results.refused`): a missing
+    bound to it reads its `verdict` before publishing (si#434, `simplon.domain.results.guarded`): a missing
     record means the test did not run, and a red one means it failed. Those are two answers. A run refused before it runs writes none, and
     removes the record an earlier run left there, so no stale verdict outlives the refusal.
+
+    **Each run records the daemon `id` of what it ran** (si#439), read before the container starts. A
+    reference names bytes only until the next build under the same tag; the id is what `release` compares
+    with the reference it pushes, so a green record about yesterday's build is not evidence about today's.
     """
     cfg, root = _declared_for(name, "test:image")
     # Resolved before docker starts, so an entry that is not a test result is refused before anything runs.
@@ -682,16 +686,17 @@ def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect
         if bound is None:
             return 1
         options += bound
-    outcomes = [(one, each, *_run_once(each, [*(["--platform", one] if one else []), *options], argv, expect,
-                                       rc))
+    outcomes = [(one, each, local_id(each),
+                 *_run_once(each, [*(["--platform", one] if one else []), *options], argv, expect, rc))
                 for one, each in runs]
-    verdict = next((v for _, _, v, _ in outcomes if v != 0), 0)
+    verdict = next((v for _, _, _, v, _ in outcomes if v != 0), 0)
     if record_path is not None:
         record_path.parent.mkdir(parents=True, exist_ok=True)
         record_path.write_text(json.dumps({
             "image": name, "verdict": verdict,
-            "runs": [{"reference": each, "platform": one, "argv": argv, "expected_rc": rc, "rc": got,
-                      "verdict": v} for one, each, v, got in outcomes]}, indent=2) + "\n", encoding="utf-8")
+            "runs": [{"reference": each, "id": id_, "platform": one, "argv": argv, "expected_rc": rc,
+                      "rc": got, "verdict": v} for one, each, id_, v, got in outcomes]}, indent=2) + "\n",
+            encoding="utf-8")
     return verdict
 
 
@@ -791,6 +796,8 @@ def release(name: str = "", tag: str = "") -> int:
         log.error(f"{ref} is not on this machine, so there is nothing to push - run the build first "
                   f"(`build:image`, with the same --tag)")
         return 1
+    if _untested(name, [platform_reference(ref, each) for each in cfg.platforms] if cfg.platforms else [ref]):
+        return 1
 
     # The read-back's tool is provisioned BEFORE anything is pushed. A host that cannot get oras must
     # learn it here, not after an image is in a registry with no way to confirm that it is.
@@ -842,6 +849,41 @@ def release(name: str = "", tag: str = "") -> int:
         log.info(f"{host} is not GitHub Packages, so no GitHub token is minted for it - the push uses "
                  f"the credential `docker login {host}` has already stored")
     return _push(cfg, name, root, ref, derived)
+
+
+def _untested(name: str, refs: Sequence[str]) -> bool:
+    """True, after saying which, when a reference about to be pushed is not what the bound evidence ran
+    (si#439).
+
+    `results.tested()` is None when this command is bound to no evidence: there is no record to compare,
+    and whether there should be is rule 6's question at load, not this one's. Otherwise every reference
+    needs a run that names it with the daemon id it has NOW. Two answers are kept apart: never tested (the
+    record is about another tag - a release run by hand with a different `--tag`) and rebuilt since (the
+    same tag over new bytes). Both are compared in one daemon, so the id means the same on either image
+    store.
+    """
+    subjects = results_mod.tested()
+    if subjects is None:
+        return False
+    reasons: list[str] = []
+    for ref in refs:
+        now = local_id(ref)
+        ran = [s for s in subjects if s.reference == ref]
+        if not ran:
+            named = ", ".join(sorted({s.reference for s in subjects}))
+            reasons.append(f"{ref} was never tested: the evidence ran {named}")
+        elif not now:
+            reasons.append(f"{ref}: the daemon's id for it cannot be read, so it cannot be compared with "
+                           f"what was tested")
+        elif all(s.id != now for s in ran):
+            reasons.append(f"{ref} was rebuilt after it was tested: the test ran {ran[0].id}, and it is "
+                           f"{now} now")
+    if reasons:
+        log.error(f"nothing was published: {name}'s evidence is green, but not about what this release "
+                  f"would push\n  " + "\n  ".join(reasons)
+                  + "\n  run `test image` with the same --tag, then release again")
+        return True
+    return False
 
 
 def _push(cfg: Image, name: str, root: Path, ref: str, derived: Mapping[str, str]) -> int:
