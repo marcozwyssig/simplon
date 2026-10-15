@@ -186,11 +186,17 @@ its own words:
 - **red:** "... is red: verdict 1 - its `runs` say which run failed"
 - **no verdict:** "... holds no verdict - a release reads a JSON record with an integer `verdict` ..."
 
-A record is the JSON that `test:image` writes, with an integer `verdict` (0 is green). One gap is still open.
-The record names the references it tested, but the release does not compare them with the one it publishes,
-so a green record left from an earlier build still reads as green. release.yml closes the gap by its order:
-it runs `build image`, then `test image`, then `release push-image` in one job, and stops at the first
-failure.
+A record is the JSON that `test:image` writes, with an integer `verdict` (0 is green). Each of its runs
+names the reference it tested and the daemon id that reference had, and a green record without them is
+refused too:
+
+- **no subject:** "... is green but does not name what it tested - every run needs its `reference` and `id`; ..."
+
+`release:image` then compares the record with what it would push (si#439), so a green record left from an
+earlier build no longer reads as green:
+
+- **never tested:** "... was never tested: the evidence ran ..." - the record is about another tag
+- **rebuilt since:** "... was rebuilt after it was tested: the test ran ..., and it is ... now"
 
 This is simplon's own `simplon.yaml`:
 
