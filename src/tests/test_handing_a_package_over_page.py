@@ -108,7 +108,7 @@ def test_the_page_carries_the_two_inherited_dotnet_facts():
     body = _text()
 
     # assert
-    assert "DOTNET_CLI_HOME" in body
+    assert "needs a writable home" in body
     assert "rc 150" in body
 
 

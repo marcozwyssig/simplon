@@ -50,9 +50,13 @@ the fourth measurement and is not measured.
 
 TWO FACTS INHERITED FROM si#102, both of which cost a measurement there:
 
-  - `dotnet` under `docker.user_args()` needs `DOTNET_CLI_HOME`. As uid 1000 it dies on `/.dotnet`
-    denied and as uid 0 it passes, which is why it had to be measured rather than reasoned about. Every
-    container this module starts sets it, into a directory inside the mounted tree.
+  - `dotnet` under `docker.user_args()` needs a writable home. As an unmapped uid it dies on `/.dotnet`
+    denied and as uid 0 it passes, which is why it had to be measured rather than reasoned about. It got
+    one through `DOTNET_CLI_HOME` until si#325: since si#319 the kernel hands every container a home under
+    the output directory, and `dotnet` reads `$HOME` first. Measured 2026-10-15, sdk:9.0: as uid 4242
+    with only `HOME` set, `dotnet pack` is rc 0 and the package cache sits under that home; with neither,
+    it crashes in `ConfigureDotNetForFirstTimeUse`; as root it reads `$HOME` too. So the second variable
+    was a second source for one fact, and it is gone.
   - The target framework must match the SDK image. `net8.0` BUILDS in a 9.0 image and then refuses to
     run with rc 150. This module cannot check that - it is a property of the product's `.csproj` - but
     the docs page says it, because the failure names neither.
@@ -90,10 +94,6 @@ CONFIG_NAME = "nuget.config"
 #: container is started. `githubpackages.token()` reads the same name first, so a caller who exported one
 #: sees it used rather than a second one invented beside it.
 TOKEN_VAR = "GITHUB_TOKEN"
-
-#: Where `dotnet` may keep its per-user state. si#102 measured the failure without it; the path is inside
-#: the mounted tree because that is the one directory a container running as the caller can always write.
-CLI_HOME = "build/dotnet-home"
 
 #: The default name the generated config gives GitHub's feed. A manifest may choose another with
 #: `source_name:`; both halves read the same key, so the push and the restore cannot disagree.
@@ -290,7 +290,7 @@ def _env_file(token: str) -> Iterator[Path]:
 
 
 def docker_argv(image: str, root: Path, env_file: Path, argv: list[str],
-                lifecycle: Sequence[str] = ()) -> list[str]:
+                lifecycle: Sequence[str] = (), home: str = "") -> list[str]:
     """The container line for one dotnet invocation. PURE: it assembles, it runs nothing.
 
     Pure for the reason `toolchain.docker_argv` is pure: the decisions here - whose uid, which mount,
@@ -304,13 +304,14 @@ def docker_argv(image: str, root: Path, env_file: Path, argv: list[str],
     shape si#105 wrote to keep declarations reviewable.
 
     `lifecycle` is `docker.lifecycle()`'s flags (si#412), handed in by `_contained` because the name in
-    them is fresh per call - choosing it here would make the line impure.
+    them is fresh per call - choosing it here would make the line impure. `home` is si#319's home in
+    container coordinates (`outputs.home_in_container`), handed in for the same reason.
     """
     return ["docker", "run", "--rm", *lifecycle,
             *docker.user_args(),
             "-v", f"{hostpath.translate(root)}:{WORKDIR}", "-w", WORKDIR,
             "--env-file", str(env_file),
-            "-e", f"DOTNET_CLI_HOME={WORKDIR}/{CLI_HOME}",
+            *(["-e", f"HOME={home}"] if home else []),
             "-e", "DOTNET_CLI_TELEMETRY_OPTOUT=1", "-e", "DOTNET_NOLOGO=1",
             image, *argv]
 
@@ -322,7 +323,8 @@ def _contained(image: str, root: Path, env_file: Path, argv: list[str]) -> int:
     """
     container, lifecycle = docker.lifecycle()
     with docker.stopped_on_interrupt(container):
-        return stream(docker_argv(image, root, env_file, argv, lifecycle))
+        return stream(docker_argv(image, root, env_file, argv, lifecycle,
+                                  home=outputs.home_in_container(WORKDIR)))
 
 
 def pack_argv(project: str, version: str, out: str) -> list[str]:
@@ -397,7 +399,7 @@ def pack(name: str = "", tag: str = "") -> int:
     target.mkdir(parents=True, exist_ok=True)
     for old in target.glob("*.nupkg"):
         old.unlink()
-    (root / CLI_HOME).mkdir(parents=True, exist_ok=True)
+    outputs.ensure_home()
 
     with _env_file(githubpackages.token()) as env_file:
         log.info(f"packing {project} as {resolved} into {out}")
@@ -427,7 +429,7 @@ def push(name: str = "", tag: str = "") -> int:
     _config_or_refuse(root, source_name)
 
     docker.ensure_docker()
-    (root / CLI_HOME).mkdir(parents=True, exist_ok=True)
+    outputs.ensure_home()
     rc = 0
     with _env_file(githubpackages.token()) as env_file:
         for package in found:
@@ -495,16 +497,14 @@ def restore(name: str = "") -> int:
         raise ValueError(f"nothing to restore: {project} does not exist under the product root")
 
     docker.ensure_docker()
-    # si#319: the tree this container writes must be the CALLER'S, not merely writable. `DOTNET_CLI_HOME`
-    # below is the hand-made half of exactly this problem, inherited from si#102 - a container run as the
-    # caller has no writable home, so the tool was pointed into the mounted tree, which then carries
-    # whatever ownership an earlier root run left.
+    # si#319: the tree this container writes must be the CALLER'S, not merely writable - the home below
+    # is inside it, so a home an earlier root run left behind is refused here rather than by dotnet.
     fault = docker.ownership_fault([outputs.root()], root)
     if fault:
         log.error(fault)
         raise ValueError(fault)
 
-    (root / CLI_HOME).mkdir(parents=True, exist_ok=True)
+    outputs.ensure_home()
 
     with _env_file(githubpackages.token()) as env_file:
         log.info(f"restoring {project} against {index_url(registry)}")

@@ -225,7 +225,7 @@ def test_the_env_file_is_removed_even_when_the_run_raises(monkeypatch):
 
 # --- the container the two commands run in ------------------------------------------------------------
 
-def test_every_line_sets_dotnet_cli_home_and_runs_as_the_caller(lines):
+def test_every_line_gets_the_kernels_home_and_runs_as_the_caller(lines):
     """si#102 measured this the hard way: as uid 1000 `dotnet` dies on `/.dotnet` denied, and as uid 0 it
     passes - so a container that runs as the caller and does not set it is green on one machine and red
     on the next."""
@@ -234,7 +234,8 @@ def test_every_line_sets_dotnet_cli_home_and_runs_as_the_caller(lines):
 
     for line in lines:
         assert "-u" in line and "1000:1000" in line
-        assert f"DOTNET_CLI_HOME=/work/{nuget.CLI_HOME}" in line
+        assert "HOME=/work/build/home" in line
+        assert not any("DOTNET_CLI_HOME" in str(element) for element in line)
 
 
 def test_an_unpinned_image_is_refused_with_the_kernels_one_wording(lines):

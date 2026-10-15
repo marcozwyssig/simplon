@@ -89,12 +89,14 @@ def test_the_credential_reaches_the_container_as_a_file_and_the_token_is_in_no_l
     assert not any(_TOKEN in str(element) for element in lines[0])
 
 
-def test_the_container_sets_dotnet_cli_home(lines):
+def test_the_container_gets_the_kernels_home_and_no_second_one(lines):
     """si#102's measured fact, and it bites HARDER here: `dotnet restore` writes the package cache, so
-    without a writable home the very command this coordinate exists for is the one that fails."""
+    without a writable home the very command this coordinate exists for is the one that fails. Since
+    si#325 the home is si#319's, and `DOTNET_CLI_HOME` - the second source for it - is gone."""
     nuget.restore(name="corelib")
 
-    assert f"DOTNET_CLI_HOME=/work/{nuget.CLI_HOME}" in lines[0]
+    assert "HOME=/work/build/home" in lines[0]
+    assert not any("DOTNET_CLI_HOME" in str(element) for element in lines[0])
 
 
 def test_without_a_generated_config_it_names_the_command_that_writes_one(lines, _product):

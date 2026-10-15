@@ -6,8 +6,8 @@ and had no way to hand the result to anybody. A product whose only consumption r
 to write its own publish, which is the situation the catalogue exists to end.
 
 WHICH OF THE TWO PRECEDENTS THIS FOLLOWS, and the choice was argued rather than copied. `release:nuget`
-LEARNED the toolchain: it runs `dotnet` in a container at `/work` and knows what `DOTNET_CLI_HOME` has to
-be. `release:conan` deliberately did NOT - its head says the product drives conan through its own
+LEARNED the toolchain: it runs `dotnet` in a container at `/work` and knows that `dotnet` needs a home it can
+write. `release:conan` deliberately did NOT - its head says the product drives conan through its own
 `toolchain:run` commands, and calls the alternative "the kernel learning a language toolchain, which the
 design refuses everywhere else". Conan's reason was specific and is recorded there: GitHub Packages has no
 Conan registry, so there was nothing to publish to and only a transport was possible. For Maven there IS a
