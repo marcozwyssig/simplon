@@ -1431,6 +1431,17 @@ entry that cannot serve as a deployment source says so by name - one that is a b
 mapping, or that carries no `registry:` - and the message lists the keys it does carry, because the next
 question is what to add.
 
+**The section is also the binding** (si#435). `deploy:up` has an input port, `source`, and the loader binds
+it from `deploy: source:`, so the plan rules see a deploy as they see every other consumer: an aggregate
+that runs `deploy up` before the build of its image is refused at load. A `consumes:` on a `deploy:up`
+command is refused, because it would state the same fact a second time:
+
+> command 'deploy up' binds `consumes: source`, and task 'deploy:up' takes that port from `deploy: source:`,
+> which already names what is deployed - name it there, once
+
+A deploy asks for no test result. That question belongs to the test levels, which have not been built yet
+(si#450).
+
 {{< callout type="info" >}}
 **One source, many targets.** `dev|test|uat|prod` choose where a deployment goes, not where the artefact
 comes from. Build once, deploy often - and a promotion is only provable if the number that went to test

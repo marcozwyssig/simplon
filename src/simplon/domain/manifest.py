@@ -952,7 +952,8 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     # BEFORE `resolve`, because `resolve` consumes the `task:` this rule is about and hands back an
     # `impl:` the coordinate is no longer visible in.
     treeform.check_coordinate_placement(flat, treeform.platform_groups(catalogue_groups), areas=areas)
-    resolved = treeform.resolve(flat, product_tasks, getattr(catalogue, "tasks", {}) or {})
+    resolved = treeform.resolve(flat, product_tasks, getattr(catalogue, "tasks", {}) or {},
+                                ports.section_bound(data))
     data = {**data, "groups": resolved, "tasks": {}}
     try:
         model = _ManifestModel.model_validate(data)
