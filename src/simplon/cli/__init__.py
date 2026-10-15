@@ -239,9 +239,13 @@ def _bound(fn: Callable[..., object], spec: manifest.CommandSpec,
     # si#344 C.3: a command bound to produce a test result fails when its body exits 0 without writing it
     # (`simplon.domain.results`) - the same check the generated module wraps its call in.
     produced = tuple(a for names in (spec.produces or {}).values() for a in names)
+    # si#434: a command bound to evidence runs its body only when every record it is bound to is green.
+    evidence = results.evidence_of(spec)
 
     @functools.wraps(fn)
     def _wrapped(*args: object, **kwargs: object) -> None:
+        if evidence and results.refused(evidence):
+            raise typer.Exit(code=1)
         if not produced:
             raise typer.Exit(code=_rc(fn(*args, **{**kwargs, **pinned})))
         snapshot = results.before(produced)

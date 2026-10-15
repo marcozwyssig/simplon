@@ -87,3 +87,124 @@ def test_path_of_refuses_an_entry_that_is_not_a_test_result(_product):
     # act / assert
     with pytest.raises(ValueError, match="is a `image`, not a `test-result`"):
         results.path_of("app")
+
+
+# --- a release reads its evidence (si#434) ------------------------------------------------------------
+# Rule 6 binds every test result about what a release publishes to its `evidence` port, and until si#434
+# nothing opened them: a release after a red test and one after a green test ran alike. Missing, red and
+# unreadable are three answers, and each says so in its own words.
+
+def _record(root, text: str) -> None:
+    (root / "build" / "test").mkdir(parents=True, exist_ok=True)
+    (root / "build" / "test" / "app.json").write_text(text, encoding="utf-8")
+
+
+def test_a_green_record_lets_the_release_run(_product):
+    # arrange
+    _record(_product, '{"image": "app", "verdict": 0, "runs": []}')
+
+    # act / assert
+    assert results.refused(("checked",)) == 0
+
+
+def test_a_red_record_refuses_the_release_and_names_the_verdict(_product, capsys):
+    # arrange
+    _record(_product, '{"image": "app", "verdict": 3, "runs": []}')
+
+    # act
+    rc = results.refused(("checked",))
+
+    # assert
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "'checked' (build/test/app.json) is red: verdict 3" in err
+
+
+def test_a_missing_record_refuses_in_other_words_than_a_red_one(_product, capsys):
+    # act
+    rc = results.refused(("checked",))
+
+    # assert: "the test has not run here" and "the test failed" are two outcomes
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "'checked' (build/test/app.json) has not been written" in err
+    assert "is red" not in err
+
+
+@pytest.mark.parametrize("text", ["not json", '{"verdict": "0"}', '{"verdict": true}', "[0]"])
+def test_a_record_that_is_no_verdict_refuses_rather_than_reading_as_green(_product, capsys, text):
+    # arrange
+    _record(_product, text)
+
+    # act
+    rc = results.refused(("checked",))
+
+    # assert
+    assert rc == 1
+    assert "'checked' (build/test/app.json) holds no verdict" in capsys.readouterr().err
+
+
+def test_a_directory_result_holds_no_verdict_a_release_can_read(_product, capsys):
+    # arrange
+    (_product / "build" / "test" / "report").mkdir(parents=True)
+
+    # act
+    rc = results.refused(("report",))
+
+    # assert
+    assert rc == 1
+    assert "holds no verdict" in capsys.readouterr().err
+
+
+def test_every_record_is_read_even_after_one_is_red(_product, capsys):
+    # arrange
+    _record(_product, '{"verdict": 1}')
+
+    # act
+    rc = results.refused(("checked", "report"))
+
+    # assert: which of them failed is the whole content of the answer
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "'checked'" in err and "'report'" in err
+
+
+def _release_spec():
+    from simplon.domain import manifest
+    from simplon.domain.artifactschema import PORTS
+
+    return manifest.CommandSpec(impl="m:f", help="Publish.", task="release:image",
+                                consumes={"image": ("app",), "evidence": ("checked",)},
+                                ports=PORTS["release:image"])
+
+
+@pytest.mark.parametrize("record, ran, rc", [('{"verdict": 0}', True, 0), ('{"verdict": 2}', False, 1),
+                                             (None, False, 1)])
+def test_the_assembled_cli_runs_a_release_body_only_on_green_evidence(_product, record, ran, rc):
+    # arrange: the live dispatch path, around a body that records whether it ran
+    import typer
+
+    from simplon import cli
+
+    calls: list[str] = []
+
+    def publish(name: str = "", tag: str = "") -> int:
+        calls.append(name)
+        return 0
+
+    if record is not None:
+        _record(_product, record)
+    bound = cli._bound(publish, _release_spec(), where="release image")
+
+    # act
+    with pytest.raises(typer.Exit) as exit_:
+        bound(name="app", tag="")
+
+    # assert
+    assert exit_.value.exit_code == rc
+    assert bool(calls) is ran
+
+
+def test_evidence_is_what_a_command_binds_to_a_port_taking_a_test_result():
+    # act / assert: the image the release publishes is not evidence; the test result is
+    assert results.evidence_of(_release_spec()) == ("checked",)

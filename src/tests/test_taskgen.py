@@ -1456,3 +1456,19 @@ def test_a_command_that_produces_nothing_has_no_result_check():
 
     # assert
     assert "_results" not in text
+
+
+def test_a_command_bound_to_evidence_reads_it_before_its_body_runs():
+    # arrange: si#434 - `or` short-circuits, so a refused release never calls its body
+    from simplon.domain.artifactschema import PORTS
+
+    m = _load()
+    spec = m.commands["lab"]["seed"]._replace(consumes={"evidence": ("checked",)},
+                                              ports=PORTS["release:image"])
+
+    # act
+    text = taskgen.render(m._replace(commands={"lab": {"seed": spec}}), source="m.yaml", product="demo")
+
+    # assert
+    assert "(_results.refused(('checked',)) or _rc(" in text
+    assert "from simplon.domain import results as _results" in text

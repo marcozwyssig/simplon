@@ -649,8 +649,9 @@ def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect
     the answer; `platform:` narrows the run to one.
 
     **`results` is the test result the verdict record goes to** (si#344 C.3): the command binds it with
-    `produces: { test-result: <artifact> }`. The record is written on a red run too - a release reads it as
-    evidence that the test RAN, and the rc says how it went. A run refused before it runs writes none, and
+    `produces: { test-result: <artifact> }`. The record is written on a red run too, because a release
+    bound to it reads its `verdict` before publishing (si#434, `simplon.domain.results.refused`): a missing
+    record means the test did not run, and a red one means it failed. Those are two answers. A run refused before it runs writes none, and
     removes the record an earlier run left there, so no stale verdict outlives the refusal.
     """
     cfg, root = _declared_for(name, "test:image")

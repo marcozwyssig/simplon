@@ -20,7 +20,7 @@ from typing import Callable, NamedTuple
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
-from simplon.domain import clitaxonomy, signatures
+from simplon.domain import clitaxonomy, results, signatures
 from simplon.domain.manifest import Manifest, resolve_ref
 
 _TEMPLATES = Path(__file__).resolve().parents[1] / "templates"
@@ -181,6 +181,12 @@ def render(manifest: Manifest, *, source: str, product: str,
                     wrapped = f"_results.held(_results.before({produced!r}), _rc({call}))"
                 else:
                     wrapped = f"_rc({call})"
+                # si#434: a command bound to evidence reads it first, and `or` short-circuits, so a
+                # release whose evidence is not green never calls its body.
+                evidence = results.evidence_of(spec)
+                if evidence:
+                    uses_results = True
+                    wrapped = f"(_results.refused({evidence!r}) or {wrapped})"
                 tasks.append({"func": func, "help_repr": repr(_docstring(spec, impl_body)),
                               "signature": _signature(params, takes_context=takes_ctx),
                               "call": wrapped})

@@ -177,12 +177,20 @@ A release is the chain the bindings draw: build produces the image, a test consu
 `test-result`, the publish consumes the image and the result as its `evidence`, and an aggregate under
 `ci: release:` names the bundle.
 
-The evidence is **declared and ordered, never read**. The load checks that every test result a release
-needs is bound to it; nothing at run time opens the record. The publish bodies do not read the verdict, so
-a red record on disk is not told apart from a green one when the release runs. What keeps an untested image
-out of the registry today is the step order: release.yml runs `build image`, then `test image`, then
-`release push-image`, and stops at the first failure, as `release all` does with `stop_on_failure: true`.
-Reading the verdict at release time is open work (si#344, C.4 or later).
+The evidence is **read before anything is published** (si#434). The load checks that every test result a
+release needs is bound to it. At run time, the wrapper around every command body reads each bound record
+before the body runs, and calls the body only when all of them are green. There are three refusals, each in
+its own words:
+
+- **not written:** "... has not been written - the test that produces it has not run here"
+- **red:** "... is red: verdict 1 - its `runs` say which run failed"
+- **no verdict:** "... holds no verdict - a release reads a JSON record with an integer `verdict` ..."
+
+A record is the JSON that `test:image` writes, with an integer `verdict` (0 is green). One gap is still open.
+The record names the references it tested, but the release does not compare them with the one it publishes,
+so a green record left from an earlier build still reads as green. release.yml closes the gap by its order:
+it runs `build image`, then `test image`, then `release push-image` in one job, and stops at the first
+failure.
 
 This is simplon's own `simplon.yaml`:
 
