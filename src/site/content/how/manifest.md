@@ -206,6 +206,7 @@ ci:
           evidence: [kernel-checked]
       all:
         depends_on: [notes, push-image, tag]
+        passes: [tag]
         produces: { release: kernel-release }
         stop_on_failure: true
 artifacts:
@@ -228,11 +229,11 @@ Two rules hold the chain (the kinds page has [the ports](../../with-what/kinds/#
   the order holds at run time only if a failed member stops the plan.
 
 `release all` **states** the release - its members, its bundle and their one safe order, checked at load -
-and with `stop_on_failure` a failed leaf stops the plan. It is not yet a release you run: an aggregate
-passes no arguments to its leaves, and `release notes` and `release tag` both need the tag, so
-`./simplon.sh release all` stops at `notes` with "which release?" and runs nothing after it. Passing the tag
-through an aggregate is open (si#344). Until then a release starts with `./simplon.sh release tag vX`, and
-that tag push is what triggers release.yml, which builds, tests and publishes the image after the tag exists.
+and with `stop_on_failure` a failed leaf stops the plan. With [`passes: [tag]`](#passes-what-an-aggregate-hands-its-leaves)
+it is also a release you can run: `./simplon.sh release all --tag v0.32.0` hands the tag to all three members.
+`push-image` needs it as much as the other two: without a tag it publishes under `git describe`, which
+before the tag exists is `v0.31.0-N-g<sha>`. simplon itself still releases with `./simplon.sh release tag vX`,
+and that tag push is what triggers release.yml, which builds, tests and publishes the image after the tag exists.
 That is the opposite of the order `all` states, so a failed publish leaves the tag behind. Changing that is open
 (si#344).
 
@@ -318,6 +319,31 @@ CPU count, whichever is smaller.
 WHICH RUNNER draws the plan is the machine's answer too, and asking for the plain one is `--no-tui`. That
 belongs with what a run looks like rather than with what a manifest declares: [Running a
 command](../running/).
+
+### `passes`: what an aggregate hands its leaves
+
+Every leaf of a plan runs as its own subprocess, `./<product>.sh <group> <command>`, so an aggregate has no
+way to give a leaf a value except on that leaf's command line. `passes:` names the parameters an aggregate
+takes on its own command line and hands on:
+
+```yaml
+all:
+  depends_on: [notes, push-image, tag]
+  passes: [tag]
+```
+
+`./simplon.sh release all --tag v0.32.0` then runs `release notes --tag=v0.32.0`, `release push-image
+--tag=v0.32.0` and `release tag -- v0.32.0`. Each leaf gets the value in its own form: `release tag` requires
+its tag, so there it is a positional argument. A leaf whose body does not take the parameter gets nothing,
+and so does a leaf that pins it with `with:`. The option is required on the aggregate where any leaf that
+takes it requires it, so a missing `--tag` is refused before anything runs.
+
+It is declared, not derived from the leaves' parameter names, because a shared name is not a shared
+meaning. `name` is the notes file on one release leaf and the image on the next, and forwarding by name
+would hand one value to both. Assembling the CLI refuses a passed name that no planned leaf takes
+unpinned. The load refuses `passes:` on a leaf, because a leaf plans nothing to pass it to. A generated
+CLI module refuses it too, because its dispatcher takes only a command name. A product with its own step
+factory gives it an `args` keyword; `run_command` refuses a factory without one before anything runs.
 
 Every `depends_on` entry must name a known, unambiguous command, and the graph must be acyclic. Both are
 checked at load, not at run: a dependency naming a command that does not exist is a manifest error, and

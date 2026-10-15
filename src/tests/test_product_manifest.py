@@ -201,3 +201,20 @@ def test_the_generated_half_of_the_site_is_not_committed(product):
     if 128 in verdicts:
         pytest.skip("not a git work tree")
     assert verdicts == [0, 0], f"not ignored: {[p for p, rc in zip(paths, verdicts) if rc != 0]}"
+
+
+def test_release_all_hands_the_tag_to_every_member_that_takes_one(product):
+    # arrange: each leaf of `release all` runs as its own subprocess (si#433). A member that got no tag
+    # would not stop: `push-image` falls back to `git describe` and, before the tag exists, publishes
+    # under `v0.31.0-N-g<sha>` with rc 0
+    from simplon import cli
+
+    spec = product.spec_for("release", "all")
+    takers = cli.receivers(product, "release", "all", spec)
+
+    # act
+    handed = cli.leaf_arguments(takers, {"tag": "v9.9.9"})
+
+    # assert: in each leaf's own form - `release tag`'s tag is required, so it is a positional
+    assert handed == {"notes": ("--tag=v9.9.9",), "push-image": ("--tag=v9.9.9",),
+                      "tag": ("--", "v9.9.9")}

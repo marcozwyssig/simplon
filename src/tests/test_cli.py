@@ -1096,3 +1096,140 @@ def test_an_annotation_the_generator_cannot_write_is_dropped_rather_than_handed_
         assert env.opts == ["--env"] and env.type is click.STRING
     finally:
         del sys.modules["annot_impls"]
+
+
+# --- an aggregate passes its own option to the leaves it plans (si#433) ---------------------------------
+# simplon's `release all` stopped at its first leaf with "which release?": every leaf runs as its own
+# subprocess, and nothing put the tag on their command lines. `passes: [tag]` makes `tag` an option of
+# the aggregate and appends it to every planned leaf that takes it unpinned, in that LEAF's own form.
+
+_PASS_MANIFEST = """
+product: demo
+tasks:
+  notes: { impl: "pass_impls:notes", help: "Write the notes." }
+  push: { impl: "pass_impls:push", help: "Push the image." }
+  other: { impl: "pass_impls:other", help: "Takes no tag." }
+  cut: { impl: "pass_impls:cut", help: "Cut the tag." }
+ci:
+  release:
+    commands:
+      notes: { task: "notes", with: { name: "kernel-notes" } }
+      push: { task: "push" }
+      other: { task: "other" }
+      cut: { task: "cut" }
+      all: { help: "Release.", depends_on: [notes, push, other, cut], passes: [tag], stop_on_failure: true }
+"""
+
+
+def _pass_impls_module():
+    mod = types.ModuleType("pass_impls")
+
+    def notes(name: str = "", tag: str = "") -> int:
+        return 0
+
+    def push(tag: str = "") -> int:
+        return 0
+
+    def other() -> int:
+        return 0
+
+    def cut(tag: str) -> int:
+        return 0
+
+    for fn in (notes, push, other, cut):
+        setattr(mod, fn.__name__, fn)
+    return mod
+
+
+def _assemble_passing(monkeypatch, text: str):
+    from simplon.kernel import product
+    from simplon.kernel.steps import Outcome, Step, run_headless
+
+    monkeypatch.setattr(product, "dispatch", run_headless)
+    built: list[tuple[str, tuple[str, ...]]] = []
+
+    def step_factory(cmd: str, args: tuple[str, ...] = ()) -> Step:
+        built.append((cmd, tuple(args)))
+        return Step(label=cmd, action=lambda: Outcome(rc=0, output=""))
+
+    monkeypatch.setitem(sys.modules, "pass_impls", _pass_impls_module())
+    app = typer.Typer(add_completion=False, no_args_is_help=True, help="demo root")
+    cli.assemble(app, manifest.load(text), product="demo",
+                 step_context=product.StepFactoryContext("demo", step_factory))
+    return app, built
+
+
+def test_an_aggregate_hands_what_it_passes_to_every_leaf_that_takes_it_in_that_leafs_form(monkeypatch):
+    # arrange
+    app, built = _assemble_passing(monkeypatch, _PASS_MANIFEST)
+
+    # act
+    result = CliRunner().invoke(app, ["release", "all", "--tag", "v1.4.0"])
+
+    # assert: an option where the leaf has one, a positional where the leaf's tag is required, nothing
+    # where the leaf takes no tag - and `name`, pinned on `notes`, is not on anybody's command line
+    assert result.exit_code == 0, result.output
+    assert built == [("notes", ("--tag=v1.4.0",)), ("push", ("--tag=v1.4.0",)), ("other", ()),
+                     ("cut", ("--", "v1.4.0"))]
+
+
+def test_an_aggregate_whose_leaf_requires_what_it_passes_refuses_to_start_without_it(monkeypatch):
+    # arrange
+    app, built = _assemble_passing(monkeypatch, _PASS_MANIFEST)
+
+    # act
+    result = CliRunner().invoke(app, ["release", "all"])
+
+    # assert: refused by the command line before any leaf ran, instead of stopping at the first one
+    assert result.exit_code == 2, result.output
+    assert built == []
+
+
+def test_assemble_refuses_a_pass_no_planned_leaf_takes_unpinned(monkeypatch):
+    # arrange: `name` is taken by `notes` alone, and `notes` pins it
+    text = _PASS_MANIFEST.replace("passes: [tag]", "passes: [tag, name]")
+
+    # act / assert
+    with pytest.raises(ValueError, match=r"release all.*passes `name`.*no leaf it plans takes it unpinned"):
+        _assemble_passing(monkeypatch, text)
+
+
+def test_run_command_refuses_a_step_factory_that_cannot_take_arguments():
+    # arrange: a product's own factory written before si#433 takes a command name and nothing else
+    from simplon.kernel import product
+    from simplon.kernel.steps import Outcome, Step
+
+    def old_factory(cmd: str) -> Step:
+        return Step(label=cmd, action=lambda: Outcome(rc=0, output=""))
+
+    sys.modules["pass_impls"] = _pass_impls_module()
+    try:
+        mf = manifest.load(_PASS_MANIFEST)
+    finally:
+        del sys.modules["pass_impls"]
+
+    # act / assert: said before anything runs, rather than a leaf running without its tag
+    with pytest.raises(ValueError, match="step factory takes no arguments"):
+        product.run_command("all", mf, product.StepFactoryContext("demo", old_factory), group="release",
+                            leaf_args={"cut": ("--", "v1")})
+
+
+def test_the_kernel_step_factories_append_a_leafs_arguments_to_its_argv():
+    # arrange
+    from simplon.kernel import product
+
+    sys.modules["pass_impls"] = _pass_impls_module()
+    try:
+        mf = manifest.load(_PASS_MANIFEST)
+    finally:
+        del sys.modules["pass_impls"]
+    shim = product.StepFactoryContext.for_shim("demo", "echo", mf)
+
+    # act: `echo` as the shim, so the step prints the command line it was really given
+    step = shim.step_factory("cut", args=("--", "v1"))
+    outcome = step.run()
+
+    # assert: the arguments follow the command name, and the identity stays the command's path, so the
+    # leaf-to-step pairing still holds
+    assert outcome.output.strip() == "cut -- v1"
+    assert step.command == "release.cut"

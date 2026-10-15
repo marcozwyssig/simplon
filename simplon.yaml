@@ -338,12 +338,14 @@ ci:
       # push would not stop the plan, and the tag would still be cut. Rule 8 refuses the aggregate
       # without it.
       #
-      # IT IS NOT YET A RUNNABLE RELEASE. An aggregate passes no arguments to its leaves, and `notes` and
-      # `tag` both need the tag: `./simplon.sh release all` stops at `notes` with "which release?" and
-      # runs nothing after it. Passing the tag through an aggregate is open (si#344). Until then the
-      # release starts with `./simplon.sh release tag vX`, and that tag push is what triggers release.yml, which
-      # builds, tests and publishes the image AFTER the tag exists: the opposite of the order `all` states, so a
-      # failed publish leaves the tag behind. Changing that is open (si#344).
+      # `passes: [tag]` (si#433) makes the tag an option of `all` and hands it to every leaf that takes
+      # it: `./simplon.sh release all --tag v0.32.0`. All three do, and `push-image` has to have it -
+      # without one it publishes under `git describe`, which before the tag exists is `v0.31.0-N-g<sha>`.
+      # Each leaf runs as its own subprocess, so before si#433 `all` stopped at `notes` with "which release?".
+      #
+      # simplon's real release still starts with `./simplon.sh release tag vX`, and that tag push is what
+      # triggers release.yml, which builds, tests and publishes the image AFTER the tag exists: the opposite
+      # of the order `all` states, so a failed publish leaves the tag behind. Changing that is open (si#344).
       notes: { task: "release:notes", produces: { release-notes: kernel-notes } }
       #
       # The release itself (#32). Simplon cuts its own releases with the command it ships, for the same
@@ -377,9 +379,10 @@ ci:
           evidence: [kernel-checked]
       all:
         depends_on: [notes, push-image, tag]
+        passes: [tag]
         produces: { release: kernel-release }
         stop_on_failure: true
-        help: "The release's members in their one safe order: notes, image, tag (the tag is not passed through yet, si#344)."
+        help: "The release's members in their one safe order: notes, image, tag."
 
 support:
   commands:

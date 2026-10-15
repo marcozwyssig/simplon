@@ -208,6 +208,25 @@ ci:
     assert "raise typer.Exit(_plan('build', 'build'))" in text
 
 
+
+def test_an_aggregate_that_passes_a_value_is_refused_rather_than_rendered_without_it():
+    # arrange: the generated dispatcher takes a name and a group (si#433). Rendering the aggregate anyway
+    # would run its leaves without the value it declares it passes them
+    m = _load("""
+tasks:
+  seed: { impl: "simplon.test_impls:seed", help: "Seed the lab." }
+
+ci:
+  build:
+    commands:
+      build: { depends_on: ["seed"], help: "Build it.", passes: [tag] }
+      seed: { task: "seed" }
+""")
+
+    # act / assert
+    with pytest.raises(ValueError, match="command 'build.build' passes tag to its leaves"):
+        taskgen.render(m, source="demo.yaml", product="sample")
+
 # --- the drift gate ----------------------------------------------------------------------------------
 
 def test_check_returns_no_diff_when_the_file_matches_the_manifest(tmp_path):

@@ -1640,3 +1640,42 @@ def test_a_new_form_tasks_block_that_is_not_a_mapping_is_rejected():
     # act / assert
     with pytest.raises(ValueError, match="`tasks:` is not a mapping"):
         manifest.load(text, catalogue=catalogue)
+
+
+def test_load_rejects_passes_on_a_leaf():
+    # arrange: `passes:` hands an aggregate's own option to the leaves it plans (si#433). A leaf plans
+    # nothing, so the key would be inert where it is written - the trap parallel is rejected for
+    text = """
+tasks:
+  jar: { impl: "m:f", help: "x" }
+
+ci:
+  build:
+    commands:
+      jar: { task: "jar", passes: [tag] }
+"""
+
+    # act / assert
+    with pytest.raises(ValueError, match="command 'build.jar': passes applies to an aggregate"):
+        manifest.load(text)
+
+
+def test_load_keeps_what_an_aggregate_passes():
+    # arrange
+    text = """
+tasks:
+  jar: { impl: "m:f", help: "x" }
+
+ci:
+  build:
+    commands:
+      jar: { task: "jar" }
+      all: { help: "y", depends_on: ["jar"], passes: [tag] }
+"""
+
+    # act
+    mf = manifest.load(text)
+
+    # assert
+    assert mf.spec_for("build", "all").passes == ("tag",)
+    assert mf.spec_for("build", "jar").passes == ()

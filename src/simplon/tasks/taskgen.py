@@ -188,6 +188,15 @@ def render(manifest: Manifest, *, source: str, product: str,
                 # An impl-less AGGREGATE has no body to wrap: it expands through its dependency plan,
                 # which the product dispatches. Skipping it would delete a real, invocable command
                 # (`netctl build`, `netctl test all`) from the surface.
+                #
+                # `passes:` (si#433) is NOT rendered: the dispatcher takes a name and a group, so there is
+                # nowhere to hand a value on, and dropping the key would build an aggregate that runs its
+                # leaves without what it was declared to pass them - which is the failure the key ends.
+                if spec.passes:
+                    raise ValueError(
+                        f"command '{group}.{name}' passes {', '.join(spec.passes)} to its leaves, which a "
+                        f"generated module cannot render - its dispatcher takes a command name only. "
+                        f"Leave this group to `simplon.cli.assemble`, which binds `passes:`")
                 has_aggregate = True
                 tasks.append({"func": func, "help_repr": repr(spec.help), "signature": "",
                               "call": f"_plan({name!r}, {group!r})"})

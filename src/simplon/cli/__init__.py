@@ -22,7 +22,7 @@ import functools
 import inspect
 import os
 import sys
-from typing import Any, Callable, Iterable, Mapping, Protocol, TypedDict, cast
+from typing import Any, Callable, Iterable, Mapping, NamedTuple, Protocol, TypedDict, cast
 
 import typer
 
@@ -297,12 +297,117 @@ def _command_callback(mf: manifest.Manifest, group: str, name: str, spec: manife
         raise ValueError(f"command '{group}.{name}' is an impl-less aggregate; "
                          "assemble(step_context=...) is required to bind it")
 
+    if spec.passes:
+        return _passing_aggregate(mf, group, name, spec, step_context)
+
     def _aggregate() -> None:
         raise typer.Exit(code=run_command(name, mf, step_context, group=group))
 
     _aggregate.__name__ = name.replace("-", "_")
     _aggregate.__doc__ = spec.help
     return _aggregate
+
+
+class Receiver(NamedTuple):
+    """One planned leaf that takes a value its aggregate passes (si#433), and how ITS command line spells it."""
+    leaf: str
+    positional: bool
+    flag: str
+    required: bool
+    help: str | None
+
+
+def receivers(mf: manifest.Manifest, group: str, name: str,
+              spec: manifest.CommandSpec) -> dict[str, list[Receiver]]:
+    """For each parameter aggregate `group name` passes (si#433): the planned leaves that take it
+    UNPINNED, in plan order, each with the form ITS OWN command line gives that parameter.
+
+    The form is the leaf's, not the aggregate's, because the value lands on the leaf's command line:
+    `release:tag`'s `tag` is required and so a POSITIONAL, `release:notes`' has a default and so is
+    `--tag`. It is decided by `signatures.shape`, the one decision both CLI mechanisms already share.
+
+    Refuses, naming the aggregate: a passed name no planned leaf takes unpinned (the declaration would
+    reach nobody - the failure `passes:` exists to end), a FLAG (a value with no text form to hand on),
+    and a body whose default is a Typer object (its spelling lives in that object, not in the manifest).
+    """
+    where = f"{group} {name}"
+    tree = mf.plan_tree_for(name, group=group)
+    out: dict[str, list[Receiver]] = {passed: [] for passed in spec.passes}
+    for leaf in tree.leaves():
+        leaf_spec = cast(manifest.CommandSpec, leaf.spec)
+        params = signatures.bindable(manifest.resolve_impl(leaf_spec))
+        for param in params:
+            if param.name not in out or param.name in (leaf_spec.with_ or {}):
+                continue
+            if param.annotation in (bool, "bool") or isinstance(param.default, bool):
+                raise ValueError(f"{where}: passes `{param.name}`, which `{leaf.path}` takes as a flag - "
+                                 f"`passes:` hands on a value, and a flag has none to hand")
+            if isinstance(param.default, (typer.models.OptionInfo, typer.models.ArgumentInfo)):
+                raise ValueError(f"{where}: passes `{param.name}`, whose spelling `{leaf.path}` declares in "
+                                 f"a Typer default - declare it under the command's `params:` instead")
+            presentation = (leaf_spec.params or {}).get(param.name)
+            form = signatures.shape(param.name, required=param.required, presentation=presentation)
+            positional = form.positional if form.declared else param.required
+            flag = form.decls[0] if form.decls else f"--{param.name.replace('_', '-')}"
+            out[param.name].append(Receiver(leaf.name, positional, flag, param.required,
+                                            getattr(presentation, "help", None)))
+    for passed, takers in out.items():
+        if not takers:
+            raise ValueError(f"{where}: passes `{passed}`, but no leaf it plans takes it unpinned - "
+                             f"planned are {', '.join(leaf.path for leaf in tree.leaves())}")
+    return out
+
+
+def leaf_arguments(takers: Mapping[str, list[Receiver]],
+                   values: Mapping[str, object]) -> dict[str, tuple[str, ...]]:
+    """The arguments each leaf's command line gets for `values` (si#433): options as `--flag=value`,
+    which cannot be misread whatever the value starts with, then positionals after a `--`, in the order
+    the leaf's body declares them. A value left unset (None) is handed to nobody."""
+    options: dict[str, list[str]] = {}
+    positionals: dict[str, list[str]] = {}
+    for passed, receivers_of in takers.items():
+        value = values.get(passed)
+        if value is None:
+            continue
+        for taker in receivers_of:
+            if taker.positional:
+                positionals.setdefault(taker.leaf, []).append(str(value))
+            else:
+                options.setdefault(taker.leaf, []).append(f"{taker.flag}={value}")
+    return {leaf: tuple(options.get(leaf, [])) + (("--", *positionals[leaf]) if leaf in positionals else ())
+            for leaf in {*options, *positionals}}
+
+
+def _passing_aggregate(mf: manifest.Manifest, group: str, name: str, spec: manifest.CommandSpec,
+                       step_context: StepFactoryContext) -> Callable[..., object]:
+    """An aggregate's callback with one OPTION per name it `passes:` (si#433), handed on to its leaves.
+
+    Required where any receiving leaf requires it: `release all` without `--tag` is refused by the
+    command line before a leaf runs, rather than stopping at its first leaf with "which release?". Where
+    every receiver has a default the option defaults to None, and None is handed to nobody - each leaf
+    then keeps its own default rather than one the aggregate invented.
+    """
+    takers = receivers(mf, group, name, spec)
+    params = []
+    for passed, receivers_of in takers.items():
+        required = any(t.required for t in receivers_of)
+        shown = next((t.help for t in receivers_of if t.help), None) or \
+            f"Handed to {', '.join(t.leaf for t in receivers_of)}."
+        params.append(inspect.Parameter(
+            passed, inspect.Parameter.KEYWORD_ONLY,
+            default=typer.Option(... if required else None, f"--{passed.replace('_', '-')}", help=shown,
+                                 show_default=not required),
+            annotation=str if required else (str | None)))
+
+    def _aggregate(**values: object) -> None:
+        raise typer.Exit(code=run_command(name, mf, step_context, group=group,
+                                          leaf_args=leaf_arguments(takers, values)))
+
+    _aggregate.__name__ = name.replace("-", "_")
+    callback = cast(_Introspectable, _aggregate)
+    callback.__doc__ = spec.help
+    callback.__signature__ = inspect.Signature(params)
+    return callback
 
 
 # `provenance_line`, which simplon is answering (si#125), lives in `simplon.kernel.provenance` (si#391): the run

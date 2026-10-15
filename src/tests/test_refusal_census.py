@@ -527,7 +527,7 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # Click accepts more in the short slot than this does, and a manifest that used it would render a
     # working command line. That makes it an expression rule rather than a diagnosis, however sensible.
     ("manifest", "_single_dashed_letter", "must be a single dash plus one letter"): EXPRESSION,
-    ("manifest", "_str_tuple", "'depends_on' must be a list of command names"): DIAGNOSIS,
+    ("manifest", "_str_tuple", "'depends_on' and 'passes' must be a list of names"): DIAGNOSIS,
     # si#267, and its neighbour above is the reason it needs an entry of its own rather than joining
     # `_as_bool`. Every other flag on a spec is coerced: `bool(value)` turns anything into a verdict.
     # This one has THREE states - true, false, and nobody has said - so a coercion would destroy the
@@ -544,6 +544,7 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("manifest", "_validate_taxonomy", "passthrough_args cannot combine with depends_on"): DIAGNOSIS,
     ("manifest", "_validate_taxonomy", "stop_on_failure applies to an aggregate"): DIAGNOSIS,
     ("manifest", "_validate_taxonomy", "parallel applies to an aggregate"): DIAGNOSIS,
+    ("manifest", "_validate_taxonomy", "passes applies to an aggregate"): DIAGNOSIS,
     ("manifest", "_validate_taxonomy", "keep_awake applies to an aggregate's plan"): DIAGNOSIS,
     ("manifest", "_validate_taxonomy", "hidden has no effect on a group-default namesake"): DIAGNOSIS,
     # si#60: a nested group-default group answered `KeyError` out of `cli.assemble`. The refused
