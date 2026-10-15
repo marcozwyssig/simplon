@@ -23,6 +23,94 @@ repository](https://github.com/marcozwyssig/simplon/issues). The 0.4.0 section
 predates that rule: it describes its release in prose and names no numbers, and
 it is the one section held only to existing.
 
+## 0.32.0
+
+**What a product has to do:** move both simplon pins to 0.32.0 together, the one in `requirements.txt`
+and the one in `deploy/image/image.pin`. Since 0.31.0 the container route stops when the two differ. A
+product whose release binds evidence has to run that test before the release, in the same checkout.
+
+1. **The evidence is read now (si#434).** A release whose `evidence` port is bound publishes only when
+   every bound record holds a green verdict. Run the test that writes the record first, in the same
+   checkout; release.yml-style jobs that run `build image`, `test image`, then the release already do.
+   A missing record, a red one and one that is no verdict record are refused, each in its own words:
+
+   ```
+   nothing was published: the evidence this release is bound to does not say the test passed
+     'kernel-checked' (build/test/kernel-image.json) has not been written - the test that produces it has not run here
+   ```
+
+   Of the eight manifests, only simplon binds evidence today. firn and agile-cockpit do once they answer
+   rule 6 as the 0.31.0 notes describe.
+2. **Imports, before 0.33.0:** the old module paths from 0.31.0 still work and warn. They are removed in
+   0.33.0.
+
+### A release reads its evidence before it publishes (si#434, #438)
+
+Both CLI mechanisms wrap a command body, and the wrapper now reads every test result the command binds to
+an input port that takes a `test-result`. It calls the body only when every record is green. One reader
+covers all five release tasks (`release:image`, `artifact`, `conan`, `nuget`, `maven`). A record is the JSON
+that `test:image` writes, with an integer `verdict` (0 is green).
+
+**Not done yet:** a green record from an earlier build still reads as green. The record names the
+references it tested, and the release does not compare them with what it publishes (si#439).
+
+### An aggregate passes the tag to its leaves (si#433, #437)
+
+An aggregate can now declare `passes: [<parameter>]`. The parameter becomes an option of the aggregate,
+and the aggregate hands it to every leaf it plans that takes it unpinned, in that leaf's own form:
+
+```
+./simplon.sh release all --tag v0.32.0
+  -> release notes --tag=v0.32.0
+  -> release push-image --tag=v0.32.0
+  -> release tag -- v0.32.0
+```
+
+simplon's own `release all` declares `passes: [tag]`, so it is a release you can run. `--tag` is required
+there, so a missing tag is refused before anything runs.
+
+Four refusals are new, and no manifest declares `passes:` yet:
+- At load, `passes:` on a leaf.
+- When the CLI is assembled, a name no planned leaf takes unpinned.
+- In a generated CLI module, any `passes:`, because its dispatcher takes a name only.
+- A product's own step factory without an `args` keyword, refused before anything runs.
+
+### The kernel image carries buildx (si#441, #442)
+
+firn found it (firn#957). On the container route, `build toolchain` and `build image` failed with "the
+--mount option requires BuildKit", because the image held the docker client and no buildx plugin. A host
+with docker and no python3 could not run firn's first Quickstart command. The image now carries buildx
+0.37.2 in the system-wide plugin directory. Measured: a `RUN --mount` build through the image works, also
+as a non-root `--user`.
+
+The runtime bootstrap (`DELIVERY_DOCKER_BOOTSTRAP`) still fetches only the docker client (left open on
+si#441).
+
+### A release's ghcr.io login ends with the publish (si#443, #444)
+
+Also from firn. `release:image`, `release:artifact` and `release:conan` logged in with the job's token
+into the runner's own docker config and never out. The token expires with the job, and GHCR answers a
+pull that carries a rejected credential with `error from registry: denied`. So one release broke every
+later public pull on that runner (measured with a stale entry in a throwaway config).
+
+The login now goes into a temporary docker config that lives exactly as long as the publish. Your own
+config, and any login you made yourself, are left alone. Where you logged in to a registry that is not
+GitHub's, `release:conan` still uses your login.
+
+### Smaller (si#419, #431; si#420, #432; si#436, #440; #430)
+
+- A `parallel: true` aggregate that runs a consumer beside the producer of what it consumes is refused at
+  load (si#419). No manifest uses `parallel:`.
+- Five follow-ups to 0.31.0's ports (si#420):
+  - two ports that hand one parameter two artifacts are refused;
+  - `with: { name: " x " }` is stripped;
+  - two pages are corrected;
+  - a census entry names its cause;
+  - ports are looked up by task name.
+- `release:maven` was measured against GitHub Packages (si#436). GitHub builds `maven-metadata.xml` itself,
+  so a second release of a module does not replace its version list. No change was needed.
+- The kernel image pin moved to v0.31.0 (#430).
+
 ## 0.31.0
 
 **What a product has to do:** a product that releases an image now has to show that a test ran on that
