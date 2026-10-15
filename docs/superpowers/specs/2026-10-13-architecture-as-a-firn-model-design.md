@@ -31,9 +31,10 @@ the artifact schema from them. Part 1 puts the architecture itself into the mode
    through `surface.MOVED` until a stated release, and each product gets an issue.
 3. **Resolve the exceptions** one ticket at a time.
 4. **Base classes, and tasks modelled and generated.** The kernel defines `Task` and `Command` as the
-   base classes of every task and command. The tasks are modelled in firn (`simplon.pipeline.Task`, with
-   its ports and parameters) and their classes generated, the body by hand; the hand-written
-   `CommandSpec`, `Manifest` and `_ManifestModel` go. Touches si#344 part C and si#346. See "Part 4,
+   base classes of every task and command. The tasks are modelled in firn as classes that extend
+   `simplon.pipeline.Task`, with their ports and parameters as typed properties (revised 2026-10-15), and
+   their Python classes generated, the body by hand; a command is an instance of a task class. The
+   hand-written `CommandSpec`, `Manifest` and `_ManifestModel` go. Touches si#344 part C and si#346. See "Part 4,
    decided now" below.
 
 ## Decisions (Marco, 2026-10-13)
@@ -172,12 +173,92 @@ resolved at run time, and no layer applies to it. Whether that is a gap is for p
 
 ## Part 4, decided now
 
-Recorded here because Marco decided it during this design; part 4 gets its own spec.
+Recorded here because Marco decided it, first during this design (2026-10-13) and then again on si#455
+(2026-10-15, comments 6202244020 and 6202270420). Part 4 gets its own spec.
+
+### Revised 2026-10-15: classes, not instances
+
+This section first said the tasks are modelled as `simplon.pipeline.Task` *instances*, and si#344 C.1 built
+them that way: `src/firn/model/simplon/catalogue/tasks.firn` holds 18 `CatalogueTask` instances with their
+ports. Marco corrected this on si#455. The model is object-oriented throughout:
+
+- **A task is a class.** `BuildImage extends CatalogueTask`. Its ports and parameters are typed properties
+  of the class, and its body is the method. A product's task is a class too, written by the product or
+  derived from a catalogue task.
+- **A command is an instance of a task class**, for example `build_firn typeOf BuildImage { image =
+  firn_image }`. `TaskCommand.task`, an association from a command to a task object, goes away, because
+  the command's type is the task.
+- **An artifact kind is a class.** Today `src/firn/model/simplon/vocabulary/kinds.firn` holds 12
+  `ArtifactKind` instances that carry 30 `ArtifactField` objects (main d706ab2). Each kind becomes a class.
+  `refines` becomes `extends` (`Site extends Directory`), each field becomes a property of its class, and
+  an artifact entry becomes an instance.
+- **A habitat is a class** (si#455). `Habitat` is abstract, and `Portainer`, `Proxmox`, `Devcontainer`,
+  `VSCode`, `PythonEnv` and the others extend it. A product writes instances, and it may derive its own
+  habitat classes (Exoscale for netctl, VMware for swi).
+- **`local` no longer exists.** "Local" is how a habitat is reached, not a habitat and not a backend.
+  6 of the 8 reachable manifests write `backend: local` today: agile-cockpit, asbundle, biz-cockpit,
+  cleon, netctl and swi. This answers si#324 and si#342, and both close when the model replaces the
+  backend.
+- **SOLID is the check.** Every class the model introduces is checked against the five principles before
+  it is generated, and each migration step names the principle it moves toward. The table that pairs each
+  principle with a measured place in the kernel is on si#455 (comment 6202270420).
+- **Order:** model first, then generate, then move the existing code onto the generated part. Each step
+  is small, and only one source is live at a time (si#456's guard rail).
+
+### Measured: firn v0.1.0 can express this shape
+
+A probe project, checked on 2026-10-15 with the pinned image `ghcr.io/marcozwyssig/firn:v0.1.0` and not
+committed, wrote the shape above with one storey more than today's model (firn's model syntax, §8.4 "More
+than two levels"). `TaskType` is a class whose instances are classes, so a task class can carry its
+coordinate and its body as values:
+
+```firn
+TaskType typeOf firn.core.Class extends firn.core.Class {        // its instances are task classes
+  property key  typeOf firn.core.Attribute { range = firn.core.StringLiteral  subjectCardinality = 0..1 }
+  property body typeOf firn.core.Attribute { range = firn.core.StringLiteral  subjectCardinality = 0..1 }
+}
+OutputPort typeOf firn.core.Class extends firn.core.Association { // a port is a kind of property
+  property needs typeOf firn.core.Association { range = firn.core.Property ... }
+}
+Image typeOf firn.core.Class extends probe.Artifact { property repository ... }
+Site  typeOf firn.core.Class extends probe.Directory {}
+
+BuildImage typeOf probe.TaskType extends probe.Task {             // a task class
+  key  = "build:image"
+  body = "simplon.tasks.image:build"
+  property image typeOf probe.OutputPort {
+    range = probe.Image  subjectCardinality = 1..1  objectCardinality = 0..N
+    needs = probe.Image.repository
+  }
+}
+build_firn typeOf probe.BuildImage { image = probe.firn_image }   // a command
+haus typeOf probe.Portainer { parent = probe.pve }                // a habitat inside a habitat
+```
+
+What it showed:
+
+- **It checks clean** (rc 0): the metaclass, ports as properties, kinds and habitats as classes, and
+  commands and habitats as instances.
+- **Liskov comes from firn's own range rule.** A `Site` instance is accepted on a port whose range is
+  `Directory`. Today the kernel writes this by hand (`artifactsection.accepts`).
+- **Seen red** (rc 1), each on its own line: a command that binds the wrong kind to a port (`E003 ... is not
+  within the range 'probe.Directory'`), a command without its required port (`E004 ... has 0
+  'probe.BuildImage.image' where 1..1 is required`), and an instance of the abstract `Habitat` (`E001`).
+- **Not refused by firn:** a port whose `needs` names a property of a kind the port does not accept
+  (`needs = probe.Image.repository` on a `Directory` port). Today
+  `src/tests/test_catalogue_ports.py::test_every_port_accepts_a_kind_and_needs_only_keys_that_kind_has`
+  holds this by hand, and part 4 has to keep that test or replace it.
+- **Not measured:** whether a `.firnt` template can walk the classes of a metaclass and their port
+  properties, which is what generating the Python task classes needs. This is the first measurement of part
+  4's spec.
+
+### Still standing from 2026-10-13
 
 - **Today there is no base class.** Every one of the catalogue's task bodies is a plain top-level
   function, named by text (`impl: "simplon.tasks.vcs:commit"`); `signatures.py` reads its parameters
   with `inspect` at run time to bind `with:` and to render the Typer commands (`taskgen`). Measured
-  2026-10-13: 50 catalogue bodies, all `def`, most with 0-2 parameters, the largest with 8 and 9.
+  2026-10-13: 50 catalogue bodies, all `def`, most with 0-2 parameters, the largest with 8 and 9. On main
+  d706ab2 `src/simplon/catalogue.yaml` holds 55 `impl:` lines.
 - **The products write their bodies the same way.** Measured 2026-10-13 through the GitHub API, the
   `impl:` entries under each live manifest's own `tasks:`: netctl 52 (in `orchestrator.cli` and
   `orchestrator.tooling`), biz-cockpit 22, asbundle 15, cleon 12, swi 11 (`packer.commands`), simplon 6,
@@ -188,12 +269,19 @@ Recorded here because Marco decided it during this design; part 4 gets its own s
   The migration path (a generated wrapper, a `migrate` step, or a deprecation window that still accepts a
   function and says so) is part 4's design.
 - **The products model and generate their tasks too** (Marco, 2026-10-13). firn reaches every product
-  through simplon (`support toolchain firn`), and `simplon.pipeline` is simplon's M2, so a product's own
-  firn model imports it, declares its tasks as `simplon.pipeline.Task` instances, and generates their
-  classes from simplon's templates; the product writes only the body. That is also what keeps the rule
-  above affordable: the class a product would otherwise rewrite by hand is generated. Part 4's spec says
-  how the templates reach a product (shipped in the wheel beside the M2, or fetched) and where the
-  generated classes land in a product's tree.
+  through simplon (`support toolchain firn`), and `simplon.pipeline` is simplon's M2. A product's own firn
+  model imports it, declares its tasks as classes that extend simplon's `Task` (revised 2026-10-15), writes
+  its commands, artifacts and habitats as instances, and generates its Python classes from simplon's
+  templates. The product writes only the bodies. That is also what keeps the rule above affordable: the
+  class a product would otherwise rewrite by hand is generated. Part 4's spec says how the templates reach
+  a product (shipped in the wheel beside the M2, or fetched) and where the generated classes land in a
+  product's tree.
+
+### The bill grows with the revision
+
+Two items join the count of bodies, and each product's peer session measures them before anything ships:
+the artifact entries, which become instances of kind classes, and the `backend: local` that 6 of the 8
+manifests write.
 
 ## Gates
 
