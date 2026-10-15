@@ -12,6 +12,7 @@ asserted RED, not merely described.
 AAA throughout; nothing here builds, pushes or logs in for real - except `provenance`, which is measured
 against a real temporary git checkout, because a derivation nobody ran against git is a guess.
 """
+import os
 import json
 import re
 import shutil
@@ -2341,3 +2342,23 @@ def test_a_number_tag_builds_under_its_string(tmp_path):
 
     # assert
     assert cfg.tag == "25"
+
+
+def test_a_release_logs_in_and_publishes_inside_a_docker_config_that_ends_with_it(cli, monkeypatch, tmp_path):
+    # arrange: si#443 - the job's token in the runner's own config expires and denies later public pulls
+    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path / "operator"))
+    seen: list = []
+    monkeypatch.setattr(githubpackages, "docker_login",
+                        lambda registry, **kw: seen.append(("login", os.environ["DOCKER_CONFIG"])))
+    asked = image.published
+    monkeypatch.setattr(image, "published",
+                        lambda ref: seen.append(("verify", os.environ["DOCKER_CONFIG"])) or asked(ref))
+
+    # act
+    rc = image.release(name="app", tag="1.0")
+
+    # assert: login and read-back shared one scope, and it was not the operator's config
+    assert rc == 0
+    assert [what for what, _ in seen] == ["login", "verify"]
+    assert seen[0][1] == seen[1][1] != str(tmp_path / "operator")
+    assert os.environ["DOCKER_CONFIG"] == str(tmp_path / "operator")

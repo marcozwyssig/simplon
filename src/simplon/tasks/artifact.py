@@ -66,10 +66,12 @@ def publish(name: str = "", tag: str = "") -> int:
     if not directory.is_dir():
         raise ValueError(f"nothing to publish: {path} does not exist under the product root. "
                          f"the artifact is built by the product, not by this task")
-    githubpackages.login(registry)
     reference = githubpackages.reference(registry, repository, resolved)
-    # `archive:` is optional: without it the archive is named after the directory, which is right when
-    # that name says what it holds and misleading when it says where it was built.
-    githubpackages.push_directory(reference, directory, media_type, archive_name=spec.archive or "")
+    # si#443: the login lives as long as this push, not in the runner's own docker config.
+    with githubpackages.scoped_credentials():
+        githubpackages.login(registry)
+        # `archive:` is optional: without it the archive is named after the directory, which is right
+        # when that name says what it holds and misleading when it says where it was built.
+        githubpackages.push_directory(reference, directory, media_type, archive_name=spec.archive or "")
     log.ok(f"published {reference}")
     return 0
