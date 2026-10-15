@@ -532,8 +532,8 @@ own authors explaining the collision and telling them not to add a `targets:` ke
 
 Every entry is one artifact, named, with its **`kind:`** - one of the kinds the catalogue declares, listed
 on [the kinds page](../../with-what/kinds/): `image`, `directory` (and `site`, which refines it), `nuget`,
-`maven`, `conan`, ... A product cannot add a kind. A task reads one entry by name (`with: { name: ... }`),
-and it accepts an entry of its kind or of a kind that refines it - `release:artifact` reads a `directory`,
+`maven`, `conan`, ... A product cannot add a kind. A command binds one entry to its task's port
+([`produces:` / `consumes:`](#binding-artifacts-produces-and-consumes)), and the port accepts an entry of its kind or of a kind that refines it - `release:artifact` reads a `directory`,
 so a `site` too; an entry of any other kind is refused with both kinds named.
 
 ```yaml
@@ -568,7 +568,8 @@ that reads the entry, and refuses by name when nothing does).
 ### `kind: image` - the container image
 
 `build:image`, `test:image` and `release:image` read one `artifacts:` entry of
-`kind: image`, pinned per command with `with: { name: ... }`, because a product may build more than one:
+`kind: image`, bound per command - `produces: { image: app }` on the build, `consumes: { image: app }` on
+the test and the release - because a product may build more than one:
 
 ```yaml
 artifacts:

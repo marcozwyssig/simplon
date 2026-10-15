@@ -15,7 +15,7 @@ such a pair. Groups keep their own names, because they are what a reader follows
 every other child of the Product carries a prefix saying which section it came from, the way a task
 already did (`t_`), so no two sections can meet by construction:
 
-    t_  a task (one per distinct impl)    e_  an environment of the cd matrix
+    t_  a task (one per `task:` placed)   e_  an environment of the cd matrix
     a_  an `artifacts:` entry (since si#344 B2 an image is one, of `kind: image`)
     s_  a kernel section                  d_  a section only the product reads
 
@@ -36,8 +36,10 @@ silently holds one command where the manifest has two is the defect this kernel 
 What is NOT exported, said so that "drops nothing" stays true of the rest:
   - `cd: site:` - the M2 has a Site class, but nothing holds one until a deploy reads a site (spec,
     "What this is NOT"); a manifest's `cd: site:` is not in the model.
-  - a `tasks:` entry no command places - one Task per distinct impl a command USES (plan rule 2), so a
-    task the product offers and never places (si#53) is invisible until parts B/C need it.
+  - a `tasks:` entry no command places - one Task per task a command USES (plan rule 2), so a task the
+    product offers and never places (si#53) is invisible until parts B/C need it. A Task is keyed by the
+    name a command's `task:` gives, as a CatalogueTask is by its coordinate, and not by its impl: two
+    tasks on one body may declare different ports, and keyed by impl the second's were dropped (si#420).
   - a Task for a command on a catalogue task the model carries (`artifactschema.PORTS`): the command
     references `simplon.catalogue.<task>` instead, the one source of its ports (si#344 C.2).
 `cd: default:` IS exported, as `Product.default` - the name as written, not a reference to one of
@@ -106,7 +108,7 @@ class _Names:
         self.seen: dict[str, str] = {}
 
     def __call__(self, original: str, prefix: str = "") -> str:
-        # Every call names a NEW child (a task is named once per impl, each other child once), so any
+        # Every call names a NEW child (a task is named once per `task:`, each other child once), so any
         # repeat is two resources on one name - the same original included: a group `build` and a
         # section `build` passed a guard that only compared originals, and firn said E001.
         name = prefix + mangle(original)
@@ -141,7 +143,7 @@ class _Export:
         self.root = f"product.{mangle(product)}.{mangle(product)}"
         self.names = _Names(f"product '{product}'")
         self.paths: dict[str, str] = {}   # dotted group path -> firn path below the Product
-        self.tasks: dict[str, tuple[str, tuple]] = {}   # impl -> (firn name, its ports), in first-use order
+        self.tasks: dict[str, tuple[str, str, tuple]] = {}   # task -> (firn name, impl, ports), first use first
 
     def area(self, group: str) -> str:
         area = self.manifest.area_of(group)
@@ -197,9 +199,9 @@ class _Export:
                 # a catalogue task the model carries (si#344 C.1): referenced, never re-declared (C.2)
                 body.append(f"task = simplon.catalogue.{mangle(spec.task)}")
             else:
-                if spec.impl not in self.tasks:
-                    self.tasks[spec.impl] = (self.names(spec.impl, "t_"), spec.ports)
-                body.append(f"task = {self.root}.{self.tasks[spec.impl][0]}")
+                if spec.task not in self.tasks:
+                    self.tasks[spec.task] = (self.names(spec.task, "t_"), spec.impl, spec.ports)
+                body.append(f"task = {self.root}.{self.tasks[spec.task][0]}")
             for key, side in (("produces", spec.produces), ("consumes", spec.consumes)):
                 body += [f"{key} = {self.root}.a_{mangle(artifact)}" for names in side.values() for artifact in names]
             kind = "TaskCommand"
@@ -216,8 +218,8 @@ class _Export:
 
     def task_lines(self) -> list[str]:
         lines: list[str] = []
-        for impl, (name, ports) in self.tasks.items():
-            body = [f"key = {_q(impl)}", f"body = {_q(impl)}"]
+        for task, (name, impl, ports) in self.tasks.items():
+            body = [f"key = {_q(task)}", f"body = {_q(impl)}"]
             for port in ports:
                 fields = [f"accepts = simplon.vocabulary.{mangle(port.accepts)}"]
                 if port.param:

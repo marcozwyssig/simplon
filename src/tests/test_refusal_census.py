@@ -608,6 +608,9 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("treeform", "_resolve_one", "an aggregate runs no task"): DIAGNOSIS,
     ("treeform", "_resolve_one", "an aggregate's one output is"): DIAGNOSIS,
     ("treeform", "_resolve_one", "which hands the artifact's name to"): DIAGNOSIS,
+    # si#420: two ports handing one `param:` two different artifacts - the body receives one name, and the other
+    # binding was dropped without a word. One artifact on both still loads.
+    ("treeform", "_resolve_one", "so the other binding would be lost"): DIAGNOSIS,
     # --- ports.py (si#344 C.2) ------------------------------------------------------------------------
     # A binding the task cannot take: no working meaning, so all four are diagnosis. Rule 4 (port names exist
     # on the task) is the second; the spec files it under C.5 as a merged-reach diagnosis.
@@ -624,7 +627,9 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("ports", "declared", "a port name says which port"): DIAGNOSIS,
     # C.5 rules 1, 2, 3 and 5 (si#344 C.2), all diagnosis, merged (spec C.7). Rule 1 is per plan (decided
     # 2026-10-14): firn's three producers of one image are a working product, and refusing them would have been
-    # an expression rule nobody measured.
+    # an expression rule nobody measured. Two producers in ONE plan have no working meaning: both write the
+    # same artifact, the second overwrites the first, and which one a consumer reads depends on where it sits
+    # in the plan - so a reader of the manifest cannot tell what was released (si#420).
     ("ports", "check", "no kind the catalogue declares"): DIAGNOSIS,
     ("ports", "check", "declare it there with its"): DIAGNOSIS,
     ("ports", "check", "and the kinds that refine it"): DIAGNOSIS,

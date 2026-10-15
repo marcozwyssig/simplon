@@ -71,9 +71,12 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 227 | nothing - the declaration had no working meaning |
+| diagnosis | 228 | nothing - the declaration had no working meaning |
 | expression rule | 36 | something it could otherwise have said |
-| **all load-time refusals** | **263** | |
+| **all load-time refusals** | **264** | |
+
+si#420 added one diagnosis: two ports of a product task that hand one `param:` two different artifacts.
+The body receives one name, so one of the bindings was dropped without a word.
 
 si#396 added two diagnoses: `claude.requires:` must be a list of executable names. Whether a named
 executable is on PATH is asked of the machine, so it refuses at run time and is not counted here.

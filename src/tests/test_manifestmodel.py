@@ -80,7 +80,7 @@ def test_a_name_that_is_not_a_firn_name_keeps_its_original_in_key():
     assert 'key = "nuget-config"' in _block(out, "command nuget_config typeOf simplon.pipeline.TaskCommand {")
 
 
-def test_a_command_runs_the_task_named_by_its_measured_impl():
+def test_a_command_runs_the_task_its_task_names_and_the_task_carries_the_impl():
     # arrange: a product task, which no catalogue model carries (since si#344 C.2 a modelled catalogue task is
     # referenced instead - `test_a_command_on_a_modelled_catalogue_task_references_it...`)
     text = DEMO.replace("cd:\n", 'tasks:\n  wheel: { impl: "orchestrator.cli:build_wheel", help: "Build." }\n'
@@ -91,10 +91,9 @@ def test_a_command_runs_the_task_named_by_its_measured_impl():
     out = _export(text)
 
     # assert
-    assert "task = product.demo.demo.t_orchestrator_cli_build_wheel" in _block(
-        out, "command wheel typeOf simplon.pipeline.TaskCommand {")
-    task = _block(out, "tasks t_orchestrator_cli_build_wheel typeOf simplon.pipeline.Task {")
-    assert 'key = "orchestrator.cli:build_wheel"' in task and 'body = "orchestrator.cli:build_wheel"' in task
+    assert "task = product.demo.demo.t_wheel" in _block(out, "command wheel typeOf simplon.pipeline.TaskCommand {")
+    task = _block(out, "tasks t_wheel typeOf simplon.pipeline.Task {")
+    assert 'key = "wheel"' in task and 'body = "orchestrator.cli:build_wheel"' in task
 
 
 def test_an_aggregate_names_its_members_and_runs_no_task():
@@ -441,6 +440,27 @@ def test_a_product_tasks_ports_are_exported_on_its_task():
     out = _export(text)
 
     # assert
-    task = _block(out, "tasks t_orchestrator_cli_pack typeOf simplon.pipeline.Task {")
+    task = _block(out, "tasks t_pack typeOf simplon.pipeline.Task {")
     assert "output bundle typeOf simplon.pipeline.Port {" in task
     assert "accepts = simplon.vocabulary.directory" in task and 'param = "name"' in task
+
+
+def test_two_product_tasks_on_one_impl_are_two_tasks_with_their_own_ports():
+    # arrange: si#420 item 5 - one body, two declarations; keyed by impl, the second's ports were dropped
+    text = DEMO.replace("cd:\n", "tasks:\n"
+                        '  pack-a: { impl: "orchestrator.cli:pack", help: "A.",'
+                        " output: { a: { accepts: directory } } }\n"
+                        '  pack-b: { impl: "orchestrator.cli:pack", help: "B.",'
+                        " output: { b: { accepts: image } } }\n"
+                        "cd:\n").replace("      all:", "      pa: { task: pack-a }\n      pb: { task: pack-b }\n"
+                                         "      all:")
+
+    # act
+    out = _export(text)
+
+    # assert
+    a = _block(out, "tasks t_pack_a typeOf simplon.pipeline.Task {")
+    b = _block(out, "tasks t_pack_b typeOf simplon.pipeline.Task {")
+    assert 'key = "pack-a"' in a and 'body = "orchestrator.cli:pack"' in a and "output a typeOf" in a
+    assert 'key = "pack-b"' in b and 'body = "orchestrator.cli:pack"' in b and "output b typeOf" in b
+    assert "task = product.demo.demo.t_pack_b" in _block(out, "command pb typeOf simplon.pipeline.TaskCommand {")
