@@ -174,7 +174,8 @@ resolved at run time, and no layer applies to it. Whether that is a gap is for p
 ## Part 4, decided now
 
 Recorded here because Marco decided it, first during this design (2026-10-13) and then again on si#455
-(2026-10-15, comments 6202244020 and 6202270420). Part 4 gets its own spec.
+(2026-10-15, comments 6202244020 and 6202270420). Part 4 has its own spec:
+`2026-10-15-part-4-tasks-as-generated-classes-design.md`.
 
 ### Revised 2026-10-15: classes, not instances
 
