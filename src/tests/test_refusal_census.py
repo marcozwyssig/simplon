@@ -636,6 +636,9 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("ports", "check", "and no command produces it"): DIAGNOSIS,
     ("ports", "_check_plan", "plans two producers of"): DIAGNOSIS,
     ("ports", "_check_plan", "first in `depends_on`"): DIAGNOSIS,
+    # si#419: measured on the runner - a consumer in one branch of a fan starts with the producer in another,
+    # even where its own branch lists the producer first. Zero of the eight live manifests says `parallel:`.
+    ("ports", "_check_fans", "a fan starts its branches at once"): DIAGNOSIS,
     # si#344 C.3. A test result with no `path:` has nowhere to be written: diagnosis. One produced outside
     # `ci: test:` would have worked - it is an expression rule, and it rules on the merged tree.
     ("ports", "_check_results", "a test result is what the test writes"): DIAGNOSIS,

@@ -71,9 +71,13 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 228 | nothing - the declaration had no working meaning |
+| diagnosis | 229 | nothing - the declaration had no working meaning |
 | expression rule | 36 | something it could otherwise have said |
-| **all load-time refusals** | **264** | |
+| **all load-time refusals** | **265** | |
+
+si#419 added one diagnosis: a `parallel: true` aggregate may not run a consumer beside the producer of
+what it consumes, because a fan starts its branches at once and the consumer may read the artifact before
+it is written. No live manifest says `parallel:`, so it refuses none of them.
 
 si#420 added one diagnosis: two ports of a product task that hand one `param:` two different artifacts.
 The body receives one name, so one of the bindings was dropped without a word.
