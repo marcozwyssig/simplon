@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from simplon.domain import artifactsection
 
 from simplon.domain.artifactschema import PORTS, Port
+from simplon.kernel.plan import PlanNode, parallel_siblings, schedule_of
 
 if TYPE_CHECKING:
     from simplon.domain.manifest import Manifest
@@ -158,7 +159,7 @@ def check(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared
     for group, members in manifest.commands.items():
         for name, spec in members.items():
             if spec.depends_on:
-                _check_plan(manifest, f"{group} {name}", manifest.plan_for(name, group=group))
+                _check_plan(manifest, f"{group} {name}", manifest.plan_tree_for(name, group=group))
     _check_bundles(manifest, declared, kinds)
     about = _check_results(manifest, declared, kinds)
     _check_release(manifest, declared, kinds, about)
@@ -209,9 +210,11 @@ def _check_bundles(manifest: "Manifest", declared: Mapping[str, "artifactsection
                         f"the tag after every publish in `depends_on`")
 
 
-def _check_plan(manifest: "Manifest", aggregate: str, plan: tuple[str, ...]) -> None:
+def _check_plan(manifest: "Manifest", aggregate: str, tree: PlanNode) -> None:
     """Rule 1 per plan (decided 2026-10-14) and rule 5: one producer of an artifact in a plan, planned
-    before every consumer of it there."""
+    before every consumer of it there - and not beside it in a fan (si#419), which `depends_on` order
+    cannot fix, so the fan is ruled on first."""
+    plan = tuple(leaf.name for leaf in tree.leaves())
     made: dict[str, tuple[int, str]] = {}
     for at, step in enumerate(plan):
         spec = manifest.spec_by_name(step)
@@ -221,6 +224,7 @@ def _check_plan(manifest: "Manifest", aggregate: str, plan: tuple[str, ...]) -> 
                     f"aggregate '{aggregate}' plans two producers of '{artifact}': '{made[artifact][1]}' and "
                     f"'{step}' - one plan builds an artifact once, so plan one of them")
             made[artifact] = (at, step)
+    _check_fans(manifest, aggregate, tree, {artifact: step for artifact, (_, step) in made.items()})
     for at, step in enumerate(plan):
         spec = manifest.spec_by_name(step)
         for artifact in (a for names in (spec.consumes if spec else {}).values() for a in names):
@@ -229,6 +233,30 @@ def _check_plan(manifest: "Manifest", aggregate: str, plan: tuple[str, ...]) -> 
                 raise ValueError(
                     f"aggregate '{aggregate}' plans '{step}' before '{producer}', and '{step}' consumes "
                     f"'{artifact}', which '{producer}' produces - list '{producer}' first in `depends_on`")
+
+
+def _check_fans(manifest: "Manifest", aggregate: str, node: PlanNode, made: Mapping[str, str]) -> None:
+    """Rule 5 inside a fan (si#419): a `parallel: true` aggregate starts its branches at once, so a
+    consumer in one branch may run before the producer in another has written the artifact. What runs
+    beside what is `plan.parallel_siblings` over `plan.schedule_of` - the runner's own answer, so this
+    refuses exactly what the runner races. Children first, so the message names the innermost fan."""
+    for child in node.children:
+        _check_fans(manifest, aggregate, child, made)
+    if not node.spec.parallel:
+        return
+    leaves = [leaf.name for leaf in node.leaves()]
+    for at, beside in sorted(parallel_siblings(schedule_of(node)).items()):
+        spec = manifest.spec_by_name(leaves[at])
+        for artifact in (a for names in (spec.consumes if spec else {}).values() for a in names):
+            producer = made.get(artifact)
+            if producer is not None and producer in (leaves[other] for other in beside):
+                group, _, name = node.path.rpartition(".")
+                raise ValueError(
+                    f"aggregate '{aggregate}' runs '{leaves[at]}' beside '{producer}' under the `parallel: "
+                    f"true` of '{f'{group} {name}' if group else name}', and '{leaves[at]}' consumes "
+                    f"'{artifact}', which '{producer}' produces - a fan starts its branches at once, so "
+                    f"'{leaves[at]}' may run before '{artifact}' is written; plan '{producer}' ahead of the "
+                    f"fan, or drop `parallel:`")
 
 
 #: The kinds a release produces about itself (si#344 C.3, decided 2026-10-14). The release rule asks for test
