@@ -662,14 +662,14 @@ def _resolve_one(spec: dict, where: str, product_tasks: dict, catalogue_tasks: d
             side[p.name] = (value.strip(),)
     # A port a section binds (si#435): `consumes:` on it would be a second statement of what the section
     # says, so it is refused - as it was before the port existed, now naming where the binding is said.
-    port = ports.SECTION_BOUND.get(ref)
-    if port is not None:
-        if port in bound["consumes"]:
+    section_port = ports.SECTION_BOUND.get(ref)
+    if section_port is not None:
+        if section_port in bound["consumes"]:
             raise ValueError(
-                f"command '{where}' binds `consumes: {port}`, and task '{ref}' takes that port from "
+                f"command '{where}' binds `consumes: {section_port}`, and task '{ref}' takes that port from "
                 f"`deploy: source:`, which already names what is deployed - name it there, once")
         if ref in section_bound:
-            bound["consumes"][port] = (section_bound[ref],)
+            bound["consumes"][section_port] = (section_bound[ref],)
     by_binding: dict[str, str] = {}
     handed: dict[str, str] = {}   # param -> the port that handed it, for the message below
     for p in task_ports:
