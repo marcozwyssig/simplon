@@ -148,6 +148,10 @@ class Image:
     #: si#347. The declared images this one is built FROM, as (name, image) pairs in declaration order,
     #: each already validated - including its own contexts, so a cycle never reaches a build.
     contexts: tuple[tuple[str, "Image"], ...] = ()
+    #: si#343. The declared `kind: file` entries `contexts:` names, as (name, path under the product root)
+    #: pairs: each is passed as `--build-context <name>=<the file's directory>`, so the Dockerfile reads the
+    #: file from there and never downloads it.
+    files: tuple[tuple[str, str], ...] = ()
 
 
 def _image_names(section: Mapping) -> list[str]:
@@ -212,6 +216,32 @@ def _bake_name(name: str, where: str) -> str:
     return name
 
 
+def _is_file(section: Mapping, name: str) -> bool:
+    """Whether the entry `name` is a `kind: file` (si#343) - or of a kind that refines it."""
+    body = section.get(name)
+    return isinstance(body, Mapping) and artifactsection.accepts(
+        artifactschema.REFINES, artifactschema.FileEntry.KIND, str(body.get("kind", "")))
+
+
+def _file_contexts(section: Mapping, declared: tuple[str, ...], where: str) -> tuple[tuple[str, str], ...]:
+    """The `kind: file` entries among `contexts:` (si#343), each with its `path:`.
+
+    The context is the file's DIRECTORY, under the entry's name, so the path is written once - in the entry -
+    and a Dockerfile names the file by its own name inside that context. The entry's keys and shapes were
+    checked at load; what is left is the one key a build needs of it."""
+    out: list[tuple[str, str]] = []
+    for dep in (d for d in declared if _is_file(section, d)):
+        _bake_name(dep, where)
+        path = section[dep].get("path")
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError(f"{where}: context '{dep}' is a `file` and declares no `path:` - the build is handed "
+                             f"the directory the file lies in, so name where it lies")
+        out.append((dep, validate_relative_dir(path, f"{where}: context '{dep}' path",
+                                               "give the file's path under the product root",
+                                               inside="the product root")))
+    return tuple(out)
+
+
 def _contexts(section: Mapping, declared: tuple[str, ...], chain: tuple[str, ...], where: str,
               source: str, coordinate: str) -> tuple[tuple[str, Image], ...]:
     """The declared images `body` is built FROM, each validated as an image in its own right.
@@ -229,7 +259,7 @@ def _contexts(section: Mapping, declared: tuple[str, ...], chain: tuple[str, ...
     Its SHAPE - a list of names, stripped and deduplicated - is the schema's (si#344 B2).
     """
     out: list[tuple[str, Image]] = []
-    for dep in declared:
+    for dep in (d for d in declared if not _is_file(section, d)):
         if dep in chain:
             raise ValueError(f"{where}: contexts form a cycle: {' -> '.join((*chain, dep))} - an image "
                              f"cannot be built from itself")
@@ -290,6 +320,7 @@ def declared_image(section: Mapping, name: str, source: str, chain: tuple[str, .
         tag=entry.tag or "",
         platforms=platforms,
         contexts=_contexts(section, entry.contexts or (), (*chain, name), where, source, coordinate),
+        files=_file_contexts(section, entry.contexts or (), where),
     )
 
 
@@ -329,6 +360,11 @@ def missing_declared_paths(cfg: Image, root: Path) -> list[str]:
     # about tar, so `is_dir` is the question and not `exists`.
     if not (root / cfg.context).is_dir():
         missing.append(f"context: {cfg.context} - no directory under the product root answers to it")
+    # si#343: a file context is fetched, not committed, so its absence is the step that has not run yet.
+    for name, path in cfg.files:
+        if not (root / path).is_file():
+            missing.append(f"contexts: {name} - no file at {path}; fetch it first, `build:fetch` with "
+                           f"`with: {{ name: {name} }}`")
     return missing
 
 
@@ -465,6 +501,8 @@ def build_image(cfg: Image, tag: str, root: Path, args: dict[str, str]) -> int:
     argv = ["docker", "build", "--file", str(root / cfg.dockerfile), "--tag", ref]
     for key in sorted(args):
         argv += ["--build-arg", f"{key}={args[key]}"]
+    for name, directory in file_contexts(cfg, root).items():
+        argv += ["--build-context", f"{name}={directory}"]
     # `root / "."` IS `root` - pathlib drops the segment - so the '.' the manifest may carry needs no
     # branch here, and a branch that can never take its second arm is a claim about the code that is
     # false.
@@ -990,8 +1028,14 @@ def dependencies(cfg: Image) -> list[tuple[str, Image]]:
     return out
 
 
-def _target_contexts(cfg: Image, version: str) -> dict[str, str]:
-    return {context_name(dep, version): f"target:{dep_name}" for dep_name, dep in cfg.contexts}
+def file_contexts(cfg: Image, root: Path) -> dict[str, str]:
+    """{name: the file's directory} for each `kind: file` context (si#343)."""
+    return {name: str((root / path).parent) for name, path in cfg.files}
+
+
+def _target_contexts(cfg: Image, version: str, root: Path) -> dict[str, str]:
+    return {**{context_name(dep, version): f"target:{dep_name}" for dep_name, dep in cfg.contexts},
+            **file_contexts(cfg, root)}
 
 
 def bake_definition(cfg: Image, name: str, ref: str, derived: Mapping[str, str], root: Path,
@@ -1013,8 +1057,8 @@ def bake_definition(cfg: Image, name: str, ref: str, derived: Mapping[str, str],
     def target(image_: Image) -> dict:
         body: dict = {"context": str(root / image_.context), "dockerfile": str(root / image_.dockerfile),
                       "platforms": list(chosen), "args": {**derived, **image_.build_args}}
-        if image_.contexts:
-            body["contexts"] = _target_contexts(image_, derived.get(VERSION_ARG, ""))
+        if image_.contexts or image_.files:
+            body["contexts"] = _target_contexts(image_, derived.get(VERSION_ARG, ""), root)
         return body
 
     targets = {dep_name: target(dep) for dep_name, dep in dependencies(cfg)}

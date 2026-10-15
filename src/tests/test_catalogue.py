@@ -158,7 +158,9 @@ def test_the_shipped_catalogue_parses_and_offers_the_namespaces_netctl_imports()
     # of them exist as coordinates rather than as `toolchain:run` commands for a reason a product cannot
     # work around - a toolchain command's environment is what the manifest names and nothing else
     # (si#105), and a token is exactly what a manifest may not name.
-    assert sorted(cat.namespace("build")) == ["cmake-files", "conan-cache", "dotnet-solution", "image",
+    # `fetch` (si#343) is the newest: a checksummed download a build context can be handed, so a Dockerfile
+    # never downloads it itself.
+    assert sorted(cat.namespace("build")) == ["cmake-files", "conan-cache", "dotnet-solution", "fetch", "image",
                                               "maven-pack", "nuget-config", "nuget-pack", "nuget-restore"]
     # `release:tag` (#32) is the newest, and the odd one out in its own namespace: `artifact` and `image`
     # publish what a build produced and both read a manifest section, while `tag` publishes NOTHING - it

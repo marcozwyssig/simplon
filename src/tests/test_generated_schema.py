@@ -89,7 +89,7 @@ def test_every_reader_names_a_catalogue_coordinate_a_kind_and_needs_of_that_kind
              for c, needs in artifactschema.NEEDS.items()}
 
     # assert
-    assert len(artifactschema.READERS) == 13
+    assert len(artifactschema.READERS) == 14
     assert unknown == []
     assert set(artifactschema.READERS.values()) <= set(artifactschema.REFINES)
     assert set(artifactschema.NEEDS) == set(artifactschema.READERS)
@@ -102,6 +102,7 @@ def test_a_reader_needs_what_its_body_checked_before_si344_b2():
     assert artifactschema.NEEDS == {
         "test:image": ("registry", "repository", "dockerfile", "context"),
         "build:image": ("registry", "repository", "dockerfile", "context"),
+        "build:fetch": ("path", "url", "sha256"),
         "release:image": ("registry", "repository", "dockerfile", "context"),
         "release:artifact": ("registry", "repository", "media_type", "path"),
         "build:conan-cache": ("registry", "repository", "media_type", "path"),

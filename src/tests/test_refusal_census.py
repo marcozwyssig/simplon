@@ -179,6 +179,8 @@ READS_INLINE = {
                       "and since si#344 B2 it hands `artifactsection.entry` the SECTION, never the "
                       "document, so it stays an inline reader",
     "tasks.asset": "`_declared(name)`, same shape as tasks.artifact",
+    "tasks.fetchfile": "`fetch(name)` reads its `artifacts:` entry inline, the same shape as tasks.artifact, and "
+                       "hands `declared` the SECTION; the version it reads is in the product tree (si#343)",
     "tasks.env": "`environments()` reads the document inline to answer a listing",
     "tasks.carrier": "reads `environments:` and `carriers:` through `environments.parse_data` and "
                      "`carrierspec.declared`, both of which the walk already follows, then holds the "
@@ -608,6 +610,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # that fact twice. Agreeing, it would have worked: an expression rule, as rule 7 is. It costs nothing measured:
     # the form was refused before the port existed (no port to bind), and 0 of 8 manifests write it.
     ("treeform", "_resolve_one", "takes that port from `deploy: source:`"): EXPRESSION,
+    # si#343 (decided 2026-10-15): `build:image`'s `file` port is bound by the `contexts:` of the image it builds,
+    # so `consumes:` on it says that fact twice - the same expression rule as si#435's, for the same reason. It
+    # costs nothing measured: the port did not exist before, and 0 of 8 manifests declare a `kind: file`.
+    ("treeform", "_resolve_one", "takes that port from the `contexts:`"): EXPRESSION,
     # si#344 C.2 final review: an aggregate runs no task, so a binding on it binds nothing (it crashed the loader
     # before); and a bound parameter's `params:` renders nowhere, the `with:` refusal above for a binding.
     ("treeform", "_resolve_one", "an aggregate runs no task"): DIAGNOSIS,
@@ -844,6 +850,8 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("image", "_bake_name", "cannot name a buildx bake target"): DIAGNOSIS,
     ("image", "_contexts", "contexts form a cycle"): DIAGNOSIS,
     ("image", "_contexts", "is not an image in the '{SECTION}:' section"): DIAGNOSIS,
+    # si#343: a file context hands the build the file's directory, so a `file` with no `path:` has none to hand.
+    ("image", "_file_contexts", "is a `file` and declares no `path:`"): DIAGNOSIS,
 
     # --- artifactsection.py and the generated artifactschema.py (si#344 B2) --------------------------------
     # DIAGNOSIS, all of them. An `artifacts:` that is not a mapping, an entry that is not one, a kind the
@@ -995,6 +1003,7 @@ REACH: dict[tuple[str, str, str], str] = {
     ("treeform", "_resolve_one", "declares `impl:`"): REACH_MERGED,
     ("treeform", "_resolve_one", "binds a port and also pins"): REACH_MERGED,
     ("treeform", "_resolve_one", "takes that port from `deploy: source:`"): REACH_MERGED,
+    ("treeform", "_resolve_one", "takes that port from the `contexts:`"): REACH_MERGED,
     ("treeform", "_resolve_one", "declares both `task:` and `depends_on:`"): REACH_MERGED,
     ("treeform", "check_no_old_form", "is written in the flat command form"): REACH_SEAM,
     ("treeform", "check_coordinate_placement", "places the coordinate"): REACH_MERGED,

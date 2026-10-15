@@ -43,7 +43,7 @@ def test_produces_binds_the_output_port_and_hands_the_name_to_its_parameter():
     assert spec.consumes == {}
     assert spec.with_ == {"name": "kernel"}
     assert spec.task == "build:image"
-    assert [p.name for p in spec.ports] == ["image"]
+    assert [p.name for p in spec.ports] == ["file", "image"]
 
 
 def test_consumes_binds_the_input_port():

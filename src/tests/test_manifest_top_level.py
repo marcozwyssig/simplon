@@ -156,6 +156,7 @@ MODULES: dict[str, tuple[str, ...]] = {
     "tasks.claudeplugins": ("claude",),
     "tasks.completion": (),          # hands the document to `completiongen.environments_of`
     "tasks.conan": ("artifacts",),   # the same `artifacts:` section as tasks.artifact (si#127)
+    "tasks.fetchfile": ("artifacts",),   # a `kind: file` entry (si#343)
     "tasks.docs": ("doctoolchain_version",),
     "tasks.env": ("cd", "env_var"),
     "tasks.image": ("artifacts",),  # its `kind: image` entries (si#344 B2)

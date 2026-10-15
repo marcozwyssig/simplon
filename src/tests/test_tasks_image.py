@@ -1616,6 +1616,88 @@ def test_a_context_that_cannot_be_supplied_is_refused_by_name(images, fragment):
         image.declared(data, name)
 
 
+# --- si#343: a `kind: file` as a context ---------------------------------------------------------------
+
+_FILE = {"kind": "file", "path": "build/dist/gradle.zip", "url": "https://e.org/g.zip", "sha256": "a" * 64}
+
+
+def test_a_file_context_is_carried_beside_the_image_contexts_and_not_as_one():
+    # arrange
+    data = _images(app=_body(contexts=["base", "gradle-dist"]), base=_body(tag="1"))
+    data["artifacts"]["gradle-dist"] = _FILE
+
+    # act
+    cfg = image.declared(data, "app")
+
+    # assert
+    assert [name for name, _ in cfg.contexts] == ["base"]
+    assert cfg.files == (("gradle-dist", "build/dist/gradle.zip"),)
+
+
+def test_a_file_context_without_a_path_is_refused_by_name():
+    # arrange
+    data = _images(app=_body(contexts=["gradle-dist"]))
+    data["artifacts"]["gradle-dist"] = {k: v for k, v in _FILE.items() if k != "path"}
+
+    # act / assert
+    with pytest.raises(ValueError, match="context 'gradle-dist' is a `file` and declares no `path:`"):
+        image.declared(data, "app")
+
+
+def test_a_bake_target_is_handed_the_files_directory_under_the_entrys_name(tmp_path):
+    # arrange
+    data = _images(app=_body(platforms=["linux/amd64"], contexts=["gradle-dist"]))
+    data["artifacts"]["gradle-dist"] = _FILE
+    cfg = image.declared(data, "app")
+
+    # act
+    bake = image.bake_definition(cfg, "app", "ghcr.io/owner/demo-app:1", {}, tmp_path)
+
+    # assert
+    assert bake["target"]["app"]["contexts"] == {"gradle-dist": str(tmp_path / "build/dist")}
+
+
+def _with_file_context(product):
+    (product / "demo.yaml").write_text(_MANIFEST + f"""\
+  tool:
+    kind: image
+    registry: ghcr.io/owner
+    repository: demo-tool
+    dockerfile: Dockerfile
+    context: .
+    contexts: [gradle-dist]
+  gradle-dist: {{ kind: file, path: build/dist/gradle.zip, url: "https://e.org/g.zip", sha256: {"a" * 64} }}
+""", encoding="utf-8")
+
+
+def test_the_build_is_handed_the_fetched_files_directory_as_a_build_context(cli, _no_provenance, _product):
+    # arrange
+    _with_file_context(_product)
+    (_product / "build/dist").mkdir(parents=True)
+    (_product / "build/dist/gradle.zip").write_bytes(b"zip")
+
+    # act
+    image.build(name="tool", tag="1")
+
+    # assert
+    argv = cli.argv_starting("docker", "build")[0]
+    assert argv[argv.index("--build-context") + 1] == f"gradle-dist={_product / 'build/dist'}"
+
+
+def test_a_file_context_not_yet_fetched_is_named_before_docker_is_started(cli, _no_provenance, _product, capsys):
+    # arrange
+    _with_file_context(_product)
+
+    # act
+    rc = image.build(name="tool", tag="1")
+
+    # assert: red, docker never asked, and the message says which step has not run
+    assert rc == 1
+    assert cli.argv_starting("docker", "build") == []
+    assert "contexts: gradle-dist - no file at build/dist/gradle.zip; fetch it first, `build:fetch`" \
+        in capsys.readouterr().err
+
+
 def test_a_broken_dependency_is_refused_as_itself_and_not_as_its_dependent():
     # arrange: the dependency is missing a required key
     data = _images(app=_body(contexts=["base"]),
