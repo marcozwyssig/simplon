@@ -321,3 +321,60 @@ def test_a_params_entry_on_a_bound_parameter_names_the_binding_not_with():
     assert message == ("command 'build image' binds port 'image', which hands the artifact's name to `name`, "
                        "and also declares `params:` for name. A bound parameter is off the command line, so "
                        "its presentation renders nowhere - drop the `params:` entry")
+
+
+#: A producer and a consumer of `local` for the fan tests below (si#419): `make` builds the image and the
+#: test reads it, so running the two at once tests whatever image was there before.
+FAN = ("  build:\n    commands:\n"
+       '      make: { task: "build:image", produces: { image: local } }\n'
+       '      other: { task: "build:image", produces: { image: kernel } }\n'
+       "  test:\n    commands:\n"
+       '      check: { task: "test:image", consumes: { image: local }, produces: { test-result: checked } }\n')
+
+
+def test_a_fan_that_runs_a_consumer_beside_its_producer_is_refused():
+    # act: listed in the right order, and `parallel:` starts both at once all the same
+    message = _refusal(FAN + '      both: { depends_on: [make, check], parallel: true, help: "Both." }\n',
+                       artifacts=CHECKED)
+
+    # assert
+    assert message == ("aggregate 'test both' runs 'check' beside 'make' under the `parallel: true` of 'test both', "
+                       "and 'check' consumes 'local', which 'make' produces - a fan starts its branches at once, "
+                       "so 'check' may run before 'local' is written; plan 'make' ahead of the fan, or drop "
+                       "`parallel:`")
+
+
+def test_a_fan_branch_that_lists_the_producer_still_races_it_when_another_branch_runs_it():
+    # act: `right` lists `make` before `check`, but `make` is planned once, in `left`'s branch - measured
+    # on the runner (si#419): `make` and `check` start at the same instant
+    message = _refusal(FAN
+                       + '      left: { depends_on: [make, other], help: "Left." }\n'
+                       + '      right: { depends_on: [make, check], help: "Right." }\n'
+                       + '      both: { depends_on: [left, right], parallel: true, help: "Both." }\n',
+                       artifacts=CHECKED)
+
+    # assert
+    assert message.startswith("aggregate 'test both' runs 'check' beside 'make' under the `parallel: true` "
+                              "of 'test both'")
+
+
+def test_a_fan_names_the_innermost_parallel_aggregate_that_races():
+    # act: the race is inside `inner`; `outer` fans `inner` beside `other`
+    message = _refusal(FAN
+                       + '      inner: { depends_on: [make, check], parallel: true, help: "Inner." }\n'
+                       + '      outer: { depends_on: [inner, other], parallel: true, help: "Outer." }\n',
+                       artifacts=CHECKED)
+
+    # assert
+    assert "under the `parallel: true` of 'test inner'" in message
+
+
+def test_a_fan_after_its_producer_loads():
+    # act: `make` runs first, then `check` beside `other` - nothing in the fan reads what the fan writes
+    m = _load(FAN
+              + '      fan: { depends_on: [check, other], parallel: true, help: "Fan." }\n'
+              + '      all: { depends_on: [make, fan], help: "All." }\n',
+              artifacts=CHECKED)
+
+    # assert
+    assert m.plan_for("all") == ("make", "check", "other")

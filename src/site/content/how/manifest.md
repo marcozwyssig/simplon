@@ -165,7 +165,8 @@ The loader holds every binding before anything runs:
 - the port exists on the task, on the side the key binds;
 - the artifact is declared, and its kind is the port's or refines it;
 - something produces what a command consumes, or the artifact names a `registry:` it is fetched from;
-- no aggregate plans two producers of one artifact, or a consumer before its producer.
+- no aggregate plans two producers of one artifact, or a consumer before its producer - or beside it, in
+  two branches of a `parallel: true` fan, where listing the producer first does not help.
 
 Several commands may produce one artifact (an everyday single-platform build beside the release's
 all-platform one); a plan picks one.
@@ -303,6 +304,12 @@ skips. A step already running when a sibling fails is left to finish rather than
 subprocess exits non-zero and that number cannot be told from the step having failed on its own; the
 members of one fan are never skipped for each other, since the declaration says none of them needs
 another; and the work after the join is skipped in the ordinary way.
+
+The loader holds that declaration to the data. A fan whose branches consume what another branch produces
+is refused at load (si#419), because its consumer may start before the artifact is written. That holds
+even when the consumer's own branch lists the producer first: a command is planned once, at its first
+place in the plan, so the producer runs in the other branch and the consumer's branch does not wait for it.
+Plan the producer ahead of the fan instead.
 
 How MANY run at once is the machine's answer rather than the manifest's, because the manifest travels
 between machines and the number does not: `SIMPLON_MAX_PARALLEL` sets it, and the default is four or the
