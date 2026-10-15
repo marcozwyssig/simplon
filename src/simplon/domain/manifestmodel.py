@@ -12,18 +12,22 @@ One owner, one namespace. firn names a child by its owner and its own name, neve
 holds it: a group `build` under `ci` and a section `build` under `build` are one resource to firn
 (measured 2026-10-11: E001 "has 2 typeOf statements"), and cleon, swi, firn and biz-cockpit each carry
 such a pair. Groups keep their own names, because they are what a reader follows in `member = ...`;
-every other child of the Product carries a prefix saying which section it came from, the way a task
-already did (`t_`), so no two sections can meet by construction:
+every other child of the Product carries a prefix saying which section it came from, so no two sections
+can meet by construction:
 
-    t_  a task (one per `task:` placed)   e_  an environment of the cd matrix
-    a_  an `artifacts:` entry (since si#344 B2 an image is one, of `kind: image`)
+    e_  an environment of the cd matrix   a_  an `artifacts:` entry (since si#344 B2 an image is one)
     s_  a kernel section                  d_  a section only the product reads
+
+A task is no child of the Product since si#400 4a: it is a CLASS at the root of the product's package,
+named by `class_name` (PascalCase, so no prefixed child and no firn keyword can meet it), and the Product
+references it through `tasks`. The package root holds the Product instance too, so a task class on the
+Product's own name is refused, and so are two tasks on one class name.
 
 An `artifacts:` entry of a kind refining `release` is the one `a_` child the Product does not own: the
 release aggregate that names it composes it (`ReleaseCommand.release`, si#344 C.3), and a kind refining
 `test-result` is exported as a `TestResult`, whose `about` the M2 derives.
 
-The price: a top-level group literally named like a prefixed child (`e_dev`, `d_jdk`, `t_...`) is
+The price: a top-level group literally named like a prefixed child (`e_dev`, `d_jdk`) is
 refused by ModelExportError. A PRODUCT cannot write one - `load` locks the top-level groups to the
 platform's tree (`ci: e_dev:` is refused as "a group the platform's tree does not declare") - so it is
 reachable only through a platform tree that declares such a group. The kernel's own six do not;
@@ -52,7 +56,8 @@ matrix); whether it names a real one stays `environments.parse_data`'s verdict a
 
 Every ModelExportError is a DIAGNOSIS (CLAUDE.md's first kind): the manifest loaded, and the model would
 otherwise hold less than it does or something it does not. Each one names what it cannot hold - two
-names that mangle alike, a group named like a prefixed child, a member that resolves to no one command,
+names that mangle alike, two task classes on one name (or one on the Product's), a group named like a
+prefixed child, a member that resolves to no one command,
 a group in no area, a matrix or an `artifacts:` that is not a mapping, or an entry without a kind. Today they
 fire at RUN time of an opt-in command (`support manifest model`) and are outside the refusal census, which counts
 what refuses on the way from a manifest to a decision. Once parts B/C generate from this model they sit
@@ -161,7 +166,9 @@ class _Export:
         self.names = _Names(f"product '{product}'")
         self.paths: dict[str, str] = {}   # dotted group path -> firn path below the Product
         self.tasks: dict[str, tuple[str, str, tuple]] = {}   # task -> (class name, impl, ports), first use first
-        self.classes: dict[str, str] = {}   # class name -> the task that took it (si#400 4a)
+        # name at the package root -> what took it (si#400 4a). The Product instance stands at the same package root,
+        # so its name is taken first: unguarded, a task class on it exported fine and firn said E200 on `extends`.
+        self.classes: dict[str, str] = {mangle(product): f"the product '{product}'"}
 
     def area(self, group: str) -> str:
         area = self.manifest.area_of(group)
@@ -240,9 +247,9 @@ class _Export:
         name = class_name(task)
         if name in self.classes:
             raise ModelExportError(
-                f"product '{self.product}': tasks '{self.classes[name]}' and '{task}' are both the class "
-                f"'{name}', and firn would merge them into one class - rename one of them")
-        self.classes[name] = task
+                f"product '{self.product}': {self.classes[name]} and task '{task}' are both '{name}' at the "
+                f"package root, and firn would merge them into one resource - rename one of them")
+        self.classes[name] = f"task '{task}'"
         return name
 
     def task_lines(self) -> list[str]:

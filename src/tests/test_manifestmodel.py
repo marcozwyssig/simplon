@@ -239,7 +239,7 @@ def test_a_kernel_section_is_a_kernel_section_and_product_is_the_resource_itself
 def test_a_group_and_a_section_of_one_name_are_two_resources():
     # arrange: cleon's `build:` section next to its `ci: build` group - firn gives one owner ONE
     # namespace whatever the property (measured: E001 "has 2 typeOf statements"), so the section is
-    # prefixed the way a task is
+    # prefixed (`s_`)
     text = DEMO + "build:\n  heap: 2g\n"
 
     # act
@@ -367,6 +367,18 @@ def _source(name: str) -> tuple[manifest_mod.Manifest, str]:
     return manifest_mod.load(text, catalogue=catalogue.load(), manifest_path=f"{name}.yaml"), text
 
 
+def _product_task_classes(out: str) -> list[str]:
+    """The task classes an export declares at its package root (si#400 4a), sorted."""
+    return sorted(re.findall(r"^(\w+) typeOf simplon\.pipeline\.TaskType extends", out, re.MULTILINE))
+
+
+def _placed_product_tasks(mf: manifest_mod.Manifest) -> set[str]:
+    """The product tasks a command places, one class each: keyed by the `task:` name, not by its impl (si#420)."""
+    from simplon.domain.artifactschema import BODIES
+    specs = [mf.spec_for(group, command) for group, members in mf.groups.items() for command in members]
+    return {manifestmodel.class_name(s.task) for s in specs if not s.depends_on and s.task not in BODIES}
+
+
 def _count(out: str, pattern: str) -> int:
     return len(re.findall(rf"^\s*{pattern} typeOf .*\{{$", out, re.MULTILINE))
 
@@ -399,8 +411,8 @@ def test_the_export_drops_nothing(name):
     assert len(re.findall(r"^  default = ", out, re.MULTILINE)) == (matrix["default"] is not None)
     # the demo places only catalogue tasks, every one a class in the model since si#400 4a
     assert impls or name == "demo"
-    classes = re.findall(r"^(\w+) typeOf simplon\.pipeline\.TaskType extends", out, re.MULTILINE)
-    assert len(classes) == len(impls)
+    classes = _product_task_classes(out)
+    assert classes == sorted(_placed_product_tasks(mf))
     assert sorted(re.findall(rf"^  tasks = product\.{re.escape(manifestmodel.mangle(name))}\.(\w+)$", out,
                              re.MULTILINE)) == sorted(classes)
     assert len(re.findall(r"^\s+produces = ", out, re.MULTILINE)) == sum(
@@ -514,3 +526,31 @@ def test_two_product_tasks_that_map_to_one_class_name_are_refused():
     # act / assert
     with pytest.raises(manifestmodel.ModelExportError, match="PackA"):
         _export(text)
+
+
+def test_a_product_task_class_named_like_the_product_is_refused():
+    # arrange: the Product instance and the task classes share the package root (si#400 4a); unguarded,
+    # the export succeeds and firn answers E200 on `extends` and `body`, far from the cause
+    text = DEMO.replace("product: demo", "product: Demo").replace(
+        "cd:\n", 'tasks:\n  demo: { impl: "m:a", help: "A." }\ncd:\n').replace(
+        "      all:", "      d: { task: demo }\n      all:")
+
+    # act / assert
+    with pytest.raises(manifestmodel.ModelExportError, match="'Demo'"):
+        manifestmodel.export(_load(text), yaml.safe_load(text), "Demo", manifestmodel.KERNEL_SECTIONS)
+
+
+def test_the_export_counts_two_product_tasks_on_one_impl_as_two_classes():
+    # arrange: si#420 - one body, two declarations; "drops nothing" must count tasks, not impls
+    text = DEMO.replace("cd:\n", "tasks:\n"
+                        '  pack-a: { impl: "orchestrator.cli:pack", help: "A." }\n'
+                        '  pack-b: { impl: "orchestrator.cli:pack", help: "B." }\n'
+                        "cd:\n").replace("      all:", "      pa: { task: pack-a }\n      pb: { task: pack-b }\n"
+                                         "      all:")
+
+    # act
+    out = _export(text)
+
+    # assert
+    assert _product_task_classes(out) == ["PackA", "PackB"]
+    assert _product_task_classes(out) == sorted(_placed_product_tasks(_load(text)))
