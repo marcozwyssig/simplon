@@ -109,8 +109,8 @@ def for_kind(kind: str) -> Path:
 
 
 #: The HOME a containerised run gets, under the output root (si#319). NOT one of `KINDS`: it is tool
-#: state rather than something a build produced, which is the same footing as `build/tools/bin` and
-#: `build/dotnet-home`, both of which already sit beside the kinds rather than among them.
+#: state rather than something a build produced, which is the same footing as `build/tools/bin`, which
+#: already sits beside the kinds rather than among them. `tasks/nuget.py` uses it since si#325.
 HOME = "home"
 
 

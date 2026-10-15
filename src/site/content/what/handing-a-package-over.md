@@ -93,9 +93,11 @@ name. So the one step that has to carry a secret into a container is the kernel'
 {{< callout type="info" >}}
 **Two facts inherited from the uniform build, both of which cost a measurement there.**
 
-`dotnet` under a container running as the calling user needs `DOTNET_CLI_HOME`. As uid 1000 it dies on
-`/.dotnet` denied; as uid 0 it passes - which is why it had to be measured rather than reasoned about.
-Every container these coordinates start sets it.
+`dotnet` under a container running as the calling user needs a writable home. As an unmapped uid it dies
+on `/.dotnet` denied; as uid 0 it passes - which is why it had to be measured rather than reasoned about.
+Every container these coordinates start gets the kernel's home under the output directory, `build/home`,
+and `dotnet` reads `$HOME` first. Until si#325 the kernel set `DOTNET_CLI_HOME` as well, to
+`build/dotnet-home`; that directory is no longer written, and you can delete it.
 
 **The target framework must match the SDK image.** `net8.0` *builds* in a 9.0 image and then refuses to
 run with rc 150. Nothing in this kernel can check that for you: it is a property of your `.csproj`.

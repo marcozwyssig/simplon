@@ -869,7 +869,7 @@ _GITIGNORE = f"""\
 /.simplon-toolchain/
 
 # Every build output the kernel names: build/logs/ (a log per step plus the run transcript, si#148),
-# build/tools/bin, build/hugo-cache, build/docToolchain, build/dotnet-home, build/nuget, and the
+# build/tools/bin, build/hugo-cache, build/docToolchain, build/home, build/nuget, and the
 # `cmake -B build` the C++ profile runs. Anchored, because a target directory named `build` is a source
 # tree and si#102 writes a committed CMakeLists.txt into it.
 /build/
