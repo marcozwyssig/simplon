@@ -103,3 +103,18 @@ def test_the_vocabulary_is_twelve_kinds_each_reaching_artifact_and_refining_only
             frontier = set().union(*(parent[k] for k in frontier)) - seen
             seen |= frontier
         assert root in seen, f"{name} does not reach {root} through refines: it reaches {sorted(seen)}"
+
+
+@needs_docker
+def test_a_task_class_without_a_coordinate_is_refused(demo):
+    # arrange: decision 4 of the part 4 spec (si#400) - every concrete task class writes its own key, and
+    # a missing one is firn's own diagnosis, held by the metaclass's 1..1
+    model = demo / "model" / "demo" / "demo.firn"
+    model.write_text(model.read_text().replace('  key = "build:image"\n', "", 1))
+
+    # act
+    rc, out = firn_rc(demo, "check")
+
+    # assert
+    assert rc == 1
+    assert "E004" in out and "simplon.pipeline.TaskType.key" in out
