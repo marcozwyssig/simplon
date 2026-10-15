@@ -471,3 +471,40 @@ def test_the_kernel_image_is_published_for_arm64_too_and_ci_builds_amd64_only():
     assert emulator < built
     assert steps[emulator]["with"] == {"image": image.BINFMT_IMAGE, "platforms": "arm64"}
     assert "docker buildx imagetools inspect" in next(r for r in runs if "deploy/image/repin.sh" in r)
+
+
+def test_buildx_is_in_the_image_because_a_container_route_build_needs_buildkit():
+    """si#441, from firn#957: on the container route `build toolchain` and `build image` failed with
+    "the --mount option requires BuildKit", because the image carried the static docker client and no
+    buildx plugin - so a host with docker and no python3 could not run firn's first Quickstart command.
+    Earlier route measurements missed it because the toolchain image was already on the daemon. The
+    plugin goes where the docker CLI looks for system-wide plugins, so it works for any `--user`.
+    """
+    # arrange
+    dockerfile = (ROOT / "deploy" / "image" / "Dockerfile").read_text(encoding="utf-8")
+
+    # act: the INSTRUCTIONS only, as the gh and oras tests read them
+    instructions = [line for line in dockerfile.splitlines()
+                    if line.strip() and not line.strip().startswith("#")]
+
+    # assert
+    assert any("docker/buildx/releases/download" in line for line in instructions), instructions
+    assert any("/usr/local/lib/docker/cli-plugins/docker-buildx" in line for line in instructions), \
+        instructions
+    assert any(line.strip() == "&& docker buildx version" for line in instructions), instructions
+
+
+def test_the_buildx_version_in_the_image_is_pinned_to_one_exact_release():
+    """`gh`'s reason, and not docker's: nothing in the kernel fetches or expects a buildx version, so a
+    Python constant mirroring the ARG would be a second source with nothing reading it (si#46). What can
+    be asserted is that the number is an exact release, so two builds of one commit carry one plugin."""
+    # arrange
+    dockerfile = (ROOT / "deploy" / "image" / "Dockerfile").read_text(encoding="utf-8")
+
+    # act
+    declared = [line.split("=", 1)[1].strip() for line in dockerfile.splitlines()
+                if line.startswith("ARG BUILDX_VERSION=")]
+
+    # assert
+    assert len(declared) == 1, declared
+    assert re.fullmatch(r"\d+\.\d+\.\d+", declared[0]), declared
