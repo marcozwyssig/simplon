@@ -323,6 +323,53 @@ def test_a_params_entry_on_a_bound_parameter_names_the_binding_not_with():
                        "its presentation renders nowhere - drop the `params:` entry")
 
 
+#: A product task whose two ports hand their artifact's name to ONE parameter (si#420 item 1).
+SHARED_PARAM_TASK = """\
+tasks:
+  pack:
+    impl: "orchestrator.cli:pack"
+    help: "Pack the site."
+    input:
+      site: { accepts: directory, param: name }
+    output:
+      bundle: { accepts: directory, param: name }
+"""
+
+
+def test_two_ports_bound_to_different_artifacts_through_one_param_are_refused():
+    # act: the body would receive one name, and the other binding would be dropped without a word
+    message = _refusal("  build:\n    commands:\n"
+                       '      site: { task: "build:image", produces: { image: local } }\n'
+                       "      pack: { task: pack, consumes: { site: docs }, produces: { bundle: web } }\n",
+                       tasks=SHARED_PARAM_TASK,
+                       artifacts=ARTIFACTS + "  web: { kind: directory, path: build/web }\n")
+
+    # assert
+    assert message == ("command 'build pack' binds port 'site' to 'docs' and port 'bundle' to 'web', and both "
+                       "hand their artifact's name to `name` - the body receives one name, so the other "
+                       "binding would be lost; bind them to one artifact, or give the task's ports their own "
+                       "`param:`")
+
+
+def test_two_ports_bound_to_one_artifact_through_one_param_load():
+    # act: one name reaches the body, and it is the name of both bindings
+    spec = _load("  build:\n    commands:\n"
+                 "      pack: { task: pack, consumes: { site: docs }, produces: { bundle: docs } }\n",
+                 tasks=SHARED_PARAM_TASK).spec_for("build", "pack")
+
+    # assert
+    assert spec.with_ == {"name": "docs"}
+
+
+def test_with_name_read_as_the_binding_is_stripped_like_produces():
+    # act: si#420 item 2 - `produces: { image: " kernel " }` reads `kernel`, so this spelling has to as well
+    spec = _load("  build:\n    commands:\n"
+                 '      image: { task: "build:image", with: { name: " kernel " } }\n').spec_for("build", "image")
+
+    # assert
+    assert spec.produces == {"image": ("kernel",)}
+    assert spec.with_ == {"name": "kernel"}
+
 #: A producer and a consumer of `local` for the fan tests below (si#419): `make` builds the image and the
 #: test reads it, so running the two at once tests whatever image was there before.
 FAN = ("  build:\n    commands:\n"
@@ -375,6 +422,5 @@ def test_a_fan_after_its_producer_loads():
               + '      fan: { depends_on: [check, other], parallel: true, help: "Fan." }\n'
               + '      all: { depends_on: [make, fan], help: "All." }\n',
               artifacts=CHECKED)
-
     # assert
     assert m.plan_for("all") == ("make", "check", "other")

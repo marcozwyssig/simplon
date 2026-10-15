@@ -648,12 +648,25 @@ def _resolve_one(spec: dict, where: str, product_tasks: dict, catalogue_tasks: d
             f"command '{where}' binds a port and also pins {', '.join(twice)} with `with:`. The binding "
             f"hands the artifact's name to that parameter - drop it from `with:`")
     # `with: { name: X }` alone is read as the binding (decided 2026-10-14, si#344)
+    # - stripped, as `produces:` and `consumes:` are, so both spellings of one binding read one name (si#420)
     for p in task_ports:
         side = bound[ports.SIDE[p.direction]]
-        if p.param and p.name not in side and isinstance((with_ or {}).get(p.param), str):
-            side[p.name] = (str((with_ or {})[p.param]),)
-    by_binding = {p.param: bound[ports.SIDE[p.direction]][p.name][0] for p in task_ports
-                  if p.param and p.name in bound[ports.SIDE[p.direction]]}
+        value = (with_ or {}).get(p.param)
+        if p.param and p.name not in side and isinstance(value, str) and value.strip():
+            side[p.name] = (value.strip(),)
+    by_binding: dict[str, str] = {}
+    handed: dict[str, str] = {}   # param -> the port that handed it, for the message below
+    for p in task_ports:
+        if not p.param or p.name not in bound[ports.SIDE[p.direction]]:
+            continue
+        artifact = bound[ports.SIDE[p.direction]][p.name][0]
+        if p.param in by_binding and by_binding[p.param] != artifact:
+            raise ValueError(
+                f"command '{where}' binds port '{handed[p.param]}' to '{by_binding[p.param]}' and port "
+                f"'{p.name}' to '{artifact}', and both hand their artifact's name to `{p.param}` - the body "
+                f"receives one name, so the other binding would be lost; bind them to one artifact, or give "
+                f"the task's ports their own `param:`")
+        by_binding[p.param], handed[p.param] = artifact, p.name
 
     out = {"impl": template["impl"], **spec, "task": ref}
     out.pop("produces", None)
