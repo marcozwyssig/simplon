@@ -43,6 +43,7 @@ the feed. That asymmetry is the design rather than an omission in one of the two
 """
 from __future__ import annotations
 
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 
 from simplon.domain import artifactsection, artifactschema, context
@@ -91,6 +92,13 @@ def _reference(name: str, tag: str, coordinate: str) -> tuple[str, str, Path, st
             context.current().root / (spec.path or ""), spec.media_type or "")
 
 
+def _scope(registry: str) -> AbstractContextManager[object]:
+    """The credential scope a transfer runs in (si#443): a fresh one where this task logs in with a GitHub
+    token, and the caller's own config elsewhere - there the transfer uses the login the operator stored,
+    which a scope would hide."""
+    return githubpackages.scoped_credentials() if githubpackages.is_github_packages(registry) else nullcontext()
+
+
 def _login_if_githubs(registry: str) -> None:
     """Log in only where the credential may go, and say out loud when it does not.
 
@@ -118,8 +126,10 @@ def publish(name: str = "", tag: str = "") -> int:
             f"nothing to publish: {archive} does not exist. The archive is written by the product's own "
             f"`conan cache save --file <path> '<pattern>'`, not by this task - this only moves it")
 
-    _login_if_githubs(registry)
-    githubpackages.push(ref, str(archive), media_type)
+    # si#443: a login made here lives as long as this push, not in the runner's own docker config.
+    with _scope(registry):
+        _login_if_githubs(registry)
+        githubpackages.push(ref, str(archive), media_type)
     log.ok(f"published {ref}\n"
            "    this is a TRANSPORT, not a remote: a consumer names this exact tag, pulls it and runs "
            "`conan cache restore`. There is no remote resolution and no version range.")
@@ -135,10 +145,11 @@ def fetch(name: str = "", tag: str = "") -> int:
     from a render.
     """
     registry, ref, archive, _ = _reference(name, tag, "build:conan-cache")
-    _login_if_githubs(registry)
-
     archive.parent.mkdir(parents=True, exist_ok=True)
-    githubpackages.pull(ref, str(archive.parent))
+    # si#443: a login made here lives as long as this pull, not in the runner's own docker config.
+    with _scope(registry):
+        _login_if_githubs(registry)
+        githubpackages.pull(ref, str(archive.parent))
     if not archive.is_file():
         raise RuntimeError(
             f"the pull of {ref} reported success and left no {archive.name} in {archive.parent}. Either "

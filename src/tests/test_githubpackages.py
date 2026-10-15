@@ -4,6 +4,8 @@ Arrange / Act / Assert throughout, one action per test. The subprocess seam is s
 mocked at the library boundary: what is under test is what this module DECIDES - which argv, which
 message - not whether oras works.
 """
+import json
+import os
 from pathlib import Path
 
 import pytest
@@ -350,3 +352,61 @@ def test_in_a_workflow_the_scope_advice_names_the_packages_actions_access_not_gh
     # assert
     assert "Manage Actions access" in said and "packages: write" in said
     assert "gh auth refresh -h" not in said
+
+
+# --- a login lives as long as the publish (si#443) -----------------------------------------------------
+# A release logged in with the job's GITHUB_TOKEN into the runner's own docker config and never out. The
+# token expires with the job, and GHCR answers a public pull that carries a rejected credential with
+# `denied` rather than falling back to anonymous - so one release poisoned every later pull on that runner.
+
+def test_a_scoped_login_never_writes_the_callers_docker_config(tmp_path, monkeypatch):
+    # arrange: the operator's own config, with a login of theirs in it
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "config.json").write_text('{"auths": {"ghcr.io": {"auth": "b3BlcmF0b3I="}}}', encoding="utf-8")
+    monkeypatch.setenv("DOCKER_CONFIG", str(home))
+
+    # act: what a login inside the scope writes
+    with githubpackages.scoped_credentials() as scoped:
+        seen = os.environ["DOCKER_CONFIG"]
+        (scoped / "config.json").write_text('{"auths": {"ghcr.io": {"auth": "am9i"}}}', encoding="utf-8")
+
+    # assert: the scope was a different directory, it is gone, and the operator's login is untouched
+    assert seen != str(home)
+    assert not scoped.exists()
+    assert os.environ["DOCKER_CONFIG"] == str(home)
+    assert "b3BlcmF0b3I=" in (home / "config.json").read_text(encoding="utf-8")
+
+
+def test_a_scoped_config_keeps_the_callers_settings_and_plugins_but_none_of_its_credentials(tmp_path,
+                                                                                            monkeypatch):
+    # arrange
+    home = tmp_path / "home"
+    (home / "cli-plugins").mkdir(parents=True)
+    (home / "config.json").write_text(
+        '{"auths": {"x.io": {}}, "credsStore": "pass", "credHelpers": {"y.io": "z"},'
+        ' "proxies": {"default": {"httpProxy": "http://p:3128"}}}', encoding="utf-8")
+    monkeypatch.setenv("DOCKER_CONFIG", str(home))
+
+    # act
+    with githubpackages.scoped_credentials() as scoped:
+        config = json.loads((scoped / "config.json").read_text(encoding="utf-8"))
+
+    # assert: a credential helper would store the login outside the scope, so none is carried over
+    assert config == {"proxies": {"default": {"httpProxy": "http://p:3128"}},
+                      "cliPluginsExtraDirs": [str(home / "cli-plugins")]}
+
+
+def test_the_scope_ends_on_a_failure_too(tmp_path, monkeypatch):
+    # arrange
+    monkeypatch.delenv("DOCKER_CONFIG", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    # act
+    with pytest.raises(RuntimeError):
+        with githubpackages.scoped_credentials() as scoped:
+            raise RuntimeError("push failed")
+
+    # assert
+    assert "DOCKER_CONFIG" not in os.environ
+    assert not scoped.exists()

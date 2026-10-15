@@ -28,9 +28,13 @@ caller that reads a registry out of a product manifest owes it.
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
+import tempfile
 import zipfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Sequence
 
@@ -153,6 +157,55 @@ def _login(command: Sequence[str], registry: str, username: str) -> None:
     if result.rc != 0:
         raise PackageError(f"{' '.join(command)} to {host} failed: {result.err or result.out}\n"
                            + scope_advice())
+
+
+#: The keys of a docker config that hold or route credentials. A scoped config carries none of them over:
+#: a `credsStore` or `credHelpers` entry would send the scoped login to a store OUTSIDE the scope.
+_CREDENTIAL_KEYS = ("auths", "credsStore", "credHelpers")
+
+
+@contextmanager
+def scoped_credentials() -> Iterator[Path]:
+    """A docker config that lives exactly as long as the block: every login inside it lands there (si#443).
+
+    WHY. A release logged in with the job's GITHUB_TOKEN into the runner's OWN config - `$DOCKER_CONFIG`,
+    else `~/.docker` - and never out. The token expires with the job, and GHCR answers a pull that carries
+    a credential it rejects with `error from registry: denied` instead of falling back to anonymous. So
+    one release left every later job on that runner unable to pull a PUBLIC image (firn, ghr-7). Measured:
+    a stale ghcr.io auth in a throwaway config turns `docker pull ghcr.io/marcozwyssig/simplon:v0.30.0`
+    into exactly that error, and an empty config pulls it.
+
+    A SCOPE AND NOT A `docker logout`, because a logout also removes a login the operator made themselves.
+    The scope points `DOCKER_CONFIG` at a temporary directory, which every client this module drives
+    reads: docker, and oras 1.3.4, measured against a local `registry:2` with htpasswd - its login was
+    written to the scoped file, `~/.docker` was untouched, and a push without the scope was refused.
+
+    The caller's own settings come along (proxies, plugin directories), and its credentials do not. Its
+    `cli-plugins` directory is added to `cliPluginsExtraDirs`, because that directory is found through
+    the config directory and a plugin installed per user (buildx) would otherwise vanish for the block.
+    The environment is restored and the directory removed on every way out, a failure included.
+    """
+    previous = os.environ.get("DOCKER_CONFIG")
+    original = Path(previous) if previous else Path.home() / ".docker"
+    try:
+        config = json.loads((original / "config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        config = {}
+    kept = {key: value for key, value in (config if isinstance(config, dict) else {}).items()
+            if key not in _CREDENTIAL_KEYS}
+    if (original / "cli-plugins").is_dir():
+        kept["cliPluginsExtraDirs"] = [*kept.get("cliPluginsExtraDirs", []), str(original / "cli-plugins")]
+    scratch = Path(tempfile.mkdtemp(prefix="simplon-docker-config-"))
+    try:
+        (scratch / "config.json").write_text(json.dumps(kept, indent=2) + "\n", encoding="utf-8")
+        os.environ["DOCKER_CONFIG"] = str(scratch)
+        yield scratch
+    finally:
+        if previous is None:
+            os.environ.pop("DOCKER_CONFIG", None)
+        else:
+            os.environ["DOCKER_CONFIG"] = previous
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 def login(registry: str, *, username: str = "") -> None:

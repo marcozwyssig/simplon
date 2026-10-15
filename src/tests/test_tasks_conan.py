@@ -174,3 +174,27 @@ def test_the_fetch_refuses_when_the_pull_left_nothing_where_it_said(pulled, monk
 def test_the_fetch_needs_a_tag_too(pulled):
     with pytest.raises(ValueError, match="--tag"):
         conan.fetch(name="untagged")
+
+
+def test_a_github_transfer_logs_in_inside_a_scope_and_any_other_uses_the_operators_config(monkeypatch,
+                                                                                          tmp_path):
+    # arrange: si#443 - a scope where this task logs in, none where the operator's own login is the one used
+    import os
+
+    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path / "operator"))
+    seen: list = []
+    monkeypatch.setattr(githubpackages, "login", lambda registry, **kw: seen.append(os.environ["DOCKER_CONFIG"]))
+    monkeypatch.setattr(githubpackages, "push", lambda *a: seen.append(os.environ["DOCKER_CONFIG"]))
+    (context.current().root / "build" / "conan").mkdir(parents=True, exist_ok=True)
+    (context.current().root / "build" / "conan" / "demo.tgz").write_bytes(b"x")
+
+    # act
+    conan.publish(name="cpplib", tag="1")
+    github = list(seen)
+    seen.clear()
+    conan.publish(name="elsewhere", tag="1")
+
+    # assert
+    assert github[0] == github[1] != str(tmp_path / "operator")
+    assert seen == [str(tmp_path / "operator")]
+    assert os.environ["DOCKER_CONFIG"] == str(tmp_path / "operator")

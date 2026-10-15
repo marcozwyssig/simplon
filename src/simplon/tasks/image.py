@@ -802,15 +802,19 @@ def release(name: str = "", tag: str = "") -> int:
 
     host = githubpackages.registry_host(cfg.registry)
     if githubpackages.is_github_packages(cfg.registry):
-        try:
-            githubpackages.docker_login(cfg.registry)
-        except githubpackages.PackageError as failure:
-            # Caught rather than allowed to propagate: this message is the fix (it names `gh auth
-            # refresh` and the two scopes), and a traceback would bury it under a stack from a wrapper
-            # the reader did not write. Acceptance 4's second half - a missing scope names the command
-            # that sets it.
-            log.error(str(failure))
-            return 1
+        # si#443: the job's token is logged in to a config that ends with this publish, so no expired
+        # credential is left in the runner's own config to deny the next public pull.
+        with githubpackages.scoped_credentials():
+            try:
+                githubpackages.docker_login(cfg.registry)
+            except githubpackages.PackageError as failure:
+                # Caught rather than allowed to propagate: this message is the fix (it names `gh auth
+                # refresh` and the two scopes), and a traceback would bury it under a stack from a wrapper
+                # the reader did not write. Acceptance 4's second half - a missing scope names the command
+                # that sets it.
+                log.error(str(failure))
+                return 1
+            return _push(cfg, name, root, ref, derived)
     else:
         # A GITHUB token goes to GITHUB and nowhere else. `registry:` is a manifest key, so a product
         # writing `registry: registry.example.com/team` would otherwise have this task mint a GitHub PAT
@@ -837,7 +841,11 @@ def release(name: str = "", tag: str = "") -> int:
             return 1
         log.info(f"{host} is not GitHub Packages, so no GitHub token is minted for it - the push uses "
                  f"the credential `docker login {host}` has already stored")
+    return _push(cfg, name, root, ref, derived)
 
+
+def _push(cfg: Image, name: str, root: Path, ref: str, derived: Mapping[str, str]) -> int:
+    """`release`'s push and its read-back, run inside whatever credential scope the caller opened."""
     if cfg.platforms:
         return _push_platforms(cfg, name, root, ref, derived)
 

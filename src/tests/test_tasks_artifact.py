@@ -145,3 +145,22 @@ def test_a_missing_key_is_named_with_everything_the_coordinate_needs(published, 
     # assert
     assert str(caught.value) == ("demo.yaml: 'artifacts.updatesite' declares no `media_type:`, which "
                                  "release:artifact needs - it reads registry, repository, media_type, path")
+
+
+def test_the_login_and_the_push_share_a_docker_config_that_ends_with_them(_product, monkeypatch, tmp_path):
+    # arrange: si#443
+    import os
+
+    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path / "operator"))
+    seen: list = []
+    monkeypatch.setattr(githubpackages, "login", lambda registry, **kw: seen.append(os.environ["DOCKER_CONFIG"]))
+    monkeypatch.setattr(githubpackages, "push_directory",
+                        lambda *a, **kw: seen.append(os.environ["DOCKER_CONFIG"]))
+
+    # act
+    rc = artifact.publish(name="updatesite", tag="0.4.149")
+
+    # assert
+    assert rc == 0
+    assert seen[0] == seen[1] != str(tmp_path / "operator")
+    assert os.environ["DOCKER_CONFIG"] == str(tmp_path / "operator")
