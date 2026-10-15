@@ -1459,7 +1459,7 @@ def test_a_command_that_produces_nothing_has_no_result_check():
 
 
 def test_a_command_bound_to_evidence_reads_it_before_its_body_runs():
-    # arrange: si#434 - `or` short-circuits, so a refused release never calls its body
+    # arrange: si#434 - a refused release never calls its body; si#439 - the body runs inside the guard
     from simplon.domain.artifactschema import PORTS
 
     m = _load()
@@ -1470,5 +1470,5 @@ def test_a_command_bound_to_evidence_reads_it_before_its_body_runs():
     text = taskgen.render(m._replace(commands={"lab": {"seed": spec}}), source="m.yaml", product="demo")
 
     # assert
-    assert "(_results.refused(('checked',)) or _rc(" in text
+    assert "_results.guarded(('checked',), lambda: _rc(" in text
     assert "from simplon.domain import results as _results" in text

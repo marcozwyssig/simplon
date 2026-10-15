@@ -181,12 +181,13 @@ def render(manifest: Manifest, *, source: str, product: str,
                     wrapped = f"_results.held(_results.before({produced!r}), _rc({call}))"
                 else:
                     wrapped = f"_rc({call})"
-                # si#434: a command bound to evidence reads it first, and `or` short-circuits, so a
-                # release whose evidence is not green never calls its body.
+                # si#434: a command bound to evidence reads it first, and a release whose evidence is not
+                # green never calls its body; si#439: the body runs inside the guard, so it can ask what
+                # the records ran (`results.tested`).
                 evidence = results.evidence_of(spec)
                 if evidence:
                     uses_results = True
-                    wrapped = f"(_results.refused({evidence!r}) or {wrapped})"
+                    wrapped = f"_results.guarded({evidence!r}, lambda: {wrapped})"
                 tasks.append({"func": func, "help_repr": repr(_docstring(spec, impl_body)),
                               "signature": _signature(params, takes_context=takes_ctx),
                               "call": wrapped})
