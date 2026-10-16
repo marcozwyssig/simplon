@@ -63,20 +63,67 @@ def test_the_class_name_follows_firns_class_name():
         "BuildImage", "TestTypecheckPython", "VcsAuthScopes"]
 
 
-def test_assembling_the_cli_imports_no_more_task_modules_than_before():
-    # arrange: measured 2026-10-16 - `./simplon.sh --help` imports 8 simplon.tasks modules; importing every
-    # class module on start would cost +0.19 s and 411 modules (si#400 4c keeps resolution lazy)
-    import os
-    import re
+def test_assembling_the_cli_imports_the_class_of_a_placed_coordinate_only():
+    # arrange: `cli.assemble` resolves every placed leaf's body eagerly, so the classes of the coordinates a
+    # manifest places are imported on start (measured 2026-10-16: `--help` 0.319 s before 4c, 0.314 s after);
+    # what must not happen is importing EVERY class module (+0.19 s, 411 modules). Counted by a meta-path
+    # hook - an earlier count through PYTHONPROFILEIMPORTTIME under ./simplon.sh said 8 and was wrong (30).
     import subprocess
+    import sys
     from conftest import ROOT
+    from simplon.domain.manifestmodel import mangle
+    hook = ("import sys, importlib.abc, runpy, io, contextlib\n"
+            "seen = set()\n"
+            "class H(importlib.abc.MetaPathFinder):\n"
+            "    def find_spec(self, name, path, target=None):\n"
+            "        seen.add(name)\n"
+            "sys.meta_path.insert(0, H())\n"
+            "sys.argv = ['simplon', '--help']\n"
+            f"sys.path.insert(0, {str(ROOT / 'deploy' / 'orchestrator' / 'src' / 'python')!r})\n"
+            "with contextlib.redirect_stdout(io.StringIO()):\n"
+            "    try:\n"
+            "        runpy.run_module('orchestrator', run_name='__main__')\n"
+            "    except SystemExit:\n"
+            "        pass\n"
+            "print('\\n'.join(sorted(seen)))\n")
+    classes = {f"simplon.tasks.{mangle(c)}" for c in catalogue.load().tasks}
+    from simplon.domain import manifest as manifest_mod
+    mf = manifest_mod.load((ROOT / "simplon.yaml").read_text(encoding="utf-8"), catalogue=catalogue.load())
+    # placed by simplon.yaml or by the catalogue's own tree: the merged manifest's commands
+    placed = {f"simplon.tasks.{mangle(spec.task)}" for members in mf.commands.values()
+              for spec in members.values() if spec.task}
 
     # act
-    run = subprocess.run([str(ROOT / "simplon.sh"), "--help"], cwd=ROOT, capture_output=True, text=True,
-                         env={**os.environ, "PYTHONPROFILEIMPORTTIME": "1"})
-    imported = set(re.findall(r"\|\s*(simplon\.tasks\.[a-z_]+)$", run.stderr, re.MULTILINE))
+    run = subprocess.run([sys.executable, "-c", hook], cwd=ROOT, capture_output=True, text=True)
+    imported = set(run.stdout.split()) & classes
 
     # assert
     assert run.returncode == 0, run.stderr[-2000:]
-    assert imported, "no import was profiled - the measurement measured nothing"
-    assert len(imported) <= 8, sorted(imported)
+    assert imported, "no class module was imported - the hook measured nothing"
+    assert imported <= placed, sorted(imported - placed)
+    assert imported < classes
+
+def test_the_catalogue_names_each_coordinates_class_and_no_function():
+    # act
+    tasks = catalogue.load().tasks
+
+    # assert
+    assert {c: s["impl"] for c, s in tasks.items()} == {c: task.class_ref(c) for c in tasks}
+
+
+def test_a_catalogue_file_whose_task_writes_impl_is_refused(tmp_path):
+    # arrange: the body lives in the task's class (si#400 4c); a written `impl:` is a second source of it
+    path = tmp_path / "catalogue.yaml"
+    path.write_text("tasks:\n  vcs:push:\n    impl: simplon.tasks.vcs:push\n    help: x\n", encoding="utf-8")
+
+    # act / assert
+    with pytest.raises(ValueError, match=r"`impl:` is written on vcs:push"):
+        catalogue.load(path)
+
+
+def test_a_catalogue_built_from_text_keeps_the_impl_it_writes():
+    # arrange: test catalogues name bodies no model generates (`build:wheel` is no catalogue task)
+    text = "tasks:\n  build:wheel:\n    impl: orchestrator.cli:build_wheel\n    help: x\n"
+
+    # act / assert
+    assert catalogue.loads(text).tasks["build:wheel"]["impl"] == "orchestrator.cli:build_wheel"

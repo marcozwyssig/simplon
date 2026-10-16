@@ -186,12 +186,12 @@ def test_a_present_value_is_read_into_its_shape_and_an_untyped_key_is_kept_as_wr
 
 
 def test_every_reader_in_the_model_is_a_coordinate_whose_body_reads_that_kind():
-    # arrange: the catalogue maps a coordinate to its body; the body's module states the class it reads
+    # arrange: the model maps a coordinate to its body (since si#400 4c the catalogue's `impl` names the
+    # generated class); the body's module states the class it reads
     import importlib
-    tasks = catalogue.load().tasks
     readers = {}
-    for coordinate, spec in tasks.items():
-        module = importlib.import_module(spec["impl"].split(":")[0])
+    for coordinate, body in artifactschema.BODIES.items():
+        module = importlib.import_module(body.split(":")[0])
         # `ARTIFACTS` first: tasks.releasenotes already has a `SECTION` (its `releases:`) and WRITES into `artifacts:`
         section = getattr(module, "ARTIFACTS", getattr(module, "SECTION", None))
         if coordinate == "test:release-notes":

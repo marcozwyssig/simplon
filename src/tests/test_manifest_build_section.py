@@ -305,19 +305,18 @@ def test_the_page_names_the_coordinates_that_actually_read_the_build_section():
     That is not a typo worth a one-line fix and nothing else: it is si#172's own confusion, committed to
     the page si#159 wrote to end exactly this class of guessing, and it is the evidence that the
     collision misleads readers rather than the hypothesis that it might. So the row is derived from
-    `catalogue.yaml` and held here: the coordinates that read this section are the ones whose `impl:`
-    lands in `simplon.tasks.buildfiles`.
+    model and held here: the coordinates that read this section are the ones whose body lands in
+    `simplon.tasks.buildfiles` (since si#400 4c the model names the body, not `catalogue.yaml`).
     """
     # arrange
-    catalogue = yaml.safe_load((ROOT / "src" / "simplon" / "catalogue.yaml").read_text(encoding="utf-8"))
+    from simplon.domain.artifactschema import BODIES
     module = buildfiles.__name__
-    readers = sorted(name for name, body in catalogue["tasks"].items()
-                     if isinstance(body, dict) and str(body.get("impl", "")).startswith(f"{module}:"))
+    readers = sorted(name for name, body in BODIES.items() if body.startswith(f"{module}:"))
     row = next((line for line in PAGE.read_text(encoding="utf-8").splitlines()
                 if line.startswith(f"| `{buildfiles.SECTION}:` |")), None)
 
     # act / assert
-    assert readers, f"no catalogue coordinate has an `impl:` in {module} - the derivation is broken"
+    assert readers, f"no catalogue coordinate has its body in {module} - the derivation is broken"
     assert row is not None, f"{PAGE} has no row for `{buildfiles.SECTION}:`"
     for coordinate in readers:
         assert f"`{coordinate}`" in row, (

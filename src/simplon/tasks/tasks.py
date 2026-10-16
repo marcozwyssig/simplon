@@ -19,6 +19,7 @@ from simplon.domain import catalogue as catalogue_mod
 from simplon.domain import context
 from simplon.kernel import log
 from simplon.tasks import taskgen
+from simplon.domain.artifactschema import BODIES
 from simplon.domain.manifest import Manifest
 
 
@@ -108,10 +109,13 @@ def _reached_namespaces(manifest: Manifest, cat: catalogue_mod.Catalogue) -> fro
     All three collapse to the same shape once the manifest is loaded: a command whose resolved `impl`
     equals the `impl` a catalogue coordinate names. Matching on that - what the loader produced, not how
     the coordinate got there - needs no per-mechanism walk and cannot miss a fourth one a later migration
-    step adds.
+    step adds. Since si#400 4c a coordinate's `impl` names its generated CLASS, while a product task that
+    reaches a kernel body names the FUNCTION; the model's body (`BODIES`) is that function, so both count.
     """
     namespace_by_impl = {spec["impl"]: coordinate.split(":", 1)[0]
                          for coordinate, spec in cat.tasks.items()}
+    namespace_by_impl.update({body: coordinate.split(":", 1)[0] for coordinate, body in BODIES.items()
+                              if coordinate in cat.tasks})
     return frozenset(namespace_by_impl[spec.impl]
                      for members in manifest.commands.values()
                      for spec in members.values()

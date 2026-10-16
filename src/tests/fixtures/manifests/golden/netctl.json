@@ -59,7 +59,7 @@
       "docs": {
         "depends_on": [],
         "help": "Render the project docs via docToolchain in Docker.",
-        "impl": "simplon.tasks.docs:render"
+        "impl": "simplon.tasks.docs_render:DocsRender"
       },
       "frr-image": {
         "depends_on": [],
@@ -300,12 +300,12 @@
       "claude-plugins": {
         "depends_on": [],
         "help": "Install the Claude Code plugins this repo is developed with, as declared in the manifest's `claude` section (#1286); idempotent, --dry-run previews.",
-        "impl": "simplon.tasks.claudeplugins:install_cmd"
+        "impl": "simplon.tasks.support_claude_plugins:SupportClaudePlugins"
       },
       "completion": {
         "depends_on": [],
         "help": "Regenerate the product's shell completion from its manifest (--check reports drift and writes nothing).",
-        "impl": "simplon.tasks.completion:generate"
+        "impl": "simplon.tasks.support_completion:SupportCompletion"
       },
       "disk-guard": {
         "depends_on": [],
@@ -320,7 +320,7 @@
       "environments": {
         "depends_on": [],
         "help": "List the named environments (#15) and the backend each targets, marking the active one.",
-        "impl": "simplon.tasks.env:environments"
+        "impl": "simplon.tasks.support_environments:SupportEnvironments"
       },
       "install": {
         "depends_on": [],
@@ -335,58 +335,58 @@
       "nexus": {
         "depends_on": [],
         "help": "Drive the LAN Sonatype Nexus artefact proxy (#948): up | down | status | repos | cleanup; bare lists the members.",
-        "impl": "simplon.tasks.nexus:nexus_cmd"
+        "impl": "simplon.tasks.support_nexus:SupportNexus"
       }
     },
     "support.git": {
       "auth-scopes": {
         "depends_on": [],
         "help": "Grant the stored gh token the package scopes GHCR needs (interactive, idempotent).",
-        "impl": "simplon.tasks.vcs:auth_scopes"
+        "impl": "simplon.tasks.vcs_auth_scopes:VcsAuthScopes"
       },
       "commit": {
         "depends_on": [],
         "help": "git add -A + git commit -m.",
-        "impl": "simplon.tasks.vcs:commit"
+        "impl": "simplon.tasks.vcs_commit:VcsCommit"
       },
       "prune-branches": {
         "depends_on": [],
         "help": "Delete local branches already merged into main (squash-aware via gh).",
-        "impl": "simplon.tasks.vcs:prune_branches"
+        "impl": "simplon.tasks.vcs_prune_branches:VcsPruneBranches"
       },
       "push": {
         "depends_on": [],
         "help": "git pull --rebase then push (current branch).",
-        "impl": "simplon.tasks.vcs:push"
+        "impl": "simplon.tasks.vcs_push:VcsPush"
       },
       "submodules": {
         "depends_on": [],
         "help": "git submodule update --init lib/platform (init the submodule a fresh worktree needs).",
-        "impl": "simplon.tasks.vcs:submodules"
+        "impl": "simplon.tasks.vcs_submodules:VcsSubmodules"
       }
     },
     "support.tasks": {
       "catalogue": {
         "depends_on": [],
         "help": "List the task coordinates the delivery kernel offers, marking the namespaces this product's commands reach.",
-        "impl": "simplon.tasks.tasks:catalogue"
+        "impl": "simplon.tasks.tasks_catalogue:TasksCatalogue"
       },
       "generate": {
         "depends_on": [],
         "help": "Regenerate the product's CLI module from its manifest (--check reports drift and writes nothing).",
-        "impl": "simplon.tasks.tasks:generate"
+        "impl": "simplon.tasks.tasks_generate:TasksGenerate"
       }
     },
     "test": {
       "accept": {
         "depends_on": [],
         "help": "Convenience: run the lab-based suites in sequence (system + acceptance-dataplane + acceptance-ui + report) against the running lab; extra args pass through to the system pytest.",
-        "impl": "simplon.tasks.testrun:accept_cmd"
+        "impl": "simplon.tasks.test_accept:TestAccept"
       },
       "acceptance-dataplane": {
         "depends_on": [],
         "help": "ACCEPTANCE-DATAPLANE gate: the test/acceptance/python black-box dataplane reachability suite against the running lab, APPENDING into the shared Allure results (#860).",
-        "impl": "simplon.tasks.testrun:gate"
+        "impl": "simplon.tasks.test_gate:TestGate"
       },
       "acceptance-ui": {
         "depends_on": [],
@@ -441,17 +441,17 @@
       "report": {
         "depends_on": [],
         "help": "REPORT step: merge the Java unit results into the shared Allure results and render the single-file Allure HTML archive (#860).",
-        "impl": "simplon.tasks.testrun:report_cmd"
+        "impl": "simplon.tasks.test_report:TestReport"
       },
       "system": {
         "depends_on": [],
         "help": "SYSTEM gate: the test/system/python suite against the running lab, into the shared Allure results; it runs FIRST and clears them (#860). Trailing args reach pytest verbatim (`-k <expr>`) and quarantine that run into its own results dir (#1406).",
-        "impl": "simplon.tasks.testrun:gate"
+        "impl": "simplon.tasks.test_gate:TestGate"
       },
       "typecheck-python": {
         "depends_on": [],
         "help": "TYPECHECK-PYTHON gate: mypy over the sidecar, orchestrator and labgen sources in the host venv (fast, lab-free).",
-        "impl": "simplon.tasks.typecheck:check"
+        "impl": "simplon.tasks.test_typecheck_python:TestTypecheckPython"
       },
       "unit-java": {
         "depends_on": [],

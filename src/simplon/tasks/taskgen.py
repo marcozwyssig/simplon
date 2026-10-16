@@ -21,7 +21,7 @@ from typing import Callable, NamedTuple
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from simplon.domain import clitaxonomy, results, signatures, task
-from simplon.domain.manifest import Manifest
+from simplon.domain.manifest import Manifest, resolve_ref
 
 _TEMPLATES = Path(__file__).resolve().parents[1] / "templates"
 
@@ -171,7 +171,11 @@ def render(manifest: Manifest, *, source: str, product: str,
                 impl_body = task.body_of(spec, where=where)
                 takes_ctx = signatures.takes_context(impl_body)
                 params = _params(impl_body, spec.with_, spec.params, where=where)
-                call = _call(f"{module}.{attribute}", params, takes_context=takes_ctx)
+                # si#400 4c: a catalogue coordinate names its task CLASS; calling the class would only build
+                # an instance and run nothing, with rc 0 - so the generated call goes through its `run`
+                is_class = isinstance(resolve_ref(spec.impl, where), type)
+                target = f"{module}.{attribute}().run" if is_class else f"{module}.{attribute}"
+                call = _call(target, params, takes_context=takes_ctx)
                 # si#344 C.3: a command bound to produce an artifact has its call wrapped in the result
                 # check - `before` is the first argument, so it is evaluated before the body runs, and
                 # `held` turns an rc 0 that wrote no test result into 1 (`simplon.domain.results`).

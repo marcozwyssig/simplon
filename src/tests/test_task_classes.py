@@ -28,7 +28,7 @@ def _class_of(coordinate: str) -> type[Task]:
 
 
 def _impl(coordinate: str):
-    module, function = catalogue.load().tasks[coordinate]["impl"].split(":")
+    module, function = artifactschema.BODIES[coordinate].split(":")
     return getattr(importlib.import_module(module), function)
 
 

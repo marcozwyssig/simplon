@@ -314,7 +314,7 @@ def test_a_command_gate_can_name_the_toolchain_run_command_this_product_declares
     # assert: it resolved to a callable, and to the body the manifest's `task:` names
     assert callable(runner)
     assert context.current().manifest().commands["build"]["unit"].impl == \
-        "simplon.tasks.toolchain:run_toolchain"
+        "simplon.tasks.toolchain_run:ToolchainRun"   # the coordinate's generated class (si#400 4c)
 
 
 @needs_docker

@@ -208,13 +208,15 @@ def test_the_innards_under_tasks_are_exactly_the_modules_no_coordinate_names():
     The tempting phrasing - "a product may not import a task body" - is FALSE, and the kernel is what
     made it false: five consumers import one, and the generated CLI (`templates/cli.py.j2`, ours)
     emits twelve such imports. The line that does hold is named versus unnamed: a module some
-    catalogue coordinate points its `impl:` at is reachable; one no coordinate names is innards.
+    catalogue coordinate points its body at is reachable; one no coordinate names is innards.
 
-    This derives both sides from `catalogue.yaml` so the page cannot drift away from the catalogue.
+    This derives both sides from the catalogue's model so the page cannot drift away from the catalogue.
     """
     # arrange
-    catalogue = (SRC / "catalogue.yaml").read_text(encoding="utf-8")
-    named = set(re.findall(r"impl:\s*\"?simplon\.tasks\.([a-z0-9_]+):", catalogue))
+    # the body each coordinate names - since si#400 4c in the model (`BODIES`), no longer in catalogue.yaml
+    from simplon.domain.artifactschema import BODIES
+    named = {body.split(":")[0][len("simplon.tasks."):] for body in BODIES.values()
+             if body.startswith("simplon.tasks.")}
     # si#400 4b: a generated task class is its coordinate's own class (its KEY names it), not innards
     generated = {p.stem for p in (SRC / "tasks").glob("*.py") if "id=[Tasks:" in p.read_text(encoding="utf-8")}
     assert generated, "no generated task class found - the exclusion below would exclude nothing"

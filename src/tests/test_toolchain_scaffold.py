@@ -146,7 +146,7 @@ def test_the_spliced_block_still_loads_and_assembles(scaffolded):
     # assert: through the loader a real product goes through, catalogue and all
     mf = manifest_mod.load(scaffolded.read_text(encoding="utf-8"), catalogue=catalogue.load())
     assert {"configure", "compile", "unit", "analyse"} <= set(mf.groups["build"])
-    assert mf.commands["build"]["compile"].impl == "simplon.tasks.toolchain:run_toolchain"
+    assert mf.commands["build"]["compile"].impl == "simplon.tasks.toolchain_run:ToolchainRun"   # si#400 4c
 
 
 def test_a_shape_the_splice_cannot_place_is_refused_with_the_block_to_paste(tmp_path, monkeypatch,

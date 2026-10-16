@@ -34,6 +34,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import NamedTuple
 
+from simplon.domain.task import class_ref
+
 #: The manifest key a job names a kind with.
 KEY = "runner"
 
@@ -117,12 +119,11 @@ TABLE: Mapping[str, Runner] = {
 #: it likes, and the generated step has to call the name that product chose. So the kernel looks the impl
 #: up in the product's command tree rather than assuming a spelling.
 #:
-#: These strings are a SECOND SOURCE for what `catalogue.yaml` declares, which is the defect `CLAUDE.md`
-#: names, so they are pinned against it: `test_runners.py` loads the real catalogue and asserts each
-#: coordinate resolves to the impl written here. Drift turns that red rather than turning a workflow into
-#: a file that calls nothing.
-PREFLIGHT = ("support:ci-disk-preflight", "simplon.tasks.cidisk:preflight")
-CLEANUP = ("support:ci-disk-cleanup", "simplon.tasks.cidisk:cleanup")
+#: The reference is DERIVED from the coordinate since si#400 4c (`task.class_ref`, the coordinate's
+#: generated class), where it used to be a typed second source for what `catalogue.yaml` declared.
+#: `test_runners.py` still loads the real catalogue and asserts each coordinate resolves to it.
+PREFLIGHT = ("support:ci-disk-preflight", class_ref("support:ci-disk-preflight"))
+CLEANUP = ("support:ci-disk-cleanup", class_ref("support:ci-disk-cleanup"))
 
 
 #: The kind a job gets when it names none, which is what every product's workflows meant before this
