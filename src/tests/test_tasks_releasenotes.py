@@ -575,6 +575,97 @@ def test_a_range_with_no_merge_says_so_rather_than_writing_an_empty_section(tmp_
     assert "no merge since v0.1.0" in text
 
 
+def test_a_tag_already_cut_at_head_is_not_its_own_starting_point(tmp_path):
+    """si#477: the tag being released already exists - cut before the notes, or a rerun. Its range
+    starts at the tag BEFORE it; measured against itself it was empty, and the run said "no merge
+    since v0.2.0" in green over a release carrying two merges."""
+    # arrange
+    root = _repo(tmp_path)
+    _commit(root, "start")
+    _merge(root, "si10-old", ["feat(si#10): old"], "Merge si10-old (si#10)")
+    _git(root, "tag", "v0.1.0")
+    _merge(root, "si12-thing", ["feat(si#12): a thing"], "Merge si12-thing (si#12)")
+    _merge(root, "si13-other", ["fix(si#13): another"], "Merge si13-other (si#13)")
+    _git(root, "tag", "v0.2.0")
+
+    # act
+    text = releasenotes.render(root, "v0.2.0")
+
+    # assert
+    assert "no merge since" not in text
+    assert "- Merge si13-other (si#13) (#13)" in text
+    assert "- Merge si12-thing (si#12) (#12)" in text
+    assert "si10-old" not in text
+
+
+def test_an_older_release_rendered_again_ends_at_its_own_tag_and_not_at_head(tmp_path):
+    """The range a released version's notes describe is the one the gate measures its section over
+    (`ranges_under_test`): from the tag before it to its OWN tag. Ending at HEAD would hand v0.2.0's
+    notes the merges of v0.3.0 and of whatever is not released yet."""
+    # arrange
+    root = _repo(tmp_path)
+    _commit(root, "start")
+    _git(root, "tag", "v0.1.0")
+    _merge(root, "si12-thing", ["feat(si#12): a thing"], "Merge si12-thing (si#12)")
+    _git(root, "tag", "v0.2.0")
+    _merge(root, "si13-later", ["fix(si#13): later"], "Merge si13-later (si#13)")
+    _git(root, "tag", "v0.3.0")
+    _merge(root, "si14-unreleased", ["fix(si#14): unreleased"], "Merge si14-unreleased (si#14)")
+
+    # act
+    text = releasenotes.render(root, "v0.2.0")
+
+    # assert
+    assert "- Merge si12-thing (si#12) (#12)" in text
+    assert "si13-later" not in text
+    assert "si14-unreleased" not in text
+
+
+def test_the_first_release_already_tagged_still_covers_the_whole_history(tmp_path):
+    # arrange
+    root = _repo(tmp_path)
+    _commit(root, "start")
+    _merge(root, "si12-thing", ["feat(si#12): a thing"], "Merge si12-thing (si#12)")
+    _git(root, "tag", "v0.1.0")
+
+    # act
+    text = releasenotes.render(root, "v0.1.0")
+
+    # assert
+    assert "- Merge si12-thing (si#12) (#12)" in text
+
+
+def test_the_first_release_with_no_merge_keeps_its_own_wording_once_tagged(tmp_path):
+    # arrange
+    root = _repo(tmp_path)
+    _commit(root, "start")
+    _git(root, "tag", "v0.1.0")
+
+    # act
+    text = releasenotes.render(root, "v0.1.0")
+
+    # assert
+    assert "no merge in this repository yet." in text
+
+
+def test_a_tag_that_is_not_a_version_keeps_the_newest_tag_as_its_start(tmp_path):
+    """`write` refuses only an empty tag, and that stays so: a tag the module cannot place among the
+    versions is measured from the newest released one to HEAD, exactly as before si#477."""
+    # arrange
+    root = _repo(tmp_path)
+    _commit(root, "start")
+    _merge(root, "si10-old", ["feat(si#10): old"], "Merge si10-old (si#10)")
+    _git(root, "tag", "v0.1.0")
+    _merge(root, "si12-thing", ["feat(si#12): a thing"], "Merge si12-thing (si#12)")
+
+    # act
+    text = releasenotes.render(root, "release-next")
+
+    # assert
+    assert "- Merge si12-thing (si#12) (#12)" in text
+    assert "si10-old" not in text
+
+
 def test_write_puts_the_notes_where_the_artifact_says(tmp_path, monkeypatch):
     # arrange
     root = _repo(tmp_path)
