@@ -5,6 +5,10 @@ property passes rc 0 and answers EMPTY. The release rule reads `TestResult.about
 would let an untested release through - the house defect, arriving through a model. Each relation is
 therefore asked for its value over a fixture whose answer is known, and an empty answer is red.
 
+Since firn v0.2.0 (si#410), `firn validate` refuses a selector step that no type in the model declares
+(E012, measured 2026-10-16 on each of the three relations with one step misspelt). A selector spelt right
+that walks the wrong relation still answers empty, which is what the value tests below are for.
+
 AAA throughout.
 """
 import shutil
@@ -33,7 +37,7 @@ def demo(tmp_path):
 @needs_docker
 def test_simplons_own_firn_project_checks_clean():
     # arrange / act
-    rc, _ = firn_rc(SRC_FIRN.parents[1], "check", cwd="src")
+    rc, _ = firn_rc(SRC_FIRN.parents[1], "validate", cwd="src")
 
     # assert
     assert rc == 0
@@ -41,10 +45,10 @@ def test_simplons_own_firn_project_checks_clean():
 
 @needs_docker
 def test_the_demo_checks_clean(demo):
-    # arrange / act: `query` answers over a model `check` refuses (measured 2026-10-14: the demo still
+    # arrange / act: `query` answers over a model `validate` refuses (measured 2026-10-14: the demo still
     # composed its artifacts under `produces` after C.2 made it an Association - E009 - and every query
     # below stayed green), so a demo that has drifted from the metamodel is red here and not nowhere
-    rc, out = firn_rc(demo, "check")
+    rc, out = firn_rc(demo, "validate")
 
     # assert
     assert rc == 0, out
@@ -57,7 +61,7 @@ def test_a_task_without_a_key_is_refused_by_firn(demo):
     path.write_text(path.read_text().replace('  key = "save-image"\n', "", 1))
 
     # act
-    rc, out = firn_rc(demo, "check")
+    rc, out = firn_rc(demo, "validate")
 
     # assert
     assert rc == 1

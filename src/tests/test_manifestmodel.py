@@ -380,7 +380,7 @@ def _count(out: str, pattern: str) -> int:
 
 @pytest.mark.parametrize("name", ["demo", *sorted(p.stem for p in FIXTURES.glob("*.yaml"))])
 def test_the_export_drops_nothing(name):
-    # arrange: `firn check` rc 0 only says the model is well-formed - a model missing half the commands
+    # arrange: `firn validate` rc 0 only says the model is well-formed - a model missing half the commands
     # is well-formed too, so every count is held against the number the manifest itself gives
     mf, text = _source(name)
     document = yaml.safe_load(text)

@@ -212,7 +212,7 @@ def two_phases(tmp_path, monkeypatch):
 
 def test_firn_check_lands_under_test_and_gen_under_build(two_phases):
     # arrange / act (si#371)
-    rc = toolchain.scaffold("firn", version="0.1.0")
+    rc = toolchain.scaffold("firn", version="0.2.0")
 
     # assert: `./<product>.sh test model` and `./<product>.sh build model`
     data = yaml.safe_load(two_phases.read_text())
@@ -220,15 +220,15 @@ def test_firn_check_lands_under_test_and_gen_under_build(two_phases):
     check = data["ci"]["test"]["commands"]["model"]
     gen = data["ci"]["build"]["commands"]["model"]
     assert check == {"task": "toolchain:run",
-                     "with": {"image": "ghcr.io/marcozwyssig/firn:v0.1.0", "workdir": "/workspace",
-                              "network": "none", "argv": ["check"]}}
+                     "with": {"image": "ghcr.io/marcozwyssig/firn:v0.2.0", "workdir": "/workspace",
+                              "network": "none", "argv": ["validate"]}}
     assert gen["with"]["argv"] == ["gen"]
     assert data["ci"]["build"]["commands"]["wheel"] == {"task": "python:wheel"}
 
 
 def test_the_report_names_each_firn_command_with_its_phase(two_phases, capsys):
     # arrange / act: two commands called `model`, so the bare name would say `test model, model`
-    toolchain.scaffold("firn", version="0.1.0")
+    toolchain.scaffold("firn", version="0.2.0")
 
     # assert
     assert "wrote 2 command(s) - test model, build model" in capsys.readouterr().out
@@ -239,7 +239,7 @@ def test_scaffolding_into_two_phases_only_inserts(two_phases):
     before = two_phases.read_text().splitlines()
 
     # act
-    toolchain.scaffold("firn", version="0.1.0")
+    toolchain.scaffold("firn", version="0.2.0")
 
     # assert: every original line survives, in order - comments included. The one exception is the
     # splice's own documented edit: `commands: {}` loses its `{}`, because block entries cannot follow it
@@ -256,7 +256,7 @@ def test_a_kept_command_in_one_phase_does_not_stop_the_other(two_phases, capsys)
     two_phases.write_text(text)
 
     # act
-    toolchain.scaffold("firn", version="0.1.0")
+    toolchain.scaffold("firn", version="0.2.0")
 
     # assert: never clobbers, and still writes what is missing
     data = yaml.safe_load(two_phases.read_text())
@@ -273,7 +273,7 @@ def test_a_missing_phase_group_is_refused_and_nothing_is_written(manifest, monke
 
     # act / assert: all or nothing - `build model` is not written without its `test model`
     with pytest.raises(RuntimeError):
-        toolchain.scaffold("firn", version="0.1.0")
+        toolchain.scaffold("firn", version="0.2.0")
     assert manifest.read_text() == before
     out = capsys.readouterr().out
     assert "ci: test: commands:" in out and "argv:" in out

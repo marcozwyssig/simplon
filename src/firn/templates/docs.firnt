@@ -1,9 +1,10 @@
 template Docs {
 
-  // The kinds reference page of the website (spec B.2). `language html`: firn has no markdown language
-  // (E200 on v0.1.0), and html gives the id line as an html comment. A line starting with `|` in the
-  // output needs `||`, because the first `|` is the template's output marker.
-  file "kinds.md" language html {
+  // The kinds reference page of the website (spec B.2). `language markdown` since firn v0.2.0 (si#410);
+  // v0.1.0 had none (E200) and this said `html`, whose id line is the same html comment - the page came
+  // out byte-identical under both. A line starting with `|` in the output needs `||`, because the first
+  // `|` is the template's output marker.
+  file "kinds.md" language markdown {
     |---
     |title: "Artifact kinds"
     |weight: 6

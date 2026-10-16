@@ -8,8 +8,9 @@
 // modelled below; what a release publishes and what a test result is about are DERIVED (SelectorRelation).
 //
 // What the sketch got wrong, measured by `firn check` on firn v0.1.0: every Association needs an
-// `objectCardinality`, which the sketch left out. `firn check` does not compile a selector: see
-// src/tests/test_firn_pipeline_e2e.py, which asks every SelectorRelation for its value.
+// `objectCardinality`, which the sketch left out. `firn check` did not compile a selector; since v0.2.0
+// `firn validate` refuses a step no type declares (E012, si#410), but a well-spelt wrong relation still
+// answers empty: src/tests/test_firn_pipeline_e2e.py asks every SelectorRelation for its value.
 package simplon.pipeline
 
 // ci | cd | support (spec D.1). Transparency is a property of the area, so it is not a key a group
