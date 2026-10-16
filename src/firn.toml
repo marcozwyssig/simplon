@@ -6,11 +6,12 @@ name = "simplon"
 model = ["firn/model"]
 templates = ["firn/templates"]
 
-# The kernel's catalogue, whose hand-written part is one protected region firn keeps, and the artifact
-# schema (si#344 B2), a whole generated module.
+# The kernel's catalogue, whose hand-written part is one protected region firn keeps, the artifact
+# schema (si#344 B2), a whole generated module, and one class per catalogue task in `simplon/tasks/`
+# (si#400 4b).
 [target.simplon]
 path = "simplon"
-templates = ["Catalogue", "ArtifactSchema"]
+templates = ["Catalogue", "ArtifactSchema", "Tasks"]
 
 # The architecture's data (si#390 part 1): test code, read by src/tests/test_architecture.py, never shipped.
 # Its own directory, which firn owns whole: firn v0.1.0 deletes, with rc 0, any file in a target that holds a
