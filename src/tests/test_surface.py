@@ -137,15 +137,38 @@ def test_no_module_is_promised_under_a_task_body_s_name():
         f"renamed, because nothing at the call site says which is which")
 
 
-# --- the old paths, answered by the alias (si#399) ------------------------------------------------------
+# --- the alias, with no move standing (si#399, si#470) ---------------------------------------------------
 #
 # The 0.4 tombstones were stub modules, and `moved_attr` served their attributes. si#399 replaced both with
-# an alias in `simplon.kernel.moved`: an old path is the SAME module object as its new one. What these hold
-# is the reason that was chosen, measured - a product's patch through an old path lands on the real code.
+# an alias in `simplon.kernel.moved`: an old path is the SAME module object as its new one. si#470 emptied
+# `MOVED` on its deadline, so nothing in the tree reaches the alias any more - and a mechanism nothing
+# reaches is one that rots between moves. These hold it against a SYNTHETIC move instead: `simplon.gone` is a
+# dissolved package and `simplon.gone.steps` an old path to `simplon.kernel.steps`, and no old module has to
+# exist for either.
+
+#: The synthetic move. Its names are chosen so no real module can ever stand at them.
+SYNTHETIC_MOVED = {"gone.steps": "simplon.kernel.steps", "gonelog": "simplon.kernel.log"}
+SYNTHETIC_DISSOLVED = frozenset({"gone"})
 
 
-@pytest.mark.parametrize("old, new", sorted(surface.MOVED.items()))
-def test_an_old_path_is_the_very_module_at_its_new_home(old, new):
+@pytest.fixture
+def synthetic_move(monkeypatch):
+    """Stand the synthetic move up for one test, and take every trace of it down again: the import system
+    leaves the aliases in `sys.modules` and binds each as an attribute of its parent package."""
+    from simplon.kernel import moved
+
+    monkeypatch.setattr(moved, "MOVED", dict(SYNTHETIC_MOVED))
+    monkeypatch.setattr(moved, "DISSOLVED", SYNTHETIC_DISSOLVED)
+    yield SYNTHETIC_MOVED
+    for old in [*SYNTHETIC_MOVED, *SYNTHETIC_DISSOLVED]:
+        sys.modules.pop(f"simplon.{old}", None)
+    for top in {old.split(".")[0] for old in [*SYNTHETIC_MOVED, *SYNTHETIC_DISSOLVED]}:
+        if hasattr(simplon, top):
+            delattr(simplon, top)
+
+
+@pytest.mark.parametrize("old, new", sorted(SYNTHETIC_MOVED.items()))
+def test_an_old_path_is_the_very_module_at_its_new_home(synthetic_move, old, new):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", FutureWarning)
         aliased = importlib.import_module(f"simplon.{old}")
@@ -154,46 +177,66 @@ def test_an_old_path_is_the_very_module_at_its_new_home(old, new):
     assert aliased.__spec__.name == new, "the alias rewrote where the module says it lives"
 
 
-def test_a_patch_through_an_old_path_patches_the_code_that_runs():
-    """THE DEFECT THE ALIAS WAS CHOSEN FOR. Thirteen product sites patch by string, five of them exactly
-    this one. On a stub module the patch would land on the stub, the real `run_stream` would run, and the
-    product's test would stay green testing nothing. Seen red by having the alias hand back a copy of the
-    module instead of the module itself."""
+def test_a_patch_through_an_old_path_patches_the_code_that_runs(synthetic_move):
+    """THE DEFECT THE ALIAS WAS CHOSEN FOR. Thirteen product sites patched by string. On a stub module the
+    patch would land on the stub, the real `run_stream` would run, and the product's test would stay green
+    testing nothing. Seen red by having the alias hand back a copy of the module instead of the module
+    itself."""
     from unittest import mock
 
     from simplon.kernel import steps
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", FutureWarning)
-        with mock.patch("simplon.orchestrator.steps.run_stream") as patched:
+        with mock.patch("simplon.gone.steps.run_stream") as patched:
             assert steps.run_stream is patched
 
 
-def test_a_dissolved_package_still_reaches_its_children():
-    """`from simplon.orchestrator import product` is the line every scaffolded product carries."""
+def test_a_dissolved_package_still_reaches_its_children(synthetic_move):
+    """`from simplon.orchestrator import product` was the line every scaffolded product carried."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", FutureWarning)
-        from simplon.orchestrator import product
-        from simplon.orchestrator.model import treeform
+        from simplon.gone import steps
 
-    from simplon.domain import treeform as new_treeform
-    from simplon.kernel import product as new_product
-    assert (product, treeform) == (new_product, new_treeform)
+    from simplon.kernel import steps as new_steps
+    assert steps is new_steps
 
 
 def test_importing_an_old_path_says_where_it_went_at_the_line_that_imported(tmp_path):
     """A fresh interpreter, because an alias warns once per process: the first import of the old name.
     The warning has to point at the product's line, not at importlib - a FutureWarning attributed to
-    `<frozen importlib._bootstrap>` tells the reader nothing they can change."""
+    `<frozen importlib._bootstrap>` tells the reader nothing they can change. The move is the synthetic
+    one, stood up in the child before the line that imports."""
     script = tmp_path / "product.py"
-    script.write_text("from simplon.orchestrator import steps\n", encoding="utf-8")
+    script.write_text("from simplon.kernel import moved\n"
+                      f"moved.MOVED.update({SYNTHETIC_MOVED!r})\n"
+                      f"moved.DISSOLVED = {SYNTHETIC_DISSOLVED!r}\n"
+                      "from simplon.gone import steps\n", encoding="utf-8")
 
     result = subprocess.run([sys.executable, str(script)], capture_output=True, text=True,
                             env={**os.environ, "PYTHONWARNINGS": "default"})
 
     assert result.returncode == 0, result.stderr
-    assert f"{script}:1: FutureWarning: " + surface.moved_message(
-        "simplon.orchestrator.steps", "simplon.kernel.steps") in result.stderr, result.stderr
+    assert f"{script}:4: FutureWarning: " + surface.moved_message(
+        "simplon.gone.steps", "simplon.kernel.steps") in result.stderr, result.stderr
+
+
+#: si#399's old paths, a sample spanning both shapes: a module that moved, a child of the dissolved
+#: package, and the dissolved package itself. Not the whole list - that is gone with `MOVED`, and a copy of
+#: it here would be the second source the removal just deleted.
+SI399_GONE = ("orchestrator", "orchestrator.model", "orchestrator.steps", "orchestrator.product", "run", "log",
+              "context", "surface", "docker")
+
+
+@pytest.mark.parametrize("old", SI399_GONE)
+def test_an_si399_old_path_is_gone_since_its_deadline(old):
+    """si#470: the promise was "removed in 0.33.0", and a removal nothing checks is a promise kept by
+    nobody. An old path is now what any unknown name is - a `ModuleNotFoundError` naming it - and no
+    stand-in module answers it quietly. Seen red with si#399's `MOVED` and `DISSOLVED` still filled."""
+    with pytest.raises(ModuleNotFoundError) as caught:
+        importlib.import_module(f"simplon.{old}")
+
+    assert caught.value.name is not None and caught.value.name.startswith("simplon."), caught.value
 
 
 def test_a_name_that_never_existed_is_still_not_found():
@@ -299,6 +342,7 @@ def test_the_tombstones_are_gone_by_the_release_they_were_promised_for():
     minor that still carries tombstones costs a tag number and ships nothing. Loud, and recoverable.
 
     Seen red by moving `MOVED_DUE_AFTER` back a minor: it named all four modules and both files.
+    Seen red again for si#470 as 0.33.0 with si#399's 65 old paths still in `MOVED`.
     """
     # arrange
     due = _release_number() > surface.MOVED_DUE_AFTER

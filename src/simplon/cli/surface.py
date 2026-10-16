@@ -97,11 +97,18 @@ import lines in three repositories; re-measured on the day, it was three lines i
 a consumer this period ever protected - see `MOVED_CONSUMERS`. Two of the recorded lines had never been
 simplon's at all. A count taken once decays, and this one decayed inside a day.
 
+THE SECOND PERIOD ENDED THE SAME WAY, ON TIME. si#399 moved every module into the package of its
+component and kept the old paths as aliases through 0.32; si#470 removed them for 0.33.0, before the tag
+rather than after it. Re-measured on the day, six of the seven consumers still imported an old path - and
+not one of them was a consumer the aliases protected, because every one pins a simplon from before the
+move. The lesson of 0.5.0, measured a second time: a grace period reaches only a product that runs the
+release carrying it.
+
 The three records below stay, empty, for the next move: `MOVED` (what is promised), `MOVED_CONSUMERS`
 (who still uses the old path, measured down to the line) and `MOVED_DUE_AFTER` (the release the promise
-names). `moved_attr` stays with them. Re-measure FIRST when the next deadline comes: the acceptance is
-that no consumer still imports an old path, measured on the day, not remembered from the day the
-tombstone was written.
+names). The alias in `simplon.kernel.moved` stays with them. Re-measure FIRST when the next deadline
+comes: the acceptance is that no consumer still imports an old path, measured on the day, not remembered
+from the day the tombstone was written.
 """
 from __future__ import annotations
 
@@ -201,10 +208,11 @@ INTERNAL = frozenset({
     "domain.signatures", "domain.task", "domain.yamlkeys", "kernel.moved", "kernel.provenance", "kernel.runhost", "kernel.steplog", "test_impls",
 })
 
-#: si#399 moved every module into the package of its component. Where each old path now lives, the alias
-#: that keeps it importable, the wording it announces itself with and the release that removes it are in
-#: `simplon.kernel.moved`, because `simplon/__init__.py` installs that alias and must not import the
-#: command line to do it. They are named here too, because this is where a releaser is sent to look.
+#: Where each old path of a move lives now, the alias that keeps it importable, the wording it announces
+#: itself with and the release that removes it are in `simplon.kernel.moved`, because `simplon/__init__.py`
+#: installs that alias and must not import the command line to do it. They are named here too, because
+#: this is where a releaser is sent to look. `MOVED` is empty since 0.33.0: si#399's 65 old paths were
+#: promised through 0.32 and came out on time (si#470).
 #:
 #: THE 0.4 TOMBSTONES ARE NOT THE MECHANISM ANY MORE. They were modules of their own serving attributes
 #: through `__getattr__`, and `moved_attr` stood here for them. A product that patches by string -
@@ -215,307 +223,21 @@ MOVED = moved.MOVED
 MOVED_DUE_AFTER = moved.MOVED_DUE_AFTER
 moved_message = moved.moved_message
 
-#: Who still imports each old path, and from which line. MEASURED on 2026-10-13 for si#399: the default
-#: branch of each repository in `CONSUMERS` was cloned and every `.py` file parsed for an import of an old
-#: path, or a string naming one (`patch("simplon.run.run")`). An old path no line imports has an EMPTY
-#: tuple, which is an answer ("nobody") rather than a gap - 29 of the 65 have one.
+#: Who still imports each old path, and from which line. EMPTY SINCE 0.33.0, with the aliases it recorded.
+#: si#399's record (2026-10-13) named 65 old paths; si#470 re-measured it on 2026-10-16, the day
+#: `MOVED_DUE_AFTER` came due, the same way: the default branch of each repository in `CONSUMERS`, every
+#: `.py` file parsed for an import of an old path or a string naming one. The finding is worth keeping
+#: although the record is empty, because it is what the removal cost:
 #:
-#: This is the record the removal is costed against, and it ages: re-measure on the day `MOVED_DUE_AFTER`
-#: comes due rather than trusting it - the last record of this kind had decayed inside a day.
-MOVED_CONSUMERS: dict[str, tuple[str, ...]] = {
-    "artifactschema": (),
-    "artifactsection": (),
-    "awake": (
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/lab.py:573",
-    ),
-    "backend": (
-        "biz-cockpit deploy/provision/orchestrator/src/python/orchestrator/cli.py:28",
-        "biz-cockpit deploy/provision/orchestrator/test/unit/test_portainer_objects.py:17",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/backends.py:29",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_backends.py:10",
-    ),
-    "bootstrap": (),
-    "carrierspec": (),
-    "catalogue": (),
-    "checksum": (),
-    "clablifecycle": (
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/lab.py:31",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_lab_down.py:20",
-    ),
-    "clabrender": (
-        "netctl deploy/provision/labgen/src/python/labgen/generate.py:40",
-        "netctl deploy/provision/labgen/test/unit/python/test_generate_manifest.py:14",
-        "netctl deploy/provision/labgen/test/unit/python/test_sidecar_mtls_wiring.py:15",
-    ),
-    "clitaxonomy": (),
-    "completiongen": (),
-    "compose": (
-        "biz-cockpit deploy/provision/orchestrator/src/python/orchestrator/cli.py:29",
-        "biz-cockpit deploy/provision/orchestrator/test/unit/test_deployment_files.py:16",
-        "biz-cockpit deploy/provision/orchestrator/test/unit/test_stack.py:18",
-    ),
-    "context": (
-        "agile-cockpit deploy/orchestrator/src/python/orchestrator/paths.py:14",
-        "asbundle deploy/provision/orchestrator/src/python/orchestrator/config.py:13",
-        "asbundle deploy/provision/orchestrator/src/python/orchestrator/container.py:19",
-        "asbundle deploy/provision/orchestrator/src/python/orchestrator/paths.py:14",
-        "biz-cockpit deploy/provision/orchestrator/src/python/orchestrator/paths.py:14",
-        "cleon deploy/provision/orchestrator/src/python/orchestrator/paths.py:14",
-        "firn deploy/provision/orchestrator/src/python/orchestrator/paths.py:15",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/environments.py:15",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/paths.py:20",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/tooling.py:24",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_environments.py:105",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_environments.py:115",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_environments.py:125",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_environments.py:68",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_environments.py:85",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_iol_image_build.py:11",
-        "secure-windows-images deploy/provision/orchestrator/src/python/orchestrator/paths.py:14",
-        "secure-windows-images deploy/provision/orchestrator/src/python/packer/manifest.py:50",
-    ),
-    "credentials": (
-        "asbundle deploy/provision/orchestrator/src/python/orchestrator/artifacts.py:29",
-        "asbundle deploy/provision/orchestrator/src/python/orchestrator/cli.py:26",
-        "asbundle deploy/provision/orchestrator/src/python/orchestrator/eclipse.py:21",
-    ),
-    "degraded": (
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/devicegate.py:40",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/guard.py:26",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/lab.py:28",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/tooling.py:24",
-        "netctl deploy/provision/orchestrator/test/unit/python/conftest.py:150",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_container_capability_guards.py:17",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_guard.py:11",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_lab_up_preflight.py:285",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_up_degraded_file.py:15",
-    ),
-    "deployment": (
-        "biz-cockpit deploy/provision/orchestrator/src/python/orchestrator/backends.py:26",
-        "biz-cockpit deploy/provision/orchestrator/test/unit/test_environments.py:89",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/backends.py:33",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_backends.py:11",
-    ),
-    "devcontainer": (),
-    "disk": (
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/guard.py:55",
-    ),
-    "diskguard": (),
-    "docker": (
-        "asbundle deploy/provision/orchestrator/src/python/orchestrator/container.py:20",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/lab.py:178",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/tooling.py:152",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_lab_up_preflight.py:244",
-    ),
-    "environments": (
-        "agile-cockpit deploy/orchestrator/src/python/orchestrator/environments.py:16",
-        "asbundle deploy/provision/orchestrator/src/python/orchestrator/environments.py:16",
-        "biz-cockpit deploy/provision/orchestrator/src/python/orchestrator/backends.py:23",
-        "biz-cockpit deploy/provision/orchestrator/src/python/orchestrator/environments.py:38",
-        "biz-cockpit deploy/provision/orchestrator/test/unit/test_compose_parity.py:26",
-        "biz-cockpit deploy/provision/orchestrator/test/unit/test_portainer_objects.py:18",
-        "biz-cockpit deploy/provision/orchestrator/test/unit/test_stack_variables.py:35",
-        "cleon deploy/provision/orchestrator/src/python/orchestrator/environments.py:16",
-        "firn deploy/provision/orchestrator/src/python/orchestrator/environments.py:18",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/backends.py:30",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/environments.py:17",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_backends.py:12",
-        "secure-windows-images deploy/provision/orchestrator/src/python/orchestrator/environments.py:16",
-    ),
-    "fetch": (
-        "secure-windows-images deploy/provision/orchestrator/src/python/packer/media.py:23",
-    ),
-    "filelock": (),
-    "githubpackages": (
-        "asbundle deploy/provision/orchestrator/src/python/orchestrator/config.py:15",
-        "asbundle deploy/provision/orchestrator/src/python/orchestrator/release.py:15",
-        "cleon deploy/provision/orchestrator/src/python/orchestrator/cli.py:28",
-    ),
-    "healthgate": (
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/lab.py:31",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/uphealth.py:34",
-    ),
-    "host": (
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/cli.py:24",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/clientops.py:18",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/devicegate.py:38",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/doctor.py:10",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/guard.py:31",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/hostsetup.py:16",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/iolrecover.py:21",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/lab.py:32",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/rescue.py:17",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/status.py:14",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/steps.py:16",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/tooling.py:28",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_lab_down.py:19",
-    ),
-    "hostpath": (),
-    "imagenames": (
-        "biz-cockpit deploy/provision/orchestrator/src/python/orchestrator/cli.py:29",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/tooling.py:32",
-    ),
-    "interact": (
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/cli.py:23",
-    ),
-    "labegress": (
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/lab.py:31",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_lab_egress_manifest.py:14",
-    ),
-    "labhost": (
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/guard.py:27",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/hostsetup.py:15",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/lab.py:31",
-    ),
-    "labinstance": (
-        "netctl deploy/provision/labgen/src/python/labgen/generate.py:40",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/cli.py:23",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/guard.py:27",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/paths.py:20",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_instance_cli_option.py:25",
-    ),
-    "labnet": (
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/labnet.py:10",
-    ),
-    "layout": (),
-    "linux": (
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/modules.py:19",
-    ),
-    "log": (
-        "agile-cockpit deploy/orchestrator/src/python/orchestrator/cli.py:25",
-        "asbundle deploy/provision/orchestrator/src/python/orchestrator/logshim.py:16",
-        "biz-cockpit deploy/provision/orchestrator/src/python/orchestrator/cli.py:29",
-        "cleon deploy/provision/orchestrator/src/python/orchestrator/cli.py:30",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/backends.py:28",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/check.py:10",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/cli.py:23",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/clientops.py:17",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/clusterhealth.py:22",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/devicegate.py:37",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/environments.py:16",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/guard.py:30",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/hostsetup.py:15",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/iolrecover.py:20",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/lab.py:31",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/rescue.py:16",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/status.py:13",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/tooling.py:27",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/uphealth.py:33",
-    ),
-    "manifestmodel": (),
-    "nexusproxy": (
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/guard.py:55",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_nexus_manifest.py:20",
-    ),
-    "oras": (),
-    "orchestrator.manifest": (
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/steps.py:12",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_cli_wiring.py:7",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_manifest_flag_agreement.py:27",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_manifest_parity.py:10",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_rescue.py:9",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_suites_taxonomy.py:17",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_taxonomy.py:6",
-        "secure-windows-images tests/unit/test_the_suites_wiring.py:20",
-    ),
-    "orchestrator.model.treeform": (),
-    "orchestrator.plan": (),
-    "orchestrator.product": (
-        "agile-cockpit deploy/orchestrator/src/python/orchestrator/cli.py:27",
-        "asbundle deploy/provision/orchestrator/src/python/orchestrator/cli.py:27",
-        "biz-cockpit deploy/provision/orchestrator/src/python/orchestrator/cli.py:30",
-        "cleon deploy/provision/orchestrator/src/python/orchestrator/cli.py:32",
-        "firn deploy/provision/orchestrator/src/python/orchestrator/cli.py:33",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/cli.py:22",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/steps.py:13",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/tooling.py:1926",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_backends.py:87",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_cli_wiring.py:145",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_up_aggregate.py:13",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_up_aggregate.py:33",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_up_aggregate.py:35",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_up_aggregate.py:63",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_up_aggregate.py:64",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_up_aggregate.py:80",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_up_aggregate.py:81",
-        "secure-windows-images deploy/provision/orchestrator/src/python/orchestrator/cli.py:26",
-    ),
-    "orchestrator.steps": (
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/cli.py:808",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/doctor.py:11",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/steps.py:11",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/tooling.py:1333",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_composite_manifest_labels.py:123",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_steps.py:12",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_up_aggregate.py:115",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_up_aggregate.py:14",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_up_aggregate.py:62",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_up_aggregate.py:78",
-        "secure-windows-images deploy/provision/orchestrator/src/python/packer/pipeline.py:65",
-    ),
-    "orchestrator.tui": (),
-    "outputs": (),
-    "portainer": (
-        "biz-cockpit deploy/provision/orchestrator/test/unit/test_portainer_objects.py:120",
-    ),
-    "ports": (
-        "biz-cockpit deploy/provision/orchestrator/src/python/orchestrator/cli.py:29",
-    ),
-    "provenance": (),
-    "pyvenv": (
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/cli.py:571",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/tooling.py:617",
-    ),
-    "run": (
-        "agile-cockpit deploy/orchestrator/src/python/orchestrator/cli.py:26",
-        "asbundle deploy/provision/orchestrator/src/python/orchestrator/config.py:16",
-        "asbundle deploy/provision/orchestrator/src/python/orchestrator/container.py:22",
-        "asbundle deploy/provision/orchestrator/src/python/orchestrator/eclipse.py:22",
-        "asbundle deploy/provision/orchestrator/src/python/orchestrator/release.py:16",
-        "biz-cockpit deploy/provision/orchestrator/src/python/orchestrator/cli.py:32",
-        "cleon deploy/provision/orchestrator/src/python/orchestrator/cli.py:31",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/check.py:11",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/cli.py:26",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/clientops.py:20",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/clusterhealth.py:23",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/guard.py:38",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/hostsetup.py:17",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/iolsource.py:22",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/lab.py:34",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/status.py:16",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/steps.py:17",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/tooling.py:33",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_clientops.py:10",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_container_capability_guards.py:18",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_guard.py:10",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_hostsetup.py:9",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_iolsource.py:12",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_lab_down.py:21",
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_tooling.py:6",
-    ),
-    "runhost": (),
-    "runners": (),
-    "signatures": (),
-    "steplog": (),
-    "surface": (),
-    "taskgen": (
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_generated_cli.py:30",
-    ),
-    "tools": (),
-    "topology": (
-        "netctl deploy/provision/labgen/src/python/labgen/generate.py:40",
-        "netctl deploy/provision/labgen/test/unit/python/test_generate_manifest.py:14",
-        "netctl deploy/provision/labgen/test/unit/python/test_topology_manifest.py:14",
-    ),
-    "tracker": (),
-    "verdict": (
-        "netctl deploy/provision/orchestrator/test/unit/python/orchestrator/test_suites_taxonomy.py:16",
-    ),
-    "waits": (
-        "biz-cockpit deploy/provision/orchestrator/src/python/orchestrator/cli.py:29",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/lab.py:635",
-        "netctl deploy/provision/orchestrator/src/python/orchestrator/lab.py:725",
-    ),
-    "workflowgen": (),
-    "yamlkeys": (),
-}
+#:   - firn had migrated (0 imports; firn#1015 is closed). The other six had not, and each has its open
+#:     issue from 2026-10-15 listing its lines. Old paths imported (an import line naming two counts
+#:     twice): netctl 124 on 110 lines plus 13 `monkeypatch.setattr` strings, biz-cockpit 20 on 16 lines,
+#:     asbundle 16, secure-windows-images 7, cleon 6, agile-cockpit 5.
+#:   - None of the six breaks on the day 0.33.0 is published, and none of them was ever protected by the
+#:     aliases: each pins a simplon from before the move (0.3.0 to 0.22.0) in its `requirements.txt`,
+#:     where the old paths are the real modules. A grace period reaches only a product that runs the
+#:     release carrying it, so their migration is part of whatever bump takes them to 0.33.0 or later -
+#:     exactly netctl's position at 0.5.0. firn, the one consumer on 0.32, is the one that migrated.
+#:   - The per-line list and the commit each repository was measured at are in the si#470 pull request,
+#:     not here: a copy of it would be the record this comment says ages.
+MOVED_CONSUMERS: dict[str, tuple[str, ...]] = {}

@@ -212,7 +212,8 @@ promised entry point — what is not promised is importing the module for its ot
 ## When something moves
 
 A move is a break in the public surface: a product that writes `from simplon import log` falls over. So a
-moved module does not simply go. Its old path keeps importing and says so when it is imported:
+moved module does not simply go. Its old path keeps importing until a stated release, and says so when it
+is imported:
 
 ```
 FutureWarning: simplon.log has moved to simplon.kernel.log; import it from there.
@@ -238,81 +239,17 @@ file and the line number) and `MOVED_DUE_AFTER` (the release the promise names),
 red once a version past it is built.
 
 **The second period: si#399, the package per component.** Every module moved into the package of its
-component, and `simplon.orchestrator` was dissolved. The move ships in 0.31; the old paths work through
-0.32 and are gone in 0.33.0 — two minors, because about two hundred lines in seven products name one. Each
-product gets an issue listing its lines once the release is out.
+component, and `simplon.orchestrator` was dissolved. The move shipped in 0.31; the old paths worked
+through 0.32 and **are gone since 0.33.0**. An import of one is now a `ModuleNotFoundError`, and
+`surface.MOVED` is empty again until the next move.
 
-| old path | new home |
-|---|---|
-| `simplon.artifactschema` | `simplon.domain.artifactschema` |
-| `simplon.artifactsection` | `simplon.domain.artifactsection` |
-| `simplon.awake` | `simplon.kernel.awake` |
-| `simplon.backend` | `simplon.adapters.backend` |
-| `simplon.bootstrap` | `simplon.cli.bootstrap` |
-| `simplon.carrierspec` | `simplon.domain.carrierspec` |
-| `simplon.catalogue` | `simplon.domain.catalogue` |
-| `simplon.checksum` | `simplon.adapters.checksum` |
-| `simplon.clablifecycle` | `simplon.adapters.clablifecycle` |
-| `simplon.clabrender` | `simplon.adapters.clabrender` |
-| `simplon.clitaxonomy` | `simplon.domain.clitaxonomy` |
-| `simplon.completiongen` | `simplon.tasks.completiongen` |
-| `simplon.compose` | `simplon.adapters.compose` |
-| `simplon.context` | `simplon.domain.context` |
-| `simplon.credentials` | `simplon.adapters.credentials` |
-| `simplon.degraded` | `simplon.kernel.degraded` |
-| `simplon.deployment` | `simplon.domain.deployment` |
-| `simplon.devcontainer` | `simplon.adapters.devcontainer` |
-| `simplon.disk` | `simplon.adapters.disk` |
-| `simplon.diskguard` | `simplon.adapters.diskguard` |
-| `simplon.docker` | `simplon.adapters.docker` |
-| `simplon.environments` | `simplon.domain.environments` |
-| `simplon.fetch` | `simplon.adapters.fetch` |
-| `simplon.filelock` | `simplon.kernel.filelock` |
-| `simplon.githubpackages` | `simplon.adapters.githubpackages` |
-| `simplon.healthgate` | `simplon.adapters.healthgate` |
-| `simplon.host` | `simplon.adapters.host` |
-| `simplon.hostpath` | `simplon.adapters.hostpath` |
-| `simplon.imagenames` | `simplon.adapters.imagenames` |
-| `simplon.interact` | `simplon.adapters.interact` |
-| `simplon.labegress` | `simplon.adapters.labegress` |
-| `simplon.labhost` | `simplon.adapters.labhost` |
-| `simplon.labinstance` | `simplon.adapters.labinstance` |
-| `simplon.labnet` | `simplon.adapters.labnet` |
-| `simplon.layout` | `simplon.domain.layout` |
-| `simplon.linux` | `simplon.adapters.linux` |
-| `simplon.log` | `simplon.kernel.log` |
-| `simplon.manifestmodel` | `simplon.domain.manifestmodel` |
-| `simplon.nexusproxy` | `simplon.adapters.nexusproxy` |
-| `simplon.oras` | `simplon.adapters.oras` |
-| `simplon.orchestrator.manifest` | `simplon.domain.manifest` |
-| `simplon.orchestrator.model.treeform` | `simplon.domain.treeform` |
-| `simplon.orchestrator.plan` | `simplon.kernel.plan` |
-| `simplon.orchestrator.product` | `simplon.kernel.product` |
-| `simplon.orchestrator.steps` | `simplon.kernel.steps` |
-| `simplon.orchestrator.tui` | `simplon.ui.tui` |
-| `simplon.outputs` | `simplon.domain.outputs` |
-| `simplon.portainer` | `simplon.adapters.portainer` |
-| `simplon.ports` | `simplon.adapters.ports` |
-| `simplon.provenance` | `simplon.kernel.provenance` |
-| `simplon.pyvenv` | `simplon.adapters.pyvenv` |
-| `simplon.run` | `simplon.kernel.run` |
-| `simplon.runhost` | `simplon.kernel.runhost` |
-| `simplon.runners` | `simplon.domain.runners` |
-| `simplon.signatures` | `simplon.domain.signatures` |
-| `simplon.steplog` | `simplon.kernel.steplog` |
-| `simplon.surface` | `simplon.cli.surface` |
-| `simplon.taskgen` | `simplon.tasks.taskgen` |
-| `simplon.tools` | `simplon.adapters.tools` |
-| `simplon.topology` | `simplon.adapters.topology` |
-| `simplon.tracker` | `simplon.adapters.tracker` |
-| `simplon.verdict` | `simplon.kernel.verdict` |
-| `simplon.waits` | `simplon.kernel.waits` |
-| `simplon.workflowgen` | `simplon.tasks.workflowgen` |
-| `simplon.yamlkeys` | `simplon.domain.yamlkeys` |
-
-`simplon.orchestrator` and `simplon.orchestrator.model` themselves stay importable as empty packages until
-then, so `from simplon.orchestrator import product` keeps working. `simplon.cli` did not move: the
-command line is the `cli` package's own `__init__`.
+Migrating is a rename, because every module kept its name: `simplon.X` is `simplon.<layer>.X`, and the
+layer is the one `surface.LIBRARY` or `surface.INTERNAL` lists it under (`log` is `kernel.log`, `host` is
+`adapters.host`). One name is on both lists: the `simplon.ports` that moved is `adapters.ports`, and
+`domain.ports` is a different, internal module. The dissolved package went to three places: `orchestrator.plan`, `.product` and `.steps`
+to `simplon.kernel`, `orchestrator.manifest` and `orchestrator.model.treeform` to `simplon.domain`, and
+`orchestrator.tui` to `simplon.ui`. A string a test patches by changes with the import:
+`patch("simplon.orchestrator.steps.run_stream")` is `patch("simplon.kernel.steps.run_stream")`.
 
 **The first period ran through 0.4.x and ended at 0.5.0.** Four modules stood as tombstones and are now
 gone; an import of one is a `ModuleNotFoundError`. The gate is what ended it: the test went red on the
@@ -325,3 +262,9 @@ import lines in three repositories; re-measured on the day, it was three lines i
 recorded lines had never been simplon's at all (a sibling kernel ships a module of the same name), and
 one product had already migrated. **Re-measure before removing.** A count taken once decays, and that
 one decayed inside a day.
+
+The second removal measured the other half of that lesson. On the day si#399's deadline came due, six of
+the seven products that install the kernel still imported an old path — and not one of them was a product
+the aliases protected, because each pins a simplon from before the move, where the old paths are the real
+modules. A grace period reaches only a product that runs the release carrying it; the others migrate when
+they bump past it, and their issues list the lines.

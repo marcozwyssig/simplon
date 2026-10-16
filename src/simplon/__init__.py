@@ -40,8 +40,9 @@ except ImportError:  # pragma: no cover - exercised by the source-tree path, not
     except PackageNotFoundError:
         __version__ = "0.0.0.dev0+unknown"
 
-# si#399: the modules moved into one package per component; the old import paths stay importable, as the
-# very same module objects, until the release `simplon.kernel.moved.MOVED_DUE_AFTER` names.
+# A moved module's old import path stays importable, as the very same module object, until the release
+# `simplon.kernel.moved.MOVED_DUE_AFTER` names. No move is standing since 0.33.0 (si#470 removed si#399's
+# aliases), so the finder answers nothing; it stays installed for the next one.
 from .kernel import moved as _moved  # noqa: E402
 
 _moved.install()
