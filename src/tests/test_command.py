@@ -70,3 +70,32 @@ def test_the_compatibility_is_gone_after_its_release():
     assert _release_number() <= command.COMPAT_DUE_AFTER, (
         f"the read compatibility on Command was due to go after {command.COMPAT_DUE_AFTER}: delete "
         f"`Command.__getattr__`, `_OTHER_KIND`, `CompatWarning` and these tests' compat cases")
+
+
+def test_a_release_aggregate_is_a_release_command_naming_its_bundle():
+    # arrange: simplon's own manifest releases through `release all` with `produces: { release: kernel-release }`
+    from conftest import ROOT
+    from simplon.domain import catalogue, manifest
+    mf = manifest.load((ROOT / "simplon.yaml").read_text(encoding="utf-8"), catalogue=catalogue.load())
+
+    # act
+    releases = {f"{g} {n}": c for g, cs in mf.commands.items() for n, c in cs.items()
+                if isinstance(c, command.ReleaseCommand)}
+
+    # assert
+    assert releases and all(c.release for c in releases.values())
+
+
+def test_a_task_command_in_an_env_first_group_is_a_deploy_and_an_aggregate_there_is_not():
+    # arrange: test_manifest's dependency fixture places leaves and aggregates under `cd: deploy:` and `ci: build:`
+    from test_manifest import _DEPS
+    from simplon.domain import manifest
+    mf = manifest.load(_DEPS)
+
+    # act
+    up, stage, build = mf.spec_for("deploy", "up"), mf.spec_for("deploy", "stage"), mf.spec_for("build", "build")
+
+    # assert: only a TASK command in an env-first group is a Deploy (simplon.pipeline)
+    assert isinstance(up, command.Deploy)
+    assert isinstance(stage, command.AggregateCommand) and not isinstance(stage, command.TaskCommand)
+    assert type(build) is command.TaskCommand
