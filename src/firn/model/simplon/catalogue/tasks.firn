@@ -1,9 +1,9 @@
-// simplon.catalogue (si#344 C.1): the catalogue's tasks that take or give an artifact, with their ports.
+// simplon.catalogue (si#344 C.1, si#400 4a): every catalogue task, with its ports where it takes or gives an artifact.
 // Measured from the bodies on 2026-10-14 (docs/superpowers/plans/2026-10-14-si344-c1-ports-on-catalogue-tasks.md):
 // all ten readers by name take `name`; the direction is what the body does with the entry. A port is named
 // after the kind it accepts, so a product can guess it; `toolchain:run`'s two are the spec's `source`/`out`.
 // si#344 C.3 (decided 2026-10-14): release:nuget and release:maven are split into a pack task (output) and a push task (input), so a test can sit between them.
-// `key` and `body` repeat catalogue.yaml's coordinate and impl until si#400 generates those from here;
+// `key` and `body` repeat catalogue.yaml's coordinate and impl until si#400 plan 4c removes `impl:` there;
 // src/tests/test_catalogue_ports.py holds the two to each other.
 package simplon.catalogue
 
@@ -226,4 +226,151 @@ toolchain_run typeOf simplon.pipeline.CatalogueTask {
   output out typeOf simplon.pipeline.Port {
     accepts = simplon.vocabulary.artifact
   }
+}
+
+// si#400 4a: the catalogue's tasks that take or give no artifact, so they have no port. They are here
+// because the generated task classes (plan 4b) and every command's `task` need all of them.
+vcs_commit typeOf simplon.pipeline.CatalogueTask {
+  key = "vcs:commit"
+  body = "simplon.tasks.vcs:commit"
+}
+vcs_push typeOf simplon.pipeline.CatalogueTask {
+  key = "vcs:push"
+  body = "simplon.tasks.vcs:push"
+}
+vcs_prune_branches typeOf simplon.pipeline.CatalogueTask {
+  key = "vcs:prune-branches"
+  body = "simplon.tasks.vcs:prune_branches"
+}
+vcs_auth_scopes typeOf simplon.pipeline.CatalogueTask {
+  key = "vcs:auth-scopes"
+  body = "simplon.tasks.vcs:auth_scopes"
+}
+vcs_submodules typeOf simplon.pipeline.CatalogueTask {
+  key = "vcs:submodules"
+  body = "simplon.tasks.vcs:submodules"
+}
+support_ci_privileges typeOf simplon.pipeline.CatalogueTask {
+  key = "support:ci-privileges"
+  body = "simplon.tasks.ciprivileges:grant"
+}
+support_ci_disk_hygiene typeOf simplon.pipeline.CatalogueTask {
+  key = "support:ci-disk-hygiene"
+  body = "simplon.tasks.cidisk:hygiene"
+}
+support_ci_arm64 typeOf simplon.pipeline.CatalogueTask {
+  key = "support:ci-arm64"
+  body = "simplon.tasks.ciarm64:arm64"
+}
+support_ci_disk_preflight typeOf simplon.pipeline.CatalogueTask {
+  key = "support:ci-disk-preflight"
+  body = "simplon.tasks.cidisk:preflight"
+}
+support_ci_disk_cleanup typeOf simplon.pipeline.CatalogueTask {
+  key = "support:ci-disk-cleanup"
+  body = "simplon.tasks.cidisk:cleanup"
+}
+test_gate typeOf simplon.pipeline.CatalogueTask {
+  key = "test:gate"
+  body = "simplon.tasks.testrun:gate"
+}
+test_typecheck_python typeOf simplon.pipeline.CatalogueTask {
+  key = "test:typecheck-python"
+  body = "simplon.tasks.typecheck:check"
+}
+test_generated typeOf simplon.pipeline.CatalogueTask {
+  key = "test:generated"
+  body = "simplon.tasks.generated:check"
+}
+test_release_notes typeOf simplon.pipeline.CatalogueTask {
+  key = "test:release-notes"
+  body = "simplon.tasks.releasenotes:check"
+}
+test_report typeOf simplon.pipeline.CatalogueTask {
+  key = "test:report"
+  body = "simplon.tasks.testrun:report_cmd"
+}
+test_accept typeOf simplon.pipeline.CatalogueTask {
+  key = "test:accept"
+  body = "simplon.tasks.testrun:accept_cmd"
+}
+test_walk typeOf simplon.pipeline.CatalogueTask {
+  key = "test:walk"
+  body = "simplon.tasks.walk:walk"
+}
+support_nexus typeOf simplon.pipeline.CatalogueTask {
+  key = "support:nexus"
+  body = "simplon.tasks.nexus:nexus_cmd"
+}
+support_install typeOf simplon.pipeline.CatalogueTask {
+  key = "support:install"
+  body = "simplon.tasks.hosttools:install"
+}
+support_claude_plugins typeOf simplon.pipeline.CatalogueTask {
+  key = "support:claude-plugins"
+  body = "simplon.tasks.claudeplugins:install_cmd"
+}
+support_environments typeOf simplon.pipeline.CatalogueTask {
+  key = "support:environments"
+  body = "simplon.tasks.env:environments"
+}
+support_completion typeOf simplon.pipeline.CatalogueTask {
+  key = "support:completion"
+  body = "simplon.tasks.completion:generate"
+}
+support_workflows typeOf simplon.pipeline.CatalogueTask {
+  key = "support:workflows"
+  body = "simplon.tasks.workflows:generate"
+}
+docs_render typeOf simplon.pipeline.CatalogueTask {
+  key = "docs:render"
+  body = "simplon.tasks.docs:render"
+}
+docs_reference typeOf simplon.pipeline.CatalogueTask {
+  key = "docs:reference"
+  body = "simplon.tasks.cliref:reference"
+}
+docs_acceptance typeOf simplon.pipeline.CatalogueTask {
+  key = "docs:acceptance"
+  body = "simplon.tasks.acceptance:document"
+}
+build_cmake_files typeOf simplon.pipeline.CatalogueTask {
+  key = "build:cmake-files"
+  body = "simplon.tasks.buildfiles:cmake"
+}
+build_dotnet_solution typeOf simplon.pipeline.CatalogueTask {
+  key = "build:dotnet-solution"
+  body = "simplon.tasks.buildfiles:dotnet"
+}
+deploy_carrier typeOf simplon.pipeline.CatalogueTask {
+  key = "deploy:carrier"
+  body = "simplon.tasks.carrier:up"
+}
+deploy_down typeOf simplon.pipeline.CatalogueTask {
+  key = "deploy:down"
+  body = "simplon.tasks.deploy:down"
+}
+release_asset typeOf simplon.pipeline.CatalogueTask {
+  key = "release:asset"
+  body = "simplon.tasks.asset:publish"
+}
+tasks_generate typeOf simplon.pipeline.CatalogueTask {
+  key = "tasks:generate"
+  body = "simplon.tasks.tasks:generate"
+}
+tasks_catalogue typeOf simplon.pipeline.CatalogueTask {
+  key = "tasks:catalogue"
+  body = "simplon.tasks.tasks:catalogue"
+}
+support_migrate typeOf simplon.pipeline.CatalogueTask {
+  key = "support:migrate"
+  body = "simplon.tasks.migrate:migrate"
+}
+support_model typeOf simplon.pipeline.CatalogueTask {
+  key = "support:model"
+  body = "simplon.tasks.manifestmodel:model"
+}
+support_toolchain typeOf simplon.pipeline.CatalogueTask {
+  key = "support:toolchain"
+  body = "simplon.tasks.toolchain:scaffold"
 }

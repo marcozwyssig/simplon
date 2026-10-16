@@ -13,15 +13,19 @@ kbundle typeOf simplon.pipeline.ArtifactKind {
 }
 
 BuildImage typeOf simplon.pipeline.Task {
+  key = "build-image"
   body = "simplon.tasks.image:build"
 }
 TestImage typeOf simplon.pipeline.Task {
+  key = "test-image"
   body = "simplon.tasks.image:test"
 }
 PublishImage typeOf simplon.pipeline.Task {
+  key = "publish-image"
   body = "simplon.tasks.image:publish"
 }
 SaveImage typeOf simplon.pipeline.Task {
+  key = "save-image"
   body = "simplon.tasks.image:save"
 }
 

@@ -12,11 +12,11 @@ simplon typeOf simplon.manifest.Product {
     }
     command reference typeOf simplon.pipeline.TaskCommand {
       key = "reference"
-      task = product.simplon.simplon.t_docs_reference
+      task = simplon.catalogue.docs_reference
     }
     command acceptance typeOf simplon.pipeline.TaskCommand {
       key = "acceptance"
-      task = product.simplon.simplon.t_docs_acceptance
+      task = simplon.catalogue.docs_acceptance
     }
     command site typeOf simplon.pipeline.TaskCommand {
       key = "site"
@@ -66,23 +66,23 @@ simplon typeOf simplon.manifest.Product {
     }
     command typecheck_python typeOf simplon.pipeline.TaskCommand {
       key = "typecheck-python"
-      task = product.simplon.simplon.t_test_typecheck_python
+      task = simplon.catalogue.test_typecheck_python
     }
     command release_notes typeOf simplon.pipeline.TaskCommand {
       key = "release-notes"
-      task = product.simplon.simplon.t_test_release_notes
+      task = simplon.catalogue.test_release_notes
     }
     command report typeOf simplon.pipeline.TaskCommand {
       key = "report"
-      task = product.simplon.simplon.t_test_report
+      task = simplon.catalogue.test_report
     }
     command generated typeOf simplon.pipeline.TaskCommand {
       key = "generated"
-      task = product.simplon.simplon.t_test_generated
+      task = simplon.catalogue.test_generated
     }
     command walk typeOf simplon.pipeline.TaskCommand {
       key = "walk"
-      task = product.simplon.simplon.t_test_walk
+      task = simplon.catalogue.test_walk
     }
     command image typeOf simplon.pipeline.TaskCommand {
       key = "image"
@@ -138,11 +138,11 @@ simplon typeOf simplon.manifest.Product {
     area = simplon.pipeline.Area.support
     command install typeOf simplon.pipeline.TaskCommand {
       key = "install"
-      task = product.simplon.simplon.t_support_install
+      task = simplon.catalogue.support_install
     }
     command completion typeOf simplon.pipeline.TaskCommand {
       key = "completion"
-      task = product.simplon.simplon.t_support_completion
+      task = simplon.catalogue.support_completion
     }
     command doctor typeOf simplon.pipeline.TaskCommand {
       key = "doctor"
@@ -150,54 +150,54 @@ simplon typeOf simplon.manifest.Product {
     }
     command workflows typeOf simplon.pipeline.TaskCommand {
       key = "workflows"
-      task = product.simplon.simplon.t_support_workflows
+      task = simplon.catalogue.support_workflows
     }
     command claude_plugins typeOf simplon.pipeline.TaskCommand {
       key = "claude-plugins"
-      task = product.simplon.simplon.t_support_claude_plugins
+      task = simplon.catalogue.support_claude_plugins
     }
     command ci_privileges typeOf simplon.pipeline.TaskCommand {
       key = "ci-privileges"
-      task = product.simplon.simplon.t_support_ci_privileges
+      task = simplon.catalogue.support_ci_privileges
     }
     command ci_disk_hygiene typeOf simplon.pipeline.TaskCommand {
       key = "ci-disk-hygiene"
-      task = product.simplon.simplon.t_support_ci_disk_hygiene
+      task = simplon.catalogue.support_ci_disk_hygiene
     }
     command ci_arm64 typeOf simplon.pipeline.TaskCommand {
       key = "ci-arm64"
-      task = product.simplon.simplon.t_support_ci_arm64
+      task = simplon.catalogue.support_ci_arm64
     }
     command ci_disk_preflight typeOf simplon.pipeline.TaskCommand {
       key = "ci-disk-preflight"
-      task = product.simplon.simplon.t_support_ci_disk_preflight
+      task = simplon.catalogue.support_ci_disk_preflight
     }
     command ci_disk_cleanup typeOf simplon.pipeline.TaskCommand {
       key = "ci-disk-cleanup"
-      task = product.simplon.simplon.t_support_ci_disk_cleanup
+      task = simplon.catalogue.support_ci_disk_cleanup
     }
     group git typeOf simplon.pipeline.Group {
       key = "git"
       area = simplon.pipeline.Area.support
       command commit typeOf simplon.pipeline.TaskCommand {
         key = "commit"
-        task = product.simplon.simplon.t_vcs_commit
+        task = simplon.catalogue.vcs_commit
       }
       command push typeOf simplon.pipeline.TaskCommand {
         key = "push"
-        task = product.simplon.simplon.t_vcs_push
+        task = simplon.catalogue.vcs_push
       }
       command prune_branches typeOf simplon.pipeline.TaskCommand {
         key = "prune-branches"
-        task = product.simplon.simplon.t_vcs_prune_branches
+        task = simplon.catalogue.vcs_prune_branches
       }
       command submodules typeOf simplon.pipeline.TaskCommand {
         key = "submodules"
-        task = product.simplon.simplon.t_vcs_submodules
+        task = simplon.catalogue.vcs_submodules
       }
       command auth_scopes typeOf simplon.pipeline.TaskCommand {
         key = "auth-scopes"
-        task = product.simplon.simplon.t_vcs_auth_scopes
+        task = simplon.catalogue.vcs_auth_scopes
       }
     }
     group tasks typeOf simplon.pipeline.Group {
@@ -205,11 +205,11 @@ simplon typeOf simplon.manifest.Product {
       area = simplon.pipeline.Area.support
       command catalogue typeOf simplon.pipeline.TaskCommand {
         key = "catalogue"
-        task = product.simplon.simplon.t_tasks_catalogue
+        task = simplon.catalogue.tasks_catalogue
       }
       command generate typeOf simplon.pipeline.TaskCommand {
         key = "generate"
-        task = product.simplon.simplon.t_tasks_generate
+        task = simplon.catalogue.tasks_generate
       }
     }
     group manifest typeOf simplon.pipeline.Group {
@@ -217,25 +217,17 @@ simplon typeOf simplon.manifest.Product {
       area = simplon.pipeline.Area.support
       command migrate typeOf simplon.pipeline.TaskCommand {
         key = "migrate"
-        task = product.simplon.simplon.t_support_migrate
+        task = simplon.catalogue.support_migrate
       }
       command model typeOf simplon.pipeline.TaskCommand {
         key = "model"
-        task = product.simplon.simplon.t_support_model
+        task = simplon.catalogue.support_model
       }
     }
   }
   tasks t_wheel typeOf simplon.pipeline.Task {
     key = "wheel"
     body = "orchestrator.cli:build_wheel"
-  }
-  tasks t_docs_reference typeOf simplon.pipeline.Task {
-    key = "docs:reference"
-    body = "simplon.tasks.cliref:reference"
-  }
-  tasks t_docs_acceptance typeOf simplon.pipeline.Task {
-    key = "docs:acceptance"
-    body = "simplon.tasks.acceptance:document"
   }
   tasks t_region_guard typeOf simplon.pipeline.Task {
     key = "region-guard"
@@ -253,101 +245,9 @@ simplon typeOf simplon.manifest.Product {
     key = "suite"
     body = "orchestrator.cli:test_suite"
   }
-  tasks t_test_typecheck_python typeOf simplon.pipeline.Task {
-    key = "test:typecheck-python"
-    body = "simplon.tasks.typecheck:check"
-  }
-  tasks t_test_release_notes typeOf simplon.pipeline.Task {
-    key = "test:release-notes"
-    body = "simplon.tasks.releasenotes:check"
-  }
-  tasks t_test_report typeOf simplon.pipeline.Task {
-    key = "test:report"
-    body = "simplon.tasks.testrun:report_cmd"
-  }
-  tasks t_test_generated typeOf simplon.pipeline.Task {
-    key = "test:generated"
-    body = "simplon.tasks.generated:check"
-  }
-  tasks t_test_walk typeOf simplon.pipeline.Task {
-    key = "test:walk"
-    body = "simplon.tasks.walk:walk"
-  }
-  tasks t_support_install typeOf simplon.pipeline.Task {
-    key = "support:install"
-    body = "simplon.tasks.hosttools:install"
-  }
-  tasks t_support_completion typeOf simplon.pipeline.Task {
-    key = "support:completion"
-    body = "simplon.tasks.completion:generate"
-  }
   tasks t_doctor typeOf simplon.pipeline.Task {
     key = "doctor"
     body = "orchestrator.cli:doctor"
-  }
-  tasks t_support_workflows typeOf simplon.pipeline.Task {
-    key = "support:workflows"
-    body = "simplon.tasks.workflows:generate"
-  }
-  tasks t_support_claude_plugins typeOf simplon.pipeline.Task {
-    key = "support:claude-plugins"
-    body = "simplon.tasks.claudeplugins:install_cmd"
-  }
-  tasks t_support_ci_privileges typeOf simplon.pipeline.Task {
-    key = "support:ci-privileges"
-    body = "simplon.tasks.ciprivileges:grant"
-  }
-  tasks t_support_ci_disk_hygiene typeOf simplon.pipeline.Task {
-    key = "support:ci-disk-hygiene"
-    body = "simplon.tasks.cidisk:hygiene"
-  }
-  tasks t_support_ci_arm64 typeOf simplon.pipeline.Task {
-    key = "support:ci-arm64"
-    body = "simplon.tasks.ciarm64:arm64"
-  }
-  tasks t_support_ci_disk_preflight typeOf simplon.pipeline.Task {
-    key = "support:ci-disk-preflight"
-    body = "simplon.tasks.cidisk:preflight"
-  }
-  tasks t_support_ci_disk_cleanup typeOf simplon.pipeline.Task {
-    key = "support:ci-disk-cleanup"
-    body = "simplon.tasks.cidisk:cleanup"
-  }
-  tasks t_vcs_commit typeOf simplon.pipeline.Task {
-    key = "vcs:commit"
-    body = "simplon.tasks.vcs:commit"
-  }
-  tasks t_vcs_push typeOf simplon.pipeline.Task {
-    key = "vcs:push"
-    body = "simplon.tasks.vcs:push"
-  }
-  tasks t_vcs_prune_branches typeOf simplon.pipeline.Task {
-    key = "vcs:prune-branches"
-    body = "simplon.tasks.vcs:prune_branches"
-  }
-  tasks t_vcs_submodules typeOf simplon.pipeline.Task {
-    key = "vcs:submodules"
-    body = "simplon.tasks.vcs:submodules"
-  }
-  tasks t_vcs_auth_scopes typeOf simplon.pipeline.Task {
-    key = "vcs:auth-scopes"
-    body = "simplon.tasks.vcs:auth_scopes"
-  }
-  tasks t_tasks_catalogue typeOf simplon.pipeline.Task {
-    key = "tasks:catalogue"
-    body = "simplon.tasks.tasks:catalogue"
-  }
-  tasks t_tasks_generate typeOf simplon.pipeline.Task {
-    key = "tasks:generate"
-    body = "simplon.tasks.tasks:generate"
-  }
-  tasks t_support_migrate typeOf simplon.pipeline.Task {
-    key = "support:migrate"
-    body = "simplon.tasks.migrate:migrate"
-  }
-  tasks t_support_model typeOf simplon.pipeline.Task {
-    key = "support:model"
-    body = "simplon.tasks.manifestmodel:model"
   }
   artifacts a_kernel typeOf simplon.pipeline.Artifact {
     key = "kernel"

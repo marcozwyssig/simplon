@@ -76,11 +76,13 @@ Port typeOf firn.core.Class extends firn.core.NamedResource {
   }
 }
 
+// A task's `key` is its coordinate, and a task without one is firn's E004 (si#400 part 4, decision 4): two
+// tasks on one coordinate, or one on none, could not be told apart. A diagnosis, and it binds the catalogue too.
 Task typeOf firn.core.Class extends firn.core.NamedResource {
   allowRoot = true
   property key typeOf firn.core.Attribute {
     range = firn.core.StringLiteral
-    subjectCardinality = 0..1
+    subjectCardinality = 1..1
   }
   property body typeOf firn.core.Attribute {
     range = firn.core.StringLiteral
@@ -100,7 +102,7 @@ Task typeOf firn.core.Class extends firn.core.NamedResource {
 
 // A task the PLATFORM offers (si#344 C.1): a catalogue coordinate in `key`, its body in `body`. Its own
 // class, because every product model declares plain Tasks in the same firn project (`support manifest
-// model`), and a template over `Task` would gather theirs too. si#400 builds the base classes on this.
+// model`), and a template over `Task` would gather theirs too. Since si#400 4a it holds every catalogue task, ported or not.
 CatalogueTask typeOf firn.core.Class extends simplon.pipeline.Task {
   allowRoot = true
 }

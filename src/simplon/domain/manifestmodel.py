@@ -40,8 +40,8 @@ What is NOT exported, said so that "drops nothing" stays true of the rest:
     product offers and never places (si#53) is invisible until parts B/C need it. A Task is keyed by the
     name a command's `task:` gives, as a CatalogueTask is by its coordinate, and not by its impl: two
     tasks on one body may declare different ports, and keyed by impl the second's were dropped (si#420).
-  - a Task for a command on a catalogue task the model carries (`artifactschema.PORTS`): the command
-    references `simplon.catalogue.<task>` instead, the one source of its ports (si#344 C.2).
+  - a Task for a command on a catalogue task (`artifactschema.BODIES`, every one since si#400 4a): the command
+    references `simplon.catalogue.<task>` instead, the one source of its body and ports (si#344 C.2).
 `cd: default:` IS exported, as `Product.default` - the name as written, not a reference to one of
 `Product.environments`, because a loadable manifest may name none (simplon's own: `default: dev`, no
 matrix); whether it names a real one stays `environments.parse_data`'s verdict at run time.
@@ -60,7 +60,7 @@ import re
 from collections.abc import Mapping
 
 from simplon.domain import artifactsection
-from simplon.domain.artifactschema import PORTS
+from simplon.domain.artifactschema import BODIES
 from simplon.domain.environments import matrix_section
 from simplon.domain.manifest import Manifest
 
@@ -195,8 +195,9 @@ class _Export:
                 body += _block(f"release a_{mangle(bundle)} typeOf simplon.pipeline.Release",
                                self.artifact_fields(bundle))
         else:
-            if spec.task in PORTS:
-                # a catalogue task the model carries (si#344 C.1): referenced, never re-declared (C.2)
+            if spec.task in BODIES:
+                # a catalogue task: since si#400 4a the model carries all of them, ported or not, so it is
+                # referenced and never re-declared (si#344 C.2)
                 body.append(f"task = simplon.catalogue.{mangle(spec.task)}")
             else:
                 if spec.task not in self.tasks:

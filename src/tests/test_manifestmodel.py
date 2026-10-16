@@ -81,7 +81,7 @@ def test_a_name_that_is_not_a_firn_name_keeps_its_original_in_key():
 
 
 def test_a_command_runs_the_task_its_task_names_and_the_task_carries_the_impl():
-    # arrange: a product task, which no catalogue model carries (since si#344 C.2 a modelled catalogue task is
+    # arrange: a product task, which no catalogue model carries (since si#400 4a every catalogue task is
     # referenced instead - `test_a_command_on_a_modelled_catalogue_task_references_it...`)
     text = DEMO.replace("cd:\n", 'tasks:\n  wheel: { impl: "orchestrator.cli:build_wheel", help: "Build." }\n'
                         "cd:\n").replace("      all:", "      wheel: { task: wheel }\n      all:")
@@ -367,6 +367,13 @@ def _source(name: str) -> tuple[manifest_mod.Manifest, str]:
     return manifest_mod.load(text, catalogue=catalogue.load(), manifest_path=f"{name}.yaml"), text
 
 
+def _placed_product_tasks(mf: manifest_mod.Manifest) -> set[str]:
+    """The product tasks a command places, keyed by the `task:` name, not by its impl (si#420)."""
+    from simplon.domain.artifactschema import BODIES
+    specs = [mf.spec_for(group, command) for group, members in mf.groups.items() for command in members]
+    return {s.task for s in specs if not s.depends_on and s.task not in BODIES}
+
+
 def _count(out: str, pattern: str) -> int:
     return len(re.findall(rf"^\s*{pattern} typeOf .*\{{$", out, re.MULTILINE))
 
@@ -384,9 +391,8 @@ def test_the_export_drops_nothing(name):
     # everything else: `cd: site:` (nothing in the M2 holds a Site until a deploy reads one) and a
     # `tasks:` entry no command places (one Task per impl a command USES, R9). Both are left out of
     # every count below on purpose, and nothing here counts them.
-    from simplon.domain.artifactschema import PORTS
     specs = [mf.spec_for(group, command) for group, members in mf.groups.items() for command in members]
-    impls = {s.impl for s in specs if not s.depends_on and s.task not in PORTS}
+    placed = _placed_product_tasks(mf)
 
     # act
     out = manifestmodel.export(mf, document, name, manifestmodel.KERNEL_SECTIONS)
@@ -397,7 +403,9 @@ def test_the_export_drops_nothing(name):
     assert len(re.findall(r"typeOf simplon\.pipeline\.Group \{$", out, re.MULTILINE)) == len(mf.groups)
     assert _count(out, r"environments \w+") == len(envs)
     assert len(re.findall(r"^  default = ", out, re.MULTILINE)) == (matrix["default"] is not None)
-    assert impls and _count(out, r"tasks \w+") == len(impls)
+    # since si#400 4a a command on a catalogue task references the catalogue's instance; the demo places none
+    assert placed or name == "demo"
+    assert _count(out, r"tasks \w+") == len(placed)
     assert len(re.findall(r"^\s+produces = ", out, re.MULTILINE)) == sum(
         len(names) for s in specs for names in s.produces.values())
     assert len(re.findall(r"^\s+consumes = ", out, re.MULTILINE)) == sum(
@@ -419,6 +427,47 @@ def test_a_command_on_a_modelled_catalogue_task_references_it_and_declares_no_ta
     command = _block(out, "command image typeOf simplon.pipeline.TaskCommand {")
     assert "task = simplon.catalogue.build_image" in command
     assert "t_simplon_tasks_image_build" not in out
+
+
+def test_a_command_on_a_portless_catalogue_task_references_the_catalogue_instance():
+    # arrange: vcs:push has no port, so before si#400 4a the export re-declared it as a product task
+    text = DEMO.replace("      all:", '      push: { task: "vcs:push" }\n      all:')
+
+    # act
+    out = _export(text)
+
+    # assert
+    assert "task = simplon.catalogue.vcs_push" in _block(out, "command push typeOf simplon.pipeline.TaskCommand {")
+    assert "simplon.tasks.vcs:push" not in out
+
+
+def test_the_export_declares_no_task_on_a_catalogue_coordinate():
+    # arrange: every reachable manifest; a product's own task never carries a `:` (treeform._resolve_one)
+    for name in ["demo", *sorted(p.stem for p in FIXTURES.glob("*.yaml"))]:
+        mf, text = _source(name)
+
+        # act
+        out = manifestmodel.export(mf, yaml.safe_load(text), name, manifestmodel.KERNEL_SECTIONS)
+
+        # assert
+        keys = re.findall(r'^\s+tasks \w+ typeOf simplon\.pipeline\.Task \{\n\s+key = "([^"]+)"', out, re.MULTILINE)
+        assert keys or name == "demo", name   # a pattern that matched nothing would pass on nothing
+        assert [k for k in keys if ":" in k] == [], name
+
+
+def test_the_export_counts_two_product_tasks_on_one_impl_as_two_tasks():
+    # arrange: si#420 - one body, two declarations; "drops nothing" must count tasks, not impls
+    text = DEMO.replace("cd:\n", "tasks:\n"
+                        '  pack-a: { impl: "orchestrator.cli:pack", help: "A." }\n'
+                        '  pack-b: { impl: "orchestrator.cli:pack", help: "B." }\n'
+                        "cd:\n").replace("      all:", "      pa: { task: pack-a }\n      pb: { task: pack-b }\n"
+                                         "      all:")
+
+    # act
+    out = _export(text)
+
+    # assert
+    assert _count(out, r"tasks \w+") == len(_placed_product_tasks(_load(text))) == 2
 
 
 def test_a_binding_is_exported_as_a_reference_to_the_artifact():
