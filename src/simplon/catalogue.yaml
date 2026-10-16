@@ -312,7 +312,7 @@ tasks:
       python:  { help: "interpreter to run mypy with, relative to `workdir` (default: the host venv the CLI runs in)" }
   # The release-notes guard (si#89, si#103). It was a test in this kernel's own `tests/` - which guarded
   # this kernel and nothing else, so every product consuming the catalogue could tag, publish and never
-  # write a word, and nothing said anything. That is netctl#1280's rule exactly: an `impl:` belongs in the
+  # write a word, and nothing said anything. That is netctl#1280's rule exactly: a body belongs in the
   # platform as soon as it needs no product knowledge, and this needs none. Which versions exist is
   # `git tag`, which the page documents is its headings, what landed between two tags is `git log`.
   #

@@ -137,7 +137,7 @@ breaking a product. A direct import is the deliberate exception a composition ro
 take.
 
 The line that does hold inside `simplon/tasks/` is **named versus unnamed**: a module some catalogue
-coordinate points its `impl:` at is reachable, by coordinate first and by import where a composition
+coordinate points its body at is reachable, by coordinate first and by import where a composition
 root has reason to. A module in there that **no** coordinate names is innards — `allure`, `gitops`,
 `handoff`, `profiles` and `proxmoxapi` today — and nothing outside the directory imports any of them.
 `handoff` works out which artifacts cross a job boundary of a generated workflow; only `workflowgen` calls it.
