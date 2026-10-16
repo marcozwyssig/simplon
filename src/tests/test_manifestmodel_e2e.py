@@ -46,7 +46,7 @@ def test_a_reachable_manifest_exports_to_a_model_firn_accepts(tmp_path, name):
     (target / f"{name}.firn").write_text(out, encoding="utf-8")
 
     # act
-    rc, text_out = firn_rc(tmp_path, "check")
+    rc, text_out = firn_rc(tmp_path, "validate")
 
     # assert
     assert rc == 0, text_out

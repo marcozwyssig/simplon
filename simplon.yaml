@@ -148,8 +148,8 @@ ci:
       # `test generated` is green over the deletion (unstaged) or asks for it to be committed (staged).
       # `model-guard` refuses such lines by number BEFORE firn runs, and `stop_on_failure: true` is what
       # makes "before" true: with the default (false) the aggregate would run `model-gen` after a red
-      # guard and delete the lines anyway. firn v0.2.0's W303 says the same about hand edits; it arrives
-      # with the bump (si#410), and the guard stays until then.
+      # guard and delete the lines anyway. firn v0.2.0's W303 says the same about hand edits; it arrived
+      # with the bump (si#410), and the guard stays until W303 is measured to cover what the guard refuses.
       model:
         help: "Guard the catalogue's hand-written lines, then generate the catalogue's kinds, the artifact schema, one class per catalogue task, the kinds page and the architecture data and page from simplon's firn model."
         depends_on: [model-guard, model-gen]
@@ -163,7 +163,7 @@ ci:
       model-gen:
         task: build:model
         with:
-          image: ghcr.io/marcozwyssig/firn:v0.1.0
+          image: ghcr.io/marcozwyssig/firn:v0.2.0
           cwd: src
           network: none
   test:
@@ -295,17 +295,17 @@ ci:
       all:
         help: "Run every test: the pytest suite, the type gate, the staleness gate, then the release-notes guard."
         depends_on: [suite, typecheck-python, generated, release-notes]
-      # `firn check` over simplon's own pipeline model (si#371): rc passes through unchanged - 0 clean,
+      # `firn validate` over simplon's own pipeline model (si#371, si#410): rc passes through unchanged - 0 clean,
       # 1 model wrong, 2 usage, 3 no project, 70 firn's own fault. Started in src/, where firn.toml is.
       model:
         task: toolchain:run
         with:
-          image: ghcr.io/marcozwyssig/firn:v0.1.0
+          image: ghcr.io/marcozwyssig/firn:v0.2.0
           workdir: /workspace
           network: none
           cwd: src
           argv:
-          - check
+          - validate
   release:
     commands:
       # The release's members (si#344 C.3, spec C.4): the notes, the image and the tag are three leaves
@@ -519,7 +519,7 @@ generated:
     path: .github/workflows/ci.yml
     by: support workflows
   # simplon's own manifest as a firn model (si#346). `test generated` regenerates it and fails on drift;
-  # `test model` runs `firn check` over it with the M2 beside it, so a manifest change the model cannot
+  # `test model` runs `firn validate` over it with the M2 beside it, so a manifest change the model cannot
   # carry is red in CI rather than discovered when parts B and C generate from it.
   firn-model:
     path: src/firn/model/product/simplon/simplon.firn

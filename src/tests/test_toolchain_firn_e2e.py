@@ -22,7 +22,7 @@ from simplon.domain import catalogue
 from simplon.kernel.run import run
 from simplon.tasks import profiles, toolchain
 
-FIRN = profiles.profile("firn", version="0.1.0")
+FIRN = profiles.profile("firn", version="0.2.0")
 OWN_MODEL = Path(__file__).resolve().parents[1] / "firn"
 
 needs_docker = pytest.mark.skipif(not docker_is_usable(), reason="no docker daemon here to run firn in")

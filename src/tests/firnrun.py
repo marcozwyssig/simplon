@@ -4,7 +4,7 @@ from pathlib import Path
 from simplon.kernel.run import run
 from simplon.tasks import profiles, toolchain
 
-FIRN = profiles.profile("firn", version="0.1.0")
+FIRN = profiles.profile("firn", version="0.2.0")
 
 
 def firn_rc(project: Path, *argv: str, cwd: str = "") -> tuple[int, str]:

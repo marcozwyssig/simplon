@@ -425,7 +425,7 @@ kernel reads are modelled; a product's own sections are `ProductData` with their
 firn names take no `-` yet (firn#962 will allow it), so names are mangled - the non-group children get a
 `t_`, `e_`, `i_`, `a_`, `s_` or `d_` prefix - and the original is kept in `key`. simplon checks its own
 model in CI: `simplon.yaml` lists it under `generated:`, so `test generated` fails when the committed file
-is not what the command writes, and `test model` runs `firn check` over it with the M2 packages beside it.
+is not what the command writes, and `test model` runs `firn validate` over it with the M2 packages beside it.
 A product's exported model names `simplon.manifest.*` and `simplon.pipeline.*`, and those packages live in
 this repository's `src/firn/`, not in the kernel's interface: checking a product's model needs simplon's
 M2 beside it, and shipping the M2 for that is not done yet. (The wheel carries `simplon` only: `firn*` is
@@ -565,9 +565,9 @@ family for the reason above and not for this one: a product may file it anywhere
 use case files the very same coordinate under `deploy up` to run the binary it compiled.
 
 **One profile places a command under `test`, and the exception is measured rather than waived**
-(si#371). `support toolchain firn <version>` writes `firn check` as `test model` and `firn gen` as
+(si#371). `support toolchain firn <version>` writes `firn validate` as `test model` and `firn gen` as
 `build model`. The argument above is about a number that can describe something older than the tree:
-`ctest` runs the binaries the last build left behind. `firn check` reads the model files as they stand,
+`ctest` runs the binaries the last build left behind. `firn validate` reads the model files as they stand,
 with no build step between, so its exit code is the verdict about the tree - the same shape as
 `test typecheck-python`, which runs mypy over the source and stands under `test` for that reason. firn's
 codes are 0 clean, 1 model wrong, 2 usage, 3 no project and 70 internal, and `toolchain:run` hands every

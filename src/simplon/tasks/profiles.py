@@ -32,7 +32,7 @@ class Profile:
     a non-empty `argv` and the `workdir` it runs in - so the scaffolder writes it out verbatim.
 
     `placements` SAYS WHERE A COMMAND GOES WHEN IT IS NOT A BUILD STEP (si#371). Every command of the
-    first four languages is written under `ci: build:`, and that stays the default. firn's `check` is a
+    first four languages is written under `ci: build:`, and that stays the default. firn's `validate` is a
     verdict, not a product, so it belongs under `test:`, and its `gen` under `build:` - and both are
     called `model`, which a table keyed by command name alone cannot say. A placement is
     `(phase, command name)`; a command it does not name is `("build", <its key>)`, exactly as before.
@@ -471,10 +471,13 @@ PROFILES: dict[str, Profile] = {
     # runs as uid 65532, and `toolchain:run` runs it as the caller instead, which is what firn's docs/07
     # recommends for anything that writes - `gen` writes, and the files belong to whoever ran it.
     # Exit codes pass through unchanged: 0 clean, 1 model wrong, 2 usage, 3 no project, 70 internal.
+    # firn v0.2.0 renamed `check` to `validate` as a hard cut (firn#964, si#410): `check` answers rc 2,
+    # "Unmatched argument". The command KEY is still `check` - it names the scaffolded command's place,
+    # not firn's subcommand, and whether it follows is a surface decision of its own.
     "firn": Profile(
         image="ghcr.io/marcozwyssig/firn:v{version}",
         commands={
-            "check": {"workdir": "/workspace", "network": "none", "argv": ["check"]},
+            "check": {"workdir": "/workspace", "network": "none", "argv": ["validate"]},
             "gen": {"workdir": "/workspace", "network": "none", "argv": ["gen"]},
         },
         placements={"check": ("test", "model"), "gen": ("build", "model")},
