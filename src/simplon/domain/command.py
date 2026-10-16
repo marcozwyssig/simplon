@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Mapping
+from types import MappingProxyType
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar, NamedTuple
 
@@ -55,10 +56,13 @@ class ParamPresentation(NamedTuple):
     short_first: bool = False
 
 
-#: Every field one kind has and the other lacks, with the empty value the other kind reads it as.
+#: Every field one kind has and the other lacks, with the empty value the other kind reads it as. The maps
+#: are read-only: one object answers every command, so a consumer writing into what it read would otherwise
+#: write into every other command's answer too (final review of 4d).
+_EMPTY: Mapping[str, object] = MappingProxyType({})
 _OTHER_KIND: Mapping[str, object] = {
-    "impl": "", "task": "", "passthrough_args": False, "with_": {}, "params": {}, "produces": {},
-    "consumes": {}, "ports": (),
+    "impl": "", "task": "", "passthrough_args": False, "with_": _EMPTY, "params": _EMPTY, "produces": _EMPTY,
+    "consumes": _EMPTY, "ports": (),
     "depends_on": (), "stop_on_failure": False, "parallel": False, "keep_awake": False, "passes": (),
     "release": "",
 }
@@ -97,11 +101,7 @@ class Command:
         # Reached only when normal lookup fails. Dunders raise at once: copy and pickle probe them.
         if name.startswith("__") or name not in _OTHER_KIND:
             raise AttributeError(name)
-        kind = type(self).__name__
-        major, minor = COMPAT_DUE_AFTER
-        warnings.warn(
-            f"{kind}.{name} is not a field of a {kind}; it reads as empty until simplon {major}.{minor + 1}.0 "
-            f"removes it - ask isinstance(command, TaskCommand) instead", CompatWarning, stacklevel=2)
+        _warn(self, name, "reads as empty")
         return _OTHER_KIND[name]
 
 
@@ -209,6 +209,25 @@ class AggregateCommand(Command):
 
 @dataclass(frozen=True)
 class ReleaseCommand(AggregateCommand):
-    """An aggregate that names its release bundle: `simplon.pipeline.ReleaseCommand` (si#344 C.3)."""
+    """An aggregate that names its release bundle: `simplon.pipeline.ReleaseCommand` (si#344 C.3).
+
+    Until 4d the bundle WAS `produces: {release: (<bundle>,)}`, so for the window `produces` answers that
+    and not the empty map every other aggregate reads: "declared a bundle" must not read as "declared
+    nothing", which is the ambiguity the window exists to end."""
     release: str = ""
+
+    def __getattr__(self, name: str) -> object:
+        if name == "produces":
+            _warn(self, name, "reads as `{release: (<release>,)}`")
+            return MappingProxyType({"release": (self.release,)})
+        return super().__getattr__(name)
+
+
+def _warn(command: Command, name: str, reads: str) -> None:
+    kind = type(command).__name__
+    major, minor = COMPAT_DUE_AFTER
+    # stacklevel 3: past this helper and `__getattr__`, at the consumer's read
+    warnings.warn(
+        f"{kind}.{name} is not a field of a {kind}; it {reads} until simplon {major}.{minor + 1}.0 removes "
+        f"it - ask isinstance(command, TaskCommand) instead", CompatWarning, stacklevel=3)
 

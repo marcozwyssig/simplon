@@ -99,3 +99,65 @@ def test_a_task_command_in_an_env_first_group_is_a_deploy_and_an_aggregate_there
     assert isinstance(up, command.Deploy)
     assert isinstance(stage, command.AggregateCommand) and not isinstance(stage, command.TaskCommand)
     assert type(build) is command.TaskCommand
+
+
+# --- final review of 4d ------------------------------------------------------------------------------
+
+def test_a_misplaced_aggregate_naming_two_outputs_is_told_where_it_stands_first():
+    # arrange: the fix is to drop `produces:`, not to reshape it - so placement is said before shape,
+    # as `ports._check_bundles` said it before 4d moved the shape half into the loader
+    from test_manifest import _DEPS
+    from simplon.domain import manifest
+    text = _DEPS.replace('depends_on: ["prep", "up"]', 'depends_on: ["prep", "up"]\n'
+                         '        produces: { release: rel, image: thing }')
+
+    # act / assert
+    with pytest.raises(ValueError, match=r"only an aggregate under `ci: release:` does"):
+        manifest.load(text)
+
+
+def test_a_task_command_in_a_nested_env_first_group_is_a_deploy_as_the_cli_gates_it():
+    # arrange: env-first inherited from a node below the top level, which the CLI's gate honours
+    from simplon.domain import manifest
+    text = """
+tasks:
+  fix: { impl: "m:f", help: "Fix it." }
+
+support:
+  groups:
+    cluster:
+      env_first: true
+      commands:
+        fix: { task: "fix" }
+"""
+    mf = manifest.load(text)
+    assert mf.taxonomy().group_requires_env("support.cluster")
+
+    # act / assert
+    assert isinstance(mf.spec_for("support.cluster", "fix"), command.Deploy)
+
+
+def test_a_release_command_still_answers_its_bundle_under_produces_for_the_window():
+    # arrange: before 4d the bundle WAS `produces: {release: (...)}`; reading it as empty would turn
+    # "declared a bundle" into "declared nothing", the ambiguity the window exists to end
+    release = command.ReleaseCommand(depends_on=("a",), release="kernel-release")
+
+    # act / assert
+    with pytest.warns(command.CompatWarning, match=r"ReleaseCommand\.produces"):
+        assert release.produces == {"release": ("kernel-release",)}
+
+
+def test_the_compatibility_hands_out_no_shared_mutable_value():
+    # arrange
+    first, second = command.AggregateCommand(), command.AggregateCommand()
+
+    # act: one consumer writes into what it read
+    with pytest.warns(command.CompatWarning):
+        try:
+            first.with_["leaked"] = 1
+        except TypeError:
+            pass
+
+    # assert: nobody else sees it
+    with pytest.warns(command.CompatWarning):
+        assert "leaked" not in second.with_

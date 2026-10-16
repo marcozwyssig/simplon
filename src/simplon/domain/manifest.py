@@ -17,9 +17,11 @@ engine must not bind to one CLI framework). "One source, two outputs": the same 
 runtime CLI now and, in Phase 2, the CI workflows.
 
 Parsing + validation run through the private Pydantic v2 models below (`_ManifestModel` and its spec
-models). The PUBLIC surface is `Manifest` and the `simplon.domain.command` classes (si#400 4d): `load()`
-converts the validated model into those tuples before returning, so consumers see byte-for-byte the same
-types (field access, tuple unpacking, `taxonomy()`, `spec_for()`, `spec_by_name()`). The fail-loud
+models). The PUBLIC surface is the `Manifest` NamedTuple and, since si#400 4d, each command as an object of
+its kind's `simplon.domain.command` class: `load()` converts the validated model into those before
+returning, so no Pydantic type escapes. A command is a frozen dataclass, not a tuple: field access and
+`dataclasses.replace` work, while the NamedTuple protocol `CommandSpec` had (unpacking, indexing,
+`_replace`, `_asdict`) is gone with it, with no window - no measured consumer used it. The fail-loud
 contract is unchanged - every rule violation is raised as a ValueError, and `load()` re-raises any Pydantic
 ValidationError as a plain ValueError so a raw ValidationError never escapes.
 """
@@ -863,14 +865,14 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     env_groups = frozenset(name for name, node in tree.items()
                            if node.env_first and any(group == name or group.startswith(f"{name}.")
                                                      for group in groups))
-    commands = {group: {name: _command(spec, group, name, env_groups, product_tasks)
-                        for name, spec in members.items()}
-                for group, members in model.groups.items()}
     # Every DOTTED `groups:` key must name a node the `taxonomy:` block actually declares. Without this,
     # an unmatched path was dropped from the tree while `groups`/`commands` kept it: the commands stayed
     # registered and runnable but were invisible to the taxonomy, so they were never env-gated and never
     # counted towards ambiguity. A typo in a nested path has to fail at load, not disable a gate.
     taxonomy = CommandTaxonomy.from_tree(tree)
+    commands = {group: {name: _command(spec, group, name, taxonomy, areas, product_tasks)
+                        for name, spec in members.items()}
+                for group, members in model.groups.items()}
     for name in groups:
         if "." in name and taxonomy.resolve_path(name) is None:
             # Unreachable from a product since the tree form: `groups` is `lower`'s output over the same
@@ -888,12 +890,13 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     return loaded
 
 
-def _command(spec: "_CommandSpecModel", group: str, name: str, env_groups: frozenset[str],
-             product_tasks: dict) -> Command:
+def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: CommandTaxonomy,
+             areas: dict[str, str], product_tasks: dict) -> Command:
     """The object of the class a validated spec's kind names (si#400 4d), carrying only that kind's fields:
     an aggregate that names its release bundle is a `ReleaseCommand`, any other one an `AggregateCommand`;
     a task command in an env-first group is a `Deploy`, any other one a `TaskCommand`. Only a TASK command
-    is a `Deploy` - an aggregate in `deploy` stays an aggregate, as `simplon.pipeline` has it.
+    is a `Deploy` - an aggregate in `deploy` stays an aggregate, as `simplon.pipeline` has it. Env-first is
+    the taxonomy's answer, the one the CLI gates with, so a node marked `env_first:` below the top counts.
 
     `spec` first: the refusal census records a rule's first argument as the population it rules on."""
     common: dict[str, Any] = {"help": spec.help, "hidden": spec.hidden, "unattended": spec.unattended}
@@ -903,15 +906,21 @@ def _command(spec: "_CommandSpecModel", group: str, name: str, env_groups: froze
                                      "keep_awake": spec.keep_awake}
         if not spec.produces:
             return AggregateCommand(**common, **aggregate)
-        # Rule 8's shape half (spec C.4): a `ReleaseCommand` holds ONE bundle by name, so a `produces:` it
-        # cannot hold is refused here, where the written map is still in hand. Where it may stand - only
-        # under `ci: release:` - and what the bundle must be stay in `ports._check_bundles`.
+        # Rule 8 (spec C.4): a `ReleaseCommand` holds ONE bundle by name, so a `produces:` it cannot hold is
+        # refused here, where the written map is still in hand. Placement first: a misplaced aggregate's
+        # fix is to drop `produces:`, and naming its shape first would send the reader to reshape it (final
+        # review of 4d). What the bundle must be stays in `ports._check_bundles`.
+        top = group.split(".", 1)[0]
+        if (areas.get(top), top) != ("ci", "release"):
+            raise ValueError(
+                f"aggregate '{group} {name}' names an output, and only an aggregate under `ci: release:` does - "
+                f"its one output is the release bundle")
         if list(spec.produces) != ["release"] or len(spec.produces["release"]) != 1:
             raise ValueError(
                 f"aggregate '{group} {name}' names {', '.join(spec.produces)}: a release "
                 f"aggregate names exactly one output, `produces: {{ release: <artifact> }}`")
         return ReleaseCommand(**common, **aggregate, release=spec.produces["release"][0])
-    kind = Deploy if group.split(".")[0] in env_groups else TaskCommand
+    kind = Deploy if taxonomy.group_requires_env(group) else TaskCommand
     return kind(**common, impl=spec.impl, passthrough_args=spec.passthrough_args, with_=spec.with_,
                 task=spec.task, produces=spec.produces, consumes=spec.consumes,
                 ports=ports.of(spec.task, product_tasks) if spec.task else (),

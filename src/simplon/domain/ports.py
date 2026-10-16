@@ -227,12 +227,9 @@ def _check_bundles(manifest: "Manifest", declared: Mapping[str, "artifactsection
             if not isinstance(spec, ReleaseCommand):
                 continue
             where = f"{group} {name}"
-            if not _under(manifest, group, "release"):
-                raise ValueError(
-                    f"aggregate '{where}' names an output, and only an aggregate under `ci: release:` does - "
-                    f"its one output is the release bundle")
-            # The shape half of rule 8 - exactly one output, `release` - is `manifest._command`'s, because a
-            # `ReleaseCommand` holds its one bundle by name and cannot carry a map it would have to refuse.
+            # Where a release aggregate may stand and its shape - exactly one output, `release` - are
+            # `manifest._command`'s, placement first: a `ReleaseCommand` holds its one bundle by name and
+            # cannot carry a map it would have to refuse (si#400 4d).
             bundle = spec.release
             if bundle not in declared:
                 raise ValueError(
