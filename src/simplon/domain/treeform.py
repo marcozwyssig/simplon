@@ -7,7 +7,8 @@ exactly the two structures `_ManifestModel` accepts - a `taxonomy:` mapping and 
 members` mapping. ("Flat" there is the loader's internal member map, not the deleted flat manifest form
 the last section of this module is about.)
 
-Lowering rather than replacing is deliberate. `CommandSpec`, `Manifest`, the six validation rules,
+Lowering rather than replacing is deliberate. The command objects (`simplon.domain.command`, `CommandSpec`
+until si#400 4d), `Manifest`, the six validation rules,
 `taskgen` and `simplon.cli.assemble` all keep working on shapes they already consume, which is what let
 every step of the migration off the old form be proved by a zero-diff on the product's CLI-surface
 golden.

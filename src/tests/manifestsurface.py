@@ -6,6 +6,7 @@ texts are included because a migration that lost a `help:` would change `--help`
 """
 from __future__ import annotations
 
+from simplon.domain.command import AggregateCommand, TaskCommand
 from simplon.domain.manifest import Manifest
 
 
@@ -14,7 +15,10 @@ def cli_surface(mf: Manifest) -> dict:
     return {
         "groups": {group: list(members) for group, members in sorted(mf.groups.items())},
         "commands": {
-            group: {name: {"impl": spec.impl, "depends_on": list(spec.depends_on), "help": spec.help}
+            # si#400 4d: each kind carries only its own fields; the golden keeps both keys, empty on the other kind
+            group: {name: {"impl": spec.impl if isinstance(spec, TaskCommand) else "",
+                           "depends_on": list(spec.depends_on) if isinstance(spec, AggregateCommand) else [],
+                           "help": spec.help}
                     for name, spec in sorted(specs.items())}
             for group, specs in sorted(mf.commands.items())
         },

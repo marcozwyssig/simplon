@@ -28,7 +28,7 @@ from simplon.kernel.run import LINE_BREAK, run_stream
 
 # What may run at the same time is read off the plan tree alone, so it lives with the tree: the load rule
 # that refuses a fan racing a consumer past its producer asks the same function the runner does (si#419).
-from simplon.kernel.plan import Fan, Schedule, parallel_siblings, schedule_indices, schedule_of
+from simplon.kernel.plan import Fan, Schedule, aggregate_of, parallel_siblings, schedule_indices, schedule_of
 
 if TYPE_CHECKING:   # type-only; the tree is the kernel's own type, the manifest builds it (si#391)
     from simplon.kernel.plan import PlanNode
@@ -764,7 +764,8 @@ def abort_after(pipeline: Pipeline, failed: int, started: frozenset[int] | None 
         return (Abort(scope="", indices=frozenset(remaining))
                 if pipeline.stop_on_failure else _NOTHING_ABORTED)
     leaves = tree.leaves()
-    scope = next((node for node in _chain_to(tree, leaves[failed]) if node.spec.stop_on_failure), None)
+    scope = next((node for node in _chain_to(tree, leaves[failed])
+                  if (aggregate := aggregate_of(node.spec)) is not None and aggregate.stop_on_failure), None)
     if scope is None:
         return _NOTHING_ABORTED
     within = {id(leaf) for leaf in scope.leaves()}
@@ -797,7 +798,9 @@ def build_rows(pipeline: Pipeline) -> Row:
         def visit(node: "PlanNode") -> Row:
             children = tuple(visit(child) for child in node.children)
             planned = {child.name for child in node.children}
-            omitted = tuple(paths.get(dep, dep) for dep in node.spec.depends_on if dep not in planned)
+            aggregate = aggregate_of(node.spec)
+            omitted = tuple(paths.get(dep, dep) for dep in (aggregate.depends_on if aggregate else ())
+                            if dep not in planned)
             return Row(label=node.path or node.name, children=children,
                        step=step_of.get(id(node)), omitted=omitted)
 

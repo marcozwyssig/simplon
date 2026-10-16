@@ -62,6 +62,7 @@ from collections.abc import Mapping
 from simplon.domain import artifactsection
 from simplon.domain.artifactschema import BODIES
 from simplon.domain.environments import matrix_section
+from simplon.domain.command import AggregateCommand, ReleaseCommand, TaskCommand
 from simplon.domain.manifest import Manifest
 
 _NOT_NAME = re.compile(r"[^A-Za-z0-9_]")
@@ -176,7 +177,7 @@ class _Export:
     def command(self, group: str, name: str) -> list[str]:
         spec = self.manifest.spec_for(group, name)
         body = [f"key = {_q(name)}"]
-        if spec.depends_on:
+        if isinstance(spec, AggregateCommand):
             for dep in spec.depends_on:
                 # the kernel's own resolution: a dependency is a bare name one group owns (rule 4, #895)
                 path = self.manifest.path_by_name(dep)
@@ -186,7 +187,8 @@ class _Export:
                 owner, _, member = path.rpartition(".")
                 body.append(f"member = {self.paths[owner]}.{mangle(member)}")
             kind = "AggregateCommand"
-            for bundle in spec.produces.get("release", ()):
+            if isinstance(spec, ReleaseCommand):
+                bundle = spec.release
                 # A release aggregate COMPOSES its bundle (ReleaseCommand.release, spec C.4), so the bundle
                 # is not among the Product's artifacts (`artifacts` skips it) and its path is
                 # <this command>.a_<bundle>, not {self.root}.a_<bundle>. Nothing references a bundle in
@@ -195,6 +197,7 @@ class _Export:
                 body += _block(f"release a_{mangle(bundle)} typeOf simplon.pipeline.Release",
                                self.artifact_fields(bundle))
         else:
+            assert isinstance(spec, TaskCommand), spec  # the loader builds no third kind
             if spec.task in BODIES:
                 # a catalogue task: since si#400 4a the model carries all of them, ported or not, so it is
                 # referenced and never re-declared (si#344 C.2)

@@ -2,32 +2,40 @@
 
 The step model and `run_command` are the kernel (layer 0), and the manifest reader is the domain above it.
 The kernel used to import `Manifest` and `PlanNode` from it, so the lowest layer named a type of the one
-above. The kernel now says what it reads. `CommandDecl` lists the six fields of a command's declaration it
-uses, `Plan` lists the four questions it asks a manifest, and `PlanNode`, the tree a plan is built as, lives
-here. `orchestrator.manifest` imports `PlanNode` from here (downward), so `manifest.PlanNode` is still the
-same class, and `Manifest` and `CommandSpec` satisfy the two protocols without naming them.
+above. The kernel now says what it reads. `CommandDecl` lists what it reads of every command and
+`AggregateDecl` what it reads of an aggregate, `Plan` lists the four questions it asks a manifest, and
+`PlanNode`, the tree a plan is built as, lives here. `orchestrator.manifest` imports `PlanNode` from here
+(downward), so `manifest.PlanNode` is still the same class, and `Manifest` and the `simplon.domain.command`
+classes satisfy the protocols without naming them.
 
 What a plan may run at the same time (`schedule_of`, `Fan`, `parallel_siblings`) lives here too and not in
 `steps`, because it is read off the tree alone: the runner schedules by it, and the load rule that refuses
 a fan racing a consumer past its producer (si#419) asks the same function before anything runs.
 
-si#400 replaces the hand-written `Manifest` and `CommandSpec` with generated classes. These protocols are
+si#400 replaces the hand-written `Manifest` and Command classes with generated ones. These protocols are
 what the generated classes have to satisfy.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import NamedTuple, Protocol
+from typing import NamedTuple, Protocol, cast
 
 
 class CommandDecl(Protocol):
-    """The fields of one command's declaration that the kernel reads: whether it runs (`impl`), what it
-    says it does (`help`), what it waits for (`depends_on`), and how its plan runs."""
+    """What the kernel reads of every command's declaration: whether it runs a task itself (`is_leaf`) and
+    what it says it does (`help`). Since si#400 4d a command is an object of its kind's class and carries
+    only its kind's fields, so what an aggregate alone has is `AggregateDecl`, reached through
+    `aggregate_of` - never read off a command whose kind is not known."""
 
     @property
-    def impl(self) -> str: ...
+    def is_leaf(self) -> bool: ...
     @property
     def help(self) -> str: ...
+
+
+class AggregateDecl(CommandDecl, Protocol):
+    """What the kernel reads of an aggregate: what it waits for (`depends_on`) and how its plan runs."""
+
     @property
     def depends_on(self) -> tuple[str, ...]: ...
     @property
@@ -36,6 +44,12 @@ class CommandDecl(Protocol):
     def parallel(self) -> bool: ...
     @property
     def keep_awake(self) -> bool: ...
+
+
+def aggregate_of(spec: CommandDecl) -> AggregateDecl | None:
+    """`spec` as an aggregate, or None for a leaf: the one place the kernel crosses from "a command" to
+    "an aggregate", so an aggregate's field is never asked of a leaf (si#400 4d)."""
+    return None if spec.is_leaf else cast(AggregateDecl, spec)
 
 
 class PlanNode(NamedTuple):
@@ -58,7 +72,7 @@ class PlanNode(NamedTuple):
     def is_leaf(self) -> bool:
         """True for an impl-bearing command (a step that really runs), False for an aggregate (a display
         node whose state a renderer derives from its children)."""
-        return bool(self.spec.impl)
+        return self.spec.is_leaf
 
     def leaves(self) -> tuple["PlanNode", ...]:
         """This node's executable leaves in POST-ORDER (every child's leaves before this node's own, so a
@@ -169,7 +183,7 @@ def schedule_of(tree: PlanNode) -> Schedule:
         own: Schedule = ((index_of[id(node)],) if node.is_leaf else ())
         if not node.children:
             return own
-        if node.spec.parallel:
+        if (aggregate := aggregate_of(node.spec)) is not None and aggregate.parallel:
             return (Fan(tuple(walk(child) for child in node.children)),) + own
         return tuple(item for child in node.children for item in walk(child)) + own
 

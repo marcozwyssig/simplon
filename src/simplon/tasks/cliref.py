@@ -62,6 +62,7 @@ from simplon.domain import catalogue as catalogue_mod
 from simplon.domain import context, task
 from simplon.kernel import log
 from simplon.domain.layout import validate_relative_dir
+from simplon.domain.command import TaskCommand
 from simplon.domain.manifest import Manifest
 
 #: The closing section's heading. A constant because it is the seam between what this product HAS and what
@@ -289,7 +290,7 @@ def unplaced(mf: Manifest, cat: catalogue_mod.Catalogue) -> tuple[tuple[str, str
     """
     # compared by body, not by spelling: a coordinate names its class, a product task the function (si#400 4c)
     placed = {task.body_identity(spec.impl) for members in mf.commands.values() for spec in members.values()
-              if spec.impl}
+              if isinstance(spec, TaskCommand)}
     return tuple((str(coordinate), str((spec or {}).get("help", "")))
                  for coordinate, spec in sorted((getattr(cat, "tasks", {}) or {}).items())
                  if task.body_identity(str((spec or {}).get("impl", ""))) not in placed)

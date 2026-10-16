@@ -32,6 +32,7 @@ from simplon.adapters import labinstance
 from simplon.kernel import log, runhost
 from simplon.domain.context import ENVIRONMENT_ENV, ProductContext, environment_name, launcher
 from simplon.domain import manifest, results, task
+from simplon.domain.command import AggregateCommand, Command, TaskCommand
 from simplon.kernel.product import StepFactoryContext, run_command
 from simplon.kernel.steps import NO_TUI_ENV, Pipeline
 from simplon.kernel.provenance import provenance_line
@@ -203,7 +204,7 @@ def _annotation(param: signatures.Parameter) -> object:
     return param.annotation if signatures.annotation(param) is not None else inspect.Parameter.empty
 
 
-def _bound(fn: Callable[..., object], spec: manifest.CommandSpec,
+def _bound(fn: Callable[..., object], spec: TaskCommand,
            *, where: str) -> Callable[..., object]:
     """`fn` as a Typer callback: the manifest's `params:` applied, its `with:` pinned, its return value
     coerced into the process exit code.
@@ -278,7 +279,7 @@ def _bound(fn: Callable[..., object], spec: manifest.CommandSpec,
     return callback
 
 
-def _command_callback(mf: manifest.Manifest, group: str, name: str, spec: manifest.CommandSpec,
+def _command_callback(mf: manifest.Manifest, group: str, name: str, spec: Command,
                       step_context: StepFactoryContext | None) -> Callable[..., object]:
     """The Typer callback for one manifest command. A leaf resolves to its own impl callable, unchanged.
     An impl-less AGGREGATE (#895/#896) has no callable of its own, so the kernel synthesizes one: it
@@ -296,13 +297,13 @@ def _command_callback(mf: manifest.Manifest, group: str, name: str, spec: manife
     coerced (`_rc` + `typer.Exit` in the template); this is the same coercion, so one body behaves
     identically under either mechanism. A body that raises `typer.Exit` itself never reaches the
     coercion, so the older style is untouched."""
-    if spec.impl:
+    if isinstance(spec, TaskCommand):
         return _bound(manifest.resolve_impl(spec), spec, where=f"{group} {name}")
     if step_context is None:
         raise ValueError(f"command '{group}.{name}' is an impl-less aggregate; "
                          "assemble(step_context=...) is required to bind it")
 
-    if spec.passes:
+    if isinstance(spec, AggregateCommand) and spec.passes:
         return _passing_aggregate(mf, group, name, spec, step_context)
 
     def _aggregate() -> None:
@@ -323,7 +324,7 @@ class Receiver(NamedTuple):
 
 
 def receivers(mf: manifest.Manifest, group: str, name: str,
-              spec: manifest.CommandSpec) -> dict[str, list[Receiver]]:
+              spec: AggregateCommand) -> dict[str, list[Receiver]]:
     """For each parameter aggregate `group name` passes (si#433): the planned leaves that take it
     UNPINNED, in plan order, each with the form ITS OWN command line gives that parameter.
 
@@ -339,7 +340,7 @@ def receivers(mf: manifest.Manifest, group: str, name: str,
     tree = mf.plan_tree_for(name, group=group)
     out: dict[str, list[Receiver]] = {passed: [] for passed in spec.passes}
     for leaf in tree.leaves():
-        leaf_spec = cast(manifest.CommandSpec, leaf.spec)
+        leaf_spec = cast(TaskCommand, leaf.spec)
         params = signatures.bindable(manifest.resolve_impl(leaf_spec))
         for param in params:
             if param.name not in out or param.name in (leaf_spec.with_ or {}):
@@ -383,7 +384,7 @@ def leaf_arguments(takers: Mapping[str, list[Receiver]],
             for leaf in {*options, *positionals}}
 
 
-def _passing_aggregate(mf: manifest.Manifest, group: str, name: str, spec: manifest.CommandSpec,
+def _passing_aggregate(mf: manifest.Manifest, group: str, name: str, spec: AggregateCommand,
                        step_context: StepFactoryContext) -> Callable[..., object]:
     """An aggregate's callback with one OPTION per name it `passes:` (si#433), handed on to its leaves.
 
@@ -471,7 +472,7 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
     seen: dict[str, int] = {}
     for specs in mf.commands.values():
         for spec in specs.values():
-            if spec.impl:
+            if isinstance(spec, TaskCommand):
                 # by body, not by spelling: a coordinate names its class, a product task the function (si#400 4c)
                 seen[task.body_identity(spec.impl)] = seen.get(task.body_identity(spec.impl), 0) + 1
     shared_impls = {ref for ref, count in seen.items() if count > 1}
@@ -534,8 +535,9 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
                 continue
             spec = mf.spec_for(group, name)
             fn = _command_callback(mf, group, name, spec, step_context)
-            kw: _CommandKwargs = {"context_settings": _PASSTHROUGH_CTX} if spec.passthrough_args else {}
-            if spec.impl and task.body_identity(spec.impl) in shared_impls:
+            kw: _CommandKwargs = ({"context_settings": _PASSTHROUGH_CTX}
+                                  if isinstance(spec, TaskCommand) and spec.passthrough_args else {})
+            if isinstance(spec, TaskCommand) and task.body_identity(spec.impl) in shared_impls:
                 # A callback several commands share cannot carry per-command help in its docstring, which
                 # is where Typer otherwise reads it from - all of them would render the same blurb. The
                 # manifest's `help:` is the canonical short summary and is per command, so it wins here

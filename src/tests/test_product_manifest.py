@@ -16,6 +16,7 @@ neither the page nor the built site is committed.
 The manifest is loaded through the real loader with the real catalogue - the same path the CLI takes -
 so a section this file asserts on is a section the running product actually has. AAA throughout.
 """
+from simplon.domain.command import AggregateCommand
 import shutil
 import subprocess
 
@@ -164,7 +165,7 @@ def test_the_docs_aggregate_carries_no_body_of_its_own(product):
     spec = product.commands["build"][DOCS_AGGREGATE]
 
     # Assert
-    assert not spec.impl
+    assert isinstance(spec, AggregateCommand)   # runs no body of its own (si#400 4d)
     assert spec.depends_on == EXPECTED_PLAN
 
 

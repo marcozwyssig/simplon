@@ -10,6 +10,7 @@ import time
 
 import pytest
 
+from simplon.domain import command
 from simplon.domain import context, results
 from simplon.domain.context import ProductContext
 
@@ -179,9 +180,9 @@ def _release_spec():
     from simplon.domain import manifest
     from simplon.domain.artifactschema import PORTS
 
-    return manifest.CommandSpec(impl="m:f", help="Publish.", task="release:image",
-                                consumes={"image": ("app",), "evidence": ("checked",)},
-                                ports=PORTS["release:image"])
+    return command.TaskCommand(impl="m:f", help="Publish.", task="release:image",
+                               consumes={"image": ("app",), "evidence": ("checked",)},
+                               ports=PORTS["release:image"])
 
 
 @pytest.mark.parametrize("record, ran, rc", [(GREEN, True, 0), ('{"verdict": 2}', False, 1),

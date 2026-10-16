@@ -101,6 +101,7 @@ from simplon.kernel import log, verdict
 from simplon.adapters import pyvenv
 from simplon.tasks import allure
 from simplon.kernel.awake import keep_awake
+from simplon.domain.command import TaskCommand
 from simplon.domain.manifest import resolve_ref
 from simplon.kernel.run import run
 from simplon.kernel.verdict import GateVerdict, RunVerdict, Verdict
@@ -631,7 +632,7 @@ def _command(path: str, where: str) -> Callable[[], int]:
         known = ", ".join(sorted(f"{g} {n}" for g, members in commands.items() for n in members))
         raise ValueError(f"{where}: '{path}' is not a command in this product's tree "
                          f"(declared: {known or 'none'})")
-    if not spec.impl:
+    if not isinstance(spec, TaskCommand):
         raise ValueError(f"{where}: '{path}' plans other commands and runs no body of its own, so there "
                          f"is no single rc for a gate to report - name one of the commands it plans")
     body = task.body_of(spec, where=f"{where} ('{path}')")

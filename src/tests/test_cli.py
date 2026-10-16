@@ -18,6 +18,7 @@ from typer.main import get_command
 from typer.testing import CliRunner
 
 from simplon import cli
+from simplon.domain import command
 from simplon.domain import manifest
 from simplon.domain import treeform
 
@@ -499,7 +500,7 @@ def test_the_aggregates_help_line_is_its_synthesized_callbacks_docstring(agg_ass
 # chain `taskgen._docstring` renders into the generated module. `_bound` is exercised directly rather
 # than through `assemble`, mirroring `test_taskgen.py`'s direct `_docstring` case: `manifest.load()`
 # itself never produces a command with empty help (rule 3 requires one somewhere in the chain), so the
-# fallback link is only reachable by constructing a `CommandSpec` by hand. ------------------------------
+# fallback link is only reachable by constructing a `TaskCommand` by hand. ------------------------------
 
 def test_bound_renders_the_commands_own_help_over_its_bodys_docstring():
     # arrange: `functools.wraps` copies the body's docstring onto the wrapper unconditionally - the exact
@@ -507,7 +508,7 @@ def test_bound_renders_the_commands_own_help_over_its_bodys_docstring():
     def body():
         """The body's own docstring, which must lose to the command's help."""
 
-    spec = manifest.CommandSpec(impl="demo_impls:body", help="The command's own help.")
+    spec = command.TaskCommand(impl="demo_impls:body", help="The command's own help.")
 
     # act
     wrapped = cli._bound(body, spec, where="demo cmd")
@@ -521,7 +522,7 @@ def test_bound_falls_back_to_the_bodys_docstring_when_the_command_declares_none(
     def body():
         """The body's own docstring, used only when nothing else describes it."""
 
-    spec = manifest.CommandSpec(impl="demo_impls:body", help="")
+    spec = command.TaskCommand(impl="demo_impls:body", help="")
 
     # act
     wrapped = cli._bound(body, spec, where="demo cmd")
@@ -542,7 +543,7 @@ def test_bound_turns_a_body_that_exits_0_without_writing_its_test_result_into_rc
     def body():
         return 0
 
-    spec = manifest.CommandSpec(impl="demo_impls:body", help="h", produces={"test-result": ("checked",)})
+    spec = command.TaskCommand(impl="demo_impls:body", help="h", produces={"test-result": ("checked",)})
     wrapped = cli._bound(body, spec, where="demo cmd")
 
     # act

@@ -28,7 +28,7 @@ from simplon.kernel.awake import keep_awake
 import sys
 
 from simplon.kernel import log, steplog
-from simplon.kernel.plan import Plan
+from simplon.kernel.plan import Plan, aggregate_of
 from simplon.kernel.steps import Pipeline, Step, argv_step, dispatch
 
 
@@ -181,7 +181,9 @@ def run_command(name: str, manifest: Plan, ctx: StepFactoryContext, *, group: st
     steps = [ctx.step_factory(leaf.name, args=given[leaf.name]) if leaf.name in given
              else ctx.step_factory(leaf.name)
              for leaf in tree.leaves()]
-    pipeline = Pipeline(name=name, steps=steps, stop_on_failure=spec.stop_on_failure,
+    aggregate = aggregate_of(spec)
+    pipeline = Pipeline(name=name, steps=steps,
+                        stop_on_failure=aggregate is not None and aggregate.stop_on_failure,
                         tree=tree, root_path=tree.path)
     # Ask the pairing verdict HERE, before anything runs. It is decided by the two lines above and cannot
     # change afterwards, but its consumers ask lazily - `abort_after` at the first FAILURE, `build_rows`
@@ -191,7 +193,7 @@ def run_command(name: str, manifest: Plan, ctx: StepFactoryContext, *, group: st
     # (#42). The verdict is computed once and remembered, so asking early changes nothing but WHERE the
     # warning lands: above the run, where it is still actionable.
     pipeline.usable_tree()
-    with (keep_awake() if spec.keep_awake else contextlib.nullcontext()):
+    with (keep_awake() if aggregate is not None and aggregate.keep_awake else contextlib.nullcontext()):
         rc = dispatch(pipeline)
     # Where the output went, said once per plan. Each step also wrote its own file (simplon.kernel.steplog),
     # which is the only way to read a long step's output back: the TUI that showed it holds the mouse,

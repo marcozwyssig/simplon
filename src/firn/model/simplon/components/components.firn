@@ -55,6 +55,9 @@ domain typeOf simplon.architecture.Component {
   key = "domain"
   layer = "1"
   summary = "Reading the configuration, validating it, and building the plan from it."
+  module m_domain_command typeOf simplon.architecture.Module {
+    path = "domain.command"
+  }
   module m_domain_manifest typeOf simplon.architecture.Module {
     path = "domain.manifest"
   }

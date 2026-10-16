@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import difflib
 import inspect
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Callable, NamedTuple
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from simplon.domain import clitaxonomy, results, signatures, task
+from simplon.domain.command import AggregateCommand, TaskCommand
 from simplon.domain.manifest import Manifest, resolve_ref
 
 _TEMPLATES = Path(__file__).resolve().parents[1] / "templates"
@@ -47,7 +49,7 @@ class _Param(NamedTuple):
     pinned: bool = False          # fixed by `with:`, so it is not a command-line parameter at all
 
 
-def _params(body: Callable[..., object], overrides: dict[str, object], presentation: dict,
+def _params(body: Callable[..., object], overrides: Mapping[str, object], presentation: Mapping,
             *, where: str) -> list[_Param]:
     """The body's payload parameters: which reach the command line, and with what default.
 
@@ -126,7 +128,7 @@ def _docstring(spec, body: object) -> str:
 def _kwargs(spec) -> str:
     """The registration kwargs a command carries beyond its name, as source."""
     out = []
-    if spec.passthrough_args:
+    if isinstance(spec, TaskCommand) and spec.passthrough_args:
         out.append(f"context_settings={_PASSTHROUGH_CTX!r}")
     return "".join(", " + kw for kw in out)
 
@@ -164,7 +166,7 @@ def render(manifest: Manifest, *, source: str, product: str,
         for name, spec in members.items():
             where = f"`{group} {name}`"
             func = funcs[(group, name)]
-            if spec.impl:
+            if isinstance(spec, TaskCommand):
                 module, attribute = spec.impl.split(":", 1)
                 if module not in imports:
                     imports.append(module)
@@ -203,7 +205,7 @@ def render(manifest: Manifest, *, source: str, product: str,
                 # `passes:` (si#433) is NOT rendered: the dispatcher takes a name and a group, so there is
                 # nowhere to hand a value on, and dropping the key would build an aggregate that runs its
                 # leaves without what it was declared to pass them - which is the failure the key ends.
-                if spec.passes:
+                if isinstance(spec, AggregateCommand) and spec.passes:
                     raise ValueError(
                         f"command '{group}.{name}' passes {', '.join(spec.passes)} to its leaves, which a "
                         f"generated module cannot render - its dispatcher takes a command name only. "
@@ -330,7 +332,7 @@ def unrenderable(manifest: Manifest) -> dict[tuple[str, str], str]:
     out: dict[tuple[str, str], str] = {}
     for group, members in manifest.commands.items():
         for name, spec in members.items():
-            if not spec.impl:
+            if not isinstance(spec, TaskCommand):
                 continue
             where = f"`{group} {name}`"
             try:

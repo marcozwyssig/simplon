@@ -66,7 +66,8 @@ import yaml
 
 from simplon.domain import artifactsection, context, runners, task
 from simplon.adapters import disk
-from simplon.domain.manifest import CommandSpec, Manifest
+from simplon.domain.command import TaskCommand
+from simplon.domain.manifest import Manifest
 from simplon.tasks import handoff
 
 #: The manifest section this module owns. A product that declares no section declares no workflows, and
@@ -882,7 +883,7 @@ def derive(manifest: Manifest, groups: Sequence[str], *, where: str) -> Derived:
                 f"It has: {', '.join(sorted(tree)) or '(none)'}")
         skipped: list[str] = []
         for name, spec in members.items():
-            if spec.depends_on:
+            if not isinstance(spec, TaskCommand):
                 # An aggregate, whose members are leaves of this same group and are emitted in their own
                 # right. Nothing is missing from the file, so nothing needs saying about it.
                 continue
@@ -1056,7 +1057,7 @@ def _placed(manifest: Manifest, impl: str) -> str:
     """
     for group, members in manifest.commands.items():
         for name, spec in members.items():
-            if spec.impl and task.body_identity(spec.impl) == task.body_identity(impl):
+            if isinstance(spec, TaskCommand) and task.body_identity(spec.impl) == task.body_identity(impl):
                 return f"{group.replace('.', ' ')} {name}"
     return ""
 
@@ -1101,20 +1102,20 @@ def _expanded(job: Job, manifest: Manifest, where: str) -> list[Step]:
     return steps
 
 
-def _leaves(manifest: Manifest, step: Step, where: str) -> "tuple[tuple[str, CommandSpec], ...]":
+def _leaves(manifest: Manifest, step: Step, where: str) -> "tuple[tuple[str, TaskCommand], ...]":
     """The leaf commands a step runs, with their specs: itself for a leaf, its plan for an aggregate, none for a
     verbatim step. An aggregate's plan names each leaf by a bare name exactly one group owns (#519)."""
     if not step.command:
         return ()
     group, name = resolve_command(manifest, step.command, where=where)
     spec = manifest.commands[group][name]
-    if not spec.depends_on:
+    if isinstance(spec, TaskCommand):
         return ((f"{group.replace('.', ' ')} {name}", spec),)
-    out: list[tuple[str, CommandSpec]] = []
+    out: list[tuple[str, TaskCommand]] = []
     for leaf in manifest.plan_for(name, group=group):
         owner = next(g for g, members in manifest.commands.items() if leaf in members)
         member = manifest.commands[owner][leaf]
-        if not member.depends_on:
+        if isinstance(member, TaskCommand):
             out.append((f"{owner.replace('.', ' ')} {leaf}", member))
     return tuple(out)
 
