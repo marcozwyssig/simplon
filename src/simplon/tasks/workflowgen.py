@@ -707,7 +707,7 @@ def _parameters(manifest: Manifest, group: str, name: str,
     takes WITHOUT a default is positional too - so `release tag` with `params: { tag: v1.4.0 }` rendered
     as `release tag --tag v1.4.0` and was a usage error on a runner. Options come first and positionals
     after - the options in the order the step wrote them, the positionals in the order the body takes
-    them, because that order is what assigns a positional its meaning.
+    them, because that order is what assigns a positional its meaning - and a `--` between the two.
 
     It costs an import of the body, and only for a step that passes a value: the same import the CLI
     makes to assemble the command the step runs, so a body the generator cannot import is one the
@@ -732,7 +732,9 @@ def _parameters(manifest: Manifest, group: str, name: str,
     options = [f"--{key.replace('_', '-')} {shlex.quote(str(value))}"
                for key, value in params.items() if key not in reads_positionally]
     positionals = [shlex.quote(str(params[key])) for key in signature if key in reads_positionally]
-    return " " + " ".join(options + positionals)
+    # `--` before the positionals, so a value starting with `-` cannot be read as an option - the
+    # convention an aggregate's `passes:` already follows, built by the same function.
+    return " " + " ".join(signatures.command_line(options, positionals))
 
 
 # --- a rollout, written from the environment matrix -----------------------------------------------------

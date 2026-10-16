@@ -2069,7 +2069,7 @@ def test_simplons_own_release_tag_step_renders_the_tag_as_the_positional_the_cli
     text = _render(kernel_manifest, _RELEASE_TAG)
 
     # assert
-    assert "run: ./sample.sh release tag v9.9.9" in text
+    assert "run: ./sample.sh release tag -- v9.9.9" in text
     # and the neighbour that keeps the option form, because its body gives `tag` a default
     assert "run: ./sample.sh release notes --tag v9.9.9" in text
 
@@ -2105,7 +2105,7 @@ def test_a_required_parameter_is_a_positional_and_a_defaulted_one_an_option():
         """)
 
     # assert
-    assert "run: ./sample.sh test aim --mode slow moon" in text
+    assert "run: ./sample.sh test aim --mode slow -- moon" in text
 
 
 def _cli_reads_positionally(spec) -> dict[str, bool]:
@@ -2149,7 +2149,7 @@ def test_every_catalogue_parameter_renders_the_way_the_cli_reads_it(coordinate, 
     reads = _cli_reads_positionally(spec)
     for key in spec.params:
         rendered = workflowgen._parameters(placed, "g", "leaf", {key: "x"}, where="sweep")
-        assert (rendered == " x") is reads[key], \
+        assert (rendered == " -- x") is reads[key], \
             f"{coordinate} `{key}`: the generator wrote {rendered!r}, the CLI reads " \
             f"{'a positional' if reads[key] else 'an option'}"
 
@@ -2162,4 +2162,32 @@ def test_the_synthetic_body_renders_the_way_the_cli_reads_it():
     assert reads == {"target": True, "mode": False}
     for key in spec.params:
         rendered = workflowgen._parameters(loaded, "test", "aim", {key: "x"}, where="sweep")
-        assert (rendered == " x") is reads[key]
+        assert (rendered == " -- x") is reads[key]
+
+
+@pytest.mark.parametrize("value", ["-x", "--help", "--mode=fast"])
+def test_a_positional_value_that_looks_like_an_option_still_reaches_the_positional(value):
+    """A positional rendered bare after the options is read by Click as an OPTION when its value starts
+    with `-`: `test aim -x` is a usage error, `test aim --help` prints help and exits 0 - a green step that
+    did nothing. `cli.leaf_arguments` (si#433) ends the options with `--` for this reason, and so does the
+    generator. Checked by feeding the rendered line to the command the CLI itself binds."""
+    import shlex
+
+    import typer
+    from typer.main import get_command
+
+    from simplon import cli
+
+    # arrange
+    loaded = manifest_mod.load(_POSITIONAL_AND_OPTION, catalogue=catalogue_mod.load())
+    spec = loaded.commands["test"]["aim"]
+    app = typer.Typer(add_completion=False)
+    app.command("leaf")(cli._bound(manifest_mod.resolve_impl(spec), spec, where="argv"))
+
+    # act
+    rendered = workflowgen._parameters(loaded, "test", "aim", {"mode": "slow", "target": value}, where="argv")
+    ctx = get_command(app).make_context("leaf", shlex.split(rendered))
+
+    # assert
+    assert rendered == f" --mode slow -- {shlex.quote(value)}"
+    assert ctx.params == {"target": value, "mode": "slow"}

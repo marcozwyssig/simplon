@@ -380,7 +380,7 @@ def leaf_arguments(takers: Mapping[str, list[Receiver]],
                 positionals.setdefault(taker.leaf, []).append(str(value))
             else:
                 options.setdefault(taker.leaf, []).append(f"{taker.flag}={value}")
-    return {leaf: tuple(options.get(leaf, [])) + (("--", *positionals[leaf]) if leaf in positionals else ())
+    return {leaf: signatures.command_line(options.get(leaf, []), positionals.get(leaf, []))
             for leaf in {*options, *positionals}}
 
 

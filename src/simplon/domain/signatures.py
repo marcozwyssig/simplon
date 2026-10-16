@@ -198,6 +198,19 @@ def positional(param: Parameter, presentation) -> bool:
     return form.positional if form.declared else param.required
 
 
+def command_line(options: "list[str] | tuple[str, ...]",
+                 positionals: "list[str] | tuple[str, ...]") -> tuple[str, ...]:
+    """The argument list a command line is handed: its option tokens, then `--` and the positionals.
+
+    The `--` is what keeps a positional a positional whatever its value starts with. Without it Click
+    reads a value beginning with `-` as an option, measured on a bound command: `-x` is a usage error,
+    `--mode=fast` silently sets another parameter, and `--help` prints help and exits 0 - a step that
+    did nothing and reads green. Both writers of a command line for a leaf build it here: an aggregate
+    handing on what it `passes:` (`cli.leaf_arguments`, si#433) and a generated workflow step (si#471).
+    """
+    return (*options, "--", *positionals) if positionals else tuple(options)
+
+
 def option_decl(name: str, literal_default: str | None, presentation, type_hint: str | None = None) -> str:
     """One wrapper parameter as source, given its rendered default and its manifest presentation.
 
