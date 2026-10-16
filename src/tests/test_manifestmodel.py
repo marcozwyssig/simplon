@@ -451,6 +451,7 @@ def test_the_export_declares_no_task_on_a_catalogue_coordinate():
 
         # assert
         keys = re.findall(r'^\s+tasks \w+ typeOf simplon\.pipeline\.Task \{\n\s+key = "([^"]+)"', out, re.MULTILINE)
+        assert keys or name == "demo", name   # a pattern that matched nothing would pass on nothing
         assert [k for k in keys if ":" in k] == [], name
 
 

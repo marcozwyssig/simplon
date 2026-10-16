@@ -102,7 +102,7 @@ Task typeOf firn.core.Class extends firn.core.NamedResource {
 
 // A task the PLATFORM offers (si#344 C.1): a catalogue coordinate in `key`, its body in `body`. Its own
 // class, because every product model declares plain Tasks in the same firn project (`support manifest
-// model`), and a template over `Task` would gather theirs too. Since si#400 4a it holds all 54, ported or not.
+// model`), and a template over `Task` would gather theirs too. Since si#400 4a it holds every catalogue task, ported or not.
 CatalogueTask typeOf firn.core.Class extends simplon.pipeline.Task {
   allowRoot = true
 }
