@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import shutil
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.kernel import log, run
 
 SECTION = "assets"

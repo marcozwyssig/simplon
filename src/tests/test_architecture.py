@@ -18,7 +18,7 @@ def test_the_components_and_their_layers_are_the_ones_decided():
     # The design (spec decision 3), not a count. cli sits above ui since si#391: every run starts in
     # `cli.main`, which registers the UI with the kernel, and ui imports nothing of the cli (Marco, 2026-10-13).
     assert {key: layer for key, (layer, _) in architecture.COMPONENTS.items()} == {
-        "kernel": 0, "domain": 1, "adapters": 2, "tasks": 3, "ui": 4, "cli": 5}
+        "kernel": 0, "model": 1, "manifest": 2, "adapters": 3, "tasks": 4, "ui": 5, "cli": 6}
     assert all(summary.strip() for _, summary in architecture.COMPONENTS.values())
 
 SRC = Path(__file__).resolve().parents[1] / "simplon"
@@ -111,7 +111,7 @@ def test_an_import_inside_a_function_is_an_edge(tmp_path):
 
 def test_the_walk_finds_the_imports_of_the_real_tree():
     # Non-vacuity: a resolver that found nothing would pass every check below.
-    assert ("cli.__init__", "domain.context") in edges(SRC)
+    assert ("cli.__init__", "manifest.context") in edges(SRC)
 def test_every_module_is_in_one_component_or_excluded():
     files = modules_below(SRC)
     assigned, excluded = set(MODULES), set(EXCLUDED)
@@ -161,3 +161,15 @@ def test_every_exception_names_its_reason_and_its_ticket():
         seen.add((importer, imported))
         assert reason.strip(), f"{importer} -> {imported} has no reason"
         assert re.fullmatch(r"si#\d+", ticket), f"{importer} -> {imported} names no ticket: {ticket!r}"
+
+
+def test_the_model_imports_nothing_outside_itself():
+    # si#473 (Marco, 2026-10-16): the model is the vocabulary, below the manifest that reads it - and it
+    # imports not even the kernel, although the layers would let it. Every import counts, function-local
+    # and TYPE_CHECKING ones included: a model that needs a reader imported first is no longer the model.
+    model = {path for path, component in MODULES.items() if component == "model"}
+    known = modules_below(SRC)
+    outside = sorted((path, target) for path in model for target in imports_of(SRC, path, known)
+                     if MODULES.get(target) != "model" and target != "model.__init__")
+    assert model, "no module in the model component - this test is measuring nothing"
+    assert not outside, f"the model imports outside itself: {outside}"

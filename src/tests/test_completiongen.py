@@ -26,7 +26,7 @@ from typer.main import get_command
 
 from simplon import cli
 from simplon.tasks import completiongen
-from simplon.domain import manifest as manifest_mod
+from simplon.manifest import load as manifest_mod
 
 BASH = shutil.which("bash")
 

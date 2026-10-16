@@ -34,7 +34,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import NamedTuple
 
-from simplon.domain.task import class_ref
+from simplon.model.task import class_ref
 
 #: The manifest key a job names a kind with.
 KEY = "runner"

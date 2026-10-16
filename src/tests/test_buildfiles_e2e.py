@@ -41,13 +41,13 @@ import typer
 import yaml
 from typer.testing import CliRunner
 
-from simplon.domain import catalogue as catalogue_mod
+from simplon.manifest import catalogue as catalogue_mod
 
 from conftest import docker_is_usable
 from simplon import cli
-from simplon.domain import context
-from simplon.domain.context import ProductContext
-from simplon.domain import manifest as manifest_mod
+from simplon.manifest import context
+from simplon.manifest.context import ProductContext
+from simplon.manifest import load as manifest_mod
 from simplon.kernel.run import run
 from simplon.tasks import buildfiles, profiles, toolchain
 

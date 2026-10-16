@@ -386,7 +386,7 @@ tasks:
   support:environments:
     help: "List the named environments and the backend each targets, marking the active one."
     unattended: true
-  # The manifest's SECOND output (si#40). `simplon.domain.manifest` has promised since it was
+  # The manifest's SECOND output (si#40). `simplon.manifest.load` has promised since it was
   # written that "the same manifest assembles the runtime CLI now and, in Phase 2, the CI workflows";
   # this is that phase, and it is the same shape as `tasks:generate` for the same reason - the files are
   # committed, so the manifest and the file can disagree, and `--check` is what notices.
@@ -764,7 +764,7 @@ tasks:
 
   # --- tasks: the task machinery, addressable ---------------------------------------------------------
   # `generate` writes the product's committed CLI module; `catalogue` prints this file. Both are kernel
-  # mechanisms: what is product-specific reaches them through simplon.domain.context and a manifest-pinned
+  # mechanisms: what is product-specific reaches them through simplon.manifest.context and a manifest-pinned
   # `with: { target: ... }`, never through an import.
   tasks:generate:
     help: "Regenerate the product's CLI module from its manifest (--check reports drift and writes nothing)."

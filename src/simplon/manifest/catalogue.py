@@ -23,8 +23,8 @@ from typing import NamedTuple
 
 import yaml
 
-from simplon.domain import task
-from simplon.domain.manifest import _CommandSpecModel
+from simplon.model import task
+from simplon.manifest.load import _CommandSpecModel
 
 # The catalogue file belongs to the kernel, so it travels INSIDE the package. This used to read
 # parents[5] -- a reach five levels up to the repo root, correct only as long as the code was

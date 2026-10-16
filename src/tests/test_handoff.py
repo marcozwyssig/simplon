@@ -5,7 +5,7 @@ the loader binds, not hand-built tuples.
 """
 import pytest
 
-from simplon.domain import artifactsection, catalogue, manifest
+from simplon.manifest import artifactsection, catalogue, load as manifest
 from simplon.tasks import handoff
 
 import yaml

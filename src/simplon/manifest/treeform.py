@@ -7,7 +7,7 @@ exactly the two structures `_ManifestModel` accepts - a `taxonomy:` mapping and 
 members` mapping. ("Flat" there is the loader's internal member map, not the deleted flat manifest form
 the last section of this module is about.)
 
-Lowering rather than replacing is deliberate. The command objects (`simplon.domain.command`, `CommandSpec`
+Lowering rather than replacing is deliberate. The command objects (`simplon.model.command`, `CommandSpec`
 until si#400 4d), `Manifest`, the six validation rules,
 `taskgen` and `simplon.cli.assemble` all keep working on shapes they already consume, which is what let
 every step of the migration off the old form be proved by a zero-diff on the product's CLI-surface
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from simplon.domain import artifactsection, ports
+from simplon.manifest import artifactsection, ports
 
 # A group node's own keys. Everything else under a node would be ambiguous, which is why members live
 # under `commands:` rather than directly on the node: otherwise `help:` would be a group attribute in one
@@ -139,7 +139,7 @@ def elide_transparent(tree: dict) -> tuple[dict, dict[str, str]]:
 AREAS = ("ci", "cd", "support")
 
 #: Keys under `cd:` that are product DATA rather than groups: the environment matrix (`default`,
-#: `environments`, read by `simplon.domain.environments`) and the location axis (`site`, reserved, si#344).
+#: `environments`, read by `simplon.manifest.environments`) and the location axis (`site`, reserved, si#344).
 CD_DATA_KEYS = ("default", "environments", "site")
 
 #: The kernel tree a load WITHOUT a catalogue merges onto (`locked=False`). It exists only so that such a
@@ -193,7 +193,7 @@ def tree_from_areas(data: dict, phases: dict[str, tuple[str, ...]]) -> dict:
 
     Under `ci:` and `cd:` the phase groups stand directly (`ci: build:`), where the tree nests children
     under `groups:`; this wraps them. The data keys under `cd:` are not groups and are left out here -
-    `simplon.domain.environments` reads them from the document. `support:` already IS a group node.
+    `simplon.manifest.environments` reads them from the document. `support:` already IS a group node.
 
     `phases` maps an area to the phase groups the PLATFORM declares under it (read off the catalogue's
     tree by the loader, so this module keeps no second list). It is empty for a load with no catalogue,
@@ -359,7 +359,7 @@ def merge(kernel: dict, product: dict, _path: tuple[str, ...] = (),
     an unconditional rule. "The platform owns which groups exist" is a statement about a platform, and a
     caller that hands in no catalogue at all has none: with `kernel` empty, an unconditional lock would
     make every possible tree illegal and the form unusable outside a product. `load()` therefore ties it
-    to the catalogue it was given, which in every product is one (`simplon.domain.context` always passes it);
+    to the catalogue it was given, which in every product is one (`simplon.manifest.context` always passes it);
     unlocked, a group the kernel does not declare is simply the manifest's own.
 
     Three outcomes, and the first is the group lock: a PATH the kernel does not declare is an error, a
@@ -452,7 +452,7 @@ def _impl_of(ref: str, product_tasks: dict, catalogue_tasks: dict) -> str:
     # Imported here: `simplon manifest migrate` imports this module and must not load the manifest loader,
     # which `task` imports (test_importing_the_migration_does_not_import_the_manifest_loader); and
     # `body_identity` refuses nothing, so the census loses nothing by not walking into it.
-    from simplon.domain.task import body_identity
+    from simplon.model.task import body_identity
     return body_identity(str(spec.get("impl") or ref))
 
 

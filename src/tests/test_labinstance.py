@@ -11,16 +11,16 @@ Two load-bearing contracts:
      validation.
 
 The three product values (env var spelling, default id, id-length budget) arrive as manifest DATA
-through simplon.domain.context; the tests register a fake ProductContext exactly as test_commands_env.py does.
+through simplon.manifest.context; the tests register a fake ProductContext exactly as test_commands_env.py does.
 AAA throughout; goal-stating names, incl. the negative manifest cases.
 """
 import re
 
 import pytest
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.adapters import labinstance
-from simplon.domain.context import ProductContext
+from simplon.manifest.context import ProductContext
 
 # The sample product's instance section: a 2-char budget, as netctl's IFNAMSIZ ceiling yields.
 _SPEC = {"env_var": "SAMPLE_INSTANCE", "default": "dev", "max_id_len": 2}

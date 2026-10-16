@@ -12,7 +12,7 @@ from pathlib import Path
 
 import yaml
 
-from simplon.domain import catalogue
+from simplon.manifest import catalogue
 
 CATALOGUE = catalogue.DEFAULT_PATH
 KINDS_MODEL = Path(__file__).resolve().parents[1] / "firn" / "model" / "simplon" / "vocabulary" / "kinds.firn"

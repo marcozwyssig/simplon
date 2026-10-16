@@ -5,7 +5,7 @@ import pickle
 
 import pytest
 
-from simplon.domain import command
+from simplon.model import command
 
 
 def test_a_task_command_carries_its_own_fields_and_reads_the_aggregates_as_empty_with_a_warning():
@@ -75,7 +75,7 @@ def test_the_compatibility_is_gone_after_its_release():
 def test_a_release_aggregate_is_a_release_command_naming_its_bundle():
     # arrange: simplon's own manifest releases through `release all` with `produces: { release: kernel-release }`
     from conftest import ROOT
-    from simplon.domain import catalogue, manifest
+    from simplon.manifest import catalogue, load as manifest
     mf = manifest.load((ROOT / "simplon.yaml").read_text(encoding="utf-8"), catalogue=catalogue.load())
 
     # act
@@ -89,7 +89,7 @@ def test_a_release_aggregate_is_a_release_command_naming_its_bundle():
 def test_a_task_command_in_an_env_first_group_is_a_deploy_and_an_aggregate_there_is_not():
     # arrange: test_manifest's dependency fixture places leaves and aggregates under `cd: deploy:` and `ci: build:`
     from test_manifest import _DEPS
-    from simplon.domain import manifest
+    from simplon.manifest import load as manifest
     mf = manifest.load(_DEPS)
 
     # act
@@ -107,7 +107,7 @@ def test_a_misplaced_aggregate_naming_two_outputs_is_told_where_it_stands_first(
     # arrange: the fix is to drop `produces:`, not to reshape it - so placement is said before shape,
     # as `ports._check_bundles` said it before 4d moved the shape half into the loader
     from test_manifest import _DEPS
-    from simplon.domain import manifest
+    from simplon.manifest import load as manifest
     text = _DEPS.replace('depends_on: ["prep", "up"]', 'depends_on: ["prep", "up"]\n'
                          '        produces: { release: rel, image: thing }')
 
@@ -118,7 +118,7 @@ def test_a_misplaced_aggregate_naming_two_outputs_is_told_where_it_stands_first(
 
 def test_a_task_command_in_a_nested_env_first_group_is_a_deploy_as_the_cli_gates_it():
     # arrange: env-first inherited from a node below the top level, which the CLI's gate honours
-    from simplon.domain import manifest
+    from simplon.manifest import load as manifest
     text = """
 tasks:
   fix: { impl: "m:f", help: "Fix it." }

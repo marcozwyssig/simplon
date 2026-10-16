@@ -1,4 +1,4 @@
-"""Unit tests for the manifest-driven CLI assembly engine (simplon.domain.manifest): the pure
+"""Unit tests for the manifest-driven CLI assembly engine (simplon.manifest.load): the pure
 YAML load + schema validation of the nested group -> command -> spec TREE (#729), the impl-reference
 resolution, and the shared-taxonomy build - exercised on a SYNTHETIC manifest so the engine is validated
 independently of any product's command set. No Typer, no product impls; AAA throughout.
@@ -13,9 +13,9 @@ import textwrap
 
 import pytest
 
-from simplon.domain import command
-from simplon.domain import catalogue as catalogue_mod
-from simplon.domain import manifest
+from simplon.model import command
+from simplon.manifest import catalogue as catalogue_mod
+from simplon.manifest import load as manifest
 
 _OK = """
 product: demo
@@ -790,7 +790,7 @@ def test_the_named_plan_is_the_alphabetically_first_candidate_whatever_the_hash_
     # load under several PYTHONHASHSEEDs instead and require ONE message out of all of them.
     source = str(pathlib.Path(manifest.__file__).parents[2])
     probe = (f"import sys; sys.path.insert(0, {source!r})\n"
-             "from simplon.domain import manifest\n"
+             "from simplon.manifest import load as manifest\n"
              "try:\n"
              f"    manifest.load({_TWO_PLANS_COLLIDE!r})\n"
              "except ValueError as exc:\n"

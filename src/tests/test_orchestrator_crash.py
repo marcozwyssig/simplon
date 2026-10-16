@@ -16,9 +16,9 @@ import asyncio
 
 import pytest
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.kernel import steplog
-from simplon.domain.context import ProductContext
+from simplon.manifest.context import ProductContext
 from simplon.kernel.steps import (
     CRASH_RC,
     Outcome,

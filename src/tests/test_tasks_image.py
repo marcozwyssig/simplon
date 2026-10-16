@@ -25,11 +25,11 @@ import pytest
 
 from conftest import lifecycle_name, without_lifecycle
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.adapters import docker, githubpackages
-from simplon.domain.context import ProductContext
+from simplon.manifest.context import ProductContext
 from simplon.kernel.run import Result
-from simplon.domain import results as results_mod
+from simplon.manifest import results as results_mod
 from simplon.tasks import image
 
 #: The real gate, captured before the autouse fixture below neutralises it - the two tests that assert

@@ -72,7 +72,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from xml.sax.saxutils import quoteattr
 
-from simplon.domain import artifactsection, artifactschema, context, outputs
+from simplon.manifest import artifactsection, context, outputs
+from simplon.model import artifactschema
 from simplon.adapters import docker, githubpackages, hostpath
 from simplon.kernel import log
 from simplon.kernel.run import stream

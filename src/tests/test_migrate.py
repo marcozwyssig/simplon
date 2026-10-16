@@ -8,8 +8,8 @@ import pytest
 import yaml
 
 import realmanifests
-from simplon.domain import catalogue, yamlkeys
-from simplon.domain import manifest
+from simplon.manifest import catalogue, yamlkeys
+from simplon.manifest import load as manifest
 from simplon.tasks.migrate import migrate_text
 from manifestsurface import cli_surface
 
@@ -1042,7 +1042,7 @@ def test_importing_the_migration_does_not_import_the_manifest_loader():
     import subprocess
     import sys
     code = ("import sys, simplon.tasks.migrate; "
-            "print('simplon.domain.manifest' in sys.modules, 'simplon.domain.context' in sys.modules)")
+            "print('simplon.manifest.load' in sys.modules, 'simplon.manifest.context' in sys.modules)")
 
     # act
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout
@@ -1054,7 +1054,7 @@ def test_importing_the_migration_does_not_import_the_manifest_loader():
 def test_the_migrations_areas_are_the_catalogues():
     # arrange: CI / CD here, and `_phases_of` in the loader's messages, restate which phase groups stand
     # under which area; the catalogue is the statement
-    from simplon.domain import treeform
+    from simplon.manifest import treeform
     groups = catalogue.load().groups
 
     # act

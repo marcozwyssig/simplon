@@ -1,5 +1,5 @@
 """Render a product's committed GitHub workflows from its manifest (si#40) - the SECOND of the "one
-source, two outputs" this kernel has promised since `simplon.domain.manifest` was written.
+source, two outputs" this kernel has promised since `simplon.manifest.load` was written.
 
 WHAT MAKES THIS A GENERATOR RATHER THAN A TRANSCODER. A workflow that lists build steps restates
 something the manifest already says, and the restatement is not checked by anything: agile-cockpit's
@@ -64,10 +64,11 @@ from typing import NamedTuple, cast
 
 import yaml
 
-from simplon.domain import artifactsection, context, runners, signatures, task
+from simplon.manifest import artifactsection, context, runners, signatures
+from simplon.model import task
 from simplon.adapters import disk
-from simplon.domain.command import TaskCommand
-from simplon.domain.manifest import Manifest
+from simplon.model.command import TaskCommand
+from simplon.manifest.load import Manifest
 from simplon.tasks import handoff
 
 #: The manifest section this module owns. A product that declares no section declares no workflows, and
@@ -277,7 +278,7 @@ class Report(NamedTuple):
 def parse(data: Mapping[str, object]) -> tuple[Workflow, ...]:
     """The `workflows:` section of a raw manifest, validated.
 
-    Loud on every defect, like `simplon.domain.environments.parse` and every other section parser here: a
+    Loud on every defect, like `simplon.manifest.environments.parse` and every other section parser here: a
     manifest that says something this module cannot render is a manifest defect, and the message names
     the workflow it is talking about.
     """
@@ -770,7 +771,7 @@ def _rollout(workflow: "Workflow", registry: "Mapping[str, object] | None") -> "
         # demanded a registered ProductContext, which is a coupling nobody asked for.
         return ()
 
-    from simplon.domain import context, environments as env_mod
+    from simplon.manifest import context, environments as env_mod
 
     data = registry if registry is not None else context.current().manifest_data()
     matrix = env_mod.parse_data(data, env_mod.declared_backends(data))
@@ -977,7 +978,7 @@ def launcher(product: str) -> str:
 
     DERIVED, not spelled here (si#58). The same string is now needed in two more places - the usage line
     Click prints and the command word a generated shell completion registers on - so the spelling moved
-    to `simplon.domain.context.launcher` and this stays the name a workflow author looks for.
+    to `simplon.manifest.context.launcher` and this stays the name a workflow author looks for.
     """
     return context.launcher(product)
 

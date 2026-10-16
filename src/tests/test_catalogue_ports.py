@@ -8,7 +8,8 @@ AAA; the name states the behaviour under test.
 import importlib
 import inspect
 
-from simplon.domain import artifactschema, catalogue
+from simplon.model import artifactschema
+from simplon.manifest import catalogue
 
 P = artifactschema.Port
 IMAGE_NEEDS = ("registry", "repository", "dockerfile", "context")
@@ -47,7 +48,7 @@ def test_every_wrapper_wraps_the_body_the_model_names():
     # arrange: since si#400 4c the catalogue names no body; the model's `body` seeds each class's
     # `<task>.imports` region, and while that region holds the wrapper, the two are two sources for one body
     from pathlib import Path
-    from simplon.domain.manifestmodel import mangle
+    from simplon.model.task import mangle
     tasks = catalogue.load().tasks
     classes = Path(__file__).resolve().parents[1] / "simplon" / "tasks"
 
@@ -66,7 +67,7 @@ def test_every_catalogue_instance_is_named_as_the_export_references_it():
     # passes every pure test and is firn's E200 only where docker runs
     import re
     from pathlib import Path
-    from simplon.domain.manifestmodel import mangle
+    from simplon.model.task import mangle
     text = (Path(__file__).resolve().parents[1] / "firn" / "model" / "simplon" / "catalogue" / "tasks.firn").read_text()
 
     # act
@@ -156,7 +157,7 @@ def test_each_generated_file_names_both_models_it_is_generated_from():
     # a header naming one would send whoever changes a port to a file that has none
     from pathlib import Path
     src = Path(__file__).resolve().parents[1]
-    files = [src / "simplon" / "domain" / "artifactschema.py", src / "site" / "content" / "with-what" / "kinds.md"]
+    files = [src / "simplon" / "model" / "artifactschema.py", src / "site" / "content" / "with-what" / "kinds.md"]
 
     # act
     missing = {f.name: [m for m in ("vocabulary/kinds.firn", "catalogue/tasks.firn") if m not in f.read_text()]

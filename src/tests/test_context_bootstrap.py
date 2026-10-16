@@ -1,9 +1,9 @@
-"""Unit tests for simplon.domain.context.bootstrap - the marker walk every scaffolded `paths.py` carried.
+"""Unit tests for simplon.manifest.context.bootstrap - the marker walk every scaffolded `paths.py` carried.
 AAA throughout, including the negatives that decide whether a broken checkout fails early or late.
 """
 import pytest
 
-from simplon.domain import context
+from simplon.manifest import context
 
 _MARKER = """product: sample
 tasks:

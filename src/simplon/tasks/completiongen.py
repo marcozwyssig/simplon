@@ -22,12 +22,12 @@ slash" when the full pathname has no compspec. So `complete -F ... simplon.sh` s
 compspec registered for `simplon.sh` alone: `./simplon.sh typech<TAB>` completed to `typecheck-python`,
 so did the same line typed with an absolute path, and so did the bare `simplon.sh`; with nothing sourced
 the same keystrokes completed nothing at all, which is what makes the first three a measurement rather
-than a coincidence. The registration therefore uses `simplon.domain.context.shim` - the basename - while the
-usage line Click prints uses `simplon.domain.context.launcher` - the `./` form - and both come off one spelling.
+than a coincidence. The registration therefore uses `simplon.manifest.context.shim` - the basename - while the
+usage line Click prints uses `simplon.manifest.context.launcher` - the `./` form - and both come off one spelling.
 
 THE `<env>` SLOT, and the ticket's premise about it is wrong in this kernel's own code. si#58 says the
 environment names "come NOT from the manifest but from the product's `environments` module". They come
-from the manifest: `simplon.domain.environments.Provider.registry` reads `context.current().manifest_data()` and
+from the manifest: `simplon.manifest.environments.Provider.registry` reads `context.current().manifest_data()` and
 `parse_data` takes the names out of its `environments:` section. Measured on agile-cockpit's real
 manifest, which is the one product on this machine that HAS an env-first group: `env_groups: [deploy]`
 and `environments: {dev: {backend: local}}`, both in `agile-cockpit.yaml`. So the names are static data
@@ -65,9 +65,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
 
-from simplon.domain import clitaxonomy, context
-from simplon.domain import environments as environments_mod
-from simplon.domain.manifest import Manifest
+from simplon.manifest import clitaxonomy, context
+from simplon.manifest import environments as environments_mod
+from simplon.manifest.load import Manifest
 
 #: Where the generated file goes, relative to the product root. STILL not configurable, and for the
 #: unchanged reason: a knob here would be a second place to look for one file, and the one thing an
@@ -122,7 +122,7 @@ class Tree:
 def environments_of(data: Mapping[str, object]) -> tuple[str, ...]:
     """The environment names a raw manifest declares, in declaration order.
 
-    Reads the same section `simplon.domain.environments.parse_data` reads, so the completion cannot offer an
+    Reads the same section `simplon.manifest.environments.parse_data` reads, so the completion cannot offer an
     environment the dispatcher does not know. A manifest with no section yields NOTHING rather than the
     `dev` that `Provider.registry` falls back to: that fallback is a runtime convenience for a product
     which has not reached deployment, and completing a name no manifest states would put a token on

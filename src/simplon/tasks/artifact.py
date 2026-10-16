@@ -19,7 +19,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from simplon.domain import artifactsection, artifactschema, context
+from simplon.manifest import artifactsection, context
+from simplon.model import artifactschema
 from simplon.adapters import githubpackages
 from simplon.kernel import log
 

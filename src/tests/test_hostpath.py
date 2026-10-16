@@ -14,7 +14,7 @@ So the translation is not a nicety, and the case that has no answer must refuse 
 
 import pytest
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.adapters import hostpath
 
 

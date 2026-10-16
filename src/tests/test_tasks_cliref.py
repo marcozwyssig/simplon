@@ -26,11 +26,11 @@ import yaml
 from click.testing import CliRunner
 from typer.main import get_command
 
-from simplon.domain import catalogue as catalogue_mod
+from simplon.manifest import catalogue as catalogue_mod
 from simplon import cli
-from simplon.domain import context
-from simplon.domain.context import ProductContext
-from simplon.domain import manifest
+from simplon.manifest import context
+from simplon.manifest.context import ProductContext
+from simplon.manifest import load as manifest
 from simplon.tasks import cliref
 
 
@@ -679,7 +679,7 @@ def test_the_task_writes_the_page_where_the_manifest_pinned_it(monkeypatch, tmp_
 
 
 def test_an_output_path_that_leaves_the_product_root_is_refused(monkeypatch, tmp_path, impls):
-    # arrange: the same rule `docs:site` applies to its own paths (simplon.domain.layout.validate_relative_dir)
+    # arrange: the same rule `docs:site` applies to its own paths (simplon.manifest.layout.validate_relative_dir)
     root, mf = _built()
     ctx = ProductContext("sample", tmp_path, tmp_path / "sample.yaml")
     monkeypatch.setattr(context, "_current", ctx)

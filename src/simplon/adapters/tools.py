@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from simplon.domain import context
+from simplon.manifest import context
 
 
 def bin_dir() -> Path:

@@ -41,9 +41,9 @@ import re
 from pathlib import Path
 from typing import NamedTuple
 
-from simplon.domain import catalogue as catalogue_mod
-from simplon.domain import command
-from simplon.domain import manifest as manifest_mod
+from simplon.manifest import catalogue as catalogue_mod
+from simplon.model import command
+from simplon.manifest import load as manifest_mod
 
 from conftest import ROOT
 

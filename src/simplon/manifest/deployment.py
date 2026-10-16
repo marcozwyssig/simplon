@@ -43,7 +43,7 @@ from __future__ import annotations
 
 from typing import Callable, NamedTuple
 
-from simplon.domain import context
+from simplon.manifest import context
 
 #: The manifest section this module reads.
 SECTION = "deploy"
@@ -211,7 +211,7 @@ def resolve(selector: str, source: Source, *, newest: Callable[[Source], str],
 
     THE REGISTRY IS HANDED IN (si#393). `newest` names the newest published tag, and `serves` says whether
     the registry really serves a tag. Asking either one is I/O through an adapter (`githubpackages`, oras),
-    and this module is the domain, which imports nothing above itself. The task that deploys,
+    and this module is the manifest layer, which imports nothing above itself. The task that deploys,
     `tasks.deploy`, passes the two in.
     """
     selector = (selector or "").strip()

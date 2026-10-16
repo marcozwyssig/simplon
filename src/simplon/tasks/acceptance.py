@@ -100,9 +100,9 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import NoReturn
 
-from simplon.domain import context, layout
+from simplon.manifest import context, layout
 from simplon.kernel import log
-from simplon.domain.layout import validate_relative_dir
+from simplon.manifest.layout import validate_relative_dir
 
 #: Where a product's `.feature` files are when its manifest does not say (si#183's rule, see the head of
 #: this file for why the value is a convention rather than a measured agreement).

@@ -10,8 +10,8 @@ and every assertion below looks at what is on the disk afterwards.
 import pytest
 import yaml
 
-from simplon.domain import context
-from simplon.domain.context import ProductContext
+from simplon.manifest import context
+from simplon.manifest.context import ProductContext
 from simplon.tasks import buildfiles
 
 

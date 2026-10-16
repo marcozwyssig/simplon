@@ -89,7 +89,7 @@ import sys
 from pathlib import Path
 from typing import NoReturn
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.kernel import log
 from simplon.kernel.run import Result, run
 

@@ -257,7 +257,7 @@ def test_the_innards_under_tasks_are_exactly_the_modules_no_coordinate_names():
     """
     # arrange
     # the body each coordinate names - since si#400 4c in the model (`BODIES`), no longer in catalogue.yaml
-    from simplon.domain.artifactschema import BODIES
+    from simplon.model.artifactschema import BODIES
     named = {body.split(":")[0][len("simplon.tasks."):] for body in BODIES.values()
              if body.startswith("simplon.tasks.")}
     # si#400 4b: a generated task class is its coordinate's own class (its KEY names it), not innards

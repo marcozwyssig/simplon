@@ -19,7 +19,7 @@ the command reference is read off the assembled app, the version comes off the t
 derived, and the reason is worth stating because it looks derivable: you can measure who imports what
 today, but a promise is about tomorrow. `simplon.kernel.verdict` has no consumer in any repository right now
 and is still a library - it was written as one, it names no product, and the next product to read a
-suite's outcome is meant to find it. `simplon.domain.catalogue` has no consumer either and is machinery. The
+suite's outcome is meant to find it. `simplon.manifest.catalogue` has no consumer either and is machinery. The
 import graph cannot tell those two apart, because the difference is an intention. So the intention is
 written down, once, here - and `tests/test_surface.py` holds it to the tree: every top-level module has
 to appear in exactly one of the three sets below, so a module cannot be added without somebody deciding
@@ -158,12 +158,12 @@ LIBRARY = frozenset({
     "adapters.imagenames", "adapters.interact", "adapters.labegress", "adapters.labhost",
     "adapters.labinstance", "adapters.labnet", "adapters.linux", "adapters.nexusproxy", "adapters.portainer",
     "adapters.ports", "adapters.pyvenv", "adapters.topology", "adapters.tracker", "cli", "cli.surface",
-    "domain.artifactsection", "domain.carrierspec", "domain.context", "domain.deployment",
-    "domain.environments", "domain.layout", "domain.manifest",
+    "manifest.artifactsection", "model.carrierspec", "manifest.context", "manifest.deployment",
+    "manifest.environments", "manifest.layout", "manifest.load",
     # si#400 4d: netctl's tests read a loaded manifest's commands, which are these objects.
-    "domain.command", "domain.outputs", "domain.treeform",
+    "model.command", "manifest.outputs", "manifest.treeform",
     # si#344 C.3: a GENERATED product module imports it, to hold a command's test results.
-    "domain.results",
+    "manifest.results",
     "kernel.awake", "kernel.degraded", "kernel.filelock", "kernel.log", "kernel.plan", "kernel.product",
     "kernel.run", "kernel.steps", "kernel.verdict", "kernel.waits", "tasks.completiongen", "tasks.taskgen",
     "tasks.workflowgen", "ui.tui",
@@ -203,9 +203,9 @@ PACKAGES = frozenset({"tasks"})
 #: `task` (si#400 4b) is the base of the task classes firn generates; nothing runs them before 4c, and a
 #: product's own classes (spec step 5) are where it moves to LIBRARY - promised then, not before.
 INTERNAL = frozenset({
-    "adapters.diskguard", "adapters.oras", "adapters.tools", "cli.bootstrap", "domain.artifactschema",
-    "domain.catalogue", "domain.clitaxonomy", "domain.launcherenv", "domain.manifestmodel", "domain.ports", "domain.runners",
-    "domain.signatures", "domain.task", "domain.yamlkeys", "kernel.moved", "kernel.provenance", "kernel.runhost", "kernel.steplog", "test_impls",
+    "adapters.diskguard", "adapters.oras", "adapters.tools", "cli.bootstrap", "model.artifactschema",
+    "manifest.catalogue", "manifest.clitaxonomy", "manifest.launcherenv", "manifest.manifestmodel", "manifest.ports", "manifest.runners",
+    "manifest.signatures", "model.task", "manifest.yamlkeys", "kernel.moved", "kernel.provenance", "kernel.runhost", "kernel.steplog", "test_impls",
 })
 
 #: Where each old path of a move lives now, the alias that keeps it importable, the wording it announces

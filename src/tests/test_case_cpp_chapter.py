@@ -58,8 +58,8 @@ import yaml
 from simplon.cli import bootstrap
 from simplon import cli as cli_mod
 from simplon.adapters import docker
-from simplon.domain import catalogue as catalogue_mod
-from simplon.domain import manifest as manifest_mod
+from simplon.manifest import catalogue as catalogue_mod
+from simplon.manifest import load as manifest_mod
 from simplon.tasks import profiles, toolchain
 from simplon.tasks.testrun import Gate
 

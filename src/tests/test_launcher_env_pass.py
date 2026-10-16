@@ -20,7 +20,7 @@ import pytest
 
 from conftest import ROOT
 from simplon.cli import bootstrap
-from simplon.domain import launcherenv, manifest
+from simplon.manifest import launcherenv, load as manifest
 from simplon.tasks import toolchain
 from test_launch_container import _product, _run
 

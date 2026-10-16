@@ -11,7 +11,7 @@ be generated rather than assembled reflectively; the command line it produces is
 product's CLI-surface golden asserts.
 
 The product's Nexus DATA (container, compose file, repository script, proxy repositories, the one
-client-side base-URL variable) is read from its manifest through `simplon.domain.context.current()`, never from a
+client-side base-URL variable) is read from its manifest through `simplon.manifest.context.current()`, never from a
 product import, so nothing here knows which product it is serving.
 """
 from __future__ import annotations

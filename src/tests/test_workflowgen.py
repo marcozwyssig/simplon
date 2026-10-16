@@ -26,9 +26,9 @@ import textwrap
 import pytest
 import yaml
 
-from simplon.domain import catalogue as catalogue_mod
+from simplon.manifest import catalogue as catalogue_mod
 from simplon.tasks import workflowgen
-from simplon.domain import manifest as manifest_mod
+from simplon.manifest import load as manifest_mod
 
 from conftest import ROOT
 
@@ -1872,7 +1872,7 @@ def test_a_parameter_the_command_does_not_declare_is_refused(rollout_manifest):
 # of images and build cache in a 64 GB refquota, reported to the pipeline as
 # `E: You don't have enough free space in /var/cache/apt/archives/` inside a docker build.
 #
-# So the steps are a consequence of the KIND of machine, which is what `simplon.domain.runners` carries once for
+# So the steps are a consequence of the KIND of machine, which is what `simplon.manifest.runners` carries once for
 # everybody - the same seam `setup_python` and the docker bootstrap already sit on. A product declaring a
 # self-hosted kind gets them without asking; a product that writes `runs-on:` itself gets nothing, because
 # that spelling says "the machine is mine" and the kernel has no table entry to reason from.
@@ -2125,7 +2125,7 @@ def _cli_reads_positionally(spec) -> dict[str, bool]:
 
 def _catalogue_leaves():
     """Every catalogue coordinate that declares `params:`, as the leaf a product placing it would get."""
-    from simplon.domain.command import ParamPresentation, TaskCommand
+    from simplon.model.command import ParamPresentation, TaskCommand
 
     for coordinate, entry in sorted(catalogue_mod.load().tasks.items()):
         if entry.get("params"):

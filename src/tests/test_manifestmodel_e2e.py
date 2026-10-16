@@ -13,8 +13,9 @@ import yaml
 from conftest import docker_is_usable
 from firnrun import firn_rc
 import realmanifests
-from simplon.domain import catalogue, manifestmodel
-from simplon.domain import manifest as manifest_mod
+from simplon.manifest import catalogue, manifestmodel
+from simplon.model.task import mangle
+from simplon.manifest import load as manifest_mod
 from simplon.tasks.migrate import migrate_text
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "manifests"
@@ -41,7 +42,7 @@ def test_a_reachable_manifest_exports_to_a_model_firn_accepts(tmp_path, name):
     out = manifestmodel.export(mf, yaml.safe_load(text), name, manifestmodel.KERNEL_SECTIONS)
     shutil.copy(SRC_FIRN_TOML, tmp_path / "firn.toml")
     shutil.copytree(SRC_FIRN, tmp_path / "firn")
-    target = tmp_path / "firn" / "model" / "product" / manifestmodel.mangle(name)
+    target = tmp_path / "firn" / "model" / "product" / mangle(name)
     target.mkdir(parents=True, exist_ok=True)
     (target / f"{name}.firn").write_text(out, encoding="utf-8")
 

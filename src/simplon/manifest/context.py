@@ -26,10 +26,10 @@ from typing import NamedTuple
 
 import yaml
 
-from simplon.domain import yamlkeys
-from simplon.domain.manifest import Manifest
-from simplon.domain.manifest import load as _load_manifest
-from simplon.domain import treeform as _treeform
+from simplon.manifest import yamlkeys
+from simplon.manifest.load import Manifest
+from simplon.manifest.load import load as _load_manifest
+from simplon.manifest import treeform as _treeform
 
 ROOT_ENV = "DELIVERY_PRODUCT_ROOT"
 MANIFEST_ENV = "DELIVERY_MANIFEST"
@@ -187,7 +187,7 @@ class ProductContext:
         """The RAW manifest mapping, for the product's OWN build-data sections that the CLI engine ignores
         (image names, cache volumes, ...). Fails loudly with a clear RuntimeError so a missing/corrupt
         manifest never surfaces as a bare traceback deep in a build/lab command. A key written twice is
-        corrupt too (si#344 B2, `simplon.domain.yamlkeys`): YAML would hand back the second copy and lose the first.
+        corrupt too (si#344 B2, `simplon.manifest.yamlkeys`): YAML would hand back the second copy and lose the first.
         Read from the FILE, so the parser's marks name it rather than "<unicode string>"."""
         try:
             with self.manifest_path.open(encoding="utf-8") as stream:
@@ -197,7 +197,7 @@ class ProductContext:
 
     def manifest(self) -> Manifest:
         """The parsed + validated command manifest the CLI engine assembles the product's CLI from
-        (delegates to ``simplon.domain.manifest.load``).
+        (delegates to ``simplon.manifest.load.load``).
 
         The kernel's task CATALOGUE is passed in, and it is not optional in practice: it carries both the
         coordinate space a command names instead of a module path (`task: "vcs:commit"`, netctl#1437) and
@@ -207,7 +207,7 @@ class ProductContext:
         Imported lazily so this module keeps no import-time dependency on the catalogue, which itself
         imports the manifest models.
         """
-        from simplon.domain import catalogue
+        from simplon.manifest import catalogue
 
         try:
             return _load_manifest(self.manifest_path.read_text(encoding="utf-8"),
@@ -322,7 +322,7 @@ def current() -> ProductContext:
     if _current is None:
         raise RuntimeError(
             "simplon: no ProductContext registered; the product's paths adapter must call "
-            "simplon.domain.context.set_current(...) at import before the kernel reads the context")
+            "simplon.manifest.context.set_current(...) at import before the kernel reads the context")
     return _current
 
 

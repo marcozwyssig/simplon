@@ -36,7 +36,7 @@ product's isolation env var set to 0, loudly. The rule CONSTRUCTION is pure and 
 iptables/sysctl I/O is thin and routed through `simplon.adapters.host.Host` so it lands on the docker host (a VM
 on macOS, the host itself on Linux), like every other lab-host mutation.
 
-What the PRODUCT supplies, as manifest data read through `simplon.domain.context` - never as an import:
+What the PRODUCT supplies, as manifest data read through `simplon.manifest.context` - never as an import:
 
 ```yaml
 lab_egress:
@@ -74,7 +74,7 @@ import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.kernel import log
 from simplon.adapters.host import Host
 from simplon.kernel.run import Result, run
@@ -103,7 +103,7 @@ class EgressSpec:
 
 
 def spec() -> EgressSpec:
-    """Read the product's ``lab_egress:`` section RAW through ``simplon.domain.context``, the same seam the
+    """Read the product's ``lab_egress:`` section RAW through ``simplon.manifest.context``, the same seam the
     build data and `labinstance` use. Fails loudly naming the manifest and the missing key: a silently
     defaulted env-var name would mean the operator's documented escape hatch does nothing, and a
     silently defaulted tag would make one product's teardown delete another's rules."""

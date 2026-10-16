@@ -13,7 +13,7 @@ from simplon.tasks import allure
 import pytest
 
 from conftest import lifecycle_name
-from simplon.domain import context
+from simplon.manifest import context
 
 
 def test_report_filename_produces_a_timestamped_single_file_html_name_for_a_given_time():

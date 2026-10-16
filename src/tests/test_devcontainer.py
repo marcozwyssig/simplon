@@ -6,10 +6,10 @@ containers BY LABEL rather than by a name this module invents.
 """
 import pytest
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.adapters import devcontainer
-from simplon.domain.deployment import Version
-from simplon.domain.environments import Environment
+from simplon.manifest.deployment import Version
+from simplon.manifest.environments import Environment
 from simplon.kernel.run import Result
 
 _ENV = Environment("dev", devcontainer.BACKEND, "The development container.")

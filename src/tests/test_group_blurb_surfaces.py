@@ -38,10 +38,10 @@ import typer
 from click.testing import CliRunner
 from typer.main import get_command
 
-from simplon.domain import catalogue as catalogue_mod
+from simplon.manifest import catalogue as catalogue_mod
 from simplon import cli
 from simplon.tasks import completiongen, taskgen
-from simplon.domain import manifest as manifest_mod
+from simplon.manifest import load as manifest_mod
 from simplon.tasks import cliref
 
 from conftest import ROOT
@@ -71,7 +71,7 @@ SURFACES = {
 #: token names a group in order to decide whether it is an environment name; nothing it answers reaches a
 #: screen, so a group description would have nowhere to arrive.
 NOT_A_SURFACE = {
-    "domain.environments": "asks whether a token names a group, to tell an environment name from a group token - "
+    "manifest.environments": "asks whether a token names a group, to tell an environment name from a group token - "
                     "it renders nothing",
 }
 

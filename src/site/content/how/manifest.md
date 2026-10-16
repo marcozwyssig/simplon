@@ -525,11 +525,11 @@ Each is driven in the test module above, so the silence is measured rather than 
 
 ### Reading a section, yours or the kernel's
 
-A product's own task body reads its own section through `simplon.domain.context.section`, the same walk the
+A product's own task body reads its own section through `simplon.manifest.context.section`, the same walk the
 kernel's own readers use:
 
 ```python
-from simplon.domain import context
+from simplon.manifest import context
 
 ctx = context.current()
 packer, blame, got = context.section(ctx.manifest_data(), "build", "packer")
@@ -611,7 +611,7 @@ refused by name, with the nearest key it does take, because otherwise it would b
 What a task NEEDS it is told when it runs, all at once: `release:nuget` needs `registry`, `image` and
 `path`; `build:nuget-pack` needs `image`, `project` and `path`; `build:nuget-config` only `registry`, so one entry
 can serve both. The refusal of an unknown key
-lists the keys the kind does take; your own code asks `simplon.domain.artifactsection.is_a(kind, "image")` rather
+lists the keys the kind does take; your own code asks `simplon.manifest.artifactsection.is_a(kind, "image")` rather
 than comparing `kind` to a string, so a kind that refines `image` is one too. Before si#344 B2 `path:` was called `source:`,
 `images:` was a section of its own, and an entry needed no `kind:`; the loader refuses each of those by
 name, and `simplon manifest migrate` rewrites all three (it derives a missing kind from the catalogue task

@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.tasks import releasenotes
 from simplon.kernel.run import Result
 

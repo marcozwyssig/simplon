@@ -24,14 +24,14 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.adapters import docker
 from simplon.kernel import log
 from simplon.kernel.run import Result, run, stream
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from simplon.domain.deployment import Version
-    from simplon.domain.environments import Environment
+    from simplon.manifest.deployment import Version
+    from simplon.manifest.environments import Environment
 
 #: The `backend:` tag an environment names to reach this.
 BACKEND = "devcontainer"

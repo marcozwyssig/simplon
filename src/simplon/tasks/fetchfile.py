@@ -35,8 +35,9 @@ from pathlib import Path
 
 from simplon.adapters import checksum
 from simplon.adapters import fetch as transfer
-from simplon.domain import artifactsection, artifactschema, context
-from simplon.domain.layout import validate_relative_dir
+from simplon.manifest import artifactsection, context
+from simplon.model import artifactschema
+from simplon.manifest.layout import validate_relative_dir
 from simplon.kernel import log
 
 #: The manifest section this task reads.

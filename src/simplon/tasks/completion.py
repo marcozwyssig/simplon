@@ -12,13 +12,13 @@ is the fourth quality goal spent where it is cheapest - one line of output - rat
 something a user has to go and read about.
 
 A KERNEL MECHANISM: nothing here knows a product. The repo root, the manifest and its filename arrive
-through `simplon.domain.context.current()`, and the environment names come out of the manifest's own
-`environments:` section - the same one `simplon.domain.environments.parse_data` reads.
+through `simplon.manifest.context.current()`, and the environment names come out of the manifest's own
+`environments:` section - the same one `simplon.manifest.environments.parse_data` reads.
 """
 from __future__ import annotations
 
 from simplon.tasks import completiongen
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.kernel import log
 
 

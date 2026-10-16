@@ -9,9 +9,9 @@ import pytest
 
 import sitepages
 from conftest import ROOT
-from simplon.domain import catalogue as catalogue_mod
-from simplon.domain import manifest
-from simplon.domain import treeform
+from simplon.manifest import catalogue as catalogue_mod
+from simplon.manifest import load as manifest
+from simplon.manifest import treeform
 from simplon.tasks import migrate
 
 
@@ -563,7 +563,7 @@ def test_a_product_adding_to_a_group_the_platform_already_placed_a_command_in_ke
 # --- one command name, one or two bodies (netctl's silent oras-vs-Colima `support install`) ---------------
 
 def _support_install_catalogue():
-    """A minimal catalogue that PLACES `support install`, the way `simplon.domain.catalogue.yaml` has since
+    """A minimal catalogue that PLACES `support install`, the way `simplon.manifest.catalogue.yaml` has since
     0.1.4 - just enough tree for the collision/refinement/override tests below."""
     return catalogue_mod.loads(textwrap.dedent("""
         tasks:
@@ -740,7 +740,7 @@ def test_a_declared_task_no_command_places_is_accepted():
     because a test that names the helper would pass by import error rather than by behaviour.
     """
     # arrange: a manifest declaring two tasks and placing exactly one of them
-    from simplon.domain import manifest as manifest_mod
+    from simplon.manifest import load as manifest_mod
     text = """
 product: demo
 tasks:
@@ -1031,7 +1031,7 @@ def test_against_the_shipped_catalogue_the_message_names_the_platforms_body_and_
     # arrange: since si#400 4c the shipped catalogue's impl names a CLASS; the message must still name the
     # body a human recognises (the function the class wraps), and two pages quote this very sentence
     # (CLAUDE.md: a quoted error text is a second source, pinned against the real message)
-    from simplon.domain import catalogue as catalogue_mod
+    from simplon.manifest import catalogue as catalogue_mod
     from conftest import ROOT
     text = textwrap.dedent("""
         product: netctl

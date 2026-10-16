@@ -4,7 +4,7 @@ AAA; the name states the behaviour under test.
 """
 import pytest
 
-from simplon.domain import catalogue, manifest
+from simplon.manifest import catalogue, load as manifest
 
 HEAD = """
 product: demo

@@ -45,8 +45,8 @@ from __future__ import annotations
 
 import yaml
 
-from simplon.domain import catalogue as catalogue_mod, context
-from simplon.domain import manifest as manifest_mod
+from simplon.manifest import catalogue as catalogue_mod, context
+from simplon.manifest import load as manifest_mod
 from simplon.tasks import releasenotes
 
 import sitepages

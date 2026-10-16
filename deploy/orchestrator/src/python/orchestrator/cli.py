@@ -9,7 +9,7 @@ the CI/CD panels) and the env-first dispatch live in the kernel, driven entirely
 fresh product adds groups/commands in simplon.yaml and impl callables HERE, and nowhere else.
 
 build.wheel, test.suite, support.doctor and build.model-guard below are simplon.yaml's BODIES; keep them as
-module-level callables so the manifest's impl refs resolve (simplon.domain.manifest.resolve_impl
+module-level callables so the manifest's impl refs resolve (simplon.manifest.load.resolve_impl
 imports THIS module and getattrs the function named after the `:`). Each shells out to the working tree at
 ROOT (a subprocess, not an in-process call) so `./simplon.sh build wheel` / `test suite` / `support doctor`
 exercise the exact commands a developer would run by hand.
@@ -46,7 +46,7 @@ _ALIASES: dict[str, str] = {}
 # that already carried the answer -- two sources for one path, and the counted one was wrong the
 # moment the block moved (si#24): it resolved to `deploy/`, and `test all` went looking for
 # `deploy/tests`. It failed loudly, which is the only reason this is a finding and not a silently
-# wrong build. `simplon.domain.context.bootstrap` walks up to the manifest marker, so the derived one is
+# wrong build. `simplon.manifest.context.bootstrap` walks up to the manifest marker, so the derived one is
 # right at any depth, and deleting the second source is cheaper than keeping it in step.
 ROOT = paths.ROOT
 
@@ -170,7 +170,7 @@ _MANIFEST = paths.CONTEXT.manifest()
 # `./simplon.sh <cmd>` steps. simplon.yaml has two of those - `build docs` and, since si#156, `test all` -
 # so this is load-bearing rather than provisional; assemble() takes a step_context either way.
 # StepFactoryContext is simplon.kernel.product's step-factory seam (kept
-# distinct from the identity context in simplon.domain.context, netctl#737); `for_shim` is the kernel's own
+# distinct from the identity context in simplon.manifest.context, netctl#737); `for_shim` is the kernel's own
 # factory for this shape, stamping each step with the planned command's exact-command identity so the
 # kernel can verify step i really is the step for plan leaf i (#42).
 _STEP_CONTEXT = StepFactoryContext.for_shim("simplon", paths.ROOT / "simplon.sh", _MANIFEST)

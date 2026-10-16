@@ -12,7 +12,7 @@ from typing import Iterable, Mapping, NamedTuple
 
 import yaml
 
-from simplon.domain import carrierspec
+from simplon.model import carrierspec
 
 
 #: What a `repository:` block accepts, and - as in `carrierspec` - everything else is REFUSED rather than
@@ -234,7 +234,7 @@ def declared_backends(data: "Mapping[str, object]") -> tuple[str, ...]:
 def parse_data(data: Mapping[str, object],
                valid_backends: "Iterable[str] | None" = None) -> Registry:
     """Build the registry from an ALREADY-parsed mapping - the `cd: environments:` / `cd: default:` of a
-    product's one manifest (simplon.domain.context.manifest_data()), read through `matrix_section`. Validates
+    product's one manifest (simplon.manifest.context.manifest_data()), read through `matrix_section`. Validates
     that every backend is one of valid_backends and that `default` names a real environment, so a bad
     descriptor fails loudly here, not deep in a deployment.
 
@@ -344,7 +344,7 @@ class Provider:
 
         A manifest with no `environments:` section falls back to a single local environment rather than
         raising: a product that has not reached deployment yet still has to be able to run its CLI."""
-        from simplon.domain import context  # local: context imports the manifest layer, this module is a leaf
+        from simplon.manifest import context  # local: context imports the manifest layer, this module is a leaf
 
         data = context.current().manifest_data()
         if not matrix_section(data)["environments"]:
@@ -406,7 +406,7 @@ class Provider:
         line that silently targets something else: with a `test` GROUP present, `<shim> test deploy down`
         runs the group, not the test instance. Read off the live manifest taxonomy, so a renamed group
         cannot leave a stale instruction behind in a runbook."""
-        from simplon.domain import context
+        from simplon.manifest import context
 
         if env in context.current().manifest().taxonomy().groups:
             return f"{self.ENV_VAR}={env} {self._shim} {command}"

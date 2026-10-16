@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from simplon.domain import layout
+from simplon.manifest import layout
 from simplon.tasks import toolchain
 
 

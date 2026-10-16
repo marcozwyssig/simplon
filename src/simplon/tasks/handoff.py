@@ -33,8 +33,8 @@ from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
-    from simplon.domain.artifactsection import Declared
-    from simplon.domain.command import TaskCommand
+    from simplon.manifest.artifactsection import Declared
+    from simplon.model.command import TaskCommand
 
 
 class Run(NamedTuple):

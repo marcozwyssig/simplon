@@ -21,7 +21,7 @@ import re
 
 from conftest import ROOT
 from simplon.cli import bootstrap
-from simplon.domain import launcherenv
+from simplon.manifest import launcherenv
 
 #: The kernel's own launcher, and the template every scaffolded product is rendered from.
 LAUNCHER = ROOT / "simplon.sh"

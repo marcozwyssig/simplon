@@ -3,7 +3,7 @@ addressable - `generate` (write the product's committed CLI module) and `catalog
 space).
 
 The generator itself is covered by test_taskgen.py. What is asserted here is the seam: that the verbs read
-the product's root, manifest and manifest FILENAME from `simplon.domain.context` rather than knowing a product,
+the product's root, manifest and manifest FILENAME from `simplon.manifest.context` rather than knowing a product,
 that `--check` reports drift as a non-zero exit so one command serves both a gate and a hook, and that the
 listing survives a product importing nothing.
 
@@ -13,7 +13,7 @@ import textwrap
 
 import pytest
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.tasks import tasks
 
 # `stamp` rather than any of the catalogue's own git verbs: the catalogue PLACES commit/push/... under

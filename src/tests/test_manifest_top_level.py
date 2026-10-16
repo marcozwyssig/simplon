@@ -77,7 +77,8 @@ import re
 import pytest
 import yaml
 
-from simplon.domain import carrierspec, context, deployment, environments, launcherenv, layout, outputs
+from simplon.model import carrierspec
+from simplon.manifest import context, deployment, environments, launcherenv, layout, outputs
 from simplon.adapters import labegress, labinstance, nexusproxy, tracker
 from simplon.tasks import workflowgen
 from simplon.tasks import (artifact, asset, buildfiles, claudeplugins, docs, env, generated,
@@ -89,7 +90,7 @@ from conftest import ROOT
 
 SRC = ROOT / "src" / "simplon"
 
-#: The one accessor a product's manifest DOCUMENT leaves `simplon.domain.context` through. Read off the call
+#: The one accessor a product's manifest DOCUMENT leaves `simplon.manifest.context` through. Read off the call
 #: sites rather than assumed, exactly as `test_refusal_census` does with the same name: a rename here
 #: finds no readers at all and `_document_readers` raises rather than quietly measuring nothing.
 DOCUMENT_ACCESSOR = "manifest_data"
@@ -113,7 +114,7 @@ PUBLISHED_UNDER = "### The names the kernel has claimed"
 MODULES: dict[str, tuple[str, ...]] = {
     # `deploy:` is its own; `artifacts:` is READ BUT NOT OWNED - si#235's section POINTS at an entry of it
     # rather than restating the registry, and since si#344 B2 images are entries of it too
-    "domain.deployment": ("deploy", "artifacts"),
+    "manifest.deployment": ("deploy", "artifacts"),
     # reads the document and hands it to `environments.parse_data`, the same shape as tasks.completion
     "tasks.deploy": (),
     # hands the document to `environments.parse_data` and `carrierspec.declared`, the same shape as
@@ -126,15 +127,15 @@ MODULES: dict[str, tuple[str, ...]] = {
     # si#314: the one directory a build writes into. A top-level SCALAR rather than a section - it
     # carries one value, and a section would invite a second key to grow beside it saying the same thing
     # differently.
-    "domain.outputs": ("output",),
+    "manifest.outputs": ("output",),
     # si#344 C.3: the `test-result` entries a command produces, read around its body at run time.
-    "domain.results": ("artifacts",),
+    "manifest.results": ("artifacts",),
     # `carriers:` is read HERE and not in `carrierspec.py`, which is the same shape as `deployment`'s inner
     # half: that module is handed the document and validates it, this one is what reaches the document
     # and cross-checks an environment's `carrier:` against what it declares. The key belongs to whoever
     # can name it when it is mistyped, and that is the reader with the document in its hand. The matrix
     # itself stands under `cd:` since si#344 (`matrix_section`), so `cd` is the top-level key read.
-    "domain.environments": ("cd", "carriers"),
+    "manifest.environments": ("cd", "carriers"),
     "adapters.labegress": ("lab_egress",),
     "adapters.labinstance": ("instance",),
     "adapters.nexusproxy": ("nexus",),

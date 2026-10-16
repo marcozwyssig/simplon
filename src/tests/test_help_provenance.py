@@ -23,7 +23,7 @@ from typer.testing import CliRunner
 import simplon
 from simplon import cli
 from simplon.kernel import provenance
-from simplon.domain import manifest
+from simplon.manifest import load as manifest
 
 _MANIFEST = """
 product: demo

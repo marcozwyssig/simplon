@@ -14,7 +14,7 @@ move inside the kernel without breaking anybody.
 The second is ordinary Python. A product's own task bodies `import simplon.kernel.log`, `simplon.kernel.run`,
 `simplon.adapters.host` and call them directly — that is not a workaround, it is the point of a kernel. But that
 surface had no edge. Every module sat at the top level of the package side by side (since si#399 they sit
-in one package per component - `kernel`, `domain`, `adapters`, `tasks`, `ui`, `cli`): the ones a product
+in one package per component - `kernel`, `model`, `manifest`, `adapters`, `tasks`, `ui`, `cli`): the ones a product
 may rely on, the ones the kernel merely shares between its own task bodies, and the ones that are pure
 internal machinery. If you were extending the kernel, the only way to find out what you were allowed to
 import was to read every consumer and guess.
@@ -27,7 +27,7 @@ the kernel's other packages; it belongs under `simplon/tasks/`, with the bodies 
 ```
 simplon/kernel/log.py         library — import it
 simplon/kernel/run.py         library — import it
-simplon/domain/catalogue.py   machinery — may change without notice
+simplon/manifest/catalogue.py   machinery — may change without notice
 simplon/tasks/vcs.py          a task body — reach it by coordinate, `vcs:commit`
 simplon/tasks/gitops.py       that body's innards — no promise at all
 ```
@@ -175,7 +175,7 @@ command reference is read off the assembled app, the version comes off the tag. 
 derived, and it is worth saying why, because it looks like it can: you can measure who imports what
 today, but a promise is about tomorrow. `simplon.kernel.verdict` has no consumer in any repository right now
 and is a library all the same — it was written as one, it names no product, and the next product to read
-a suite's outcome is meant to find it. `simplon.domain.catalogue` has no consumer either and is machinery. The
+a suite's outcome is meant to find it. `simplon.manifest.catalogue` has no consumer either and is machinery. The
 import graph cannot tell those two apart, because the difference is an intention.
 
 The example used to be `simplon.adapters.compose`, and it has since acquired a consumer — which is the argument
@@ -195,8 +195,8 @@ no product manifest, command or import is affected either way.
 Short enough to state, and the half you most need, because everything else is yours:
 
 `adapters.diskguard` · `adapters.oras` · `adapters.tools` · `cli.bootstrap` ·
-`domain.artifactschema` · `domain.catalogue` · `domain.clitaxonomy` · `domain.launcherenv` · `domain.manifestmodel` ·
-`domain.ports` · `domain.runners` · `domain.signatures` · `domain.task` · `domain.yamlkeys` · `kernel.moved` · `kernel.provenance` ·
+`model.artifactschema` · `manifest.catalogue` · `manifest.clitaxonomy` · `manifest.launcherenv` · `manifest.manifestmodel` ·
+`manifest.ports` · `manifest.runners` · `manifest.signatures` · `model.task` · `manifest.yamlkeys` · `kernel.moved` · `kernel.provenance` ·
 `kernel.runhost` · `kernel.steplog` · `test_impls`
 
 `runners` needs a word too, because `workflowgen` beside it is a library module and this is not. It is a
@@ -246,7 +246,7 @@ through 0.32 and **are gone since 0.33.0**. An import of one is now a `ModuleNot
 Migrating is a rename, because every module kept its name: `simplon.X` is `simplon.<layer>.X`, and the
 layer is the one `surface.LIBRARY` or `surface.INTERNAL` lists it under (`log` is `kernel.log`, `host` is
 `adapters.host`). One name is on both lists: the `simplon.ports` that moved is `adapters.ports`, and
-`domain.ports` is a different, internal module. The dissolved package went to three places: `orchestrator.plan`, `.product` and `.steps`
+`manifest.ports` is a different, internal module. The dissolved package went to three places: `orchestrator.plan`, `.product` and `.steps`
 to `simplon.kernel`, `orchestrator.manifest` and `orchestrator.model.treeform` to `simplon.domain`, and
 `orchestrator.tui` to `simplon.ui`. A string a test patches by changes with the import:
 `patch("simplon.orchestrator.steps.run_stream")` is `patch("simplon.kernel.steps.run_stream")`.

@@ -47,7 +47,7 @@ from typing import NoReturn
 import typer
 import yaml
 
-from simplon.domain import context, launcherenv, layout, outputs
+from simplon.manifest import context, launcherenv, layout, outputs
 from simplon.adapters import docker, hostpath, labinstance
 from simplon.kernel import log
 from simplon.tasks import profiles
@@ -349,7 +349,7 @@ def scaffold(language: str, version: str) -> int:
     a manifest whose shape the splice cannot read.
 
     `version` IS DECLARED AND NOT A `**params` BAG (si#105). Every profile's image is a template carrying
-    `{version}`, and `simplon.domain.signatures.bindable` drops a VAR_KEYWORD parameter - so the value a
+    `{version}`, and `simplon.manifest.signatures.bindable` drops a VAR_KEYWORD parameter - so the value a
     command supplied was accepted by the loader, never reached this body, and every language raised
     `KeyError: 'version'` on the first line. A parameter the CLI can carry has to be a parameter.
     """

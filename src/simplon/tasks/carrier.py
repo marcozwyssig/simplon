@@ -39,7 +39,8 @@ import os
 import shutil
 from pathlib import Path
 
-from simplon.domain import carrierspec, context, environments
+from simplon.model import carrierspec
+from simplon.manifest import context, environments
 from simplon.adapters import docker, hostpath
 from simplon.kernel import log, run
 from simplon.tasks import proxmoxapi

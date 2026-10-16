@@ -49,10 +49,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from simplon.domain import context, outputs
+from simplon.manifest import context, outputs
 from simplon.adapters import docker, hostpath
 from simplon.kernel import log
-from simplon.domain.layout import validate_relative_dir
+from simplon.manifest.layout import validate_relative_dir
 from simplon.kernel.run import run
 
 #: The manifest section this module owns. A section rather than flat keys: it is five related values, and

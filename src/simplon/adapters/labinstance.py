@@ -13,7 +13,7 @@ Step 3 is the one that looks product-specific and is not: it exists because an a
 worktree must not act on the main checkout's lab, which is a property of the TOOLING, not of the product.
 
 The three product-specific values - the env var's spelling, the reserved default id and the id-length
-budget - reach this module as manifest DATA through ``simplon.domain.context``, never as an import:
+budget - reach this module as manifest DATA through ``simplon.manifest.context``, never as an import:
 
 ```yaml
 instance:
@@ -34,7 +34,7 @@ import re
 from pathlib import Path
 from typing import NamedTuple
 
-from simplon.domain import context
+from simplon.manifest import context
 
 # The manifest section carrying the three product values above.
 MANIFEST_SECTION = "instance"
@@ -58,7 +58,7 @@ class InstanceSpec(NamedTuple):
 
 
 def spec() -> InstanceSpec:
-    """Read the product's ``instance:`` section RAW through ``simplon.domain.context`` (the same seam the build
+    """Read the product's ``instance:`` section RAW through ``simplon.manifest.context`` (the same seam the build
     data and the environments listing use). Fails loudly naming the manifest and the missing/invalid key,
     so a yaml typo surfaces here rather than as a lab silently resolving to the wrong tenant."""
     ctx = context.current()
@@ -131,7 +131,7 @@ def resolve(flag: str | None = None, *, worktree: object = _PROBE) -> str:
     The MAIN checkout has no worktree basename (its ``.git`` is a directory) and still resolves to the
     default, so a product's single-tenant human UX is byte-for-byte unchanged. ``worktree`` is injectable
     purely for tests (the basename, or ``None`` to assert the main-checkout branch); left unset it probes
-    the real checkout via ``simplon.domain.context.current().root``. The derived id always satisfies the
+    the real checkout via ``simplon.manifest.context.current().root``. The derived id always satisfies the
     product's id validation, so import-time resolution never fails loudly."""
     if flag is not None and flag.strip():
         return flag.strip()

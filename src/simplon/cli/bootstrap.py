@@ -26,7 +26,7 @@ It renders, mirroring the shape netctl's own `netctl.yaml` + `netctl.sh` use but
         __main__.py                                  `python -m orchestrator` entry
         cli.py                                       composition root: root Typer app + assemble
                                                      (step_context binds the `all` aggregate) + main
-        paths.py                                     the ProductContext wiring (simplon.domain.context); repo root
+        paths.py                                     the ProductContext wiring (simplon.manifest.context); repo root
                                                      found by walking up to the manifest marker, not a depth
         environments.py                              the EnvironmentProvider (its three product values)
 
@@ -35,7 +35,7 @@ block LAUNCH_ORCH_DIR points at, and both shims derive their venv, their require
 from that one variable, so the whole block moves together. The package name stays `orchestrator` under any
 layout - it is an identifier on PYTHONPATH, not a location.
 
-The generated manifest VALIDATES through `simplon.domain.manifest.load`; the generated `paths.py`
+The generated manifest VALIDATES through `simplon.manifest.load.load`; the generated `paths.py`
 registers a `ProductContext` exactly as netctl's adapter does, so the new product has a working,
 manifest-driven CLI right away (`./<product>.sh help`) - the launcher provisions its own venv and installs
 the pinned kernel from PyPI on first run; nothing needs vendoring.
@@ -78,8 +78,8 @@ from importlib.resources import files
 from pathlib import Path
 
 import simplon
-from simplon.domain import launcherenv, layout
-from simplon.domain.layout import validate_relative_dir
+from simplon.manifest import launcherenv, layout
+from simplon.manifest.layout import validate_relative_dir
 from simplon.kernel.run import run
 
 # A product name is a lowercase slug: it becomes the shim/manifest filename, the manifest `product:` label,
@@ -379,7 +379,7 @@ def released_pin(version: str) -> str:
 
 _MANIFEST = """\
 # @@PRODUCT@@ delivery manifest - the single declarative source Simplon
-# (simplon.domain.manifest) assembles @@PRODUCT@@'s CLI from. Scaffolded by
+# (simplon.manifest.load) assembles @@PRODUCT@@'s CLI from. Scaffolded by
 # `simplon init`. Fill it in: replace the placeholder tasks with your real bodies and
 # add the commands that instantiate them.
 #
@@ -634,7 +634,7 @@ fresh product adds commands in @@PRODUCT@@.yaml and impl callables HERE, and now
 
 Replace the placeholder bodies (build/check/up/down/status - one per phase of the loop) with your own;
 keep them as module-level callables so the manifest's task refs resolve
-(simplon.domain.manifest.resolve_impl imports THIS module and getattrs the function named after
+(simplon.manifest.load.resolve_impl imports THIS module and getattrs the function named after
 the `:`). Note where they are NAMED: a body is declared once under `tasks:` in @@PRODUCT@@.yaml and a
 command instantiates it with `task:` - a command never carries an `impl:` of its own, so there is one
 place a body is written down and one place it is placed. The `all` command in @@PRODUCT@@.yaml is a
@@ -715,7 +715,7 @@ _MANIFEST = paths.CONTEXT.manifest()
 # so the manifest's impl-less aggregates (`all`: depends_on build->up) run as DATA through the shared
 # runner - no product Python per aggregate. Built once; StepFactoryContext is
 # simplon.kernel.product's step-factory seam (kept distinct from the identity context in
-# simplon.domain.context, netctl#737).
+# simplon.manifest.context, netctl#737).
 #
 # `for_shim` is the kernel's own factory for this shape, and using it is not a style choice: it STAMPS
 # each step with the planned command's exact-command identity (`build.build`, `deploy.up`), which is what
@@ -744,10 +744,10 @@ def main() -> None:
 _PATHS = '''\
 """@@PRODUCT@@'s product adapter onto Simplon: derive the repo ROOT + the manifest path and
 register ONE ProductContext at import, so kernel code reads them back product-agnostically via
-simplon.domain.context.current() and never hardcodes "@@PRODUCT@@".
+simplon.manifest.context.current() and never hardcodes "@@PRODUCT@@".
 
 The walk up to the marker, the DELIVERY_* overrides and the fail-loud on a broken checkout are the
-KERNEL's (simplon.domain.context.bootstrap). What only this product knows is its name and where this file
+KERNEL's (simplon.manifest.context.bootstrap). What only this product knows is its name and where this file
 sits, so that is all this module says. Extend it to read the manifest's raw sections the kernel does
 not model - your own top-level keys - through CONTEXT.manifest_data() as your pipeline grows.
 """
@@ -755,7 +755,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from simplon.domain import context
+from simplon.manifest import context
 
 CONTEXT = context.bootstrap("@@PRODUCT@@", Path(__file__).resolve().parent)
 ROOT = CONTEXT.root
@@ -765,7 +765,7 @@ MANIFEST = CONTEXT.manifest_path
 _ENVIRONMENTS = '''\
 """@@PRODUCT@@'s named, isolated deployment environments. The matrix itself lives in @@PRODUCT@@.yaml
 (the `environments:`/`default:` sections); this adapter supplies the three things that are @@PRODUCT@@'s
-own and lets simplon.domain.environments.Provider do the rest.
+own and lets simplon.manifest.environments.Provider do the rest.
 
   * the process variable the active environment rides in (set by simplon.cli.main);
   * the backends this product IMPLEMENTS - `local` today; add your cloud backend (e.g. a VM-per-site
@@ -778,7 +778,7 @@ imported by the kernel - the coupling flows product -> kernel, never the reverse
 """
 from __future__ import annotations
 
-from simplon.domain.environments import LOCAL, Provider
+from simplon.manifest.environments import LOCAL, Provider
 
 ENV_VAR = "@@ENV_VAR@@"
 
@@ -987,7 +987,7 @@ def render(name: str, *, orch_dir: str = DEFAULT_ORCH_DIR, env_pass: tuple[str, 
 
 
 def manifest_yaml(name: str) -> str:
-    """Just the rendered starter manifest text (the piece a test feeds to simplon.domain.manifest.load)."""
+    """Just the rendered starter manifest text (the piece a test feeds to simplon.manifest.load.load)."""
     return render(name)[f"{validate_product_name(name)}.yaml"]
 
 
@@ -1161,7 +1161,7 @@ def launcher_env_pass(name: str, target: Path) -> tuple[str, ...]:
     one that is broken is refused the way the kernel's loader refuses it, with the same sentence."""
     import yaml
 
-    from simplon.domain import yamlkeys
+    from simplon.manifest import yamlkeys
 
     path = target / f"{name}.yaml"
     if not path.is_file():
@@ -1230,7 +1230,7 @@ def _manifest_migrate(args: list[str]) -> int:
     if args[:1] in (["--help"], ["-h"]):
         # The description is the catalogue's, so this route and `support manifest migrate --help` cannot
         # say two different things about one migration (si#403: this one named only the `groups:` cut).
-        from simplon.domain import catalogue
+        from simplon.manifest import catalogue
         print(f"{_MANIFEST_USAGE}\n\n{catalogue.load().resolve('support:migrate')['help']}")
         return 0
     if args[:1] and args[0].startswith("-"):

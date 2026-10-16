@@ -37,7 +37,7 @@ offers both. Today's tag list makes it harmless and the flag makes it structural
 """
 from __future__ import annotations
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.kernel import log
 from simplon.tasks import gitops
 

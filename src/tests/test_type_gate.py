@@ -71,8 +71,8 @@ import tomllib
 
 import yaml
 
-from simplon.domain import catalogue as catalogue_mod
-from simplon.domain import manifest as manifest_mod
+from simplon.manifest import catalogue as catalogue_mod
+from simplon.manifest import load as manifest_mod
 
 from conftest import ROOT
 

@@ -21,9 +21,11 @@ from typing import Callable, NamedTuple
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
-from simplon.domain import clitaxonomy, results, signatures, task
-from simplon.domain.command import AggregateCommand, TaskCommand
-from simplon.domain.manifest import Manifest, resolve_ref
+from simplon.manifest import clitaxonomy, results, signatures
+from simplon.model import task
+from simplon.model.command import AggregateCommand, TaskCommand
+from simplon.manifest.load import Manifest
+from simplon.model.task import resolve_ref
 
 _TEMPLATES = Path(__file__).resolve().parents[1] / "templates"
 
@@ -180,7 +182,7 @@ def render(manifest: Manifest, *, source: str, product: str,
                 call = _call(target, params, takes_context=takes_ctx)
                 # si#344 C.3: a command bound to produce an artifact has its call wrapped in the result
                 # check - `before` is the first argument, so it is evaluated before the body runs, and
-                # `held` turns an rc 0 that wrote no test result into 1 (`simplon.domain.results`).
+                # `held` turns an rc 0 that wrote no test result into 1 (`simplon.manifest.results`).
                 produced = tuple(a for names in spec.produces.values() for a in names)
                 if produced:
                     uses_results = True

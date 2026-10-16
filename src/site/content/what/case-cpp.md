@@ -188,7 +188,7 @@ three. They are one ticket, [simplon#105](https://github.com/marcozwyssig/simplo
 they are one story.
 
 **The version cannot be asked for.** Every profile's image is a template, and the catalogue declares
-exactly one parameter for the scaffolder - the language. `simplon.domain.signatures.bindable` drops `**kwargs`,
+exactly one parameter for the scaffolder - the language. `simplon.manifest.signatures.bindable` drops `**kwargs`,
 so there is no second value to pass and no manifest key that carries one:
 
 ```text

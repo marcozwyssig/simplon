@@ -11,7 +11,7 @@ import pytest
 
 pytest.importorskip("textual")
 
-from simplon.domain.manifest import load as manifest_load  # noqa: E402
+from simplon.manifest.load import load as manifest_load  # noqa: E402
 from simplon.kernel.steps import Outcome, Pipeline, Step, StepState  # noqa: E402
 from simplon.kernel import steps as steps_mod  # noqa: E402
 from simplon.ui.tui import _StepApp  # noqa: E402
@@ -722,8 +722,8 @@ def test_the_bar_follows_the_runs_state_in_its_css_class():
 def test_the_tui_path_leaves_the_same_transcript_behind(tmp_path, monkeypatch):
     """si#148 item 3, the other half of the both-paths decision: `run_pipeline` writes AFTER `App.run()`
     returns, so a run the operator quit half way through still leaves a record of what did happen."""
-    from simplon.domain import context
-    from simplon.domain.context import ProductContext
+    from simplon.manifest import context
+    from simplon.manifest.context import ProductContext
     from simplon.ui.tui import run_pipeline
 
     # arrange: a TTY, a registered product, and an app that quits itself the moment the run is done
@@ -1262,8 +1262,8 @@ def test_the_theme_picker_comes_free_with_the_palette():
 
 
 def test_the_palette_can_write_the_transcript_before_the_run_is_over(tmp_path, monkeypatch):
-    from simplon.domain import context
-    from simplon.domain.context import ProductContext
+    from simplon.manifest import context
+    from simplon.manifest.context import ProductContext
 
     monkeypatch.setattr(context, "_current", ProductContext("cleon", tmp_path, tmp_path / "cleon.yaml"))
 

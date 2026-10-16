@@ -18,10 +18,10 @@ from types import MappingProxyType
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar, NamedTuple
 
-from simplon.domain.artifactschema import Port
+from simplon.model.artifactschema import Port
 
 if TYPE_CHECKING:
-    from simplon.domain.task import Task
+    from simplon.model.task import Task
 
 #: The (major, minor) after which the read compatibility below goes: it ships in 0.33, so 0.34.0 removes it.
 COMPAT_DUE_AFTER = (0, 33)
@@ -134,7 +134,7 @@ class TaskCommand(Command):
         imports these classes, so a module-level import put the loader on the migration's path
         (test_importing_the_migration_does_not_import_the_manifest_loader). The refusal census reaches
         `task_class` through `manifest`'s own import of `task`, and `task.body_of` calls it by name."""
-        from simplon.domain import task
+        from simplon.model import task
         return task.task_class(self.impl, self.task or where, where=where)
 
 

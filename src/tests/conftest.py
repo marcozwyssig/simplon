@@ -27,7 +27,7 @@ def pytest_configure(config):
     such read is found by the suite rather than shipped behind the one-release compatibility. Here and not
     in `pyproject.toml`, which has no pytest section: adding one would move pytest's rootdir/inifile for a
     single line. A test that means to read one (`test_command.py`) says so with `pytest.warns`."""
-    config.addinivalue_line("filterwarnings", "error::simplon.domain.command.CompatWarning")
+    config.addinivalue_line("filterwarnings", "error::simplon.model.command.CompatWarning")
 
 
 #: The environment variables that change what a PURE kernel function returns, cleared for every test.

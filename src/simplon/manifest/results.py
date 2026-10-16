@@ -16,7 +16,7 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import NamedTuple
 
-from simplon.domain import artifactsection, context
+from simplon.manifest import artifactsection, context
 from simplon.kernel import log
 
 #: artifact name -> (its absolute path, its newest mtime_ns before the body ran, or None when absent)

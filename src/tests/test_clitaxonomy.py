@@ -1,10 +1,10 @@
-"""Unit tests for the generic CommandTaxonomy env-gate engine (simplon.domain.clitaxonomy): the reverse
+"""Unit tests for the generic CommandTaxonomy env-gate engine (simplon.manifest.clitaxonomy): the reverse
 index, group/flat-command resolution, env-requirement, and the verdict - exercised on a SYNTHETIC taxonomy
 so the engine is validated independently of any product's command set. AAA throughout."""
 import pytest
 
-from simplon.domain import clitaxonomy
-from simplon.domain.clitaxonomy import CommandTaxonomy, TaxonomyNode
+from simplon.manifest import clitaxonomy
+from simplon.manifest.clitaxonomy import CommandTaxonomy, TaxonomyNode
 
 
 def _tax() -> CommandTaxonomy:

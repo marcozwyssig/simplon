@@ -10,9 +10,9 @@ import time
 
 import pytest
 
-from simplon.domain import command
-from simplon.domain import context, results
-from simplon.domain.context import ProductContext
+from simplon.model import command
+from simplon.manifest import context, results
+from simplon.manifest.context import ProductContext
 
 _MANIFEST = """
 product: demo
@@ -177,8 +177,8 @@ def test_every_record_is_read_even_after_one_is_red(_product, capsys):
 
 
 def _release_spec():
-    from simplon.domain import manifest
-    from simplon.domain.artifactschema import PORTS
+    from simplon.manifest import load as manifest
+    from simplon.model.artifactschema import PORTS
 
     return command.TaskCommand(impl="m:f", help="Publish.", task="release:image",
                                consumes={"image": ("app",), "evidence": ("checked",)},

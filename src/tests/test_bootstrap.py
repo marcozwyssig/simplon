@@ -3,7 +3,7 @@ generated starter manifest validates through the real delivery loader, the file 
 substitution are exact) and the file-writing (every file lands, the shim is executable, an existing tree is
 not clobbered). No Typer, no product deps; AAA throughout, incl. negative cases.
 """
-from simplon.domain.command import AggregateCommand
+from simplon.model.command import AggregateCommand
 import os
 import re
 import subprocess
@@ -14,9 +14,9 @@ import pytest
 
 import simplon
 from simplon.cli import bootstrap
-from simplon.domain import catalogue as catalogue_mod
-from simplon.domain import environments as env_mod
-from simplon.domain import manifest
+from simplon.manifest import catalogue as catalogue_mod
+from simplon.manifest import environments as env_mod
+from simplon.manifest import load as manifest
 
 
 def _load_scaffold(name: str = "fooctl"):
@@ -24,7 +24,7 @@ def _load_scaffold(name: str = "fooctl"):
 
     WITH the catalogue, always: the scaffold hangs its commands off the platform's CI/CD loop and places
     two of the catalogue's own (`release tag`, `support install`), so a load without one is not a
-    stricter test - it is a different product. `simplon.domain.context.manifest()` passes the catalogue on every
+    stricter test - it is a different product. `simplon.manifest.context.manifest()` passes the catalogue on every
     real call, and this mirrors it.
     """
     return manifest.load(bootstrap.manifest_yaml(name), catalogue=catalogue_mod.load())
@@ -569,7 +569,7 @@ def test_simplon_manifest_migrate_help_is_help_and_reads_no_file(tmp_path, monke
 
 def test_simplon_manifest_migrate_help_says_what_support_manifest_migrate_says(capsys):
     # arrange: two routes to one migration, so one description - the catalogue's
-    from simplon.domain import catalogue
+    from simplon.manifest import catalogue
     described = catalogue.load().resolve("support:migrate")["help"]
 
     # act
@@ -597,7 +597,7 @@ def test_simplon_manifest_migrate_refuses_an_unknown_option_as_usage_not_as_a_fi
 def test_the_migrations_description_names_every_rewrite_it_makes():
     """si#403: 0.30.0 rewrote `images:` into `artifacts:` too, and the help named only the `groups:` cut."""
     # arrange
-    from simplon.domain import catalogue
+    from simplon.manifest import catalogue
 
     # act
     described = catalogue.load().resolve("support:migrate")["help"]

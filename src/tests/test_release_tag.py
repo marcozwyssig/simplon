@@ -25,8 +25,8 @@ from pathlib import Path
 
 import pytest
 
-from simplon.domain import context
-from simplon.domain.context import ProductContext
+from simplon.manifest import context
+from simplon.manifest.context import ProductContext
 from simplon.tasks import gitops, release
 
 import sitepages

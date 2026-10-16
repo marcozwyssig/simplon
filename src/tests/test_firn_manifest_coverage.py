@@ -7,7 +7,8 @@ the census's derived population, not against a list.
 import re
 from pathlib import Path
 
-from simplon.domain import manifestmodel
+from simplon.manifest import manifestmodel
+from simplon.model.task import mangle
 from test_refusal_census import sections_read
 
 M2 = Path(__file__).resolve().parents[1] / "firn" / "model" / "simplon" / "manifest" / "manifest.firn"
@@ -29,7 +30,7 @@ def _product_properties() -> set[str]:
 
 def test_the_manifest_package_models_exactly_what_the_kernel_reads():
     # arrange
-    read = {manifestmodel.mangle(section) for section in sections_read()}
+    read = {mangle(section) for section in sections_read()}
 
     # act
     modelled = _product_properties()
@@ -47,4 +48,4 @@ def test_the_bridges_typed_section_list_is_the_census_and_the_model():
 
     # act / assert
     assert list(typed) == sorted(sections_read())
-    assert {manifestmodel.mangle(section) for section in typed} == _product_properties()
+    assert {mangle(section) for section in typed} == _product_properties()

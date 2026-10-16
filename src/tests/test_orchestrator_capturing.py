@@ -17,9 +17,9 @@ import time
 
 import pytest
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.kernel import log, steplog
-from simplon.domain.context import ProductContext
+from simplon.manifest.context import ProductContext
 from simplon.kernel.steps import CRASH_RC, Pipeline, StepState, capturing, run_headless
 
 

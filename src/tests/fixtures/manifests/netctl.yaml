@@ -1,5 +1,5 @@
 # netctl CLI manifest (#437, #434) - the declarative source the kernel manifest engine
-# (simplon.domain.manifest) assembles netctl's Typer CLI from. It encodes the command
+# (simplon.manifest.load) assembles netctl's Typer CLI from. It encodes the command
 # taxonomy (groups + which groups are env-first) and, per command, the implementation reference
 # ("module:function", the existing orchestrator.cli callback) plus a one-line help summary. orchestrator.cli loads
 # this file at import and assembles the app from it; the env-gate reuses the same taxonomy.
@@ -19,7 +19,7 @@ product: netctl
 # The image names, cache volumes, docToolchain version and clab topology name that used to be Python
 # literals in orchestrator.paths. They live here so a second product supplies its own via its own manifest;
 # paths.py reads these RAW (import yaml + yaml.safe_load), not through the manifest engine. The engine
-# (simplon.domain.manifest.load) reads only groups/env_groups and IGNORES these
+# (simplon.manifest.load.load) reads only groups/env_groups and IGNORES these
 # extra top-level sections, so CLI assembly and the manifest-parity test are unaffected.
 images:
   web: netctl:local

@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from simplon.kernel import product
-from simplon.domain.manifest import load as manifest_load
+from simplon.manifest.load import load as manifest_load
 from simplon.kernel.steps import Outcome, Step, run_headless
 
 
@@ -208,7 +208,7 @@ def test_run_command_raises_a_clear_error_for_an_unknown_command():
 
 def test_product_context_is_a_back_compat_alias_of_step_factory_context():
     # The class was renamed ProductContext -> StepFactoryContext (netctl#737) to stop colliding with
-    # simplon.domain.context.ProductContext; the old name stays as an alias so a not-yet-bumped consumer keeps
+    # simplon.manifest.context.ProductContext; the old name stays as an alias so a not-yet-bumped consumer keeps
     # importing it until it migrates.
     # act / assert: same class, so `product.ProductContext(...)` still builds a usable step-factory context
     assert product.ProductContext is product.StepFactoryContext

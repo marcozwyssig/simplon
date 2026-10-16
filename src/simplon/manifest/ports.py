@@ -13,14 +13,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
-from simplon.domain import artifactsection
+from simplon.manifest import artifactsection
 
-from simplon.domain.artifactschema import PORTS, Port
-from simplon.domain.command import AggregateCommand, Command, ReleaseCommand, TaskCommand
+from simplon.model.artifactschema import PORTS, Port
+from simplon.model.command import AggregateCommand, Command, ReleaseCommand, TaskCommand
 from simplon.kernel.plan import PlanNode, parallel_siblings, schedule_of
 
 if TYPE_CHECKING:
-    from simplon.domain.manifest import Manifest
+    from simplon.manifest.load import Manifest
 
 #: The command key that binds each direction's ports.
 SIDE = {"output": "produces", "input": "consumes"}
