@@ -88,3 +88,13 @@ def needs_a_value(value):
     """
     CALLS.append(("needs_a_value", value))
     return 0
+
+
+def target_and_mode(target, mode="fast"):
+    """A body with one REQUIRED parameter and one with a default (si#471).
+
+    The CLI reads `target` as a POSITIONAL, because the body gives it no default, and `mode` as `--mode`.
+    A workflow generator that decided the form from the manifest's `params:` alone wrote both as options.
+    """
+    CALLS.append(("target_and_mode", target, mode))
+    return 0

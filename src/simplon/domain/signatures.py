@@ -181,6 +181,23 @@ def shape(name: str, *, required: bool, presentation) -> Shape:
                  decls=(long_decl,) + ((short,) if short else ()))
 
 
+def positional(param: Parameter, presentation) -> bool:
+    """Whether the CLI reads `param` as a POSITIONAL argument rather than an option (si#471).
+
+    The question every reader of a command line asks of a parameter it hands a value to - `assemble`
+    and the generated module through `shape`, `cli.receivers` for an aggregate's `passes:`, and the
+    workflow generator for a step's `params:` - so it is answered here once. A parameter the manifest
+    does not describe is left to Typer, which makes a REQUIRED one an argument and anything with a
+    default an option; a described one is positional when it is required or declares `argument: true`.
+
+    The workflow generator used to decide from `argument:` alone, which is the manifest's half of the
+    fact. `release:tag`'s `tag` is required in the body and declares no `argument:`, so the CLI read a
+    positional while the generator wrote `--tag`, and the step failed with a usage error on a runner.
+    """
+    form = shape(param.name, required=param.required, presentation=presentation)
+    return form.positional if form.declared else param.required
+
+
 def option_decl(name: str, literal_default: str | None, presentation, type_hint: str | None = None) -> str:
     """One wrapper parameter as source, given its rendered default and its manifest presentation.
 
