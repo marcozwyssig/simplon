@@ -6,6 +6,7 @@ catalogue allows under build. It loads with no cd group: the matrix alone is eno
 
 AAA throughout.
 """
+import dataclasses
 import copy
 import re
 from pathlib import Path
@@ -14,7 +15,7 @@ import pytest
 import yaml
 
 import realmanifests
-from simplon.domain import catalogue, manifestmodel
+from simplon.domain import catalogue, command, manifestmodel
 from simplon.domain.environments import matrix_section
 from simplon.domain import manifest as manifest_mod
 from simplon.tasks.migrate import migrate_text
@@ -283,7 +284,7 @@ def test_the_guard_holds_the_owner_not_the_property():
 def test_a_member_that_resolves_nowhere_is_refused():
     # arrange: load() cannot produce this, so the manifest is edited after it
     mf = _load()
-    spec = mf.commands["build"]["all"]._replace(depends_on=("nowhere",))
+    spec = dataclasses.replace(mf.commands["build"]["all"], depends_on=("nowhere",))
     mf = mf._replace(commands={**mf.commands, "build": {**mf.commands["build"], "all": spec}})
 
     # act / assert
@@ -371,7 +372,7 @@ def _placed_product_tasks(mf: manifest_mod.Manifest) -> set[str]:
     """The product tasks a command places, keyed by the `task:` name, not by its impl (si#420)."""
     from simplon.domain.artifactschema import BODIES
     specs = [mf.spec_for(group, command) for group, members in mf.groups.items() for command in members]
-    return {s.task for s in specs if not s.depends_on and s.task not in BODIES}
+    return {s.task for s in specs if isinstance(s, command.TaskCommand) and s.task not in BODIES}
 
 
 def _count(out: str, pattern: str) -> int:
@@ -407,9 +408,9 @@ def test_the_export_drops_nothing(name):
     assert placed or name == "demo"
     assert _count(out, r"tasks \w+") == len(placed)
     assert len(re.findall(r"^\s+produces = ", out, re.MULTILINE)) == sum(
-        len(names) for s in specs for names in s.produces.values())
+        len(names) for s in specs if isinstance(s, command.TaskCommand) for names in s.produces.values())
     assert len(re.findall(r"^\s+consumes = ", out, re.MULTILINE)) == sum(
-        len(names) for s in specs for names in s.consumes.values())
+        len(names) for s in specs if isinstance(s, command.TaskCommand) for names in s.consumes.values())
     assert _count(out, r"artifacts \w+") == len(document.get("artifacts") or {})
     assert len(re.findall(r"typeOf simplon\.manifest\.(KernelSection|ProductData) \{$", out, re.MULTILINE)) == len(
         [key for key in document if key not in structure])

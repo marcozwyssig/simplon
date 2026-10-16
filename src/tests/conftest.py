@@ -22,6 +22,14 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from simplon.adapters import hostpath   # noqa: E402  (needs the sys.path line above)
 
+def pytest_configure(config):
+    """si#400 4d: a kernel read of a field the command's own kind does not have is an ERROR here, so every
+    such read is found by the suite rather than shipped behind the one-release compatibility. Here and not
+    in `pyproject.toml`, which has no pytest section: adding one would move pytest's rootdir/inifile for a
+    single line. A test that means to read one (`test_command.py`) says so with `pytest.warns`."""
+    config.addinivalue_line("filterwarnings", "error::simplon.domain.command.CompatWarning")
+
+
 #: The environment variables that change what a PURE kernel function returns, cleared for every test.
 AMBIENT = ("DELIVERY_HOST_ROOT", "DELIVERY_MOUNT_ROOT")
 

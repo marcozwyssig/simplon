@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from simplon.domain.artifactsection import Declared
-    from simplon.domain.manifest import CommandSpec
+    from simplon.domain.command import TaskCommand
 
 
 class Run(NamedTuple):
@@ -44,7 +44,7 @@ class Run(NamedTuple):
     job-level `if:` as text, empty for none."""
 
     job: str
-    steps: "tuple[tuple[tuple[str, CommandSpec], ...], ...]"
+    steps: "tuple[tuple[tuple[str, TaskCommand], ...], ...]"
     matrix: bool = False
     needs: tuple[str, ...] = ()
     condition: str = ""

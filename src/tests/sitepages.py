@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from simplon.domain import catalogue as catalogue_mod
+from simplon.domain import command
 from simplon.domain import manifest as manifest_mod
 
 from conftest import ROOT
@@ -284,7 +285,8 @@ def generated_pages() -> frozenset[Path]:
     found: set[Path] = set()
     for members in parsed.commands.values():
         for spec in members.values():
-            output = spec.with_.get(REFERENCE_OUTPUT) if spec.impl in impls else None
+            output = (spec.with_.get(REFERENCE_OUTPUT)
+                      if isinstance(spec, command.TaskCommand) and spec.impl in impls else None)
             if isinstance(output, str) and output:
                 page = (ROOT / output).resolve()
                 if page.is_relative_to(CONTENT.resolve()):

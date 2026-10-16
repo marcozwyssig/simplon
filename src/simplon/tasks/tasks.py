@@ -20,6 +20,7 @@ from simplon.domain import context
 from simplon.kernel import log
 from simplon.tasks import taskgen
 from simplon.domain import task
+from simplon.domain.command import TaskCommand
 from simplon.domain.manifest import Manifest
 
 
@@ -117,4 +118,4 @@ def _reached_namespaces(manifest: Manifest, cat: catalogue_mod.Catalogue) -> fro
     return frozenset(namespace_by_impl[task.body_identity(spec.impl)]
                      for members in manifest.commands.values()
                      for spec in members.values()
-                     if spec.impl and task.body_identity(spec.impl) in namespace_by_impl)
+                     if isinstance(spec, TaskCommand) and task.body_identity(spec.impl) in namespace_by_impl)

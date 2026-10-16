@@ -663,7 +663,7 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("ports", "_check_release", "so no release goes past a test that ran"): EXPRESSION,
     # si#344 C.3 rule 8: a release is one aggregate naming one bundle, and its tag follows every publish.
     ("ports", "_check_bundles", "only an aggregate under `ci: release:` does"): EXPRESSION,
-    ("ports", "_check_bundles", "a release aggregate names exactly"): EXPRESSION,
+    ("manifest", "_command", "a release aggregate names exactly"): EXPRESSION,
     ("ports", "_check_bundles", "declare it with `kind: release`"): DIAGNOSIS,
     ("ports", "_check_bundles", "the bundle is a `kind: release`"): DIAGNOSIS,
     ("ports", "_check_bundles", "a tag cut before"): DIAGNOSIS,
@@ -980,7 +980,7 @@ REACH: dict[tuple[str, str, str], str] = {
     ("ports", "_check_release", "and no test produces a result about it"): REACH_MERGED,
     ("ports", "_check_release", "so no release goes past a test that ran"): REACH_MERGED,
     ("ports", "_check_bundles", "only an aggregate under `ci: release:` does"): REACH_MERGED,
-    ("ports", "_check_bundles", "a release aggregate names exactly"): REACH_MERGED,
+    ("manifest", "_command", "a release aggregate names exactly"): REACH_MERGED,
     ("ports", "_check_bundles", "leaves `stop_on_failure` false"): REACH_MERGED,
     # si#5's one expression rule. MERGED: this kernel's own manifest goes through the same parser, so a
     # stray key under a carrier of simplon's own would be refused exactly the same way. It declares no

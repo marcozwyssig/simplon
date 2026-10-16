@@ -266,9 +266,10 @@ def test_pipeline_still_takes_name_steps_and_stop_on_failure_positionally():
 
 def test_pipeline_carries_the_plan_tree_and_the_invoked_commands_dotted_path():
     # Arrange
-    from simplon.domain.manifest import CommandSpec, PlanNode
+    from simplon.domain.command import TaskCommand
+    from simplon.domain.manifest import PlanNode
 
-    node = PlanNode(name="seed", path="deploy.seed", spec=CommandSpec(impl="demo.impls:seed", help="Seed."))
+    node = PlanNode(name="seed", path="deploy.seed", spec=TaskCommand(impl="demo.impls:seed", help="Seed."))
     # Act
     p = Pipeline("seed", [_step("seed", 0)], False, node, "deploy.seed")
     # Assert: both ride along on the pipeline - the path purely so a renderer can show the invoked identity,

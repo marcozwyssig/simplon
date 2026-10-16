@@ -3,6 +3,7 @@ generated starter manifest validates through the real delivery loader, the file 
 substitution are exact) and the file-writing (every file lands, the shim is executable, an existing tree is
 not clobbered). No Typer, no product deps; AAA throughout, incl. negative cases.
 """
+from simplon.domain.command import AggregateCommand
 import os
 import re
 import subprocess
@@ -113,7 +114,7 @@ def test_generated_manifest_impls_reference_the_scaffolded_orchestrator_package(
     assert mf.spec_for("deploy", "up").impl == "orchestrator.cli:up"
     assert mf.spec_for("deploy", "down").impl == "orchestrator.cli:down"
     assert mf.spec_for("monitor", "status").impl == "orchestrator.cli:status"
-    assert mf.spec_for("deploy", "all").impl == ""
+    assert isinstance(mf.spec_for("deploy", "all"), AggregateCommand)   # runs no body (si#400 4d)
     assert mf.spec_for("release", "tag").impl == "simplon.tasks.release_tag:ReleaseTag"   # its class (si#400 4c)
 
 
@@ -410,7 +411,7 @@ def test_scaffolded_manifest_declares_no_dead_aggregate():
     # arrange
     mf = _load_scaffold()
     aggregates = {name: spec for members in mf.commands.values()
-                  for name, spec in members.items() if spec.depends_on}
+                  for name, spec in members.items() if isinstance(spec, AggregateCommand)}
 
     # assert: the starter declares a live aggregate and its plan expands to real leaves
     assert aggregates, "starter should exercise the aggregate feature"

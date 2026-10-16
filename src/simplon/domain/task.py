@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, ClassVar
 from simplon.domain import manifest
 
 if TYPE_CHECKING:
-    from simplon.domain.manifest import CommandSpec
+    from simplon.domain.command import TaskCommand
 
 
 class Task:
@@ -82,6 +82,8 @@ def body_identity(impl: str) -> str:
     return by_class.get(impl, impl)
 
 
-def body_of(spec: CommandSpec, *, where: str) -> Callable[..., object]:
+def body_of(spec: TaskCommand, *, where: str) -> Callable[..., object]:
     """The callable a leaf runs: its task class's `run`. The one runtime path (si#400 4c)."""
+    # `task_class` by name, not `spec.task_class(...)`: the refusal census follows calls by name, and the
+    # method spelling hid `task_class`'s and `resolve_ref`'s refusals from it (measured, 270 -> 266).
     return task_class(spec.impl, spec.task or where, where=where)().run

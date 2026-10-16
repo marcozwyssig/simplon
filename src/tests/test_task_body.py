@@ -5,7 +5,7 @@ AAA; the name states the behaviour under test.
 """
 import pytest
 
-from simplon.domain import catalogue, signatures, task
+from simplon.domain import catalogue, command, signatures, task
 from simplon.domain.manifestmodel import mangle
 from simplon.tasks.image import build
 
@@ -91,7 +91,7 @@ def test_assembling_the_cli_imports_the_class_of_a_placed_coordinate_only():
     mf = manifest_mod.load((ROOT / "simplon.yaml").read_text(encoding="utf-8"), catalogue=catalogue.load())
     # placed by simplon.yaml or by the catalogue's own tree: the merged manifest's commands
     placed = {f"simplon.tasks.{mangle(spec.task)}" for members in mf.commands.values()
-              for spec in members.values() if spec.task}
+              for spec in members.values() if isinstance(spec, command.TaskCommand) and spec.task}
 
     # act
     run = subprocess.run([sys.executable, "-c", hook], cwd=ROOT, capture_output=True, text=True)

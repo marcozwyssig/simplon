@@ -5,6 +5,7 @@ against REAL importable bodies (simplon.test_impls), because introspecting a moc
 Several tests import the RENDERED text and register it onto a Typer app. Asserting on the text says what
 was written; asserting on the assembled Click tree says what Click made of it, and the tree is what
 netctl's cli_surface golden compares. AAA throughout."""
+import dataclasses
 import importlib.util
 import textwrap
 
@@ -14,6 +15,7 @@ import typer
 from click.testing import CliRunner
 from typer.main import get_command
 
+from simplon.domain import command
 from simplon.domain import catalogue as catalogue_mod
 from simplon.tasks import taskgen
 from simplon.domain import manifest
@@ -940,7 +942,7 @@ def test_the_body_docstring_is_the_last_resort_when_neither_command_nor_task_dec
     # arrange: `load()` itself never produces a command with empty help (rule 3 requires one somewhere in
     # the chain), so this exercises `_docstring` directly - the shape a task nobody described would take
     # (netctl#1469 spec 3.7's third link) and the negative the two tests above cannot cover.
-    spec = manifest.CommandSpec(impl="simplon.test_impls:seed", help="")
+    spec = command.TaskCommand(impl="simplon.test_impls:seed", help="")
 
     def body():
         """A body's own docstring, used only when nothing else describes it."""
@@ -1437,7 +1439,7 @@ def test_both_mechanisms_render_the_same_group_blurb(tmp_path):
 def _render_with_produces(produces):
     """The default manifest's one leaf, bound to produce `produces`, rendered."""
     m = _load()
-    spec = m.commands["lab"]["seed"]._replace(produces=produces)
+    spec = dataclasses.replace(m.commands["lab"]["seed"], produces=produces)
     return taskgen.render(m._replace(commands={"lab": {"seed": spec}}), source="m.yaml", product="demo")
 
 
@@ -1463,8 +1465,8 @@ def test_a_command_bound_to_evidence_reads_it_before_its_body_runs():
     from simplon.domain.artifactschema import PORTS
 
     m = _load()
-    spec = m.commands["lab"]["seed"]._replace(consumes={"evidence": ("checked",)},
-                                              ports=PORTS["release:image"])
+    spec = dataclasses.replace(m.commands["lab"]["seed"], consumes={"evidence": ("checked",)},
+                               ports=PORTS["release:image"])
 
     # act
     text = taskgen.render(m._replace(commands={"lab": {"seed": spec}}), source="m.yaml", product="demo")

@@ -19,7 +19,7 @@ skipping everything after a refusal and asking a person questions whose precondi
 denied, and either would be a manual mode answering a different question than the automatic one. That is
 the whole "one verdict" property, and it is spelled `stop_on_failure`.
 
-WHAT THE MAPPING COSTS, said plainly. A `PlanNode` carries a `CommandSpec`, which is a manifest
+WHAT THE MAPPING COSTS, said plainly. A `PlanNode` carries a `Command`, which is a manifest
 declaration, and a Gherkin step is not a command - so `_plan_spec` builds specs no manifest ever wrote.
 That is a seam being borrowed rather than fitted, and it is accepted for one reason: everything
 downstream of the plan (`build_rows`, `abort_after`, `status_line`, `transcript`, `failure_report`,
@@ -93,7 +93,8 @@ from typing import ClassVar
 from simplon.domain import context
 from simplon.kernel import log, runhost, steplog
 from simplon.adapters import tracker
-from simplon.domain.manifest import CommandSpec, PlanNode
+from simplon.domain.command import AggregateCommand, Command, TaskCommand
+from simplon.domain.manifest import PlanNode
 from simplon.domain.task import class_ref
 from simplon.kernel.steps import Emit, Outcome, Pipeline, Step, StepState, write_run_transcript
 from simplon.kernel.run import run
@@ -594,18 +595,19 @@ def question(scenario: Scenario, index: int, step: GherkinStep, replayed: str) -
     return lines
 
 
-def _plan_spec(help_text: str, *, leaf: bool = False, stop: bool = False) -> CommandSpec:
-    """A `CommandSpec` for a plan node no manifest declared - see the module head on what borrowing this
-    seam costs.
+def _plan_spec(help_text: str, *, leaf: bool = False, stop: bool = False) -> Command:
+    """A `Command` for a plan node no manifest declared - see the module head on what borrowing this seam
+    costs. A leaf is a `TaskCommand` and anything else an `AggregateCommand`, because `PlanNode.is_leaf`
+    asks the kind (si#400 4d).
 
-    `impl` names THIS command for a leaf, because `PlanNode.is_leaf` is `bool(spec.impl)` and a reference
-    that resolves to nothing would be a second kind of lie to save a line. Nothing resolves it: `plan`
-    hands the runner the steps it built. `depends_on` stays empty on purpose - it is read only by
-    `steps.omitted_note`, which exists to explain a dependency planned somewhere else, and nothing in a
-    walk is planned somewhere else.
+    A leaf's `impl` names THIS command, because a reference that resolves to nothing would be a second
+    kind of lie to save a line. Nothing resolves it: `plan` hands the runner the steps it built.
+    `depends_on` stays empty on purpose - it is read only by `steps.omitted_note`, which exists to explain
+    a dependency planned somewhere else, and nothing in a walk is planned somewhere else.
     """
-    return CommandSpec(impl=class_ref("test:walk") if leaf else "", help=help_text,
-                       stop_on_failure=stop)
+    if leaf:
+        return TaskCommand(impl=class_ref("test:walk"), help=help_text)
+    return AggregateCommand(help=help_text, stop_on_failure=stop)
 
 
 def plan(taken: Sequence[tuple[Feature, tuple[Scenario, ...]]], state: State,

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from simplon.domain import artifactsection
 
 from simplon.domain.artifactschema import PORTS, Port
+from simplon.domain.command import AggregateCommand, Command, ReleaseCommand, TaskCommand
 from simplon.kernel.plan import PlanNode, parallel_siblings, schedule_of
 
 if TYPE_CHECKING:
@@ -170,6 +171,11 @@ def check(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared
     for group, members in manifest.commands.items():
         for name, spec in members.items():
             where = f"{group} {name}"
+            if isinstance(spec, ReleaseCommand):
+                producers.setdefault(spec.release, []).append(where)
+                continue
+            if not isinstance(spec, TaskCommand):
+                continue
             if not spec.task:
                 for artifact in (a for names in spec.produces.values() for a in names):
                     producers.setdefault(artifact, []).append(where)
@@ -203,7 +209,7 @@ def check(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared
                 f"command, or give it a `registry:` it is fetched from")
     for group, members in manifest.commands.items():
         for name, spec in members.items():
-            if spec.depends_on:
+            if isinstance(spec, AggregateCommand):
                 _check_plan(manifest, f"{group} {name}", manifest.plan_tree_for(name, group=group))
     _check_bundles(manifest, declared, kinds)
     about = _check_results(manifest, declared, kinds)
@@ -218,18 +224,16 @@ def _check_bundles(manifest: "Manifest", declared: Mapping[str, "artifactsection
     task takes evidence - an input port accepting `test-result` - so the set is derived, not listed."""
     for group, members in manifest.commands.items():
         for name, spec in members.items():
-            if spec.task or not spec.produces:
+            if not isinstance(spec, ReleaseCommand):
                 continue
             where = f"{group} {name}"
             if not _under(manifest, group, "release"):
                 raise ValueError(
                     f"aggregate '{where}' names an output, and only an aggregate under `ci: release:` does - "
                     f"its one output is the release bundle")
-            if list(spec.produces) != ["release"] or len(spec.produces["release"]) != 1:
-                raise ValueError(
-                    f"aggregate '{where}' names {', '.join(spec.produces)}: a release aggregate names exactly "
-                    f"one output, `produces: {{ release: <artifact> }}`")
-            bundle = spec.produces["release"][0]
+            # The shape half of rule 8 - exactly one output, `release` - is `manifest._command`'s, because a
+            # `ReleaseCommand` holds its one bundle by name and cannot carry a map it would have to refuse.
+            bundle = spec.release
             if bundle not in declared:
                 raise ValueError(
                     f"aggregate '{where}' names the bundle '{bundle}', and `artifacts:` declares no "
@@ -244,7 +248,8 @@ def _check_bundles(manifest: "Manifest", declared: Mapping[str, "artifactsection
                     f"failed publish leaf does not stop the plan, so the tag ordered last would still be cut; "
                     f"set `stop_on_failure: true`")
             plan = manifest.plan_for(name, group=group)
-            specs = [manifest.spec_by_name(step) for step in plan]
+            # `plan_for` names leaves only, so every one is a task command; the narrowing says so to the reader.
+            specs = [s if isinstance(s := manifest.spec_by_name(step), TaskCommand) else None for step in plan]
             publishes = [at for at, s in enumerate(specs)
                          if s and any(p.direction == "input" and p.accepts == "test-result" for p in s.ports)]
             for at, (step, s) in enumerate(zip(plan, specs)):
@@ -255,6 +260,14 @@ def _check_bundles(manifest: "Manifest", declared: Mapping[str, "artifactsection
                         f"the tag after every publish in `depends_on`")
 
 
+def _bound(spec: Command | None, side: str) -> Mapping[str, tuple[str, ...]]:
+    """A command's port bindings on one side (`produces` or `consumes`): a task command's own, and none for
+    an aggregate or an absent command - an aggregate binds no port (si#400 4d reads only its own kind)."""
+    if not isinstance(spec, TaskCommand):
+        return {}
+    return spec.produces if side == "produces" else spec.consumes
+
+
 def _check_plan(manifest: "Manifest", aggregate: str, tree: PlanNode) -> None:
     """Rule 1 per plan (decided 2026-10-14) and rule 5: one producer of an artifact in a plan, planned
     before every consumer of it there - and not beside it in a fan (si#419), which `depends_on` order
@@ -263,7 +276,7 @@ def _check_plan(manifest: "Manifest", aggregate: str, tree: PlanNode) -> None:
     made: dict[str, tuple[int, str]] = {}
     for at, step in enumerate(plan):
         spec = manifest.spec_by_name(step)
-        for artifact in (a for names in (spec.produces if spec else {}).values() for a in names):
+        for artifact in (a for names in _bound(spec, "produces").values() for a in names):
             if artifact in made:
                 raise ValueError(
                     f"aggregate '{aggregate}' plans two producers of '{artifact}': '{made[artifact][1]}' and "
@@ -272,7 +285,7 @@ def _check_plan(manifest: "Manifest", aggregate: str, tree: PlanNode) -> None:
     _check_fans(manifest, aggregate, tree, {artifact: step for artifact, (_, step) in made.items()})
     for at, step in enumerate(plan):
         spec = manifest.spec_by_name(step)
-        for artifact in (a for names in (spec.consumes if spec else {}).values() for a in names):
+        for artifact in (a for names in _bound(spec, "consumes").values() for a in names):
             if artifact in made and made[artifact][0] > at:
                 producer = made[artifact][1]
                 raise ValueError(
@@ -287,12 +300,12 @@ def _check_fans(manifest: "Manifest", aggregate: str, node: PlanNode, made: Mapp
     refuses exactly what the runner races. Children first, so the message names the innermost fan."""
     for child in node.children:
         _check_fans(manifest, aggregate, child, made)
-    if not node.spec.parallel:
+    if not (isinstance(node.spec, AggregateCommand) and node.spec.parallel):
         return
     leaves = [leaf.name for leaf in node.leaves()]
     for at, beside in sorted(parallel_siblings(schedule_of(node)).items()):
         spec = manifest.spec_by_name(leaves[at])
-        for artifact in (a for names in (spec.consumes if spec else {}).values() for a in names):
+        for artifact in (a for names in _bound(spec, "consumes").values() for a in names):
             producer = made.get(artifact)
             if producer is not None and producer in (leaves[other] for other in beside):
                 group, _, name = node.path.rpartition(".")
@@ -326,7 +339,7 @@ def _check_results(manifest: "Manifest", declared: Mapping[str, "artifactsection
     about: dict[str, set[str]] = {}
     for group, members in manifest.commands.items():
         for name, spec in members.items():
-            made = [a for names in spec.produces.values() for a in names
+            made = [a for names in _bound(spec, "produces").values() for a in names
                     if artifactsection.accepts(kinds, "test-result", declared[a].kind)]
             if not made:
                 continue
@@ -340,7 +353,7 @@ def _check_results(manifest: "Manifest", declared: Mapping[str, "artifactsection
                 raise ValueError(
                     f"command '{where}' produces the test result '{made[0]}' outside `ci: test:` - a test "
                     f"result is evidence that a test ran, so only a command under `ci: test:` produces one")
-            for subject in (a for names in spec.consumes.values() for a in names):
+            for subject in (a for names in _bound(spec, "consumes").values() for a in names):
                 about.setdefault(subject, set()).update(made)
     return about
 
@@ -355,7 +368,7 @@ def _check_release(manifest: "Manifest", declared: Mapping[str, "artifactsection
             continue
         for name, spec in members.items():
             where = f"{group} {name}"
-            consumed = [a for names in spec.consumes.values() for a in names]
+            consumed = [a for names in _bound(spec, "consumes").values() for a in names]
             evidence = {a for a in consumed if artifactsection.accepts(kinds, "test-result", declared[a].kind)}
             for subject in consumed:
                 if any(artifactsection.accepts(kinds, own, declared[subject].kind) for own in OWN_KINDS):

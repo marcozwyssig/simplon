@@ -3,6 +3,7 @@ YAML load + schema validation of the nested group -> command -> spec TREE (#729)
 resolution, and the shared-taxonomy build - exercised on a SYNTHETIC manifest so the engine is validated
 independently of any product's command set. No Typer, no product impls; AAA throughout.
 """
+import dataclasses
 import json
 import os
 import pathlib
@@ -12,6 +13,7 @@ import textwrap
 
 import pytest
 
+from simplon.domain import command
 from simplon.domain import catalogue as catalogue_mod
 from simplon.domain import manifest
 
@@ -237,7 +239,7 @@ def test_load_rejects_a_malformed_impl_reference(bad_impl):
 
 def test_resolve_impl_imports_the_module_and_returns_the_function():
     # arrange: an impl reference to a real importable function (stdlib, so the test needs no product code)
-    spec = manifest.CommandSpec(impl="json:dumps", help="x")
+    spec = command.TaskCommand(impl="json:dumps", help="x")
 
     # act
     fn = manifest.resolve_impl(spec)
@@ -249,7 +251,7 @@ def test_resolve_impl_imports_the_module_and_returns_the_function():
 
 def test_resolve_impl_raises_a_clear_error_on_a_missing_module():
     # arrange
-    spec = manifest.CommandSpec(impl="no_such_module_xyz:foo", help="x")
+    spec = command.TaskCommand(impl="no_such_module_xyz:foo", help="x")
 
     # act / assert
     with pytest.raises(ValueError, match="cannot import module"):
@@ -258,7 +260,7 @@ def test_resolve_impl_raises_a_clear_error_on_a_missing_module():
 
 def test_resolve_impl_raises_a_clear_error_on_a_missing_function():
     # arrange
-    spec = manifest.CommandSpec(impl="json:no_such_function_xyz", help="x")
+    spec = command.TaskCommand(impl="json:no_such_function_xyz", help="x")
 
     # act / assert
     with pytest.raises(ValueError, match="has no attribute"):
@@ -333,8 +335,9 @@ def test_load_reads_depends_on_and_stop_on_failure_defaulting_to_empty_and_false
     assert mf.spec_for("build", "prep").depends_on == ("install", "build")
     assert mf.spec_for("deploy", "bringup").depends_on == ("stage", "prep", "seed")
     assert mf.spec_for("deploy", "bringup").stop_on_failure is True
-    assert mf.spec_for("build", "install").depends_on == ()
-    assert mf.spec_for("build", "install").stop_on_failure is False
+    # since si#400 4d a leaf is a TaskCommand and has neither field; an aggregate's flag defaults to False
+    assert isinstance(mf.spec_for("build", "install"), command.TaskCommand)
+    assert mf.spec_for("build", "prep").stop_on_failure is False
 
 
 def test_plan_for_resolves_transitively_in_dependency_order_and_dedups_the_diamond():
@@ -521,7 +524,7 @@ ci:
 
     # assert
     assert mf.spec_for("build", "images").keep_awake is True
-    assert mf.spec_for("build", "jar").keep_awake is False
+    assert isinstance(mf.spec_for("build", "jar"), command.TaskCommand)   # a leaf has no `keep_awake` (si#400 4d)
 
 
 def test_load_rejects_keep_awake_on_a_leaf():
@@ -1588,8 +1591,10 @@ def test_a_new_form_manifest_and_its_old_form_twin_load_identically():
     assert new.groups == old.groups
     # `task` is the name the command was written against (`lab-image` here, `frr-image` in the twin) - a
     # spelling, not the surface (si#344 C.2 keeps it for the model and the port rules)
-    assert ({g: {n: s._replace(task="") for n, s in m.items()} for g, m in new.commands.items()}
-            == {g: {n: s._replace(task="") for n, s in m.items()} for g, m in old.commands.items()})
+    def spelled_out(c):
+        return dataclasses.replace(c, task="") if isinstance(c, command.TaskCommand) else c
+    assert ({g: {n: spelled_out(s) for n, s in m.items()} for g, m in new.commands.items()}
+            == {g: {n: spelled_out(s) for n, s in m.items()} for g, m in old.commands.items()})
     assert new.tree == old.tree
 
 
@@ -1678,4 +1683,4 @@ ci:
 
     # assert
     assert mf.spec_for("build", "all").passes == ("tag",)
-    assert mf.spec_for("build", "jar").passes == ()
+    assert isinstance(mf.spec_for("build", "jar"), command.TaskCommand)   # a leaf passes nothing (si#400 4d)

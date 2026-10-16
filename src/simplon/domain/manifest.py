@@ -17,7 +17,7 @@ engine must not bind to one CLI framework). "One source, two outputs": the same 
 runtime CLI now and, in Phase 2, the CI workflows.
 
 Parsing + validation run through the private Pydantic v2 models below (`_ManifestModel` and its spec
-models). The PUBLIC surface stays the NamedTuples `CommandSpec` / `Manifest`: `load()`
+models). The PUBLIC surface is `Manifest` and the `simplon.domain.command` classes (si#400 4d): `load()`
 converts the validated model into those tuples before returning, so consumers see byte-for-byte the same
 types (field access, tuple unpacking, `taxonomy()`, `spec_for()`, `spec_by_name()`). The fail-loud
 contract is unchanged - every rule violation is raised as a ValueError, and `load()` re-raises any Pydantic
@@ -35,134 +35,12 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from simplon.domain import artifactsection, ports, task, yamlkeys
+from simplon.domain.command import (AggregateCommand, Command, Deploy, ParamPresentation, ReleaseCommand,
+                                    TaskCommand)
 from simplon.domain.artifactschema import Port
 from simplon.domain.clitaxonomy import CommandTaxonomy, TaxonomyNode, merge_trees
 from simplon.domain import treeform
 from simplon.kernel.plan import PlanNode
-
-
-class CommandSpec(NamedTuple):
-    """One command's declaration: its implementation reference and a one-line help summary.
-
-    `impl` is a "module:function" reference (e.g. "netctl.cli:seed") the engine resolves to the callable
-    that runs the command. `help` is the canonical short summary (used in listings + consumed by the
-    Phase-2 CI-doc generation). `passthrough_args` marks a command that forwards any unrecognised trailing
-    args to an underlying tool (e.g. a test runner) - a generic intent the product maps to its CLI
-    framework's settings. The owning GROUP is deliberately NOT stored here: it is the key of the group that
-    nests this spec in the manifest's `commands` tree (the single membership source), so a command can never
-    disagree with it.
-
-    `depends_on` (#895) names the commands this one depends on: the runner resolves them transitively,
-    DEDUPLICATES by name and runs each unique command exactly once per top-level invocation, in dependency
-    order (`Manifest.plan_for`). Idempotency is each command's own guarantee - there is no freshness/Make
-    tracking, only dedup-once. `impl` and `depends_on` are mutually exclusive (v1 lock): a command is
-    either a leaf-with-impl or an impl-less AGGREGATE. Rationale: plan steps execute as `./<product>.sh
-    <leaf>` SUBPROCESSES, so an impl-bearing command that also carried deps would re-expand them in the
-    child and break dedup-once. Forward path if a hybrid is ever needed: a child-side skip-deps env guard
-    (e.g. NETCTL_SKIP_DEPS=1) - deliberately NOT built now. `stop_on_failure` (an AGGREGATE's flag, rejected
-    on a leaf) makes a failure skip the rest of THIS command's subtree instead of running doomed work
-    (default False = run every step below it and take the worst rc). It is scoped to the subtree, not to the
-    run (netctl#1317): a failing `up` aborts its own phases while the `test all` that planned it carries on
-    to the next gate, which is what a flag declared PER AGGREGATE has to mean. The scope of a failure is the
-    OUTERMOST ancestor whose flag is true, so an explicit `false` reads the same as an unset one and cannot
-    shield its subtree from a `true` above it. `simplon.kernel.steps.abort_after` owns the walk.
-    Because a plan tree is a SPANNING tree, a dependency two aggregates both declare is planned under one
-    of them only, and the other's flag would never fire for it; `load()` rule 6 (netctl#1319) rejects that
-    ambiguity where the two aggregates sit in ONE plan and their flags disagree.
-
-    `parallel` (an aggregate's flag, si#147) declares that this command's dependencies do NOT have to wait
-    for each other: its planned children run at the SAME time instead of in list order, and the command
-    itself is the join - whatever follows it in its own parent's list starts only once all of them are
-    done. DECLARED rather than derived, and the measurement is why. `depends_on` states ORDER, and across
-    the six manifests this kernel can reach (`simplon.cli.surface.CONSUMERS` plus its own) 541 pairs of planned
-    leaves have no edge between them - and 466 of those would BREAK if run together, because the order
-    between siblings is stated by their POSITION in the list and nowhere else. `build docs` in this very
-    file says so in prose ("Siblings execute in list order, so [reference, site] IS the edge"), asbundle's
-    build chain says "in the order listed", and the kernel's own #901 leaf/aggregate idiom - an aggregate
-    `[builder-image, web-jar-only]` whose two members carry no edge - turns every chained build into such a
-    pair. A derived executor would run gradle in an image that does not exist yet, in five products at
-    once. So the flag is opt-in and its default is exactly today's behaviour.
-
-    Rejected on a LEAF for the reason `stop_on_failure` and `keep_awake` already are: a leaf has no
-    children, so the flag would do nothing where it is written. `parallel` and `stop_on_failure` compose
-    without a special case - a failure inside a fan skips what has not STARTED and lets what is already
-    running finish (`simplon.kernel.steps.abort_after`, which takes the started set for it).
-
-    `keep_awake` (an aggregate's flag, netctl#1238) declares that the host must not idle-sleep while this
-    command's PLAN runs: `run_command` wraps the whole dispatch in `simplon.kernel.awake.keep_awake`. It exists
-    because a plan has no product code around it - the callback the CLI binds for an aggregate is
-    kernel-synthesized - so an aggregate that replaced a hand-written multi-minute pipeline would silently
-    lose the inhibitor that pipeline's command had. Declaring it beats each leaf arming its own: the
-    inhibitor then spans the GAPS between steps too, and one line in the manifest replaces the same `with`
-    block repeated in every long leaf.
-
-    `hidden` (netctl#1277) declares that the command must not appear in any `--help` listing while staying
-    fully INVOCABLE - a plan step named in a `depends_on` (loader rule 4) must be a real manifest command,
-    but a bring-up PHASE or a raw `-only` leaf ("prefer the aggregate") clutters the listing meant for a
-    human. `simplon.cli.assemble` is the sole consumer: it threads the flag onto the command's GROUP
-    registration, on top of the flat back-compat alias, which has always been hidden regardless of this
-    flag. On a group-default group's NAMESAKE member the flag is meaningless - that member is never a
-    listed subcommand or a separate flat command to begin with, it is the sub-app's default callback - so
-    `load()` rejects it there, the same reasoning `keep_awake` on a leaf already uses (netctl#1238): a flag
-    that does nothing where it is written is worse than no flag.
-
-    `passes` (an aggregate's, si#433) names parameters the aggregate takes on its OWN command line and
-    hands to every planned leaf whose body takes that parameter unpinned. Each leaf runs as its own
-    subprocess, so without it an aggregate could not give its leaves anything: simplon's `release all`
-    stopped at its first leaf with "which release?". DECLARED rather than derived from the leaves'
-    signatures, because a shared parameter NAME is not a shared meaning - `name` is the notes file on
-    one release leaf and the image on the next - and forwarding by name alone would hand one value to
-    both. Rejected on a leaf for `parallel`'s reason: a leaf plans nothing to pass it to.
-    """
-    impl: str
-    help: str
-    passthrough_args: bool = False
-    depends_on: tuple[str, ...] = ()
-    stop_on_failure: bool = False
-    parallel: bool = False
-    keep_awake: bool = False
-    hidden: bool = False
-    passes: tuple[str, ...] = ()
-    #: si#267: can this command run with nobody watching? `None` is the third state and means NOBODY HAS
-    #: SAID - which is not the same as "no". A derivation that read an unset flag as false would quietly
-    #: drop a command from a pipeline, and a pipeline missing a gate is green for the wrong reason; one
-    #: that read it as true would put `test walk` on a runner, where it waits for an answer nobody is
-    #: there to give. So the value has three meanings and gets three values, and the derivation refuses
-    #: the middle one by name.
-    unattended: bool | None = None
-    with_: dict[str, object] = {}
-    params: dict[str, "ParamPresentation"] = {}
-    # si#344 C.2: the `task:` this command named (a coordinate, or a product task's bare name; "" for an
-    # aggregate), the artifacts it binds to its task's ports, and those ports.
-    task: str = ""
-    produces: dict[str, tuple[str, ...]] = {}
-    consumes: dict[str, tuple[str, ...]] = {}
-    ports: tuple[Port, ...] = ()
-
-
-class ParamPresentation(NamedTuple):
-    """How a parameter is PRESENTED, never what it is (netctl#1437).
-
-    The signature - name, type, default - is introspected from the body; declaring it in YAML would state
-    it twice and let the two drift, which is the failure `impl:` already has. Its help text, its short
-    flag, its metavar and the ORDER its decls are declared in are a different kind of thing: user-facing
-    copy that exists nowhere in the signature, and the short flag in particular has no docstring form.
-    They lived inside `typer.Option(...)` in the command body until the bodies became framework-free,
-    and this is where they went.
-
-    `short_first` exists because Click renders a parameter's decls in DECLARATION order and netctl's
-    surface uses both: `--watch -w` on one command and `-f --follow` on the next. The long decl is still
-    derived from the parameter name - listing both decls here would restate the signature, which is the
-    drift this block refuses. What is declared is which of the two comes first.
-
-    Only these presentation keys are accepted, so a `type:` or `default:` cannot bring the drift back
-    through this door.
-    """
-    help: str | None = None
-    short: str | None = None
-    argument: bool = False
-    metavar: str | None = None
-    short_first: bool = False
 
 
 class Manifest(NamedTuple):
@@ -176,7 +54,7 @@ class Manifest(NamedTuple):
     """
     groups: dict[str, tuple[str, ...]]
     env_groups: frozenset[str]
-    commands: dict[str, dict[str, CommandSpec]]
+    commands: dict[str, dict[str, Command]]
     tree: dict[str, TaxonomyNode]
     # The groups a product assembles from its GENERATED module rather than reflectively (netctl#1444).
     # Migration state, and deliberately in the model: the diff of this list per wave is the ratchet, and
@@ -195,13 +73,13 @@ class Manifest(NamedTuple):
         """The shared env-gate engine built from this manifest's tree (one env-gate, not a copy)."""
         return CommandTaxonomy.from_tree(self.tree)
 
-    def spec_for(self, group: str, name: str) -> CommandSpec:
+    def spec_for(self, group: str, name: str) -> Command:
         """The spec for a group member, resolved by nesting (`commands[group][name]`). load() guarantees
         membership IS the spec tree (every member of every group carries a spec), so this lookup cannot miss
         on a validated manifest."""
         return self.commands[group][name]
 
-    def spec_by_name(self, name: str) -> CommandSpec | None:
+    def spec_by_name(self, name: str) -> Command | None:
         """The spec for a command by its BARE name when exactly ONE group owns it, else None - an absent
         name OR an ambiguous one owned by several groups (#519: `all`). This flat view resolves the bare
         dependency names in a `depends_on` plan (simplon.kernel.product maps each planned leaf
@@ -218,7 +96,7 @@ class Manifest(NamedTuple):
         owners = [group for group, specs in self.commands.items() if name in specs]
         return f"{owners[0]}.{name}" if len(owners) == 1 else None
 
-    def root_spec_for(self, name: str, *, group: str | None = None) -> CommandSpec:
+    def root_spec_for(self, name: str, *, group: str | None = None) -> Command:
         """The spec for a plan ROOT: `name` scoped to `group` when given (the #519 `test all` vs
         `deploy all` disambiguation), else resolved by bare name via `spec_by_name`. Raises the same
         ValueError `plan_for`, `plan_tree_for` and `run_command` each used to raise inline, from the one
@@ -247,13 +125,13 @@ class Manifest(NamedTuple):
         done: set[str] = set()
         trail: list[str] = []   # the DFS path = the grey set, kept ordered for the cycle message
 
-        def visit(cmd: str, spec: CommandSpec) -> None:
+        def visit(cmd: str, spec: Command) -> None:
             if cmd in done:
                 return
             if cmd in trail:
                 raise ValueError("dependency cycle: " + " -> ".join(trail[trail.index(cmd):] + [cmd]))
             trail.append(cmd)
-            for dep in spec.depends_on:
+            for dep in (spec.depends_on if isinstance(spec, AggregateCommand) else ()):
                 dep_spec = self.spec_by_name(dep)
                 if dep_spec is None:
                     raise ValueError(
@@ -261,7 +139,7 @@ class Manifest(NamedTuple):
                 visit(dep, dep_spec)
             trail.pop()
             done.add(cmd)
-            if spec.impl:
+            if isinstance(spec, TaskCommand):
                 plan.append(cmd)
 
         visit(name, self.root_spec_for(name, group=group))
@@ -292,14 +170,14 @@ class Manifest(NamedTuple):
         done: set[str] = set()
         trail: list[str] = []   # the DFS path = the grey set, kept ordered for the cycle message
 
-        def visit(cmd: str, spec: CommandSpec, path: str) -> "PlanNode | None":
+        def visit(cmd: str, spec: Command, path: str) -> "PlanNode | None":
             if cmd in done:
                 return None
             if cmd in trail:
                 raise ValueError("dependency cycle: " + " -> ".join(trail[trail.index(cmd):] + [cmd]))
             trail.append(cmd)
             children: list[PlanNode] = []
-            for dep in spec.depends_on:
+            for dep in (spec.depends_on if isinstance(spec, AggregateCommand) else ()):
                 dep_spec = self.spec_by_name(dep)
                 if dep_spec is None:
                     raise ValueError(
@@ -309,7 +187,7 @@ class Manifest(NamedTuple):
                     children.append(child)
             trail.pop()
             done.add(cmd)
-            if spec.impl:
+            if isinstance(spec, TaskCommand):
                 return PlanNode(name=cmd, path=path, spec=spec, children=tuple(children))
             return PlanNode(name=cmd, path=path, spec=spec, children=tuple(children)) if children else None
 
@@ -961,23 +839,6 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
         raise ValueError(_validation_message(exc)) from exc
 
     groups = {group: tuple(members) for group, members in model.groups.items()}
-    commands = {
-        group: {name: CommandSpec(impl=spec.impl, help=spec.help, passthrough_args=spec.passthrough_args,
-                                  depends_on=spec.depends_on, passes=spec.passes,
-                                  stop_on_failure=spec.stop_on_failure,
-                                  parallel=spec.parallel, keep_awake=spec.keep_awake,
-                                  hidden=spec.hidden, unattended=spec.unattended,
-                                  with_=spec.with_,
-                                  task=spec.task, produces=spec.produces, consumes=spec.consumes,
-                                  ports=ports.of(spec.task, product_tasks) if spec.task else (),
-                                  params={pname: ParamPresentation(help=p.help, short=p.short,
-                                                                   argument=p.argument,
-                                                                   metavar=p.metavar,
-                                                                   short_first=p.short_first)
-                                          for pname, p in spec.params.items()})
-                for name, spec in members.items()}
-        for group, members in model.groups.items()
-    }
     unknown = sorted(set(model.generate) - set(groups))
     if unknown:
         raise ValueError(f"generate names group(s) the manifest does not declare: {', '.join(unknown)}")
@@ -1002,6 +863,9 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     env_groups = frozenset(name for name, node in tree.items()
                            if node.env_first and any(group == name or group.startswith(f"{name}.")
                                                      for group in groups))
+    commands = {group: {name: _command(spec, group, name, env_groups, product_tasks)
+                        for name, spec in members.items()}
+                for group, members in model.groups.items()}
     # Every DOTTED `groups:` key must name a node the `taxonomy:` block actually declares. Without this,
     # an unmatched path was dropped from the tree while `groups`/`commands` kept it: the commands stayed
     # registered and runnable but were invisible to the taxonomy, so they were never env-gated and never
@@ -1022,6 +886,38 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     ports.check(loaded, artifactsection.declared(data),
                 getattr(catalogue, "kinds", {}) or artifactsection.REFINES)
     return loaded
+
+
+def _command(spec: "_CommandSpecModel", group: str, name: str, env_groups: frozenset[str],
+             product_tasks: dict) -> Command:
+    """The object of the class a validated spec's kind names (si#400 4d), carrying only that kind's fields:
+    an aggregate that names its release bundle is a `ReleaseCommand`, any other one an `AggregateCommand`;
+    a task command in an env-first group is a `Deploy`, any other one a `TaskCommand`. Only a TASK command
+    is a `Deploy` - an aggregate in `deploy` stays an aggregate, as `simplon.pipeline` has it.
+
+    `spec` first: the refusal census records a rule's first argument as the population it rules on."""
+    common: dict[str, Any] = {"help": spec.help, "hidden": spec.hidden, "unattended": spec.unattended}
+    if spec.depends_on:
+        aggregate: dict[str, Any] = {"depends_on": spec.depends_on, "passes": spec.passes,
+                                     "stop_on_failure": spec.stop_on_failure, "parallel": spec.parallel,
+                                     "keep_awake": spec.keep_awake}
+        if not spec.produces:
+            return AggregateCommand(**common, **aggregate)
+        # Rule 8's shape half (spec C.4): a `ReleaseCommand` holds ONE bundle by name, so a `produces:` it
+        # cannot hold is refused here, where the written map is still in hand. Where it may stand - only
+        # under `ci: release:` - and what the bundle must be stay in `ports._check_bundles`.
+        if list(spec.produces) != ["release"] or len(spec.produces["release"]) != 1:
+            raise ValueError(
+                f"aggregate '{group} {name}' names {', '.join(spec.produces)}: a release "
+                f"aggregate names exactly one output, `produces: {{ release: <artifact> }}`")
+        return ReleaseCommand(**common, **aggregate, release=spec.produces["release"][0])
+    kind = Deploy if group.split(".")[0] in env_groups else TaskCommand
+    return kind(**common, impl=spec.impl, passthrough_args=spec.passthrough_args, with_=spec.with_,
+                task=spec.task, produces=spec.produces, consumes=spec.consumes,
+                ports=ports.of(spec.task, product_tasks) if spec.task else (),
+                params={pname: ParamPresentation(help=p.help, short=p.short, argument=p.argument,
+                                                 metavar=p.metavar, short_first=p.short_first)
+                        for pname, p in spec.params.items()})
 
 
 def _catalogue_tree(declared: dict[str, dict],
@@ -1141,7 +1037,7 @@ def _enforce_the_catalogue_owns_the_groups(members: dict[str, tuple[str, ...]],
               f"`groups:` - once, for everybody")
 
 
-def _validate_param_bindings(commands: dict[str, dict[str, "CommandSpec"]]) -> None:
+def _validate_param_bindings(commands: dict[str, dict[str, Command]]) -> None:
     """Reject a `with:` or `params:` key that is not a parameter of the command's impl.
 
     This is the check that makes both blocks worth having: without it a typo is a silently ignored
@@ -1156,7 +1052,7 @@ def _validate_param_bindings(commands: dict[str, dict[str, "CommandSpec"]]) -> N
 
     for group, members in commands.items():
         for name, spec in members.items():
-            if not spec.impl or not (spec.with_ or spec.params):
+            if not isinstance(spec, TaskCommand) or not (spec.with_ or spec.params):
                 continue
             body = task.body_of(spec, where=f"{group} {name}")
             # BINDABLE parameters only, the same set the generator will substitute into. Using every
@@ -1191,7 +1087,7 @@ def resolve_ref(ref: str, where: str) -> Callable[..., object]:
             f"{where}: module '{module_name}' has no attribute '{function_name}'") from exc
 
 
-def resolve_impl(spec: CommandSpec) -> Callable[..., object]:
+def resolve_impl(spec: TaskCommand) -> Callable[..., object]:
     """The callable the CLI runs for a leaf: its task class's `run` (si#400 4c, `task.body_of`) - where the
     manifest's declarative reference becomes real code. Raises a clear ValueError if the module cannot be
     imported, the attribute is missing, or it is no body at all (so a stale ref fails loudly, not silently).

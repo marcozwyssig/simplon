@@ -15,11 +15,8 @@ from __future__ import annotations
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, ClassVar, NamedTuple
 
-# `task` at module level for the reason `task` gives for its own `manifest` import: the refusal census
-# follows a module's imports, and `task_class`'s refusals must stay reachable from here.
-from simplon.domain import task
 from simplon.domain.artifactschema import Port
 
 if TYPE_CHECKING:
@@ -78,8 +75,20 @@ class Command:
     there to give. So the value has three meanings and gets three values, and the derivation refuses the
     middle one by name.
 
-    `hidden` (netctl#1277): not listed in any `--help` while staying fully invocable.
+    `hidden` (netctl#1277) declares that the command must not appear in any `--help` listing while staying
+    fully INVOCABLE - a plan step named in a `depends_on` (loader rule 4) must be a real manifest command,
+    but a bring-up PHASE or a raw `-only` leaf ("prefer the aggregate") clutters the listing meant for a
+    human. `simplon.cli.assemble` is the sole consumer: it threads the flag onto the command's GROUP
+    registration, on top of the flat back-compat alias, which has always been hidden regardless of this
+    flag. On a group-default group's NAMESAKE member the flag is meaningless - that member is never a
+    listed subcommand or a separate flat command to begin with, it is the sub-app's default callback - so
+    `load()` rejects it there, the same reasoning `keep_awake` on a leaf already uses (netctl#1238): a flag
+    that does nothing where it is written is worse than no flag.
     """
+    #: Whether this kind runs a task itself, which is all the kernel asks to tell the kinds apart
+    #: (`simplon.kernel.plan.CommandDecl`): the kernel is the layer below and names no class of this one.
+    is_leaf: ClassVar[bool] = False
+
     help: str = ""
     hidden: bool = False
     unattended: bool | None = None
@@ -106,6 +115,8 @@ class TaskCommand(Command):
     `consumes` bind artifacts to the task's `ports` (si#344 C.2). `passthrough_args` forwards unrecognised
     trailing arguments to the underlying tool; `with_` pins parameters; `params` presents them.
     """
+    is_leaf: ClassVar[bool] = True
+
     impl: str = ""
     task: str = ""
     passthrough_args: bool = False
@@ -116,7 +127,14 @@ class TaskCommand(Command):
     ports: tuple[Port, ...] = ()
 
     def task_class(self, *, where: str) -> type[Task]:
-        """The Task class this command runs, resolved now (it is not held, see `task.task_class`)."""
+        """The Task class this command runs, resolved now (it is not held, see `task.task_class`).
+
+        `task` is imported here and not at module level, and both are measured: `task` imports the manifest
+        loader, and `ports` - which `simplon manifest migrate` imports for a manifest the loader refuses -
+        imports these classes, so a module-level import put the loader on the migration's path
+        (test_importing_the_migration_does_not_import_the_manifest_loader). The refusal census reaches
+        `task_class` through `manifest`'s own import of `task`, and `task.body_of` calls it by name."""
+        from simplon.domain import task
         return task.task_class(self.impl, self.task or where, where=where)
 
 
@@ -127,12 +145,60 @@ class Deploy(TaskCommand):
 
 @dataclass(frozen=True)
 class AggregateCommand(Command):
-    """A command that runs other commands: `simplon.pipeline.AggregateCommand`.
+    """A command that runs other commands: `simplon.pipeline.AggregateCommand`. It moved here from
+    `CommandSpec` with si#400 4d; the reasoning for each field is what it was there.
 
-    `depends_on` names its members, run once each in dependency order; `stop_on_failure` skips the rest of
-    its subtree after a failure; `parallel` runs its members at once; `keep_awake` holds the host awake for
-    the whole plan; `passes` names the parameters it hands to its leaves (si#433). The full reasoning for
-    each sits on the loader's rules in `simplon.domain.manifest`.
+    `depends_on` (#895) names the commands this one depends on: the runner resolves them transitively,
+    DEDUPLICATES by name and runs each unique command exactly once per top-level invocation, in dependency
+    order (`Manifest.plan_for`). Idempotency is each command's own guarantee - there is no freshness/Make
+    tracking, only dedup-once. `impl` and `depends_on` are mutually exclusive (v1 lock): a command is
+    either a leaf-with-impl or an impl-less AGGREGATE. Rationale: plan steps execute as `./<product>.sh
+    <leaf>` SUBPROCESSES, so an impl-bearing command that also carried deps would re-expand them in the
+    child and break dedup-once. Forward path if a hybrid is ever needed: a child-side skip-deps env guard
+    (e.g. NETCTL_SKIP_DEPS=1) - deliberately NOT built now. `stop_on_failure` (an AGGREGATE's flag, rejected
+    on a leaf) makes a failure skip the rest of THIS command's subtree instead of running doomed work
+    (default False = run every step below it and take the worst rc). It is scoped to the subtree, not to the
+    run (netctl#1317): a failing `up` aborts its own phases while the `test all` that planned it carries on
+    to the next gate, which is what a flag declared PER AGGREGATE has to mean. The scope of a failure is the
+    OUTERMOST ancestor whose flag is true, so an explicit `false` reads the same as an unset one and cannot
+    shield its subtree from a `true` above it. `simplon.kernel.steps.abort_after` owns the walk.
+    Because a plan tree is a SPANNING tree, a dependency two aggregates both declare is planned under one
+    of them only, and the other's flag would never fire for it; `load()` rule 6 (netctl#1319) rejects that
+    ambiguity where the two aggregates sit in ONE plan and their flags disagree.
+
+    `parallel` (an aggregate's flag, si#147) declares that this command's dependencies do NOT have to wait
+    for each other: its planned children run at the SAME time instead of in list order, and the command
+    itself is the join - whatever follows it in its own parent's list starts only once all of them are
+    done. DECLARED rather than derived, and the measurement is why. `depends_on` states ORDER, and across
+    the six manifests this kernel can reach (`simplon.cli.surface.CONSUMERS` plus its own) 541 pairs of planned
+    leaves have no edge between them - and 466 of those would BREAK if run together, because the order
+    between siblings is stated by their POSITION in the list and nowhere else. `build docs` in this very
+    file says so in prose ("Siblings execute in list order, so [reference, site] IS the edge"), asbundle's
+    build chain says "in the order listed", and the kernel's own #901 leaf/aggregate idiom - an aggregate
+    `[builder-image, web-jar-only]` whose two members carry no edge - turns every chained build into such a
+    pair. A derived executor would run gradle in an image that does not exist yet, in five products at
+    once. So the flag is opt-in and its default is exactly today's behaviour.
+
+    Rejected on a LEAF for the reason `stop_on_failure` and `keep_awake` already are: a leaf has no
+    children, so the flag would do nothing where it is written. `parallel` and `stop_on_failure` compose
+    without a special case - a failure inside a fan skips what has not STARTED and lets what is already
+    running finish (`simplon.kernel.steps.abort_after`, which takes the started set for it).
+
+    `keep_awake` (an aggregate's flag, netctl#1238) declares that the host must not idle-sleep while this
+    command's PLAN runs: `run_command` wraps the whole dispatch in `simplon.kernel.awake.keep_awake`. It exists
+    because a plan has no product code around it - the callback the CLI binds for an aggregate is
+    kernel-synthesized - so an aggregate that replaced a hand-written multi-minute pipeline would silently
+    lose the inhibitor that pipeline's command had. Declaring it beats each leaf arming its own: the
+    inhibitor then spans the GAPS between steps too, and one line in the manifest replaces the same `with`
+    block repeated in every long leaf.
+
+    `passes` (an aggregate's, si#433) names parameters the aggregate takes on its OWN command line and
+    hands to every planned leaf whose body takes that parameter unpinned. Each leaf runs as its own
+    subprocess, so without it an aggregate could not give its leaves anything: simplon's `release all`
+    stopped at its first leaf with "which release?". DECLARED rather than derived from the leaves'
+    signatures, because a shared parameter NAME is not a shared meaning - `name` is the notes file on
+    one release leaf and the image on the next - and forwarding by name alone would hand one value to
+    both. Rejected on a leaf for `parallel`'s reason: a leaf plans nothing to pass it to.
     """
     depends_on: tuple[str, ...] = ()
     stop_on_failure: bool = False
@@ -145,3 +211,4 @@ class AggregateCommand(Command):
 class ReleaseCommand(AggregateCommand):
     """An aggregate that names its release bundle: `simplon.pipeline.ReleaseCommand` (si#344 C.3)."""
     release: str = ""
+

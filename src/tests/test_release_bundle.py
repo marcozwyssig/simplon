@@ -4,6 +4,7 @@ AAA; the name states the behaviour under test.
 """
 from pathlib import Path
 
+from simplon.domain.command import ReleaseCommand
 import pytest
 
 from simplon.domain import catalogue, manifest
@@ -51,7 +52,8 @@ def test_a_release_aggregate_names_its_bundle():
     loaded = _load(text)
 
     # assert
-    assert loaded.spec_for("release", "all").produces == {"release": ("app-release",)}
+    spec = loaded.spec_for("release", "all")
+    assert isinstance(spec, ReleaseCommand) and spec.release == "app-release"   # si#400 4d
 
 
 def test_an_aggregate_outside_ci_release_naming_an_output_is_refused():
@@ -107,7 +109,7 @@ def test_the_kernels_own_release_aggregate_loads():
 
     # assert
     spec = loaded.spec_for("release", "all")
-    assert spec.produces == {"release": ("kernel-release",)}
+    assert isinstance(spec, ReleaseCommand) and spec.release == "kernel-release"   # si#400 4d
     assert loaded.plan_for("all", group="release")[-1] == "tag"
 
 
@@ -151,14 +153,24 @@ def test_the_kernels_own_release_aggregate_stops_on_failure():
 
 PAGE = ROOT / "src" / "site" / "content" / "how" / "manifest.md"
 PORTS = ROOT / "src" / "simplon" / "domain" / "ports.py"
+MANIFEST_PY = ROOT / "src" / "simplon" / "domain" / "manifest.py"
 
 
-def _raised_in(function):
-    """Each `raise ValueError(f"...")` in `function` of ports.py, its f-string pieces joined and every
-    substitution kept as `{}` - adjacent f-strings are one JoinedStr once parsed, as the census reads them."""
+def _raised_in(*functions):
+    """Each `raise ValueError(f"...")` in the named `(source, function)` pairs, its f-string pieces joined and
+    every substitution kept as `{}` - adjacent f-strings are one JoinedStr once parsed, as the census reads
+    them. Rule 8 sits in two: its shape half moved to `manifest._command` with si#400 4d."""
     import ast
-    tree = ast.parse(PORTS.read_text(encoding="utf-8"))
-    body = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == function)
+    texts = []
+    for source, function in functions:
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        body = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == function)
+        texts += _raises(body)
+    return texts
+
+
+def _raises(body):
+    import ast
     texts = []
     for node in ast.walk(body):
         if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call) and node.exc.args:
@@ -176,11 +188,14 @@ def _quoted_under(rule):
     return [" ".join(q.split()) for q in re.findall(r'"\.\.\. (.+?)(?: \.\.\.)?"', bullet, re.S)]
 
 
-@pytest.mark.parametrize("rule, function", [(6, "_check_release"), (8, "_check_bundles")])
-def test_every_refusal_the_manifest_page_quotes_is_the_real_message(rule, function):
+@pytest.mark.parametrize("rule, functions", [
+    (6, ((PORTS, "_check_release"),)),
+    (8, ((PORTS, "_check_bundles"), (MANIFEST_PY, "_command"))),
+], ids=["6", "8"])
+def test_every_refusal_the_manifest_page_quotes_is_the_real_message(rule, functions):
     # arrange
     quoted = _quoted_under(rule)
-    raised = _raised_in(function)
+    raised = _raised_in(*functions)
 
     # act
     unmatched = [q for q in quoted if not any(q in r for r in raised)]
