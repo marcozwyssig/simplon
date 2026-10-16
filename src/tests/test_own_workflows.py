@@ -191,7 +191,9 @@ def test_the_derived_pipeline_over_this_manifest_is_a_pipeline_that_would_run():
 
     si#344 B2 put `model-whole` between `model-gen` and `model-mode`; it refuses a generated file firn
     deleted or left with only its id line. Run on 2026-10-12 over the committed files: it exits 0 and
-    writes nothing.
+    writes nothing. si#400 4b folded `model-whole` and `model-mode` into `model-gen`, which runs
+    `build:model` and does both from firn's own report; run on 2026-10-16 over the committed tree, it
+    exits 0 and leaves the tree clean.
 
     si#344 C.3 added `test image`, which runs the kernel image built by `build image` and writes its verdict
     record. Run on 2026-10-14 with `--platform linux/amd64` (the arm64 half was not built on this machine):
@@ -201,12 +203,12 @@ def test_the_derived_pipeline_over_this_manifest_is_a_pipeline_that_would_run():
 
     assert [step.command for step in derived.steps] == [
         "build wheel", "build reference", "build acceptance", "build site", "build image", "build model-guard",
-        "build model-gen", "build model-whole", "build model-mode", "test suite", "test typecheck-python", "test release-notes",
+        "build model-gen", "test suite", "test typecheck-python", "test release-notes",
         "test report", "test generated", "test image",
         "test model"]
 
 
-def test_this_repository_runs_eight_of_those_sixteen_and_the_difference_is_a_choice_not_a_defect():
+def test_this_repository_runs_eight_of_those_fourteen_and_the_difference_is_a_choice_not_a_defect():
     """THE FINDING si#267 ends on, kept as a measurement instead of a sentence in a document.
 
     A derived pipeline here would be correct and would cost more: `build site` pulls Hugo and
@@ -217,9 +219,9 @@ def test_this_repository_runs_eight_of_those_sixteen_and_the_difference_is_a_cho
     si#371 added `test model`, which the CI runs, and `build model`, which it does not: `firn gen` had no
     template to render yet, so a step for it would have reported on nothing. Since si#344 B1 it has one,
     and the CI still runs no step for it because `test generated` runs it already - the catalogue is a
-    `generated:` entry, regenerated and diffed there. Its four leaves (`model-guard` since B1's final
-    review, `model-whole` since si#344 B2) are the fourth to seventh difference, and as cheap as the two above.
-    `test image` (si#344 C.3) is the eighth: the release runs it, between building and publishing the image,
+    `generated:` entry, regenerated and diffed there. Its two leaves (`model-guard` since B1's final
+    review; `model-whole` and `model-mode` stood beside them until si#400 4b folded both into `model-gen`)
+    are the fourth and fifth difference, and as cheap as the two above. `test image` (si#344 C.3) is the sixth: the release runs it, between building and publishing the image,
     and ci.yml builds that image for amd64 only and does not run it.
 
     simplon's own CI stays hand-written all the same, for a reason a derivation cannot carry: its order
@@ -237,8 +239,7 @@ def test_this_repository_runs_eight_of_those_sixteen_and_the_difference_is_a_cho
 
     assert run_here < derived
     assert sorted(derived - run_here) == ["build acceptance", "build model-gen", "build model-guard",
-                                          "build model-mode", "build model-whole", "build reference",
-                                          "build site", "test image"]
+                                          "build reference", "build site", "test image"]
 
 
 def test_the_command_this_repository_never_puts_in_ci_is_the_one_the_catalogue_marks_attended():

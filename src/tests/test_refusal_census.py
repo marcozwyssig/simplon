@@ -237,6 +237,9 @@ BORROWS_A_READER = {
     "cli": "hands `labinstance.declared_id` and `outputs.log_directory` to `runhost.RunHost` as references "
            "for the run transcript's header and the step logs (si#391); it calls neither and refuses "
            "nothing on what they return",
+    "tasks.firngen": "`generate` asks `toolchain.invocation` for the docker line `toolchain:run` would build "
+                     "(si#400 4b), which reads the product's `layout` itself; this module rules on firn's JSON "
+                     "report and on files, never on the manifest",
     "tasks.nexus": "`nexus` is a thin task over `nexusproxy.dispatch`, which reads the `nexus:` section "
                    "itself and is the module the census accounts for; this module raises nothing",
     "tasks.walk": "`file_tickets` asks `tracker.declared()` where to file, after a person has answered; a "
@@ -1224,6 +1227,16 @@ def _reader_functions(dotted: str) -> frozenset[str]:
 
 
 @functools.lru_cache(maxsize=None)
+def _generated_task_classes() -> set[str]:
+    """The task classes firn generates (si#400 4b, the `Tasks` template), by firn's own id line in the file.
+
+    Each one imports the body it wraps (`run = staticmethod(_body)`), which `_borrowers` reads as borrowing
+    that body's reader. The wrapper decides nothing - `test_a_generated_task_class_refuses_nothing` holds
+    that - so they are accounted for by this derivation, not by one typed reason per task.
+    """
+    return {_dotted_of(path) for path in (SRC / "tasks").glob("*.py") if "id=[Tasks:" in path.read_text()}
+
+
 def _borrowers() -> dict[str, tuple[str, ...]]:
     """Modules that use another module's reader function and do not call the accessor themselves (si#331).
 
@@ -1738,8 +1751,9 @@ def test_a_module_that_borrows_another_modules_reader_is_accounted_for():
         "no kernel function reaches the accessor - the walk is broken, and the comparison below would "
         "mean nothing")
 
-    # act
-    borrowers = _borrowers()
+    # act: a generated task class borrows the body it wraps and refuses nothing (the test below)
+    generated = _generated_task_classes()
+    borrowers = {m: used for m, used in _borrowers().items() if m not in generated}
 
     # assert
     assert set(borrowers) == set(BORROWS_A_READER), (
@@ -1748,6 +1762,20 @@ def test_a_module_that_borrows_another_modules_reader_is_accounted_for():
         "(then the test above accounts for it), or say in BORROWS_A_READER why it decides nothing on it - "
         f"new: { {m: borrowers[m] for m in sorted(set(borrowers) - set(BORROWS_A_READER))} }, "
         f"gone: {sorted(set(BORROWS_A_READER) - set(borrowers))}")
+
+def test_a_generated_task_class_refuses_nothing():
+    """si#400 4b: what lets `_generated_task_classes` stand outside BORROWS_A_READER. A body moved into a
+    class's protected region that raises is no longer a wrapper, and this goes red until it is accounted for."""
+    # arrange
+    generated = _generated_task_classes()
+
+    # act
+    raising = sorted(m for m in generated if any(isinstance(n, ast.Raise) for n in ast.walk(_module(m).tree)))
+
+    # assert
+    assert generated, "no generated task class found - the derivation is looking in the wrong place"
+    assert raising == []
+
 
 def test_the_section_walk_is_an_accessor_and_not_a_reader():
     """si#175, and it is si#61's property held over a second spelling of the seam.

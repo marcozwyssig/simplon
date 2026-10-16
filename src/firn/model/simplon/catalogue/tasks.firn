@@ -334,6 +334,10 @@ docs_acceptance typeOf simplon.pipeline.CatalogueTask {
   key = "docs:acceptance"
   body = "simplon.tasks.acceptance:document"
 }
+build_model typeOf simplon.pipeline.CatalogueTask {
+  key = "build:model"
+  body = "simplon.tasks.firngen:generate"
+}
 build_cmake_files typeOf simplon.pipeline.CatalogueTask {
   key = "build:cmake-files"
   body = "simplon.tasks.buildfiles:cmake"
