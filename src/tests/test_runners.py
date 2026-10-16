@@ -282,20 +282,22 @@ def test_a_job_may_still_set_variables_of_its_own_beside_the_kinds():
 
 
 def test_the_disk_coordinates_resolve_to_the_impls_the_table_names():
-    # arrange: `runners.PREFLIGHT`/`CLEANUP` carry an impl string so `workflowgen` can find the command a
-    # product placed WITHOUT assuming what that product called it. That string is a second source for what
-    # `catalogue.yaml` declares, and a second source nobody compares is this repository's oldest defect -
-    # so it is compared here, against the real catalogue.
-    from simplon.domain import catalogue as catalogue_mod
+    # arrange: `runners.PREFLIGHT`/`CLEANUP` carry an impl reference so `workflowgen` can find the command a
+    # product placed WITHOUT assuming what that product called it. Since si#400 4c the reference is derived
+    # from the coordinate (`task.class_ref`), as the catalogue's is, so the two cannot drift; what can still
+    # be wrong is the coordinate itself - gone, or no longer the disk body the workflow step means to run.
+    from simplon.domain import catalogue as catalogue_mod, task
+    from simplon.domain.artifactschema import BODIES
     tasks = catalogue_mod.load().tasks
 
     # act / assert
     for coordinate, impl in (runners.PREFLIGHT, runners.CLEANUP):
         assert coordinate in tasks, f"the catalogue no longer declares {coordinate}"
-        declared = tasks[coordinate]["impl"]
-        assert declared == impl, (
-            f"{coordinate} resolves to {declared!r}, but the runner table says {impl!r} - "
-            f"a generated workflow would look for a command that is not there")
+        assert tasks[coordinate]["impl"] == impl
+        assert task.body_identity(impl) == BODIES[coordinate]
+        assert BODIES[coordinate].startswith("simplon.tasks.cidisk:"), (
+            f"{coordinate} runs {BODIES[coordinate]!r}, not a disk body - a generated workflow's disk step "
+            f"would run something else")
 
 
 def test_a_thrown_away_machine_is_not_asked_to_look_after_its_disk():

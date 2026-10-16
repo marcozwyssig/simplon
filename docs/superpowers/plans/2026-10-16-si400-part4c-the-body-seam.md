@@ -59,7 +59,8 @@ function. The class is what runs either way.
    A generated `module.Class(...)` call would construct the class and run nothing, with rc 0. That is the
    house defect, in generated code. Pinned in Task 3.
 4. **`catalogue.yaml` that still writes `impl:` on a task** (an old hand edit, or a product copying the
-   form). It is a second source of a body, so it is refused as a diagnosis with a census entry. Pinned in Task 3.
+   form). It is a second source of a body, so it is refused. Pinned in Task 3. *(Built in `catalogue.load()`,
+   the file, which is no manifest seam, so it has no census entry - see the ledger's Task 3 rulings.)*
 5. **Startup stays lazy**: `simplon --help` imports no more task modules than before. Pinned in Task 2.
 
 ---

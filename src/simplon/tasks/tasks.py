@@ -19,7 +19,7 @@ from simplon.domain import catalogue as catalogue_mod
 from simplon.domain import context
 from simplon.kernel import log
 from simplon.tasks import taskgen
-from simplon.domain.artifactschema import BODIES
+from simplon.domain import task
 from simplon.domain.manifest import Manifest
 
 
@@ -110,13 +110,11 @@ def _reached_namespaces(manifest: Manifest, cat: catalogue_mod.Catalogue) -> fro
     equals the `impl` a catalogue coordinate names. Matching on that - what the loader produced, not how
     the coordinate got there - needs no per-mechanism walk and cannot miss a fourth one a later migration
     step adds. Since si#400 4c a coordinate's `impl` names its generated CLASS, while a product task that
-    reaches a kernel body names the FUNCTION; the model's body (`BODIES`) is that function, so both count.
+    reaches a kernel body names the FUNCTION; `task.body_identity` gives both one spelling.
     """
-    namespace_by_impl = {spec["impl"]: coordinate.split(":", 1)[0]
+    namespace_by_impl = {task.body_identity(spec["impl"]): coordinate.split(":", 1)[0]
                          for coordinate, spec in cat.tasks.items()}
-    namespace_by_impl.update({body: coordinate.split(":", 1)[0] for coordinate, body in BODIES.items()
-                              if coordinate in cat.tasks})
-    return frozenset(namespace_by_impl[spec.impl]
+    return frozenset(namespace_by_impl[task.body_identity(spec.impl)]
                      for members in manifest.commands.values()
                      for spec in members.values()
-                     if spec.impl in namespace_by_impl)
+                     if spec.impl and task.body_identity(spec.impl) in namespace_by_impl)

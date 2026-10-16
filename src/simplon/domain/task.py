@@ -70,6 +70,18 @@ def task_class(ref: str, key: str, *, where: str) -> type[Task]:
                      f"callable, so there is no body to run")
 
 
+def body_identity(impl: str) -> str:
+    """One spelling per body, for the readers that ask whether two commands run the same one (si#400 4c).
+
+    A catalogue coordinate's `impl` names its generated class, while a product task that reaches the same
+    kernel body names the function (`simplon.tasks.cidisk:preflight`); comparing the two strings would say
+    "two bodies". So a class reference answers the function the model gives its task (`BODIES`), which is
+    what the class's wrapper runs, and anything else answers itself."""
+    from simplon.domain.artifactschema import BODIES
+    by_class = {class_ref(coordinate): body for coordinate, body in BODIES.items()}
+    return by_class.get(impl, impl)
+
+
 def body_of(spec: CommandSpec, *, where: str) -> Callable[..., object]:
     """The callable a leaf runs: its task class's `run`. The one runtime path (si#400 4c)."""
     return task_class(spec.impl, spec.task or where, where=where)().run

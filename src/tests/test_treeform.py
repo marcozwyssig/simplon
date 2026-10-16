@@ -1025,3 +1025,30 @@ def test_a_task_misspelling_the_flag_is_refused_rather_than_silently_ignored():
             """)
 
     assert "unattend" in str(exc.value)
+
+
+def test_against_the_shipped_catalogue_the_message_names_the_platforms_body_and_the_pages_quote_it():
+    # arrange: since si#400 4c the shipped catalogue's impl names a CLASS; the message must still name the
+    # body a human recognises (the function the class wraps), and two pages quote this very sentence
+    # (CLAUDE.md: a quoted error text is a second source, pinned against the real message)
+    from simplon.domain import catalogue as catalogue_mod
+    from conftest import ROOT
+    text = textwrap.dedent("""
+        product: netctl
+        tasks:
+          install: { impl: "orchestrator.cli:install", help: "Provision Colima and containerlab." }
+        support:
+          commands:
+            install: { task: install, help: "Provision Colima and containerlab." }
+    """)
+    quoted = "placed under one name: the platform's is `simplon.tasks.hosttools:install`, the product's is"
+    pages = [ROOT / "src" / "site" / "content" / "with-what" / "rules.md",
+             ROOT / "src" / "site" / "content" / "how" / "task-and-command.md"]
+
+    # act
+    with pytest.raises(ValueError) as refused:
+        manifest.load(text, catalogue=catalogue_mod.load())
+
+    # assert
+    assert quoted.replace("placed under one name: ", "") in " ".join(str(refused.value).split())
+    assert all(quoted in " ".join(page.read_text(encoding="utf-8").replace("> ", "").split()) for page in pages)

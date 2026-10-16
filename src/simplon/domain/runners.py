@@ -120,8 +120,8 @@ TABLE: Mapping[str, Runner] = {
 #: up in the product's command tree rather than assuming a spelling.
 #:
 #: The reference is DERIVED from the coordinate since si#400 4c (`task.class_ref`, the coordinate's
-#: generated class), where it used to be a typed second source for what `catalogue.yaml` declared.
-#: `test_runners.py` still loads the real catalogue and asserts each coordinate resolves to it.
+#: generated class), where it used to be a typed second source for what `catalogue.yaml` declared, so the
+#: two cannot drift. `test_runners.py` holds what still can: that each coordinate exists and runs a disk body.
 PREFLIGHT = ("support:ci-disk-preflight", class_ref("support:ci-disk-preflight"))
 CLEANUP = ("support:ci-disk-cleanup", class_ref("support:ci-disk-cleanup"))
 

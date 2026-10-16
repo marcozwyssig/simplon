@@ -127,3 +127,46 @@ def test_a_catalogue_built_from_text_keeps_the_impl_it_writes():
 
     # act / assert
     assert catalogue.loads(text).tasks["build:wheel"]["impl"] == "orchestrator.cli:build_wheel"
+
+
+_RAW = """product: demo
+tasks:
+  pre: { impl: "simplon.tasks.cidisk:preflight", help: x }
+  gate-a: { impl: "simplon.tasks.testrun:gate", help: y }
+ci:
+  build:
+    commands:
+      pre: { task: pre }
+  test:
+    commands:
+      gate-a: { task: gate-a }
+      gate-b: { task: "test:gate" }
+"""
+
+
+def test_a_product_task_naming_a_kernel_function_counts_as_that_coordinate_placed():
+    # arrange: since si#400 4c a coordinate's impl names its class while such a product task names the
+    # function; the readers that compare bodies by impl must still see one body (4c final review, I1)
+    from simplon.domain import manifest as manifest_mod, runners
+    from simplon.tasks import cliref, workflowgen
+    mf = manifest_mod.load(_RAW, catalogue=catalogue.load())
+
+    # act
+    placed = workflowgen._placed(mf, runners.PREFLIGHT[1])
+    unplaced = {c for c, *_ in cliref.unplaced(mf, catalogue.load())}
+
+    # assert
+    assert placed == "build pre"
+    assert "support:ci-disk-preflight" not in unplaced
+
+
+def test_one_body_behind_a_product_task_and_a_coordinate_is_one_shared_impl():
+    # arrange: the cli gives commands that share a body their own `help:` (netctl#1406)
+    from simplon.domain import manifest as manifest_mod
+
+    # act
+    mf = manifest_mod.load(_RAW, catalogue=catalogue.load())
+    a, b = mf.commands["test"]["gate-a"].impl, mf.commands["test"]["gate-b"].impl
+
+    # assert
+    assert task.body_identity(a) == task.body_identity(b)
