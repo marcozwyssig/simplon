@@ -91,6 +91,9 @@ domain typeOf simplon.architecture.Component {
   module m_domain_deployment typeOf simplon.architecture.Module {
     path = "domain.deployment"
   }
+  module m_domain_task typeOf simplon.architecture.Module {
+    path = "domain.task"
+  }
   module m_domain_signatures typeOf simplon.architecture.Module {
     path = "domain.signatures"
   }
@@ -262,6 +265,9 @@ tasks typeOf simplon.architecture.Component {
   }
   module m_tasks_fetchfile typeOf simplon.architecture.Module {
     path = "tasks.fetchfile"
+  }
+  module m_tasks_firngen typeOf simplon.architecture.Module {
+    path = "tasks.firngen"
   }
   module m_tasks_env typeOf simplon.architecture.Module {
     path = "tasks.env"

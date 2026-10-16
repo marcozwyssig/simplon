@@ -215,7 +215,10 @@ def test_the_innards_under_tasks_are_exactly_the_modules_no_coordinate_names():
     # arrange
     catalogue = (SRC / "catalogue.yaml").read_text(encoding="utf-8")
     named = set(re.findall(r"impl:\s*\"?simplon\.tasks\.([a-z0-9_]+):", catalogue))
-    present = ({p.stem for p in (SRC / "tasks").glob("*.py")} - {"__init__"}
+    # si#400 4b: a generated task class is its coordinate's own class (its KEY names it), not innards
+    generated = {p.stem for p in (SRC / "tasks").glob("*.py") if "id=[Tasks:" in p.read_text(encoding="utf-8")}
+    assert generated, "no generated task class found - the exclusion below would exclude nothing"
+    present = ({p.stem for p in (SRC / "tasks").glob("*.py")} - {"__init__"} - generated
                - {m[len("tasks."):] for m in surface.LIBRARY if m.startswith("tasks.")})
 
     # act

@@ -25,6 +25,11 @@ template ArchitectureData {
         |    ("${m.path}", "${c.key}"),
       }
     }
+    // The task classes the Tasks template generates (si#400 4b), one module per catalogue task, belong to the
+    // tasks component: derived from the instances that generate them, never typed one by one.
+    for t : `simplon.pipeline.CatalogueTask` {
+      |    ("tasks.${t.name}", "tasks"),
+    }
     |)
     |
     |#: (path, reason) for each module that belongs to no component, in model order.
@@ -72,7 +77,14 @@ template ArchitecturePage {
       |
       |## ${c.key}
       |
-      |<<for m : c.module sep ", ">>`${m.path}`<<end>>
+      // the tasks component also holds one generated class per catalogue task (si#400 4b), named on the same
+      // line, because the page names every module of a component there (test_architecture_page.py)
+      if c.key == "tasks" {
+        |<<for m : c.module sep ", ">>`${m.path}`<<end>>, and one generated class per catalogue task: <<for t : `simplon.pipeline.CatalogueTask` sep ", ">>`tasks.${t.name}`<<end>>
+      }
+      if c.key != "tasks" {
+        |<<for m : c.module sep ", ">>`${m.path}`<<end>>
+      }
     }
     |
     |## Exceptions

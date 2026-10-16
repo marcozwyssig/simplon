@@ -37,8 +37,6 @@ simplon typeOf simplon.manifest.Product {
       key = "model"
       member = product.simplon.simplon.build.model_guard
       member = product.simplon.simplon.build.model_gen
-      member = product.simplon.simplon.build.model_whole
-      member = product.simplon.simplon.build.model_mode
     }
     command model_guard typeOf simplon.pipeline.TaskCommand {
       key = "model-guard"
@@ -46,15 +44,7 @@ simplon typeOf simplon.manifest.Product {
     }
     command model_gen typeOf simplon.pipeline.TaskCommand {
       key = "model-gen"
-      task = simplon.catalogue.toolchain_run
-    }
-    command model_whole typeOf simplon.pipeline.TaskCommand {
-      key = "model-whole"
-      task = product.simplon.simplon.t_whole_files
-    }
-    command model_mode typeOf simplon.pipeline.TaskCommand {
-      key = "model-mode"
-      task = product.simplon.simplon.t_make_readable
+      task = simplon.catalogue.build_model
     }
   }
   ci test typeOf simplon.pipeline.Group {
@@ -232,14 +222,6 @@ simplon typeOf simplon.manifest.Product {
   tasks t_region_guard typeOf simplon.pipeline.Task {
     key = "region-guard"
     body = "orchestrator.cli:region_guard"
-  }
-  tasks t_whole_files typeOf simplon.pipeline.Task {
-    key = "whole-files"
-    body = "orchestrator.cli:whole_files"
-  }
-  tasks t_make_readable typeOf simplon.pipeline.Task {
-    key = "make-readable"
-    body = "orchestrator.cli:make_readable"
   }
   tasks t_suite typeOf simplon.pipeline.Task {
     key = "suite"

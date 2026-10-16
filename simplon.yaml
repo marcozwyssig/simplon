@@ -537,6 +537,11 @@ generated:
   artifact-schema:
     path: src/simplon/domain/artifactschema.py
     by: build model
+  # One class per catalogue task (si#400 4b), firn's whole output in this directory beside the hand-written
+  # task modules: a directory entry, so a class for a new task is stale until committed.
+  task-classes:
+    path: src/simplon/tasks
+    by: build model
   # The architecture's data (si#390 part 1), generated WHOLE by firn into the tests: it has no protected
   # region, so a hand edit is lost on the next `build model` and is red here first.
   architecture-data:

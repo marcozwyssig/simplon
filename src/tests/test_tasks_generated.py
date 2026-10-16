@@ -163,3 +163,46 @@ def test_a_regeneration_that_fails_is_not_read_as_freshness(tmp_path, monkeypatc
     rc = generated.check()
     # Assert
     assert rc == 1
+
+
+# --- a directory entry (si#400 4b) ---------------------------------------------------------------------
+
+_DIRECTORY = """
+generated:
+  classes:
+    path: out/tasks
+    by: build model
+"""
+
+
+def _writes_both(entry, root):
+    (root / entry.path / "a.py").write_text("A = 1\n", encoding="utf-8")
+    (root / entry.path / "b.py").write_text("B = 1\n", encoding="utf-8")
+    return 0
+
+
+def test_a_new_untracked_file_under_a_directory_entry_is_stale_and_named(tmp_path, monkeypatch, capsys):
+    # Arrange: one class committed, the next one generated and never committed - `git diff` sees no change
+    root = _repo(tmp_path)
+    (root / "out" / "tasks").mkdir(parents=True)
+    (root / "out" / "tasks" / "a.py").write_text("A = 1\n", encoding="utf-8")
+    _product(root, monkeypatch, _DIRECTORY)
+    _commit(root)
+    monkeypatch.setattr(generated, "_regenerate", _writes_both)
+    # Act
+    rc = generated.check()
+    # Assert
+    assert rc == 1
+    assert "out/tasks/b.py" in capsys.readouterr().err
+
+
+def test_a_directory_entry_whose_files_are_all_committed_passes(tmp_path, monkeypatch):
+    # Arrange
+    root = _repo(tmp_path)
+    (root / "out" / "tasks").mkdir(parents=True)
+    _product(root, monkeypatch, _DIRECTORY)
+    _writes_both(generated.Entry("classes", "out/tasks", "build model"), root)
+    _commit(root)
+    monkeypatch.setattr(generated, "_regenerate", _writes_both)
+    # Act / Assert
+    assert generated.check() == 0

@@ -92,6 +92,14 @@ def _regenerate(entry: Entry, root: Path) -> int:
     return run.stream(argv, cwd=str(root))
 
 
+def _untracked(root: Path, path: str) -> list[str]:
+    """Files under `path` git does not track and does not ignore: a new generated file never committed.
+    `git diff` cannot see one, so without this a directory entry (si#400 4b) is green over exactly that
+    staleness - the untracked-file defect `_tracked` closes for a single file, one level down."""
+    listed = run.run(["git", "-C", str(root), "ls-files", "--others", "--exclude-standard", "--", path])
+    return [line for line in listed.out.splitlines() if line.strip()]
+
+
 def _differs(root: Path, path: str) -> bool:
     return not run.run(["git", "-C", str(root), "diff", "--exit-code", "--", path]).ok
 
@@ -117,6 +125,12 @@ def check() -> int:
         if rc != 0:
             log.error(f"{entry.name}: `{entry.by}` exited {rc}, so {entry.path} was NOT regenerated and "
                       f"this says nothing about whether it is fresh")
+            stale.append(entry.name)
+            continue
+        new = _untracked(root, entry.path)
+        if new:
+            log.error(f"{entry.name}: `{entry.by}` wrote {', '.join(new)}, which git does not track. Commit it "
+                      f"(or, if no template should write it, find out why one does)")
             stale.append(entry.name)
             continue
         if _differs(root, entry.path):
