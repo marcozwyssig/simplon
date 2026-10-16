@@ -49,6 +49,13 @@ SECTION = "launcher"
 #: the kernel's namespace; the launcher sets it explicitly and skips a host value of it.
 EXPORTED = "DELIVERY_ENV_PASS"
 
+#: THE FIXED NAMES BOTH LAUNCHERS FORWARD on the container route, beside the `DELIVERY_*` and `<PRODUCT>_*`
+#: namespaces: the handful a CI runner speaks, and `gh`'s two tokens - `GH_TOKEN`, which it reads first, and
+#: `GITHUB_TOKEN`, its fallback (si#225). Written once, here, and rendered into `launch.sh.j2` and
+#: `launch.cmd.j2` by `simplon init`: si#225 added `GH_TOKEN` to the `.sh` list by hand and the `.cmd` copy
+#: stayed one name short (si#479).
+FORWARDED = ("CI", "NO_COLOR", "TERM", "TZ", "GITHUB_TOKEN", "GH_TOKEN")
+
 #: The namespace the launcher's own parameters live in (`LAUNCH_PRODUCT`, `LAUNCH_ORCH_DIR`, ...).
 LAUNCHER_PREFIX = "LAUNCH_"
 
