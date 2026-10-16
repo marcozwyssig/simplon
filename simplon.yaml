@@ -26,22 +26,11 @@ tasks:
     impl: "orchestrator.cli:doctor"
     help: "Check the tools and the environment."
     unattended: true
-  # firn v0.1.0 writes its output 0600 (si#344 B1); `build model-mode` sets 0644 on what it names.
-  make-readable:
-    impl: "orchestrator.cli:make_readable"
-    help: "Make the named files readable by everyone (mode 0644)."
-    unattended: true
   # firn rewrites everything outside a protected region with rc 0, so a hand-written line there is lost
   # without a word (si#344 B1 final review); `build model-guard` runs this before `firn gen` can.
   region-guard:
     impl: "orchestrator.cli:region_guard"
     help: "Refuse a file with hand-written lines outside its protected region, naming them."
-    unattended: true
-  # firn deletes a file its templates no longer produce, with rc 0 (firn#966), and a template error leaves
-  # one holding only its id line (si#344 B2); `build model-whole` runs this after `firn gen`.
-  whole-files:
-    impl: "orchestrator.cli:whole_files"
-    help: "Refuse a generated file that is missing or holds nothing but firn's id line."
     unattended: true
 
 # The command tree. `ci:`, `cd:` and `support:` hang off the tree the catalogue declares
@@ -137,15 +126,21 @@ ci:
       # region. An AGGREGATE, for the same reason `docs` is one: two steps in an order only the manifest
       # can state.
       #
-      # THE SECOND STEP IS A MEASURED DEFECT'S REPAIR, not tidiness. firn v0.1.0 writes every file it
-      # generates with mode 0600 (measured 2026-10-12: 644 before `gen`, 600 after), and setuptools carries
-      # that mode into the wheel unchanged - a root-installed kernel whose catalogue only root can read,
-      # so every other user's first command fails to load it. CI runs `test generated` (which runs this
-      # command) before `build wheel` in the same checkout, so the mode would reach a released wheel.
-      # firn has no option for it, and its image is distroless (entrypoint /firn, no shell), so the
-      # mode is set on the host by this product's own `make-readable` task, as the calling user, who
-      # owns what firn just wrote. It names each file, and a file that is not there is rc 1.
-      # test_wheel.py's `test_the_catalogue_in_the_wheel_is_readable_by_everyone` is the guard.
+      # WHAT `model-gen` DOES BESIDES `gen` IS TWO MEASURED DEFECTS' REPAIRS, not tidiness, and since si#400 4b
+      # it does them from firn's own report (`gen --format=json`) instead of from two hand-typed file lists.
+      # firn v0.1.0 writes every file it generates with mode 0600 (measured 2026-10-12: 644 before `gen`, 600
+      # after), and setuptools carries that mode into the wheel unchanged for package data - a root-installed
+      # kernel whose catalogue only root can read. firn has no option for it, so the kernel's `build:model`
+      # sets 0644 on every file firn reports; test_wheel.py's `test_the_catalogue_in_the_wheel_is_readable_by_everyone`
+      # is the guard. And firn#966: an empty selector deletes a generated file with rc 0, a template error
+      # leaves one holding only its id line, so `build:model` refuses a file firn reports deleted and one it
+      # reports holding only its id line. Until
+      # 4b those were two steps of their own, `model-whole` and `model-mode`, each with the same list of five
+      # files typed out - and one class per catalogue task would have added a line per task to both.
+      #
+      # `build:model` also turns what firn only WARNS about into rc 1: a file kept because it holds a
+      # protected region no template produces any more (W301), and a region appended to the end of a file
+      # (W300). A kept task file still defines its class with its old KEY (part 4 spec, decision 6).
       #
       # THE FIRST STEP GUARDS WHAT `gen` WOULD DELETE (si#344 B1 final review). firn rewrites everything
       # outside the catalogue's protected region on every run with rc 0, and the end of the file - below
@@ -153,42 +148,24 @@ ci:
       # `test generated` is green over the deletion (unstaged) or asks for it to be committed (staged).
       # `model-guard` refuses such lines by number BEFORE firn runs, and `stop_on_failure: true` is what
       # makes "before" true: with the default (false) the aggregate would run `model-gen` after a red
-      # guard and delete the lines anyway, merely reporting rc 1 afterwards. It also skips `model-mode`
-      # after a failed `gen`, which loses nothing - the aggregate is red either way.
+      # guard and delete the lines anyway. firn v0.2.0's W303 says the same about hand edits; it arrives
+      # with the bump (si#410), and the guard stays until then.
       model:
-        help: "Guard the catalogue's hand-written lines, generate its kinds, the kinds page and the architecture data and page from simplon's firn model, refuse an empty or missing output, then make the output world-readable."
-        depends_on: [model-guard, model-gen, model-whole, model-mode]
+        help: "Guard the catalogue's hand-written lines, then generate the catalogue's kinds, the artifact schema, one class per catalogue task, the kinds page and the architecture data and page from simplon's firn model."
+        depends_on: [model-guard, model-gen]
         stop_on_failure: true
       # The catalogue only: kinds.md has no protected region, so nothing in it is hand-written to lose.
       model-guard:
         task: region-guard
         with:
           file: src/simplon/catalogue.yaml
-      # `firn gen`, started in src/, where firn.toml is.
+      # `firn gen`, started in src/, where firn.toml is, through the kernel's `build:model` (si#400 4b).
       model-gen:
-        task: toolchain:run
+        task: build:model
         with:
           image: ghcr.io/marcozwyssig/firn:v0.1.0
-          workdir: /workspace
-          network: none
           cwd: src
-          argv:
-          - gen
-      # firn#966: an empty selector deletes a generated file with rc 0, a template error leaves the id line
-      # alone. `artifactschema.py` has no protected region to survive either, so this refuses both before
-      # `model-mode` can report the files done. The list is `model-mode`'s, and a test holds the two equal.
-      model-whole:
-        task: whole-files
-        with:
-          files: [src/simplon/catalogue.yaml, src/site/content/with-what/kinds.md, src/simplon/domain/artifactschema.py,
-                 src/tests/generated/architecture.py, src/site/content/with-what/architecture.md]
-      # firn writes 0600; see `model` above. The generated .py is listed for existence (make-readable refuses
-      # a missing file); its mode matters for the wheel's yaml, not for the module.
-      model-mode:
-        task: make-readable
-        with:
-          files: [src/simplon/catalogue.yaml, src/site/content/with-what/kinds.md, src/simplon/domain/artifactschema.py,
-                 src/tests/generated/architecture.py, src/site/content/with-what/architecture.md]
+          network: none
   test:
     commands:
       # The pytest suite (si#156). It answered to `all` until that ticket; what took the name is the
@@ -560,6 +537,11 @@ generated:
   # protected region, so a hand edit is lost on the next `build model` and is red here first.
   artifact-schema:
     path: src/simplon/domain/artifactschema.py
+    by: build model
+  # One class per catalogue task (si#400 4b), firn's whole output in this directory beside the hand-written
+  # task modules: a directory entry, so a class for a new task is stale until committed.
+  task-classes:
+    path: src/simplon/tasks
     by: build model
   # The architecture's data (si#390 part 1), generated WHOLE by firn into the tests: it has no protected
   # region, so a hand edit is lost on the next `build model` and is red here first.

@@ -144,7 +144,7 @@ the number that says whether a rib is filled:
 
 | namespace | kind | tasks in the catalogue today |
 |---|---|---|
-| `build` | phase, agnostic | 9 |
+| `build` | phase, agnostic | 10 |
 | `test` | phase, agnostic | 8 |
 | `release` | phase, agnostic | 8 |
 | `deploy` | phase, env-first | 3 |
@@ -155,7 +155,7 @@ the number that says whether a rib is filled:
 | `tasks` | family | 2 |
 | `toolchain` | family | 1 |
 
-Fifty-four coordinates: forty-two carrying a placement, twelve free to be filed. The numbers in this sentence, in that
+Fifty-five coordinates: forty-three carrying a placement, twelve free to be filed. The numbers in this sentence, in that
 table and in every section below are read back out of `catalogue.yaml` by the test suite and compared with what is
 printed here, because a count typed into a page is wrong on the day the next task lands and nobody finds
 out.
@@ -179,7 +179,7 @@ it - or **placed**, written into the tree for everybody. The bar a placed comman
 *Produce the artefacts.* Whatever a product ships: a wheel, a container image, a bundle, a generated
 site.
 
-**In the catalogue today: 9 tasks.**
+**In the catalogue today: 10 tasks.**
 
 - `build:cmake-files`
 - `build:conan-cache`
@@ -187,6 +187,7 @@ site.
 - `build:fetch`
 - `build:image`
 - `build:maven-pack`
+- `build:model`
 - `build:nuget-config`
 - `build:nuget-pack`
 - `build:nuget-restore`
@@ -200,7 +201,8 @@ brings - `build:image` an `artifacts:` entry of `kind: image`, the two generator
 `artifacts:` entry of their own kind - which is why all
 six are offered rather than placed: declared for everybody, `build:image` would die on its first
 line in a product with no Dockerfile, and a generator would write a CMake project for a product with
-no C++ in it.
+no C++ in it. `build:model` (si#400 4b) is offered by the same bar: it runs `firn gen` over a product's
+firn project, and a product with no firn model has nothing for it to generate.
 
 **The tree is the declaration, and the manifest is the exception.** A directory holding sources
 already says what it is - a library, or an executable when it holds a `main` - so the generators read

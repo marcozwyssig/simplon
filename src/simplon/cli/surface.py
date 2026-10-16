@@ -191,10 +191,12 @@ PACKAGES = frozenset({"tasks"})
 #: `provenance` and `runhost` (si#391) are the kernel's side of two seams the cli used to be reached for
 #: across: which simplon is answering, and what the layers above tell a run. `cli.main` registers the host;
 #: a product has no reason to import either.
+#: `task` (si#400 4b) is the base of the task classes firn generates; nothing runs them before 4c, and a
+#: product's own classes (spec step 5) are where it moves to LIBRARY - promised then, not before.
 INTERNAL = frozenset({
     "adapters.diskguard", "adapters.oras", "adapters.tools", "cli.bootstrap", "domain.artifactschema",
     "domain.catalogue", "domain.clitaxonomy", "domain.manifestmodel", "domain.ports", "domain.runners",
-    "domain.signatures", "domain.yamlkeys", "kernel.moved", "kernel.provenance", "kernel.runhost", "kernel.steplog", "test_impls",
+    "domain.signatures", "domain.task", "domain.yamlkeys", "kernel.moved", "kernel.provenance", "kernel.runhost", "kernel.steplog", "test_impls",
 })
 
 #: si#399 moved every module into the package of its component. Where each old path now lives, the alias

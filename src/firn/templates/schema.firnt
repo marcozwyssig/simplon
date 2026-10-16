@@ -4,7 +4,7 @@ template ArtifactSchema {
   // the coordinates that read one entry by name, and the keys each of them needs. A WHOLE module with no
   // protected region: firn rewrites every line on every run. The `file` block stands outside every `for`,
   // so a selector that answers nothing leaves a module without classes rather than no module - and
-  // `build model-whole` and src/tests/test_generated_schema.py refuse that module too. A field's type is
+  // `build:model` (si#400 4b) and src/tests/test_generated_schema.py refuse that module too. A field's type is
   // `_<shape>`, an alias the module defines, so the template needs no conditional per shape.
   file "domain/artifactschema.py" language python {
     |# GENERATED from src/firn/model/simplon/vocabulary/kinds.firn (the kinds) and

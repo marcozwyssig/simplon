@@ -1,0 +1,52 @@
+template Tasks {
+
+  // A Python class name from an instance name: snake_case to PascalCase. firn has no built-in for it
+  // (docs/04 §3.5), so each "_<letter>" is replaced; mangle() only writes [a-z0-9_] (si#400 4b, measured).
+  function className(t) {
+    |${t.name.toFirstUpper().replace("_a", "A").replace("_b", "B").replace("_c", "C").replace("_d", "D").replace("_e", "E").replace("_f", "F").replace("_g", "G").replace("_h", "H").replace("_i", "I").replace("_j", "J").replace("_k", "K").replace("_l", "L").replace("_m", "M").replace("_n", "N").replace("_o", "O").replace("_p", "P").replace("_q", "Q").replace("_r", "R").replace("_s", "S").replace("_t", "T").replace("_u", "U").replace("_v", "V").replace("_w", "W").replace("_x", "X").replace("_y", "Y").replace("_z", "Z")}
+  }
+
+  function port(p, direction) {
+    if p.param {
+      |    ${p.name}: ClassVar[Port] = Port("${p.name.replace("_", "-")}", "${direction}", "${p.accepts.name.replace("_", "-")}", "${p.param}", (<<for f : p.needs>>"${f.key}", <<end>>))
+    }
+    if not p.param {
+      |    ${p.name}: ClassVar[Port] = Port("${p.name.replace("_", "-")}", "${direction}", "${p.accepts.name.replace("_", "-")}", "", (<<for f : p.needs>>"${f.key}", <<end>>))
+    }
+  }
+
+  // One file per catalogue task (part 4, decision 5), its body in two protected regions: the import at
+  // module level (mypy refuses a class-scoped one) and `run` in the class (decision 2). Their first content
+  // is the wrapper over today's `impl:` (decision 3).
+  for t : `simplon.pipeline.CatalogueTask` {
+    file "tasks/${t.name}.py" language python {
+      |"""GENERATED from simplon.catalogue.${t.name} by `./simplon.sh build model`: the task `${t.key}`.
+      |
+      |Edit only inside the protected regions; firn rewrites everything else on every run."""
+      if t.input or t.output {
+        |from typing import ClassVar
+        |
+        |from simplon.domain.artifactschema import Port
+      }
+      |from simplon.domain.task import Task
+      |
+      protected "${t.name}.imports" {
+      |from ${t.body.replace(":", " import ")} as _body
+      }
+      |
+      |
+      |class ${@className(t)}(Task):
+      |    KEY = "${t.key}"
+      for p : t.input {
+        |${@port(p, "input")}
+      }
+      for p : t.output {
+        |${@port(p, "output")}
+      }
+      |
+      protected "${t.name}.run" {
+      |    run = staticmethod(_body)
+      }
+    }
+  }
+}

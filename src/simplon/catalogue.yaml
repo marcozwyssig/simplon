@@ -618,6 +618,18 @@ tasks:
     params:
       name: { help: "the file to fetch, a `kind: file` entry (normally pinned per command with `with:`)" }
 
+  # `firn gen` over a product's firn project (si#400 4b): firn's own answer, plus rc 1 on what firn only
+  # warns about (W300/W301 - a kept file still defines its task class), 0644 on every file it wrote, and rc 1
+  # on a reported file holding only firn's id line. The list is firn's report, never a hand-typed one.
+  build:model:
+    impl: simplon.tasks.firngen:generate
+    help: "Generate from this product's firn model, refusing a protected region firn kept or orphaned."
+    unattended: true
+    params:
+      image:   { help: "the pinned firn image" }
+      cwd:     { help: "the directory under the root where firn.toml is (a plain relative path)" }
+      network: { help: "the docker network firn runs on ('none' for no networking)" }
+
   # --- release: what a product hands over --------------------------------------------------------------
   # A TASK, not a placed command: it needs an `artifacts:` section naming the registry, the package, the
   # directory and the media type, so a command declared here would die on its first line in a product

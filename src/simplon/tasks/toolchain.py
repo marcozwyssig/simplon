@@ -209,6 +209,18 @@ def run_toolchain(ctx: typer.Context, image: str = "", argv: list[str] | None = 
     `typer.Context` because that is what the CLI hands it and the stand-in is structural.
     """
     where = ctx.command_path or "toolchain:run"
+    got = invocation(where, image=image, argv=argv, workdir=workdir, env=env, caches=caches,
+                     network=network, cwd=cwd, extra=list(extra or []))
+    if got is None:
+        return 1
+    return docker.run_container(*got).rc
+
+
+def invocation(where: str, *, image: str, argv: list[str] | None, workdir: str, env: object, caches: object,
+               network: str | None, cwd: str | None, extra: list[str]) -> tuple[list[str], str] | None:
+    """The `docker run` line for one toolchain invocation and its container's name, or None when the
+    output tree is not the caller's (the fault is logged). Shared by `run_toolchain` and `firngen.generate`
+    (si#400 4b), which needs the same line and firn's stdout back."""
     # HANDED OVER RAW, not coerced on the way in, and that is not tidiness. `declared` is the gate that
     # decides what is legal and refuses in a command's voice; a `dict(env)` here would meet a stray
     # `--env foo` FIRST and hand the caller `ValueError: dictionary update sequence element #0 has
@@ -241,14 +253,14 @@ def run_toolchain(ctx: typer.Context, image: str = "", argv: list[str] | None = 
     fault = docker.ownership_fault([outputs.root()], product.root)
     if fault:
         log.error(fault)
-        return 1
+        return None
     # si#409: the kernel names the container, so a cancelled run can stop it - see `docker.run_container`.
     name = docker.container_name(product.name)
     line = docker_argv(cfg, root=product.root, product=product.name, instance=instance,
                        home=outputs.home_in_container(cfg.workdir),
                        build_root=layout.declared(context.current().manifest_data()).build_root,
                        extra=list(extra or []), network=network, name=name)
-    return docker.run_container(line, name).rc
+    return line, name
 
 
 def _pinned(image: str, where: str) -> str:
