@@ -54,7 +54,12 @@ def __getattr__(name: str) -> object:
 
     The finder alone is not enough for this one spelling, and that is measured: `from simplon import X`
     treats a ModuleNotFoundError whose `name` is `simplon.X` as "no such submodule" and swallows it, so the
-    tombstone's message was replaced by a bare "cannot import name 'run' from 'simplon'"."""
-    if name in _moved.GONE:
+    tombstone's message was replaced by a bare "cannot import name 'run' from 'simplon'". A dissolved package
+    (`from simplon import domain`) is answered the same way, naming where each of its modules went.
+
+    The price, stated: for a gone name, `hasattr(simplon, "run")` and `getattr(simplon, "run", default)`
+    raise `GoneError` rather than answering False or the default - both swallow only AttributeError, and
+    the from-form needs this hook to raise something else to keep its message."""
+    if name in _moved.GONE or name in _moved.GONE_PACKAGES:
         raise _moved.GoneError(_moved.gone_message(f"simplon.{name}"), name=f"simplon.{name}")
     raise AttributeError(f"module 'simplon' has no attribute {name!r}")

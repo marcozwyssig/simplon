@@ -217,7 +217,11 @@ class _Dissolved(importlib.abc.Loader):
 
 
 class MovedFinder(importlib.abc.MetaPathFinder):
-    """Answers the old paths, and only them; every other name goes on to the ordinary finders."""
+    """Answers the old paths, and only them; every other name goes on to the ordinary finders.
+
+    A tombstoned path (`GONE`, `GONE_PACKAGES`) is answered by RAISING: `find_spec` - and so
+    `importlib.util.find_spec("simplon.run")` - raises `GoneError`, a ModuleNotFoundError naming the new
+    home, rather than returning None the way a finder says "not mine"."""
 
     def find_spec(self, fullname: str, path: object = None,
                   target: ModuleType | None = None) -> importlib.machinery.ModuleSpec | None:

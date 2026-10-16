@@ -195,9 +195,16 @@ no product manifest, command or import is affected either way.
 Short enough to state, and the half you most need, because everything else is yours:
 
 `adapters.diskguard` · `adapters.oras` · `adapters.tools` · `cli.bootstrap` ·
-`model.artifactschema` · `manifest.catalogue` · `manifest.clitaxonomy` · `manifest.launcherenv` · `manifest.manifestmodel` ·
+`manifest.catalogue` · `manifest.clitaxonomy` · `manifest.launcherenv` · `manifest.manifestmodel` ·
 `manifest.ports` · `manifest.runners` · `manifest.signatures` · `model.task` · `manifest.yamlkeys` · `kernel.moved` · `kernel.provenance` ·
 `kernel.runhost` · `kernel.steplog` · `test_impls`
+
+`model.artifactschema` left this list in 0.33.0 (si#473). Every task class firn generates with ports —
+the kernel's, and a product's own from the same template — imports `simplon.model.artifactschema.Port`,
+so a product's generated code bakes the path in, and it is library now. It is still generated and
+rewritten whole: its names are promised, its text is not. `model.task`, whose `Task` every generated
+class imports, is to follow; its name collides with the task body module `simplon.tasks.tasks`, and
+that is not settled yet.
 
 `runners` needs a word too, because `workflowgen` beside it is a library module and this is not. It is a
 **table** of facts about kinds of CI machine — what a self-hosted Debian runner provides, why

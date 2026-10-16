@@ -251,12 +251,12 @@ def test_an_si399_old_path_is_gone_since_its_deadline(old):
     assert homes and all(home in str(caught.value) for home in homes), caught.value
 
 
-@pytest.mark.parametrize("old", ["run", "log", "context"])
+@pytest.mark.parametrize("old", ["run", "log", "context", "domain", "orchestrator"])
 def test_from_simplon_import_an_old_module_names_its_new_home(old):
     """`from simplon import run` is the spelling most products used, and Python swallows a
     ModuleNotFoundError named for the submodule it is looking for there - measured: the tombstone's message
     became "cannot import name 'run' from 'simplon'". `simplon.__getattr__` answers it instead. Seen red
-    with that hook removed."""
+    with that hook removed, and for a dissolved package with its `GONE_PACKAGES` clause removed."""
     with pytest.raises(ModuleNotFoundError, match=re.escape(moved.gone_message(f"simplon.{old}"))):
         exec(f"from simplon import {old}", {})
 
