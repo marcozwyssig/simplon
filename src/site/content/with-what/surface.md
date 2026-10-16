@@ -240,16 +240,59 @@ red once a version past it is built.
 
 **The second period: si#399, the package per component.** Every module moved into the package of its
 component, and `simplon.orchestrator` was dissolved. The move shipped in 0.31; the old paths worked
-through 0.32 and **are gone since 0.33.0**. An import of one is now a `ModuleNotFoundError`, and
-`surface.MOVED` is empty again until the next move.
+through 0.32 and **are gone since 0.33.0**, and `surface.MOVED` is empty again until the next move.
 
 Migrating is a rename, because every module kept its name: `simplon.X` is `simplon.<layer>.X`, and the
 layer is the one `surface.LIBRARY` or `surface.INTERNAL` lists it under (`log` is `kernel.log`, `host` is
 `adapters.host`). One name is on both lists: the `simplon.ports` that moved is `adapters.ports`, and
 `manifest.ports` is a different, internal module. The dissolved package went to three places: `orchestrator.plan`, `.product` and `.steps`
-to `simplon.kernel`, `orchestrator.manifest` and `orchestrator.model.treeform` to `simplon.domain`, and
-`orchestrator.tui` to `simplon.ui`. A string a test patches by changes with the import:
+to `simplon.kernel`, `orchestrator.manifest` to `simplon.manifest.load`, `orchestrator.model.treeform` to
+`simplon.manifest.treeform`, and `orchestrator.tui` to `simplon.ui`. A string a test patches by changes with the import:
 `patch("simplon.orchestrator.steps.run_stream")` is `patch("simplon.kernel.steps.run_stream")`.
+
+**In the same release, si#473 split `simplon.domain` in two, with no alias at all.** `simplon.model` is
+the vocabulary — the task and command base classes, the artifact schema, the carrier spec — and imports
+nothing outside itself; `simplon.manifest` is everything that reads a manifest. The loader is
+`simplon.manifest.load`, the one module that changed its name. Shipping the split with si#470 means a
+product that still imports a pre-si#399 path migrates once, straight to the new home:
+
+| Old path | New path |
+|---|---|
+| `simplon.domain.artifactschema` | `simplon.model.artifactschema` |
+| `simplon.domain.artifactsection` | `simplon.manifest.artifactsection` |
+| `simplon.domain.carrierspec` | `simplon.model.carrierspec` |
+| `simplon.domain.catalogue` | `simplon.manifest.catalogue` |
+| `simplon.domain.clitaxonomy` | `simplon.manifest.clitaxonomy` |
+| `simplon.domain.command` | `simplon.model.command` |
+| `simplon.domain.context` | `simplon.manifest.context` |
+| `simplon.domain.deployment` | `simplon.manifest.deployment` |
+| `simplon.domain.environments` | `simplon.manifest.environments` |
+| `simplon.domain.layout` | `simplon.manifest.layout` |
+| `simplon.domain.manifest` | `simplon.manifest.load` |
+| `simplon.domain.manifestmodel` | `simplon.manifest.manifestmodel` |
+| `simplon.domain.outputs` | `simplon.manifest.outputs` |
+| `simplon.domain.ports` | `simplon.manifest.ports` |
+| `simplon.domain.results` | `simplon.manifest.results` |
+| `simplon.domain.runners` | `simplon.manifest.runners` |
+| `simplon.domain.signatures` | `simplon.manifest.signatures` |
+| `simplon.domain.task` | `simplon.model.task` |
+| `simplon.domain.treeform` | `simplon.manifest.treeform` |
+| `simplon.domain.yamlkeys` | `simplon.manifest.yamlkeys` |
+
+**A removed path is a tombstone, not a bare miss.** The import still fails — there is no alias, and no
+stub to patch by mistake — but the error names the new home instead of "No module named":
+
+```
+simplon.log has moved to simplon.kernel.log; import it from there. The old path was removed in 0.33.0.
+```
+
+Every path si#399 moved and every `domain` module is in `simplon.kernel.moved.GONE`, each pointing at its
+final home: a pre-si#399 path that went into `domain` points past it, into `model` or `manifest`. A
+dissolved package (`orchestrator`, `orchestrator.model`, `domain`) fails naming where each of its modules
+went, because importing `simplon.orchestrator.steps` imports `simplon.orchestrator` first. The error is a
+`ModuleNotFoundError`, so a product that already catches one keeps working. The tombstones have their own
+deadline, `GONE_DUE_AFTER`: they stand through 0.33 and go in 0.34.0, with a test that turns red once a
+version past it is built.
 
 **The first period ran through 0.4.x and ended at 0.5.0.** Four modules stood as tombstones and are now
 gone; an import of one is a `ModuleNotFoundError`. The gate is what ended it: the test went red on the

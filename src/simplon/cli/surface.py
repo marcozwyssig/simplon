@@ -109,6 +109,10 @@ The three records below stay, empty, for the next move: `MOVED` (what is promise
 names). The alias in `simplon.kernel.moved` stays with them. Re-measure FIRST when the next deadline
 comes: the acceptance is that no consumer still imports an old path, measured on the day, not remembered
 from the day the tombstone was written.
+
+What 0.33.0 does leave behind is a NOTICE, not a way in (si#473): `simplon.kernel.moved.GONE` names the new
+home of every si#399 path and of every module of the `domain` package si#473 split, and an import of one
+fails with that home in the message. The notices have their own deadline, `GONE_DUE_AFTER`.
 """
 from __future__ import annotations
 
