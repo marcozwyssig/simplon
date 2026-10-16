@@ -584,6 +584,8 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("manifest", "_validate_param_bindings", "that are not parameters of"): DIAGNOSIS,
     ("manifest", "resolve_ref", "cannot import module"): DIAGNOSIS,
     ("manifest", "resolve_ref", "has no attribute"): DIAGNOSIS,
+    # si#400 4c: a reference that resolves to neither a Task class nor a callable has no body to run
+    ("task", "task_class", "neither a Task class nor a callable"): DIAGNOSIS,
 
     # --- treeform.py -----------------------------------------------------------------------------
     ("treeform", "_check_node_keys", "declares unknown key"): DIAGNOSIS,

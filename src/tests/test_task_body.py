@@ -61,3 +61,22 @@ def test_the_class_name_follows_firns_class_name():
     # act / assert: the Tasks template's className, in Python (4b holds the generated side)
     assert [task.class_name(mangle(c)) for c in ("build:image", "test:typecheck-python", "vcs:auth-scopes")] == [
         "BuildImage", "TestTypecheckPython", "VcsAuthScopes"]
+
+
+def test_assembling_the_cli_imports_no_more_task_modules_than_before():
+    # arrange: measured 2026-10-16 - `./simplon.sh --help` imports 8 simplon.tasks modules; importing every
+    # class module on start would cost +0.19 s and 411 modules (si#400 4c keeps resolution lazy)
+    import os
+    import re
+    import subprocess
+    from conftest import ROOT
+
+    # act
+    run = subprocess.run([str(ROOT / "simplon.sh"), "--help"], cwd=ROOT, capture_output=True, text=True,
+                         env={**os.environ, "PYTHONPROFILEIMPORTTIME": "1"})
+    imported = set(re.findall(r"\|\s*(simplon\.tasks\.[a-z_]+)$", run.stderr, re.MULTILINE))
+
+    # assert
+    assert run.returncode == 0, run.stderr[-2000:]
+    assert imported, "no import was profiled - the measurement measured nothing"
+    assert len(imported) <= 8, sorted(imported)

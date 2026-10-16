@@ -20,8 +20,8 @@ from typing import Callable, NamedTuple
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
-from simplon.domain import clitaxonomy, results, signatures
-from simplon.domain.manifest import Manifest, resolve_ref
+from simplon.domain import clitaxonomy, results, signatures, task
+from simplon.domain.manifest import Manifest
 
 _TEMPLATES = Path(__file__).resolve().parents[1] / "templates"
 
@@ -168,7 +168,7 @@ def render(manifest: Manifest, *, source: str, product: str,
                 module, attribute = spec.impl.split(":", 1)
                 if module not in imports:
                     imports.append(module)
-                impl_body = resolve_ref(spec.impl, where)
+                impl_body = task.body_of(spec, where=where)
                 takes_ctx = signatures.takes_context(impl_body)
                 params = _params(impl_body, spec.with_, spec.params, where=where)
                 call = _call(f"{module}.{attribute}", params, takes_context=takes_ctx)
@@ -330,7 +330,7 @@ def unrenderable(manifest: Manifest) -> dict[tuple[str, str], str]:
                 continue
             where = f"`{group} {name}`"
             try:
-                _params(resolve_ref(spec.impl, where), spec.with_, spec.params, where=where)
+                _params(task.body_of(spec, where=where), spec.with_, spec.params, where=where)
             except ValueError as exc:
                 out[(group, name)] = str(exc)
     return out

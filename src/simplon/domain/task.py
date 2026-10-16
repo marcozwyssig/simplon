@@ -11,9 +11,15 @@ generates its class - one built here around the function its `impl:` names.
 """
 from __future__ import annotations
 
-import functools
 from collections.abc import Callable
 from typing import TYPE_CHECKING, ClassVar
+
+# `manifest` at module level, not inside `task_class`, and that is measured: imported there, the refusal
+# census lost `resolve_ref`'s two refusals and `_split_impl`'s one (269 -> 267), because its walk follows a
+# module's imports and a function-local one is none. `manifest` imports this module too; each reaches into
+# the other only at call time, so the cycle resolves. `manifestmodel` stays local (it imports
+# `manifest.Manifest` at load, a cycle that does not resolve), and its `mangle` refuses nothing.
+from simplon.domain import manifest
 
 if TYPE_CHECKING:
     from simplon.domain.manifest import CommandSpec
@@ -42,17 +48,19 @@ def class_ref(coordinate: str) -> str:
     return f"simplon.tasks.{name}:{class_name(name)}"
 
 
-@functools.lru_cache(maxsize=None)
 def task_class(ref: str, key: str, *, where: str) -> type[Task]:
     """The Task class `ref` names: a generated class as it is, or - for a product task, until spec step 6
     generates its class - one built here around the callable, keyed by the task's own name (si#420: two
     tasks on one function are two classes). Anything else is refused, naming the command.
 
     A callable that is not a class is a body, as `resolve_ref` has always taken it (a function, a
-    `functools.partial`); a class that is no Task, or a value that cannot be called, is not."""
-    from simplon.domain.manifest import resolve_ref
+    `functools.partial`); a class that is no Task, or a value that cannot be called, is not.
+
+    NOT CACHED, measured: with an lru_cache six CLI tests failed in the suite and passed alone - a class
+    built once held the function a later test had patched in its place. Resolving is an import lookup and
+    building a class is cheap, so each call answers what the reference names NOW."""
     from simplon.domain.manifestmodel import mangle
-    target = resolve_ref(ref, where)
+    target = manifest.resolve_ref(ref, where)
     if isinstance(target, type) and issubclass(target, Task):
         return target
     if callable(target) and not isinstance(target, type):

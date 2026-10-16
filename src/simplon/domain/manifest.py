@@ -34,7 +34,7 @@ from typing import Any, Callable, NamedTuple, cast
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from simplon.domain import artifactsection, ports, yamlkeys
+from simplon.domain import artifactsection, ports, task, yamlkeys
 from simplon.domain.artifactschema import Port
 from simplon.domain.clitaxonomy import CommandTaxonomy, TaxonomyNode, merge_trees
 from simplon.domain import treeform
@@ -1158,7 +1158,7 @@ def _validate_param_bindings(commands: dict[str, dict[str, "CommandSpec"]]) -> N
         for name, spec in members.items():
             if not spec.impl or not (spec.with_ or spec.params):
                 continue
-            body = resolve_ref(spec.impl, f"{group} {name}")
+            body = task.body_of(spec, where=f"{group} {name}")
             # BINDABLE parameters only, the same set the generator will substitute into. Using every
             # signature name accepted `with: {c: ...}` - binding the CLI context, the likeliest real
             # typo - and the generator then discarded it silently.
@@ -1192,8 +1192,8 @@ def resolve_ref(ref: str, where: str) -> Callable[..., object]:
 
 
 def resolve_impl(spec: CommandSpec) -> Callable[..., object]:
-    """Import the module named in the spec's `impl` and return its function - where the manifest's
-    declarative "module:function" becomes the real callable the CLI runs. Raises a clear ValueError if the
-    module cannot be imported or the function is missing (so a stale impl ref fails loudly, not silently).
+    """The callable the CLI runs for a leaf: its task class's `run` (si#400 4c, `task.body_of`) - where the
+    manifest's declarative reference becomes real code. Raises a clear ValueError if the module cannot be
+    imported, the attribute is missing, or it is no body at all (so a stale ref fails loudly, not silently).
     """
-    return resolve_ref(spec.impl, f"impl '{spec.impl}'")
+    return task.body_of(spec, where=f"impl '{spec.impl}'")
