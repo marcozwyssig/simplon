@@ -71,9 +71,17 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 232 | nothing - the declaration had no working meaning |
+| diagnosis | 239 | nothing - the declaration had no working meaning |
 | expression rule | 38 | something it could otherwise have said |
-| **all load-time refusals** | **270** | |
+| **all load-time refusals** | **277** | |
+
+si#467 added seven diagnoses and no expression rule. They come with `launcher: env: pass:`, the names
+forwarded by name into the kernel's container. A section, `env:` or `pass:` of the wrong shape, and an
+unknown key under either, would forward nothing, so the command that needed the variable would fail on the
+container route. A name that is not an environment variable name cannot be written into the launcher's
+list. A name the launcher sets on that container itself (`HOME`, `PYTHONPATH`, `LAUNCH_*`, ...) would break
+it. A name the launcher already forwards is accepted. `layout:`'s unknown-key refusal is billed as an
+expression rule because the product it refuses still works. These two are not, because it does not.
 
 si#343 added one expression rule and one diagnosis. The rule refuses a `consumes:` on a `build:image`
 command. Its `file` port is bound by the `contexts:` of the image it builds, which already names the files,

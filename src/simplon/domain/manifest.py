@@ -36,7 +36,7 @@ from typing import Any, Callable, NamedTuple, cast
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from simplon.domain import artifactsection, ports, task, yamlkeys
+from simplon.domain import artifactsection, launcherenv, ports, task, yamlkeys
 from simplon.domain.command import (AggregateCommand, Command, Deploy, ParamPresentation, ReleaseCommand,
                                     TaskCommand)
 from simplon.domain.artifactschema import Port
@@ -745,6 +745,10 @@ def load(text: str, *, validate_with: bool = False, catalogue: object = None,
     # keys, in the shapes the generated schema checks. A catalogue-less load checks against the same model.
     artifactsection.check(data, getattr(catalogue, "kinds", {}) or artifactsection.REFINES,
                           manifest_path or "the manifest")
+    # si#467: `launcher: env: pass:` is read by the launchers' renderer, by the container-route check and by
+    # `toolchain:run` - each after the load - so a broken section is refused HERE, on either route, before a
+    # command that never touches a container could run past it.
+    launcherenv.declared(data, manifest_path or "the manifest")
     # The catalogue's own tree. `taxonomy:` is `groups:`'s predecessor (netctl#1444, superseded by
     # netctl#1469) and a catalogue carries one or the other, never both. The two spell a node the same
     # way - help, env_first, nested groups - so the older one is simply a tree with no commands placed in

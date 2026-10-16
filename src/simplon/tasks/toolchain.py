@@ -47,7 +47,7 @@ from typing import NoReturn
 import typer
 import yaml
 
-from simplon.domain import context, layout, outputs
+from simplon.domain import context, launcherenv, layout, outputs
 from simplon.adapters import docker, hostpath, labinstance
 from simplon.kernel import log
 from simplon.tasks import profiles
@@ -102,7 +102,8 @@ def declared(body: Mapping[str, object], where: str) -> Toolchain:
 
 def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
                 extra: list[str], network: str | None = None,
-                build_root: str = "", home: str = "", name: str = "") -> list[str]:
+                build_root: str = "", home: str = "", name: str = "",
+                passes: tuple[str, ...] = ()) -> list[str]:
     """The full docker argv for one toolchain invocation. PURE: it assembles, it runs nothing.
 
     NAMED `docker_argv` SINCE si#105, and the rename is the loader's doing rather than taste: `argv:` is
@@ -126,6 +127,10 @@ def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
     invocation by construction - and `run_toolchain`, which runs the line, is the one that has to stop
     that container again. An empty `name` adds no `--name`, so a test that only reads the line reads
     the same line twice. They sit AFTER `--network`, so `docker run --rm --network <n>` keeps its shape.
+
+    `passes` is the manifest's `launcher: env: pass:` (si#467), and each name is written BY NAME - `-e NAME`,
+    never `-e NAME=<value>` - so a secret is in no argv and no log, and a name this process does not have
+    stays unset in the container. Before the manifest's `env:`, so a value a product states still wins.
     """
     volumes: list[str] = []
     for cache in cfg.caches:
@@ -144,7 +149,8 @@ def docker_argv(cfg: Toolchain, root: Path, product: str, instance: str,
             "-v", f"{hostpath.translate(root)}:{cfg.workdir}",
             "-w", _start_in(cfg, build_root),
             *volumes,
-            *(["-e", f"HOME={home}"] if home else []), *env,
+            *(["-e", f"HOME={home}"] if home else []),
+            *[arg for passed in passes for arg in ("-e", passed)], *env,
             cfg.image, *cfg.argv, *extra]
 
 
@@ -259,7 +265,8 @@ def invocation(where: str, *, image: str, argv: list[str] | None, workdir: str, 
     line = docker_argv(cfg, root=product.root, product=product.name, instance=instance,
                        home=outputs.home_in_container(cfg.workdir),
                        build_root=layout.declared(context.current().manifest_data()).build_root,
-                       extra=list(extra or []), network=network, name=name)
+                       extra=list(extra or []), network=network, name=name,
+                       passes=launcherenv.declared(context.current().manifest_data()))
     return line, name
 
 

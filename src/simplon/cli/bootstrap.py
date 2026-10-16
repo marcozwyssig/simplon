@@ -542,7 +542,7 @@ USERBASE_CHECK = (
 )
 
 
-def _render_launcher(name: str, template: str, orch_dir: str) -> str:
+def _render_launcher(name: str, template: str, orch_dir: str, env_pass: tuple[str, ...] = ()) -> str:
     """Read a launcher template from package data and fill in the product name + the block dir.
 
     Package data rather than a string constant: the launchers are read by
@@ -564,6 +564,10 @@ def _render_launcher(name: str, template: str, orch_dir: str) -> str:
     a reader debugging a broken checkout should not have to hold in their head.
     So `{{ orch_dir }}` and `{{ product_env_prefix }}` are substituted there
     too, for the same reason `{{ orch_dir_win }}` already was.
+
+    `env_pass` is the manifest's `launcher: env: pass:` (si#467), as space-separated NAMES: both
+    launchers read no YAML, so the list is written into them, and each name is forwarded by name only.
+    Validated by `launcherenv.declared` before it gets here, so nothing in it needs quoting.
     """
     # files("simplon") and then joinpath -- not files("simplon.templates"):
     # the templates directory is not a package and has no __init__.py.
@@ -571,6 +575,7 @@ def _render_launcher(name: str, template: str, orch_dir: str) -> str:
     return (raw.replace("{{ userbase_check }}", USERBASE_CHECK)
                .replace("{{ product }}", name)
                .replace("{{ product_env_prefix }}", env_var_name(name).removesuffix("_ENV"))
+               .replace("{{ env_pass }}", " ".join(env_pass))
                .replace("{{ orch_dir_win }}", orch_dir.replace("/", "\\"))
                .replace("{{ orch_dir }}", orch_dir))
 
@@ -930,12 +935,12 @@ layout:
 """
 
 
-def _templates(name: str, orch_dir: str) -> dict[str, str]:
+def _templates(name: str, orch_dir: str, env_pass: tuple[str, ...] = ()) -> dict[str, str]:
     """The (relative POSIX path -> template) map for a product, BEFORE placeholder substitution."""
     pkg_dir = pkg_dir_for(orch_dir)
     return {
-        f"{name}.sh": _render_launcher(name, "launch.sh.j2", orch_dir),
-        f"{name}.cmd": _render_launcher(name, "launch.cmd.j2", orch_dir),
+        f"{name}.sh": _render_launcher(name, "launch.sh.j2", orch_dir, env_pass),
+        f"{name}.cmd": _render_launcher(name, "launch.cmd.j2", orch_dir, env_pass),
         f"{name}.yaml": _MANIFEST,
         GITIGNORE: _GITIGNORE,
         f"{orch_dir}/requirements.txt": _REQUIREMENTS,
@@ -948,7 +953,7 @@ def _templates(name: str, orch_dir: str) -> dict[str, str]:
     }
 
 
-def render(name: str, *, orch_dir: str = DEFAULT_ORCH_DIR) -> dict[str, str]:
+def render(name: str, *, orch_dir: str = DEFAULT_ORCH_DIR, env_pass: tuple[str, ...] = ()) -> dict[str, str]:
     """PURE: the product skeleton as a {relative POSIX path -> file content} map, with @@PRODUCT@@,
     @@ENV_VAR@@, @@PKG_DIR@@ and @@KERNEL_PIN@@ substituted. No I/O, no yaml/pydantic import - so a test can validate the
     rendered manifest through the real loader and assert the exact file set without a filesystem or the
@@ -971,7 +976,7 @@ def render(name: str, *, orch_dir: str = DEFAULT_ORCH_DIR) -> dict[str, str]:
                       .replace("@@ENV_VAR@@", env_var)
                       .replace("@@PKG_DIR@@", pkg_dir)
                       .replace("@@KERNEL_PIN@@", kernel_pin))
-        for rel, template in _templates(product, block).items()
+        for rel, template in _templates(product, block, env_pass).items()
     }
 
 
@@ -1143,12 +1148,35 @@ def launcher_orch_dir(name: str, target: Path, asked: str | None) -> str:
     return current
 
 
+def launcher_env_pass(name: str, target: Path) -> tuple[str, ...]:
+    """The names `<product>.yaml` at `target` passes through (`launcher: env: pass:`, si#467), for the
+    launchers `--launchers-only` renders. The manifest is READ, never written. One that is not there yields
+    no names - the scaffold writes it beside the launchers, so a checkout without it has nothing to say - and
+    one that is broken is refused the way the kernel's loader refuses it, with the same sentence."""
+    import yaml
+
+    from simplon.domain import launcherenv, yamlkeys
+
+    path = target / f"{name}.yaml"
+    if not path.is_file():
+        return ()
+    try:
+        with path.open(encoding="utf-8") as stream:
+            data = yaml.load(stream, Loader=yamlkeys.UniqueKeyLoader) or {}
+    except yaml.YAMLError as exc:
+        raise ValueError(f"simplon init --launchers-only: cannot read {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        return ()
+    return launcherenv.declared(data, str(path))
+
+
 def write_launchers(name: str, target: Path, orch_dir: str) -> dict[str, str]:
     """Write ONLY the two launchers (si#407) and say, per file, what happened: `unchanged`, `replaced` or
     `written`. Overwrites without `force` - re-rendering them is the whole request - and touches nothing
-    else, the manifest, `cli.py` and `requirements.txt` above all, which is what `--force` costs today."""
+    else, the manifest, `cli.py` and `requirements.txt` above all, which is what `--force` costs today.
+    The manifest's `launcher: env: pass:` is read and rendered into both (si#467)."""
     product = validate_product_name(name)
-    files = render(product, orch_dir=orch_dir)
+    files = render(product, orch_dir=orch_dir, env_pass=launcher_env_pass(product, target))
     shim = shim_relpath(product)
     outcome: dict[str, str] = {}
     for rel in (shim, f"{product}.cmd"):

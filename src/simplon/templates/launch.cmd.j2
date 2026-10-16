@@ -25,6 +25,12 @@ rem The PUBLISHED KERNEL IMAGE this checkout runs on the container route (si#200
 rem line a shell can read before any Python exists. A checkout with no such file, or one whose
 rem file carries no reference, has no container route.
 set "LAUNCH_IMAGE_PIN=%LAUNCH_ROOT%\deploy\image\image.pin"
+rem THE NAMES THIS PRODUCT'S MANIFEST PASSES THROUGH, `launcher: env: pass:` (si#467), written here by
+rem `simplon init` because this file reads no YAML. The container route forwards each one BY NAME (`-e NAME`,
+rem never a value) and only when it is defined here, so a name unset here stays unset there. The kernel
+rem compares this list with the manifest on that route; after editing the list, re-render with
+rem `simplon init --dir . --launchers-only`.
+set "LAUNCH_ENV_PASS={{ env_pass }}"
 
 set "VENV=%LAUNCH_ORCH_DIR%\.venv"
 set "REQ=%LAUNCH_ORCH_DIR%\requirements.txt"
@@ -169,6 +175,10 @@ rem set is named rather than left to be discovered.
 for /f "usebackq tokens=1 delims==" %%N in (`set DELIVERY_ 2^>nul`) do call :forward %%N
 for /f "usebackq tokens=1 delims==" %%N in (`set {{ product_env_prefix }}_ 2^>nul`) do call :forward %%N
 for %%N in (CI NO_COLOR TERM TZ GITHUB_TOKEN) do call :forward %%N
+for %%N in (%LAUNCH_ENV_PASS%) do call :forward %%N
+rem What this file was rendered to pass, as names, so the kernel can tell a stale launcher from an unset
+rem variable (si#467).
+set "DOCKER_ENV=%DOCKER_ENV% -e "DELIVERY_ENV_PASS=%LAUNCH_ENV_PASS%""
 
 rem THE PRODUCT'S OWN ORCHESTRATOR DEPENDENCIES, on the same condition the venv route uses. The image
 rem carries the KERNEL and nothing of any product (si#200/si#121), so this checkout still provides its
@@ -191,6 +201,7 @@ exit /b %ERRORLEVEL%
 if /i "%~1"=="DELIVERY_ROUTE" goto :eof
 if /i "%~1"=="DELIVERY_HOST_ROOT" goto :eof
 if /i "%~1"=="DELIVERY_MOUNT_ROOT" goto :eof
+if /i "%~1"=="DELIVERY_ENV_PASS" goto :eof
 if not defined %~1 goto :eof
 set "DOCKER_ENV=%DOCKER_ENV% -e %~1"
 goto :eof

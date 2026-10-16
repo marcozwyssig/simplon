@@ -88,6 +88,9 @@ domain typeOf simplon.architecture.Component {
   module m_domain_layout typeOf simplon.architecture.Module {
     path = "domain.layout"
   }
+  module m_domain_launcherenv typeOf simplon.architecture.Module {
+    path = "domain.launcherenv"
+  }
   module m_domain_outputs typeOf simplon.architecture.Module {
     path = "domain.outputs"
   }

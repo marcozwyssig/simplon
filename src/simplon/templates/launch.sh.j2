@@ -38,6 +38,12 @@ LAUNCH_IMAGE_PIN="$ROOT/deploy/image/image.pin"
 # form the kernel no longer loads is told the migration's two commands, and those are written in terms of
 # where THIS checkout keeps its orchestrator and which image it pins. The kernel only reads them.
 export LAUNCH_ORCH_DIR LAUNCH_IMAGE_PIN
+# THE NAMES THIS PRODUCT'S MANIFEST PASSES THROUGH, `launcher: env: pass:` (si#467), written here by
+# `simplon init` because this file reads no YAML. The container route forwards each one into the kernel's
+# container BY NAME (`-e NAME`, never a value) and only when this shell exports it, so a name unset here
+# stays unset there. The kernel compares this list with the manifest on that route and refuses when they
+# differ: after editing the list, re-render with `simplon init --dir . --launchers-only`.
+LAUNCH_ENV_PASS="{{ env_pass }}"
 
 VENV="$LAUNCH_ORCH_DIR/.venv"
 REQ="$LAUNCH_ORCH_DIR/requirements.txt"
@@ -238,7 +244,8 @@ if [ "$DELIVERY_ROUTE" = container ]; then
     # the handful of variables a CI runner speaks: the kernel's own DELIVERY_*, this product's, and
     # CI/NO_COLOR/TERM/TZ/GITHUB_TOKEN/GH_TOKEN. Anything else stays on the host on purpose - PATH and
     # HOME from the host mean nothing in the image, and forwarding an unbounded environment is how a
-    # secret travels somewhere nobody meant it to.
+    # secret travels somewhere nobody meant it to. A name a third-party tool reads under its own fixed
+    # spelling (`VSCE_PAT`) crosses only when the manifest declares it, through LAUNCH_ENV_PASS above.
     #
     # GH_TOKEN JOINS THAT LIST IN si#225, and leaving it off would have been the quieter half of the same
     # bug. si#206 drove its broken-tracker proof with GH_TOKEN, which is the variable `gh` reads FIRST;
@@ -249,11 +256,16 @@ if [ "$DELIVERY_ROUTE" = container ]; then
     ENV_PREFIX="$(printf '%s' "$LAUNCH_PRODUCT" | tr '[:lower:]-' '[:upper:]_')"
     while read -r _name; do
         case "$_name" in
-            DELIVERY_ROUTE|DELIVERY_HOST_ROOT|DELIVERY_MOUNT_ROOT|PYTHONPATH|PYTHONUSERBASE|HOME) ;;
+            DELIVERY_ROUTE|DELIVERY_HOST_ROOT|DELIVERY_MOUNT_ROOT|DELIVERY_ENV_PASS|PYTHONPATH|PYTHONUSERBASE|HOME) ;;
             DELIVERY_*|CI|NO_COLOR|TERM|TZ|GITHUB_TOKEN|GH_TOKEN) DOCKER_RUN+=(-e "$_name") ;;
             "$ENV_PREFIX"_*) DOCKER_RUN+=(-e "$_name") ;;
+            *) case " $LAUNCH_ENV_PASS " in *" $_name "*) DOCKER_RUN+=(-e "$_name") ;; esac ;;
         esac
     done < <(compgen -e)
+    # WHAT THIS FILE WAS RENDERED TO PASS, as names (si#467). It crosses so the kernel can tell a launcher
+    # that forwards what the manifest declares from one rendered before the list changed - without it, an
+    # out-of-date launcher would look exactly like a variable the host never set.
+    DOCKER_RUN+=(-e "DELIVERY_ENV_PASS=$LAUNCH_ENV_PASS")
 
     # EACH KERNEL CONTAINER IS NAMED AND LABELLED FOR THE PRODUCT (si#412): `simplon.run=<product>`, the
     # label the kernel puts on every container it starts itself, so one `docker ps --filter
