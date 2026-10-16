@@ -33,7 +33,8 @@ the artifact schema from them. Part 1 puts the architecture itself into the mode
 4. **Base classes, and tasks modelled and generated.** The kernel defines `Task` and `Command` as the
    base classes of every task and command. The tasks are modelled in firn as instances of
    `simplon.pipeline.Task` (revised 2026-10-15 to classes, and back to instances on 2026-10-16), and
-   their Python classes generated from them, the body by hand. The
+   their Python classes generated from them, the body by hand; each command is an object of a `Command`
+   class (`TaskCommand`, `AggregateCommand`), decided 2026-10-16. The
    hand-written `CommandSpec`, `Manifest` and `_ManifestModel` go. Touches si#344 part C and si#346. See "Part 4,
    decided now" below.
 

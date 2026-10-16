@@ -21,7 +21,7 @@ stand as written. Decision 4 changes (below). Measured on firn v0.1.0 while sett
 
 Every task, the kernel's and every product's, is a Python class that firn generates from a task instance
 in a firn model (an instance of `simplon.pipeline.Task`, revised 2026-10-16). Its ports are typed attributes and its body is a hand-written method
-in a protected region. A command is an object of that class, and `CommandSpec` and the `impl:` lookup
+in a protected region. A command is an object of a `Command` class (revised 2026-10-16), and `CommandSpec` and the `impl:` lookup
 go.
 
 ## Decisions (Marco, 2026-10-15)
@@ -107,8 +107,19 @@ class BuildImage(Task):
         return build(self)            # the wrapper (decision 3): impl "simplon.tasks.image:build"
         # End Protected Region  [BuildImage.run]
 
-build_firn = BuildImage(image=firn_image)  # a command is an object of its task class
+# the kernel's, hand-written - the Python image of simplon.pipeline's TaskCommand and AggregateCommand
+class TaskCommand(Command): ...       # holds its task class and its port bindings
+class AggregateCommand(Command): ...  # holds its members; runs no task
+
+build_firn = TaskCommand(task=BuildImage, produces={"image": firn_image})  # a command is an object
+build_all = AggregateCommand(members=[build_firn])
 ```
+
+**Revised 2026-10-16 (Marco, by choice list): a command is an object of a `Command` class, not of its task
+class.** The Python classes mirror the firn model: every task is a generated class deriving from `Task`;
+`TaskCommand` and `AggregateCommand` derive from `Command`, and each command of a manifest is an object of
+one of them. The first form (`build_firn = BuildImage(image=firn_image)`) had no place for an aggregate,
+which runs no task, and left `Command` without a role.
 
 The wrapper's call is the function that `impl:` names today. How the wrapper hands the bound ports and
 parameters to a function that takes keyword arguments is the plan's first design step, measured against
@@ -125,7 +136,8 @@ Each step is small, and only one source is live at a time.
    foreign kind (measured in the part 1 spec).
 2. **The template, over the kernel first.** It generates one Python class per task instance, one file
    per class, with wrapper regions. The kernel follows the layout it gives products, and no exemption.
-3. **The runtime.** The loader builds a command as an object of its class, instead of looking up
+3. **The runtime.** The loader builds each command as a `TaskCommand` or `AggregateCommand` object that holds
+   its task class, instead of looking up
    `impl:` text. `CommandSpec` and the `impl:` lookup go. `signatures.py` goes once ports and parameters
    are typed attributes.
 4. **The gen guard.** W300 and W301 become rc 1 (decision 6), seen red on a rename.
