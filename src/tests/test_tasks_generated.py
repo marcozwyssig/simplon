@@ -206,3 +206,21 @@ def test_a_directory_entry_whose_files_are_all_committed_passes(tmp_path, monkey
     monkeypatch.setattr(generated, "_regenerate", _writes_both)
     # Act / Assert
     assert generated.check() == 0
+
+
+def test_a_listing_git_could_not_make_is_stale_not_clean(tmp_path, monkeypatch, capsys):
+    # Arrange: `git ls-files` failing must not read as "nothing untracked"
+    root = _repo(tmp_path)
+    (root / "out" / "tasks").mkdir(parents=True)
+    _product(root, monkeypatch, _DIRECTORY)
+    _writes_both(generated.Entry("classes", "out/tasks", "build model"), root)
+    _commit(root)
+    monkeypatch.setattr(generated, "_regenerate", _writes_both)
+    real = generated.run.run
+    monkeypatch.setattr(generated.run, "run", lambda argv, **kw: generated.run.Result(128, "", "fatal: broken")
+                        if "--others" in argv else real(argv, **kw))
+    # Act
+    rc = generated.check()
+    # Assert
+    assert rc == 1
+    assert "fatal: broken" in capsys.readouterr().err

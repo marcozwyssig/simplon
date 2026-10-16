@@ -95,8 +95,11 @@ def _regenerate(entry: Entry, root: Path) -> int:
 def _untracked(root: Path, path: str) -> list[str]:
     """Files under `path` git does not track and does not ignore: a new generated file never committed.
     `git diff` cannot see one, so without this a directory entry (si#400 4b) is green over exactly that
-    staleness - the untracked-file defect `_tracked` closes for a single file, one level down."""
+    staleness - the untracked-file defect `_tracked` closes for a single file, one level down. A listing git
+    could not make is a ValueError, never an empty answer: "could not look" is not "nothing there"."""
     listed = run.run(["git", "-C", str(root), "ls-files", "--others", "--exclude-standard", "--", path])
+    if not listed.ok:
+        raise ValueError(f"`git ls-files --others` failed (rc {listed.rc}): {listed.err.strip()}")
     return [line for line in listed.out.splitlines() if line.strip()]
 
 
@@ -127,7 +130,12 @@ def check() -> int:
                       f"this says nothing about whether it is fresh")
             stale.append(entry.name)
             continue
-        new = _untracked(root, entry.path)
+        try:
+            new = _untracked(root, entry.path)
+        except ValueError as e:
+            log.error(f"{entry.name}: {e}, so whether `{entry.by}` wrote an untracked file is unknown")
+            stale.append(entry.name)
+            continue
         if new:
             log.error(f"{entry.name}: `{entry.by}` wrote {', '.join(new)}, which git does not track. Commit it "
                       f"(or, if no template should write it, find out why one does)")

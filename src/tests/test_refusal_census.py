@@ -1226,7 +1226,6 @@ def _reader_functions(dotted: str) -> frozenset[str]:
     return frozenset(hit)
 
 
-@functools.lru_cache(maxsize=None)
 def _generated_task_classes() -> set[str]:
     """The task classes firn generates (si#400 4b, the `Tasks` template), by firn's own id line in the file.
 
@@ -1237,6 +1236,7 @@ def _generated_task_classes() -> set[str]:
     return {_dotted_of(path) for path in (SRC / "tasks").glob("*.py") if "id=[Tasks:" in path.read_text()}
 
 
+@functools.lru_cache(maxsize=None)
 def _borrowers() -> dict[str, tuple[str, ...]]:
     """Modules that use another module's reader function and do not call the accessor themselves (si#331).
 
@@ -1762,6 +1762,7 @@ def test_a_module_that_borrows_another_modules_reader_is_accounted_for():
         "(then the test above accounts for it), or say in BORROWS_A_READER why it decides nothing on it - "
         f"new: { {m: borrowers[m] for m in sorted(set(borrowers) - set(BORROWS_A_READER))} }, "
         f"gone: {sorted(set(BORROWS_A_READER) - set(borrowers))}")
+
 
 def test_a_generated_task_class_refuses_nothing():
     """si#400 4b: what lets `_generated_task_classes` stand outside BORROWS_A_READER. A body moved into a

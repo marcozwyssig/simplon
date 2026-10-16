@@ -6,8 +6,9 @@ defines a task class with a live KEY, so after a rename two classes carry one co
 `gen --format=json` names both in `diagnostics[].code`, and this reads it (spec decision 6).
 
 It also does what `build model` did by hand-typed lists until 4b: firn writes every file 0600, so each file
-firn reports is made 0644, and a file holding nothing but firn's id line - what a template error or an
-empty selector leaves (firn#966) - is refused. The list is firn's own report, so it cannot go stale.
+firn reports is made 0644; a file holding nothing but firn's id line (what a template error leaves) is
+refused, and so is every file firn reports DELETED, because an empty selector deletes one with rc 0 and no
+diagnostic (firn#966). The list is firn's own report, so it cannot go stale.
 """
 import json
 import re
@@ -67,6 +68,13 @@ def verdict(rc: int, out: str, root: Path) -> int:
         print(f"build:model: firn kept {path}, which no template produces any more but which holds a protected "
               f"region. It still defines what it defined - move its region's content where it belongs, then "
               f"delete the file", file=sys.stderr)
+        bad = 1
+    for path in files.get("deleted", []):
+        # firn#966: an empty selector deletes a generated file with rc 0 and no diagnostic (measured in the 4b
+        # review). A deletion meant on purpose - a template or a task taken out - is green on the next run.
+        print(f"build:model: firn deleted {path}. If no template should produce it any more, run again; if one "
+              f"should, its selector answered nothing (firn#966)", file=sys.stderr)
+        bad = 1
     refused = sorted({str(d.get("code")) for d in diagnostics if d.get("code") in REFUSED})
     if refused:
         print(f"build:model: {', '.join(refused)} - firn left a protected region no template produces, with "

@@ -133,7 +133,8 @@ ci:
       # kernel whose catalogue only root can read. firn has no option for it, so the kernel's `build:model`
       # sets 0644 on every file firn reports; test_wheel.py's `test_the_catalogue_in_the_wheel_is_readable_by_everyone`
       # is the guard. And firn#966: an empty selector deletes a generated file with rc 0, a template error
-      # leaves one holding only its id line, so `build:model` refuses a reported file in either state. Until
+      # leaves one holding only its id line, so `build:model` refuses a file firn reports deleted and one it
+      # reports holding only its id line. Until
       # 4b those were two steps of their own, `model-whole` and `model-mode`, each with the same list of five
       # files typed out - and one class per catalogue task would have added a line per task to both.
       #

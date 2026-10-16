@@ -8,7 +8,7 @@ resolve to, and hands the app + product context + environments + aliases to Simp
 the CI/CD panels) and the env-first dispatch live in the kernel, driven entirely by the manifest - so a
 fresh product adds groups/commands in simplon.yaml and impl callables HERE, and nowhere else.
 
-build.wheel, test.suite, support.doctor, build.model-mode and build.model-guard below are simplon.yaml's five BODIES; keep them as
+build.wheel, test.suite, support.doctor and build.model-guard below are simplon.yaml's BODIES; keep them as
 module-level callables so the manifest's impl refs resolve (simplon.domain.manifest.resolve_impl
 imports THIS module and getattrs the function named after the `:`). Each shells out to the working tree at
 ROOT (a subprocess, not an in-process call) so `./simplon.sh build wheel` / `test suite` / `support doctor`

@@ -3,7 +3,7 @@ template ArchitectureData {
   // src/tests/generated/architecture.py (si#390 part 1): the components, every module's component, the exclusions
   // and the exceptions, as Python data for src/tests/test_architecture.py. A WHOLE file with no protected
   // region. The `file` block stands outside every `for`, so a selector that answers nothing leaves a file
-  // with empty collections rather than no file - and `build model-whole` refuses a missing one.
+  // with empty collections rather than no file - and `build:model` refuses a file firn deleted (si#400 4b).
   file "architecture.py" language python {
     |# GENERATED from src/firn/model/simplon/components/components.firn by `./simplon.sh build model`. Do not
     |# edit: firn rewrites the whole file on every run. Read by src/tests/test_architecture.py (si#390).
