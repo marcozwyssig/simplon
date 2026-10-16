@@ -31,6 +31,10 @@ class-scoped import (measured). The Python `Command` hierarchy mirrors `pipeline
 (`task.class_ref`) and every body runs through `task.body_of`; a product task runs through a class built from
 its own `impl:` until step 6 (si#400 comment 6214912886).
 
+**4d built 2026-10-16:** commands are Command objects (`simplon.domain.command`: `TaskCommand`, `Deploy`,
+`AggregateCommand`, `ReleaseCommand`); `CommandSpec` is gone; the other kind's fields read as empty with a
+`CompatWarning` until 0.34.0 (si#400 comment 6219416834).
+
 ## The goal, in one sentence
 
 Every task, the kernel's and every product's, is a Python class that firn generates from a task instance
