@@ -152,7 +152,9 @@ LIBRARY = frozenset({
     "adapters.labinstance", "adapters.labnet", "adapters.linux", "adapters.nexusproxy", "adapters.portainer",
     "adapters.ports", "adapters.pyvenv", "adapters.topology", "adapters.tracker", "cli", "cli.surface",
     "domain.artifactsection", "domain.carrierspec", "domain.context", "domain.deployment",
-    "domain.environments", "domain.layout", "domain.manifest", "domain.outputs", "domain.treeform",
+    "domain.environments", "domain.layout", "domain.manifest",
+    # si#400 4d: netctl's tests read a loaded manifest's commands, which are these objects.
+    "domain.command", "domain.outputs", "domain.treeform",
     # si#344 C.3: a GENERATED product module imports it, to hold a command's test results.
     "domain.results",
     "kernel.awake", "kernel.degraded", "kernel.filelock", "kernel.log", "kernel.plan", "kernel.product",
