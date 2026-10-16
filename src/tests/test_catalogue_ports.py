@@ -43,7 +43,7 @@ def test_the_ports_are_the_ones_measured_from_the_bodies():
     }
 
 
-def test_every_modelled_task_is_a_catalogue_coordinate_with_the_body_the_catalogue_names():
+def test_every_catalogue_task_is_modelled_with_the_body_the_catalogue_names():
     # arrange
     tasks = catalogue.load().tasks
 
@@ -52,10 +52,28 @@ def test_every_modelled_task_is_a_catalogue_coordinate_with_the_body_the_catalog
     wrong = {c: (body, tasks[c]["impl"]) for c, body in artifactschema.BODIES.items()
              if c in tasks and tasks[c]["impl"] != body}
 
-    # assert: the model and the hand-written catalogue are two sources for one body until si#400
-    assert set(artifactschema.BODIES) == set(artifactschema.PORTS)
+    # assert: since si#400 4a EVERY catalogue task is an instance in the model, not only those with ports;
+    # the model and the hand-written catalogue stay two sources for one body until plan 4c
+    assert set(artifactschema.BODIES) == set(tasks)
+    assert set(artifactschema.PORTS) <= set(artifactschema.BODIES)
     assert unknown == []
     assert wrong == {}
+
+
+def test_every_catalogue_instance_is_named_as_the_export_references_it():
+    # arrange: manifestmodel writes `task = simplon.catalogue.<mangle(coordinate)>`; a misnamed instance
+    # passes every pure test and is firn's E200 only where docker runs
+    import re
+    from pathlib import Path
+    from simplon.domain.manifestmodel import mangle
+    text = (Path(__file__).resolve().parents[1] / "firn" / "model" / "simplon" / "catalogue" / "tasks.firn").read_text()
+
+    # act
+    declared = dict(re.findall(
+        r'^(\w+) typeOf simplon\.pipeline\.CatalogueTask \{\n  key = "([^"]+)"$', text, re.MULTILINE))
+
+    # assert
+    assert declared == {mangle(c): c for c in catalogue.load().tasks}
 
 
 def test_a_port_that_binds_a_parameter_names_one_its_body_takes():

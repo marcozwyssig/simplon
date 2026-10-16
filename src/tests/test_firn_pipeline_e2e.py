@@ -51,6 +51,20 @@ def test_the_demo_checks_clean(demo):
 
 
 @needs_docker
+def test_a_task_without_a_key_is_refused_by_firn(demo):
+    # arrange: si#400 part 4, decision 4 - the coordinate is required, and firn says so, not the kernel
+    path = demo / "model" / "demo" / "demo.firn"
+    path.write_text(path.read_text().replace('  key = "save-image"\n', "", 1))
+
+    # act
+    rc, out = firn_rc(demo, "check")
+
+    # assert
+    assert rc == 1
+    assert "E004" in out and "simplon.pipeline.Task.key" in out
+
+
+@needs_docker
 @pytest.mark.parametrize("selector, expected", [
     ("TestResult.about", ["demo.demo.a_kernel"]),
     ("AggregateCommand.produced", ["demo.demo.a_kernel_archive"]),
