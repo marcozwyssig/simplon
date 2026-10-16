@@ -472,15 +472,15 @@ PROFILES: dict[str, Profile] = {
     # recommends for anything that writes - `gen` writes, and the files belong to whoever ran it.
     # Exit codes pass through unchanged: 0 clean, 1 model wrong, 2 usage, 3 no project, 70 internal.
     # firn v0.2.0 renamed `check` to `validate` as a hard cut (firn#964, si#410): `check` answers rc 2,
-    # "Unmatched argument". The command KEY is still `check` - it names the scaffolded command's place,
-    # not firn's subcommand, and whether it follows is a surface decision of its own.
+    # "Unmatched argument". The key followed (Marco's decision): the placement names the scaffolded
+    # command `test model`, so the key reaches no manifest - measured, the scaffold is byte-identical.
     "firn": Profile(
         image="ghcr.io/marcozwyssig/firn:v{version}",
         commands={
-            "check": {"workdir": "/workspace", "network": "none", "argv": ["validate"]},
+            "validate": {"workdir": "/workspace", "network": "none", "argv": ["validate"]},
             "gen": {"workdir": "/workspace", "network": "none", "argv": ["gen"]},
         },
-        placements={"check": ("test", "model"), "gen": ("build", "model")},
+        placements={"validate": ("test", "model"), "gen": ("build", "model")},
     ),
 }
 

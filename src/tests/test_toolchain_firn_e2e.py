@@ -47,7 +47,7 @@ def tree(tmp_path):
 @needs_docker
 def test_a_clean_model_checks_clean(tree):
     # arrange / act
-    rc = _rc(tree, "check")
+    rc = _rc(tree, "validate")
 
     # assert
     assert rc == 0
@@ -60,7 +60,7 @@ def test_a_broken_model_comes_back_as_1(tree):
     model.write_text(model.read_text() + "\nbroken {{{\n")
 
     # act
-    rc = _rc(tree, "check")
+    rc = _rc(tree, "validate")
 
     # assert
     assert rc == 1
@@ -72,7 +72,7 @@ def test_no_project_comes_back_as_3_and_not_as_a_wrong_model(tree):
     (tree / "src" / "firn.toml").unlink()
 
     # act
-    rc = _rc(tree, "check")
+    rc = _rc(tree, "validate")
 
     # assert
     assert rc == 3
@@ -81,7 +81,7 @@ def test_no_project_comes_back_as_3_and_not_as_a_wrong_model(tree):
 @needs_docker
 def test_a_usage_error_comes_back_as_2(tree):
     # arrange / act: the caller's tail is appended to the profile's argv
-    rc = _rc(tree, "check", extra=["--no-such-option"])
+    rc = _rc(tree, "validate", extra=["--no-such-option"])
 
     # assert
     assert rc == 2

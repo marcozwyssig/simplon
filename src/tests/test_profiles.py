@@ -363,20 +363,20 @@ def test_the_firn_profile_runs_the_pinned_firn_image_in_its_own_workspace():
 
     # assert: a release tag, never a moving one
     assert prof.image == "ghcr.io/marcozwyssig/firn:v0.2.0"
-    assert set(prof.commands) == {"check", "gen"}
+    assert set(prof.commands) == {"validate", "gen"}
     for body in prof.commands.values():
         assert body["workdir"] == "/workspace"
         assert body["network"] == "none"
 
 
-def test_the_firn_check_is_a_test_and_gen_is_a_build():
+def test_the_firn_validate_is_a_test_and_gen_is_a_build():
     # arrange / act
     prof = profiles.profile("firn", version="0.2.0")
 
     # assert: the image's entrypoint is /firn, so argv is firn's own subcommand
-    assert prof.commands["check"]["argv"] == ["validate"]
+    assert prof.commands["validate"]["argv"] == ["validate"]
     assert prof.commands["gen"]["argv"] == ["gen"]
-    assert prof.placement("check") == ("test", "model")
+    assert prof.placement("validate") == ("test", "model")
     assert prof.placement("gen") == ("build", "model")
 
 
