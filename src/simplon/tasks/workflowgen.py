@@ -64,7 +64,7 @@ from typing import NamedTuple
 
 import yaml
 
-from simplon.domain import artifactsection, context, runners
+from simplon.domain import artifactsection, context, runners, task
 from simplon.adapters import disk
 from simplon.domain.manifest import CommandSpec, Manifest
 from simplon.tasks import handoff
@@ -1056,7 +1056,7 @@ def _placed(manifest: Manifest, impl: str) -> str:
     """
     for group, members in manifest.commands.items():
         for name, spec in members.items():
-            if spec.impl == impl:
+            if spec.impl and task.body_identity(spec.impl) == task.body_identity(impl):
                 return f"{group.replace('.', ' ')} {name}"
     return ""
 

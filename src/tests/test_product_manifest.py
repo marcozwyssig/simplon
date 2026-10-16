@@ -174,8 +174,9 @@ def test_both_documentation_commands_are_real_commands(product):
     members = product.commands["build"]
 
     # Assert
-    assert members["reference"].impl == "simplon.tasks.cliref:reference"
-    assert members["site"].impl == "simplon.tasks.site:build"
+    # since si#400 4c a coordinate's impl names its generated class
+    assert members["reference"].impl == "simplon.tasks.docs_reference:DocsReference"
+    assert members["site"].impl == "simplon.tasks.docs_site:DocsSite"
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is not on PATH")

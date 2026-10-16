@@ -59,7 +59,7 @@ from enum import Enum
 import click
 
 from simplon.domain import catalogue as catalogue_mod
-from simplon.domain import context
+from simplon.domain import context, task
 from simplon.kernel import log
 from simplon.domain.layout import validate_relative_dir
 from simplon.domain.manifest import Manifest
@@ -283,14 +283,16 @@ def unplaced(mf: Manifest, cat: catalogue_mod.Catalogue) -> tuple[tuple[str, str
 
     Matched on the resolved `impl`, the way `simplon.tasks.tasks._reached_namespaces` does: a coordinate
     can reach a product's surface three ways (placed by the platform's own tree, named by a `task:`, or
-    left as a bare `impl:` by a half-migrated group) and all three end as the same resolved impl once the
-    manifest is loaded. Matching what the loader PRODUCED needs no per-mechanism walk and cannot miss a
+    left as a bare `impl:` by a half-migrated group) and all three end as the same body once the manifest is
+    loaded - one `task.body_identity`, though a coordinate's impl names its class (si#400 4c). Matching what the loader PRODUCED needs no per-mechanism walk and cannot miss a
     fourth one a later migration adds.
     """
-    placed = {spec.impl for members in mf.commands.values() for spec in members.values() if spec.impl}
+    # compared by body, not by spelling: a coordinate names its class, a product task the function (si#400 4c)
+    placed = {task.body_identity(spec.impl) for members in mf.commands.values() for spec in members.values()
+              if spec.impl}
     return tuple((str(coordinate), str((spec or {}).get("help", "")))
                  for coordinate, spec in sorted((getattr(cat, "tasks", {}) or {}).items())
-                 if (spec or {}).get("impl") not in placed)
+                 if task.body_identity(str((spec or {}).get("impl", ""))) not in placed)
 
 
 def _cell(text: str) -> str:

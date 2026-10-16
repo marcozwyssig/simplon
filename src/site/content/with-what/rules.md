@@ -71,9 +71,9 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 231 | nothing - the declaration had no working meaning |
+| diagnosis | 232 | nothing - the declaration had no working meaning |
 | expression rule | 38 | something it could otherwise have said |
-| **all load-time refusals** | **269** | |
+| **all load-time refusals** | **270** | |
 
 si#343 added one expression rule and one diagnosis. The rule refuses a `consumes:` on a `build:image`
 command. Its `file` port is bound by the `contexts:` of the image it builds, which already names the files,

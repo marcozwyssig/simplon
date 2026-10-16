@@ -95,9 +95,21 @@ def test_a_task_that_is_not_a_namespace_qualified_coordinate_is_rejected(key):
         catalogue.loads(text)
 
 
-def test_a_catalogue_task_without_an_impl_is_rejected():
-    # arrange: the catalogue is where a body LIVES; an entry without one resolves to no code at all
+def test_a_catalogue_task_without_an_impl_names_its_generated_class():
+    # arrange: since si#400 4c a coordinate's body lives in its generated class, so an entry writing no
+    # `impl:` is the ordinary form, not an empty one - it resolves to that class's body
     text = 'tasks:\n  vcs:commit: { help: "Commit." }\n'
+
+    # act
+    impl = catalogue.loads(text).tasks["vcs:commit"]["impl"]
+
+    # assert
+    assert impl == "simplon.tasks.vcs_commit:VcsCommit"
+
+
+def test_a_catalogue_task_with_an_empty_impl_is_rejected():
+    # arrange: an `impl:` written empty names no body at all
+    text = 'tasks:\n  vcs:commit: { impl: "", help: "Commit." }\n'
 
     # act / assert
     with pytest.raises(ValueError, match="impl"):

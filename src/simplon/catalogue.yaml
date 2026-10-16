@@ -196,15 +196,12 @@ tasks:
 
   # --- vcs: the version-control verbs -----------------------------------------------------------------
   vcs:commit:
-    impl: simplon.tasks.vcs:commit
     help: "git add -A + git commit -m."
     unattended: true
   vcs:push:
-    impl: simplon.tasks.vcs:push
     help: "git pull --rebase then push (current branch)."
     unattended: true
   vcs:prune-branches:
-    impl: simplon.tasks.vcs:prune_branches
     help: "Delete local branches already merged into main (squash-aware via gh)."
     unattended: true
   # `unattended: true` beside the word "interactive" in the help is not a contradiction, and it is the
@@ -213,11 +210,9 @@ tasks:
   # workflow token already carries the scopes. So a pipeline that runs it does not hang and does not go
   # red. The flag asks what happens with nobody watching, not whether a person is ever involved.
   vcs:auth-scopes:
-    impl: simplon.tasks.vcs:auth_scopes
     help: "Grant the stored gh token the package scopes GHCR needs (interactive, idempotent)."
     unattended: true
   vcs:submodules:
-    impl: simplon.tasks.vcs:submodules
     help: "git submodule update --init lib/platform (init the submodule a fresh worktree needs)."
     unattended: true
 
@@ -231,7 +226,6 @@ tasks:
   # in order to be allowed to do anything, so it cannot take it from inside a job. si#87 drew the same
   # line one level down, where the docker group moved to the engine install.
   support:ci-privileges:
-    impl: simplon.tasks.ciprivileges:grant
     help: "Give a user passwordless sudo and the docker group on THIS host (needs root; idempotent)."
     unattended: true
 
@@ -249,7 +243,6 @@ tasks:
   # /var/cache/apt/archives/`. A step never run in its own house rots unseen (si#8, si#89, si#200), and
   # this is that pattern one module along.
   support:ci-disk-hygiene:
-    impl: simplon.tasks.cidisk:hygiene
     help: "Cap docker logs, bound the build cache and install a daily prune on THIS host (needs root)."
     unattended: true
     params:
@@ -260,17 +253,14 @@ tasks:
   # `simplon` builder a multi-platform build uses - and installs only when that builder cannot run arm64:
   # `qemu-user-binfmt` on a VM, a boot-time binfmt_misc registration in an LXC container.
   support:ci-arm64:
-    impl: simplon.tasks.ciarm64:arm64
     help: "Check that THIS host can build linux/arm64, and register the emulator if not (VM or LXC; needs root)."
     unattended: true
     params:
       dry_run: { help: "Show which recipe this host takes and what would run, and change nothing.", short: "-n" }
   support:ci-disk-preflight:
-    impl: simplon.tasks.cidisk:preflight
     help: "Refuse to start a job on a runner whose docker disk is too full to finish one."
     unattended: true
   support:ci-disk-cleanup:
-    impl: simplon.tasks.cidisk:cleanup
     help: "Prune build cache older than a day - the step a job runs when it is done, whatever it decided."
     unattended: true
 
@@ -303,7 +293,6 @@ tasks:
   # tool nor the way out, having first wiped the venv it might have reused. Both refusals now live in
   # `simplon.adapters.pyvenv`, with the measurement.
   test:gate:
-    impl: simplon.tasks.testrun:gate
     help: "Run a declared pytest suite against the running lab."
     unattended: true
     passthrough_args: true
@@ -315,7 +304,6 @@ tasks:
   # may install. Adopting the gate is therefore three things: this one manifest line, the config file
   # that states what is covered, and `simplon[typecheck]` in the product's own requirements.
   test:typecheck-python:
-    impl: simplon.tasks.typecheck:check
     help: "Type-check the product's Python sources with mypy, in the host venv (no Docker, no lab)."
     unattended: true
     params:
@@ -324,7 +312,7 @@ tasks:
       python:  { help: "interpreter to run mypy with, relative to `workdir` (default: the host venv the CLI runs in)" }
   # The release-notes guard (si#89, si#103). It was a test in this kernel's own `tests/` - which guarded
   # this kernel and nothing else, so every product consuming the catalogue could tag, publish and never
-  # write a word, and nothing said anything. That is netctl#1280's rule exactly: an `impl:` belongs in the
+  # write a word, and nothing said anything. That is netctl#1280's rule exactly: a body belongs in the
   # platform as soon as it needs no product knowledge, and this needs none. Which versions exist is
   # `git tag`, which the page documents is its headings, what landed between two tags is `git log`.
   #
@@ -349,19 +337,15 @@ tasks:
   # In `test` and not in `build`, because its verdict is red or green and nothing else - the same reason
   # `test:release-notes` sits here rather than beside the thing it rules on.
   test:generated:
-    impl: simplon.tasks.generated:check
     help: "Fail if a committed generated file is not what its own command produces."
     unattended: true
   test:release-notes:
-    impl: simplon.tasks.releasenotes:check
     help: "Check the product's releases page against the tags and merges its repository carries."
     unattended: true
   test:report:
-    impl: simplon.tasks.testrun:report_cmd
     help: "Merge the unit results into the shared Allure results and render the HTML archive."
     unattended: true
   test:accept:
-    impl: simplon.tasks.testrun:accept_cmd
     help: "Run the lab-based suites in sequence against the running lab."
     unattended: true
     passthrough_args: true
@@ -381,7 +365,6 @@ tasks:
   # command that refuses on its first line in every product that writes none. A product declares it the
   # day it has scenarios; simplon does exactly that.
   test:walk:
-    impl: simplon.tasks.walk:walk
     help: "Walk the product's acceptance scenarios with a person answering each step."
     unattended: false
     params:
@@ -392,19 +375,15 @@ tasks:
 
   # --- support: host and tooling upkeep ---------------------------------------------------------------
   support:nexus:
-    impl: simplon.tasks.nexus:nexus_cmd
     help: "Drive the LAN Sonatype Nexus artefact proxy: up | down | status | repos | cleanup."
     unattended: true
   support:install:
-    impl: simplon.tasks.hosttools:install
     help: "Provision the host tooling the kernel needs - today oras; idempotent."
     unattended: true
   support:claude-plugins:
-    impl: simplon.tasks.claudeplugins:install_cmd
     help: "Install the Claude Code plugins declared in the manifest's `claude` section; idempotent."
     unattended: true
   support:environments:
-    impl: simplon.tasks.env:environments
     help: "List the named environments and the backend each targets, marking the active one."
     unattended: true
   # The manifest's SECOND output (si#40). `simplon.domain.manifest` has promised since it was
@@ -432,13 +411,11 @@ tasks:
   # costs a `case` statement in the shell the user is already in. The price is a second source for the
   # command tree, and `--check` plus `src/tests/test_own_completion.py` is what pays it.
   support:completion:
-    impl: simplon.tasks.completion:generate
     help: "Regenerate the product's shell completion from its manifest (--check reports drift and writes nothing)."
     unattended: true
     params:
       check: { help: "report drift and write nothing" }
   support:workflows:
-    impl: simplon.tasks.workflows:generate
     help: "Regenerate the product's GitHub workflows from its manifest (--check reports drift and writes nothing)."
     unattended: true
     params:
@@ -449,7 +426,6 @@ tasks:
   # and a `docToolchainConfig.groovy` in the checkout, so a command declared here would die on its first
   # line in a product that has neither. A product declares the command the day it has both.
   docs:render:
-    impl: simplon.tasks.docs:render
     help: "Render the project docs via docToolchain (generateHTML + generatePDF) in Docker."
     unattended: true
   # The second SHAPE of the same capability, not a second category (#2): `render` produces a product's
@@ -465,7 +441,6 @@ tasks:
   # the product's data, the container invocation is the mechanism, and that split is why this belongs to
   # the kernel at all.
   docs:site:
-    impl: simplon.tasks.site:build
     help: "Build the product's documentation website with Hugo, in Docker (HTML only)."
     unattended: true
   # The THIRD documentation shape, and the only one that is not a render of something a human wrote: the
@@ -476,7 +451,6 @@ tasks:
   # `with: { output: ... }`; one without still gets a usable command, because the path is an ordinary
   # positional argument when nothing pins it.
   docs:reference:
-    impl: simplon.tasks.cliref:reference
     help: "Write the product's command reference as Markdown, read off its BUILT command line."
     unattended: true
     params:
@@ -499,7 +473,6 @@ tasks:
   # are only ever read, so the kernel may assume where to look, while the output path is written and the
   # kernel may not assume what to overwrite in a product's tree.
   docs:acceptance:
-    impl: simplon.tasks.acceptance:document
     help: "Write the product's acceptance document as Markdown, read off its own .feature files."
     unattended: true
     params:
@@ -524,7 +497,6 @@ tasks:
   # nothing and pulls nothing: it runs what the daemon holds under the reference the build would have
   # produced, so a missing image is a refusal naming `build image` rather than a quiet pull.
   test:image:
-    impl: simplon.tasks.image:smoke
     help: "Run the product's container image and check that it answers."
     unattended: true
     params:
@@ -539,7 +511,6 @@ tasks:
       results: { help: "the test result to write the verdict record to (normally bound with `produces:`)" }
 
   build:image:
-    impl: simplon.tasks.image:build
     help: "Build the product's container image from its declared Dockerfile, with VERSION/REVISION, for every declared platform."
     unattended: true
     params:
@@ -566,11 +537,9 @@ tasks:
   # binds `with:` to the impl's PARAMETERS one for one, so a key here that no parameter answers to is
   # refused at load and a manifest naming it cannot be assembled at all.
   build:cmake-files:
-    impl: simplon.tasks.buildfiles:cmake
     help: "Write this product's CMakeLists.txt files from its source tree."
     unattended: true
   build:dotnet-solution:
-    impl: simplon.tasks.buildfiles:dotnet
     help: "Write this product's .sln and .csproj files from its source tree."
     unattended: true
   # The CONSUMING halves of si#127 and si#128 - a coordinate each, because publishing alone is half a
@@ -582,7 +551,6 @@ tasks:
   # a ClearTextPassword on Linux, so what is in the file is the variable's NAME. si#127 states that as
   # the part to get right.
   build:nuget-config:
-    impl: simplon.tasks.nuget:config
     help: "Write the product's nuget.config naming the GitHub feed (no credential in it)."
     unattended: true
     params:
@@ -591,7 +559,6 @@ tasks:
   # environment is what the manifest names and nothing else, and a token is exactly what a manifest may
   # not name. So a product cannot declare this one, which is what makes it the kernel's.
   build:nuget-restore:
-    impl: simplon.tasks.nuget:restore
     help: "Restore the declared project inside the SDK image, with the credential the feed needs."
     unattended: true
     params:
@@ -599,7 +566,6 @@ tasks:
   # The pull half of si#128's transport. It moves a FILE and knows nothing about conan: the product runs
   # `conan cache restore <path>` itself, through its own toolchain command, against its own cache.
   build:conan-cache:
-    impl: simplon.tasks.conan:fetch
     help: "Fetch a published Conan cache archive so a build can restore it."
     unattended: true
     params:
@@ -612,7 +578,6 @@ tasks:
   # Dockerfile never downloads it and the build runs offline. Like `build:conan-cache` above it is a TASK,
   # not a placed command: a product with no download has nothing to name.
   build:fetch:
-    impl: simplon.tasks.fetchfile:fetch
     help: "Download a declared file and check its sha256, unless the file is already there with that checksum."
     unattended: true
     params:
@@ -622,7 +587,6 @@ tasks:
   # warns about (W300/W301 - a kept file still defines its task class), 0644 on every file it wrote, and rc 1
   # on a reported file holding only firn's id line. The list is firn's report, never a hand-typed one.
   build:model:
-    impl: simplon.tasks.firngen:generate
     help: "Generate from this product's firn model, refusing a protected region firn kept or orphaned."
     unattended: true
     params:
@@ -652,25 +616,21 @@ tasks:
   # environment; `support` is environment-less by taxonomy and `deploy` is already environment-first.
   # That decision took back an earlier placement and removed the whole conflict rather than managing it.
   deploy:carrier:
-    impl: simplon.tasks.carrier:up
     help: "Make the carrier this environment stands on: the machine, then the Portainer on it."
     unattended: true
     params:
       environment: { help: "the environment whose carrier to make (default: the active one)" }
   deploy:up:
-    impl: simplon.tasks.deploy:up
     help: "Deploy a version - a published one, `latest`, or `local` for the current code base."
     unattended: true
     params:
       version: { help: "the version to deploy: a published tag, `latest`, or `local`" }
   deploy:down:
-    impl: simplon.tasks.deploy:down
     help: "Remove a deployment - a client's installed version, or a server's environment."
     unattended: true
     params:
       version: { help: "which installed version to remove (a client install; a server takes none)" }
   release:artifact:
-    impl: simplon.tasks.artifact:publish
     help: "Publish a declared directory to a registry as an OCI artifact."
     unattended: true
     params:
@@ -685,7 +645,6 @@ tasks:
   # replace-if-present are one flag each in `gh`, and twenty lines of PyGithub plus a content-type table
   # in the product this was ported from. See src/simplon/tasks/asset.py.
   release:asset:
-    impl: simplon.tasks.asset:publish
     help: "Attach declared files to a GitHub release, creating it if it is not there yet."
     unattended: true
     params:
@@ -705,14 +664,12 @@ tasks:
   # first existed inside its own push could not have one. `build:nuget-pack` writes it to the entry's
   # `path:`; `release:nuget` pushes exactly the package that path holds for the version.
   build:nuget-pack:
-    impl: simplon.tasks.nuget:pack
     help: "Pack the declared project into the artifact's path, as the version the tag names."
     unattended: true
     params:
       name: { help: "the artifact to pack (normally bound with `produces:`)" }
       tag:  { help: "the package version, for one only known after a build" }
   release:nuget:
-    impl: simplon.tasks.nuget:push
     help: "Push the package `build:nuget-pack` wrote for this version to GitHub's NuGet feed."
     unattended: true
     params:
@@ -728,7 +685,6 @@ tasks:
   # `conan remote add` in Conan 2.32.0 accepts one remote type, `local-recipes-index`. A second value in
   # that list is what reopens this.
   release:conan:
-    impl: simplon.tasks.conan:publish
     help: "Publish a Conan cache archive to a registry as an OCI artifact (a transport, not a remote)."
     unattended: true
     params:
@@ -761,21 +717,18 @@ tasks:
   # scratch module uploaded with this upload, and GitHub's `maven-metadata.xml` lists both, although each
   # PUT carried a one-version file. GitHub keeps the version list itself (tasks/maven.py has the numbers).
   build:maven-pack:
-    impl: simplon.tasks.maven:pack
     help: "Stage the declared Gradle modules into the artifact's path as a Maven file repository."
     unattended: true
     params:
       name: { help: "the artifact to stage (normally bound with `produces:`)" }
       tag:  { help: "the version to stage, for one only known after a build" }
   release:maven:
-    impl: simplon.tasks.maven:push
     help: "Upload what `build:maven-pack` staged to GitHub's Maven registry and read the coordinates back."
     unattended: true
     params:
       name: { help: "the artifact to upload (normally bound with `consumes:`)" }
       tag:  { help: "the version to upload, for one only known after a build" }
   release:image:
-    impl: simplon.tasks.image:release
     help: "Push the product's container image and verify the tag, and every declared platform, is in the registry."
     unattended: true
     params:
@@ -786,7 +739,6 @@ tasks:
   # second one. OFFERED, not placed, for `release:tag`'s reason: it is one leaf of a release, and a product
   # that releases by hand-written notes alone has nothing waiting for it.
   release:notes:
-    impl: simplon.tasks.releasenotes:write
     help: "Write the release notes for a tag from the merges and tickets since the previous one."
     unattended: true
     params:
@@ -805,7 +757,6 @@ tasks:
   # the product's own statement - its release workflow's trigger and its setuptools-scm settings - and a
   # kernel that turned `1.4.0` into `v1.4.0` would be guessing at a convention it cannot read.
   release:tag:
-    impl: simplon.tasks.release:tag
     help: "Cut the release tag at HEAD and push it (`git push origin <tag>`, never `--tags`)."
     unattended: true
     params:
@@ -816,23 +767,19 @@ tasks:
   # mechanisms: what is product-specific reaches them through simplon.domain.context and a manifest-pinned
   # `with: { target: ... }`, never through an import.
   tasks:generate:
-    impl: simplon.tasks.tasks:generate
     help: "Regenerate the product's CLI module from its manifest (--check reports drift and writes nothing)."
     unattended: true
   tasks:catalogue:
-    impl: simplon.tasks.tasks:catalogue
     help: "List the task coordinates the delivery kernel offers, marking the namespaces this product's commands reach."
     unattended: true
 
   # --- manifest: the product's own manifest as the thing worked on (si#344) -------------------------
   support:migrate:
-    impl: simplon.tasks.migrate:migrate
     help: "Rewrite this product's manifest into the current form (si#344): `groups:` into `ci:` / `cd:` / `support:`, `images:` into `artifacts:`, and `with: name` into `produces:` / `consumes:`."
     unattended: true
     params:
       manifest: { help: "the manifest to rewrite (default: this product's own)", argument: true }
   support:model:
-    impl: simplon.tasks.manifestmodel:model
     help: "Write this product's validated manifest as a firn model (si#346)."
     unattended: true
     params:
@@ -847,7 +794,6 @@ tasks:
   # Declared and not placed for the reason above: a product without a compiled toolchain has no use for
   # it, and a command nobody asked for is a command nobody reviews.
   support:toolchain:
-    impl: simplon.tasks.toolchain:scaffold
     help: "Write a ready-made toolchain configuration for a language into this product's manifest."
     unattended: true
     params:
@@ -860,7 +806,6 @@ tasks:
       version: { help: "the toolchain version the image is pinned to (e.g. 25, 19, 9.0, 3.12)", argument: true }
 
   toolchain:run:
-    impl: simplon.tasks.toolchain:run_toolchain
     help: "Run a pinned toolchain image over the product tree, as the calling user."
     unattended: true
     # BOTH HALVES OF THE APPENDING RULE, and neither is enough alone (si#105). `extra` is the variadic

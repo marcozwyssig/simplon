@@ -447,7 +447,12 @@ def _impl_of(ref: str, product_tasks: dict, catalogue_tasks: dict) -> str:
     """
     source = catalogue_tasks if ":" in ref else product_tasks
     spec = (source or {}).get(ref) or {}
-    return str(spec.get("impl") or ref)
+    # since si#400 4c a coordinate's impl names its generated class; the human recognises the body it wraps.
+    # Imported here: `simplon manifest migrate` imports this module and must not load the manifest loader,
+    # which `task` imports (test_importing_the_migration_does_not_import_the_manifest_loader); and
+    # `body_identity` refuses nothing, so the census loses nothing by not walking into it.
+    from simplon.domain.task import body_identity
+    return body_identity(str(spec.get("impl") or ref))
 
 
 def _merge_commands(base: dict, extra: dict, path: tuple[str, ...],

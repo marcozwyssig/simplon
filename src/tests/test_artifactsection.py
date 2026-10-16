@@ -219,7 +219,8 @@ def test_every_reader_module_names_exactly_the_coordinates_the_catalogue_routes_
     tasks = catalogue.load().tasks
     routed: dict[str, set[str]] = {}
     for coordinate in artifactschema.READERS:
-        routed.setdefault(tasks[coordinate]["impl"].split(":")[0], set()).add(coordinate)
+        # the body's module, as the model names it - since si#400 4c the catalogue's `impl` names the class
+        routed.setdefault(artifactschema.BODIES[coordinate].split(":")[0], set()).add(coordinate)
 
     # act
     named = {module: set(re.findall(r'"([a-z]+:[a-z-]+)"', importlib.import_module(module).__loader__

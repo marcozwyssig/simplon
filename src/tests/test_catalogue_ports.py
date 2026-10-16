@@ -43,20 +43,21 @@ def test_the_ports_are_the_ones_measured_from_the_bodies():
     }
 
 
-def test_every_catalogue_task_is_modelled_with_the_body_the_catalogue_names():
-    # arrange
+def test_every_wrapper_wraps_the_body_the_model_names():
+    # arrange: since si#400 4c the catalogue names no body; the model's `body` seeds each class's
+    # `<task>.imports` region, and while that region holds the wrapper, the two are two sources for one body
+    from pathlib import Path
+    from simplon.domain.manifestmodel import mangle
     tasks = catalogue.load().tasks
+    classes = Path(__file__).resolve().parents[1] / "simplon" / "tasks"
 
     # act
-    unknown = sorted(c for c in artifactschema.BODIES if c not in tasks)
-    wrong = {c: (body, tasks[c]["impl"]) for c, body in artifactschema.BODIES.items()
-             if c in tasks and tasks[c]["impl"] != body}
+    wrong = {c: body for c, body in artifactschema.BODIES.items()
+             if f"from {body.replace(':', ' import ')} as _body" not in (classes / f"{mangle(c)}.py").read_text()}
 
-    # assert: since si#400 4a EVERY catalogue task is an instance in the model, not only those with ports;
-    # the model and the hand-written catalogue stay two sources for one body until plan 4c
+    # assert: since si#400 4a EVERY catalogue task is an instance in the model, not only those with ports
     assert set(artifactschema.BODIES) == set(tasks)
     assert set(artifactschema.PORTS) <= set(artifactschema.BODIES)
-    assert unknown == []
     assert wrong == {}
 
 
@@ -83,7 +84,7 @@ def test_a_port_that_binds_a_parameter_names_one_its_body_takes():
     # act: the body's real signature, imported - a `param:` the body lacks would bind nothing at run time
     missing = {}
     for coordinate, ports in artifactschema.PORTS.items():
-        module, function = tasks[coordinate]["impl"].split(":")
+        module, function = artifactschema.BODIES[coordinate].split(":")
         params = inspect.signature(getattr(importlib.import_module(module), function)).parameters
         lost = [p.param for p in ports if p.param and p.param not in params]
         if lost:

@@ -94,6 +94,7 @@ from simplon.domain import context
 from simplon.kernel import log, runhost, steplog
 from simplon.adapters import tracker
 from simplon.domain.manifest import CommandSpec, PlanNode
+from simplon.domain.task import class_ref
 from simplon.kernel.steps import Emit, Outcome, Pipeline, Step, StepState, write_run_transcript
 from simplon.kernel.run import run
 from simplon.tasks.acceptance import DEFAULT_SOURCE, Feature, Scenario
@@ -603,7 +604,7 @@ def _plan_spec(help_text: str, *, leaf: bool = False, stop: bool = False) -> Com
     `steps.omitted_note`, which exists to explain a dependency planned somewhere else, and nothing in a
     walk is planned somewhere else.
     """
-    return CommandSpec(impl="simplon.tasks.walk:walk" if leaf else "", help=help_text,
+    return CommandSpec(impl=class_ref("test:walk") if leaf else "", help=help_text,
                        stop_on_failure=stop)
 
 

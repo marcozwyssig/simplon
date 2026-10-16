@@ -31,7 +31,7 @@ from simplon.domain import clitaxonomy, outputs, signatures
 from simplon.adapters import labinstance
 from simplon.kernel import log, runhost
 from simplon.domain.context import ENVIRONMENT_ENV, ProductContext, environment_name, launcher
-from simplon.domain import manifest, results
+from simplon.domain import manifest, results, task
 from simplon.kernel.product import StepFactoryContext, run_command
 from simplon.kernel.steps import NO_TUI_ENV, Pipeline
 from simplon.kernel.provenance import provenance_line
@@ -472,7 +472,8 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
     for specs in mf.commands.values():
         for spec in specs.values():
             if spec.impl:
-                seen[spec.impl] = seen.get(spec.impl, 0) + 1
+                # by body, not by spelling: a coordinate names its class, a product task the function (si#400 4c)
+                seen[task.body_identity(spec.impl)] = seen.get(task.body_identity(spec.impl), 0) + 1
     shared_impls = {ref for ref, count in seen.items() if count > 1}
 
     # a sub-app per non-flat group, in manifest order (a collapsed flat group is skipped - no sub-app, so
@@ -534,7 +535,7 @@ def assemble(app: typer.Typer, mf: manifest.Manifest, *, product: str,
             spec = mf.spec_for(group, name)
             fn = _command_callback(mf, group, name, spec, step_context)
             kw: _CommandKwargs = {"context_settings": _PASSTHROUGH_CTX} if spec.passthrough_args else {}
-            if spec.impl in shared_impls:
+            if spec.impl and task.body_identity(spec.impl) in shared_impls:
                 # A callback several commands share cannot carry per-command help in its docstring, which
                 # is where Typer otherwise reads it from - all of them would render the same blurb. The
                 # manifest's `help:` is the canonical short summary and is per command, so it wins here

@@ -65,8 +65,8 @@ template ArchitecturePage {
     |import is a named exception below, with the ticket that resolves it. `src/tests/test_architecture.py`
     |holds the code to this page.
     |
-    |The test reads Python imports only. A body named by text - `impl: "module:function"` in the catalogue
-    |or a manifest - is resolved at run time, and no layer applies to it.
+    |The test reads Python imports only. A body named by text - a product's `impl: "module:function"`, or the
+    |generated task class a catalogue coordinate names - is resolved at run time, and no layer applies to it.
     |
     || Layer | Component | What it is for |
     ||---|---|---|

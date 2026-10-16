@@ -4,17 +4,17 @@
       "acceptance-document": {
         "depends_on": [],
         "help": "Write the acceptance document into docs/site/content/, read off tests/acceptance/**/*.feature.",
-        "impl": "simplon.tasks.acceptance:document"
+        "impl": "simplon.tasks.docs_acceptance:DocsAcceptance"
       },
       "bootstrap": {
         "depends_on": [],
         "help": "Regenerate the checked-in kernel sources (Handles, the Java function registry) from src/firn/bootstrap's models.",
-        "impl": "simplon.tasks.toolchain:run_toolchain"
+        "impl": "simplon.tasks.toolchain_run:ToolchainRun"
       },
       "compile": {
         "depends_on": [],
         "help": "Compile every module and its test sources, all three levels.",
-        "impl": "simplon.tasks.toolchain:run_toolchain"
+        "impl": "simplon.tasks.toolchain_run:ToolchainRun"
       },
       "docs": {
         "depends_on": [
@@ -33,42 +33,42 @@
       "image": {
         "depends_on": [],
         "help": "Build the container image from src/pkg/Dockerfile, for linux/amd64 only.",
-        "impl": "simplon.tasks.image:build"
+        "impl": "simplon.tasks.build_image:BuildImage"
       },
       "image-arm64": {
         "depends_on": [],
         "help": "Build the container image for linux/arm64 only: the everyday build on an arm64 host.",
-        "impl": "simplon.tasks.image:build"
+        "impl": "simplon.tasks.build_image:BuildImage"
       },
       "image-fixture": {
         "depends_on": [],
         "help": "Write build/system/broken-project, the unresolvable project `test image-model-error` mounts.",
-        "impl": "simplon.tasks.toolchain:run_toolchain"
+        "impl": "simplon.tasks.toolchain_run:ToolchainRun"
       },
       "native": {
         "depends_on": [],
         "help": "Build the static native firn binary.",
-        "impl": "simplon.tasks.toolchain:run_toolchain"
+        "impl": "simplon.tasks.toolchain_run:ToolchainRun"
       },
       "release-image": {
         "depends_on": [],
         "help": "Build the container image for every platform a release publishes (linux/amd64, and linux/arm64 under QEMU: about 46 min cold).",
-        "impl": "simplon.tasks.image:build"
+        "impl": "simplon.tasks.build_image:BuildImage"
       },
       "site": {
         "depends_on": [],
         "help": "Render docs/site/ into build/website/ with Hugo, in its pinned container.",
-        "impl": "simplon.tasks.site:build"
+        "impl": "simplon.tasks.docs_site:DocsSite"
       },
       "site-pages": {
         "depends_on": [],
         "help": "Write docs/site/content/using/, one page per acceptance fixture.",
-        "impl": "simplon.tasks.toolchain:run_toolchain"
+        "impl": "simplon.tasks.toolchain_run:ToolchainRun"
       },
       "toolchain": {
         "depends_on": [],
         "help": "Build the toolchain image every other build step runs in.",
-        "impl": "simplon.tasks.image:build"
+        "impl": "simplon.tasks.build_image:BuildImage"
       }
     },
     "deploy": {
@@ -85,12 +85,12 @@
       "devcontainer-only": {
         "depends_on": [],
         "help": "Bring up the development container without building anything first.",
-        "impl": "simplon.tasks.deploy:up"
+        "impl": "simplon.tasks.deploy_up:DeployUp"
       },
       "down": {
         "depends_on": [],
         "help": "Remove the development container.",
-        "impl": "simplon.tasks.deploy:down"
+        "impl": "simplon.tasks.deploy_down:DeployDown"
       },
       "open": {
         "depends_on": [],
@@ -120,205 +120,205 @@
       "push-image": {
         "depends_on": [],
         "help": "Push the image for every platform as one manifest list, and verify each platform is in the registry with the digest the build recorded (run `build release-image` first).",
-        "impl": "simplon.tasks.image:release"
+        "impl": "simplon.tasks.release_image:ReleaseImage"
       },
       "tag": {
         "depends_on": [],
         "help": "Cut the release tag at HEAD and push it (`git push origin <tag>`, never `--tags`).",
-        "impl": "simplon.tasks.release:tag"
+        "impl": "simplon.tasks.release_tag:ReleaseTag"
       }
     },
     "support": {
       "adr-index": {
         "depends_on": [],
         "help": "Write docs/adr/README.md's table from the records' own Index: lines.",
-        "impl": "simplon.tasks.toolchain:run_toolchain"
+        "impl": "simplon.tasks.toolchain_run:ToolchainRun"
       },
       "ci-arm64": {
         "depends_on": [],
         "help": "Check that THIS host can build linux/arm64, and register the emulator if not (VM or LXC; needs root).",
-        "impl": "simplon.tasks.ciarm64:arm64"
+        "impl": "simplon.tasks.support_ci_arm64:SupportCiArm64"
       },
       "claude-plugins": {
         "depends_on": [],
         "help": "Install the Claude Code plugins this repo is developed with, as declared in the manifest's `claude` section (#1286); idempotent, --dry-run previews.",
-        "impl": "simplon.tasks.claudeplugins:install_cmd"
+        "impl": "simplon.tasks.support_claude_plugins:SupportClaudePlugins"
       },
       "completion": {
         "depends_on": [],
         "help": "Regenerate the product's shell completion from its manifest (--check reports drift and writes nothing).",
-        "impl": "simplon.tasks.completion:generate"
+        "impl": "simplon.tasks.support_completion:SupportCompletion"
       },
       "font-table": {
         "depends_on": [],
         "help": "Write LiberationSerif13.java from the Liberation Serif in the toolchain image.",
-        "impl": "simplon.tasks.toolchain:run_toolchain"
+        "impl": "simplon.tasks.toolchain_run:ToolchainRun"
       },
       "install": {
         "depends_on": [],
         "help": "Provision the host tooling the kernel needs - today oras; idempotent.",
-        "impl": "simplon.tasks.hosttools:install"
+        "impl": "simplon.tasks.support_install:SupportInstall"
       },
       "kernel-icons": {
         "depends_on": [],
         "help": "Write src/firn/kernel/icons, the kernel's own class icons, from their generator.",
-        "impl": "simplon.tasks.toolchain:run_toolchain"
+        "impl": "simplon.tasks.toolchain_run:ToolchainRun"
       },
       "toolchain-pin": {
         "depends_on": [],
         "help": "Rewrite the toolchain block in this manifest, e.g. for a JDK bump.",
-        "impl": "simplon.tasks.toolchain:scaffold"
+        "impl": "simplon.tasks.support_toolchain:SupportToolchain"
       },
       "workflows": {
         "depends_on": [],
         "help": "Regenerate the product's GitHub workflows from its manifest (--check reports drift and writes nothing).",
-        "impl": "simplon.tasks.workflows:generate"
+        "impl": "simplon.tasks.support_workflows:SupportWorkflows"
       },
       "workflows-check": {
         "depends_on": [],
         "help": "Report drift between .github/workflows/ and this manifest, writing nothing.",
-        "impl": "simplon.tasks.workflows:generate"
+        "impl": "simplon.tasks.support_workflows:SupportWorkflows"
       }
     },
     "support.git": {
       "auth-scopes": {
         "depends_on": [],
         "help": "Grant the stored gh token the package scopes GHCR needs (interactive, idempotent).",
-        "impl": "simplon.tasks.vcs:auth_scopes"
+        "impl": "simplon.tasks.vcs_auth_scopes:VcsAuthScopes"
       },
       "commit": {
         "depends_on": [],
         "help": "git add -A + git commit -m.",
-        "impl": "simplon.tasks.vcs:commit"
+        "impl": "simplon.tasks.vcs_commit:VcsCommit"
       },
       "prune-branches": {
         "depends_on": [],
         "help": "Delete local branches already merged into main (squash-aware via gh).",
-        "impl": "simplon.tasks.vcs:prune_branches"
+        "impl": "simplon.tasks.vcs_prune_branches:VcsPruneBranches"
       },
       "push": {
         "depends_on": [],
         "help": "git pull --rebase then push (current branch).",
-        "impl": "simplon.tasks.vcs:push"
+        "impl": "simplon.tasks.vcs_push:VcsPush"
       },
       "submodules": {
         "depends_on": [],
         "help": "git submodule update --init lib/platform (init the submodule a fresh worktree needs).",
-        "impl": "simplon.tasks.vcs:submodules"
+        "impl": "simplon.tasks.vcs_submodules:VcsSubmodules"
       }
     },
     "support.tasks": {
       "catalogue": {
         "depends_on": [],
         "help": "List the task coordinates the delivery kernel offers, marking the namespaces this product's commands reach.",
-        "impl": "simplon.tasks.tasks:catalogue"
+        "impl": "simplon.tasks.tasks_catalogue:TasksCatalogue"
       },
       "generate": {
         "depends_on": [],
         "help": "Regenerate the product's CLI module from its manifest (--check reports drift and writes nothing).",
-        "impl": "simplon.tasks.tasks:generate"
+        "impl": "simplon.tasks.tasks_generate:TasksGenerate"
       }
     },
     "test": {
       "acceptance": {
         "depends_on": [],
         "help": "Run the acceptance level on its own: every scenario under tests/acceptance/.",
-        "impl": "simplon.tasks.toolchain:run_toolchain"
+        "impl": "simplon.tasks.toolchain_run:ToolchainRun"
       },
       "all": {
         "depends_on": [],
         "help": "Run the tests and the format check. The gate AGENTS.md requires.",
-        "impl": "simplon.tasks.toolchain:run_toolchain"
+        "impl": "simplon.tasks.toolchain_run:ToolchainRun"
       },
       "baseline": {
         "depends_on": [],
         "help": "One whole run per size over the D8 corpus, as docs/benchmarks.md records it.",
-        "impl": "simplon.tasks.toolchain:run_toolchain"
+        "impl": "simplon.tasks.toolchain_run:ToolchainRun"
       },
       "bootstrap": {
         "depends_on": [],
         "help": "Check that the generated kernel sources are what src/firn/bootstrap generates (adr/0079).",
-        "impl": "simplon.tasks.toolchain:run_toolchain"
+        "impl": "simplon.tasks.toolchain_run:ToolchainRun"
       },
       "candidate-cost": {
         "depends_on": [],
         "help": "What a reference field's candidate list costs over a 1M corpus (#346).",
-        "impl": "simplon.tasks.toolchain:run_toolchain"
+        "impl": "simplon.tasks.toolchain_run:ToolchainRun"
       },
       "container": {
         "depends_on": [],
         "help": "Run the shipped linux/amd64 container image over a bind-mounted project.",
-        "impl": "simplon.tasks.image:smoke"
+        "impl": "simplon.tasks.test_image:TestImage"
       },
       "container-arm64": {
         "depends_on": [],
         "help": "Run the shipped linux/arm64 image (under QEMU) over a bind-mounted project; the release runs it.",
-        "impl": "simplon.tasks.image:smoke"
+        "impl": "simplon.tasks.test_image:TestImage"
       },
       "extension-tests": {
         "depends_on": [],
         "help": "Run the VS Code extension's tests against the fake editor.",
-        "impl": "simplon.tasks.toolchain:run_toolchain"
+        "impl": "simplon.tasks.toolchain_run:ToolchainRun"
       },
       "grammar": {
         "depends_on": [],
         "help": "Run the editor's TextMate grammars through the engine VS Code runs them through.",
-        "impl": "simplon.tasks.toolchain:run_toolchain"
+        "impl": "simplon.tasks.toolchain_run:ToolchainRun"
       },
       "image-model-error": {
         "depends_on": [],
         "help": "Run the shipped linux/amd64 image over a project whose model does not resolve, and expect MODEL_ERROR (run `build image-fixture` first).",
-        "impl": "simplon.tasks.image:smoke"
+        "impl": "simplon.tasks.test_image:TestImage"
       },
       "image-model-error-arm64": {
         "depends_on": [],
         "help": "Run the shipped linux/arm64 image over a project whose model does not resolve, and expect MODEL_ERROR.",
-        "impl": "simplon.tasks.image:smoke"
+        "impl": "simplon.tasks.test_image:TestImage"
       },
       "image-refuses": {
         "depends_on": [],
         "help": "Run the shipped linux/amd64 image over a directory that is not a project, and expect its refusal.",
-        "impl": "simplon.tasks.image:smoke"
+        "impl": "simplon.tasks.test_image:TestImage"
       },
       "image-refuses-arm64": {
         "depends_on": [],
         "help": "Run the shipped linux/arm64 image over a directory that is not a project, and expect its refusal.",
-        "impl": "simplon.tasks.image:smoke"
+        "impl": "simplon.tasks.test_image:TestImage"
       },
       "jmh": {
         "depends_on": [],
         "help": "The JMH benchmarks for load, resolve, rules and generate.",
-        "impl": "simplon.tasks.toolchain:run_toolchain"
+        "impl": "simplon.tasks.toolchain_run:ToolchainRun"
       },
       "model-format": {
         "depends_on": [],
         "help": "Check every .firn in a project here for canonical form: `firn fmt --check`.",
-        "impl": "simplon.tasks.toolchain:run_toolchain"
+        "impl": "simplon.tasks.toolchain_run:ToolchainRun"
       },
       "regression": {
         "depends_on": [],
         "help": "Fail when a tracked number of docs/benchmarks.md is over 20 % worse (D10).",
-        "impl": "simplon.tasks.toolchain:run_toolchain"
+        "impl": "simplon.tasks.toolchain_run:ToolchainRun"
       },
       "request-cost": {
         "depends_on": [],
         "help": "What one LSP request spends its 16 s on, phase by phase over a 1M corpus (#306).",
-        "impl": "simplon.tasks.toolchain:run_toolchain"
+        "impl": "simplon.tasks.toolchain_run:ToolchainRun"
       },
       "system": {
         "depends_on": [],
         "help": "Run the system level on its own: the shipped binary, against tests/system/.",
-        "impl": "simplon.tasks.toolchain:run_toolchain"
+        "impl": "simplon.tasks.toolchain_run:ToolchainRun"
       },
       "unit": {
         "depends_on": [],
         "help": "Run the unit level on its own: src/test/unit/java/<module>. `--tests X` finds X in any module.",
-        "impl": "simplon.tasks.toolchain:run_toolchain"
+        "impl": "simplon.tasks.toolchain_run:ToolchainRun"
       },
       "walk": {
         "depends_on": [],
         "help": "Walk the acceptance scenarios with a person answering each step.",
-        "impl": "simplon.tasks.walk:walk"
+        "impl": "simplon.tasks.test_walk:TestWalk"
       }
     }
   },

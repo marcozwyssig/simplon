@@ -96,7 +96,7 @@ from typing import Callable
 
 import typer
 
-from simplon.domain import context, layout, signatures
+from simplon.domain import context, layout, signatures, task
 from simplon.kernel import log, verdict
 from simplon.adapters import pyvenv
 from simplon.tasks import allure
@@ -634,7 +634,7 @@ def _command(path: str, where: str) -> Callable[[], int]:
     if not spec.impl:
         raise ValueError(f"{where}: '{path}' plans other commands and runs no body of its own, so there "
                          f"is no single rc for a gate to report - name one of the commands it plans")
-    body = resolve_ref(spec.impl, f"{where} ('{path}')")
+    body = task.body_of(spec, where=f"{where} ('{path}')")
     pinned = dict(spec.with_ or {})
     if _runs_gates(body):
         raise ValueError(f"{where}: '{path}' is the command that RUNS the gates, so a gate naming it "

@@ -23,6 +23,7 @@ from typing import NamedTuple
 
 import yaml
 
+from simplon.domain import task
 from simplon.domain.manifest import _CommandSpecModel
 
 # The catalogue file belongs to the kernel, so it travels INSIDE the package. This used to read
@@ -135,18 +136,30 @@ def loads(text: str) -> Catalogue:
         namespace, name = str(coordinate).split(":", 1)
         if not namespace or not name:
             raise ValueError(f"catalogue task '{coordinate}' is not a '<namespace>:<name>' coordinate")
-        model = _CommandSpecModel.model_validate(spec or {})
+        # si#400 4c: a coordinate that writes no `impl:` names its generated class (simplon/tasks/<task>.py),
+        # which is every task of the shipped catalogue - `load()` refuses a written one there. A catalogue
+        # built from text keeps the `impl:` it writes: test catalogues name bodies no model generates.
+        derived = dict(spec or {})
+        derived.setdefault("impl", task.class_ref(str(coordinate)))
+        model = _CommandSpecModel.model_validate(derived)
         if not model.impl:
-            # The catalogue is where a body LIVES. An entry without one defines nothing, and a product
-            # importing it would resolve a coordinate to no code at all.
             raise ValueError(f"catalogue task '{coordinate}' declares no impl")
-        out[str(coordinate)] = dict(spec or {})
+        out[str(coordinate)] = derived
     return Catalogue(tasks=out, taxonomy=taxonomy, groups=groups, kinds=kinds)
 
 
 def load(path: Path | str = DEFAULT_PATH) -> Catalogue:
     """Read the catalogue from disk."""
-    cat = loads(Path(path).read_text(encoding="utf-8"))
+    text = Path(path).read_text(encoding="utf-8")
+    cat = loads(text)
+    # si#400 4c, here and not in loads() for the reason below: in a catalogue FILE each task's body lives in
+    # its generated class, seeded by the model's `body`, and an `impl:` written beside it would be a second
+    # source of that body - which one runs?
+    written = sorted(c for c, spec in ((yaml.safe_load(text) or {}).get("tasks") or {}).items()
+                     if isinstance(spec, dict) and "impl" in spec)
+    if written:
+        raise ValueError(f"catalogue {path}: `impl:` is written on {', '.join(written)}; a task's body lives in "
+                         f"its task class ({task.class_ref(written[0])}, ...), so delete the line")
     # Here and not in loads(): the hazard is the shipped file (firn leaves it task-less with rc 0 when a
     # region marker goes missing); group-only stubs built through loads() are legitimate test catalogues.
     if not cat.tasks:

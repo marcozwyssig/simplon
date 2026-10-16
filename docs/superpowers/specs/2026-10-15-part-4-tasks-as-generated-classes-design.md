@@ -27,6 +27,10 @@ body stands in a module-level protected region `<name>.imports`, not in the clas
 class-scoped import (measured). The Python `Command` hierarchy mirrors `pipeline.firn` one to one,
 `Deploy(TaskCommand)` and `ReleaseCommand(AggregateCommand)` included, and is built in 4c.
 
+**4c built 2026-10-16:** `catalogue.yaml` names no `impl:`; a coordinate's reference is its generated class
+(`task.class_ref`) and every body runs through `task.body_of`; a product task runs through a class built from
+its own `impl:` until step 6 (si#400 comment 6214912886).
+
 ## The goal, in one sentence
 
 Every task, the kernel's and every product's, is a Python class that firn generates from a task instance

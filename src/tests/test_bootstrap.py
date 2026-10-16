@@ -114,7 +114,7 @@ def test_generated_manifest_impls_reference_the_scaffolded_orchestrator_package(
     assert mf.spec_for("deploy", "down").impl == "orchestrator.cli:down"
     assert mf.spec_for("monitor", "status").impl == "orchestrator.cli:status"
     assert mf.spec_for("deploy", "all").impl == ""
-    assert mf.spec_for("release", "tag").impl == "simplon.tasks.release:tag"
+    assert mf.spec_for("release", "tag").impl == "simplon.tasks.release_tag:ReleaseTag"   # its class (si#400 4c)
 
 
 def test_generated_manifest_taxonomy_matches_the_assembly_semantics():

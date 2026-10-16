@@ -33,17 +33,17 @@
       "claude-plugins": {
         "depends_on": [],
         "help": "Install the Claude Code plugins declared in the manifest's `claude` section; idempotent.",
-        "impl": "simplon.tasks.claudeplugins:install_cmd"
+        "impl": "simplon.tasks.support_claude_plugins:SupportClaudePlugins"
       },
       "completion": {
         "depends_on": [],
         "help": "Regenerate the product's shell completion from its manifest (--check reports drift and writes nothing).",
-        "impl": "simplon.tasks.completion:generate"
+        "impl": "simplon.tasks.support_completion:SupportCompletion"
       },
       "completion-check": {
         "depends_on": [],
         "help": "Report whether deploy\\completions\\swi.bash still agrees with swi.yaml.",
-        "impl": "simplon.tasks.completion:generate"
+        "impl": "simplon.tasks.support_completion:SupportCompletion"
       },
       "config": {
         "depends_on": [],
@@ -73,7 +73,7 @@
       "install": {
         "depends_on": [],
         "help": "Provision the host tooling the kernel needs - today oras; idempotent.",
-        "impl": "simplon.tasks.hosttools:install"
+        "impl": "simplon.tasks.support_install:SupportInstall"
       },
       "reset": {
         "depends_on": [],
@@ -83,58 +83,58 @@
       "workflows": {
         "depends_on": [],
         "help": "Regenerate the product's GitHub workflows from its manifest (--check reports drift and writes nothing).",
-        "impl": "simplon.tasks.workflows:generate"
+        "impl": "simplon.tasks.support_workflows:SupportWorkflows"
       }
     },
     "support.git": {
       "auth-scopes": {
         "depends_on": [],
         "help": "Grant the stored gh token the package scopes GHCR needs (interactive, idempotent).",
-        "impl": "simplon.tasks.vcs:auth_scopes"
+        "impl": "simplon.tasks.vcs_auth_scopes:VcsAuthScopes"
       },
       "commit": {
         "depends_on": [],
         "help": "git add -A + git commit -m.",
-        "impl": "simplon.tasks.vcs:commit"
+        "impl": "simplon.tasks.vcs_commit:VcsCommit"
       },
       "prune-branches": {
         "depends_on": [],
         "help": "Delete local branches already merged into main (squash-aware via gh).",
-        "impl": "simplon.tasks.vcs:prune_branches"
+        "impl": "simplon.tasks.vcs_prune_branches:VcsPruneBranches"
       },
       "push": {
         "depends_on": [],
         "help": "git pull --rebase then push (current branch).",
-        "impl": "simplon.tasks.vcs:push"
+        "impl": "simplon.tasks.vcs_push:VcsPush"
       },
       "submodules": {
         "depends_on": [],
         "help": "git submodule update --init lib/platform (init the submodule a fresh worktree needs).",
-        "impl": "simplon.tasks.vcs:submodules"
+        "impl": "simplon.tasks.vcs_submodules:VcsSubmodules"
       }
     },
     "support.tasks": {
       "catalogue": {
         "depends_on": [],
         "help": "List the task coordinates the delivery kernel offers, marking the namespaces this product's commands reach.",
-        "impl": "simplon.tasks.tasks:catalogue"
+        "impl": "simplon.tasks.tasks_catalogue:TasksCatalogue"
       },
       "generate": {
         "depends_on": [],
         "help": "Regenerate the product's CLI module from its manifest (--check reports drift and writes nothing).",
-        "impl": "simplon.tasks.tasks:generate"
+        "impl": "simplon.tasks.tasks_generate:TasksGenerate"
       }
     },
     "test": {
       "accept": {
         "depends_on": [],
         "help": "Run every declared suite in order, then render the Allure archive.",
-        "impl": "simplon.tasks.testrun:accept_cmd"
+        "impl": "simplon.tasks.test_accept:TestAccept"
       },
       "artefact": {
         "depends_on": [],
         "help": "Check a published OVA and the fact sheet beside it. Reads the file; boots nothing.",
-        "impl": "simplon.tasks.testrun:gate"
+        "impl": "simplon.tasks.test_gate:TestGate"
       },
       "iso": {
         "depends_on": [],
@@ -149,12 +149,12 @@
       "report": {
         "depends_on": [],
         "help": "Merge the suites' results and render the single-file Allure archive.",
-        "impl": "simplon.tasks.testrun:report_cmd"
+        "impl": "simplon.tasks.test_report:TestReport"
       },
       "unit": {
         "depends_on": [],
         "help": "Run the unit suite: the seams where swi.yaml becomes configuration. No VM.",
-        "impl": "simplon.tasks.testrun:gate"
+        "impl": "simplon.tasks.test_gate:TestGate"
       }
     }
   },

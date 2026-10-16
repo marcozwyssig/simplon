@@ -47,7 +47,7 @@
       "website": {
         "depends_on": [],
         "help": "Die Produktwebseite mit Hugo bauen (in Docker, HTML).",
-        "impl": "simplon.tasks.site:build"
+        "impl": "simplon.tasks.docs_site:DocsSite"
       }
     },
     "deploy": {
@@ -84,12 +84,12 @@
       "rollout": {
         "depends_on": [],
         "help": "Eine ver\u00f6ffentlichte Version \u00fcber Portainer in die Zielumgebung ausliefern.",
-        "impl": "simplon.tasks.deploy:up"
+        "impl": "simplon.tasks.deploy_up:DeployUp"
       },
       "teardown": {
         "depends_on": [],
         "help": "Den Stapel der Zielumgebung in Portainer ENTFERNEN (nicht nur anhalten).",
-        "impl": "simplon.tasks.deploy:down"
+        "impl": "simplon.tasks.deploy_down:DeployDown"
       },
       "up": {
         "depends_on": [],
@@ -136,71 +136,71 @@
       "check-completion": {
         "depends_on": [],
         "help": "Fail if the committed shell completion differs from the manifest.",
-        "impl": "simplon.tasks.completion:generate"
+        "impl": "simplon.tasks.support_completion:SupportCompletion"
       },
       "check-workflows": {
         "depends_on": [],
         "help": "Fail if the committed workflows differ from the manifest.",
-        "impl": "simplon.tasks.workflows:generate"
+        "impl": "simplon.tasks.support_workflows:SupportWorkflows"
       },
       "claude-plugins": {
         "depends_on": [],
         "help": "Die im Manifest erklaerten Claude-Code-Erweiterungen einrichten; wiederholbar.",
-        "impl": "simplon.tasks.claudeplugins:install_cmd"
+        "impl": "simplon.tasks.support_claude_plugins:SupportClaudePlugins"
       },
       "completion": {
         "depends_on": [],
         "help": "Regenerate the product's shell completion from its manifest (--check reports drift and writes nothing).",
-        "impl": "simplon.tasks.completion:generate"
+        "impl": "simplon.tasks.support_completion:SupportCompletion"
       },
       "install": {
         "depends_on": [],
         "help": "Provision the host tooling the kernel needs - today oras; idempotent.",
-        "impl": "simplon.tasks.hosttools:install"
+        "impl": "simplon.tasks.support_install:SupportInstall"
       },
       "workflows": {
         "depends_on": [],
         "help": "Regenerate the GitHub workflows from this manifest.",
-        "impl": "simplon.tasks.workflows:generate"
+        "impl": "simplon.tasks.support_workflows:SupportWorkflows"
       }
     },
     "support.git": {
       "auth-scopes": {
         "depends_on": [],
         "help": "Grant the stored gh token the package scopes GHCR needs (interactive, idempotent).",
-        "impl": "simplon.tasks.vcs:auth_scopes"
+        "impl": "simplon.tasks.vcs_auth_scopes:VcsAuthScopes"
       },
       "commit": {
         "depends_on": [],
         "help": "git add -A + git commit -m.",
-        "impl": "simplon.tasks.vcs:commit"
+        "impl": "simplon.tasks.vcs_commit:VcsCommit"
       },
       "prune-branches": {
         "depends_on": [],
         "help": "Delete local branches already merged into main (squash-aware via gh).",
-        "impl": "simplon.tasks.vcs:prune_branches"
+        "impl": "simplon.tasks.vcs_prune_branches:VcsPruneBranches"
       },
       "push": {
         "depends_on": [],
         "help": "git pull --rebase then push (current branch).",
-        "impl": "simplon.tasks.vcs:push"
+        "impl": "simplon.tasks.vcs_push:VcsPush"
       },
       "submodules": {
         "depends_on": [],
         "help": "git submodule update --init lib/platform (init the submodule a fresh worktree needs).",
-        "impl": "simplon.tasks.vcs:submodules"
+        "impl": "simplon.tasks.vcs_submodules:VcsSubmodules"
       }
     },
     "support.tasks": {
       "catalogue": {
         "depends_on": [],
         "help": "List the task coordinates the delivery kernel offers, marking the namespaces this product's commands reach.",
-        "impl": "simplon.tasks.tasks:catalogue"
+        "impl": "simplon.tasks.tasks_catalogue:TasksCatalogue"
       },
       "generate": {
         "depends_on": [],
         "help": "Regenerate the product's CLI module from its manifest (--check reports drift and writes nothing).",
-        "impl": "simplon.tasks.tasks:generate"
+        "impl": "simplon.tasks.tasks_generate:TasksGenerate"
       }
     },
     "test": {
@@ -279,7 +279,7 @@
       "typecheck-backend": {
         "depends_on": [],
         "help": "Type-check the backend (mypy).",
-        "impl": "simplon.tasks.toolchain:run_toolchain"
+        "impl": "simplon.tasks.toolchain_run:ToolchainRun"
       },
       "typecheck-frontend": {
         "depends_on": [],
