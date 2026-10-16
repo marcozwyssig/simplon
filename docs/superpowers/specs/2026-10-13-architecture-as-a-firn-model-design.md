@@ -31,9 +31,9 @@ the artifact schema from them. Part 1 puts the architecture itself into the mode
    through `surface.MOVED` until a stated release, and each product gets an issue.
 3. **Resolve the exceptions** one ticket at a time.
 4. **Base classes, and tasks modelled and generated.** The kernel defines `Task` and `Command` as the
-   base classes of every task and command. The tasks are modelled in firn as classes that extend
-   `simplon.pipeline.Task`, with their ports and parameters as typed properties (revised 2026-10-15), and
-   their Python classes generated, the body by hand; a command is an instance of a task class. The
+   base classes of every task and command. The tasks are modelled in firn as instances of
+   `simplon.pipeline.Task` (revised 2026-10-15 to classes, and back to instances on 2026-10-16), and
+   their Python classes generated from them, the body by hand. The
    hand-written `CommandSpec`, `Manifest` and `_ManifestModel` go. Touches si#344 part C and si#346. See "Part 4,
    decided now" below.
 
@@ -177,7 +177,20 @@ Recorded here because Marco decided it, first during this design (2026-10-13) an
 (2026-10-15, comments 6202244020 and 6202270420). Part 4 has its own spec:
 `2026-10-15-part-4-tasks-as-generated-classes-design.md`.
 
-### Revised 2026-10-15: classes, not instances
+### Revised again 2026-10-16: in the model, a task is an instance
+
+Marco, on the closed si#400 4a PR #462: `TaskType extends firn.core.Class` is the wrong shape, and the
+tasks are instances. The model keeps main's form, `Task typeOf firn.core.Class extends
+firn.core.NamedResource` with the catalogue's tasks as `CatalogueTask` instances, and a command keeps
+`TaskCommand.task`. The first two bullets below (a task is a class, a command is an instance of a task
+class) are withdrawn for the firn model; the generated Python stays a class per task
+(`2026-10-15-part-4-tasks-as-generated-classes-design.md`, revised the same day). The kind and habitat
+bullets were not part of this decision and stand. Measured on firn v0.1.0: with `TaskType extends
+firn.core.Resource` a task class is red (`E200` on `extends`, `property`, `name`), and a *named*
+instance of a `Resource` subclass is red too (`E200 cannot resolve 'name'`), so the instance form needs
+`NamedResource`.
+
+### Revised 2026-10-15: classes, not instances (tasks and commands withdrawn 2026-10-16)
 
 This section first said the tasks are modelled as `simplon.pipeline.Task` *instances*, and si#344 C.1 built
 them that way: `src/firn/model/simplon/catalogue/tasks.firn` holds 18 `CatalogueTask` instances with their
@@ -271,8 +284,8 @@ What it showed:
   function and says so) is part 4's design.
 - **The products model and generate their tasks too** (Marco, 2026-10-13). firn reaches every product
   through simplon (`support toolchain firn`), and `simplon.pipeline` is simplon's M2. A product's own firn
-  model imports it, declares its tasks as classes that extend simplon's `Task` (revised 2026-10-15), writes
-  its commands, artifacts and habitats as instances, and generates its Python classes from simplon's
+  model imports it, declares its tasks as instances of simplon's `Task` (classes on 2026-10-15, instances
+  again on 2026-10-16), writes its commands, artifacts and habitats as instances, and generates its Python classes from simplon's
   templates. The product writes only the bodies. That is also what keeps the rule above affordable: the
   class a product would otherwise rewrite by hand is generated. Part 4's spec says how the templates reach
   a product (shipped in the wheel beside the M2, or fetched) and where the generated classes land in a

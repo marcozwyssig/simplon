@@ -5,10 +5,22 @@
 task is a class, a command is an instance, kinds and habitats are classes, `local` is gone, and SOLID is
 the check. This spec says how that shape reaches Python, in the kernel and in a product.
 
+**Revised 2026-10-16 (Marco, on the closed si#400 4a PR #462): in the firn model a task is an
+INSTANCE, not a class.** `TaskType extends firn.core.Class` was the wrong shape. The model keeps the form
+main has: `Task typeOf firn.core.Class extends firn.core.NamedResource`, its `key`, `body`, `input` and
+`output`, and the catalogue's tasks as instances of `CatalogueTask`. What firn *generates* from each
+instance is still a Python class, with the body in its protected region. Decisions 1, 2, 3, 5 and 6
+stand as written. Decision 4 changes (below). Measured on firn v0.1.0 while settling it:
+
+- With `TaskType extends firn.core.Resource`, a task written as a class (`BuildImage typeOf TaskType
+  extends Task`) is red: `E200 cannot resolve` on `extends`, `property` and `name`.
+- A **named** instance of a class that extends `firn.core.Resource` is red too: `E200 cannot resolve
+  'name'`. The name comes from `firn.core.NamedResource`, and a command can only reference a named task.
+
 ## The goal, in one sentence
 
-Every task, the kernel's and every product's, is a Python class that firn generates from a firn model
-extending `simplon.pipeline.Task`. Its ports are typed attributes and its body is a hand-written method
+Every task, the kernel's and every product's, is a Python class that firn generates from a task instance
+in a firn model (an instance of `simplon.pipeline.Task`, revised 2026-10-16). Its ports are typed attributes and its body is a hand-written method
 in a protected region. A command is an object of that class, and `CommandSpec` and the `impl:` lookup
 go.
 
@@ -25,15 +37,21 @@ go.
    function that `impl:` names today. No product has to rewrite a body at once. Each one moves a body
    into the method when it chooses, and `CommandSpec` and the `impl:` lookup still go in the same step,
    so only one source is live (si#456's guard rail).
-4. **Every concrete task class writes its own coordinate.** `key` is not inherited in firn (measured), and
-   that is right: two classes with one coordinate would be ambiguous, which is the defect this project
-   hunts. A concrete task class without a `key` is a **diagnosis**.
+4. **Every task writes its own coordinate.** Two tasks with one coordinate would be ambiguous, which is
+   the defect this project hunts, and a task without a `key` is a **diagnosis**. *Revised 2026-10-16:*
+   first written for task classes, where `key` is not inherited (measured). With tasks as instances
+   there is nothing to inherit; the open part is that `key` is `0..1` on `Task` today, so making it
+   required is part of building 4a.
 5. **One file per class.** The default is `<package>/tasks/<name>.py`: one task, one file, one region,
    small diffs (SRP). The location is a kernel default that a product's `firn.toml` target may override.
 6. **A protected region that firn no longer produces is a refusal.** This is a diagnosis, not an
    expression rule, because without it the failure is silent (measured below).
 
 ## Measured 2026-10-15 (pinned `ghcr.io/marcozwyssig/firn:v0.1.0`, probes in the session scratchpad, not committed)
+
+The probes below were written in the class form withdrawn on 2026-10-16. What they show about the jar,
+the template's scope and protected regions does not depend on that form; the selectors do (`for t :
+\`simplon.pipeline.CatalogueTask\`` over instances, as main's templates already walk them).
 
 - **A product extends a library's task class through a jar, with rc 0.** The library jar carries
   `META-INF/firn/firn.toml`, `model/kern/kern.firn` (`TaskType`, `Task`, `BuildImage`) and
@@ -44,8 +62,9 @@ go.
   every name, `firn.core`'s included.
 - **The library's template generates the library's classes too.** `for t : \`kern.TaskType\`` answered
   `BuildImage` beside `MyBuild`, so a product would get the kernel's classes in its own tree, which is a
-  second source. The product's template has to keep only the product's own package. *Unmeasured:*
-  which selector filters a class by package.
+  second source. The product's template has to keep only the product's own package. *Measured
+  2026-10-16:* ``.inBuild()`` does it (firn docs/04, adr/0072): over a library on `-cp`, the product's
+  output held only its own.
 - **A protected region per class works inside a `for`.** `protected "${t.name}.run"` writes one
   region per class. A hand-written body survives a second `gen` ("1 up to date").
 - **Renaming a class orphans its body, with rc 0.** With one file for all classes, firn appends the old
@@ -99,12 +118,13 @@ parameters to a function that takes keyword arguments is the plan's first design
 
 Each step is small, and only one source is live at a time.
 
-1. **The kernel's model.** `TaskType` (the metaclass that carries `key` and `body`) and `Task` in
-   `simplon.pipeline`. The 18 `CatalogueTask` instances in `catalogue/tasks.firn` become classes, and
-   their ports become `OutputPort`/`InputPort` properties. `test_catalogue_ports.py` stays, because firn
-   does not refuse a `needs` on a foreign kind (measured in the part 1 spec).
-2. **The template, over the kernel first.** It generates the kernel's own task classes, one file per
-   class, with wrapper regions. The kernel follows the layout it gives products, and no exemption.
+1. **The kernel's model.** The catalogue's tasks stay instances of `CatalogueTask` (revised
+   2026-10-16), and their ports stay `input`/`output` compositions of `Port`. Today
+   `catalogue/tasks.firn` holds 18 of the 54; the template needs all of them, so the 36 without a port
+   join as instances. `test_catalogue_ports.py` stays, because firn does not refuse a `needs` on a
+   foreign kind (measured in the part 1 spec).
+2. **The template, over the kernel first.** It generates one Python class per task instance, one file
+   per class, with wrapper regions. The kernel follows the layout it gives products, and no exemption.
 3. **The runtime.** The loader builds a command as an object of its class, instead of looking up
    `impl:` text. `CommandSpec` and the `impl:` lookup go. `signatures.py` goes once ports and parameters
    are typed attributes.
@@ -123,7 +143,7 @@ The rule "every task is a generated class" is an expression rule: a function bod
 product today. The wrapper (decision 3) is what keeps it affordable, because no body has to be rewritten.
 What each product still pays, and its peer session measures before step 6, is:
 
-- its `impl:` entries become model classes: netctl 52, biz-cockpit 22, asbundle 15, cleon 12, swi 11,
+- its `impl:` entries become task instances in a model: netctl 52, biz-cockpit 22, asbundle 15, cleon 12, swi 11,
   simplon 6, firn 4, agile-cockpit 3 (measured 2026-10-13);
 - a `firn.toml` and a model in a product that has none today. No product imports `simplon.pipeline`
   (code search across all repos, 2026-10-15: only simplon's own files);
@@ -137,7 +157,7 @@ What each product still pays, and its peer session measures before step 6, is:
 
 ## Testing, per CLAUDE.md
 
-- Decision 4 is seen red: a concrete task class without `key`.
+- Decision 4 is seen red: a task instance without `key`.
 - Decision 6 is seen red twice: a rename with one file per class (W301), and a region taken out of a
   template (W300).
 - The jar is seen loading in a product the way it was in the probe, from the wheel's own copy, not a
