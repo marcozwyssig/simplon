@@ -17,6 +17,16 @@ stand as written. Decision 4 changes (below). Measured on firn v0.1.0 while sett
 - A **named** instance of a class that extends `firn.core.Resource` is red too: `E200 cannot resolve
   'name'`. The name comes from `firn.core.NamedResource`, and a command can only reference a named task.
 
+**Revised again 2026-10-16 (Marco, by choice list, before plan 4b):** the ports are `ClassVar[Port]`
+attributes holding the same `artifactschema.Port` values `PORTS` holds, generated from the same instance;
+4c derives `PORTS` from the classes, and the second rendering goes. The gen guard (step 4) moves before the
+runtime (step 3): firn writes every file 0600 and `build model`'s two hand-typed file lists would otherwise
+grow by one entry per task, so the kernel's new `build:model` task reads `gen --format=json`, refuses
+W300/W301, and sets 0644 on and checks the wholeness of every file firn reports. The import of the wrapped
+body stands in a module-level protected region `<name>.imports`, not in the class: mypy refuses a
+class-scoped import (measured). The Python `Command` hierarchy mirrors `pipeline.firn` one to one,
+`Deploy(TaskCommand)` and `ReleaseCommand(AggregateCommand)` included, and is built in 4c.
+
 ## The goal, in one sentence
 
 Every task, the kernel's and every product's, is a Python class that firn generates from a task instance
@@ -97,15 +107,20 @@ root), and `test_wheel.py` has to say that it ships, as it now says the wheel sh
 ## The shape in Python
 
 ```python
-# <package>/tasks/build_image.py - GENERATED; edit only inside the protected region
+# <package>/tasks/build_image.py - GENERATED; edit only inside the protected regions
+# Begin Protected Region [build_image.imports]
+from simplon.tasks.image import build as _body
+# End Protected Region  [build_image.imports]
+
+
 class BuildImage(Task):
     KEY = "build:image"
-    image: Image                      # output port; the type is the kind class
+    file: ClassVar[Port] = Port("file", "input", "file", "", ())
+    image: ClassVar[Port] = Port("image", "output", "image", "name", ("registry", "repository", "dockerfile", "context"))
 
-    def run(self) -> None:
-        # Begin Protected Region [BuildImage.run]
-        return build(self)            # the wrapper (decision 3): impl "simplon.tasks.image:build"
-        # End Protected Region  [BuildImage.run]
+    # Begin Protected Region [build_image.run]
+    run = staticmethod(_body)                 # the wrapper (decision 3)
+    # End Protected Region  [build_image.run]
 
 # the kernel's, hand-written - the Python image of simplon.pipeline's TaskCommand and AggregateCommand
 class TaskCommand(Command): ...       # holds its task class and its port bindings
@@ -140,7 +155,7 @@ Each step is small, and only one source is live at a time.
    its task class, instead of looking up
    `impl:` text. `CommandSpec` and the `impl:` lookup go. `signatures.py` goes once ports and parameters
    are typed attributes.
-4. **The gen guard.** W300 and W301 become rc 1 (decision 6), seen red on a rename.
+4. **The gen guard** (moved before step 3 on 2026-10-16, see above). W300 and W301 become rc 1 (decision 6), seen red on a rename.
 5. **The jar in the wheel**, and `gen -cp` in a product.
 6. **The products, one per peer session**, each measuring its bill first (below).
 7. **`Manifest` and `_ManifestModel`** go, as part 1 fixed. Kinds follow the same mechanism (kind
