@@ -624,8 +624,13 @@ def test_the_generator_carries_no_list_of_workflow_kinds():
     source = (ROOT / "src" / "simplon" / "tasks" / "workflowgen.py").read_text(encoding="utf-8")
 
     # Act: the code, without the prose that legitimately discusses those words
+    # si#490: `RELEASE_KEY = "release"` and `RELEASE_JOB = "release"` name a KEY inside a workflow's body
+    # and the job it derives - the sibling of `FLOW_KEY = "flow"` - and not a workflow kind: a workflow
+    # declaring `release:` may be called anything (the tests below call it `rel`). Those two definitions
+    # are the only lines exempted, so a comparison against a workflow NAME would still be caught.
     code = "\n".join(line for line in source.splitlines()
-                     if not line.lstrip().startswith("#"))
+                     if not line.lstrip().startswith("#")
+                     and line not in ('RELEASE_KEY = "release"', 'RELEASE_JOB = "release"'))
     code = code.split('"""')[0] + '"""'.join(code.split('"""')[2:])
 
     # Assert
@@ -688,7 +693,8 @@ def test_two_workflows_may_not_write_one_file():
 
 def test_a_workflow_declaring_no_trigger_is_refused():
     """The kernel does not invent one. Whether a tag publishes is the product's statement, and si#40
-    says plainly that the generator must not promise more than it knows."""
+    says plainly that the generator must not promise more than it knows. The one derived trigger is a
+    `release:` workflow's (si#490), and that one is derived from a declaration, not invented."""
     # Arrange / Act / Assert
     with pytest.raises(ValueError, match="declares no `on:` trigger"):
         workflowgen.parse(_section("""
@@ -2277,3 +2283,87 @@ def test_a_value_that_is_not_a_scalar_or_a_set_variable_is_refused(kernel_manife
         _render(kernel_manifest, _env_steps(
             _NOTES + f"              - command: release tag\n                params: {{ tag: {value} }}\n",
             job_env=_JOB_ENV))
+
+
+# --- si#490: `release:` - the dispatch release, derived from a release aggregate ------------------------
+
+_RELEASE = """
+workflows:
+  rel:
+    release: release all
+    runner: { kind: self-hosted-debian, labels: ghr-8 }
+"""
+
+
+def _release_parsed(extra: str = "") -> "workflowgen.Workflow":
+    return workflowgen.parse(_section(_RELEASE + textwrap.indent(textwrap.dedent(extra), "    ")))[0]
+
+
+def test_release_derives_the_dispatch_trigger():
+    """D2 (si#463): a release is started by dispatch only, with the version typed and a dry run by default."""
+    assert _release_parsed().on == {"workflow_dispatch": {"inputs": {
+        "version": {"description": "The version to release, exactly as its tag will be: vX.Y.Z",
+                    "required": True, "type": "string"},
+        "dry_run": {"description": "Rehearse: build and check everything, publish nothing",
+                    "required": True, "type": "boolean", "default": True}}}}
+
+
+def test_release_derives_permissions_and_concurrency():
+    parsed = _release_parsed()
+    assert list(parsed.extras)[:2] == ["permissions", "concurrency"]
+    assert parsed.extras["permissions"] == {"contents": "write", "packages": "write"}
+    assert parsed.extras["concurrency"] == {"group": "${{ github.workflow }}-${{ inputs.version }}",
+                                            "cancel-in-progress": False}
+    assert parsed.release == "release all"
+
+
+def test_a_product_permission_beside_release_is_added_to_the_derived_ones():
+    """Ruling of si#490 Task 2: merged, not refused - simplon's own release needs `id-token: write` for
+    PyPI's Trusted Publishing, and a closed set of scopes would make it inexpressible (si#491)."""
+    parsed = _release_parsed("permissions: { id-token: write }\n")
+    assert parsed.extras["permissions"] == {"contents": "write", "packages": "write", "id-token": "write"}
+
+
+@pytest.mark.parametrize("scope", ["contents", "packages"])
+def test_a_product_permission_may_not_lower_what_the_release_needs(scope):
+    with pytest.raises(ValueError, match=f"`{scope}: write` is what the release needs"):
+        _release_parsed(f"permissions: {{ {scope}: read }}\n")
+
+
+@pytest.mark.parametrize("extra, complaint", [
+    ("on: [push]\n", "the trigger is derived from `release:`"),
+    ("concurrency: { group: x }\n", "`concurrency:` is derived from `release:`"),
+    ("flow: [{ to: prod }]\n", "a rollout or a release, not both"),
+    ("jobs: { release: { runs-on: x, steps: [{ run: y }] } }\n", "the derived job is named 'release'"),
+    ("env: { RELEASE_VERSION: x }\n", "RELEASE_VERSION is the dispatch input's"),
+])
+def test_what_release_derives_may_not_be_declared_beside_it(extra, complaint):
+    with pytest.raises(ValueError, match=re.escape(complaint)):
+        _release_parsed(extra)
+
+
+@pytest.mark.parametrize("value", ["", "all", 3])
+def test_release_names_an_aggregate_by_group_and_name(value):
+    with pytest.raises(ValueError, match="names a release aggregate as <group> <name>"):
+        workflowgen.parse({"workflows": {"rel": {"release": value,
+                                                 "runner": {"kind": "self-hosted-debian", "labels": "ghr-8"}}}})
+
+
+def test_a_hand_written_workflow_may_not_declare_a_release():
+    with pytest.raises(ValueError, match="cannot also declare release"):
+        workflowgen.parse({"workflows": {"rel": {"handwritten": "ours", "release": "release all"}}})
+
+
+def test_a_product_job_may_stand_beside_the_release():
+    parsed = _release_parsed("jobs: { announce: { runs-on: x, needs: release, steps: [{ run: y }] } }\n")
+    assert [job.name for job in parsed.jobs] == ["announce"]
+
+
+def test_a_workflow_without_release_still_writes_its_own_trigger():
+    with pytest.raises(ValueError, match="declares no `on:` trigger") as exc:
+        workflowgen.parse(_section("""
+        workflows:
+          ci:
+            jobs: { a: { runs-on: x, steps: [{ run: y }] } }
+        """))
+    assert "`release:`" in str(exc.value)

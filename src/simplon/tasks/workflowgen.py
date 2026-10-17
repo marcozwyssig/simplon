@@ -248,6 +248,8 @@ class Workflow:
     jobs: tuple[Job, ...] = ()
     handwritten: str = ""
     extras: Mapping[str, object] = field(default_factory=dict)
+    #: si#490: the release aggregate's `<group> <name>`, when this workflow is its dispatch release.
+    release: str = ""
 
     @property
     def generated(self) -> bool:
@@ -329,7 +331,7 @@ def _workflow(key: str, body: object) -> Workflow:
     if handwritten:
         # A declined workflow must decline COMPLETELY. Carrying jobs beside the decline would leave two
         # readings of one entry and no way to tell which the author meant.
-        stray = sorted(k for k in ("jobs", "note", "name") if body.get(k) is not None)
+        stray = sorted(k for k in ("jobs", "note", "name", RELEASE_KEY) if body.get(k) is not None)
         if _declared_trigger(body, where) is not None:
             stray = sorted([*stray, "on"])
         if stray:
@@ -342,41 +344,119 @@ def _workflow(key: str, body: object) -> Workflow:
         # An EMPTY `handwritten:` is the case worth naming: it reads as a decline and behaves as none.
         raise ValueError(f"{where}: `handwritten:` must say why this file is not generated, not be empty")
 
-    trigger = _declared_trigger(body, where)
+    release = _release_key(body, where)
+    trigger = _declared_trigger(body, where) if not release else _RELEASE_TRIGGER
     if trigger is None:
         raise ValueError(
-            f"{where}: declares no `on:` trigger. The kernel does not invent one - whether a tag "
-            f"publishes, or a push runs the suite, is this product's statement and not something that "
-            f"can be derived from a command tree")
+            f"{where}: declares no `on:` trigger. The kernel derives one only for a `{RELEASE_KEY}:` "
+            f"workflow - otherwise whether a tag publishes, or a push runs the suite, is this product's "
+            f"statement and not something that can be derived from a command tree")
     # `flow:` AND `jobs:` TOGETHER ARE ALLOWED, and the refusal that stood here was struck for si#267's
     # reason: a product wanting the rollout plus a notification job of its own was saying something the
     # kernel could honour, and forbidding it sent them back to writing the whole file. The generated
     # stage jobs carry stable names (`deploy-<environment>`), so a product's own job hangs `needs:` on
     # one and the order stays the product's.
     stages = _stages(body, where)
-    runner, rollout_runs_on = ((None, "") if not stages
+    runner, rollout_runs_on = ((None, "") if not stages and not release
                                else _machine(body, body.get("runs-on") or body.get("runs_on"), where))
     rollout_env = _with_runner_env(runner, {}, where).get("env", {}) if runner is not None else {}
     jobs = body.get("jobs")
-    if not stages and (not isinstance(jobs, Mapping) or not jobs):
+    if not stages and not release and (not isinstance(jobs, Mapping) or not jobs):
         raise ValueError(
             f"{where}: `jobs:` must be a non-empty mapping of job name -> its declaration, or "
             f"`{FLOW_KEY}:` must name the environments this release is rolled out to")
 
     return Workflow(key=key, path=path, name=str(body.get("name") or key),
-                    note=str(body.get("note") or ""), on=trigger, flow=stages,
+                    note=str(body.get("note") or ""), on=trigger, flow=stages, release=release,
                     rollout_runs_on=rollout_runs_on,
                     rollout_env=rollout_env if isinstance(rollout_env, Mapping) else {},
                     jobs=tuple(_job(str(name), spec, where)
                                for name, spec in (jobs or {}).items()) if isinstance(jobs, Mapping)
                          else (),
-                    extras=_workflow_extras(body))
+                    extras=_release_extras(body, where) if release else _workflow_extras(body))
 
 
 #: The workflow-level keys this module reads itself. Everything else GitHub allows at that level -
 #: `permissions:`, `concurrency:`, `defaults:`, `env:`, `run-name:` - is the PRODUCT's and is carried
 #: through, exactly as a job's unknown keys are.
 FLOW_KEY = "flow"
+
+# --- si#490: `release: <group> <name>` - the dispatch release, derived from a release aggregate ---------
+#
+# WHAT A RELEASE WORKFLOW DERIVES, and why the product writes none of it. A release is started by dispatch
+# with the version typed and a dry run by default (si#463 D2); the version reaches a script only through
+# the job's `env:` and a command only as `"$RELEASE_VERSION"` (si#488), never as `${{ inputs.* }}` inside a
+# `run:` line. The ORDER is the aggregate's: `plan_for` already returns it in the one order rule 8 accepts
+# (si#489), so nothing here orders anything.
+RELEASE_KEY = "release"
+RELEASE_JOB = "release"
+RELEASE_ENV = "RELEASE_VERSION"
+_RELEASE_TRIGGER: Mapping[str, object] = {"workflow_dispatch": {"inputs": {
+    "version": {"description": "The version to release, exactly as its tag will be: vX.Y.Z",
+                "required": True, "type": "string"},
+    "dry_run": {"description": "Rehearse: build and check everything, publish nothing",
+                "required": True, "type": "boolean", "default": True}}}}
+#: The scopes the release itself needs: `contents` to push the tag and write the GitHub Release, `packages`
+#: to push an image. A product may ADD scopes (simplon's PyPI publish needs `id-token: write`), never lower these.
+_RELEASE_PERMISSIONS: Mapping[str, str] = {"contents": "write", "packages": "write"}
+_RELEASE_CONCURRENCY: Mapping[str, object] = {"group": "${{ github.workflow }}-${{ inputs.version }}",
+                                              "cancel-in-progress": False}
+
+
+def _release_key(body: Mapping[object, object], where: str) -> str:
+    """The aggregate a release workflow derives from, or "" - with every key it derives refused beside it."""
+    value = body.get(RELEASE_KEY)
+    if value is None:
+        return ""
+    if not isinstance(value, str) or len(value.split()) < 2:
+        raise ValueError(
+            f"{where}: `{RELEASE_KEY}:` names a release aggregate as <group> <name> (e.g. `release all`), "
+            f"got '{value}'")
+    if _declared_trigger(body, where) is not None:
+        # EXPRESSION rule (si#490 decision 1): a second trigger would start a release with no `version`.
+        raise ValueError(
+            f"{where}: declares `on:`, and the trigger is derived from `{RELEASE_KEY}:` - a dispatch with the "
+            f"version and a dry run; remove `on:`")
+    if body.get("concurrency") is not None:
+        # EXPRESSION rule: two runs of one version must queue, never cancel each other mid-release.
+        raise ValueError(
+            f"{where}: `concurrency:` is derived from `{RELEASE_KEY}:` - one release per version, never "
+            f"cancelled in progress; remove it")
+    if body.get(FLOW_KEY) is not None:
+        raise ValueError(
+            f"{where}: declares `{FLOW_KEY}:` and `{RELEASE_KEY}:` - one workflow is a rollout or a release, "
+            f"not both, because each derives its own trigger; give each its own workflow")
+    jobs = body.get("jobs")
+    if isinstance(jobs, Mapping) and RELEASE_JOB in jobs:
+        raise ValueError(
+            f"{where}: declares a job '{RELEASE_JOB}', and the derived job is named '{RELEASE_JOB}' - "
+            f"rename yours; it can still `needs: {RELEASE_JOB}`")
+    env = body.get("env")
+    if isinstance(env, Mapping) and RELEASE_ENV in env:
+        raise ValueError(
+            f"{where}: sets {RELEASE_ENV} in `env:`, and {RELEASE_ENV} is the dispatch input's - the job "
+            f"sets it from `inputs.version`, and a second value would be shadowed with nobody told")
+    return " ".join(value.split())
+
+
+def _release_extras(body: Mapping[object, object], where: str) -> dict[str, object]:
+    """The derived `permissions`/`concurrency` first, then the product's own extras in their order.
+
+    `permissions:` is MERGED rather than refused (ruling of si#490 Task 2, measured): simplon's own release
+    needs `id-token: write` for PyPI's Trusted Publishing, and a closed set would make it inexpressible."""
+    own = _workflow_extras(body)
+    declared = own.pop("permissions", None) or {}
+    if not isinstance(declared, Mapping):
+        raise ValueError(
+            f"{where}: `permissions:` beside `{RELEASE_KEY}:` is a mapping of scope -> level, which is added "
+            f"to the scopes the release needs; got '{declared}'")
+    for scope, level in _RELEASE_PERMISSIONS.items():
+        if scope in declared and declared[scope] != level:
+            raise ValueError(
+                f"{where}: `permissions:` sets `{scope}: {declared[scope]}`, and `{scope}: {level}` is what "
+                f"the release needs - leave {scope} out, it is derived")
+    return {"permissions": {**_RELEASE_PERMISSIONS, **{str(k): v for k, v in declared.items()}},
+            "concurrency": dict(_RELEASE_CONCURRENCY), **own}
 
 
 class Stage(NamedTuple):
@@ -437,7 +517,7 @@ def _stages(body: Mapping[object, object], where: str) -> "tuple[Stage, ...]":
     return tuple(stages)
 
 
-_OWN_WORKFLOW_KEYS = frozenset({"path", "handwritten", "name", "note", "on", "jobs", FLOW_KEY, "runs-on", "runs_on", runners.KEY, True})
+_OWN_WORKFLOW_KEYS = frozenset({"path", "handwritten", "name", "note", "on", "jobs", FLOW_KEY, RELEASE_KEY, "runs-on", "runs_on", runners.KEY, True})
 
 
 def _workflow_extras(body: Mapping[object, object]) -> dict[str, object]:
