@@ -59,7 +59,9 @@ def serve(shared: dict) -> tuple[str, Callable[[], None]]:
         def _dressed(self, rel: dict) -> dict:
             base = self._base()
             return {**rel, "url": f"{base}/repos/{REPO}/releases/{rel['id']}",
-                    "html_url": f"https://github.example/{REPO}/releases/tag/{rel['tag_name']}"}
+                    # A draft's page is not under its tag, as on GitHub: `releases/tag/untagged-<hash>`.
+                    "html_url": f"https://github.example/{REPO}/releases/tag/"
+                                + (f"untagged-{rel['id']}" if rel["draft"] else rel["tag_name"])}
 
         def _handle(self, method: str) -> None:
             split = urlsplit(self.path)

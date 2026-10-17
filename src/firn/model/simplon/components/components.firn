@@ -325,6 +325,9 @@ tasks typeOf simplon.architecture.Component {
   module m_tasks_release typeOf simplon.architecture.Module {
     path = "tasks.release"
   }
+  module m_tasks_githubrelease typeOf simplon.architecture.Module {
+    path = "tasks.githubrelease"
+  }
   module m_tasks_releasenotes typeOf simplon.architecture.Module {
     path = "tasks.releasenotes"
   }
