@@ -1896,6 +1896,34 @@ def test_the_run_finishing_after_the_screen_is_gone_focuses_nothing_and_raises_n
     assert app._bar is None, "the app kept a widget that is no longer mounted"
 
 
+def test_a_tick_after_the_screen_is_gone_paints_nothing_and_raises_nothing():
+    """si#499, the third instance of si#265's moment and the one on a TIMER.
+
+    `set_interval(1.0, self._tick)` keeps firing until Textual stops it, so a tick can land after the screen
+    has been torn down. `_tick` repaints running rows and then asks `_refresh_open_aggregate` where the
+    cursor is, and both reach `#steps`. The CI run of PR #498 found it: `NoMatches: No nodes match
+    '#steps'` from `_tick`, on the push run of a commit whose pull_request run was green.
+    """
+    # arrange: an app that had a screen and lost it
+    pipeline = _pipeline()
+
+    async def _drive():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert app._bar is not None, "the app never had a screen"
+        return app
+
+    app = asyncio.run(_drive())
+
+    # act: the tick that used to arrive into an empty tree
+    app._tick()
+
+    # assert
+    assert app._bar is None, "the app kept a widget that is no longer mounted"
+
+
 def test_a_run_that_finishes_while_the_screen_is_up_still_focuses_the_first_failure():
     """The other half, so the guard cannot become an early return that switched the feature off. si#265
     said it in its own words: the repair is not `except NoMatches: pass`, because that swallows the case
