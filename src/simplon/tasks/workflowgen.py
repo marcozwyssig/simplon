@@ -68,7 +68,7 @@ import yaml
 from simplon.manifest import artifactsection, context, runners, signatures
 from simplon.model import task
 from simplon.adapters import disk
-from simplon.model.command import TaskCommand
+from simplon.model.command import ReleaseCommand, TaskCommand
 from simplon.manifest.load import Manifest
 from simplon.tasks import handoff
 
@@ -945,6 +945,81 @@ def _rollout(workflow: "Workflow", registry: "Mapping[str, object] | None") -> "
     return tuple(jobs)
 
 
+#: si#490: the two scripts the release job runs before the plan, and its dry-run tail. The cut deletes a
+#: local copy first, because `fetch-depth: 0` fetches every tag: on a re-run after the tag push a plain
+#: `git tag` fails (rc 128, measured) and the run never reaches `release:tag`, which compares origin's tag
+#: with HEAD and either resumes or names the move. The stamp is firn's: the build reads the version off
+#: `git describe`, so a describe that is not the version is a build stamped with something else.
+RELEASE_CUT = ('git tag -d "$RELEASE_VERSION" >/dev/null 2>&1 || true\n'
+               'git tag "$RELEASE_VERSION"\n')
+RELEASE_STAMP = ('described="$(git describe --tags --always --dirty)"\n'
+                 '[ "$described" = "$RELEASE_VERSION" ] || {\n'
+                 '  echo "::error::the build would be stamped $described, not $RELEASE_VERSION"\n'
+                 '  exit 1\n'
+                 '}\n')
+_DRY_RUN = "${{ inputs.dry_run }}"
+_NOT_DRY_RUN = "${{ !inputs.dry_run }}"
+_TOKEN = {"GITHUB_TOKEN": "${{ secrets.GITHUB_TOKEN }}"}
+
+
+def _release(workflow: "Workflow", manifest: Manifest,
+             artifacts: "Mapping[str, artifactsection.Declared]") -> "tuple[Job, ...]":
+    """The one job a `release:` workflow derives: the cut, the stamp, the aggregate's plan, the dry-run tail.
+
+    NOTHING HERE ORDERS ANYTHING. `plan_for` returns the leaves in an order rule 8 accepted at load
+    (si#489), and a second ordering here could only disagree with it. What a plan cannot say is added:
+    - a leaf whose task `publishes:` is skipped on a dry run (si#490 decision 5);
+    - a `token: github` leaf, and only that one, gets the run's GITHUB_TOKEN (decision 4);
+    - a leaf taking a passed parameter unpinned gets it as `"$RELEASE_VERSION"`, the CLI's own reading of
+      `passes:` (si#433), so `release all --tag v1.4.0` and the workflow hand the same leaves the version.
+    """
+    if not workflow.release:
+        return ()
+    where = f"workflow '{workflow.key}'"
+    group, name = resolve_command(manifest, workflow.release, where=where)
+    spec = manifest.commands[group][name]
+    if not isinstance(spec, ReleaseCommand):
+        raise ValueError(
+            f"{where}: `{RELEASE_KEY}:` names '{workflow.release}', which is not a release aggregate - name the "
+            f"aggregate under `ci: release:` that `produces: {{ release: <artifact> }}`")
+    if "tag" not in spec.passes:
+        raise ValueError(
+            f"{where}: '{workflow.release}' passes no `tag`, so the version would reach no command - add "
+            f"`passes: [tag]` to the aggregate")
+    if set(spec.passes) - {"tag"}:
+        # A dispatch carries the version and nothing else, so every other passed parameter would reach its
+        # leaves with no value - or, handed the version, with a wrong one.
+        raise ValueError(
+            f"{where}: '{workflow.release}' passes {', '.join(sorted(set(spec.passes) - {'tag'}))}, and a "
+            f"dispatch carries only the version - pin it on the leaves with `with:`, or pass only `tag`")
+    steps: list[Step] = [Step(verbatim={"name": "Cut the tag in this checkout", "run": RELEASE_CUT}),
+                         Step(verbatim={"name": "The build will be stamped with the version", "run": RELEASE_STAMP})]
+    notes = ""
+    for words, leaf in _leaves(manifest, Step(command=workflow.release), where):
+        if leaf.unattended is not True:
+            raise ValueError(
+                f"{where}: '{words}' cannot run in the release job unattended - it declares `unattended: "
+                f"{str(leaf.unattended).lower() if leaf.unattended is not None else '(nothing)'}`, and a "
+                f"release member that is skipped would release past it; declare `unattended: true` or "
+                f"take it out of '{workflow.release}'")
+        modifiers: dict[str, object] = {}
+        if leaf.publishes:
+            modifiers["if"] = _NOT_DRY_RUN
+        if leaf.token == "github":
+            modifiers["env"] = dict(_TOKEN)
+        passed = {"tag": EnvValue(RELEASE_ENV)} if "tag" in leaf.params and "tag" not in leaf.with_ else {}
+        steps.append(Step(command=words, params=passed, modifiers=modifiers))
+        if leaf.task == "release:notes" and not notes:
+            produced = leaf.produces.get("release-notes", ())
+            notes = artifacts[produced[0]].path if produced and produced[0] in artifacts else ""
+    tail = (f'echo "dry run: no draft, no tag pushed, nothing published. The notes for $RELEASE_VERSION:"\n'
+            f"cat {shlex.quote(notes)}\n" if notes else 'echo "dry run: nothing published for $RELEASE_VERSION"\n')
+    steps.append(Step(verbatim={"name": "What a release would have published (dry run)", "if": _DRY_RUN,
+                                "run": tail}))
+    return (Job(name=RELEASE_JOB, runs_on=workflow.rollout_runs_on, steps=tuple(steps),
+                extras={"env": {RELEASE_ENV: "${{ inputs.version }}", **workflow.rollout_env}}),)
+
+
 def _rollout_note(stage: "Stage", env: object) -> str:
     """What the generated job says about itself, because a reader of the file has neither half."""
     receives = getattr(env, "deploys", "")
@@ -1151,7 +1226,9 @@ def render(workflow: Workflow, *, manifest: Manifest, product: str, source: str,
         lines += _key_and_value(key, value, "")
     lines.append("")
     lines.append("jobs:")
-    jobs = (*_rollout(workflow, environments), *workflow.jobs)
+    if workflow.release and artifacts is None:
+        artifacts = artifactsection.declared(context.current().manifest_data())
+    jobs = (*_rollout(workflow, environments), *_release(workflow, manifest, artifacts or {}), *workflow.jobs)
     expanded = {job.name: _expanded(job, manifest, f"workflow '{workflow.key}', job '{job.name}'") for job in jobs}
     runs = [handoff.Run(job.name,
                         tuple(_leaves(manifest, step, f"workflow '{workflow.key}', job '{job.name}', step {at + 1}")

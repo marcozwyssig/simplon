@@ -2367,3 +2367,211 @@ def test_a_workflow_without_release_still_writes_its_own_trigger():
             jobs: { a: { runs-on: x, steps: [{ run: y }] } }
         """))
     assert "`release:`" in str(exc.value)
+
+
+# --- si#490 Task 3: the derived release job ---------------------------------------------------------------
+
+_RELEASE_PRODUCT = """
+product: app
+artifacts:
+  app: { kind: image, registry: ghcr.io/o, repository: app, dockerfile: Dockerfile, context: . }
+  app-checked: { kind: test-result, path: build/test/app.json }
+  app-notes: { kind: release-notes, path: build/release/notes.md }
+  app-tag: { kind: tag }
+  app-gh: { kind: github-release }
+  app-release: { kind: release }
+ci:
+  build:
+    commands:
+      build-image: { task: "build:image", produces: { image: app }, with: { tag: "" } }
+  test:
+    commands:
+      test-image: { task: "test:image", consumes: { image: app }, produces: { test-result: app-checked },
+                    with: { tag: "" } }
+  release:
+    commands:
+      unpublished: { task: "release:github-unpublished" }
+      notes: { task: "release:notes", produces: { release-notes: app-notes } }
+      draft: { task: "release:github-draft", consumes: { release-notes: app-notes } }
+      publish: { task: "release:image", consumes: { image: app, evidence: [app-checked] } }
+      tag: { task: "release:tag", consumes: { release-notes: app-notes }, produces: { tag: app-tag } }
+      gh-publish: { task: "release:github-publish", produces: { github-release: app-gh } }
+      all:
+        depends_on: [unpublished, notes, draft, build-image, test-image, publish, tag, gh-publish]
+        passes: [tag]
+        produces: { release: app-release }
+        stop_on_failure: true
+        help: "The release."
+"""
+
+_RELEASE_WORKFLOWS = """
+workflows:
+  rel:
+    release: release all
+    runner: { kind: github-ubuntu }
+    jobs:
+      announce:
+        runs-on: ubuntu-latest
+        needs: release
+        steps: [{ run: echo released }]
+"""
+
+
+def _release_text(product: str = _RELEASE_PRODUCT, workflows: str = _RELEASE_WORKFLOWS) -> str:
+    loaded = manifest_mod.load(product, catalogue=catalogue_mod.load(), manifest_path="app.yaml")
+    data = {**yaml.safe_load(product), **_section(workflows)}
+    from simplon.manifest import artifactsection
+    return workflowgen.render(workflowgen.parse(data)[0], manifest=loaded, product="app", source="app.yaml",
+                              artifacts=artifactsection.declared(data))
+
+
+def _release_steps(text: str) -> list[dict]:
+    return yaml.safe_load(text)["jobs"]["release"]["steps"]
+
+
+def _runs(text: str) -> list[str]:
+    found: list[str] = []
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "run":
+                    found.append(str(value))
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+    walk(yaml.safe_load(text))
+    return found
+
+
+def test_release_workflow_matches_its_golden():
+    golden = ROOT / "src" / "tests" / "fixtures" / "workflows" / "release.golden.yml"
+    assert _release_text() == golden.read_text(encoding="utf-8")
+
+
+def test_release_workflow_parses_as_yaml():
+    doc = yaml.safe_load(_release_text())
+    # YAML 1.1 reads the bare word `on` as a boolean: the trigger is under True, which is what GitHub reads.
+    assert "workflow_dispatch" in doc[True], "the trigger must land under the key YAML 1.1 gives `on:`"
+    assert list(doc["jobs"]) == ["release", "announce"]
+    assert doc["jobs"]["release"]["env"]["RELEASE_VERSION"] == "${{ inputs.version }}"
+
+
+def test_no_dispatch_input_inside_a_run_script():
+    assert not [run for run in _runs(_release_text()) if "${{ inputs." in run]
+
+
+def test_release_workflow_passes_actionlint(tmp_path):
+    import shutil
+    import subprocess
+    if shutil.which("actionlint") is None:
+        pytest.skip("actionlint is not on PATH")
+    target = tmp_path / ".github" / "workflows" / "rel.yml"
+    target.parent.mkdir(parents=True)
+    target.write_text(_release_text(), encoding="utf-8")
+    done = subprocess.run(["actionlint", str(target)], capture_output=True, text=True)
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
+def _leaf_steps(text: str) -> dict[str, dict]:
+    """The command steps by the command they run (`./app.sh release tag ...` -> `release tag`)."""
+    return {" ".join(step["run"].split()[1:3]): step for step in _release_steps(text)
+            if str(step.get("run", "")).startswith("./app.sh ")}
+
+
+def test_a_dry_run_skips_exactly_the_publishing_leaves():
+    steps = _leaf_steps(_release_text())
+    skipped = {name for name, step in steps.items() if step.get("if") == "${{ !inputs.dry_run }}"}
+    assert skipped == {"release draft", "release publish", "release tag", "release gh-publish"}
+    assert _release_steps(_release_text())[-1]["if"] == "${{ inputs.dry_run }}"
+
+
+def test_only_token_leaves_see_the_token():
+    steps = _leaf_steps(_release_text())
+    tokened = {name for name, step in steps.items() if "GITHUB_TOKEN" in (step.get("env") or {})}
+    assert tokened == {"release unpublished", "release draft", "release publish", "release gh-publish"}
+    assert "GITHUB_TOKEN" not in yaml.safe_load(_release_text())["jobs"]["release"]["env"]
+
+
+def test_the_version_goes_to_the_leaves_that_take_it_unpinned():
+    steps = _leaf_steps(_release_text())
+    assert steps["release tag"]["run"].endswith('"$RELEASE_VERSION"')
+    assert '--tag "$RELEASE_VERSION"' in steps["release notes"]["run"]
+    assert "RELEASE_VERSION" not in steps["build build-image"]["run"]  # pinned with `with:`
+
+
+def test_without_a_notes_leaf_the_tail_prints_only_its_line():
+    product = (_RELEASE_PRODUCT.replace("[unpublished, notes, draft,", "[unpublished,")
+               .replace('      draft: { task: "release:github-draft", consumes: { release-notes: app-notes } }\n', "")
+               .replace("tag: { task: \"release:tag\", consumes: { release-notes: app-notes }, ",
+                        "tag: { task: \"release:tag\", "))
+    tail = _release_steps(_release_text(product))[-1]["run"]
+    assert "cat" not in tail and "nothing published" in tail
+
+
+@pytest.mark.parametrize("change, complaint", [
+    (("release: release all", "release: release nothing"), "release nothing"),
+    (("release: release all", "release: release notes"), "names 'release notes', which is not a release aggregate"),
+])
+def test_a_release_names_an_aggregate_the_manifest_has(change, complaint):
+    with pytest.raises(ValueError, match=re.escape(complaint)):
+        _release_text(workflows=_RELEASE_WORKFLOWS.replace(*change))
+
+
+def test_a_release_aggregate_that_passes_no_tag_is_refused():
+    with pytest.raises(ValueError, match="the version would reach no command"):
+        _release_text(_RELEASE_PRODUCT.replace("        passes: [tag]\n", ""))
+
+
+def test_a_leaf_that_cannot_run_unattended_is_refused():
+    product = _RELEASE_PRODUCT.replace('unpublished: { task: "release:github-unpublished" }',
+                                       'unpublished: { task: "release:github-unpublished", unattended: false }')
+    with pytest.raises(ValueError, match="cannot run in the release job unattended"):
+        _release_text(product)
+
+
+def _cut_and_stamp(text: str) -> list[str]:
+    named = {step.get("name"): step for step in _release_steps(text)}
+    return [named["Cut the tag in this checkout"]["run"], named["The build will be stamped with the version"]["run"]]
+
+
+@pytest.mark.parametrize("case", ["fresh", "rerun", "unequal", "hostile"])
+def test_the_cut_and_the_stamp_run_in_bash(tmp_path, case):
+    """Review Focus 1 and 4: a re-run after the tag push must reach `release:tag` (a plain `git tag` fails
+    with rc 128 on the fetched tag), and a hostile version is one quoted argument that git refuses."""
+    import subprocess
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / "f").write_text("1")
+    subprocess.run([*git, "add", "f"], check=True)
+    subprocess.run([*git, "commit", "-qm", "one"], check=True)
+    version = "v1.0.0; touch pwned" if case == "hostile" else "v1.0.0"
+    if case == "rerun":
+        subprocess.run([*git, "tag", "v1.0.0"], check=True)
+    if case == "unequal":
+        (repo / "f").write_text("dirty")
+    rcs = []
+    for script in _cut_and_stamp(_release_text()):
+        done = subprocess.run(["bash", "-e", "-c", script], cwd=repo, capture_output=True, text=True,
+                              env={"PATH": "/usr/bin:/bin", "RELEASE_VERSION": version, "HOME": str(tmp_path)})
+        rcs.append((done.returncode, done.stdout + done.stderr))
+        if done.returncode:
+            break
+    if case in ("fresh", "rerun"):
+        assert [rc for rc, _ in rcs] == [0, 0], rcs
+    elif case == "unequal":
+        assert rcs[-1][0] == 1 and "::error::the build would be stamped" in rcs[-1][1], rcs
+    else:
+        assert rcs[-1][0] != 0, rcs
+        assert not (repo / "pwned").exists() and not (tmp_path / "pwned").exists()
+
+
+def test_a_passed_parameter_the_dispatch_cannot_fill_is_refused():
+    """Review Focus 3, as it turned out (ruling of si#490 Task 3): a dispatch carries the version only, so
+    a second passed parameter would reach its leaves empty - or, handed the version, wrong."""
+    product = _RELEASE_PRODUCT.replace("        passes: [tag]\n", "        passes: [tag, name]\n")
+    with pytest.raises(ValueError, match="passes name, and a dispatch carries only the version"):
+        _release_text(product)
