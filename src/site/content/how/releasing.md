@@ -316,3 +316,31 @@ $ ./myctl.sh release tag v1.4.0        # the release
 ```
 
 Notice what is not on that list: editing a version number. There is nowhere to edit one.
+
+## A dispatch release that stopped half-way
+
+A workflow declared with [`release:`](../manifest/) runs the release as one job, started by dispatch. It
+publishes in steps (draft, tag, image, publish), and a run can stop between any two. **A re-run of the
+same run is safe**, and that is the answer to most of the cases below. The draft an earlier attempt left
+is reused. A tag already on origin at this commit is resumed rather than cut again. The release is
+published once, at the end.
+
+- **The tag was pushed, then `release:image` failed.** Re-run.
+- **The image was pushed, then the publish failed.** Re-run: the image is rebuilt and pushed again,
+  which costs a full release's runner time. Running only the publish command by hand avoids that.
+- **The default branch moved after the tag was pushed.** Re-run the same run: it finishes on its own
+  commit. A *new* dispatch is refused, because the tag is at another commit. Alternatively, delete the
+  tag and the draft.
+- **A check fails only after the tag was pushed** (flaky, or dependent on the environment). The re-run
+  fails the same way. Delete the tag and the draft, or release the next version.
+- **The run was cancelled between the tag push and the publish.** Re-run.
+- **A draft was abandoned.** A draft is not public. Delete it by hand.
+
+A **dry run** (the default) builds and checks everything and publishes nothing. Every step whose task
+declares `publishes: true` is skipped, and the last step prints the notes the release would have carried.
+A publishing task that forgot the field would run on a rehearsal, which is why the catalogue's own
+release tasks are held to it by a test.
+
+`release:check` (si#487) will refuse a malformed version or a commit `main` does not carry *before*
+anything is built. Until it lands, those runs go red at the notes or at the stamping check instead, and
+nothing has been published yet when they do.
