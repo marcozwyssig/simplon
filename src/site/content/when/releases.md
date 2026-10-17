@@ -65,7 +65,7 @@ container route stops when the two differ.
    the other kind still reads, as its empty value, with a `CompatWarning` until 0.34.0:
 
    ```
-   CompatWarning: AggregateCommand.impl is not a field of a AggregateCommand; it reads as empty until
+   CompatWarning: AggregateCommand.impl is not a field of AggregateCommand; it reads as empty until
    simplon 0.34.0 removes it - ask isinstance(command, TaskCommand) instead
    ```
 

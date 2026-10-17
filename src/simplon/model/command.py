@@ -228,6 +228,6 @@ def _warn(command: Command, name: str, reads: str) -> None:
     major, minor = COMPAT_DUE_AFTER
     # stacklevel 3: past this helper and `__getattr__`, at the consumer's read
     warnings.warn(
-        f"{kind}.{name} is not a field of a {kind}; it {reads} until simplon {major}.{minor + 1}.0 removes "
+        f"{kind}.{name} is not a field of {kind}; it {reads} until simplon {major}.{minor + 1}.0 removes "
         f"it - ask isinstance(command, TaskCommand) instead", CompatWarning, stacklevel=3)
 
