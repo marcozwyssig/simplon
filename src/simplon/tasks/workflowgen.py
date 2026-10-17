@@ -55,6 +55,7 @@ TWO MEASURED TRAPS, both live in this file.
 from __future__ import annotations
 
 import difflib
+import re
 import shlex
 import textwrap
 from collections.abc import Mapping, Sequence
@@ -175,7 +176,27 @@ class Step(NamedTuple):
     #: the resolved command line, with the name checked against what the command actually declares - the
     #: same join `command:` already is, one level in. A workflow can no longer pass a parameter that does
     #: not exist, which a hand-typed `run:` line could and did.
-    params: Mapping[str, str] = {}
+    params: "Mapping[str, str | EnvValue]" = {}
+
+
+@dataclass(frozen=True)
+class EnvValue:
+    """A `params:` value that NAMES an environment variable, `{ env: RELEASE_VERSION }` (si#488).
+
+    Rendered as `"$RELEASE_VERSION"`: GitHub interpolates nothing into the script, the shell expands the
+    variable, and the double quotes keep whatever it holds one argument. It is how a dispatch input
+    reaches a command - through a job's `env:`, never as `${{ inputs.* }}` inside a `run:` line, which is
+    the script injection `_rollout` refuses to write. A plain `$NAME` value would not do it: it is
+    shell-quoted like any literal and reaches the command as the five characters `$NAME`."""
+
+    name: str
+
+
+#: The variables a runner sets with no `env:` of the workflow's - GitHub's own defaults. An `{ env: }` value
+#: naming one needs no declaration; any other name must be set by the step, the job or the workflow.
+GITHUB_SETS = re.compile(r"(GITHUB_|RUNNER_)[A-Z0-9_]+|CI")
+
+_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 @dataclass(frozen=True)
@@ -684,7 +705,7 @@ def _step(item: object, where: str) -> Step:
         if not isinstance(raw, Mapping):
             raise ValueError(f"{where}: `params:` must map parameter names to values, not "
                              f"{type(raw).__name__}")
-        params = {str(k): str(v) for k, v in raw.items()}
+        params = {str(k): _param_value(v, where=f"{where}, `params: {k}`") for k, v in raw.items()}
         return Step(command=command, modifiers=rest, note=note, params=params)
     if not rest:
         raise ValueError(f"{where}: declares neither `command:` nor a verbatim GitHub step")
@@ -694,8 +715,38 @@ def _step(item: object, where: str) -> Step:
     return Step(verbatim=rest, note=note)
 
 
+def _param_value(value: object, *, where: str) -> "str | EnvValue":
+    """One `params:` value: a scalar as its text, or `{ env: NAME }` as an `EnvValue`.
+
+    Anything else is REFUSED, and that is a defect si#488 found rather than a rule it added: a list or a
+    mapping used to pass through `str()`, so `{ env: X }` written before this form existed rendered as the
+    text of a Python dict - a command handed `{'env': 'X'}` as its tag, with the manifest looking right."""
+    if isinstance(value, Mapping):
+        if set(value) == {"env"}:
+            named = value["env"]
+            if not isinstance(named, str) or not _ENV_NAME.fullmatch(named):
+                raise ValueError(f"{where}: `env: {named!r}` is not an environment variable name - letters, "
+                                 f"digits and `_`, not starting with a digit")
+            return EnvValue(named)
+    elif isinstance(value, (str, int, float)):          # bool is an int; it renders as YAML read it
+        return str(value)
+    raise ValueError(f"{where}: the value must be a scalar or `{{ env: NAME }}`, not {value!r} - a "
+                     f"{type(value).__name__} would reach the command as its Python text")
+
+
+def _rendered(value: "str | EnvValue") -> str:
+    """A value as the shell receives it: a literal shell-quoted, a variable double-quoted (si#488)."""
+    return f'"${value.name}"' if isinstance(value, EnvValue) else shlex.quote(value)
+
+
+def _names(env: object) -> "frozenset[str]":
+    """The variable names an `env:` mapping sets; none for anything else."""
+    return frozenset(str(k) for k in env) if isinstance(env, Mapping) else frozenset()
+
+
 def _parameters(manifest: Manifest, group: str, name: str,
-                params: "Mapping[str, str]", *, where: str) -> str:
+                params: "Mapping[str, str | EnvValue]", *, where: str,
+                env: "frozenset[str]" = frozenset()) -> str:
     """`{"version": "1.4.0"}` -> ` --version 1.4.0`, with the name checked against the command.
 
     THE JOIN si#40 IS ABOUT, one level in. A workflow may only run a command the manifest declares, and
@@ -730,9 +781,15 @@ def _parameters(manifest: Manifest, group: str, name: str,
     signature = {p.name: p for p in signatures.bindable(body)}
     reads_positionally = {key for key in params
                           if key in signature and signatures.positional(signature[key], declared[key])}
-    options = [f"--{key.replace('_', '-')} {shlex.quote(str(value))}"
+    for key, value in params.items():
+        if isinstance(value, EnvValue) and value.name not in env and not GITHUB_SETS.fullmatch(value.name):
+            raise ValueError(
+                f"{where}: `params: {key}` reads ${value.name}, and {value.name} is set by no `env:` of this "
+                f"step, its job or the workflow, nor by GitHub - it would expand to nothing and the command "
+                f"would run as if no value were given. Set it in an `env:`")
+    options = [f"--{key.replace('_', '-')} {_rendered(value)}"
                for key, value in params.items() if key not in reads_positionally]
-    positionals = [shlex.quote(str(params[key])) for key in signature if key in reads_positionally]
+    positionals = [_rendered(params[key]) for key in signature if key in reads_positionally]
     # `--` before the positionals, so a value starting with `-` cannot be read as an option - the
     # convention an aggregate's `passes:` already follows, built by the same function.
     return " " + " ".join(signatures.command_line(options, positionals))
@@ -1029,7 +1086,8 @@ def render(workflow: Workflow, *, manifest: Manifest, product: str, source: str,
     handoffs = handoff.plan(workflow.key, runs, artifacts or {})
     for job in jobs:
         lines += _render_job(job, expanded=expanded[job.name], crossing=handoffs[job.name],
-                             artifacts=artifacts or {}, manifest=manifest, product=product, workflow=workflow.key)
+                             artifacts=artifacts or {}, manifest=manifest, product=product, workflow=workflow.key,
+                             workflow_env=_names(workflow.extras.get("env")))
     text = "\n".join(lines).rstrip("\n") + "\n"
 
     validate(text, where=f"workflow '{workflow.key}'")
@@ -1169,7 +1227,7 @@ def _receive(artifact: str) -> tuple[Step, Step]:
 
 def _render_job(job: Job, *, expanded: Sequence[Step], crossing: "handoff.Handoff",
                 artifacts: "Mapping[str, artifactsection.Declared]", manifest: Manifest, product: str,
-                workflow: str) -> list[str]:
+                workflow: str, workflow_env: "frozenset[str]" = frozenset()) -> list[str]:
     where = f"workflow '{workflow}', job '{job.name}'"
     steps: list[Step] = []
     for at, step in enumerate(expanded):
@@ -1228,7 +1286,9 @@ def _render_job(job: Job, *, expanded: Sequence[Step], crossing: "handoff.Handof
             line = f"{launcher(product)} {group.replace('.', ' ')} {name}"
             body = {**step.modifiers,
                     "run": line + _parameters(manifest, group, name, step.params,
-                                              where=f"{where}, step {index + 1}")}
+                                              where=f"{where}, step {index + 1}",
+                                              env=workflow_env | _names(job.extras.get("env"))
+                                              | _names(step.modifiers.get("env")))}
             lines += _dumped_step(body, "      ")
         else:
             lines += _dumped_step(step.verbatim or {}, "      ")

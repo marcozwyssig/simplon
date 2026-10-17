@@ -315,6 +315,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("runners", "_labels", "is a label or a list of labels"): DIAGNOSIS,
     ("workflowgen", "_job", "cannot be handed an interpreter"): DIAGNOSIS,
     ("workflowgen", "_with_runner_env", "is a mapping of name -> value"): DIAGNOSIS,
+    # si#488: a `params:` value is a scalar or `{ env: NAME }`. A list or another mapping used to reach the
+    # command as its Python text, so neither refusal costs a working product anything
+    ("workflowgen", "_param_value", "is not an environment variable name"): DIAGNOSIS,
+    ("workflowgen", "_param_value", "must be a scalar or"): DIAGNOSIS,
     # THE TWO THAT COST SOMETHING, and both cost the same thing: a manifest that said a fact twice.
     # Either would have produced a WORKING file - one of the two values wins and the workflow runs -
     # which is exactly the test CLAUDE.md sets, so they are expression rules and they owe the three
