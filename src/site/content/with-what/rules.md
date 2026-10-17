@@ -71,9 +71,18 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 241 | nothing - the declaration had no working meaning |
-| expression rule | 38 | something it could otherwise have said |
-| **all load-time refusals** | **279** | |
+| diagnosis | 243 | nothing - the declaration had no working meaning |
+| expression rule | 39 | something it could otherwise have said |
+| **all load-time refusals** | **282** | |
+
+si#489 added two diagnoses and one expression rule, all on a release aggregate. With
+`release:github-publish` in its plan, the **published release** is the public statement, not the tag. So
+the tag may be pushed before the image, every publish comes before the GitHub publish, and so does the
+tag, which the publish needs on origin. A publish after it would announce a push that has not happened, and
+a tag after it is a release that never publishes: both are diagnoses. The expression rule is that **the
+aggregate makes its bundle**: no member may produce the artifact the aggregate names as its `release:`. Such a
+plan would run, and only the model export broke on it. Measured first, it reaches nothing: of the eight
+reachable manifests only simplon's declares a release aggregate, and no member produces its bundle.
 
 si#467 added seven diagnoses and no expression rule. They come with `launcher: env: pass:`, the names
 forwarded by name into the kernel's container. A section, `env:` or `pass:` of the wrong shape, and an
@@ -152,7 +161,7 @@ Self-binding is not a third bucket of refusals; it is how far an expression rule
 
 | reach | count | meaning |
 | --- | --- | --- |
-| the kernel is held to it too | 31 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
+| the kernel is held to it too | 32 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
 | a statement about the platform/product seam | 7 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
 | the kernel exempts itself | 0 | there is no longer a rule the kernel declines to apply to itself |
 

@@ -693,6 +693,16 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("ports", "_check_bundles", "declare it with `kind: release`"): DIAGNOSIS,
     ("ports", "_check_bundles", "the bundle is a `kind: release`"): DIAGNOSIS,
     ("ports", "_check_bundles", "a tag cut before"): DIAGNOSIS,
+    # si#489: with `release:github-publish` in the plan the PUBLISHED release is the statement. A publish
+    # after it announces a push that has not happened - the same kind as "a tag cut before" above - and a
+    # tag after it is a release `release:github-publish` refuses to publish at run time: both DIAGNOSIS.
+    ("ports", "_check_bundles", "with a draft release the published release is the public statement"): DIAGNOSIS,
+    ("ports", "_check_bundles", "refuses a tag origin does not carry"): DIAGNOSIS,
+    # si#489: the aggregate makes its bundle, so no member produces it. The plan would RUN - only the model
+    # export breaks - so a product loses a way to say something that worked: EXPRESSION. Measured before it
+    # shipped: of the eight reachable manifests only simplon's declares a release aggregate, and its bundle
+    # `kernel-release` is produced by no member. Decided by Marco on 2026-10-17.
+    ("ports", "_check_bundles", "the aggregate makes its bundle"): EXPRESSION,
     # final review of si#344 C.3: an order the load checks is only an order the run keeps if a failed
     # member stops the plan. A release aggregate that may not say `stop_on_failure: false` - expression.
     ("ports", "_check_bundles", "leaves `stop_on_failure` false"): EXPRESSION,
@@ -1008,6 +1018,7 @@ REACH: dict[tuple[str, str, str], str] = {
     ("load", "_command", "only an aggregate under `ci: release:` does"): REACH_MERGED,
     ("load", "_command", "a release aggregate names exactly"): REACH_MERGED,
     ("ports", "_check_bundles", "leaves `stop_on_failure` false"): REACH_MERGED,
+    ("ports", "_check_bundles", "the aggregate makes its bundle"): REACH_MERGED,
     # si#5's one expression rule. MERGED: this kernel's own manifest goes through the same parser, so a
     # stray key under a carrier of simplon's own would be refused exactly the same way. It declares no
     # carrier today, which is why the claim is about the parser rather than about a placement.
