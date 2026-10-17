@@ -211,7 +211,7 @@ PACKAGES = frozenset({"tasks"})
 #: across: which simplon is answering, and what the layers above tell a run. `cli.main` registers the host;
 #: a product has no reason to import either.
 INTERNAL = frozenset({
-    "adapters.diskguard", "adapters.oras", "adapters.tools", "cli.bootstrap",
+    "adapters.diskguard", "adapters.github", "adapters.oras", "adapters.tools", "cli.bootstrap",
     "manifest.catalogue", "manifest.clitaxonomy", "manifest.launcherenv", "manifest.manifestmodel", "manifest.ports", "manifest.runners",
     "manifest.signatures", "manifest.yamlkeys", "kernel.moved", "kernel.provenance", "kernel.runhost", "kernel.steplog", "test_impls",
 })

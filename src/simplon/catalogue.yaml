@@ -642,9 +642,10 @@ tasks:
   # may want both, one, or neither, and a public repository has a third answer - what its licence lets it
   # hand out is not the kernel's to assume, which is the whole reason this is offered and not placed.
   #
-  # `gh` rather than a GitHub client, and the reason is a dependency and not a taste: create-if-absent and
+  # `gh` rather than the kernel's GitHub client (`adapters.github`, si#486): create-if-absent and
   # replace-if-present are one flag each in `gh`, and twenty lines of PyGithub plus a content-type table
-  # in the product this was ported from. See src/simplon/tasks/asset.py.
+  # in the product this was ported from. The dependency argument this once also made is withdrawn - see
+  # src/simplon/tasks/asset.py.
   release:asset:
     help: "Attach declared files to a GitHub release, creating it if it is not there yet."
     unattended: true

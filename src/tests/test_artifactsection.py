@@ -20,7 +20,7 @@ from test_manifest import _OK
 
 PARENTS = artifactschema.REFINES
 PRODUCTS = sorted(p.stem for p in (realmanifests.FIXTURES / "golden").glob("*.json"))
-KINDS = "artifact, image, directory, file, site, nuget, maven, conan, test-result, release-notes, tag, release"
+KINDS = "artifact, image, directory, file, site, nuget, maven, conan, test-result, release-notes, tag, release, github-release"
 
 
 @pytest.mark.parametrize("wanted,kind,accepted", [

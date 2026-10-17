@@ -316,7 +316,9 @@ def _check_fans(manifest: "Manifest", aggregate: str, node: PlanNode, made: Mapp
 
 #: The kinds a release produces about itself (si#344 C.3, decided 2026-10-14). The release rule asks for test
 #: results about every OTHER artifact a release command consumes: the notes, the tag, the bundle and the
-#: evidence itself are not what a release publishes.
+#: evidence itself are not what a release publishes. Matched by REFINEMENT, so `github-release` (which refines
+#: `release`, si#486) is one too: the first command that consumes a GitHub Release is asked no test result
+#: about it - recorded on si#449, whose package managers would be that consumer.
 OWN_KINDS = ("test-result", "release-notes", "tag", "release")
 
 

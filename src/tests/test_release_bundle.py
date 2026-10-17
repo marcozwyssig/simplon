@@ -203,3 +203,60 @@ def test_every_refusal_the_manifest_page_quotes_is_the_real_message(rule, functi
     # assert
     assert quoted, f"the page quotes no refusal under rule {rule} - the extraction no longer finds them"
     assert unmatched == []
+
+
+# --- si#486: `github-release` refines `release` ----------------------------------------------------------
+# Decided by Marco on 2026-10-17: a GitHub Release IS a release bundle. These pin what that touches.
+
+GH = HEAD.replace("  app-release: { kind: release }\n",
+                  "  app-release: { kind: release }\n  app-gh: { kind: github-release }\n") + \
+    "      gh-publish: { task: \"release:github-publish\", produces: { github-release: app-gh } }\n"
+
+
+def test_a_github_release_produced_by_a_leaf_is_in_the_model_export():
+    # arrange: `app-gh` is produced by a leaf and named by no aggregate
+    import yaml
+    from simplon.manifest import manifestmodel
+
+    # act
+    text = manifestmodel.export(_load(GH), yaml.safe_load(GH), "demo", manifestmodel.KERNEL_SECTIONS)
+
+    # assert: the skip at manifestmodel's `release` refinement must not drop an artifact no aggregate composes
+    assert '"app-gh"' in text, "a release-refining artifact no aggregate names vanished from the model"
+
+
+def test_an_aggregate_may_name_a_github_release_as_its_bundle():
+    # act
+    loaded = _load(GH + "      all: { depends_on: [notes, publish, tag], help: 'h', stop_on_failure: true, "
+                        "produces: { release: app-gh } }\n")
+
+    # assert
+    spec = loaded.spec_for("release", "all")
+    assert isinstance(spec, ReleaseCommand) and spec.release == "app-gh"
+
+
+BOTH = GH + ("      all: { depends_on: [notes, publish, tag, gh-publish], help: 'h', stop_on_failure: true, "
+             "produces: { release: app-gh } }\n")
+
+
+def test_an_aggregate_whose_bundle_its_publish_leaf_produces_loads():
+    # act / assert: measured on si#486 - the loader has no one-producer rule that refuses it
+    assert _load(BOTH).spec_for("release", "all").release == "app-gh"
+
+
+@pytest.mark.xfail(strict=True, reason="si#489: whether an aggregate's bundle may be its publish leaf's output "
+                                       "is undecided, and the export then references a bundle it composed elsewhere")
+def test_the_export_of_a_bundle_its_leaf_produces_references_only_what_it_declares():
+    # arrange
+    import re
+
+    import yaml
+    from simplon.manifest import manifestmodel
+
+    # act
+    text = manifestmodel.export(_load(BOTH), yaml.safe_load(BOTH), "demo", manifestmodel.KERNEL_SECTIONS)
+
+    # assert: every product.demo.demo.a_<x> a command produces is declared at the product's own level
+    produced = set(re.findall(r"produces = product\.demo\.demo\.(a_\w+)", text))
+    declared = set(re.findall(r"^  artifacts (a_\w+) typeOf", text, re.MULTILINE))
+    assert produced <= declared, produced - declared

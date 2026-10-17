@@ -84,7 +84,7 @@ def test_every_selector_relation_answers_what_the_fixture_says(demo, selector, e
 
 
 @needs_docker
-def test_the_vocabulary_is_twelve_kinds_each_reaching_artifact_and_refining_only_within_itself():
+def test_the_vocabulary_is_thirteen_kinds_each_reaching_artifact_and_refining_only_within_itself():
     # arrange / act: spec B.2 - one root, and every other kind reaches it. `ArtifactKind.refines` answers
     # the targets as one flat set, which says nothing about WHICH kind reaches the root; so each kind is
     # asked for its own parent and the chain is walked here (si#346's final review)
@@ -98,7 +98,7 @@ def test_the_vocabulary_is_twelve_kinds_each_reaching_artifact_and_refining_only
     # exported manifest) are left out of the count by the prefix filter on purpose
     root = "simplon.vocabulary.artifact"
     names = {n for n in kinds.split() if n.startswith("simplon.vocabulary.")}
-    assert len(names) == 12
+    assert len(names) == 13   # github-release joined in si#486, refining release
     assert root in names
     # every refines target, unfiltered, is inside the vocabulary: a target outside it is a failure here
     targets = set(refines.split())

@@ -155,6 +155,7 @@ MODULES: dict[str, tuple[str, ...]] = {
     "cli.__init__": ("launcher",),
     "tasks.artifact": ("artifacts",),
     "tasks.asset": ("assets",),
+    "tasks.githubrelease": ("artifacts",),
     "tasks.buildfiles": ("build",),
     "tasks.claudeplugins": ("claude",),
     "tasks.completion": (),          # hands the document to `completiongen.environments_of`
