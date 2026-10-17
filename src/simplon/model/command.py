@@ -61,7 +61,7 @@ class ParamPresentation(NamedTuple):
 #: write into every other command's answer too (final review of 4d).
 _EMPTY: Mapping[str, object] = MappingProxyType({})
 _OTHER_KIND: Mapping[str, object] = {
-    "impl": "", "task": "", "passthrough_args": False, "with_": _EMPTY, "params": _EMPTY, "produces": _EMPTY,
+    "impl": "", "task": "", "passthrough_args": False, "publishes": False, "token": "", "with_": _EMPTY, "params": _EMPTY, "produces": _EMPTY,
     "consumes": _EMPTY, "ports": (),
     "depends_on": (), "stop_on_failure": False, "parallel": False, "keep_awake": False, "passes": (),
     "release": "",
@@ -120,6 +120,11 @@ class TaskCommand(Command):
     impl: str = ""
     task: str = ""
     passthrough_args: bool = False
+    #: si#490: inherited from the task like `unattended` - `publishes` puts a derived release's dry run
+    #: past this leaf, `token: github` puts the run's GITHUB_TOKEN in its step's `env:` and no other step's
+    #: (the checkout's persisted credential is si#507's).
+    publishes: bool = False
+    token: str = ""
     with_: Mapping[str, object] = field(default_factory=dict)
     params: Mapping[str, ParamPresentation] = field(default_factory=dict)
     produces: Mapping[str, tuple[str, ...]] = field(default_factory=dict)

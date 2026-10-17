@@ -958,6 +958,53 @@ itself (`GITHUB_*`, `RUNNER_*`, `CI`). A name set nowhere would expand to nothin
 run as if no value were given, so generation refuses it. A `params:` value that is neither a scalar
 nor `{ env: NAME }` is refused too: it used to reach the command as its Python text.
 
+**`release:` on a workflow derives the whole dispatch release from a release aggregate** (si#490). The
+product names the aggregate and the machine:
+
+```yaml
+workflows:
+  release:
+    release: release all
+    runner: { kind: self-hosted-debian, labels: ghr-8 }
+```
+
+What the kernel writes:
+
+- **The trigger.** `on: workflow_dispatch` with `version` (required) and `dry_run` (default **true**).
+  There is no tag trigger: a release is started by a person who types the version.
+- **`permissions:`** `contents: write` and `packages: write`. A product's own `permissions:` adds scopes,
+  such as `id-token: write` for PyPI's Trusted Publishing, but it may not lower those two.
+- **`concurrency:`** One release per version, never cancelled in progress.
+- **One job, `release`.** It cuts the tag in the checkout, checks that `git describe` is the version, runs
+  the aggregate's leaves **in the plan's own order**, and ends with a dry-run step that prints the notes.
+  The order is what rule 8 already checked at load, so the workflow orders nothing itself.
+
+The version reaches each leaf that takes `tag` unpinned as `"$RELEASE_VERSION"`, exactly as
+`release all --tag v1.4.0` would hand it on the command line. Two task fields decide the rest, and both
+come from the catalogue rather than from your manifest:
+
+- **`publishes: true`:** the task's act cannot be taken back, so a dry run skips its step;
+- **`token: github`:** the task authenticates to GitHub, so its step's `env:`, and no other step's,
+  carries the run's `GITHUB_TOKEN`. That is not yet isolation. The checkout every generated job starts
+  with persists the job token in `.git/config`, where any step can read it, and `release:tag`'s push relies
+  on it (si#507). A secret of your own goes in the workflow's `env:`, which every step of the job sees.
+
+Refused beside `release:`:
+
+- an `on:` (a second trigger would start a release with no version) and a `concurrency:`;
+- `flow:` (each derives its own trigger);
+- a job of your own called `release`;
+- an `env:` that sets `RELEASE_VERSION`.
+
+Refused at generation:
+
+- an aggregate that passes no `tag`, or passes a second parameter a dispatch cannot fill;
+- a leaf that is not `unattended: true`.
+
+Your own jobs may stand beside it and `needs: release`.
+[Cutting a release](../releasing/#a-dispatch-release-that-stopped-half-way) says how a run that stopped
+half-way is finished.
+
 **`derive:` on a step writes the pipeline the command tree already implies** (si#267). A step that
 declares it is not one step but a placeholder for however many the named groups carry:
 

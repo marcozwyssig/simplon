@@ -1,0 +1,96 @@
+# GENERATED from app.yaml by `app support workflows`. Do not edit.
+#
+# The steps below are the product's own commands, resolved against app.yaml's command tree, so
+# a command that is renamed or removed breaks generation instead of leaving a workflow calling
+# something that is gone. `--check` reports drift and returns 1.
+
+name: rel
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'The version to release, exactly as its tag will be: vX.Y.Z'
+        required: true
+        type: string
+      dry_run:
+        description: 'Rehearse: build and check everything, publish nothing'
+        required: true
+        type: boolean
+        default: true
+permissions:
+  contents: write
+  packages: write
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+
+  release:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      # The full history, and it is a precondition rather than an optimisation.
+      # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
+      # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
+      # by the generator rather than declared per job, so a workflow written later inherits the
+      # rule instead of somebody having to remember it.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Cut the tag in this checkout
+        run: |
+          there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
+          if [ -n "$there" ] && [ "$there" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::$RELEASE_VERSION already exists at $there, not at this commit; choose the next version"
+            exit 1
+          fi
+          git tag -d "$RELEASE_VERSION" >/dev/null 2>&1 || true
+          git tag "$RELEASE_VERSION"
+      - name: The build will be stamped with the version
+        run: |
+          described="$(git describe --tags --always --dirty)"
+          [ "$described" = "$RELEASE_VERSION" ] || {
+            echo "::error::the build would be stamped $described, not $RELEASE_VERSION"
+            exit 1
+          }
+      - env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./app.sh release unpublished --tag "$RELEASE_VERSION"
+      - run: ./app.sh release notes --tag "$RELEASE_VERSION"
+      - if: ${{ !inputs.dry_run }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./app.sh release draft --tag "$RELEASE_VERSION"
+      - run: ./app.sh build build-image
+      - run: ./app.sh test test-image
+      - if: ${{ !inputs.dry_run }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./app.sh release publish --tag "$RELEASE_VERSION"
+      - if: ${{ !inputs.dry_run }}
+        run: ./app.sh release tag -- "$RELEASE_VERSION"
+      - if: ${{ !inputs.dry_run }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./app.sh release gh-publish --tag "$RELEASE_VERSION"
+      - name: What a release would have published (dry run)
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "dry run: no draft, no tag pushed, nothing published. The notes for $RELEASE_VERSION:"
+          cat build/release/notes.md
+
+  announce:
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      # The full history, and it is a precondition rather than an optimisation.
+      # actions/checkout defaults to a shallow clone, which carries no tags at all - so anything
+      # that derives a version from one gets a wrong answer SILENTLY instead of an error. Emitted
+      # by the generator rather than declared per job, so a workflow written later inherits the
+      # rule instead of somebody having to remember it.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: echo released

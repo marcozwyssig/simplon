@@ -565,6 +565,9 @@ CENSUS: dict[tuple[str, str, str], str] = {
     # third on the way in, which is the defect this repository hunts, at the loader's own door.
     # `unattended: maybe` has no reading and neither does the quoted string "true".
     ("load", "_tri_state", "'unattended' is true or false, got"): DIAGNOSIS,
+    # si#490: the two task fields a derived release reads; a written value with no reading is refused.
+    ("load", "_strict_bool", "'publishes' is true or false, got"): DIAGNOSIS,
+    ("load", "_issuer", "'token' is github or absent, got"): DIAGNOSIS,
     ("load", "_reject_removed_composites", "which has been removed"): DIAGNOSIS,
     ("load", "_coerce_groups", "'groups' must be a mapping of group name"): DIAGNOSIS,
     ("load", "_coerce_groups", "must be a mapping of command name -> spec"): DIAGNOSIS,
@@ -955,6 +958,22 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("workflowgen", "_workflow", "declares no `on:` trigger"): DIAGNOSIS,
     ("workflowgen", "_workflow", "`jobs:` must be a non-empty mapping"): DIAGNOSIS,
     ("workflowgen", "_workflow", "so it cannot also declare"): DIAGNOSIS,
+    # si#490: `release:` derives the trigger, the concurrency and the job. Two refusals cost a statement a
+    # product could have made and that would have run - a second trigger, its own concurrency - and are
+    # expression rules (decision 1 of 2026-10-17, and the concurrency ruled with it). The rest name a
+    # declaration with no working reading: a release with no aggregate, a job name already taken, a version
+    # the job would shadow, a rollout and a release deriving two triggers, scopes the release needs lowered.
+    ("workflowgen", "_release_key", "and the trigger is derived from"): EXPRESSION,
+    ("workflowgen", "_release_key", "is derived from `{RELEASE_KEY}:` - one release per version"): EXPRESSION,
+    ("workflowgen", "_release_key", "names a release aggregate as <group> <name>"): DIAGNOSIS,
+    ("workflowgen", "_release_key", "and the derived job is named"): DIAGNOSIS,
+    ("workflowgen", "_release_key", "is the dispatch input's"): DIAGNOSIS,
+    ("workflowgen", "_release_key", "one workflow is a rollout or a release"): DIAGNOSIS,
+    ("workflowgen", "_release_extras", "is a mapping of scope -> level"): DIAGNOSIS,
+    # An EXPRESSION rule, not a diagnosis (final review of si#490): a release with no tag, no GitHub
+    # Release and no package push would have worked with `contents: read` - the spec lets an aggregate
+    # leave those leaves out - so lowering a scope is a statement that could have run.
+    ("workflowgen", "_release_extras", "is what "): EXPRESSION,
     ("workflowgen", "_job", "must be a mapping, not {type(spec)"): DIAGNOSIS,
     ("workflowgen", "_runs_on", "declares no `runs-on:`"): DIAGNOSIS,
     # si#266. Both are diagnosis: a list with a number in it, or a bool, is not a runner label in
@@ -1027,6 +1046,11 @@ REACH: dict[tuple[str, str, str], str] = {
     # the kernel's own CI job every time the workflows are generated.
     ("workflowgen", "_machine", "declares both"): REACH_MERGED,
     ("workflowgen", "_with_runner_env", "already sets"): REACH_MERGED,
+    # si#490. MERGED as a claim about the parser, like si#5's: this kernel's own release is `handwritten:`
+    # until si#491, and then its own `release:` workflow goes through exactly these two rules.
+    ("workflowgen", "_release_key", "and the trigger is derived from"): REACH_MERGED,
+    ("workflowgen", "_release_key", "is derived from `{RELEASE_KEY}:` - one release per version"): REACH_MERGED,
+    ("workflowgen", "_release_extras", "is what "): REACH_MERGED,
     ("carrierspec", "_block", "does not take"): REACH_MERGED,
     ("environments", "_repository", "does not take"): REACH_MERGED,
     ("environments", "_names", "may not name"): REACH_MERGED,

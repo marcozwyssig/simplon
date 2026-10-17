@@ -68,7 +68,7 @@ import yaml
 from simplon.manifest import artifactsection, context, runners, signatures
 from simplon.model import task
 from simplon.adapters import disk
-from simplon.model.command import TaskCommand
+from simplon.model.command import ReleaseCommand, TaskCommand
 from simplon.manifest.load import Manifest
 from simplon.tasks import handoff
 
@@ -245,9 +245,13 @@ class Workflow:
     #: WORKFLOW level because the kernel writes the jobs: there is no job for a product to put it on.
     rollout_runs_on: "str | tuple[str, ...] | Mapping[str, object]" = ""
     rollout_env: Mapping[str, object] = field(default_factory=dict)
+    #: The machine `runner:` named for a derived job, kept so its disk steps and note reach the job (si#327).
+    rollout_runner: "runners.Runner | None" = None
     jobs: tuple[Job, ...] = ()
     handwritten: str = ""
     extras: Mapping[str, object] = field(default_factory=dict)
+    #: si#490: the release aggregate's `<group> <name>`, when this workflow is its dispatch release.
+    release: str = ""
 
     @property
     def generated(self) -> bool:
@@ -329,7 +333,7 @@ def _workflow(key: str, body: object) -> Workflow:
     if handwritten:
         # A declined workflow must decline COMPLETELY. Carrying jobs beside the decline would leave two
         # readings of one entry and no way to tell which the author meant.
-        stray = sorted(k for k in ("jobs", "note", "name") if body.get(k) is not None)
+        stray = sorted(k for k in ("jobs", "note", "name", RELEASE_KEY) if body.get(k) is not None)
         if _declared_trigger(body, where) is not None:
             stray = sorted([*stray, "on"])
         if stray:
@@ -342,41 +346,121 @@ def _workflow(key: str, body: object) -> Workflow:
         # An EMPTY `handwritten:` is the case worth naming: it reads as a decline and behaves as none.
         raise ValueError(f"{where}: `handwritten:` must say why this file is not generated, not be empty")
 
-    trigger = _declared_trigger(body, where)
+    release = _release_key(body, where)
+    trigger = _declared_trigger(body, where) if not release else _RELEASE_TRIGGER
     if trigger is None:
         raise ValueError(
-            f"{where}: declares no `on:` trigger. The kernel does not invent one - whether a tag "
-            f"publishes, or a push runs the suite, is this product's statement and not something that "
-            f"can be derived from a command tree")
+            f"{where}: declares no `on:` trigger. The kernel derives one only for a `{RELEASE_KEY}:` "
+            f"workflow - otherwise whether a tag publishes, or a push runs the suite, is this product's "
+            f"statement and not something that can be derived from a command tree")
     # `flow:` AND `jobs:` TOGETHER ARE ALLOWED, and the refusal that stood here was struck for si#267's
     # reason: a product wanting the rollout plus a notification job of its own was saying something the
     # kernel could honour, and forbidding it sent them back to writing the whole file. The generated
     # stage jobs carry stable names (`deploy-<environment>`), so a product's own job hangs `needs:` on
     # one and the order stays the product's.
     stages = _stages(body, where)
-    runner, rollout_runs_on = ((None, "") if not stages
+    runner, rollout_runs_on = ((None, "") if not stages and not release
                                else _machine(body, body.get("runs-on") or body.get("runs_on"), where))
     rollout_env = _with_runner_env(runner, {}, where).get("env", {}) if runner is not None else {}
     jobs = body.get("jobs")
-    if not stages and (not isinstance(jobs, Mapping) or not jobs):
+    if not stages and not release and (not isinstance(jobs, Mapping) or not jobs):
         raise ValueError(
             f"{where}: `jobs:` must be a non-empty mapping of job name -> its declaration, or "
             f"`{FLOW_KEY}:` must name the environments this release is rolled out to")
 
     return Workflow(key=key, path=path, name=str(body.get("name") or key),
-                    note=str(body.get("note") or ""), on=trigger, flow=stages,
-                    rollout_runs_on=rollout_runs_on,
+                    note=str(body.get("note") or ""), on=trigger, flow=stages, release=release,
+                    rollout_runs_on=rollout_runs_on, rollout_runner=runner,
                     rollout_env=rollout_env if isinstance(rollout_env, Mapping) else {},
                     jobs=tuple(_job(str(name), spec, where)
                                for name, spec in (jobs or {}).items()) if isinstance(jobs, Mapping)
                          else (),
-                    extras=_workflow_extras(body))
+                    extras=_release_extras(body, where) if release else _workflow_extras(body))
 
 
 #: The workflow-level keys this module reads itself. Everything else GitHub allows at that level -
 #: `permissions:`, `concurrency:`, `defaults:`, `env:`, `run-name:` - is the PRODUCT's and is carried
 #: through, exactly as a job's unknown keys are.
 FLOW_KEY = "flow"
+
+# --- si#490: `release: <group> <name>` - the dispatch release, derived from a release aggregate ---------
+#
+# WHAT A RELEASE WORKFLOW DERIVES, and why the product writes none of it. A release is started by dispatch
+# with the version typed and a dry run by default (si#463 D2); the version reaches a script only through
+# the job's `env:` and a command only as `"$RELEASE_VERSION"` (si#488), never as `${{ inputs.* }}` inside a
+# `run:` line. The ORDER is the aggregate's: `plan_for` already returns it in the one order rule 8 accepts
+# (si#489), so nothing here orders anything.
+RELEASE_KEY = "release"
+RELEASE_JOB = "release"
+RELEASE_ENV = "RELEASE_VERSION"
+_RELEASE_TRIGGER: Mapping[str, object] = {"workflow_dispatch": {"inputs": {
+    "version": {"description": "The version to release, exactly as its tag will be: vX.Y.Z",
+                "required": True, "type": "string"},
+    "dry_run": {"description": "Rehearse: build and check everything, publish nothing",
+                "required": True, "type": "boolean", "default": True}}}}
+#: The scopes the release itself needs: `contents` to push the tag and write the GitHub Release, `packages`
+#: to push an image. A product may ADD scopes (simplon's PyPI publish needs `id-token: write`), never lower these.
+_RELEASE_PERMISSIONS: Mapping[str, str] = {"contents": "write", "packages": "write"}
+_RELEASE_CONCURRENCY: Mapping[str, object] = {"group": "${{ github.workflow }}-${{ inputs.version }}",
+                                              "cancel-in-progress": False}
+
+
+def _release_key(body: Mapping[object, object], where: str) -> str:
+    """The aggregate a release workflow derives from, or "" - with every key it derives refused beside it."""
+    value = body.get(RELEASE_KEY)
+    if value is None:
+        return ""
+    if not isinstance(value, str) or len(value.split()) < 2:
+        raise ValueError(
+            f"{where}: `{RELEASE_KEY}:` names a release aggregate as <group> <name> (e.g. `release all`), "
+            f"got '{value}'")
+    if _declared_trigger(body, where) is not None:
+        # EXPRESSION rule (si#490 decision 1): a second trigger would start a release with no `version`.
+        raise ValueError(
+            f"{where}: declares `on:`, and the trigger is derived from `{RELEASE_KEY}:` - a dispatch with the "
+            f"version and a dry run; remove `on:`")
+    if body.get("concurrency") is not None:
+        # EXPRESSION rule: two runs of one version must queue, never cancel each other mid-release.
+        raise ValueError(
+            f"{where}: `concurrency:` is derived from `{RELEASE_KEY}:` - one release per version, never "
+            f"cancelled in progress; remove it")
+    if body.get(FLOW_KEY) is not None:
+        raise ValueError(
+            f"{where}: declares `{FLOW_KEY}:` and `{RELEASE_KEY}:` - one workflow is a rollout or a release, "
+            f"not both, because each derives its own trigger; give each its own workflow")
+    jobs = body.get("jobs")
+    if isinstance(jobs, Mapping) and RELEASE_JOB in jobs:
+        raise ValueError(
+            f"{where}: declares a job '{RELEASE_JOB}', and the derived job is named '{RELEASE_JOB}' - "
+            f"rename yours; it can still `needs: {RELEASE_JOB}`")
+    env = body.get("env")
+    if isinstance(env, Mapping) and RELEASE_ENV in env:
+        raise ValueError(
+            f"{where}: sets {RELEASE_ENV} in `env:`, and {RELEASE_ENV} is the dispatch input's - the job "
+            f"sets it from `inputs.version`, and a second value would be shadowed with nobody told")
+    return " ".join(value.split())
+
+
+def _release_extras(body: Mapping[object, object], where: str) -> dict[str, object]:
+    """The derived `permissions`/`concurrency` first, then the product's own extras in their order.
+
+    `permissions:` is MERGED rather than refused (ruling of si#490 Task 2, measured): simplon's own release
+    needs `id-token: write` for PyPI's Trusted Publishing, and a closed set would make it inexpressible.
+    Lowering `contents`/`packages` stays refused, and that refusal is an EXPRESSION rule: a release with no
+    tag, no GitHub Release and no package push would have worked without them."""
+    own = _workflow_extras(body)
+    declared = own.pop("permissions", None) or {}
+    if not isinstance(declared, Mapping):
+        raise ValueError(
+            f"{where}: `permissions:` beside `{RELEASE_KEY}:` is a mapping of scope -> level, which is added "
+            f"to the scopes the release needs; got '{declared}'")
+    for scope, level in _RELEASE_PERMISSIONS.items():
+        if scope in declared and declared[scope] != level:
+            raise ValueError(
+                f"{where}: `permissions:` sets `{scope}: {declared[scope]}`, and `{scope}: {level}` is what "
+                f"the release needs - leave {scope} out, it is derived")
+    return {"permissions": {**_RELEASE_PERMISSIONS, **{str(k): v for k, v in declared.items()}},
+            "concurrency": dict(_RELEASE_CONCURRENCY), **own}
 
 
 class Stage(NamedTuple):
@@ -437,7 +521,7 @@ def _stages(body: Mapping[object, object], where: str) -> "tuple[Stage, ...]":
     return tuple(stages)
 
 
-_OWN_WORKFLOW_KEYS = frozenset({"path", "handwritten", "name", "note", "on", "jobs", FLOW_KEY, "runs-on", "runs_on", runners.KEY, True})
+_OWN_WORKFLOW_KEYS = frozenset({"path", "handwritten", "name", "note", "on", "jobs", FLOW_KEY, RELEASE_KEY, "runs-on", "runs_on", runners.KEY, True})
 
 
 def _workflow_extras(body: Mapping[object, object]) -> dict[str, object]:
@@ -770,17 +854,18 @@ def _parameters(manifest: Manifest, group: str, name: str,
         return ""
     spec = manifest.commands.get(group, {}).get(name)
     declared = dict(getattr(spec, "params", {}) or {})
+    # The BODY's signature counts as well as the presentation (final review of si#490): a product task
+    # may take a parameter it never describes under `params:`, and the CLI hands it one all the same.
+    signature = ({p.name: p for p in signatures.bindable(task.body_of(spec, where=where))}
+                 if isinstance(spec, TaskCommand) else {})
     for key in params:
-        if key not in declared:
+        if key not in declared and key not in signature:
             raise ValueError(
                 f"{where}: `{group.replace('.', ' ')} {name}` declares no parameter '{key}' - it takes "
-                f"{', '.join(sorted(declared)) or 'none'}. A workflow that passed one anyway would fail "
-                f"on a runner, with the manifest looking correct")
-    # `declared` is non-empty here, so `spec` is a leaf: only a TaskCommand carries `params:`.
-    body = task.body_of(cast(TaskCommand, spec), where=where)
-    signature = {p.name: p for p in signatures.bindable(body)}
+                f"{', '.join(sorted({*declared, *signature})) or 'none'}. A workflow that passed one anyway "
+                f"would fail on a runner, with the manifest looking correct")
     reads_positionally = {key for key in params
-                          if key in signature and signatures.positional(signature[key], declared[key])}
+                          if key in signature and signatures.positional(signature[key], declared.get(key))}
     for key, value in params.items():
         if isinstance(value, EnvValue) and value.name not in env and not GITHUB_SETS.fullmatch(value.name):
             raise ValueError(
@@ -863,6 +948,92 @@ def _rollout(workflow: "Workflow", registry: "Mapping[str, object] | None") -> "
             extras=extras))
         previous = name
     return tuple(jobs)
+
+
+#: si#490: the two scripts the release job runs before the plan, and its dry-run tail. The cut deletes a
+#: local copy first, because `fetch-depth: 0` fetches every tag: on a re-run after the tag push a plain
+#: `git tag` fails (rc 128, measured) and the run never reaches `release:tag`, which compares origin's tag
+#: with HEAD and either resumes or names the move. The stamp is firn's: the build reads the version off
+#: `git describe`, so a describe that is not the version is a build stamped with something else.
+#: A fetched tag at ANOTHER commit is refused here, before anything publishes and on a dry run too (final
+#: review of si#490): deleting it would let the image be pushed under a version that is already taken,
+#: and `release:tag` would refuse the move only after that push.
+RELEASE_CUT = ('there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"\n'
+               'if [ -n "$there" ] && [ "$there" != "$(git rev-parse HEAD)" ]; then\n'
+               '  echo "::error::$RELEASE_VERSION already exists at $there, not at this commit; choose the next version"\n'
+               '  exit 1\n'
+               'fi\n'
+               'git tag -d "$RELEASE_VERSION" >/dev/null 2>&1 || true\n'
+               'git tag "$RELEASE_VERSION"\n')
+RELEASE_STAMP = ('described="$(git describe --tags --always --dirty)"\n'
+                 '[ "$described" = "$RELEASE_VERSION" ] || {\n'
+                 '  echo "::error::the build would be stamped $described, not $RELEASE_VERSION"\n'
+                 '  exit 1\n'
+                 '}\n')
+_DRY_RUN = "${{ inputs.dry_run }}"
+_NOT_DRY_RUN = "${{ !inputs.dry_run }}"
+_TOKEN = {"GITHUB_TOKEN": "${{ secrets.GITHUB_TOKEN }}"}
+
+
+def _release(workflow: "Workflow", manifest: Manifest,
+             artifacts: "Mapping[str, artifactsection.Declared]") -> "tuple[Job, ...]":
+    """The one job a `release:` workflow derives: the cut, the stamp, the aggregate's plan, the dry-run tail.
+
+    NOTHING HERE ORDERS ANYTHING. `plan_for` returns the leaves in an order rule 8 accepted at load
+    (si#489), and a second ordering here could only disagree with it. What a plan cannot say is added:
+    - a leaf whose task `publishes:` is skipped on a dry run (si#490 decision 5);
+    - a `token: github` leaf, and only that one, gets the run's GITHUB_TOKEN (decision 4);
+    - a leaf taking a passed parameter unpinned gets it as `"$RELEASE_VERSION"`, the CLI's own reading of
+      `passes:` (si#433), so `release all --tag v1.4.0` and the workflow hand the same leaves the version.
+    """
+    if not workflow.release:
+        return ()
+    where = f"workflow '{workflow.key}'"
+    group, name = resolve_command(manifest, workflow.release, where=where)
+    spec = manifest.commands[group][name]
+    if not isinstance(spec, ReleaseCommand):
+        raise ValueError(
+            f"{where}: `{RELEASE_KEY}:` names '{workflow.release}', which is not a release aggregate - name the "
+            f"aggregate under `ci: release:` that `produces: {{ release: <artifact> }}`")
+    if "tag" not in spec.passes:
+        raise ValueError(
+            f"{where}: '{workflow.release}' passes no `tag`, so the version would reach no command - add "
+            f"`passes: [tag]` to the aggregate")
+    if set(spec.passes) - {"tag"}:
+        # A dispatch carries the version and nothing else, so every other passed parameter would reach its
+        # leaves with no value - or, handed the version, with a wrong one.
+        raise ValueError(
+            f"{where}: '{workflow.release}' passes {', '.join(sorted(set(spec.passes) - {'tag'}))}, and a "
+            f"dispatch carries only the version - pin it on the leaves with `with:`, or pass only `tag`")
+    steps: list[Step] = [Step(verbatim={"name": "Cut the tag in this checkout", "run": RELEASE_CUT}),
+                         Step(verbatim={"name": "The build will be stamped with the version", "run": RELEASE_STAMP})]
+    notes = ""
+    for words, leaf in _leaves(manifest, Step(command=workflow.release), where):
+        if leaf.unattended is not True:
+            raise ValueError(
+                f"{where}: '{words}' cannot run in the release job unattended - it declares `unattended: "
+                f"{str(leaf.unattended).lower() if leaf.unattended is not None else '(nothing)'}`, and a "
+                f"release member that is skipped would release past it; declare `unattended: true` or "
+                f"take it out of '{workflow.release}'")
+        modifiers: dict[str, object] = {}
+        if leaf.publishes:
+            modifiers["if"] = _NOT_DRY_RUN
+        if leaf.token == "github":
+            modifiers["env"] = dict(_TOKEN)
+        # The takers are read off the body's signature, as `cli.receivers` reads them, so the command line
+        # and the workflow hand the same leaves the version (final review of si#490, Important 3).
+        takes = {p.name for p in signatures.bindable(task.body_of(leaf, where=f"{where}, '{words}'"))}
+        passed = {"tag": EnvValue(RELEASE_ENV)} if "tag" in takes and "tag" not in leaf.with_ else {}
+        steps.append(Step(command=words, params=passed, modifiers=modifiers))
+        if leaf.task == "release:notes" and not notes:
+            produced = leaf.produces.get("release-notes", ())
+            notes = artifacts[produced[0]].path if produced and produced[0] in artifacts else ""
+    tail = (f'echo "dry run: no draft, no tag pushed, nothing published. The notes for $RELEASE_VERSION:"\n'
+            f"cat {shlex.quote(notes)}\n" if notes else 'echo "dry run: nothing published for $RELEASE_VERSION"\n')
+    steps.append(Step(verbatim={"name": "What a release would have published (dry run)", "if": _DRY_RUN,
+                                "run": tail}))
+    return (Job(name=RELEASE_JOB, runs_on=workflow.rollout_runs_on, steps=tuple(steps), runner=workflow.rollout_runner,
+                extras={"env": {RELEASE_ENV: "${{ inputs.version }}", **workflow.rollout_env}}),)
 
 
 def _rollout_note(stage: "Stage", env: object) -> str:
@@ -1071,7 +1242,9 @@ def render(workflow: Workflow, *, manifest: Manifest, product: str, source: str,
         lines += _key_and_value(key, value, "")
     lines.append("")
     lines.append("jobs:")
-    jobs = (*_rollout(workflow, environments), *workflow.jobs)
+    if workflow.release and artifacts is None:
+        artifacts = artifactsection.declared(context.current().manifest_data())
+    jobs = (*_rollout(workflow, environments), *_release(workflow, manifest, artifacts or {}), *workflow.jobs)
     expanded = {job.name: _expanded(job, manifest, f"workflow '{workflow.key}', job '{job.name}'") for job in jobs}
     runs = [handoff.Run(job.name,
                         tuple(_leaves(manifest, step, f"workflow '{workflow.key}', job '{job.name}', step {at + 1}")

@@ -46,10 +46,10 @@ different answer to the second one twice over.
 
 ## Which keys belong to which
 
-A task takes exactly seven keys:
+A task takes exactly nine keys:
 
 ```text
-impl   help   passthrough_args   params   unattended   input   output
+impl   help   passthrough_args   params   unattended   publishes   token   input   output
 ```
 
 A command takes those it needs to place a task, plus the ones that describe *this* placement:
@@ -58,8 +58,8 @@ A command takes those it needs to place a task, plus the ones that describe *thi
 task   with   produces   consumes   help   params   hidden   keep_awake   stop_on_failure   parallel   depends_on   passes   override
 ```
 
-Three of the task's keys are **inherited** by every command that instantiates it unless the command says
-otherwise: `help`, `passthrough_args` and `unattended`. That is the template doing its job - one task
+Five of the task's keys are **inherited** by every command that instantiates it unless the command says
+otherwise: `help`, `passthrough_args`, `unattended`, `publishes` and `token`. That is the template doing its job - one task
 documents itself once, and every placement gets that wording for free while remaining free to override
 it.
 
@@ -74,8 +74,14 @@ It has **three** states and not two. `unattended: true` and `unattended: false` 
 key out is *nobody has said*, and that is neither. A derivation cannot guess it either way - reading it
 as false drops a gate and the pipeline goes green for the wrong reason, reading it as true puts a command
 that wants a person on a runner - so an undeclared command is named and refused instead. It is also the
-one flag on a spec that is not coerced: every other is `bool(value)`, and `bool(None)` is `False`, which
+first flag on a spec that is not coerced: the older ones are `bool(value)`, and `bool(None)` is `False`, which
 would destroy the third state at the loader's own door.
+
+`publishes` and `token` (si#490) are facts about the body for the same reason, and a
+[derived release](../manifest/) reads both. A `publishes: true` task's act cannot be taken back, so a dry
+run skips its step. A `token: github` task authenticates to GitHub, so its step's `env:`, and no other
+step's, carries the run's `GITHUB_TOKEN`. The checkout's persisted credential still reaches every step
+(si#507). Neither is coerced: `publishes: "yes"` and `token: gitlab` are refused.
 
 `impl` is not in that list, because it is never the command's to declare. `with` is not in it either, and
 the reason is worth stating plainly: **a template that pinned a value would not be a template.** It would
@@ -99,11 +105,11 @@ are worth reading as a group, because together they are the whole of the rule.
 > task 'wheel' declares `with:`, which belongs on a command rather than on the task it instantiates. Move
 > it to the command under `ci:`, `cd:` or `support:`.
 
-**A task that declares a key nobody reads.** Anything outside the seven is rejected rather than dropped,
+**A task that declares a key nobody reads.** Anything outside the nine is rejected rather than dropped,
 including keys that read as entirely plausible on a template:
 
 > task 'wheel' declares unknown key `group:`. A task takes impl, help, passthrough_args, params,
-> unattended, input, output - check the spelling.
+> unattended, publishes, token, input, output - check the spelling.
 
 **A task with no body at all.** The message names the alternative, because the mistake it usually
 represents is reaching for the wrong construct:
