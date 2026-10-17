@@ -219,8 +219,9 @@ def check(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared
 def _check_bundles(manifest: "Manifest", declared: Mapping[str, "artifactsection.Declared"],
                    kinds: Mapping[str, str]) -> None:
     """Rule 8 (spec C.4, C.5): only an aggregate under `ci: release:` names an output, exactly one, of kind
-    `release`; it sets `stop_on_failure: true`, so a failed member stops the plan; and its plan cuts no
-    `release:tag` before a publish member. A publish member is one whose
+    `release`; it sets `stop_on_failure: true`, so a failed member stops the plan; no member produces its
+    bundle; and its plan cuts no `release:tag` before a publish member - unless it plans
+    `release:github-publish`, which then comes after every publish member and the tag (si#489). A publish member is one whose
     task takes evidence - an input port accepting `test-result` - so the set is derived, not listed."""
     for group, members in manifest.commands.items():
         for name, spec in members.items():
@@ -247,8 +248,38 @@ def _check_bundles(manifest: "Manifest", declared: Mapping[str, "artifactsection
             plan = manifest.plan_for(name, group=group)
             # `plan_for` names leaves only, so every one is a task command; the narrowing says so to the reader.
             specs = [s if isinstance(s := manifest.spec_by_name(step), TaskCommand) else None for step in plan]
+            # THE AGGREGATE MAKES ITS BUNDLE (si#489, Marco 2026-10-17): no member produces it. `github-release`
+            # refines `release`, so a member's GitHub Release could be named as the bundle too - and the model
+            # export then composed it inside the aggregate while the member still pointed at the Product's own
+            # (measured on si#486, pinned there as a strict xfail).
+            for step, s in zip(plan, specs):
+                if s and any(bundle in names for names in s.produces.values()):
+                    raise ValueError(
+                        f"aggregate '{where}' names '{bundle}' as its bundle, and its member '{step}' produces "
+                        f"'{bundle}' - the aggregate makes its bundle; give the member's output an artifact of "
+                        f"its own")
             publishes = [at for at, s in enumerate(specs)
                          if s and any(p.direction == "input" and p.accepts == "test-result" for p in s.ports)]
+            announces = [at for at, s in enumerate(specs) if s and s.task == "release:github-publish"]
+            if announces:
+                # WITH A DRAFT RELEASE THE PUBLISHED RELEASE IS THE PUBLIC STATEMENT, not the tag (si#489,
+                # si#463 decision A): the tag may be pushed before the image, and the publish comes after every
+                # push it announces - and after the tag, which `release:github-publish` needs on origin.
+                first = min(announces)
+                for at, (step, s) in enumerate(zip(plan, specs)):
+                    if at <= first or s is None:
+                        continue
+                    if at in publishes:
+                        raise ValueError(
+                            f"aggregate '{where}' plans '{step}' after '{plan[first]}' - with a draft release the "
+                            f"published release is the public statement, and it would announce a push that has "
+                            f"not happened; list every publish before it in `depends_on`")
+                    if s.task == "release:tag":
+                        raise ValueError(
+                            f"aggregate '{where}' plans '{step}' after '{plan[first]}' - `release:github-publish` "
+                            f"refuses a tag origin does not carry, so the release would never publish; list the "
+                            f"tag before it in `depends_on`")
+                continue
             for at, (step, s) in enumerate(zip(plan, specs)):
                 if s and s.task == "release:tag" and publishes and at < max(publishes):
                     raise ValueError(

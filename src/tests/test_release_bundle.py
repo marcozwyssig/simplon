@@ -239,24 +239,39 @@ BOTH = GH + ("      all: { depends_on: [notes, publish, tag, gh-publish], help: 
              "produces: { release: app-gh } }\n")
 
 
-def test_an_aggregate_whose_bundle_its_publish_leaf_produces_loads():
-    # act / assert: measured on si#486 - the loader has no one-producer rule that refuses it
-    assert _load(BOTH).spec_for("release", "all").release == "app-gh"
+def test_an_aggregate_whose_bundle_its_publish_leaf_produces_is_refused():
+    # si#489, decided by Marco on 2026-10-17: the aggregate MAKES its bundle, so no member produces it. It
+    # used to load, and the model export then referenced a bundle it had composed elsewhere (si#486's xfail).
+    with pytest.raises(ValueError, match=r"aggregate 'release all' names 'app-gh' as its bundle, and its "
+                                         r"member 'gh-publish' produces 'app-gh'"):
+        _load(BOTH)
 
 
-@pytest.mark.xfail(strict=True, reason="si#489: whether an aggregate's bundle may be its publish leaf's output "
-                                       "is undecided, and the export then references a bundle it composed elsewhere")
-def test_the_export_of_a_bundle_its_leaf_produces_references_only_what_it_declares():
-    # arrange
-    import re
+# --- si#489: with a draft release, the PUBLISHED release is the public statement ---------------------------
 
-    import yaml
-    from simplon.manifest import manifestmodel
+def _gh_all(deps: str) -> str:
+    return GH + (f"      all: {{ depends_on: [{deps}], help: 'h', stop_on_failure: true, "
+                 f"produces: {{ release: app-release }} }}\n")
 
-    # act
-    text = manifestmodel.export(_load(BOTH), yaml.safe_load(BOTH), "demo", manifestmodel.KERNEL_SECTIONS)
 
-    # assert: every product.demo.demo.a_<x> a command produces is declared at the product's own level
-    produced = set(re.findall(r"produces = product\.demo\.demo\.(a_\w+)", text))
-    declared = set(re.findall(r"^  artifacts (a_\w+) typeOf", text, re.MULTILINE))
-    assert produced <= declared, produced - declared
+def test_with_a_github_publish_the_tag_may_precede_the_image():
+    # decision A of si#463: the tag is pushed after the checks and BEFORE push-image
+    loaded = _load(_gh_all("notes, tag, publish, gh-publish"))
+    assert loaded.plan_for("all", group="release")[-1] == "gh-publish"
+
+
+def test_a_publish_member_after_the_github_publish_is_refused():
+    with pytest.raises(ValueError, match=r"plans 'publish' after 'gh-publish' - with a draft "
+                                         r"release the published release is the public statement"):
+        _load(_gh_all("notes, tag, gh-publish, publish"))
+
+
+def test_a_tag_after_the_github_publish_is_refused():
+    with pytest.raises(ValueError, match=r"plans 'tag' after 'gh-publish' - "
+                                         r"`release:github-publish` refuses a tag origin does not carry"):
+        _load(_gh_all("notes, publish, gh-publish, tag"))
+
+
+def test_without_a_github_publish_the_tag_still_follows_every_publish():
+    with pytest.raises(ValueError, match="a tag cut before the push it announces"):
+        _load(_all("notes, tag, publish", "produces: { release: app-release }"))
