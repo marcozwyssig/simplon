@@ -288,7 +288,13 @@ class _StepApp(App):
 
         `_refresh_open_aggregate` joins it under exactly the same argument and adds no new hazard: it
         reads `rc`, `state` and `started_at`/`ended_at` through `Row`, one attribute at a time, and the
-        worst it can render is a listing one tick behind."""
+        worst it can render is a listing one tick behind.
+
+        A TICK CAN OUTLIVE THE SCREEN (si#499), the timer's version of si#265's and si#306's moment: the
+        interval fires until Textual stops it, and one that lands after `on_unmount` finds no `#steps`.
+        `_bar` is the app's one marker for "there is a screen right now", so it answers here too."""
+        if self._bar is None:
+            return
         for index, step in enumerate(self.pipeline.steps):
             if step.state == StepState.RUNNING:
                 self._refresh_row(index)
