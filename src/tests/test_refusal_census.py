@@ -970,7 +970,10 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("workflowgen", "_release_key", "is the dispatch input's"): DIAGNOSIS,
     ("workflowgen", "_release_key", "one workflow is a rollout or a release"): DIAGNOSIS,
     ("workflowgen", "_release_extras", "is a mapping of scope -> level"): DIAGNOSIS,
-    ("workflowgen", "_release_extras", "is what "): DIAGNOSIS,
+    # An EXPRESSION rule, not a diagnosis (final review of si#490): a release with no tag, no GitHub
+    # Release and no package push would have worked with `contents: read` - the spec lets an aggregate
+    # leave those leaves out - so lowering a scope is a statement that could have run.
+    ("workflowgen", "_release_extras", "is what "): EXPRESSION,
     ("workflowgen", "_job", "must be a mapping, not {type(spec)"): DIAGNOSIS,
     ("workflowgen", "_runs_on", "declares no `runs-on:`"): DIAGNOSIS,
     # si#266. Both are diagnosis: a list with a number in it, or a bool, is not a runner label in
@@ -1047,6 +1050,7 @@ REACH: dict[tuple[str, str, str], str] = {
     # until si#491, and then its own `release:` workflow goes through exactly these two rules.
     ("workflowgen", "_release_key", "and the trigger is derived from"): REACH_MERGED,
     ("workflowgen", "_release_key", "is derived from `{RELEASE_KEY}:` - one release per version"): REACH_MERGED,
+    ("workflowgen", "_release_extras", "is what "): REACH_MERGED,
     ("carrierspec", "_block", "does not take"): REACH_MERGED,
     ("environments", "_repository", "does not take"): REACH_MERGED,
     ("environments", "_names", "may not name"): REACH_MERGED,

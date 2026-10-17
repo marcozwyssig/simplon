@@ -71,8 +71,8 @@ an argument.
 
 | kind | today | what it costs a product |
 | --- | --- | --- |
-| diagnosis | 251 | nothing - the declaration had no working meaning |
-| expression rule | 41 | something it could otherwise have said |
+| diagnosis | 250 | nothing - the declaration had no working meaning |
+| expression rule | 42 | something it could otherwise have said |
 | **all load-time refusals** | **292** | |
 
 si#489 added two diagnoses and one expression rule, all on a release aggregate. With
@@ -161,7 +161,7 @@ Self-binding is not a third bucket of refusals; it is how far an expression rule
 
 | reach | count | meaning |
 | --- | --- | --- |
-| the kernel is held to it too | 34 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
+| the kernel is held to it too | 35 | the same check rules on the catalogue's own declarations - over the merged tree, or over a product-owned section the kernel would go through unchanged |
 | a statement about the platform/product seam | 7 | the rule *is* the asymmetry - the platform owns which groups exist, and "the kernel too" means nothing |
 | the kernel exempts itself | 0 | there is no longer a rule the kernel declines to apply to itself |
 

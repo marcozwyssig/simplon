@@ -41,6 +41,11 @@ jobs:
           fetch-depth: 0
       - name: Cut the tag in this checkout
         run: |
+          there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"
+          if [ -n "$there" ] && [ "$there" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::$RELEASE_VERSION already exists at $there, not at this commit; choose the next version"
+            exit 1
+          fi
           git tag -d "$RELEASE_VERSION" >/dev/null 2>&1 || true
           git tag "$RELEASE_VERSION"
       - name: The build will be stamped with the version

@@ -245,6 +245,8 @@ class Workflow:
     #: WORKFLOW level because the kernel writes the jobs: there is no job for a product to put it on.
     rollout_runs_on: "str | tuple[str, ...] | Mapping[str, object]" = ""
     rollout_env: Mapping[str, object] = field(default_factory=dict)
+    #: The machine `runner:` named for a derived job, kept so its disk steps and note reach the job (si#327).
+    rollout_runner: "runners.Runner | None" = None
     jobs: tuple[Job, ...] = ()
     handwritten: str = ""
     extras: Mapping[str, object] = field(default_factory=dict)
@@ -368,7 +370,7 @@ def _workflow(key: str, body: object) -> Workflow:
 
     return Workflow(key=key, path=path, name=str(body.get("name") or key),
                     note=str(body.get("note") or ""), on=trigger, flow=stages, release=release,
-                    rollout_runs_on=rollout_runs_on,
+                    rollout_runs_on=rollout_runs_on, rollout_runner=runner,
                     rollout_env=rollout_env if isinstance(rollout_env, Mapping) else {},
                     jobs=tuple(_job(str(name), spec, where)
                                for name, spec in (jobs or {}).items()) if isinstance(jobs, Mapping)
@@ -443,7 +445,9 @@ def _release_extras(body: Mapping[object, object], where: str) -> dict[str, obje
     """The derived `permissions`/`concurrency` first, then the product's own extras in their order.
 
     `permissions:` is MERGED rather than refused (ruling of si#490 Task 2, measured): simplon's own release
-    needs `id-token: write` for PyPI's Trusted Publishing, and a closed set would make it inexpressible."""
+    needs `id-token: write` for PyPI's Trusted Publishing, and a closed set would make it inexpressible.
+    Lowering `contents`/`packages` stays refused, and that refusal is an EXPRESSION rule: a release with no
+    tag, no GitHub Release and no package push would have worked without them."""
     own = _workflow_extras(body)
     declared = own.pop("permissions", None) or {}
     if not isinstance(declared, Mapping):
@@ -850,17 +854,18 @@ def _parameters(manifest: Manifest, group: str, name: str,
         return ""
     spec = manifest.commands.get(group, {}).get(name)
     declared = dict(getattr(spec, "params", {}) or {})
+    # The BODY's signature counts as well as the presentation (final review of si#490): a product task
+    # may take a parameter it never describes under `params:`, and the CLI hands it one all the same.
+    signature = ({p.name: p for p in signatures.bindable(task.body_of(spec, where=where))}
+                 if isinstance(spec, TaskCommand) else {})
     for key in params:
-        if key not in declared:
+        if key not in declared and key not in signature:
             raise ValueError(
                 f"{where}: `{group.replace('.', ' ')} {name}` declares no parameter '{key}' - it takes "
-                f"{', '.join(sorted(declared)) or 'none'}. A workflow that passed one anyway would fail "
-                f"on a runner, with the manifest looking correct")
-    # `declared` is non-empty here, so `spec` is a leaf: only a TaskCommand carries `params:`.
-    body = task.body_of(cast(TaskCommand, spec), where=where)
-    signature = {p.name: p for p in signatures.bindable(body)}
+                f"{', '.join(sorted({*declared, *signature})) or 'none'}. A workflow that passed one anyway "
+                f"would fail on a runner, with the manifest looking correct")
     reads_positionally = {key for key in params
-                          if key in signature and signatures.positional(signature[key], declared[key])}
+                          if key in signature and signatures.positional(signature[key], declared.get(key))}
     for key, value in params.items():
         if isinstance(value, EnvValue) and value.name not in env and not GITHUB_SETS.fullmatch(value.name):
             raise ValueError(
@@ -950,7 +955,15 @@ def _rollout(workflow: "Workflow", registry: "Mapping[str, object] | None") -> "
 #: `git tag` fails (rc 128, measured) and the run never reaches `release:tag`, which compares origin's tag
 #: with HEAD and either resumes or names the move. The stamp is firn's: the build reads the version off
 #: `git describe`, so a describe that is not the version is a build stamped with something else.
-RELEASE_CUT = ('git tag -d "$RELEASE_VERSION" >/dev/null 2>&1 || true\n'
+#: A fetched tag at ANOTHER commit is refused here, before anything publishes and on a dry run too (final
+#: review of si#490): deleting it would let the image be pushed under a version that is already taken,
+#: and `release:tag` would refuse the move only after that push.
+RELEASE_CUT = ('there="$(git rev-parse -q --verify "refs/tags/$RELEASE_VERSION^{commit}" || true)"\n'
+               'if [ -n "$there" ] && [ "$there" != "$(git rev-parse HEAD)" ]; then\n'
+               '  echo "::error::$RELEASE_VERSION already exists at $there, not at this commit; choose the next version"\n'
+               '  exit 1\n'
+               'fi\n'
+               'git tag -d "$RELEASE_VERSION" >/dev/null 2>&1 || true\n'
                'git tag "$RELEASE_VERSION"\n')
 RELEASE_STAMP = ('described="$(git describe --tags --always --dirty)"\n'
                  '[ "$described" = "$RELEASE_VERSION" ] || {\n'
@@ -1007,7 +1020,10 @@ def _release(workflow: "Workflow", manifest: Manifest,
             modifiers["if"] = _NOT_DRY_RUN
         if leaf.token == "github":
             modifiers["env"] = dict(_TOKEN)
-        passed = {"tag": EnvValue(RELEASE_ENV)} if "tag" in leaf.params and "tag" not in leaf.with_ else {}
+        # The takers are read off the body's signature, as `cli.receivers` reads them, so the command line
+        # and the workflow hand the same leaves the version (final review of si#490, Important 3).
+        takes = {p.name for p in signatures.bindable(task.body_of(leaf, where=f"{where}, '{words}'"))}
+        passed = {"tag": EnvValue(RELEASE_ENV)} if "tag" in takes and "tag" not in leaf.with_ else {}
         steps.append(Step(command=words, params=passed, modifiers=modifiers))
         if leaf.task == "release:notes" and not notes:
             produced = leaf.produces.get("release-notes", ())
@@ -1016,7 +1032,7 @@ def _release(workflow: "Workflow", manifest: Manifest,
             f"cat {shlex.quote(notes)}\n" if notes else 'echo "dry run: nothing published for $RELEASE_VERSION"\n')
     steps.append(Step(verbatim={"name": "What a release would have published (dry run)", "if": _DRY_RUN,
                                 "run": tail}))
-    return (Job(name=RELEASE_JOB, runs_on=workflow.rollout_runs_on, steps=tuple(steps),
+    return (Job(name=RELEASE_JOB, runs_on=workflow.rollout_runs_on, steps=tuple(steps), runner=workflow.rollout_runner,
                 extras={"env": {RELEASE_ENV: "${{ inputs.version }}", **workflow.rollout_env}}),)
 
 

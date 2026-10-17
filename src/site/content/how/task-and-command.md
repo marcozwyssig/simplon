@@ -79,8 +79,9 @@ would destroy the third state at the loader's own door.
 
 `publishes` and `token` (si#490) are facts about the body for the same reason, and a
 [derived release](../manifest/) reads both. A `publishes: true` task's act cannot be taken back, so a dry
-run skips its step. A `token: github` task authenticates to GitHub, so its step, and only its step, is
-handed the run's `GITHUB_TOKEN`. Neither is coerced: `publishes: "yes"` and `token: gitlab` are refused.
+run skips its step. A `token: github` task authenticates to GitHub, so its step's `env:`, and no other
+step's, carries the run's `GITHUB_TOKEN`. The checkout's persisted credential still reaches every step
+(si#507). Neither is coerced: `publishes: "yes"` and `token: gitlab` are refused.
 
 `impl` is not in that list, because it is never the command's to declare. `with` is not in it either, and
 the reason is worth stating plainly: **a template that pinned a value would not be a template.** It would

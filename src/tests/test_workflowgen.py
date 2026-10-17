@@ -2536,7 +2536,7 @@ def _cut_and_stamp(text: str) -> list[str]:
     return [named["Cut the tag in this checkout"]["run"], named["The build will be stamped with the version"]["run"]]
 
 
-@pytest.mark.parametrize("case", ["fresh", "rerun", "unequal", "hostile"])
+@pytest.mark.parametrize("case", ["fresh", "rerun", "unequal", "hostile", "moved"])
 def test_the_cut_and_the_stamp_run_in_bash(tmp_path, case):
     """Review Focus 1 and 4: a re-run after the tag push must reach `release:tag` (a plain `git tag` fails
     with rc 128 on the fetched tag), and a hostile version is one quoted argument that git refuses."""
@@ -2553,6 +2553,13 @@ def test_the_cut_and_the_stamp_run_in_bash(tmp_path, case):
         subprocess.run([*git, "tag", "v1.0.0"], check=True)
     if case == "unequal":
         (repo / "f").write_text("dirty")
+    if case == "moved":
+        # Final review of si#490, Important 1: the version is already released at the first commit, and a
+        # new dispatch runs at a second one. Deleting the fetched tag would let the image be pushed under a
+        # taken version before `release:tag` refuses; the cut refuses first, on a dry run too.
+        subprocess.run([*git, "tag", "v1.0.0"], check=True)
+        (repo / "f").write_text("2")
+        subprocess.run([*git, "commit", "-qam", "two"], check=True)
     rcs = []
     for script in _cut_and_stamp(_release_text()):
         done = subprocess.run(["bash", "-e", "-c", script], cwd=repo, capture_output=True, text=True,
@@ -2564,6 +2571,8 @@ def test_the_cut_and_the_stamp_run_in_bash(tmp_path, case):
         assert [rc for rc, _ in rcs] == [0, 0], rcs
     elif case == "unequal":
         assert rcs[-1][0] == 1 and "::error::the build would be stamped" in rcs[-1][1], rcs
+    elif case == "moved":
+        assert len(rcs) == 1 and rcs[0][0] == 1 and "already exists at" in rcs[0][1], rcs
     else:
         assert rcs[-1][0] != 0, rcs
         assert not (repo / "pwned").exists() and not (tmp_path / "pwned").exists()
@@ -2575,3 +2584,23 @@ def test_a_passed_parameter_the_dispatch_cannot_fill_is_refused():
     product = _RELEASE_PRODUCT.replace("        passes: [tag]\n", "        passes: [tag, name]\n")
     with pytest.raises(ValueError, match="passes name, and a dispatch carries only the version"):
         _release_text(product)
+
+
+def test_a_leaf_whose_body_takes_tag_gets_the_version_as_the_cli_hands_it():
+    """Final review of si#490, Important 3: the takers are read off the BODY's signature, as
+    `cli.receivers` reads them - not off `params:`, a presentation a product task may leave out. Before,
+    `release all --tag v1` handed `ship` the version and the workflow ran it with none, green."""
+    product = (_RELEASE_PRODUCT.replace("ci:\n", 'tasks:\n  ship: { impl: "simplon.test_impls:pinned_rc", help: "Ship.", '
+                                        "unattended: true }\nci:\n", 1)
+               .replace("      all:\n", "      ship: { task: ship }\n      all:\n")
+               .replace("tag, gh-publish]", "tag, ship, gh-publish]"))
+    assert _leaf_steps(_release_text(product))["release ship"]["run"].endswith('"$RELEASE_VERSION"')
+
+
+def test_a_release_job_on_a_self_hosted_runner_keeps_the_runners_disk_steps():
+    """Final review of si#490, Important 4: the release job builds images, which is si#327's case, and the
+    runner's disk preflight - or the comment saying why it is not placed - must not be dropped."""
+    text = _release_text(workflows=_RELEASE_WORKFLOWS.replace("runner: { kind: github-ubuntu }",
+                                                             "runner: { kind: self-hosted-debian, labels: ghr-8 }"))
+    job = text[text.index("\n  release:"):text.index("\n  announce:")]
+    assert "si#327" in job

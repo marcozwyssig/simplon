@@ -984,9 +984,10 @@ The version reaches each leaf that takes `tag` unpinned as `"$RELEASE_VERSION"`,
 come from the catalogue rather than from your manifest:
 
 - **`publishes: true`:** the task's act cannot be taken back, so a dry run skips its step;
-- **`token: github`:** the task authenticates to GitHub, so its step, and only its step, gets the run's
-  `GITHUB_TOKEN`. The build and the tests never see it. A secret of your own goes in the workflow's
-  `env:`.
+- **`token: github`:** the task authenticates to GitHub, so its step's `env:`, and no other step's,
+  carries the run's `GITHUB_TOKEN`. That is not yet isolation. The checkout every generated job starts
+  with persists the job token in `.git/config`, where any step can read it, and `release:tag`'s push relies
+  on it (si#507). A secret of your own goes in the workflow's `env:`, which every step of the job sees.
 
 Refused beside `release:`:
 
