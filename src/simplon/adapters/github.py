@@ -97,7 +97,7 @@ def repository(origin: str = "") -> Repository:
         # `token()` falls back to `gh auth token`, and on a host without `gh` that is FileNotFoundError, not
         # a PackageError - found by si#486's final review as a traceback where a sentence belongs.
         raise Unanswered(f"no GitHub token: GITHUB_TOKEN is not set and `gh` could not be run ({no_gh}). "
-                         f"Export GITHUB_TOKEN; in GitHub Actions it is automatic") from None
+                         f"Export GITHUB_TOKEN; in GitHub Actions, pass `secrets.GITHUB_TOKEN` in the step's `env:`") from None
     client = Github(auth=Auth.Token(token), base_url=api, timeout=TIMEOUT_S, retry=None, per_page=PER_PAGE,
                     lazy=False)
     try:

@@ -11,7 +11,9 @@ Windows archive cannot live in a Linux image, and a consumer of one should not n
 zip. `oras` pushes an arbitrary file as an OCI artifact, which a registry stores and serves like any
 other package - so one registry holds every platform's archive, distinguished by tag.
 
-THE TOKEN. Actions injects `GITHUB_TOKEN`. Locally, someone already logged in with `gh` should not have
+THE TOKEN. `GITHUB_TOKEN` from the environment. Actions does NOT put it there by itself: a workflow
+passes `secrets.GITHUB_TOKEN` in a step's `env:`, which is what a derived release does for every task
+declaring `token: github` (si#490, measured: before it, firn and simplon wrote that line by hand). Locally, someone already logged in with `gh` should not have
 to mint and export a second credential, so `gh auth token` is the fallback. What `gh` does NOT grant is
 the package scopes - `gh auth login` asks for gist, read:org, repo and workflow - so the very first
 local publish fails with `denied: permission_denied: read_package` and points at the package rather than
@@ -92,7 +94,8 @@ def token() -> str:
 
     raise PackageError(
         "no GitHub token: GITHUB_TOKEN is not set and `gh auth token` did not provide one. "
-        "Either export a token or run `gh auth login`. In GitHub Actions it is automatic.")
+        "Either export a token or run `gh auth login`. In GitHub Actions, pass `secrets.GITHUB_TOKEN` in the "
+        "step's `env:` - Actions sets it for no step on its own.")
 
 
 def require_oras() -> None:

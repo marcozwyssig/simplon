@@ -272,6 +272,8 @@ class _CommandSpecModel(BaseModel):
     keep_awake: bool = False
     hidden: bool = False
     unattended: bool | None = None
+    publishes: bool = False
+    token: str = ""
     task: str = ""
     produces: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     consumes: dict[str, tuple[str, ...]] = Field(default_factory=dict)
@@ -316,6 +318,32 @@ class _CommandSpecModel(BaseModel):
                 f"third answer - nobody has said - and a derived pipeline names the command rather "
                 f"than guessing on its behalf")
         return value
+
+    @field_validator("publishes", mode="before")
+    @classmethod
+    def _strict_bool(cls, value: object) -> bool:
+        # si#490: strict for `_tri_state`'s reason. A quoted "true" that coerced would be a publish a dry run
+        # skips by accident, and a quoted "false" one it runs by accident; neither has a reading.
+        if value is None:
+            return False
+        if not isinstance(value, bool):
+            raise ValueError(
+                f"'publishes' is true or false, got '{value}'. It says whether this task's act cannot be "
+                f"taken back, so a derived release's dry run skips it")
+        return value
+
+    @field_validator("token", mode="before")
+    @classmethod
+    def _issuer(cls, value: object) -> str:
+        # si#490: the one issuer a derived workflow can hand a step is the run's own GITHUB_TOKEN.
+        if value is None or value == "":
+            return ""
+        if value != "github":
+            raise ValueError(
+                f"'token' is github or absent, got '{value}'. It says this task's body authenticates to "
+                f"GitHub, so a derived release hands its step the run's GITHUB_TOKEN; any other secret goes "
+                f"in the workflow's own `env:`")
+        return "github"
 
 
 class _ManifestModel(BaseModel):
@@ -913,6 +941,7 @@ def _command(spec: "_CommandSpecModel", group: str, name: str, taxonomy: Command
         return ReleaseCommand(**common, **aggregate, release=spec.produces["release"][0])
     kind = Deploy if taxonomy.group_requires_env(group) else TaskCommand
     return kind(**common, impl=spec.impl, passthrough_args=spec.passthrough_args, with_=spec.with_,
+                publishes=spec.publishes, token=spec.token,
                 task=spec.task, produces=spec.produces, consumes=spec.consumes,
                 ports=ports.of(spec.task, product_tasks) if spec.task else (),
                 params={pname: ParamPresentation(help=p.help, short=p.short, argument=p.argument,

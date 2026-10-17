@@ -542,11 +542,11 @@ def _check_command_is_mapping(spec, where: str, name: str) -> None:
 # in the catalogue, it is true for everybody - which is the same argument the coordinate space itself
 # runs on. A command may still override it, because a product can wrap a body in a way that changes the
 # answer, and the override is the instance's to make.
-INHERITED = ("help", "passthrough_args", "unattended")
+INHERITED = ("help", "passthrough_args", "unattended", "publishes", "token")
 
 # What a TASK may declare. Everything else that `_CommandSpecModel` accepts belongs to the instance:
 # a template that pinned a value, hid itself or planned other commands would not be a template.
-TASK_KEYS = ("impl", "help", "passthrough_args", "params", "unattended", "input", "output")
+TASK_KEYS = ("impl", "help", "passthrough_args", "params", "unattended", "publishes", "token", "input", "output")
 COMMAND_ONLY_KEYS = ("hidden", "keep_awake", "stop_on_failure", "parallel", "depends_on", "passes", "with",
                      "task")
 

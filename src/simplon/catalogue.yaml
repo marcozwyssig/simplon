@@ -634,6 +634,8 @@ tasks:
   release:artifact:
     help: "Publish a declared directory to a registry as an OCI artifact."
     unattended: true
+    publishes: true
+    token: github
     params:
       name: { help: "the artifact to publish (normally pinned per command with `with:`)" }
       tag:  { help: "the tag to publish under, for a version only known after a build" }
@@ -649,6 +651,8 @@ tasks:
   release:asset:
     help: "Attach declared files to a GitHub release, creating it if it is not there yet."
     unattended: true
+    publishes: true
+    token: github
     params:
       name: { help: "the asset to publish (normally pinned per command with `with:`)" }
       tag:  { help: "the release to attach to, for a version only known after a build" }
@@ -674,6 +678,8 @@ tasks:
   release:nuget:
     help: "Push the package `build:nuget-pack` wrote for this version to GitHub's NuGet feed."
     unattended: true
+    publishes: true
+    token: github
     params:
       name: { help: "the artifact to push (normally bound with `consumes:`)" }
       tag:  { help: "the package version to push, for one only known after a build" }
@@ -689,6 +695,8 @@ tasks:
   release:conan:
     help: "Publish a Conan cache archive to a registry as an OCI artifact (a transport, not a remote)."
     unattended: true
+    publishes: true
+    token: github
     params:
       name: { help: "the artifact to publish (normally pinned per command with `with:`)" }
       tag:  { help: "the tag to publish under, for a version only known after a build" }
@@ -727,12 +735,16 @@ tasks:
   release:maven:
     help: "Upload what `build:maven-pack` staged to GitHub's Maven registry and read the coordinates back."
     unattended: true
+    publishes: true
+    token: github
     params:
       name: { help: "the artifact to upload (normally bound with `consumes:`)" }
       tag:  { help: "the version to upload, for one only known after a build" }
   release:image:
     help: "Push the product's container image and verify the tag, and every declared platform, is in the registry."
     unattended: true
+    publishes: true
+    token: github
     params:
       name: { help: "the image to publish (normally pinned per command with `with:`)" }
       tag:  { help: "the tag to publish under, for a version only known after a build" }
@@ -761,6 +773,7 @@ tasks:
   release:tag:
     help: "Cut the release tag at HEAD and push it (`git push origin <tag>`, never `--tags`)."
     unattended: true
+    publishes: true
     params:
       tag: { help: "the tag to cut, exactly as it will exist (e.g. v1.4.0)", metavar: "TAG" }
 
@@ -776,17 +789,22 @@ tasks:
   release:github-unpublished:
     help: "Answer whether a tag's GitHub Release is still unpublished (a draft or none); red when it is published or GitHub does not answer."
     unattended: true
+    token: github
     params:
       tag: { help: "the tag exactly as it exists or will exist (e.g. v1.4.0)", metavar: "TAG" }
   release:github-draft:
     help: "Create the tag's draft GitHub Release with the release notes as its body, or reuse the draft an earlier run left."
     unattended: true
+    publishes: true
+    token: github
     params:
       name: { help: "the release-notes artifact whose text is the body (normally bound with `consumes:`)" }
       tag:  { help: "the tag exactly as it exists or will exist (e.g. v1.4.0)", metavar: "TAG" }
   release:github-publish:
     help: "Publish the tag's draft GitHub Release, once origin carries the tag."
     unattended: true
+    publishes: true
+    token: github
     params:
       tag: { help: "the tag exactly as it exists or will exist (e.g. v1.4.0)", metavar: "TAG" }
 
