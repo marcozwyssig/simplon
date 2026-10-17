@@ -141,9 +141,10 @@ reads (`release:notes`, `release:github-unpublished`, `release:check` when it la
 which it is. Rule 8's `publishes` set (evidence ports) is left as it is. It answers a different question
 (what needs evidence), and the two need not agree.
 
-Both new fields are catalogue data, and the catalogue is generated from the firn model
-(`src/firn/model/simplon/catalogue/tasks.firn`, `./simplon.sh build model`). They are added there, not in
-the YAML by hand.
+Both new fields are task data beside `unattended:`. Measured while planning: `unattended:` lives in the
+hand-written part of `catalogue.yaml` and in `treeform.TASK_KEYS`/`INHERITED`, not in the firn model
+(which carries key, body and ports). So a command inherits both from its task and may override them,
+exactly as `unattended`. (This corrects an earlier draft of this paragraph, which placed them in the model.)
 
 ## Half-release cases (docs section `how/releasing`, source firn docs/07 §7)
 
