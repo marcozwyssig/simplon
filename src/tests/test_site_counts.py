@@ -53,8 +53,8 @@ from __future__ import annotations
 
 import re
 
-from simplon.domain import catalogue as catalogue_mod
-from simplon.domain import treeform
+from simplon.manifest import catalogue as catalogue_mod
+from simplon.manifest import treeform
 
 import sitepages
 from sitepages import CONTENT, number_word

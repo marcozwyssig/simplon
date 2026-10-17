@@ -1,6 +1,6 @@
 """simplon's named, isolated deployment environments. The matrix itself lives in simplon.yaml
 (the `environments:`/`default:` sections); this adapter supplies the three things that are simplon's
-own and lets simplon.domain.environments.Provider do the rest.
+own and lets simplon.manifest.environments.Provider do the rest.
 
   * the process variable the active environment rides in (set by simplon.cli.main);
   * the backends this product IMPLEMENTS - `local` today; add your cloud backend (e.g. a VM-per-site
@@ -13,7 +13,7 @@ imported by the kernel - the coupling flows product -> kernel, never the reverse
 """
 from __future__ import annotations
 
-from simplon.domain.environments import LOCAL, Provider
+from simplon.manifest.environments import LOCAL, Provider
 
 ENV_VAR = "SIMPLON_ENV"
 

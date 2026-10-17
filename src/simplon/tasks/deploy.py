@@ -3,7 +3,7 @@
 ONE SHAPE FOR EVERY PRODUCT, and the axis is what the product IS rather than what it is written in: a
 CLIENT application is installed into a directory on this machine, a SERVER application is brought up on a
 target through the product's own backend. Both name the version they are deploying, in the same three
-words (`1.4.0`, `latest`, `local`), and `simplon.domain.deployment` is where that vocabulary lives.
+words (`1.4.0`, `latest`, `local`), and `simplon.manifest.deployment` is where that vocabulary lives.
 
 WHAT IS OUT OF SCOPE, stated here because it is the half somebody will assume is coming. `client` means
 installing a version HERE. Distributing one to a FLEET - an SCCM, an MDM, a software deployment server -
@@ -33,7 +33,7 @@ import shutil
 from pathlib import Path
 
 from simplon.adapters import backend, devcontainer, githubpackages, portainer
-from simplon.domain import context, deployment, environments
+from simplon.manifest import context, deployment, environments
 from simplon.kernel import log
 from simplon.tasks import image
 

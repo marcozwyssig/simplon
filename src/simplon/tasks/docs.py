@@ -49,7 +49,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.adapters import docker, hostpath
 from simplon.kernel import log
 from simplon.kernel.run import run

@@ -79,11 +79,11 @@ def test_a_deleted_file_is_rc_1_naming_it(tmp_path, capsys):
     _file(tmp_path, "a.py")
 
     # act
-    rc = firngen.verdict(0, _out(written=["a.py"], deleted=["simplon/domain/artifactschema.py"]), tmp_path)
+    rc = firngen.verdict(0, _out(written=["a.py"], deleted=["simplon/model/artifactschema.py"]), tmp_path)
 
     # assert
     assert rc == 1
-    assert "simplon/domain/artifactschema.py" in capsys.readouterr().err
+    assert "simplon/model/artifactschema.py" in capsys.readouterr().err
 
 
 def test_an_orphaned_region_is_rc_1(tmp_path, capsys):

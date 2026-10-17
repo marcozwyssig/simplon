@@ -14,7 +14,7 @@ move inside the kernel without breaking anybody.
 The second is ordinary Python. A product's own task bodies `import simplon.kernel.log`, `simplon.kernel.run`,
 `simplon.adapters.host` and call them directly — that is not a workaround, it is the point of a kernel. But that
 surface had no edge. Every module sat at the top level of the package side by side (since si#399 they sit
-in one package per component - `kernel`, `domain`, `adapters`, `tasks`, `ui`, `cli`): the ones a product
+in one package per component - `kernel`, `model`, `manifest`, `adapters`, `tasks`, `ui`, `cli`): the ones a product
 may rely on, the ones the kernel merely shares between its own task bodies, and the ones that are pure
 internal machinery. If you were extending the kernel, the only way to find out what you were allowed to
 import was to read every consumer and guess.
@@ -27,7 +27,7 @@ the kernel's other packages; it belongs under `simplon/tasks/`, with the bodies 
 ```
 simplon/kernel/log.py         library — import it
 simplon/kernel/run.py         library — import it
-simplon/domain/catalogue.py   machinery — may change without notice
+simplon/manifest/catalogue.py   machinery — may change without notice
 simplon/tasks/vcs.py          a task body — reach it by coordinate, `vcs:commit`
 simplon/tasks/gitops.py       that body's innards — no promise at all
 ```
@@ -175,7 +175,7 @@ command reference is read off the assembled app, the version comes off the tag. 
 derived, and it is worth saying why, because it looks like it can: you can measure who imports what
 today, but a promise is about tomorrow. `simplon.kernel.verdict` has no consumer in any repository right now
 and is a library all the same — it was written as one, it names no product, and the next product to read
-a suite's outcome is meant to find it. `simplon.domain.catalogue` has no consumer either and is machinery. The
+a suite's outcome is meant to find it. `simplon.manifest.catalogue` has no consumer either and is machinery. The
 import graph cannot tell those two apart, because the difference is an intention.
 
 The example used to be `simplon.adapters.compose`, and it has since acquired a consumer — which is the argument
@@ -195,9 +195,17 @@ no product manifest, command or import is affected either way.
 Short enough to state, and the half you most need, because everything else is yours:
 
 `adapters.diskguard` · `adapters.oras` · `adapters.tools` · `cli.bootstrap` ·
-`domain.artifactschema` · `domain.catalogue` · `domain.clitaxonomy` · `domain.launcherenv` · `domain.manifestmodel` ·
-`domain.ports` · `domain.runners` · `domain.signatures` · `domain.task` · `domain.yamlkeys` · `kernel.moved` · `kernel.provenance` ·
+`manifest.catalogue` · `manifest.clitaxonomy` · `manifest.launcherenv` · `manifest.manifestmodel` ·
+`manifest.ports` · `manifest.runners` · `manifest.signatures` · `manifest.yamlkeys` · `kernel.moved` · `kernel.provenance` ·
 `kernel.runhost` · `kernel.steplog` · `test_impls`
+
+`model.task` and `model.artifactschema` left this list in 0.33.0 (si#473). Every task class firn
+generates — the kernel's, and a product's own from the same template — imports `simplon.model.task.Task`,
+and every class with ports `simplon.model.artifactschema.Port`, so a product's generated code bakes both
+paths in, and both are library now. `artifactschema` is still generated and rewritten whole: its names
+are promised, its text is not. Promoting `model.task` made it collide with the task body module
+`simplon.tasks.tasks` (the bodies of `support tasks generate` and `support tasks catalogue`), so that
+module is `simplon.tasks.taskverbs` since 0.33.0.
 
 `runners` needs a word too, because `workflowgen` beside it is a library module and this is not. It is a
 **table** of facts about kinds of CI machine — what a self-hosted Debian runner provides, why
@@ -240,16 +248,59 @@ red once a version past it is built.
 
 **The second period: si#399, the package per component.** Every module moved into the package of its
 component, and `simplon.orchestrator` was dissolved. The move shipped in 0.31; the old paths worked
-through 0.32 and **are gone since 0.33.0**. An import of one is now a `ModuleNotFoundError`, and
-`surface.MOVED` is empty again until the next move.
+through 0.32 and **are gone since 0.33.0**, and `surface.MOVED` is empty again until the next move.
 
 Migrating is a rename, because every module kept its name: `simplon.X` is `simplon.<layer>.X`, and the
 layer is the one `surface.LIBRARY` or `surface.INTERNAL` lists it under (`log` is `kernel.log`, `host` is
 `adapters.host`). One name is on both lists: the `simplon.ports` that moved is `adapters.ports`, and
-`domain.ports` is a different, internal module. The dissolved package went to three places: `orchestrator.plan`, `.product` and `.steps`
-to `simplon.kernel`, `orchestrator.manifest` and `orchestrator.model.treeform` to `simplon.domain`, and
-`orchestrator.tui` to `simplon.ui`. A string a test patches by changes with the import:
+`manifest.ports` is a different, internal module. The dissolved package went to three places: `orchestrator.plan`, `.product` and `.steps`
+to `simplon.kernel`, `orchestrator.manifest` to `simplon.manifest.load`, `orchestrator.model.treeform` to
+`simplon.manifest.treeform`, and `orchestrator.tui` to `simplon.ui`. A string a test patches by changes with the import:
 `patch("simplon.orchestrator.steps.run_stream")` is `patch("simplon.kernel.steps.run_stream")`.
+
+**In the same release, si#473 split `simplon.domain` in two, with no alias at all.** `simplon.model` is
+the vocabulary — the task and command base classes, the artifact schema, the carrier spec — and imports
+nothing outside itself; `simplon.manifest` is everything that reads a manifest. The loader is
+`simplon.manifest.load`, the one module that changed its name. Shipping the split with si#470 means a
+product that still imports a pre-si#399 path migrates once, straight to the new home:
+
+| Old path | New path |
+|---|---|
+| `simplon.domain.artifactschema` | `simplon.model.artifactschema` |
+| `simplon.domain.artifactsection` | `simplon.manifest.artifactsection` |
+| `simplon.domain.carrierspec` | `simplon.model.carrierspec` |
+| `simplon.domain.catalogue` | `simplon.manifest.catalogue` |
+| `simplon.domain.clitaxonomy` | `simplon.manifest.clitaxonomy` |
+| `simplon.domain.command` | `simplon.model.command` |
+| `simplon.domain.context` | `simplon.manifest.context` |
+| `simplon.domain.deployment` | `simplon.manifest.deployment` |
+| `simplon.domain.environments` | `simplon.manifest.environments` |
+| `simplon.domain.layout` | `simplon.manifest.layout` |
+| `simplon.domain.manifest` | `simplon.manifest.load` |
+| `simplon.domain.manifestmodel` | `simplon.manifest.manifestmodel` |
+| `simplon.domain.outputs` | `simplon.manifest.outputs` |
+| `simplon.domain.ports` | `simplon.manifest.ports` |
+| `simplon.domain.results` | `simplon.manifest.results` |
+| `simplon.domain.runners` | `simplon.manifest.runners` |
+| `simplon.domain.signatures` | `simplon.manifest.signatures` |
+| `simplon.domain.task` | `simplon.model.task` |
+| `simplon.domain.treeform` | `simplon.manifest.treeform` |
+| `simplon.domain.yamlkeys` | `simplon.manifest.yamlkeys` |
+
+**A removed path is a tombstone, not a bare miss.** The import still fails — there is no alias, and no
+stub to patch by mistake — but the error names the new home instead of "No module named":
+
+```
+simplon.log has moved to simplon.kernel.log; import it from there. The old path was removed in 0.33.0.
+```
+
+Every path si#399 moved and every `domain` module is in `simplon.kernel.moved.GONE`, each pointing at its
+final home: a pre-si#399 path that went into `domain` points past it, into `model` or `manifest`. A
+dissolved package (`orchestrator`, `orchestrator.model`, `domain`) fails naming where each of its modules
+went, because importing `simplon.orchestrator.steps` imports `simplon.orchestrator` first. The error is a
+`ModuleNotFoundError`, so a product that already catches one keeps working. The tombstones have their own
+deadline, `GONE_DUE_AFTER`: they stand through 0.33 and go in 0.34.0, with a test that turns red once a
+version past it is built.
 
 **The first period ran through 0.4.x and ended at 0.5.0.** Four modules stood as tombstones and are now
 gone; an import of one is a `ModuleNotFoundError`. The gate is what ended it: the test went red on the

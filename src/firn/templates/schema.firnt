@@ -1,23 +1,23 @@
 template ArtifactSchema {
 
-  // src/simplon/domain/artifactschema.py (si#344 B2): one pydantic model per artifact kind of simplon.vocabulary,
+  // src/simplon/model/artifactschema.py (si#344 B2): one pydantic model per artifact kind of simplon.vocabulary,
   // the coordinates that read one entry by name, and the keys each of them needs. A WHOLE module with no
   // protected region: firn rewrites every line on every run. The `file` block stands outside every `for`,
   // so a selector that answers nothing leaves a module without classes rather than no module - and
   // `build:model` (si#400 4b) and src/tests/test_generated_schema.py refuse that module too. A field's type is
   // `_<shape>`, an alias the module defines, so the template needs no conditional per shape.
-  file "domain/artifactschema.py" language python {
+  file "model/artifactschema.py" language python {
     |# GENERATED from src/firn/model/simplon/vocabulary/kinds.firn (the kinds) and
     |# src/firn/model/simplon/catalogue/tasks.firn (the ports) by `./simplon.sh build model`. Do not edit:
     |# firn rewrites the whole file on every run, and this file has no protected region. If it is missing or
-    |# empty, every `./simplon.sh` command stops at import: `git checkout -- src/simplon/domain/artifactschema.py`.
+    |# empty, every `./simplon.sh` command stops at import: `git checkout -- src/simplon/model/artifactschema.py`.
     |"""The `artifacts:` entry of each kind, as a pydantic model (si#344 B2, spec B.1-B.3).
     |
     |One class per kind of the catalogue's vocabulary. A kind that refines another is a subclass of it, so
     |`isinstance(entry, DirectoryEntry)` holds for a `site` too: a reader accepts a kind and every kind that
     |refines it. A key the kind does not declare is refused by name (`_known`); a declared key's value has
     |the SHAPE the model gives it (`_typed`). Which keys a reader NEEDS is `NEEDS`, applied by
-    |`simplon.domain.artifactsection.entry`. Every refusal here is a `raise ValueError` in the root's validators,
+    |`simplon.manifest.artifactsection.entry`. Every refusal here is a `raise ValueError` in the root's validators,
     |where the refusal census counts it.
     |"""
     |from __future__ import annotations

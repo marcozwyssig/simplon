@@ -66,7 +66,7 @@ def test_the_toolchain_mount_is_the_host_path_when_there_is_one(tmp_path, monkey
     # arrange: the commonest of the mount sites, and the only one that is a pure function
     monkeypatch.setenv(hostpath.HOST_ROOT_ENV, "/home/marco/proj")
     monkeypatch.setenv(hostpath.MOUNT_ROOT_ENV, "/src")
-    from simplon.domain import context
+    from simplon.manifest import context
     context.set_current(context.ProductContext("democtl", tmp_path, tmp_path / "democtl.yaml"))
     cfg = toolchain.Toolchain(image="python:3.12-slim", argv=["pytest"],
                               caches=[toolchain.Cache(volume="pip-cache", path="/cache")])
@@ -83,7 +83,7 @@ def test_the_toolchain_mount_is_unchanged_on_the_venv_route(tmp_path, monkeypatc
     # arrange: the Gegenprobe, so the test above is about the translation rather than about any rewrite
     monkeypatch.delenv(hostpath.HOST_ROOT_ENV, raising=False)
     monkeypatch.delenv(hostpath.MOUNT_ROOT_ENV, raising=False)
-    from simplon.domain import context
+    from simplon.manifest import context
     context.set_current(context.ProductContext("democtl", tmp_path, tmp_path / "democtl.yaml"))
     cfg = toolchain.Toolchain(image="python:3.12-slim", argv=["pytest"])
 
@@ -105,7 +105,7 @@ def test_the_mermaid_scratch_is_inside_the_tree_so_it_can_be_mounted_from_a_cont
     explaining why the code no longer calls it, and a substring check cannot tell the two apart.
     """
     # arrange: the product root IS the mount, and the host knows it by another name
-    from simplon.domain import context
+    from simplon.manifest import context
     from simplon.tasks import site
     monkeypatch.setenv(hostpath.HOST_ROOT_ENV, "/home/marco/proj")
     monkeypatch.setenv(hostpath.MOUNT_ROOT_ENV, str(tmp_path))

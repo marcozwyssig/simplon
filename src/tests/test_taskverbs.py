@@ -1,9 +1,9 @@
-"""Unit tests for simplon.tasks.tasks (netctl#1444): the two verbs that make the task machinery
+"""Unit tests for simplon.tasks.taskverbs (netctl#1444): the two verbs that make the task machinery
 addressable - `generate` (write the product's committed CLI module) and `catalogue` (print the coordinate
 space).
 
 The generator itself is covered by test_taskgen.py. What is asserted here is the seam: that the verbs read
-the product's root, manifest and manifest FILENAME from `simplon.domain.context` rather than knowing a product,
+the product's root, manifest and manifest FILENAME from `simplon.manifest.context` rather than knowing a product,
 that `--check` reports drift as a non-zero exit so one command serves both a gate and a hook, and that the
 listing survives a product importing nothing.
 
@@ -13,8 +13,8 @@ import textwrap
 
 import pytest
 
-from simplon.domain import context
-from simplon.tasks import tasks
+from simplon.manifest import context
+from simplon.tasks import taskverbs
 
 # `stamp` rather than any of the catalogue's own git verbs: the catalogue PLACES commit/push/... under
 # `support.git`, so reusing one of those names here would be a second body under a placed name - which
@@ -48,7 +48,7 @@ def test_generate_writes_the_module_at_the_target_the_manifest_pinned(product):
     # arrange: `target` is a manifest-pinned parameter (`with:`), resolved against the product's ROOT -
     # the kernel must not know where a product keeps its generated module
     # act
-    rc = tasks.generate("pkg/_generated_cli.py")
+    rc = taskverbs.generate("pkg/_generated_cli.py")
 
     # assert
     assert rc == 0
@@ -59,7 +59,7 @@ def test_generate_names_the_manifest_file_in_the_module_it_writes(product):
     # arrange: the header says which manifest the module came from, and that filename is the CONTEXT's,
     # not a constant - a second product's module must not claim it was generated from netctl.yaml
     # act
-    tasks.generate("pkg/_generated_cli.py")
+    taskverbs.generate("pkg/_generated_cli.py")
 
     # assert
     assert "sample.yaml" in (product.root / "pkg" / "_generated_cli.py").read_text(encoding="utf-8")
@@ -68,11 +68,11 @@ def test_generate_names_the_manifest_file_in_the_module_it_writes(product):
 def test_generate_is_idempotent(product):
     # arrange: a second run must not rewrite an identical file - the drift gate compares TEXT, so a render
     # that varied between runs would make it a permanent false green
-    tasks.generate("pkg/_generated_cli.py")
+    taskverbs.generate("pkg/_generated_cli.py")
     first = (product.root / "pkg" / "_generated_cli.py").read_text(encoding="utf-8")
 
     # act
-    rc = tasks.generate("pkg/_generated_cli.py")
+    rc = taskverbs.generate("pkg/_generated_cli.py")
 
     # assert
     assert rc == 0
@@ -81,10 +81,10 @@ def test_generate_is_idempotent(product):
 
 def test_check_passes_on_a_module_that_agrees_with_the_manifest(product):
     # arrange
-    tasks.generate("pkg/_generated_cli.py")
+    taskverbs.generate("pkg/_generated_cli.py")
 
     # act
-    rc = tasks.generate("pkg/_generated_cli.py", check=True)
+    rc = taskverbs.generate("pkg/_generated_cli.py", check=True)
 
     # assert
     assert rc == 0
@@ -93,12 +93,12 @@ def test_check_passes_on_a_module_that_agrees_with_the_manifest(product):
 def test_check_reports_drift_as_a_failing_exit_code_and_writes_nothing(product):
     # arrange: one command serving both a unit gate and a pre-commit hook is why this returns 1 rather
     # than printing and succeeding
-    tasks.generate("pkg/_generated_cli.py")
+    taskverbs.generate("pkg/_generated_cli.py")
     target = product.root / "pkg" / "_generated_cli.py"
     target.write_text("# hand-edited\n", encoding="utf-8")
 
     # act
-    rc = tasks.generate("pkg/_generated_cli.py", check=True)
+    rc = taskverbs.generate("pkg/_generated_cli.py", check=True)
 
     # assert
     assert rc == 1
@@ -109,7 +109,7 @@ def test_check_reports_a_module_that_was_never_generated_rather_than_creating_it
     # arrange: a missing file is drift, not a reason to silently succeed - a gate that generates what it
     # was asked to verify can never fail
     # act
-    rc = tasks.generate("pkg/_generated_cli.py", check=True)
+    rc = taskverbs.generate("pkg/_generated_cli.py", check=True)
 
     # assert
     assert rc == 1
@@ -123,7 +123,7 @@ def test_check_reports_a_module_that_was_never_generated_rather_than_creating_it
 def test_catalogue_prints_every_namespace_the_kernel_offers(product, capsys):
     # arrange / act: the real shipped catalogue, not a fixture - a listing that disagrees with the file is
     # worse than no listing
-    rc = tasks.catalogue()
+    rc = taskverbs.catalogue()
 
     # assert
     out = capsys.readouterr().out
@@ -146,7 +146,7 @@ def test_catalogue_marks_the_namespace_a_task_coordinate_reaches(tmp_path, monke
         name="sample", root=tmp_path, manifest_path=manifest_path))
 
     # act
-    tasks.catalogue()
+    taskverbs.catalogue()
 
     # assert
     out = capsys.readouterr().out
@@ -159,7 +159,7 @@ def test_catalogue_marks_a_namespace_the_platform_places_with_no_task_ref_anywhe
     # arrange: this product's manifest names not a single platform coordinate - the one command it
     # declares refers to a task it defines ITSELF (no colon, no namespace). But `build` is written as a
     # command TREE, so loading it merges the platform's OWN `groups:` (netctl#1444) onto it - and that
-    # block PLACES `support.git.*` and `tasks.catalogue`/`tasks.generate` itself, unconditionally, in
+    # block PLACES `support.git.*` and `taskverbs.catalogue`/`taskverbs.generate` itself, unconditionally, in
     # every product that has migrated even one group. `vcs` and `tasks` are therefore reached even though
     # this manifest's own text never says so; a walk over the RAW manifest (the bug) cannot see that,
     # because the reference lives in the KERNEL's catalogue.yaml, never in this file.
@@ -177,7 +177,7 @@ def test_catalogue_marks_a_namespace_the_platform_places_with_no_task_ref_anywhe
         name="sample", root=tmp_path, manifest_path=manifest_path))
 
     # act
-    rc = tasks.catalogue()
+    rc = taskverbs.catalogue()
 
     # assert: the platform-placed namespaces are marked, but the bare task itself introduces none of its
     # own - a fix that marked everything once any group migrated would also pass the two lines above, so
@@ -220,7 +220,7 @@ def test_catalogue_marks_a_namespace_reached_via_a_raw_impl_naming_a_kernel_modu
         name="sample", root=tmp_path, manifest_path=manifest_path))
 
     # act
-    rc = tasks.catalogue()
+    rc = taskverbs.catalogue()
 
     # assert
     out = capsys.readouterr().out
@@ -250,7 +250,7 @@ def test_catalogue_marks_a_namespace_a_command_names_a_coordinate_from(tmp_path,
         name="sample", root=tmp_path, manifest_path=manifest_path))
 
     # act
-    rc = tasks.catalogue()
+    rc = taskverbs.catalogue()
 
     # assert: `vcs` is reached because a command names one of its coordinates. `docs` is what pins the
     # behaviour down - the kernel declares `docs:render`/`docs:site` and places no command for either, so
@@ -269,7 +269,7 @@ def test_catalogue_leaves_a_namespace_nothing_reaches_unmarked(product, capsys):
     # `docs:render`/`docs:site` as tasks only, and `test` likewise. A fix that marked every namespace
     # would light both up.
     # act
-    rc = tasks.catalogue()
+    rc = taskverbs.catalogue()
 
     # assert
     out = capsys.readouterr().out

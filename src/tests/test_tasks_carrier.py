@@ -25,7 +25,8 @@ from __future__ import annotations
 
 import pytest
 
-from simplon.domain import carrierspec, environments
+from simplon.model import carrierspec
+from simplon.manifest import environments
 from simplon.tasks import carrier, proxmoxapi
 
 from conftest import lifecycle_name
@@ -301,7 +302,7 @@ MACHINE = carrierspec.Carrier(
 
 def _stub(monkeypatch, tmp_path, carrier_, seen: list) -> None:
     """Everything `up` reaches outside itself, replaced. Nothing here runs Pulumi, Ansible or Proxmox."""
-    from simplon.domain import context
+    from simplon.manifest import context
 
     # si#280: `_carrier_of` hands the MACHINE back beside the carrier, so its refusal of a carrier with
     # no `proxmox:` is a narrowing the type gate can see rather than an assertion further down.
@@ -372,7 +373,7 @@ def test_deploy_carrier_refuses_a_portainer_that_was_built_by_somebody_else(monk
     fault, because a reader who lands here is here by accident and not by mistake - they pointed at a
     Portainer that already exists and typed the command that creates one.
     """
-    from simplon.domain import context
+    from simplon.manifest import context
 
     monkeypatch.setattr(carrier.carrierspec, "declared", lambda *a, **k: {
         "theirs": carrier.carrierspec.Carrier(
@@ -402,7 +403,7 @@ def test_the_backends_are_read_from_a_cd_matrix():
 @pytest.fixture
 def _lines(monkeypatch, tmp_path):
     """Every line `_pulumi` / `_ansible` streams, recorded; the product registered so the label has a name."""
-    from simplon.domain import context
+    from simplon.manifest import context
     seen: list = []
     monkeypatch.setattr(context, "_current", context.ProductContext("p", tmp_path, tmp_path / "p.yaml"))
     monkeypatch.setattr(carrier.run, "stream", lambda argv, **kw: (seen.append(list(argv)), 0)[1])

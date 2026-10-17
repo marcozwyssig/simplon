@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pathlib
 
-from simplon.domain import catalogue as catalogue_mod
+from simplon.manifest import catalogue as catalogue_mod
 
 import sitepages
 

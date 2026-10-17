@@ -1,10 +1,10 @@
-"""Unit tests for simplon.domain.environments.parse - the pure manifest-matrix (`cd: environments:` /
+"""Unit tests for simplon.manifest.environments.parse - the pure manifest-matrix (`cd: environments:` /
 `cd: default:`) -> Registry parsing and validation with product-supplied valid backends. No I/O; AAA
 throughout."""
 import pytest
 
-from simplon.domain import environments as envs_mod
-from simplon.domain.environments import parse, parse_data
+from simplon.manifest import environments as envs_mod
+from simplon.manifest.environments import parse, parse_data
 
 _BACKENDS = ("local", "cloud")
 _OK = """

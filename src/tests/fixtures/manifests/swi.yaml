@@ -796,7 +796,7 @@ release:
 # simplon 0.12.0:
 #
 #   * the kernel keeps `name`, `backend` and `description` from an environment entry and DROPS
-#     everything else - `simplon.domain.environments.parse_data` builds exactly those three. A `host:` written
+#     everything else - `simplon.manifest.environments.parse_data` builds exactly those three. A `host:` written
 #     there parses without complaint and is then invisible, which is the worst failure shape there is;
 #   * an environment is WHERE COMMANDS RUN, and building stays local - it needs Workstation, an ISO and
 #     an hour. `swi --env esxi build template win2019` would be a sentence with no meaning, and making

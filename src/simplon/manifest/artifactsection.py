@@ -1,7 +1,7 @@
 """The `artifacts:` section, one reading for every reader (si#344 B2, spec B.1-B.3).
 
 Every entry names its `kind:`, one of the catalogue's kinds, carries only that kind's keys, each in the shape
-`simplon.domain.artifactschema` - GENERATED from simplon's firn model - checks, and a reader finds there the keys
+`simplon.model.artifactschema` - GENERATED from simplon's firn model - checks, and a reader finds there the keys
 its coordinate NEEDS. Two functions, for the two moments the section is read:
 
   - `check(document, kinds, source)` at LOAD, from `orchestrator.manifest.load`: every entry is a mapping,
@@ -34,16 +34,16 @@ from typing import NamedTuple, TypeVar
 from pydantic import ValidationError
 
 try:
-    from simplon.domain import artifactschema
+    from simplon.model import artifactschema
     REFINES = artifactschema.REFINES
     READERS = artifactschema.READERS
     NEEDS = artifactschema.NEEDS
     _ROOT = artifactschema.ArtifactEntry
 except Exception as exc:  # ImportError, SyntaxError, AttributeError: each is what firn#966 can leave behind
     raise ImportError(
-        "simplon.domain.artifactschema is missing, empty or broken - firn deletes or half-writes it with rc 0 "
+        "simplon.model.artifactschema is missing, empty or broken - firn deletes or half-writes it with rc 0 "
         "(firn#966), and nothing that loads a manifest runs without it. In simplon's checkout: "
-        "`git checkout -- src/simplon/domain/artifactschema.py`, then `./simplon.sh build model` and read firn's "
+        "`git checkout -- src/simplon/model/artifactschema.py`, then `./simplon.sh build model` and read firn's "
         "own error; in an installed kernel, reinstall it") from exc
 
 SECTION = "artifacts"

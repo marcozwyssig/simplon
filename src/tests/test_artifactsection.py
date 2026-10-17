@@ -9,9 +9,10 @@ import types
 import pytest
 import yaml
 
-import simplon.domain
-from simplon.domain import artifactsection, artifactschema, catalogue
-from simplon.domain import manifest
+import simplon.model
+from simplon.manifest import artifactsection, catalogue
+from simplon.model import artifactschema
+from simplon.manifest import load as manifest
 from simplon.tasks.migrate import migrate_text
 
 import realmanifests
@@ -199,17 +200,17 @@ def test_a_use_of_a_refining_kind_is_accepted_and_typed():
 
 def test_a_broken_schema_names_its_recovery(monkeypatch):
     # arrange: what firn#966 leaves - a module with nothing in it (an id-line-only file imports as this)
-    empty = types.ModuleType("simplon.domain.artifactschema")
-    monkeypatch.setitem(sys.modules, "simplon.domain.artifactschema", empty)
-    monkeypatch.setattr(simplon.domain, "artifactschema", empty)
-    monkeypatch.delitem(sys.modules, "simplon.domain.artifactsection")
+    empty = types.ModuleType("simplon.model.artifactschema")
+    monkeypatch.setitem(sys.modules, "simplon.model.artifactschema", empty)
+    monkeypatch.setattr(simplon.model, "artifactschema", empty)
+    monkeypatch.delitem(sys.modules, "simplon.manifest.artifactsection")
 
     # act
     with pytest.raises(ImportError) as caught:
-        importlib.import_module("simplon.domain.artifactsection")
+        importlib.import_module("simplon.manifest.artifactsection")
 
     # assert: the sentence IS the way out, because no `./simplon.sh` command runs until it is taken
-    assert "git checkout -- src/simplon/domain/artifactschema.py" in str(caught.value)
+    assert "git checkout -- src/simplon/model/artifactschema.py" in str(caught.value)
     assert "./simplon.sh build model" in str(caught.value)
 
 

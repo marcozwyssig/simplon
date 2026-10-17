@@ -29,7 +29,7 @@ import pytest
 
 from conftest import ROOT  # noqa: E402 - the one product-root anchor (si#283)
 PROBE = (
-    "import simplon.domain.catalogue as c, pathlib;"
+    "import simplon.manifest.catalogue as c, pathlib;"
     "p = pathlib.Path(c.__file__).parent;"
     "assert 'site-packages' in str(p), p;"
     "cat = c.load();"
@@ -42,8 +42,8 @@ PROBE = (
 # the scaffolded product so `orchestrator.cli`'s impls resolve. Run with the product dir as cwd.
 _GENERATE_CLI = (
     "import sys; sys.path.insert(0, 'deploy/provision/orchestrator/src/python');"
-    "from simplon.tasks import taskgen; from simplon.domain import catalogue;"
-    "from simplon.domain import manifest;"
+    "from simplon.tasks import taskgen; from simplon.manifest import catalogue;"
+    "from simplon.manifest import load as manifest;"
     "text = open('demo.yaml', encoding='utf-8').read();"
     "m = manifest.load(text, catalogue=catalogue.load());"
     "src = taskgen.render(m, source='demo.yaml', product='demo');"

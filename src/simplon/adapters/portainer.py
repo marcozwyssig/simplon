@@ -42,12 +42,12 @@ import urllib.request
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Callable, Mapping
 
-from simplon.domain import environments
+from simplon.manifest import environments
 
 if TYPE_CHECKING:  # local: keeps the module head free of the manifest layer, the way `backend` does
-    from simplon.domain.carrierspec import Carrier
-    from simplon.domain.deployment import Version
-    from simplon.domain.environments import Environment, Repository
+    from simplon.model.carrierspec import Carrier
+    from simplon.manifest.deployment import Version
+    from simplon.manifest.environments import Environment, Repository
 
 # The registry Portainer pulls the images from. A private package needs credentials stored IN Portainer;
 # without them the pull fails with "unauthorized", and it fails at START time - the kind of failure worth
@@ -549,7 +549,8 @@ def _target_for(env: "Environment") -> "tuple[PortainerTarget, Repository]":
     Each of the three refusals names the key that is missing, because an environment is half a chain until
     all three are there and "portainer backend failed" would send the reader through the whole file.
     """
-    from simplon.domain import carrierspec, context  # local: this module is a leaf, the manifest layer is not
+    from simplon.model import carrierspec
+    from simplon.manifest import context  # local: this module is a leaf, the manifest layer is not
 
     if not env.carrier:
         raise ValueError(

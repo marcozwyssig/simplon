@@ -18,7 +18,7 @@ from pathlib import Path
 import typer
 
 from simplon.adapters import docker
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.tasks import toolchain
 
 #: firn's id line in any comment syntax: `# ...` (yaml, python) or `<!-- ... -->` (html, markdown).

@@ -8,9 +8,9 @@ import shlex
 
 import pytest
 
-from simplon.domain import context
-from simplon.domain.context import ProductContext
-from simplon.domain.manifest import load as manifest_load
+from simplon.manifest import context
+from simplon.manifest.context import ProductContext
+from simplon.manifest.load import load as manifest_load
 from simplon.kernel.steps import (
     FAILURE_TAIL_LINES,
     VERBOSE_ENV,
@@ -266,8 +266,8 @@ def test_pipeline_still_takes_name_steps_and_stop_on_failure_positionally():
 
 def test_pipeline_carries_the_plan_tree_and_the_invoked_commands_dotted_path():
     # Arrange
-    from simplon.domain.command import TaskCommand
-    from simplon.domain.manifest import PlanNode
+    from simplon.model.command import TaskCommand
+    from simplon.manifest.load import PlanNode
 
     node = PlanNode(name="seed", path="deploy.seed", spec=TaskCommand(impl="demo.impls:seed", help="Seed."))
     # Act

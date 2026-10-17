@@ -27,7 +27,7 @@ import shutil
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.kernel import log
 from simplon.kernel.run import run
 

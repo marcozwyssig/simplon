@@ -371,7 +371,7 @@ PROFILES: dict[str, Profile] = {
         # have found - it took driving a real `simplon init` product. `mypy .` over a scaffolded pydemo
         # is rc 1 with FIVE errors and every one of them in the kernel's own scaffold:
         # `deploy/provision/orchestrator/.../cli.py: Cannot find implementation or library stub for
-        # module named "simplon"` (and `typer`, and `simplon.domain.environments`). Not one was about the
+        # module named "simplon"` (and `typer`, and `simplon.manifest.environments`). Not one was about the
         # product. The orchestrator is HOST-venv Python by construction - its `requirements.txt`
         # installs the kernel into `.venv`, and `test:typecheck-python` is the command that checks it,
         # in the environment where its imports exist. A container that has neither can only produce

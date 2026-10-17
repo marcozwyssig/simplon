@@ -16,15 +16,15 @@ neither the page nor the built site is committed.
 The manifest is loaded through the real loader with the real catalogue - the same path the CLI takes -
 so a section this file asserts on is a section the running product actually has. AAA throughout.
 """
-from simplon.domain.command import AggregateCommand
+from simplon.model.command import AggregateCommand
 import shutil
 import subprocess
 
 import pytest
 
-from simplon.domain import catalogue as catalogue_mod
-from simplon.domain import manifest as manifest_mod
-from simplon.domain import outputs
+from simplon.manifest import catalogue as catalogue_mod
+from simplon.manifest import load as manifest_mod
+from simplon.manifest import outputs
 from simplon.tasks import site as site_task
 
 from conftest import ROOT
@@ -51,7 +51,7 @@ def product():
 
 def test_the_site_section_is_declared_and_valid(product):
     """The `site:` section parses through the very validator `docs:site` runs it through."""
-    # Arrange: the raw manifest data, as simplon.domain.context.manifest_data would hand it to the task.
+    # Arrange: the raw manifest data, as simplon.manifest.context.manifest_data would hand it to the task.
     import yaml
     data = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
 

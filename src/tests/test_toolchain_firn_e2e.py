@@ -18,7 +18,7 @@ import pytest
 import yaml
 
 from conftest import docker_is_usable
-from simplon.domain import catalogue
+from simplon.manifest import catalogue
 from simplon.kernel.run import run
 from simplon.tasks import profiles, toolchain
 

@@ -10,7 +10,7 @@ aggregates for free. Every product in `simplon.cli.surface.CONSUMERS` already do
 own orchestrator - measured (#51), not assumed.
 
 This module is PURE of any product import: the ONLY product-specific thing is the injected `step_factory`
-on the `StepFactoryContext`. That name is deliberately DISTINCT from `simplon.domain.context.ProductContext`
+on the `StepFactoryContext`. That name is deliberately DISTINCT from `simplon.manifest.context.ProductContext`
 (which carries a product's identity/root/manifest path for the CLI engine): the two used to share the name
 `ProductContext`, disambiguated only by a docstring, which was a footgun (netctl#737). This seam is the
 step-runner one - a command name -> Step factory - so it is named for what it is.
@@ -38,7 +38,7 @@ class StepFactoryContext:
     the Step that runs it (typically a streaming `./<product>.sh <cmd>` subprocess step). Immutable; the
     product builds it once and passes it in, so the runner never imports the product.
 
-    Named `StepFactoryContext` (not `ProductContext`) so it never collides with `simplon.domain.context`'s
+    Named `StepFactoryContext` (not `ProductContext`) so it never collides with `simplon.manifest.context`'s
     identity `ProductContext` (netctl#737): the two live in different modules for different jobs, and a
     shared name disambiguated only by a docstring was a footgun."""
 
@@ -67,7 +67,7 @@ class StepFactoryContext:
         `run_command` does not stamp the steps it receives.
 
         `manifest` is the parsed manifest the product assembles its CLI from; a product that has none at
-        hand reads it back through `simplon.domain.context.current().manifest()`.
+        hand reads it back through `simplon.manifest.context.current().manifest()`.
         """
         argv0 = str(script)
 

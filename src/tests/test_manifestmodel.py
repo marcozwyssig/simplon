@@ -15,9 +15,11 @@ import pytest
 import yaml
 
 import realmanifests
-from simplon.domain import catalogue, command, manifestmodel
-from simplon.domain.environments import matrix_section
-from simplon.domain import manifest as manifest_mod
+from simplon.manifest import catalogue, manifestmodel
+from simplon.model.task import mangle
+from simplon.model import command
+from simplon.manifest.environments import matrix_section
+from simplon.manifest import load as manifest_mod
 from simplon.tasks.migrate import migrate_text
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "manifests"
@@ -59,7 +61,7 @@ def _block(out: str, head: str) -> str:
     ("typecheck-python", "typecheck_python"), ("build:image", "build_image"),
     ("simplon.tasks.image:build", "simplon_tasks_image_build"), ("7zip", "_7zip"), ("ok_1", "ok_1")])
 def test_mangle_makes_a_firn_name(raw, mangled):
-    assert manifestmodel.mangle(raw) == mangled
+    assert mangle(raw) == mangled
 
 
 def test_the_export_is_one_product_in_its_own_package():
@@ -370,7 +372,7 @@ def _source(name: str) -> tuple[manifest_mod.Manifest, str]:
 
 def _placed_product_tasks(mf: manifest_mod.Manifest) -> set[str]:
     """The product tasks a command places, keyed by the `task:` name, not by its impl (si#420)."""
-    from simplon.domain.artifactschema import BODIES
+    from simplon.model.artifactschema import BODIES
     specs = [mf.spec_for(group, command) for group, members in mf.groups.items() for command in members]
     return {s.task for s in specs if isinstance(s, command.TaskCommand) and s.task not in BODIES}
 

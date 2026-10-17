@@ -7,9 +7,9 @@ else.
 """
 import pytest
 
-from simplon.domain import context, outputs
+from simplon.manifest import context, outputs
 from simplon.kernel import steplog
-from simplon.domain.context import ProductContext
+from simplon.manifest.context import ProductContext
 
 
 @pytest.fixture(autouse=True)

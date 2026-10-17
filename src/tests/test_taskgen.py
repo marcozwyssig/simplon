@@ -15,10 +15,10 @@ import typer
 from click.testing import CliRunner
 from typer.main import get_command
 
-from simplon.domain import command
-from simplon.domain import catalogue as catalogue_mod
+from simplon.model import command
+from simplon.manifest import catalogue as catalogue_mod
 from simplon.tasks import taskgen
-from simplon.domain import manifest
+from simplon.manifest import load as manifest
 
 _MANIFEST = """
 tasks:
@@ -1449,7 +1449,7 @@ def test_a_command_that_produces_wraps_its_call_in_the_result_check():
 
     # assert
     assert "_results.held(_results.before(('checked',)), _rc(" in text
-    assert "from simplon.domain import results as _results" in text
+    assert "from simplon.manifest import results as _results" in text
 
 
 def test_a_command_that_produces_nothing_has_no_result_check():
@@ -1462,7 +1462,7 @@ def test_a_command_that_produces_nothing_has_no_result_check():
 
 def test_a_command_bound_to_evidence_reads_it_before_its_body_runs():
     # arrange: si#434 - a refused release never calls its body; si#439 - the body runs inside the guard
-    from simplon.domain.artifactschema import PORTS
+    from simplon.model.artifactschema import PORTS
 
     m = _load()
     spec = dataclasses.replace(m.commands["lab"]["seed"], consumes={"evidence": ("checked",)},
@@ -1473,13 +1473,13 @@ def test_a_command_bound_to_evidence_reads_it_before_its_body_runs():
 
     # assert
     assert "_results.guarded(('checked',), lambda: _rc(" in text
-    assert "from simplon.domain import results as _results" in text
+    assert "from simplon.manifest import results as _results" in text
 
 
 def test_a_generated_cli_runs_a_catalogue_coordinates_class_not_just_builds_it():
     # arrange: si#400 4c - a coordinate's impl names its task class; `Class(...)` would build an instance and
     # run nothing, with rc 0, so the generated call must go through `run`
-    from simplon.domain import catalogue as catalogue_mod, manifest as manifest_mod
+    from simplon.manifest import catalogue as catalogue_mod, load as manifest_mod
     from simplon.tasks import taskgen as taskgen_mod
     text = "product: demo\nci:\n  build:\n    commands:\n      push: { task: \"vcs:push\" }\n"
     mf = manifest_mod.load(text, catalogue=catalogue_mod.load())

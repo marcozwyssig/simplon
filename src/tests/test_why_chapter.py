@@ -49,8 +49,8 @@ AAA throughout.
 import ast
 import re
 
-from simplon.domain import catalogue as catalogue_mod
-from simplon.domain import treeform
+from simplon.manifest import catalogue as catalogue_mod
+from simplon.manifest import treeform
 from simplon.tasks import site as site_mod
 
 import sitepages
@@ -366,7 +366,7 @@ def test_the_bodies_the_page_says_reach_no_external_tool_really_do_not():
     contradict it on its own.
     """
     # arrange: the bodies behind the coordinates the page says reach nothing
-    modules = ("simplon.tasks.tasks", "simplon.tasks.env", "simplon.tasks.buildfiles")
+    modules = ("simplon.tasks.taskverbs", "simplon.tasks.env", "simplon.tasks.buildfiles")
 
     # act
     shelling = {}
@@ -439,7 +439,7 @@ def test_the_kernel_source_keeps_the_meaning_the_callout_claims_for_it():
     source, throughout"*.
 
     The first round of si#29 asserted that over the site only, and the sentence was false - two
-    docstrings in `simplon.domain.clitaxonomy` said "when a discipline gains sibling commands", which is the
+    docstrings in `simplon.manifest.clitaxonomy` said "when a discipline gains sibling commands", which is the
     owner's sense (a kind of work with its own commands), not rigour. Both are reworded; this is what
     stops the next one from landing unnoticed.
 

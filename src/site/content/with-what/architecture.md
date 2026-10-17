@@ -15,20 +15,25 @@ generated task class a catalogue coordinate names - is resolved at run time, and
 
 | Layer | Component | What it is for |
 |---|---|---|
-| 0 | `kernel` | Running a plan: steps, outcomes, the subprocess seam, the log - and, with si#390 part 4, the base classes of tasks and commands. |
-| 1 | `domain` | Reading the configuration, validating it, and building the plan from it. |
-| 2 | `adapters` | The tools and platforms a task drives: docker, oras, a registry, a lab, a proxy. |
-| 3 | `tasks` | The catalogue's task bodies, and the generators they call. |
-| 5 | `cli` | The command line: simplon and simplon init, and what a product may import. |
-| 4 | `ui` | Running a plan in front of a person. |
+| 0 | `kernel` | Running a plan: steps, outcomes, the subprocess seam, the log. |
+| 1 | `model` | The vocabulary a pipeline is said in: the task and command base classes, the artifact schema and the carrier spec. It imports nothing outside itself. |
+| 2 | `manifest` | Reading the configuration, validating it, and building the plan from it. |
+| 3 | `adapters` | The tools and platforms a task drives: docker, oras, a registry, a lab, a proxy. |
+| 4 | `tasks` | The catalogue's task bodies, and the generators they call. |
+| 6 | `cli` | The command line: simplon and simplon init, and what a product may import. |
+| 5 | `ui` | Running a plan in front of a person. |
 
 ## kernel
 
 `kernel.steps`, `kernel.product`, `kernel.plan`, `kernel.run`, `kernel.awake`, `kernel.provenance`, `kernel.runhost`, `kernel.log`, `kernel.verdict`, `kernel.steplog`, `kernel.waits`, `kernel.degraded`, `kernel.filelock`, `kernel.moved`
 
-## domain
+## model
 
-`domain.command`, `domain.manifest`, `domain.treeform`, `domain.yamlkeys`, `domain.artifactsection`, `domain.artifactschema`, `domain.ports`, `domain.results`, `domain.environments`, `domain.carrierspec`, `domain.layout`, `domain.launcherenv`, `domain.outputs`, `domain.deployment`, `domain.task`, `domain.signatures`, `domain.context`, `domain.catalogue`, `domain.runners`, `domain.manifestmodel`, `domain.clitaxonomy`
+`model.command`, `model.artifactschema`, `model.carrierspec`, `model.task`
+
+## manifest
+
+`manifest.load`, `manifest.treeform`, `manifest.yamlkeys`, `manifest.artifactsection`, `manifest.ports`, `manifest.results`, `manifest.environments`, `manifest.layout`, `manifest.launcherenv`, `manifest.outputs`, `manifest.deployment`, `manifest.signatures`, `manifest.context`, `manifest.catalogue`, `manifest.runners`, `manifest.manifestmodel`, `manifest.clitaxonomy`
 
 ## adapters
 
@@ -36,7 +41,7 @@ generated task class a catalogue coordinate names - is resolved at run time, and
 
 ## tasks
 
-`tasks.completiongen`, `tasks.taskgen`, `tasks.acceptance`, `tasks.allure`, `tasks.artifact`, `tasks.asset`, `tasks.buildfiles`, `tasks.carrier`, `tasks.ciarm64`, `tasks.cidisk`, `tasks.ciprivileges`, `tasks.claudeplugins`, `tasks.cliref`, `tasks.completion`, `tasks.conan`, `tasks.deploy`, `tasks.docs`, `tasks.fetchfile`, `tasks.firngen`, `tasks.env`, `tasks.generated`, `tasks.gitops`, `tasks.handoff`, `tasks.hosttools`, `tasks.image`, `tasks.manifestmodel`, `tasks.maven`, `tasks.migrate`, `tasks.nexus`, `tasks.nuget`, `tasks.profiles`, `tasks.proxmoxapi`, `tasks.release`, `tasks.releasenotes`, `tasks.site`, `tasks.tasks`, `tasks.testrun`, `tasks.toolchain`, `tasks.typecheck`, `tasks.vcs`, `tasks.walk`, `tasks.workflows`, `tasks.workflowgen`, and one generated class per catalogue task: `tasks.build_image`, `tasks.build_fetch`, `tasks.test_image`, `tasks.release_image`, `tasks.release_artifact`, `tasks.build_conan_cache`, `tasks.release_conan`, `tasks.build_nuget_config`, `tasks.build_nuget_restore`, `tasks.build_nuget_pack`, `tasks.release_nuget`, `tasks.build_maven_pack`, `tasks.release_maven`, `tasks.release_notes`, `tasks.release_tag`, `tasks.docs_site`, `tasks.deploy_up`, `tasks.toolchain_run`, `tasks.vcs_commit`, `tasks.vcs_push`, `tasks.vcs_prune_branches`, `tasks.vcs_auth_scopes`, `tasks.vcs_submodules`, `tasks.support_ci_privileges`, `tasks.support_ci_disk_hygiene`, `tasks.support_ci_arm64`, `tasks.support_ci_disk_preflight`, `tasks.support_ci_disk_cleanup`, `tasks.test_gate`, `tasks.test_typecheck_python`, `tasks.test_generated`, `tasks.test_release_notes`, `tasks.test_report`, `tasks.test_accept`, `tasks.test_walk`, `tasks.support_nexus`, `tasks.support_install`, `tasks.support_claude_plugins`, `tasks.support_environments`, `tasks.support_completion`, `tasks.support_workflows`, `tasks.docs_render`, `tasks.docs_reference`, `tasks.docs_acceptance`, `tasks.build_model`, `tasks.build_cmake_files`, `tasks.build_dotnet_solution`, `tasks.deploy_carrier`, `tasks.deploy_down`, `tasks.release_asset`, `tasks.tasks_generate`, `tasks.tasks_catalogue`, `tasks.support_migrate`, `tasks.support_model`, `tasks.support_toolchain`
+`tasks.completiongen`, `tasks.taskgen`, `tasks.acceptance`, `tasks.allure`, `tasks.artifact`, `tasks.asset`, `tasks.buildfiles`, `tasks.carrier`, `tasks.ciarm64`, `tasks.cidisk`, `tasks.ciprivileges`, `tasks.claudeplugins`, `tasks.cliref`, `tasks.completion`, `tasks.conan`, `tasks.deploy`, `tasks.docs`, `tasks.fetchfile`, `tasks.firngen`, `tasks.env`, `tasks.generated`, `tasks.gitops`, `tasks.handoff`, `tasks.hosttools`, `tasks.image`, `tasks.manifestmodel`, `tasks.maven`, `tasks.migrate`, `tasks.nexus`, `tasks.nuget`, `tasks.profiles`, `tasks.proxmoxapi`, `tasks.release`, `tasks.releasenotes`, `tasks.site`, `tasks.taskverbs`, `tasks.testrun`, `tasks.toolchain`, `tasks.typecheck`, `tasks.vcs`, `tasks.walk`, `tasks.workflows`, `tasks.workflowgen`, and one generated class per catalogue task: `tasks.build_image`, `tasks.build_fetch`, `tasks.test_image`, `tasks.release_image`, `tasks.release_artifact`, `tasks.build_conan_cache`, `tasks.release_conan`, `tasks.build_nuget_config`, `tasks.build_nuget_restore`, `tasks.build_nuget_pack`, `tasks.release_nuget`, `tasks.build_maven_pack`, `tasks.release_maven`, `tasks.release_notes`, `tasks.release_tag`, `tasks.docs_site`, `tasks.deploy_up`, `tasks.toolchain_run`, `tasks.vcs_commit`, `tasks.vcs_push`, `tasks.vcs_prune_branches`, `tasks.vcs_auth_scopes`, `tasks.vcs_submodules`, `tasks.support_ci_privileges`, `tasks.support_ci_disk_hygiene`, `tasks.support_ci_arm64`, `tasks.support_ci_disk_preflight`, `tasks.support_ci_disk_cleanup`, `tasks.test_gate`, `tasks.test_typecheck_python`, `tasks.test_generated`, `tasks.test_release_notes`, `tasks.test_report`, `tasks.test_accept`, `tasks.test_walk`, `tasks.support_nexus`, `tasks.support_install`, `tasks.support_claude_plugins`, `tasks.support_environments`, `tasks.support_completion`, `tasks.support_workflows`, `tasks.docs_render`, `tasks.docs_reference`, `tasks.docs_acceptance`, `tasks.build_model`, `tasks.build_cmake_files`, `tasks.build_dotnet_solution`, `tasks.deploy_carrier`, `tasks.deploy_down`, `tasks.release_asset`, `tasks.tasks_generate`, `tasks.tasks_catalogue`, `tasks.support_migrate`, `tasks.support_model`, `tasks.support_toolchain`
 
 ## cli
 
@@ -50,4 +55,4 @@ generated task class a catalogue coordinate names - is resolved at run time, and
 
 | Import | Why | Ticket |
 |---|---|---|
-<!-- Generated by firn, do not edit outside protected regions. id=[ArchitecturePage:,a6f0f1a0040ec817] -->
+<!-- Generated by firn, do not edit outside protected regions. id=[ArchitecturePage:,c599c45e2ac3184f] -->

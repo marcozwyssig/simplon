@@ -8,7 +8,7 @@ absent. AAA throughout.
 """
 from __future__ import annotations
 
-from simplon.domain.manifest import load as manifest_load
+from simplon.manifest.load import load as manifest_load
 import io
 import sys
 import time

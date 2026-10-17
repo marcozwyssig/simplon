@@ -16,10 +16,10 @@ import json
 
 import pytest
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.kernel import run
 from simplon.adapters import tracker
-from simplon.domain.context import ProductContext
+from simplon.manifest.context import ProductContext
 
 
 # --- the harness ------------------------------------------------------------------------------------

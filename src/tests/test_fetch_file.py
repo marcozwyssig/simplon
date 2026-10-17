@@ -13,9 +13,9 @@ import re
 import pytest
 
 from simplon.adapters import fetch as transfer
-from simplon.domain import catalogue, context
-from simplon.domain import manifest as manifest_mod
-from simplon.domain.context import ProductContext
+from simplon.manifest import catalogue, context
+from simplon.manifest import load as manifest_mod
+from simplon.manifest.context import ProductContext
 from simplon.tasks import fetchfile
 
 ARCHIVE = b"gradle 9.7.1, as served"

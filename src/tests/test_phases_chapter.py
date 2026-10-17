@@ -59,8 +59,8 @@ import re
 
 import pytest
 
-from simplon.domain import catalogue as catalogue_mod
-from simplon.domain import treeform
+from simplon.manifest import catalogue as catalogue_mod
+from simplon.manifest import treeform
 
 import sitepages
 from conftest import ROOT

@@ -56,16 +56,14 @@ on that load path, and each needs a census entry then.
 """
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 
-from simplon.domain import artifactsection
-from simplon.domain.artifactschema import BODIES
-from simplon.domain.environments import matrix_section
-from simplon.domain.command import AggregateCommand, ReleaseCommand, TaskCommand
-from simplon.domain.manifest import Manifest
-
-_NOT_NAME = re.compile(r"[^A-Za-z0-9_]")
+from simplon.manifest import artifactsection
+from simplon.model.artifactschema import BODIES
+from simplon.manifest.environments import matrix_section
+from simplon.model.command import AggregateCommand, ReleaseCommand, TaskCommand
+from simplon.manifest.load import Manifest
+from simplon.model.task import mangle
 
 #: The top-level sections the kernel reads - exactly `test_refusal_census.sections_read()`, typed once
 #: (`src/firn/` and `src/firn.toml` are no part of the `simplon` package, so `manifest.firn` is not something it can read at
@@ -87,13 +85,6 @@ _AREAS = ("ci", "cd", "support")
 
 class ModelExportError(ValueError):
     """A manifest the bridge cannot write as a model without losing something."""
-
-
-def mangle(name: str) -> str:
-    """`name` as a firn name (firn docs/03 §2; firn#962 will allow `-`): every character outside
-    [A-Za-z0-9_] becomes `_`, and a leading digit gets `_`."""
-    out = _NOT_NAME.sub("_", name)
-    return f"_{out}" if out[:1].isdigit() else out
 
 
 def _q(text: str) -> str:

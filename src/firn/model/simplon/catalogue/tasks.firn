@@ -360,11 +360,11 @@ release_asset typeOf simplon.pipeline.CatalogueTask {
 }
 tasks_generate typeOf simplon.pipeline.CatalogueTask {
   key = "tasks:generate"
-  body = "simplon.tasks.tasks:generate"
+  body = "simplon.tasks.taskverbs:generate"
 }
 tasks_catalogue typeOf simplon.pipeline.CatalogueTask {
   key = "tasks:catalogue"
-  body = "simplon.tasks.tasks:catalogue"
+  body = "simplon.tasks.taskverbs:catalogue"
 }
 support_migrate typeOf simplon.pipeline.CatalogueTask {
   key = "support:migrate"

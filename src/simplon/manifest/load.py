@@ -10,7 +10,7 @@ group-scoped keys `test.all` / `deploy.all` it needed because `all` collides acr
 namespace) is gone - the collision is resolved by NESTING instead.
 
 The engine is PURE and framework-free: it parses + validates the manifest (loudly, like
-simplon.domain.environments.parse), resolves an impl reference to the real callable, and builds the shared
+simplon.manifest.environments.parse), resolves an impl reference to the real callable, and builds the shared
 CommandTaxonomy (the env-gate) from the manifest so that logic is reused, not copied. It deliberately
 imports no CLI framework: registering Typer commands / sub-apps / help panels is the PRODUCT's job (the
 engine must not bind to one CLI framework). "One source, two outputs": the same manifest assembles the
@@ -18,7 +18,7 @@ runtime CLI now and, in Phase 2, the CI workflows.
 
 Parsing + validation run through the private Pydantic v2 models below (`_ManifestModel` and its spec
 models). The PUBLIC surface is the `Manifest` NamedTuple and, since si#400 4d, each command as an object of
-its kind's `simplon.domain.command` class: `load()` converts the validated model into those before
+its kind's `simplon.model.command` class: `load()` converts the validated model into those before
 returning, so no Pydantic type escapes. A command is a frozen dataclass, not a tuple: field access and
 `dataclasses.replace` work, while the NamedTuple protocol `CommandSpec` had (unpacking, indexing,
 `_replace`, `_asdict`) is gone with it, with no window - no measured consumer used it. The fail-loud
@@ -28,20 +28,19 @@ ValidationError as a plain ValueError so a raw ValidationError never escapes.
 from __future__ import annotations
 
 import re
-
-import importlib
 from collections.abc import Iterable, Mapping
 from typing import Any, Callable, NamedTuple, cast
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from simplon.domain import artifactsection, launcherenv, ports, task, yamlkeys
-from simplon.domain.command import (AggregateCommand, Command, Deploy, ParamPresentation, ReleaseCommand,
+from simplon.manifest import artifactsection, launcherenv, ports, yamlkeys
+from simplon.model import task
+from simplon.model.command import (AggregateCommand, Command, Deploy, ParamPresentation, ReleaseCommand,
                                     TaskCommand)
-from simplon.domain.artifactschema import Port
-from simplon.domain.clitaxonomy import CommandTaxonomy, TaxonomyNode, merge_trees
-from simplon.domain import treeform
+from simplon.model.artifactschema import Port
+from simplon.manifest.clitaxonomy import CommandTaxonomy, TaxonomyNode, merge_trees
+from simplon.manifest import treeform
 from simplon.kernel.plan import PlanNode
 
 
@@ -199,18 +198,6 @@ class Manifest(NamedTuple):
         # An aggregate always bottoms out at leaves in a validated manifest, so `visit` returning None for
         # the ROOT cannot happen; return the bare node rather than None so the caller's type never widens.
         return root if root is not None else PlanNode(name=name, path=root_path, spec=root_spec)
-
-
-def _split_impl(impl: str, context: str) -> tuple[str, str]:
-    """Split a "module:function" reference into its two parts, failing loudly on a malformed one.
-
-    `context` names what is being validated (a command name, or the impl itself) so the error points at
-    the offending declaration.
-    """
-    module, sep, function = impl.partition(":")
-    if sep != ":" or not module or not function or ":" in function:
-        raise ValueError(f"{context}: impl must be 'module:function', got '{impl}'")
-    return module, function
 
 
 # --- internal Pydantic parse/validate layer ---------------------------------------------------------
@@ -487,7 +474,7 @@ class _ManifestModel(BaseModel):
                 if not spec.impl and not spec.depends_on:
                     raise ValueError(f"command '{group}.{name}': missing impl")
                 if spec.impl:
-                    _split_impl(spec.impl, f"command '{group}.{name}'")   # validates the "module:function" shape
+                    task._split_impl(spec.impl, f"command '{group}.{name}'")   # validates the "module:function" shape
                 if not spec.help:
                     raise ValueError(f"command '{group}.{name}': missing help")
 
@@ -1061,7 +1048,7 @@ def _validate_param_bindings(commands: dict[str, dict[str, Command]]) -> None:
     Both maps are checked against ONE walk of the signature rather than two, so they cannot come to
     disagree about what a parameter is.
     """
-    from simplon.domain import signatures      # lazy: taskgen/signatures must not be a load-time dependency
+    from simplon.manifest import signatures      # lazy: taskgen/signatures must not be a load-time dependency
 
     for group, members in commands.items():
         for name, spec in members.items():
@@ -1077,27 +1064,6 @@ def _validate_param_bindings(commands: dict[str, dict[str, Command]]) -> None:
                 raise ValueError(
                     f"`{group} {name}` binds key(s) {', '.join(unknown)} that are not parameters "
                     f"of {spec.impl} (it takes: {', '.join(sorted(params)) or 'none'})")
-
-
-def resolve_ref(ref: str, where: str) -> Callable[..., object]:
-    """Import a "module:function" reference and return the callable - the one place a declarative ref
-    becomes real code. `where` labels the errors so a stale ref points at the declaration that carries it.
-
-    A command's `impl:` is the original consumer, but it is not the only kind of ref a manifest carries: a
-    product also declares HOOKS a kernel command calls back into (netctl#1406 - the lab preamble and the
-    health precondition of a suite gate). Those are data in the manifest exactly as an impl is, so they
-    resolve through the same function rather than a second, subtly different importer.
-    """
-    module_name, function_name = _split_impl(ref, where)
-    try:
-        module = importlib.import_module(module_name)
-    except ImportError as exc:
-        raise ValueError(f"{where}: cannot import module '{module_name}': {exc}") from exc
-    try:
-        return getattr(module, function_name)
-    except AttributeError as exc:
-        raise ValueError(
-            f"{where}: module '{module_name}' has no attribute '{function_name}'") from exc
 
 
 def resolve_impl(spec: TaskCommand) -> Callable[..., object]:

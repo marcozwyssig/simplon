@@ -18,7 +18,7 @@ AAA throughout.
 import pytest
 import yaml
 
-from simplon.domain import runners
+from simplon.manifest import runners
 from simplon.tasks import workflowgen
 
 from conftest import ROOT  # noqa: F401  (keeps the src tree on sys.path)
@@ -286,8 +286,9 @@ def test_the_disk_coordinates_resolve_to_the_impls_the_table_names():
     # product placed WITHOUT assuming what that product called it. Since si#400 4c the reference is derived
     # from the coordinate (`task.class_ref`), as the catalogue's is, so the two cannot drift; what can still
     # be wrong is the coordinate itself - gone, or no longer the disk body the workflow step means to run.
-    from simplon.domain import catalogue as catalogue_mod, task
-    from simplon.domain.artifactschema import BODIES
+    from simplon.manifest import catalogue as catalogue_mod
+    from simplon.model import task
+    from simplon.model.artifactschema import BODIES
     tasks = catalogue_mod.load().tasks
 
     # act / assert

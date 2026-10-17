@@ -33,7 +33,7 @@ import shlex
 from pathlib import Path
 from typing import NamedTuple
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.kernel import log, run
 
 #: The manifest section this gate reads: one entry per generated artefact that is committed.

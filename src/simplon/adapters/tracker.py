@@ -67,7 +67,7 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.kernel import log, run
 
 #: The manifest section this module reads. A product that declares none opens no tickets, and a walk with

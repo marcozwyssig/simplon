@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 import simplon
-from simplon.kernel import log
+from simplon.kernel import log, moved
 from simplon.cli import surface
 
 import sitepages
@@ -222,21 +222,69 @@ def test_importing_an_old_path_says_where_it_went_at_the_line_that_imported(tmp_
 
 
 #: si#399's old paths, a sample spanning both shapes: a module that moved, a child of the dissolved
-#: package, and the dissolved package itself. Not the whole list - that is gone with `MOVED`, and a copy of
-#: it here would be the second source the removal just deleted.
+#: package, and the dissolved package itself - and, since si#473, `domain`'s. The whole list is
+#: `moved.GONE`; the sample is spelled out so a GONE that lost these would not pass by shrinking.
 SI399_GONE = ("orchestrator", "orchestrator.model", "orchestrator.steps", "orchestrator.product", "run", "log",
-              "context", "surface", "docker")
+              "context", "surface", "docker", "domain", "domain.context", "domain.manifest", "domain.task")
+
+
+def _new_homes(old: str) -> set[str]:
+    """Where an old path's modules went: its own tombstone's target, or every child's for a package."""
+    if old in moved.GONE:
+        return {moved.GONE[old]}
+    return {new for child, new in moved.GONE.items() if child.startswith(old + ".")}
 
 
 @pytest.mark.parametrize("old", SI399_GONE)
 def test_an_si399_old_path_is_gone_since_its_deadline(old):
     """si#470: the promise was "removed in 0.33.0", and a removal nothing checks is a promise kept by
     nobody. An old path is now what any unknown name is - a `ModuleNotFoundError` naming it - and no
-    stand-in module answers it quietly. Seen red with si#399's `MOVED` and `DISSOLVED` still filled."""
+    stand-in module answers it quietly. Seen red with si#399's `MOVED` and `DISSOLVED` still filled.
+
+    si#473: and the failure names where the module went - a tombstone, not an alias. Seen red with `GONE`
+    emptied: the message was the bare "No module named"."""
     with pytest.raises(ModuleNotFoundError) as caught:
         importlib.import_module(f"simplon.{old}")
 
     assert caught.value.name is not None and caught.value.name.startswith("simplon."), caught.value
+    homes = _new_homes(old) or _new_homes(caught.value.name.removeprefix("simplon."))
+    assert homes and all(home in str(caught.value) for home in homes), caught.value
+
+
+@pytest.mark.parametrize("old", ["run", "log", "context", "domain", "orchestrator"])
+def test_from_simplon_import_an_old_module_names_its_new_home(old):
+    """`from simplon import run` is the spelling most products used, and Python swallows a
+    ModuleNotFoundError named for the submodule it is looking for there - measured: the tombstone's message
+    became "cannot import name 'run' from 'simplon'". `simplon.__getattr__` answers it instead. Seen red
+    with that hook removed, and for a dissolved package with its `GONE_PACKAGES` clause removed."""
+    with pytest.raises(ModuleNotFoundError, match=re.escape(moved.gone_message(f"simplon.{old}"))):
+        exec(f"from simplon import {old}", {})
+
+
+def test_the_renamed_body_module_names_its_new_home_in_the_spelling_products_use():
+    """si#473 renamed `simplon.tasks.tasks` to `simplon.tasks.taskverbs` so `model.task` could be promised.
+    Measured 2026-10-17: netctl's and asbundle's committed generated CLIs say `import simplon.tasks.tasks`,
+    so that is the spelling held here. (`from simplon.tasks import tasks` would get Python's bare "cannot
+    import name", as `from simplon import run` did before `simplon.__getattr__`; no product writes it.)
+    Seen red without the `tasks.tasks` tombstone."""
+    with pytest.raises(ModuleNotFoundError, match=re.escape("simplon.tasks.taskverbs")):
+        exec("import simplon.tasks.tasks", {})
+
+
+@pytest.mark.parametrize("old, new", sorted(moved.GONE.items()))
+def test_every_tombstone_names_a_module_that_imports(old, new):
+    """A tombstone that names a home which does not import sends a product from one ImportError to the
+    next. Seen red by pointing `domain.context` at `simplon.domain.context`."""
+    assert importlib.import_module(new).__name__ == new
+
+
+def test_no_tombstone_shadows_a_module_that_exists():
+    """The finder sits first on `sys.meta_path`, so a tombstone named like a real module would make that
+    module unimportable - `simplon.manifest` is one such name, and it is a package now (si#473)."""
+    real = {".".join(p.relative_to(SRC).with_suffix("").parts).removesuffix(".__init__")
+            for p in SRC.rglob("*.py")}
+    assert not (set(moved.GONE) | moved.GONE_PACKAGES) & real
+    assert all(any(child.startswith(package + ".") for child in moved.GONE) for package in moved.GONE_PACKAGES)
 
 
 def test_a_name_that_never_existed_is_still_not_found():
@@ -257,7 +305,7 @@ def test_the_innards_under_tasks_are_exactly_the_modules_no_coordinate_names():
     """
     # arrange
     # the body each coordinate names - since si#400 4c in the model (`BODIES`), no longer in catalogue.yaml
-    from simplon.domain.artifactschema import BODIES
+    from simplon.model.artifactschema import BODIES
     named = {body.split(":")[0][len("simplon.tasks."):] for body in BODIES.values()
              if body.startswith("simplon.tasks.")}
     # si#400 4b: a generated task class is its coordinate's own class (its KEY names it), not innards
@@ -357,6 +405,19 @@ def test_the_tombstones_are_gone_by_the_release_they_were_promised_for():
         f"MOVED_CONSUMERS first - "
         f"the record says {sum(len(v) for v in surface.MOVED_CONSUMERS.values())} import lines are "
         f"still out there.")
+
+
+def test_the_tombstones_of_removed_paths_go_by_their_own_deadline():
+    """si#473: the tombstones are a second promise with their own date - they name the new home through
+    the release that removed the paths, and go after it. The same gate as the aliases': red on the release
+    run of the first minor past `GONE_DUE_AFTER` while `GONE` still holds anything. Seen red by setting
+    `GONE_DUE_AFTER` to (0, 31)."""
+    due = _release_number() > moved.GONE_DUE_AFTER
+
+    assert not (due and moved.GONE), (
+        f"this is {simplon.__version__}, past {'.'.join(map(str, moved.GONE_DUE_AFTER))}, and "
+        f"{len(moved.GONE)} tombstones still stand. Removing them is: empty simplon.kernel.moved.GONE and "
+        f"GONE_PACKAGES, and drop the tombstone paragraph from {PAGE.relative_to(sitepages.ROOT)}.")
 
 
 def test_the_release_page_sends_a_minor_release_to_the_record():
@@ -469,3 +530,19 @@ def test_the_website_carries_every_move(old, new):
     assert any(f"`simplon.{old}`" in line and f"`{new}`" in line
                for line in page.splitlines() if line.startswith("|")), (
         f"the move simplon.{old} -> {new} is in no row of the table in {PAGE}")
+
+
+@pytest.mark.parametrize("old, new", sorted((o, n) for o, n in moved.GONE.items() if o.startswith("domain.")))
+def test_the_website_carries_every_module_of_the_domain_split(old, new):
+    """si#473: the split shipped with no alias window, so the table is the whole migration for a product.
+    A module missing from it is an error message pointing at a page that does not mention it."""
+    page = PAGE.read_text(encoding="utf-8")
+
+    assert any(f"`simplon.{old}`" in line and f"`{new}`" in line
+               for line in page.splitlines() if line.startswith("|")), (
+        f"the move simplon.{old} -> {new} is in no row of the table in {PAGE}")
+
+
+def test_the_website_quotes_the_tombstone_as_it_is_raised():
+    """A quoted error text is a second source for a string: pin it against the real message."""
+    assert moved.gone_message("simplon.log") in PAGE.read_text(encoding="utf-8")

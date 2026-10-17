@@ -23,10 +23,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Mapping, Protocol, runtime_checkable
 
-from simplon.domain.environments import Environment
+from simplon.manifest.environments import Environment
 
 if TYPE_CHECKING:  # local: keeps this module a runtime leaf - nothing here imports the manifest layer
-    from simplon.domain.deployment import Version
+    from simplon.manifest.deployment import Version
 
 
 @runtime_checkable
@@ -51,7 +51,7 @@ class Backend(Protocol):
 
 
 #: The product's backend registry, registered once at import by its composition root - the same shape
-#: `simplon.domain.context.set_current` has, and for the same reason: a CATALOGUE TASK is called by the CLI with
+#: `simplon.manifest.context.set_current` has, and for the same reason: a CATALOGUE TASK is called by the CLI with
 #: manifest-pinned parameters and nothing else, so it cannot be handed a registry as an argument the way
 #: `resolve` is. si#235's `deploy:up` and `deploy:down` are the first readers.
 #:

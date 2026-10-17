@@ -4,8 +4,8 @@ kernel reads it back without ever naming a product. AAA throughout; goal-stating
 """
 import pytest
 
-from simplon.domain import context
-from simplon.domain.context import ProductContext
+from simplon.manifest import context
+from simplon.manifest.context import ProductContext
 
 _SAMPLE_MANIFEST = """product: sample
 artifacts:
@@ -194,7 +194,7 @@ def test_set_current_registers_and_returns_the_context(monkeypatch, tmp_path):
 _IMPORT_TIME_LOAD = """
 import sys
 from pathlib import Path
-from simplon.domain import context
+from simplon.manifest import context
 ctx = context.set_current(context.ProductContext("sample", Path(sys.argv[1]).parent, Path(sys.argv[1])))
 {body}
 """

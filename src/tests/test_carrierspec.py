@@ -24,7 +24,8 @@ from __future__ import annotations
 
 import pytest
 
-from simplon.domain import carrierspec, environments
+from simplon.model import carrierspec
+from simplon.manifest import environments
 
 HAUS = {
     "proxmox": {"node": "pve1", "kind": "lxc"},

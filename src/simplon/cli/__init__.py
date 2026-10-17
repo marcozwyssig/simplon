@@ -1,6 +1,6 @@
 """Typer binding layer for the manifest-driven CLI (netctl#592 Train D).
 
-The framework-free engine (simplon.domain.manifest + simplon.domain.clitaxonomy + simplon.domain.environments)
+The framework-free engine (simplon.manifest.load + simplon.manifest.clitaxonomy + simplon.manifest.environments)
 stays Typer-free on purpose - it parses, validates and decides, but binds to no CLI framework. THIS is the
 one delivery module that imports Typer: it turns a validated Manifest into a Typer app (`assemble`) and
 runs the env-first dispatch (`main`). Both are product-AGNOSTIC - the product name, its environments and
@@ -27,12 +27,13 @@ from typing import Any, Callable, Iterable, Mapping, NamedTuple, Protocol, Typed
 import typer
 
 import simplon
-from simplon.domain import clitaxonomy, outputs, signatures
+from simplon.manifest import clitaxonomy, outputs, signatures
 from simplon.adapters import labinstance
 from simplon.kernel import log, runhost
-from simplon.domain.context import ENVIRONMENT_ENV, ProductContext, environment_name, launcher
-from simplon.domain import launcherenv, manifest, results, task
-from simplon.domain.command import AggregateCommand, Command, TaskCommand
+from simplon.manifest.context import ENVIRONMENT_ENV, ProductContext, environment_name, launcher
+from simplon.manifest import launcherenv, load as manifest, results
+from simplon.model import task
+from simplon.model.command import AggregateCommand, Command, TaskCommand
 from simplon.kernel.product import StepFactoryContext, run_command
 from simplon.kernel.steps import NO_TUI_ENV, Pipeline
 from simplon.kernel.provenance import provenance_line
@@ -238,7 +239,7 @@ def _bound(fn: Callable[..., object], spec: TaskCommand,
     ]
 
     # si#344 C.3: a command bound to produce a test result fails when its body exits 0 without writing it
-    # (`simplon.domain.results`) - the same check the generated module wraps its call in.
+    # (`simplon.manifest.results`) - the same check the generated module wraps its call in.
     produced = tuple(a for names in (spec.produces or {}).values() for a in names)
     # si#434: a command bound to evidence runs its body only when every record it is bound to is green,
     # and si#439: the body learns what those records ran (`results.tested`).
@@ -744,6 +745,6 @@ def main(*, app: typer.Typer, context: ProductContext,
     # sees `python -m orchestrator`, because that is literally how the launcher execs the module - so
     # every usage line and every Click error message named an invocation that works only with the
     # launcher's own PYTHONPATH already exported. The product IS driven through its launcher, so that is
-    # the name; it comes off `simplon.domain.context.launcher`, the same spelling the generated workflows call
+    # the name; it comes off `simplon.manifest.context.launcher`, the same spelling the generated workflows call
     # and the generated completion registers on.
     app(prog_name=launcher(context.name))

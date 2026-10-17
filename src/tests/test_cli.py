@@ -18,9 +18,9 @@ from typer.main import get_command
 from typer.testing import CliRunner
 
 from simplon import cli
-from simplon.domain import command
-from simplon.domain import manifest
-from simplon.domain import treeform
+from simplon.model import command
+from simplon.manifest import load as manifest
+from simplon.manifest import treeform
 
 
 def _impls_module():
@@ -533,8 +533,8 @@ def test_bound_falls_back_to_the_bodys_docstring_when_the_command_declares_none(
 
 def test_bound_turns_a_body_that_exits_0_without_writing_its_test_result_into_rc_1(tmp_path, monkeypatch):
     # arrange: si#344 C.3 - the assembled path holds the same check the generated module wraps its call in
-    from simplon.domain import context
-    from simplon.domain.context import ProductContext
+    from simplon.manifest import context
+    from simplon.manifest.context import ProductContext
     (tmp_path / "demo.yaml").write_text(
         "product: demo\nartifacts:\n  checked: { kind: test-result, path: build/test/app.json }\n",
         encoding="utf-8")
@@ -982,7 +982,7 @@ def test_every_group_the_shipped_catalogue_describes_renders_that_description():
     # declares, so all eight sub-apps are actually assembled. This is the assurance that goes red when a
     # description is declared and lands nowhere - it reads the catalogue, not a copy of it, so a group
     # added tomorrow is covered without anybody remembering to add it here.
-    from simplon.domain import catalogue as catalogue_mod
+    from simplon.manifest import catalogue as catalogue_mod
 
     cat = catalogue_mod.load()
     text = """

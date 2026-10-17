@@ -72,7 +72,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.kernel import log
 from simplon.kernel.run import run
 

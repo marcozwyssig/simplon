@@ -1,5 +1,5 @@
 """Unit tests for simplon.tasks.docs (netctl#1280): the docToolchain render, driven purely by the
-manifest's pinned image tag and the product root, read through simplon.domain.context - no product import.
+manifest's pinned image tag and the product root, read through simplon.manifest.context - no product import.
 
 The docker invocation is stubbed, so these assert the DECISIONS (which tag is pinned, what is refused)
 rather than that docker works. AAA throughout.
@@ -8,10 +8,10 @@ import os
 
 import pytest
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.adapters import docker
 from simplon.kernel import log
-from simplon.domain.context import ProductContext
+from simplon.manifest.context import ProductContext
 from simplon.kernel.run import Result
 from simplon.tasks import docs as docs_cmd
 

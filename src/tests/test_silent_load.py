@@ -9,8 +9,8 @@ import pytest
 
 import realmanifests
 
-from simplon.domain import catalogue
-from simplon.domain import manifest
+from simplon.manifest import catalogue
+from simplon.manifest import load as manifest
 from simplon.tasks.migrate import migrate_text
 
 _SIMPLON = (pathlib.Path(__file__).resolve().parents[2] / "simplon.yaml").read_text(encoding="utf-8")

@@ -60,12 +60,12 @@ import typer
 import yaml
 from typer.testing import CliRunner
 
-from simplon.domain import catalogue as catalogue_mod
+from simplon.manifest import catalogue as catalogue_mod
 from simplon import cli
-from simplon.domain import context
-from simplon.domain.context import ProductContext
+from simplon.manifest import context
+from simplon.manifest.context import ProductContext
 from simplon.tasks import buildfiles
-from simplon.domain import manifest as manifest_mod
+from simplon.manifest import load as manifest_mod
 
 import sitepages
 from conftest import ROOT
@@ -309,7 +309,7 @@ def test_the_page_names_the_coordinates_that_actually_read_the_build_section():
     `simplon.tasks.buildfiles` (since si#400 4c the model names the body, not `catalogue.yaml`).
     """
     # arrange
-    from simplon.domain.artifactschema import BODIES
+    from simplon.model.artifactschema import BODIES
     module = buildfiles.__name__
     readers = sorted(name for name, body in BODIES.items() if body.startswith(f"{module}:"))
     row = next((line for line in PAGE.read_text(encoding="utf-8").splitlines()

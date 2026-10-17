@@ -8,7 +8,7 @@ anything, not only from a Click parser, and the decorator lives only in generate
 
 The mechanism - git/gh subprocess wrappers and the pure `prune_verdict` decision - already lives in
 `simplon.tasks.gitops`; this module is the thin layer that points it at the calling product's repo root. ROOT
-comes from `simplon.domain.context.current().root`, never from a product import: this module knows no product
+comes from `simplon.manifest.context.current().root`, never from a product import: this module knows no product
 name and no product layout. The one exception is `submodules`, which carries a conventional default
 path - a convention, not a claim about what any particular product vendors there.
 """
@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 import sys
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.adapters import githubpackages
 from simplon.kernel import log
 from simplon.tasks import gitops

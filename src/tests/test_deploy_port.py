@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from simplon.domain import catalogue
-from simplon.domain import manifest as manifest_mod
+from simplon.manifest import catalogue
+from simplon.manifest import load as manifest_mod
 
 ARTIFACTS = """\
 artifacts:

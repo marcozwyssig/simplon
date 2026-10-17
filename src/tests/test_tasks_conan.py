@@ -9,9 +9,9 @@ AAA throughout; nothing pushes anything.
 """
 import pytest
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.adapters import githubpackages
-from simplon.domain.context import ProductContext
+from simplon.manifest.context import ProductContext
 from simplon.tasks import conan
 
 _MANIFEST = """

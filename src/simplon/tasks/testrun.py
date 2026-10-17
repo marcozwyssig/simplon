@@ -96,13 +96,14 @@ from typing import Callable
 
 import typer
 
-from simplon.domain import context, layout, signatures, task
+from simplon.manifest import context, layout, signatures
+from simplon.model import task
 from simplon.kernel import log, verdict
 from simplon.adapters import pyvenv
 from simplon.tasks import allure
 from simplon.kernel.awake import keep_awake
-from simplon.domain.command import TaskCommand
-from simplon.domain.manifest import resolve_ref
+from simplon.model.command import TaskCommand
+from simplon.model.task import resolve_ref
 from simplon.kernel.run import run
 from simplon.kernel.verdict import GateVerdict, RunVerdict, Verdict
 

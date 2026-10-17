@@ -36,10 +36,10 @@ from pathlib import Path
 
 import pytest
 
-from simplon.domain import context
+from simplon.manifest import context
 
 from conftest import docker_is_usable
-from simplon.domain.context import ProductContext
+from simplon.manifest.context import ProductContext
 from simplon.kernel.run import run
 from simplon.tasks import profiles, testrun
 from simplon.kernel.verdict import Verdict

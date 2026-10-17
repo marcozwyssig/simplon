@@ -5,7 +5,7 @@ The product supplies the concrete backends; here we register tiny fakes to exerc
 import pytest
 
 from simplon.adapters.backend import Backend, resolve
-from simplon.domain.environments import Environment
+from simplon.manifest.environments import Environment
 
 
 class _FakeBackend:

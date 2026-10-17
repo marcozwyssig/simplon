@@ -2,7 +2,7 @@
 
 The GENERATOR is covered by test_workflowgen.py. What is asserted here is the SEAM, and it is the same
 seam test_tasks_tasks.py holds for `tasks:generate`: that the verb reads the product's root, manifest and
-manifest filename out of `simplon.domain.context` rather than knowing a product, and that `--check` reports
+manifest filename out of `simplon.manifest.context` rather than knowing a product, and that `--check` reports
 disagreement as a NON-ZERO EXIT so one command serves both a pre-commit hook and a CI step.
 
 THE EXIT CODE IS THE POINT, not the message. si#40 is a ticket about a class of failure that is green:
@@ -15,7 +15,7 @@ import textwrap
 
 import pytest
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.tasks import workflows as workflows_task
 
 _MANIFEST = """

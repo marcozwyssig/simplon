@@ -26,10 +26,10 @@ existed and by somebody who was not trying to make it pass.
 """
 import yaml
 
-from simplon.domain import catalogue as catalogue_mod
-from simplon.domain import artifactsection
+from simplon.manifest import catalogue as catalogue_mod
+from simplon.manifest import artifactsection
 from simplon.tasks import workflowgen
-from simplon.domain import manifest as manifest_mod
+from simplon.manifest import load as manifest_mod
 
 from conftest import ROOT
 

@@ -28,7 +28,7 @@ only the image that gets thrown away.
 NOT from setuptools-scm, although this repository has it: `simplon._version` is SIMPLON's release number,
 read out of the installed kernel wheel, and stamping it into a product's image would label agile-cockpit
 with the version of its build tool. A product has its own version, and the place it keeps it is its own
-git checkout - `simplon.domain.context.current().root`, never this package's `__file__`. The derivation is the
+git checkout - `simplon.manifest.context.current().root`, never this package's `__file__`. The derivation is the
 same one setuptools-scm performs (`git describe`), pointed at the product instead of at the kernel.
 
     VERSION  = git describe --tags --always --dirty   (a release tag when there is one; else the short
@@ -108,12 +108,13 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from simplon.domain import artifactsection, artifactschema, context, outputs
-from simplon.domain import results as results_mod
+from simplon.manifest import artifactsection, context, outputs
+from simplon.model import artifactschema
+from simplon.manifest import results as results_mod
 from simplon.adapters import docker, githubpackages, hostpath
 from simplon.kernel import log
 from simplon.adapters.labhost import BINFMT_IMAGE
-from simplon.domain.layout import validate_relative_dir
+from simplon.manifest.layout import validate_relative_dir
 from simplon.kernel.run import Result, run, stream
 
 #: The manifest section this module reads (si#344 B2: `images:` folded into it). An entry is an image when
@@ -688,7 +689,7 @@ def smoke(name: str = "", tag: str = "", argv: str = "", mount: str = "", expect
 
     **`results` is the test result the verdict record goes to** (si#344 C.3): the command binds it with
     `produces: { test-result: <artifact> }`. The record is written on a red run too, because a release
-    bound to it reads its `verdict` before publishing (si#434, `simplon.domain.results.guarded`): a missing
+    bound to it reads its `verdict` before publishing (si#434, `simplon.manifest.results.guarded`): a missing
     record means the test did not run, and a red one means it failed. Those are two answers. A run refused before it runs writes none, and
     removes the record an earlier run left there, so no stale verdict outlives the refusal.
 

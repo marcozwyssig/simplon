@@ -56,8 +56,8 @@ import yaml
 
 from simplon.cli import bootstrap
 from simplon.adapters import docker
-from simplon.domain import catalogue as catalogue_mod
-from simplon.domain import manifest as manifest_mod
+from simplon.manifest import catalogue as catalogue_mod
+from simplon.manifest import load as manifest_mod
 from simplon.tasks import docs as docs_task
 from simplon.tasks.testrun import IMPL_DETAIL
 from simplon.kernel.verdict import GateVerdict, Verdict

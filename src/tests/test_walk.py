@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.adapters import tracker
 from simplon.kernel.steps import StepState, build_rows, summarise
 from simplon.tasks import walk as walk_mod

@@ -6,15 +6,15 @@ the exact iptables argv, and the SCOPING that keeps two concurrent labs from del
 rules. The rules themselves are proven on a real lab (the isolation probes in the acceptance level);
 these tests prove the construction is what gets sent.
 
-The three product values arrive as manifest DATA through simplon.domain.context; the tests register a fake
+The three product values arrive as manifest DATA through simplon.manifest.context; the tests register a fake
 ProductContext, and use a `democtl` tag throughout precisely because a module that named a product
 would pass with netctl's and fail for the next one. AAA throughout, negative cases included.
 """
 import pytest
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.adapters import labegress
-from simplon.domain.context import ProductContext
+from simplon.manifest.context import ProductContext
 
 _SPEC = {"isolation_env": "DEMO_LAB_ISOLATION", "harden_env": "DEMO_HOST_HARDEN", "rule_tag": "democtl"}
 

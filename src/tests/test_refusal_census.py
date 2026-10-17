@@ -93,7 +93,7 @@ from typing import NamedTuple
 import pytest
 import yaml
 
-from simplon.domain import catalogue as catalogue_mod
+from simplon.manifest import catalogue as catalogue_mod
 
 import sitepages
 from conftest import ROOT
@@ -128,9 +128,9 @@ from conftest import ROOT
 #: this block used to open with ("everything else in the kernel refuses at RUN time - a task that cannot
 #: reach its tool, an image without a pin") named one of them as the counter-example. The image pin is
 #: decided on a manifest string with no docker running. It was never run time.
-LOADER_ENTRY = ("domain.manifest", "load")
+LOADER_ENTRY = ("manifest.load", "load")
 
-#: The accessor a product's manifest DOCUMENT leaves `simplon.domain.context` through. Read off the call sites
+#: The accessor a product's manifest DOCUMENT leaves `simplon.manifest.context` through. Read off the call sites
 #: rather than assumed: a rename here changes the entry points and `test_the_walk_finds_refusals_at_both
 #: _seams` goes red rather than quietly finding none.
 DOCUMENT_ACCESSOR = "manifest_data"
@@ -149,7 +149,7 @@ DOCUMENT_ACCESSOR = "manifest_data"
 #: So the accessor is neither. A module that reads a section through it is still an INLINE reader, its
 #: refusals are still its own, and `test_the_section_walk_is_an_accessor_and_not_a_reader` holds both
 #: halves rather than leaving them to be noticed.
-SECTION_ACCESSOR = ("domain.context", "section")
+SECTION_ACCESSOR = ("manifest.context", "section")
 
 SRC = ROOT / "src" / "simplon"
 
@@ -169,9 +169,9 @@ CHAPTER = sitepages.chapter("rules.md")
 #: red the day a new one appears. That is the property si#61 asked for: a manifest reader cannot join the
 #: kernel quietly, whether or not the walk can follow it.
 READS_INLINE = {
-    "domain.results": "`before`/`path_of` read `artifacts:` at RUN time, around a body the dispatcher is "
+    "manifest.results": "`before`/`path_of` read `artifacts:` at RUN time, around a body the dispatcher is "
                       "calling - the read and the run are one wrapper (si#344 C.3)",
-    "domain.environments": "reads `environments:`/`default:` into a local `data` inside `Provider.registry`, "
+    "manifest.environments": "reads `environments:`/`default:` into a local `data` inside `Provider.registry`, "
                     "which then builds backends - the reading and the wiring are one function",
     "adapters.labinstance": "`spec()` reads the topology section and goes on to talk to docker in the same body",
     "adapters.labegress": "`spec()`, same shape as labinstance",
@@ -545,64 +545,64 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("environments", "parse_data", "backend must be"): DIAGNOSIS,
     ("environments", "parse_data", "is not a defined environment"): DIAGNOSIS,
     # --- manifest.py -----------------------------------------------------------------------------
-    ("manifest", "_split_impl", "impl must be 'module:function'"): DIAGNOSIS,
-    ("manifest", "_short_first_needs_a_short_flag_to_order", "needs a `short:` flag to put first"): DIAGNOSIS,
-    ("manifest", "_a_positional_takes_no_short_flag", "is positional and takes no `short:`"): DIAGNOSIS,
+    ("task", "_split_impl", "impl must be 'module:function'"): DIAGNOSIS,
+    ("load", "_short_first_needs_a_short_flag_to_order", "needs a `short:` flag to put first"): DIAGNOSIS,
+    ("load", "_a_positional_takes_no_short_flag", "is positional and takes no `short:`"): DIAGNOSIS,
     # Click accepts more in the short slot than this does, and a manifest that used it would render a
     # working command line. That makes it an expression rule rather than a diagnosis, however sensible.
-    ("manifest", "_single_dashed_letter", "must be a single dash plus one letter"): EXPRESSION,
-    ("manifest", "_str_tuple", "'depends_on' and 'passes' must be a list of names"): DIAGNOSIS,
+    ("load", "_single_dashed_letter", "must be a single dash plus one letter"): EXPRESSION,
+    ("load", "_str_tuple", "'depends_on' and 'passes' must be a list of names"): DIAGNOSIS,
     # si#267, and its neighbour above is the reason it needs an entry of its own rather than joining
     # `_as_bool`. Every other flag on a spec is coerced: `bool(value)` turns anything into a verdict.
     # This one has THREE states - true, false, and nobody has said - so a coercion would destroy the
     # third on the way in, which is the defect this repository hunts, at the loader's own door.
     # `unattended: maybe` has no reading and neither does the quoted string "true".
-    ("manifest", "_tri_state", "'unattended' is true or false, got"): DIAGNOSIS,
-    ("manifest", "_reject_removed_composites", "which has been removed"): DIAGNOSIS,
-    ("manifest", "_coerce_groups", "'groups' must be a mapping of group name"): DIAGNOSIS,
-    ("manifest", "_coerce_groups", "must be a mapping of command name -> spec"): DIAGNOSIS,
-    ("manifest", "_validate_taxonomy", "declares no commands under ci:, cd: or support:"): DIAGNOSIS,
+    ("load", "_tri_state", "'unattended' is true or false, got"): DIAGNOSIS,
+    ("load", "_reject_removed_composites", "which has been removed"): DIAGNOSIS,
+    ("load", "_coerce_groups", "'groups' must be a mapping of group name"): DIAGNOSIS,
+    ("load", "_coerce_groups", "must be a mapping of command name -> spec"): DIAGNOSIS,
+    ("load", "_validate_taxonomy", "declares no commands under ci:, cd: or support:"): DIAGNOSIS,
     # The v1 lock. A command with both would run - the forward path is named in the comment beside it
     # and deliberately not built - so this forbids something expressible.
-    ("manifest", "_validate_taxonomy", "impl and depends_on are mutually exclusive"): EXPRESSION,
-    ("manifest", "_validate_taxonomy", "passthrough_args cannot combine with depends_on"): DIAGNOSIS,
-    ("manifest", "_validate_taxonomy", "stop_on_failure applies to an aggregate"): DIAGNOSIS,
-    ("manifest", "_validate_taxonomy", "parallel applies to an aggregate"): DIAGNOSIS,
-    ("manifest", "_validate_taxonomy", "passes applies to an aggregate"): DIAGNOSIS,
-    ("manifest", "_validate_taxonomy", "keep_awake applies to an aggregate's plan"): DIAGNOSIS,
-    ("manifest", "_validate_taxonomy", "hidden has no effect on a group-default namesake"): DIAGNOSIS,
+    ("load", "_validate_taxonomy", "impl and depends_on are mutually exclusive"): EXPRESSION,
+    ("load", "_validate_taxonomy", "passthrough_args cannot combine with depends_on"): DIAGNOSIS,
+    ("load", "_validate_taxonomy", "stop_on_failure applies to an aggregate"): DIAGNOSIS,
+    ("load", "_validate_taxonomy", "parallel applies to an aggregate"): DIAGNOSIS,
+    ("load", "_validate_taxonomy", "passes applies to an aggregate"): DIAGNOSIS,
+    ("load", "_validate_taxonomy", "keep_awake applies to an aggregate's plan"): DIAGNOSIS,
+    ("load", "_validate_taxonomy", "hidden has no effect on a group-default namesake"): DIAGNOSIS,
     # si#60: a nested group-default group answered `KeyError` out of `cli.assemble`. The refused
     # manifest produced no working product - it produced a stacktrace - so this is diagnosis, and
     # the capability stays deliberately unbuilt.
-    ("manifest", "_validate_taxonomy", "a NESTED group cannot have a group-default namesake"): DIAGNOSIS,
-    ("manifest", "_validate_taxonomy", "missing impl"): DIAGNOSIS,
+    ("load", "_validate_taxonomy", "a NESTED group cannot have a group-default namesake"): DIAGNOSIS,
+    ("load", "_validate_taxonomy", "missing impl"): DIAGNOSIS,
     # An undocumented command is a working command. The kernel requires the sentence anyway.
-    ("manifest", "_validate_taxonomy", "missing help"): EXPRESSION,
-    ("manifest", "_validate_taxonomy", "is not a command in the manifest"): DIAGNOSIS,
-    ("manifest", "_validate_taxonomy", "is ambiguous (owned by groups"): DIAGNOSIS,
-    ("manifest", "walk", "dependency cycle: "): DIAGNOSIS,
+    ("load", "_validate_taxonomy", "missing help"): EXPRESSION,
+    ("load", "_validate_taxonomy", "is not a command in the manifest"): DIAGNOSIS,
+    ("load", "_validate_taxonomy", "is ambiguous (owned by groups"): DIAGNOSIS,
+    ("load", "walk", "dependency cycle: "): DIAGNOSIS,
     # netctl#1319. The manifest loads and runs; what is wrong is the abort scope, which is invisible.
-    ("manifest", "_validate_taxonomy", "disagree on stop_on_f"): EXPRESSION,
+    ("load", "_validate_taxonomy", "disagree on stop_on_f"): EXPRESSION,
     # si#222. A document that does not parse could not have meant anything at all, so there is no
     # product it would have produced - and it is the only refusal that takes out every command at
     # once, which is why it is worth a sentence of its own rather than the parser's traceback.
-    ("manifest", "load", "is not valid YAML"): DIAGNOSIS,
+    ("load", "load", "is not valid YAML"): DIAGNOSIS,
     # si#344 B2, ruling T4a. NOT the entry above: the document parses, and cleon's manifest with two
     # identical copies produced a working product, so "could not have meant anything" would be false here.
     # A diagnosis for another reason: YAML drops the first copy of a key written twice WITHOUT A WORD, and
     # the kernel cannot tell a stale edit from a deliberate repeat - the silent loss is the defect, and
     # only the person who wrote both copies can say which was meant. What it costs when the copies are
     # identical is one `manifest migrate` run (cleon, measured), not a line of what the product says.
-    ("manifest", "load", "writes a key twice"): DIAGNOSIS,
-    ("manifest", "load", "`tasks:` is not a mapping"): DIAGNOSIS,
-    ("manifest", "load", "generate names group(s)"): DIAGNOSIS,
-    ("manifest", "load", "names a nested group the `taxonomy:` block"): DIAGNOSIS,
-    ("manifest", "_enforce_the_catalogue_owns_the_groups", "may not declare `taxonomy:`"): EXPRESSION,
-    ("manifest", "_enforce_the_catalogue_owns_the_groups", "names a group the catalogue's `groups:` does not declare"):
+    ("load", "load", "writes a key twice"): DIAGNOSIS,
+    ("load", "load", "`tasks:` is not a mapping"): DIAGNOSIS,
+    ("load", "load", "generate names group(s)"): DIAGNOSIS,
+    ("load", "load", "names a nested group the `taxonomy:` block"): DIAGNOSIS,
+    ("load", "_enforce_the_catalogue_owns_the_groups", "may not declare `taxonomy:`"): EXPRESSION,
+    ("load", "_enforce_the_catalogue_owns_the_groups", "names a group the catalogue's `groups:` does not declare"):
         EXPRESSION,
-    ("manifest", "_validate_param_bindings", "that are not parameters of"): DIAGNOSIS,
-    ("manifest", "resolve_ref", "cannot import module"): DIAGNOSIS,
-    ("manifest", "resolve_ref", "has no attribute"): DIAGNOSIS,
+    ("load", "_validate_param_bindings", "that are not parameters of"): DIAGNOSIS,
+    ("task", "resolve_ref", "cannot import module"): DIAGNOSIS,
+    ("task", "resolve_ref", "has no attribute"): DIAGNOSIS,
     # si#400 4c: a reference that resolves to neither a Task class nor a callable has no body to run
     ("task", "task_class", "neither a Task class nor a callable"): DIAGNOSIS,
 
@@ -681,15 +681,15 @@ CENSUS: dict[tuple[str, str, str], str] = {
     ("ports", "_check_release", "and no test produces a result about it"): EXPRESSION,
     ("ports", "_check_release", "so no release goes past a test that ran"): EXPRESSION,
     # si#344 C.3 rule 8: a release is one aggregate naming one bundle, and its tag follows every publish.
-    ("manifest", "_command", "only an aggregate under `ci: release:` does"): EXPRESSION,
-    ("manifest", "_command", "a release aggregate names exactly"): EXPRESSION,
+    ("load", "_command", "only an aggregate under `ci: release:` does"): EXPRESSION,
+    ("load", "_command", "a release aggregate names exactly"): EXPRESSION,
     ("ports", "_check_bundles", "declare it with `kind: release`"): DIAGNOSIS,
     ("ports", "_check_bundles", "the bundle is a `kind: release`"): DIAGNOSIS,
     ("ports", "_check_bundles", "a tag cut before"): DIAGNOSIS,
     # final review of si#344 C.3: an order the load checks is only an order the run keeps if a failed
     # member stops the plan. A release aggregate that may not say `stop_on_failure: false` - expression.
     ("ports", "_check_bundles", "leaves `stop_on_failure` false"): EXPRESSION,
-    # `domain.results` (si#344 C.3) raises too, at RUN time around a body; it is in READS_INLINE, so the walk
+    # `manifest.results` (si#344 C.3) raises too, at RUN time around a body; it is in READS_INLINE, so the walk
     # does not follow it and its three refusals are in neither count - measured: keys for them matched nothing.
     ("treeform", "check_no_old_form", "is written in the flat command form"): EXPRESSION,
     # si#344, the cut. DIAGNOSIS, all of them: `_ManifestModel` ignores an unknown top-level key, so each of
@@ -998,8 +998,8 @@ REACH: dict[tuple[str, str, str], str] = {
     ("ports", "_check_results", "so only a command under `ci: test:` produces one"): REACH_MERGED,
     ("ports", "_check_release", "and no test produces a result about it"): REACH_MERGED,
     ("ports", "_check_release", "so no release goes past a test that ran"): REACH_MERGED,
-    ("manifest", "_command", "only an aggregate under `ci: release:` does"): REACH_MERGED,
-    ("manifest", "_command", "a release aggregate names exactly"): REACH_MERGED,
+    ("load", "_command", "only an aggregate under `ci: release:` does"): REACH_MERGED,
+    ("load", "_command", "a release aggregate names exactly"): REACH_MERGED,
     ("ports", "_check_bundles", "leaves `stop_on_failure` false"): REACH_MERGED,
     # si#5's one expression rule. MERGED: this kernel's own manifest goes through the same parser, so a
     # stray key under a carrier of simplon's own would be refused exactly the same way. It declares no
@@ -1013,12 +1013,12 @@ REACH: dict[tuple[str, str, str], str] = {
     ("environments", "_repository", "does not take"): REACH_MERGED,
     ("environments", "_names", "may not name"): REACH_MERGED,
     ("layout", "declared", "does not take"): REACH_MERGED,
-    ("manifest", "_single_dashed_letter", "must be a single dash plus one letter"): REACH_MERGED,
-    ("manifest", "_validate_taxonomy", "impl and depends_on are mutually exclusive"): REACH_MERGED,
-    ("manifest", "_validate_taxonomy", "missing help"): REACH_MERGED,
-    ("manifest", "_validate_taxonomy", "disagree on stop_on_f"): REACH_MERGED,
-    ("manifest", "_enforce_the_catalogue_owns_the_groups", "may not declare `taxonomy:`"): REACH_SEAM,
-    ("manifest", "_enforce_the_catalogue_owns_the_groups", "names a group the catalogue's `groups:` does not declare"):
+    ("load", "_single_dashed_letter", "must be a single dash plus one letter"): REACH_MERGED,
+    ("load", "_validate_taxonomy", "impl and depends_on are mutually exclusive"): REACH_MERGED,
+    ("load", "_validate_taxonomy", "missing help"): REACH_MERGED,
+    ("load", "_validate_taxonomy", "disagree on stop_on_f"): REACH_MERGED,
+    ("load", "_enforce_the_catalogue_owns_the_groups", "may not declare `taxonomy:`"): REACH_SEAM,
+    ("load", "_enforce_the_catalogue_owns_the_groups", "names a group the catalogue's `groups:` does not declare"):
         REACH_SEAM,
     ("treeform", "merge", "names a group the platform's tree does not declare"): REACH_SEAM,
     ("treeform", "merge", "shape_is_the_platforms"): REACH_SEAM,
@@ -1704,7 +1704,7 @@ def test_the_walk_finds_refusals_at_both_seams():
     per_module = _per_module()
 
     # assert: the loader seam refuses in both its modules
-    assert per_module["manifest"] > 0
+    assert per_module["load"] > 0
     assert per_module["treeform"] > 0
 
     # assert: and so does the document seam - `testrun` is si#61's module, and it is no longer the only
@@ -1944,7 +1944,7 @@ def test_the_only_excluded_raise_is_the_funnel_that_re_raises_the_model():
 
     # assert: exactly the two funnels - the loader's, and the artifact section's (si#344 B2) - each
     # re-raising what a model raised, which the census counts at its own site
-    assert sorted(site[0] for site in dropped) == ["artifactsection", "manifest"], dropped
+    assert sorted(site[0] for site in dropped) == ["artifactsection", "load"], dropped
     assert all(FUNNEL in site[2] for site in dropped)
 
     # assert: and the classes that used to need a list really are out of reach on their own
@@ -2093,7 +2093,7 @@ def test_no_expression_rule_exempts_the_kernel_from_itself():
 
 #: The modules on the merge path, where a manifest has a platform half and a product half (ports since
 #: si#344 C.3: its rules run on the loaded, merged Manifest).
-TREE_MODULES = ("manifest", "treeform", "ports")
+TREE_MODULES = ("load", "treeform", "ports")
 
 #: The two expression rules pydantic runs, and why they need naming instead of wrapping. Both are
 #: validators on `_ManifestModel` - a field validator and a model validator - so no expression in the
@@ -2182,9 +2182,9 @@ def _populations(monkeypatch) -> dict[str, list[str]]:
     it is given, so a reference kept and read afterwards shows an empty-handed rule that was in fact handed
     the coordinate. That was measured here, and reading it late is what turned it into a false exemption.
     """
-    from simplon.domain import manifest as manifest_mod
-    from simplon.domain import ports as ports_mod
-    from simplon.domain import treeform
+    from simplon.manifest import load as manifest_mod
+    from simplon.manifest import ports as ports_mod
+    from simplon.manifest import treeform
 
     seen: dict[str, list[str]] = {}
 
@@ -2237,7 +2237,7 @@ def test_the_rules_pydantic_runs_are_reached_through_the_model():
     value while staying green.
     """
     # arrange
-    source = (SRC / "domain" / "manifest.py").read_text(encoding="utf-8")
+    source = (SRC / "manifest" / "load.py").read_text(encoding="utf-8")
 
     # act / assert
     for name in THROUGH_THE_MODEL:
@@ -2358,7 +2358,7 @@ def test_the_kernels_own_manifest_violates_none_of_its_own_expression_rules():
     be measured against something real. It loads, which is the whole assertion: a manifest that loads
     has violated no refusal in the census, expression rule or otherwise."""
     # arrange
-    from simplon.domain import manifest as manifest_mod
+    from simplon.manifest import load as manifest_mod
 
     # act
     loaded = manifest_mod.load((ROOT / "simplon.yaml").read_text(encoding="utf-8"),

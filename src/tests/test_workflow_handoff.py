@@ -11,7 +11,7 @@ import textwrap
 import pytest
 import yaml
 
-from simplon.domain import artifactsection, catalogue as catalogue_mod, manifest as manifest_mod
+from simplon.manifest import artifactsection, catalogue as catalogue_mod, load as manifest_mod
 from simplon.tasks import workflowgen
 
 from conftest import ROOT

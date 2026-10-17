@@ -4,10 +4,10 @@ AAA; the name states the behaviour under test.
 """
 from pathlib import Path
 
-from simplon.domain.command import ReleaseCommand
+from simplon.model.command import ReleaseCommand
 import pytest
 
-from simplon.domain import catalogue, manifest
+from simplon.manifest import catalogue, load as manifest
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -152,8 +152,8 @@ def test_the_kernels_own_release_aggregate_stops_on_failure():
 # --- the refusal fragments the manifest page quotes are a second source (final review of si#344 C.3) ---
 
 PAGE = ROOT / "src" / "site" / "content" / "how" / "manifest.md"
-PORTS = ROOT / "src" / "simplon" / "domain" / "ports.py"
-MANIFEST_PY = ROOT / "src" / "simplon" / "domain" / "manifest.py"
+PORTS = ROOT / "src" / "simplon" / "manifest" / "ports.py"
+MANIFEST_PY = ROOT / "src" / "simplon" / "manifest" / "load.py"
 
 
 def _raised_in(*functions):

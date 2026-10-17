@@ -15,10 +15,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.tasks import allure
 from simplon.tasks import testrun
-from simplon.domain.context import ProductContext
+from simplon.manifest.context import ProductContext
 from simplon.kernel import verdict as verdict_module
 from simplon.kernel.verdict import GateVerdict, RunVerdict, Verdict
 

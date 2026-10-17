@@ -79,7 +79,7 @@ parameter, so it stays invisible on the command line. Pair it with `passthrough_
 A body never imports the product. It asks the registered context:
 
 ```python
-from simplon.domain import context
+from simplon.manifest import context
 
 def build() -> int:
     ctx = context.current()

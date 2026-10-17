@@ -42,7 +42,24 @@ except ImportError:  # pragma: no cover - exercised by the source-tree path, not
 
 # A moved module's old import path stays importable, as the very same module object, until the release
 # `simplon.kernel.moved.MOVED_DUE_AFTER` names. No move is standing since 0.33.0 (si#470 removed si#399's
-# aliases), so the finder answers nothing; it stays installed for the next one.
+# aliases), so the finder answers no alias; it stays installed for the next one. What it does answer since
+# si#473 is a removed path's TOMBSTONE (`moved.GONE`): the import still fails, naming the new home.
 from .kernel import moved as _moved  # noqa: E402
 
 _moved.install()
+
+
+def __getattr__(name: str) -> object:
+    """`from simplon import run` for a removed top-level module fails naming its new home (si#473).
+
+    The finder alone is not enough for this one spelling, and that is measured: `from simplon import X`
+    treats a ModuleNotFoundError whose `name` is `simplon.X` as "no such submodule" and swallows it, so the
+    tombstone's message was replaced by a bare "cannot import name 'run' from 'simplon'". A dissolved package
+    (`from simplon import domain`) is answered the same way, naming where each of its modules went.
+
+    The price, stated: for a gone name, `hasattr(simplon, "run")` and `getattr(simplon, "run", default)`
+    raise `GoneError` rather than answering False or the default - both swallow only AttributeError, and
+    the from-form needs this hook to raise something else to keep its message."""
+    if name in _moved.GONE or name in _moved.GONE_PACKAGES:
+        raise _moved.GoneError(_moved.gone_message(f"simplon.{name}"), name=f"simplon.{name}")
+    raise AttributeError(f"module 'simplon' has no attribute {name!r}")

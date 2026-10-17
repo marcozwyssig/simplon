@@ -167,7 +167,7 @@ def test_a_SIGKILLed_run_leaves_a_container_its_label_still_finds(product, tmp_p
 SITE_CHILD = """
 import sys
 from pathlib import Path
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.tasks import image
 product, root, ref, seconds = sys.argv[1:5]
 context.set_current(context.ProductContext(product, Path(root), Path(root) / "x.yaml"))

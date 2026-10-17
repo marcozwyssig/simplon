@@ -1,4 +1,4 @@
-"""Unit tests for `simplon.domain.context.section` - the ONE walk from a manifest document to a data section
+"""Unit tests for `simplon.manifest.context.section` - the ONE walk from a manifest document to a data section
 (si#175).
 
 The accessor ANSWERS and the caller REFUSES, so these tests are about the answer: which step a broken
@@ -8,7 +8,7 @@ reader's own tests. AAA throughout.
 """
 import pytest
 
-from simplon.domain.context import Section, section
+from simplon.manifest.context import Section, section
 
 
 def test_a_declared_section_comes_back_with_nothing_to_blame():

@@ -11,9 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from simplon.domain import artifactschema, catalogue, signatures
-from simplon.domain.manifestmodel import mangle
-from simplon.domain.task import Task
+from simplon.model import artifactschema
+from simplon.manifest import catalogue, signatures
+from simplon.model.task import mangle
+from simplon.model.task import Task
 
 TASKS = Path(__file__).resolve().parents[1] / "simplon" / "tasks"
 COORDINATES = sorted(catalogue.load().tasks)

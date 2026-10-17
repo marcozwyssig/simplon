@@ -58,7 +58,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from simplon.domain import artifactschema, artifactsection, context
+from simplon.model import artifactschema
+from simplon.manifest import artifactsection, context
 from simplon.kernel import log
 from simplon.kernel.run import run
 

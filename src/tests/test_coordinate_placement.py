@@ -29,9 +29,9 @@ import textwrap
 import pytest
 import yaml
 
-from simplon.domain import catalogue as catalogue_mod
-from simplon.domain import manifest as manifest_mod
-from simplon.domain import treeform
+from simplon.manifest import catalogue as catalogue_mod
+from simplon.manifest import load as manifest_mod
+from simplon.manifest import treeform
 
 import sitepages
 from conftest import ROOT

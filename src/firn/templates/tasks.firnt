@@ -26,9 +26,9 @@ template Tasks {
       if t.input or t.output {
         |from typing import ClassVar
         |
-        |from simplon.domain.artifactschema import Port
+        |from simplon.model.artifactschema import Port
       }
-      |from simplon.domain.task import Task
+      |from simplon.model.task import Task
       |
       protected "${t.name}.imports" {
       |from ${t.body.replace(":", " import ")} as _body

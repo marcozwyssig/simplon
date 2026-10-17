@@ -1,11 +1,11 @@
 """What the kernel reads of a manifest, as the kernel's own types (si#391).
 
-The step model and `run_command` are the kernel (layer 0), and the manifest reader is the domain above it.
+The step model and `run_command` are the kernel (layer 0), and the manifest reader sits above it (layer 2, over the model at 1).
 The kernel used to import `Manifest` and `PlanNode` from it, so the lowest layer named a type of the one
 above. The kernel now says what it reads. `CommandDecl` lists what it reads of every command and
 `AggregateDecl` what it reads of an aggregate, `Plan` lists the four questions it asks a manifest, and
 `PlanNode`, the tree a plan is built as, lives here. `orchestrator.manifest` imports `PlanNode` from here
-(downward), so `manifest.PlanNode` is still the same class, and `Manifest` and the `simplon.domain.command`
+(downward), so `manifest.PlanNode` is still the same class, and `Manifest` and the `simplon.model.command`
 classes satisfy the protocols without naming them.
 
 What a plan may run at the same time (`schedule_of`, `Fan`, `parallel_siblings`) lives here too and not in

@@ -19,7 +19,7 @@ import time
 
 import pytest
 
-from simplon.domain.manifest import load as manifest_load
+from simplon.manifest.load import load as manifest_load
 from simplon.kernel.steps import (
     Fan,
     _HeadlessOutput,

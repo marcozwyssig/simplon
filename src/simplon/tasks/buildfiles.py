@@ -32,7 +32,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from simplon.domain import context
+from simplon.manifest import context
 from simplon.kernel import log
 
 #: The extensions that make a directory a target. `.cs` is here because the same model feeds the .NET

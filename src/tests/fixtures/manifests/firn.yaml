@@ -1,5 +1,5 @@
 # firn's delivery manifest: the one place the build, the test gate and the release say
-# what they are. Simplon (simplon.domain.manifest) assembles ./firn.sh from it.
+# what they are. Simplon (simplon.manifest.load) assembles ./firn.sh from it.
 #
 # WHAT THIS REPLACED, and why three files became one. The same flow used to be declared
 # three times and nowhere reconciled: `Makefile` (build/test/native/image),
@@ -851,7 +851,7 @@ groups:
       # bump is `firn support toolchain-pin java 26` rather than a hand edit.
       #
       # `toolchain-pin` AND NOT `toolchain`, AND THE KERNEL DECIDED THAT (#283). A `depends_on`
-      # entry is a BARE command name -- simplon.domain.manifest rule 4 -- so a name two
+      # entry is a BARE command name -- simplon.manifest.load rule 4 -- so a name two
       # groups both use can never be depended on. `deploy devcontainer` naming `toolchain` was
       # refused in exactly those words:
       #
@@ -1011,7 +1011,7 @@ groups:
       #   ValueError: command 'deploy devcontainer' declares both `task:` and `depends_on:`.
       #   A command either instantiates a task or plans other commands, never both - split it into two
       #
-      # -- which is the v1 lock in simplon.domain.manifest: a plan step runs as a
+      # -- which is the v1 lock in simplon.manifest.load: a plan step runs as a
       # `./firn.sh <leaf>` SUBPROCESS, so an impl-bearing command that also carried dependencies
       # would re-expand them in the child and break the dedup-once the plan rests on. `hidden`
       # keeps it out of `--help` and fully invocable, which is what a plan step has to be.

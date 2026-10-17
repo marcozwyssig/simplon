@@ -58,12 +58,13 @@ from enum import Enum
 
 import click
 
-from simplon.domain import catalogue as catalogue_mod
-from simplon.domain import context, task
+from simplon.manifest import catalogue as catalogue_mod
+from simplon.manifest import context
+from simplon.model import task
 from simplon.kernel import log
-from simplon.domain.layout import validate_relative_dir
-from simplon.domain.command import TaskCommand
-from simplon.domain.manifest import Manifest
+from simplon.manifest.layout import validate_relative_dir
+from simplon.model.command import TaskCommand
+from simplon.manifest.load import Manifest
 
 #: The closing section's heading. A constant because it is the seam between what this product HAS and what
 #: the platform merely offers, and a test asserts nothing from the first half leaks into the second.
@@ -282,7 +283,7 @@ def unplaced(mf: Manifest, cat: catalogue_mod.Catalogue) -> tuple[tuple[str, str
     """The catalogue coordinates no command of this product instantiates, each with the platform's own
     one-line summary.
 
-    Matched on the resolved `impl`, the way `simplon.tasks.tasks._reached_namespaces` does: a coordinate
+    Matched on the resolved `impl`, the way `simplon.tasks.taskverbs._reached_namespaces` does: a coordinate
     can reach a product's surface three ways (placed by the platform's own tree, named by a `task:`, or
     left as a bare `impl:` by a half-migrated group) and all three end as the same body once the manifest is
     loaded - one `task.body_identity`, though a coordinate's impl names its class (si#400 4c). Matching what the loader PRODUCED needs no per-mechanism walk and cannot miss a
@@ -494,7 +495,7 @@ def reference(output: str, title: str = "") -> int:
     """Write the product's command reference to `output`, as Markdown for Hugo.
 
     `output` is a plain relative path under the product root, checked by the rule `--orch-dir` and the
-    site build's own paths already use (`simplon.domain.layout.validate_relative_dir`): the value comes from a
+    site build's own paths already use (`simplon.manifest.layout.validate_relative_dir`): the value comes from a
     manifest and is then written to, so an absolute one would land outside the product entirely. It is a
     FILE here rather than a directory, which is all that rule's wording gets wrong - the escape it refuses
     is the same one.
