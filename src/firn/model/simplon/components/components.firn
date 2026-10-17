@@ -328,8 +328,8 @@ tasks typeOf simplon.architecture.Component {
   module m_tasks_site typeOf simplon.architecture.Module {
     path = "tasks.site"
   }
-  module m_tasks_tasks typeOf simplon.architecture.Module {
-    path = "tasks.tasks"
+  module m_tasks_taskverbs typeOf simplon.architecture.Module {
+    path = "tasks.taskverbs"
   }
   module m_tasks_testrun typeOf simplon.architecture.Module {
     path = "tasks.testrun"

@@ -61,8 +61,8 @@ MOVED_DUE_AFTER = (0, 32)
 #: instead of the bare "No module named" an unknown name gets. Two removals end here at once in 0.33.0:
 #: si#399's 65 paths, whose aliases si#470 removed on their deadline, each pointing at its FINAL home (the
 #: ones that went into `domain` point past it, into `model` or `manifest`), and the `domain.*` modules
-#: si#473 split, which never had an alias. A tombstone is a diagnosis, not a way in: the import still
-#: fails, only the message changes.
+#: si#473 split, which never had an alias - and one rename, `tasks.tasks`. A tombstone is a diagnosis,
+#: not a way in: the import still fails, only the message changes.
 GONE: dict[str, str] = {
     "artifactschema": "simplon.model.artifactschema",
     "artifactsection": "simplon.manifest.artifactsection",
@@ -142,6 +142,10 @@ GONE: dict[str, str] = {
     "steplog": "simplon.kernel.steplog",
     "surface": "simplon.cli.surface",
     "taskgen": "simplon.tasks.taskgen",
+    # Renamed in 0.33.0 so `model.task` could be promised (si#473). Measured 2026-10-17: netctl's and
+    # asbundle's committed generated CLIs `import simplon.tasks.tasks`; regenerating them writes the
+    # class modules (`tasks.tasks_generate`, `tasks.tasks_catalogue`) instead, which is the real fix.
+    "tasks.tasks": "simplon.tasks.taskverbs",
     "tools": "simplon.adapters.tools",
     "topology": "simplon.adapters.topology",
     "tracker": "simplon.adapters.tracker",

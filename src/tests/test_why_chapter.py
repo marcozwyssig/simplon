@@ -366,7 +366,7 @@ def test_the_bodies_the_page_says_reach_no_external_tool_really_do_not():
     contradict it on its own.
     """
     # arrange: the bodies behind the coordinates the page says reach nothing
-    modules = ("simplon.tasks.tasks", "simplon.tasks.env", "simplon.tasks.buildfiles")
+    modules = ("simplon.tasks.taskverbs", "simplon.tasks.env", "simplon.tasks.buildfiles")
 
     # act
     shelling = {}

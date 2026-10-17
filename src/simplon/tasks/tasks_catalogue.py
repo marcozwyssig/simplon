@@ -4,7 +4,7 @@ Edit only inside the protected regions; firn rewrites everything else on every r
 from simplon.model.task import Task
 
 # Begin Protected Region [tasks_catalogue.imports]
-from simplon.tasks.tasks import catalogue as _body
+from simplon.tasks.taskverbs import catalogue as _body
 # End Protected Region  [tasks_catalogue.imports]
 
 

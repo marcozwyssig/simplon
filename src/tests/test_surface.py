@@ -261,6 +261,16 @@ def test_from_simplon_import_an_old_module_names_its_new_home(old):
         exec(f"from simplon import {old}", {})
 
 
+def test_the_renamed_body_module_names_its_new_home_in_the_spelling_products_use():
+    """si#473 renamed `simplon.tasks.tasks` to `simplon.tasks.taskverbs` so `model.task` could be promised.
+    Measured 2026-10-17: netctl's and asbundle's committed generated CLIs say `import simplon.tasks.tasks`,
+    so that is the spelling held here. (`from simplon.tasks import tasks` would get Python's bare "cannot
+    import name", as `from simplon import run` did before `simplon.__getattr__`; no product writes it.)
+    Seen red without the `tasks.tasks` tombstone."""
+    with pytest.raises(ModuleNotFoundError, match=re.escape("simplon.tasks.taskverbs")):
+        exec("import simplon.tasks.tasks", {})
+
+
 @pytest.mark.parametrize("old, new", sorted(moved.GONE.items()))
 def test_every_tombstone_names_a_module_that_imports(old, new):
     """A tombstone that names a home which does not import sends a product from one ImportError to the

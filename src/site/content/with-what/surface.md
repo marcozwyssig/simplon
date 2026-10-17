@@ -196,15 +196,16 @@ Short enough to state, and the half you most need, because everything else is yo
 
 `adapters.diskguard` · `adapters.oras` · `adapters.tools` · `cli.bootstrap` ·
 `manifest.catalogue` · `manifest.clitaxonomy` · `manifest.launcherenv` · `manifest.manifestmodel` ·
-`manifest.ports` · `manifest.runners` · `manifest.signatures` · `model.task` · `manifest.yamlkeys` · `kernel.moved` · `kernel.provenance` ·
+`manifest.ports` · `manifest.runners` · `manifest.signatures` · `manifest.yamlkeys` · `kernel.moved` · `kernel.provenance` ·
 `kernel.runhost` · `kernel.steplog` · `test_impls`
 
-`model.artifactschema` left this list in 0.33.0 (si#473). Every task class firn generates with ports —
-the kernel's, and a product's own from the same template — imports `simplon.model.artifactschema.Port`,
-so a product's generated code bakes the path in, and it is library now. It is still generated and
-rewritten whole: its names are promised, its text is not. `model.task`, whose `Task` every generated
-class imports, is to follow; its name collides with the task body module `simplon.tasks.tasks`, and
-that is not settled yet.
+`model.task` and `model.artifactschema` left this list in 0.33.0 (si#473). Every task class firn
+generates — the kernel's, and a product's own from the same template — imports `simplon.model.task.Task`,
+and every class with ports `simplon.model.artifactschema.Port`, so a product's generated code bakes both
+paths in, and both are library now. `artifactschema` is still generated and rewritten whole: its names
+are promised, its text is not. Promoting `model.task` made it collide with the task body module
+`simplon.tasks.tasks` (the bodies of `support tasks generate` and `support tasks catalogue`), so that
+module is `simplon.tasks.taskverbs` since 0.33.0.
 
 `runners` needs a word too, because `workflowgen` beside it is a library module and this is not. It is a
 **table** of facts about kinds of CI machine — what a self-hosted Debian runner provides, why

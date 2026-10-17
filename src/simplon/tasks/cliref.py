@@ -283,7 +283,7 @@ def unplaced(mf: Manifest, cat: catalogue_mod.Catalogue) -> tuple[tuple[str, str
     """The catalogue coordinates no command of this product instantiates, each with the platform's own
     one-line summary.
 
-    Matched on the resolved `impl`, the way `simplon.tasks.tasks._reached_namespaces` does: a coordinate
+    Matched on the resolved `impl`, the way `simplon.tasks.taskverbs._reached_namespaces` does: a coordinate
     can reach a product's surface three ways (placed by the platform's own tree, named by a `task:`, or
     left as a bare `impl:` by a half-migrated group) and all three end as the same body once the manifest is
     loaded - one `task.body_identity`, though a coordinate's impl names its class (si#400 4c). Matching what the loader PRODUCED needs no per-mechanism walk and cannot miss a
