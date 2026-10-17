@@ -60,11 +60,11 @@ import textwrap
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
 import yaml
 
-from simplon.domain import artifactsection, context, runners, task
+from simplon.domain import artifactsection, context, runners, signatures, task
 from simplon.adapters import disk
 from simplon.domain.command import TaskCommand
 from simplon.domain.manifest import Manifest
@@ -701,25 +701,40 @@ def _parameters(manifest: Manifest, group: str, name: str,
     now it may only hand that command a parameter the command declares - so a renamed parameter breaks
     generation instead of becoming a `run:` line that fails on a runner three minutes into a job.
 
-    A parameter declared as an ARGUMENT is positional and gets no flag, because that is how the CLI reads
-    it; anything else is an option. The value is shell-quoted, and what it is is the manifest's business:
-    a rollout renders `deploys:` here, which is a literal nobody outside the repository chose.
+    POSITIONAL OR OPTION IS THE CLI'S ANSWER, asked of the same decision it uses (si#471):
+    `signatures.positional`, over the body's signature and the manifest's presentation together. It
+    used to be read off `argument:` in `params:` alone, which is half the fact - a parameter the body
+    takes WITHOUT a default is positional too - so `release tag` with `params: { tag: v1.4.0 }` rendered
+    as `release tag --tag v1.4.0` and was a usage error on a runner. Options come first and positionals
+    after - the options in the order the step wrote them, the positionals in the order the body takes
+    them, because that order is what assigns a positional its meaning - and a `--` between the two.
+
+    It costs an import of the body, and only for a step that passes a value: the same import the CLI
+    makes to assemble the command the step runs, so a body the generator cannot import is one the
+    step could not have run either. The value is shell-quoted, and what it is is the manifest's
+    business: a rollout renders `deploys:` here, which is a literal nobody outside the repository chose.
     """
     if not params:
         return ""
     spec = manifest.commands.get(group, {}).get(name)
     declared = dict(getattr(spec, "params", {}) or {})
-    out: list[str] = []
-    for key, value in params.items():
+    for key in params:
         if key not in declared:
             raise ValueError(
                 f"{where}: `{group.replace('.', ' ')} {name}` declares no parameter '{key}' - it takes "
                 f"{', '.join(sorted(declared)) or 'none'}. A workflow that passed one anyway would fail "
                 f"on a runner, with the manifest looking correct")
-        rendered = shlex.quote(str(value))
-        out.append(rendered if getattr(declared[key], "argument", False)
-                   else f"--{key.replace('_', '-')} {rendered}")
-    return " " + " ".join(out)
+    # `declared` is non-empty here, so `spec` is a leaf: only a TaskCommand carries `params:`.
+    body = task.body_of(cast(TaskCommand, spec), where=where)
+    signature = {p.name: p for p in signatures.bindable(body)}
+    reads_positionally = {key for key in params
+                          if key in signature and signatures.positional(signature[key], declared[key])}
+    options = [f"--{key.replace('_', '-')} {shlex.quote(str(value))}"
+               for key, value in params.items() if key not in reads_positionally]
+    positionals = [shlex.quote(str(params[key])) for key in signature if key in reads_positionally]
+    # `--` before the positionals, so a value starting with `-` cannot be read as an option - the
+    # convention an aggregate's `passes:` already follows, built by the same function.
+    return " " + " ".join(signatures.command_line(options, positionals))
 
 
 # --- a rollout, written from the environment matrix -----------------------------------------------------

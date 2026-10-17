@@ -353,7 +353,7 @@ def receivers(mf: manifest.Manifest, group: str, name: str,
                                  f"a Typer default - declare it under the command's `params:` instead")
             presentation = (leaf_spec.params or {}).get(param.name)
             form = signatures.shape(param.name, required=param.required, presentation=presentation)
-            positional = form.positional if form.declared else param.required
+            positional = signatures.positional(param, presentation)
             flag = form.decls[0] if form.decls else f"--{param.name.replace('_', '-')}"
             out[param.name].append(Receiver(leaf.name, positional, flag, param.required,
                                             getattr(presentation, "help", None)))
@@ -380,7 +380,7 @@ def leaf_arguments(takers: Mapping[str, list[Receiver]],
                 positionals.setdefault(taker.leaf, []).append(str(value))
             else:
                 options.setdefault(taker.leaf, []).append(f"{taker.flag}={value}")
-    return {leaf: tuple(options.get(leaf, [])) + (("--", *positionals[leaf]) if leaf in positionals else ())
+    return {leaf: signatures.command_line(options.get(leaf, []), positionals.get(leaf, []))
             for leaf in {*options, *positionals}}
 
 

@@ -2040,3 +2040,154 @@ def test_a_manifest_step_naming_a_parameter_the_command_lacks_is_refused(kernel_
     # act / assert
     with pytest.raises(ValueError, match="platfrom"):
         _render(kernel_manifest, _PARAMS.format(param="platfrom"))
+
+
+# --- si#471: a parameter renders the way the CLI reads it ----------------------------------------------
+# The generator decided positional versus option from the manifest's `params:` alone, while the CLI
+# decides from the body's signature through `signatures.shape`. `release:tag`'s `tag` is required in the
+# body and declares no `argument: true`, so the CLI read a positional and the generator wrote `--tag`: a
+# usage error on a runner, three minutes into a job, with the manifest looking correct.
+
+
+_RELEASE_TAG = """
+    workflows:
+      ci:
+        on: [push]
+        jobs:
+          cut:
+            runner: github-ubuntu
+            steps:
+              - command: release notes
+                params: { tag: v9.9.9 }
+              - command: release tag
+                params: { tag: v9.9.9 }
+"""
+
+
+def test_simplons_own_release_tag_step_renders_the_tag_as_the_positional_the_cli_reads(kernel_manifest):
+    # act
+    text = _render(kernel_manifest, _RELEASE_TAG)
+
+    # assert
+    assert "run: ./sample.sh release tag -- v9.9.9" in text
+    # and the neighbour that keeps the option form, because its body gives `tag` a default
+    assert "run: ./sample.sh release notes --tag v9.9.9" in text
+
+
+_POSITIONAL_AND_OPTION = """
+tasks:
+  aim:
+    impl: "simplon.test_impls:target_and_mode"
+    help: "Aim."
+    params: { target: { help: "what to aim at" }, mode: { help: "how" } }
+ci:
+  test:
+    commands:
+      aim: { task: aim }
+"""
+
+
+def test_a_required_parameter_is_a_positional_and_a_defaulted_one_an_option():
+    # arrange
+    loaded = manifest_mod.load(_POSITIONAL_AND_OPTION, catalogue=catalogue_mod.load())
+
+    # act
+    text = _render(loaded, """
+        workflows:
+          ci:
+            on: [push]
+            jobs:
+              j:
+                runs-on: ubuntu-latest
+                steps:
+                  - command: test aim
+                    params: { mode: slow, target: moon }
+        """)
+
+    # assert
+    assert "run: ./sample.sh test aim --mode slow -- moon" in text
+
+
+def _cli_reads_positionally(spec) -> dict[str, bool]:
+    """Each parameter of the leaf `spec` -> whether the LIVE CLI reads it as a positional, read off the
+    Click command the kernel's own binding (`cli._bound`, what `assemble` registers) builds rather than
+    recomputed - so it is the CLI's answer, not a second copy of the decision under test."""
+    import click
+    import typer
+    from typer.main import get_command
+
+    from simplon import cli
+
+    app = typer.Typer(add_completion=False)
+    app.command("leaf")(cli._bound(manifest_mod.resolve_impl(spec), spec, where="sweep"))
+    return {p.name: isinstance(p, click.Argument) for p in get_command(app).params if p.name}
+
+
+def _catalogue_leaves():
+    """Every catalogue coordinate that declares `params:`, as the leaf a product placing it would get."""
+    from simplon.domain.command import ParamPresentation, TaskCommand
+
+    for coordinate, entry in sorted(catalogue_mod.load().tasks.items()):
+        if entry.get("params"):
+            yield coordinate, TaskCommand(
+                impl=entry["impl"], task=coordinate,
+                params={k: ParamPresentation(**(v or {})) for k, v in entry["params"].items()})
+
+
+def test_the_sweep_reaches_release_tag():
+    """Guards the sweep below against passing over nothing: the coordinate si#471 was found on is in it."""
+    assert "release:tag" in dict(_catalogue_leaves())
+
+
+@pytest.mark.parametrize("coordinate, spec", [pytest.param(c, s, id=c) for c, s in _catalogue_leaves()])
+def test_every_catalogue_parameter_renders_the_way_the_cli_reads_it(coordinate, spec):
+    """The sweep si#471 asks for: every parameter of every catalogue coordinate a step may hand a value
+    to renders, through the generator, as the form the bound CLI command reads it in."""
+    import types
+
+    placed = types.SimpleNamespace(commands={"g": {"leaf": spec}})
+    reads = _cli_reads_positionally(spec)
+    for key in spec.params:
+        rendered = workflowgen._parameters(placed, "g", "leaf", {key: "x"}, where="sweep")
+        assert (rendered == " -- x") is reads[key], \
+            f"{coordinate} `{key}`: the generator wrote {rendered!r}, the CLI reads " \
+            f"{'a positional' if reads[key] else 'an option'}"
+
+
+def test_the_synthetic_body_renders_the_way_the_cli_reads_it():
+    loaded = manifest_mod.load(_POSITIONAL_AND_OPTION, catalogue=catalogue_mod.load())
+    spec = loaded.commands["test"]["aim"]
+    reads = _cli_reads_positionally(spec)
+
+    assert reads == {"target": True, "mode": False}
+    for key in spec.params:
+        rendered = workflowgen._parameters(loaded, "test", "aim", {key: "x"}, where="sweep")
+        assert (rendered == " -- x") is reads[key]
+
+
+@pytest.mark.parametrize("value", ["-x", "--help", "--mode=fast"])
+def test_a_positional_value_that_looks_like_an_option_still_reaches_the_positional(value):
+    """A positional rendered bare after the options is read by Click as an OPTION when its value starts
+    with `-`: `test aim -x` is a usage error, `test aim --help` prints help and exits 0 - a green step that
+    did nothing. `cli.leaf_arguments` (si#433) ends the options with `--` for this reason, and so does the
+    generator. Checked by feeding the rendered line to the command the CLI itself binds."""
+    import shlex
+
+    import typer
+    from typer.main import get_command
+
+    from simplon import cli
+
+    # arrange
+    loaded = manifest_mod.load(_POSITIONAL_AND_OPTION, catalogue=catalogue_mod.load())
+    spec = loaded.commands["test"]["aim"]
+    app = typer.Typer(add_completion=False)
+    app.command("leaf")(cli._bound(manifest_mod.resolve_impl(spec), spec, where="argv"))
+
+    # act
+    rendered = workflowgen._parameters(loaded, "test", "aim", {"mode": "slow", "target": value}, where="argv")
+    ctx = get_command(app).make_context("leaf", shlex.split(rendered))
+
+    # assert
+    assert rendered == f" --mode slow -- {shlex.quote(value)}"
+    assert ctx.params == {"target": value, "mode": "slow"}
