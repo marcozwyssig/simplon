@@ -13,8 +13,15 @@ that answered 200.
 WHERE THE REPOSITORY AND THE API ARE, decided by Marco on 2026-10-17. `GITHUB_REPOSITORY` and
 `GITHUB_API_URL`, which Actions sets for every job, win when they are set. The container route's launcher
 forwards neither (only the tokens), so otherwise both are read off origin's URL: the path names the
-repository, and the host the API - `github.com` is `https://api.github.com`, any other host is a GitHub
-Enterprise at `https://<host>/api/v3`.
+repository, and a `github.com` host means `https://api.github.com`.
+
+THE TOKEN GOES TO GITHUB AND NOWHERE ELSE - `githubpackages`' own rule, and the reason the origin route
+stops at github.com. A GitHub Enterprise origin would map to `https://<host>/api/v3`, but the token here
+is a github.com one (`gh auth token` answers for github.com), and a host read out of a checkout's remote is
+a host the checkout chose: a clone whose origin names any machine would have that machine handed the
+token. So an Enterprise host is named by the person, in `GITHUB_API_URL` (Actions on GHES sets it), and
+an origin that is not github.com is refused rather than followed. Measured by the commit security review
+of si#486, which narrowed Marco's "derive it from origin" by its Enterprise half.
 
 THE TOKEN is `githubpackages.token()`, the kernel's one token story: `GITHUB_TOKEN`, then `gh auth token`
 (which answers `GH_TOKEN` on the container route, where the launcher forwards it and `gh` has no login).
@@ -52,13 +59,12 @@ class Unanswered(Exception):
 
 
 def locate(origin: str) -> tuple[str, str] | None:
-    """(`owner/name`, API base) out of an origin URL, or None when it names no GitHub repository."""
+    """(`owner/name`, API base) out of an origin URL on github.com, or None for any other origin - an
+    Enterprise host included, which only `GITHUB_API_URL` may name (see the module docstring)."""
     found = _ORIGIN.match(origin.strip())
-    if not found or "." not in found["host"]:
+    if not found or found["host"].lower() != "github.com":
         return None
-    host = found["host"]
-    api = "https://api.github.com" if host == "github.com" else f"https://{host}/api/v3"
-    return found["path"], api
+    return found["path"], "https://api.github.com"
 
 
 def where(origin: str = "") -> tuple[str, str]:
@@ -72,8 +78,9 @@ def where(origin: str = "") -> tuple[str, str]:
     if located is None:
         raise Unanswered(
             f"no GitHub repository to ask: GITHUB_REPOSITORY and GITHUB_API_URL are "
-            f"{'set' if name else 'not set'} / {'set' if api else 'not set'}, and origin "
-            f"({origin or 'none'}) is not a GitHub URL. The Release workflow sets both; by hand, export them")
+            f"{'set' if name else 'not set'} / {'set' if api else 'not set'}, and origin is "
+            f"{'not a github.com URL' if origin else 'not set'} - a GitHub Enterprise is named by "
+            f"GITHUB_API_URL, never read off a remote. The Release workflow sets both; by hand, export them")
     return name or located[0], api or located[1]
 
 

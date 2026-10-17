@@ -29,8 +29,11 @@ def standin(monkeypatch):
     ("https://github.com/o/n", ("o/n", "https://api.github.com")),
     ("git@github.com:o/n.git", ("o/n", "https://api.github.com")),
     ("ssh://git@github.com/o/n.git", ("o/n", "https://api.github.com")),
-    ("https://ghe.example/o/n.git", ("o/n", "https://ghe.example/api/v3")),
-    ("git@ghe.example:o/n.git", ("o/n", "https://ghe.example/api/v3")),
+    ("https://x-access-token:secret@github.com/o/n.git", ("o/n", "https://api.github.com")),
+    # an Enterprise host is never read off a remote: the token would go to whatever host the clone names
+    ("https://ghe.example/o/n.git", None),
+    ("git@ghe.example:o/n.git", None),
+    ("https://github.com.evil.example/o/n.git", None),
     ("/srv/git/n.git", None),
     ("", None),
 ])
@@ -67,8 +70,9 @@ def test_a_non_github_origin_with_no_variable_names_both_variables(monkeypatch):
 
     # act / assert
     with pytest.raises(github.Unanswered) as refused:
-        github.repository("/srv/git/n.git")
+        github.repository("https://user:hunter2@ghe.example/o/n.git")
     assert "GITHUB_REPOSITORY" in str(refused.value) and "GITHUB_API_URL" in str(refused.value)
+    assert "hunter2" not in str(refused.value) and "ghe.example" not in str(refused.value)
 
 
 def test_a_repository_the_token_cannot_see_is_unanswered_not_absent(standin):
