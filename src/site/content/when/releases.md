@@ -45,9 +45,9 @@ container route stops when the two differ.
      path.
    - **biz-cockpit** 20 imports (on 16 lines), **asbundle** 16, **secure-windows-images** 7, **cleon** 6,
      **agile-cockpit** 5.
-   - **firn:** 4 lines into `simplon.domain.*` (context 3, layout 1, outputs 1, environments 1), and its
-     55 task classes are regenerated, because `tasks.firnt` now writes `from simplon.model.task import
-     Task` and `from simplon.model.artifactschema import Port`.
+   - **firn:** 4 lines into `simplon.domain.*` (context 3, layout 1, outputs 1, environments 1).
+   - No product generates task classes. simplon's own 55 are regenerated, because `tasks.firnt` now
+     writes `from simplon.model.task import Task` and `from simplon.model.artifactschema import Port`.
 
    The six products other than firn pin a simplon from before 0.31.0 (netctl 0.21.0, biz-cockpit 0.22.0,
    asbundle 0.3.0, secure-windows-images 0.12.0, cleon 0.5.0, agile-cockpit 0.22.0). There the old paths
