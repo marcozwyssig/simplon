@@ -1924,6 +1924,27 @@ def test_a_tick_after_the_screen_is_gone_paints_nothing_and_raises_nothing():
     assert app._bar is None, "the app kept a widget that is no longer mounted"
 
 
+def test_a_tick_inside_teardown_paints_nothing_and_raises_nothing():
+    """si#499 reopened: the WINDOW, not the aftermath. Teardown removes `#steps` before `on_unmount` drops
+    `_bar`, so a tick landing between the two passes the `_bar` guard and finds no tree. Measured in a full
+    suite run on 2026-10-17 (`test_slash_filters_...`): NoMatches from `_tick` THROUGH the guard #500 added.
+    The window is reached here on purpose: the tree is removed while the bar is still set."""
+    pipeline = _pipeline()
+
+    async def _drive():
+        app = _StepApp(pipeline)
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            await app.query_one("#steps").remove()
+            assert app._bar is not None, "the window needs the bar still set"
+            # act: the tick that lands between the tree going and the bar going
+            app._tick()
+            return True
+
+    assert asyncio.run(_drive())
+
+
 def test_a_run_that_finishes_while_the_screen_is_up_still_focuses_the_first_failure():
     """The other half, so the guard cannot become an early return that switched the feature off. si#265
     said it in its own words: the repair is not `except NoMatches: pass`, because that swallows the case
