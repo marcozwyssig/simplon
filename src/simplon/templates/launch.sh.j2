@@ -257,7 +257,7 @@ if [ "$DELIVERY_ROUTE" = container ]; then
     while read -r _name; do
         case "$_name" in
             DELIVERY_ROUTE|DELIVERY_HOST_ROOT|DELIVERY_MOUNT_ROOT|DELIVERY_ENV_PASS|PYTHONPATH|PYTHONUSERBASE|HOME) ;;
-            DELIVERY_*|CI|NO_COLOR|TERM|TZ|GITHUB_TOKEN|GH_TOKEN) DOCKER_RUN+=(-e "$_name") ;;
+            DELIVERY_*|{{ forwarded_sh }}) DOCKER_RUN+=(-e "$_name") ;;
             "$ENV_PREFIX"_*) DOCKER_RUN+=(-e "$_name") ;;
             *) case " $LAUNCH_ENV_PASS " in *" $_name "*) DOCKER_RUN+=(-e "$_name") ;; esac ;;
         esac

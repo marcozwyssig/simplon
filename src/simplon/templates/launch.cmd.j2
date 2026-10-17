@@ -174,7 +174,7 @@ rem speaks. The venv route inherits the caller's whole environment and this one 
 rem set is named rather than left to be discovered.
 for /f "usebackq tokens=1 delims==" %%N in (`set DELIVERY_ 2^>nul`) do call :forward %%N
 for /f "usebackq tokens=1 delims==" %%N in (`set {{ product_env_prefix }}_ 2^>nul`) do call :forward %%N
-for %%N in (CI NO_COLOR TERM TZ GITHUB_TOKEN) do call :forward %%N
+for %%N in ({{ forwarded }}) do call :forward %%N
 for %%N in (%LAUNCH_ENV_PASS%) do call :forward %%N
 rem What this file was rendered to pass, as names, so the kernel can tell a stale launcher from an unset
 rem variable (si#467).
@@ -198,10 +198,15 @@ docker run %DOCKER_ARGS% %DOCKER_ENV% "%KERNEL_IMAGE%" python -u -m %LAUNCH_MODU
 exit /b %ERRORLEVEL%
 
 :forward
+rem The names this file sets on the container line itself, so a host value of them never crosses - the
+rem same names the `.sh` launcher's skip arm lists, held equal by test_launch_container_env (si#479).
 if /i "%~1"=="DELIVERY_ROUTE" goto :eof
 if /i "%~1"=="DELIVERY_HOST_ROOT" goto :eof
 if /i "%~1"=="DELIVERY_MOUNT_ROOT" goto :eof
 if /i "%~1"=="DELIVERY_ENV_PASS" goto :eof
+if /i "%~1"=="PYTHONPATH" goto :eof
+if /i "%~1"=="PYTHONUSERBASE" goto :eof
+if /i "%~1"=="HOME" goto :eof
 if not defined %~1 goto :eof
 set "DOCKER_ENV=%DOCKER_ENV% -e %~1"
 goto :eof

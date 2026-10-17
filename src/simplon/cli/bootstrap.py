@@ -78,7 +78,7 @@ from importlib.resources import files
 from pathlib import Path
 
 import simplon
-from simplon.domain import layout
+from simplon.domain import launcherenv, layout
 from simplon.domain.layout import validate_relative_dir
 from simplon.kernel.run import run
 
@@ -568,6 +568,10 @@ def _render_launcher(name: str, template: str, orch_dir: str, env_pass: tuple[st
     `env_pass` is the manifest's `launcher: env: pass:` (si#467), as space-separated NAMES: both
     launchers read no YAML, so the list is written into them, and each name is forwarded by name only.
     Validated by `launcherenv.declared` before it gets here, so nothing in it needs quoting.
+
+    `{{ forwarded }}` / `{{ forwarded_sh }}` are the FIXED names both launchers forward, from the one
+    constant `launcherenv.FORWARDED`, space- and `|`-separated for the batch loop and the shell `case` arm:
+    two hand-kept copies drifted by `GH_TOKEN` (si#479).
     """
     # files("simplon") and then joinpath -- not files("simplon.templates"):
     # the templates directory is not a package and has no __init__.py.
@@ -576,6 +580,8 @@ def _render_launcher(name: str, template: str, orch_dir: str, env_pass: tuple[st
                .replace("{{ product }}", name)
                .replace("{{ product_env_prefix }}", env_var_name(name).removesuffix("_ENV"))
                .replace("{{ env_pass }}", " ".join(env_pass))
+               .replace("{{ forwarded_sh }}", "|".join(launcherenv.FORWARDED))
+               .replace("{{ forwarded }}", " ".join(launcherenv.FORWARDED))
                .replace("{{ orch_dir_win }}", orch_dir.replace("/", "\\"))
                .replace("{{ orch_dir }}", orch_dir))
 
@@ -1155,7 +1161,7 @@ def launcher_env_pass(name: str, target: Path) -> tuple[str, ...]:
     one that is broken is refused the way the kernel's loader refuses it, with the same sentence."""
     import yaml
 
-    from simplon.domain import launcherenv, yamlkeys
+    from simplon.domain import yamlkeys
 
     path = target / f"{name}.yaml"
     if not path.is_file():
