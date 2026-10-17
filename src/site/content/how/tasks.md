@@ -79,7 +79,7 @@ parameter, so it stays invisible on the command line. Pair it with `passthrough_
 A body never imports the product. It asks the registered context:
 
 ```python
-from simplon import context
+from simplon.domain import context
 
 def build() -> int:
     ctx = context.current()
@@ -123,7 +123,7 @@ is why a body that shells out by hand loses the log file it would otherwise have
 ## Saying what happened
 
 ```python
-from simplon import log
+from simplon.kernel import log
 
 log.info("what is about to happen")
 log.ok("it worked")

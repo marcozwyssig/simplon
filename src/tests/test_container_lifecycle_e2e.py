@@ -50,7 +50,7 @@ SLEEP = "60"
 CHILD = """
 import sys
 from pathlib import Path
-from simplon import docker
+from simplon.adapters import docker
 from simplon.tasks import toolchain
 product, root, image, seconds = sys.argv[1:5]
 cfg = toolchain.declared({"image": image, "argv": ["sleep", seconds]}, where="si409")

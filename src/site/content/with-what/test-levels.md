@@ -201,7 +201,7 @@ You write an ordinary task body that shells out to it and returns its exit code,
 that names that body:
 
 ```python
-from simplon import context
+from simplon.domain import context
 from simplon.kernel.run import run
 
 

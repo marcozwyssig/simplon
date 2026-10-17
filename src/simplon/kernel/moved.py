@@ -1,9 +1,14 @@
-"""Where every module si#399 moved now lives, and the import alias that keeps the old paths working.
+"""Where a moved module now lives, and the import alias that keeps an old path working until its deadline.
 
 si#399 put each module into the package of its component (`kernel`, `domain`, `adapters`, `tasks`, `ui`,
-`cli`) and dissolved `simplon.orchestrator`. About two hundred import lines in seven products name an old
-path - measured per line in `simplon.cli.surface.MOVED_CONSUMERS` - so every old path stays importable until
-the release `MOVED_DUE_AFTER` names, and announces the move when it is imported.
+`cli`) and dissolved `simplon.orchestrator`. About two hundred import lines in seven products named an old
+path - measured per line in `simplon.cli.surface.MOVED_CONSUMERS` - so every old path stayed importable
+through the release `MOVED_DUE_AFTER` names, and announced the move when it was imported.
+
+THAT PERIOD IS OVER (si#470, 0.33.0). `MOVED` and `DISSOLVED` are empty, so the finder answers nothing and
+an old path is an ordinary `ModuleNotFoundError`, as the 0.4 paths became one at 0.5.0. The mechanism
+stays, installed and tested against a synthetic pair, because the next move needs exactly this: a move
+fills the two tables and sets the deadline, and nothing else.
 
 AN ALIAS, NOT A STUB FILE, and the difference is a measured defect (Marco, 2026-10-13). The 0.4 tombstones
 were modules of their own that served attributes through `__getattr__`. Products patch the kernel by
@@ -27,83 +32,22 @@ import sys
 import warnings
 from types import ModuleType
 
-#: Old import path (relative to `simplon`) -> the module's home since si#399.
-MOVED: dict[str, str] = {
-    "artifactschema": "simplon.domain.artifactschema",
-    "artifactsection": "simplon.domain.artifactsection",
-    "awake": "simplon.kernel.awake",
-    "backend": "simplon.adapters.backend",
-    "bootstrap": "simplon.cli.bootstrap",
-    "carrierspec": "simplon.domain.carrierspec",
-    "catalogue": "simplon.domain.catalogue",
-    "checksum": "simplon.adapters.checksum",
-    "clablifecycle": "simplon.adapters.clablifecycle",
-    "clabrender": "simplon.adapters.clabrender",
-    "clitaxonomy": "simplon.domain.clitaxonomy",
-    "completiongen": "simplon.tasks.completiongen",
-    "compose": "simplon.adapters.compose",
-    "context": "simplon.domain.context",
-    "credentials": "simplon.adapters.credentials",
-    "degraded": "simplon.kernel.degraded",
-    "deployment": "simplon.domain.deployment",
-    "devcontainer": "simplon.adapters.devcontainer",
-    "disk": "simplon.adapters.disk",
-    "diskguard": "simplon.adapters.diskguard",
-    "docker": "simplon.adapters.docker",
-    "environments": "simplon.domain.environments",
-    "fetch": "simplon.adapters.fetch",
-    "filelock": "simplon.kernel.filelock",
-    "githubpackages": "simplon.adapters.githubpackages",
-    "healthgate": "simplon.adapters.healthgate",
-    "host": "simplon.adapters.host",
-    "hostpath": "simplon.adapters.hostpath",
-    "imagenames": "simplon.adapters.imagenames",
-    "interact": "simplon.adapters.interact",
-    "labegress": "simplon.adapters.labegress",
-    "labhost": "simplon.adapters.labhost",
-    "labinstance": "simplon.adapters.labinstance",
-    "labnet": "simplon.adapters.labnet",
-    "layout": "simplon.domain.layout",
-    "linux": "simplon.adapters.linux",
-    "log": "simplon.kernel.log",
-    "manifestmodel": "simplon.domain.manifestmodel",
-    "nexusproxy": "simplon.adapters.nexusproxy",
-    "oras": "simplon.adapters.oras",
-    "orchestrator.manifest": "simplon.domain.manifest",
-    "orchestrator.model.treeform": "simplon.domain.treeform",
-    "orchestrator.plan": "simplon.kernel.plan",
-    "orchestrator.product": "simplon.kernel.product",
-    "orchestrator.steps": "simplon.kernel.steps",
-    "orchestrator.tui": "simplon.ui.tui",
-    "outputs": "simplon.domain.outputs",
-    "portainer": "simplon.adapters.portainer",
-    "ports": "simplon.adapters.ports",
-    "provenance": "simplon.kernel.provenance",
-    "pyvenv": "simplon.adapters.pyvenv",
-    "run": "simplon.kernel.run",
-    "runhost": "simplon.kernel.runhost",
-    "runners": "simplon.domain.runners",
-    "signatures": "simplon.domain.signatures",
-    "steplog": "simplon.kernel.steplog",
-    "surface": "simplon.cli.surface",
-    "taskgen": "simplon.tasks.taskgen",
-    "tools": "simplon.adapters.tools",
-    "topology": "simplon.adapters.topology",
-    "tracker": "simplon.adapters.tracker",
-    "verdict": "simplon.kernel.verdict",
-    "waits": "simplon.kernel.waits",
-    "workflowgen": "simplon.tasks.workflowgen",
-    "yamlkeys": "simplon.domain.yamlkeys",
-}
+#: Old import path (relative to `simplon`) -> the module's new home. EMPTY SINCE 0.33.0 (si#470): the 65
+#: paths si#399 moved were promised through 0.32 and came out on that deadline. The record stays, empty,
+#: for the next move.
+MOVED: dict[str, str] = {}
 
-#: Packages si#399 dissolved. Nothing lives in them any more, but `from simplon.orchestrator import steps`
+#: Packages a move dissolved. Nothing lives in one any more, but `from simplon.orchestrator import steps`
 #: needs the package to import before it can reach the alias for its child, so each is answered with an
-#: empty package that holds only what its children's aliases put there.
-DISSOLVED = frozenset({"orchestrator", "orchestrator.model"})
+#: empty package that holds only what its children's aliases put there. Empty since 0.33.0 with `MOVED`;
+#: si#399's two were `orchestrator` and `orchestrator.model`.
+DISSOLVED: frozenset[str] = frozenset()
 
-#: The (major, minor) after which the old paths are removed: the move ships in 0.31, and the products have
-#: two minors to migrate (Marco, 2026-10-13), so 0.33 is the first release without them.
-#: `test_surface.py` turns red on the release run of the first minor past this pair.
+#: The (major, minor) after which the old paths are removed: si#399's move shipped in 0.31, and the products
+#: had two minors to migrate (Marco, 2026-10-13), so 0.33 is the first release without them. That promise
+#: was kept (si#470); the pair stays as its record until the next move names its own.
+#: `test_surface.py` turns red on the release run of the first minor past this pair while `MOVED` is not
+#: empty.
 MOVED_DUE_AFTER = (0, 32)
 
 

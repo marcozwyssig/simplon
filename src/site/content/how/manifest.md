@@ -524,7 +524,7 @@ A product's own task body reads its own section through `simplon.domain.context.
 kernel's own readers use:
 
 ```python
-from simplon import context
+from simplon.domain import context
 
 ctx = context.current()
 packer, blame, got = context.section(ctx.manifest_data(), "build", "packer")
