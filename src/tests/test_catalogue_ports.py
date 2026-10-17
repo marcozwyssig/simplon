@@ -33,6 +33,8 @@ def test_the_ports_are_the_ones_measured_from_the_bodies():
         "build:nuget-pack": (P("nuget", "output", "nuget", "name", ("image", "project", "path")),),
         "release:notes": (P("release-notes", "output", "release-notes", "name", ("path",)),),
         "release:tag": (P("release-notes", "input", "release-notes", "", ()), P("tag", "output", "tag", "", ())),
+        "release:github-draft": (P("release-notes", "input", "release-notes", "name", ("path",)),),
+        "release:github-publish": (P("github-release", "output", "github-release", "", ()),),
         "release:nuget": (P("nuget", "input", "nuget", "name", ("registry", "image", "path")), EVIDENCE),
         "build:maven-pack": (P("maven", "output", "maven", "name", ("image", "group", "modules", "path")),),
         "release:maven": (P("maven", "input", "maven", "name", ("registry", "group", "modules", "path")),
